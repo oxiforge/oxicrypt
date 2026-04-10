@@ -1,0 +1,15 @@
+[package]
+name = "fips-integrity"
+description = "Software/firmware integrity self-test (FIPS 140-3 IG 10.3.A)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fips-module = { path = "../fips-module" }
+fips-hmac = { path = "../fips-hmac" }

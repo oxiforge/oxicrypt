@@ -15,6 +15,7 @@ members = [
     "crates/fips-xof",
     "crates/fips-cmac",
     "crates/fips-tls-kdf",
+    "crates/fips-integrity",
     "acvp-harness",
 ]
 

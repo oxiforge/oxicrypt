@@ -27,12 +27,19 @@ use fips_module::{initialize_with_tests, state, Error, KatEntry};
 /// exactly what a CST lab will want to see during the Security
 /// Policy review.
 const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
-    { fips_sha::KATS.len() + fips_xof::KATS.len() + fips_hmac::KATS.len() + fips_kdf::KATS.len() },
+    {
+        fips_sha::KATS.len()
+            + fips_xof::KATS.len()
+            + fips_hmac::KATS.len()
+            + fips_kdf::KATS.len()
+            + fips_integrity::KATS.len()
+    },
 >(&[
     fips_sha::KATS,
     fips_xof::KATS,
     fips_hmac::KATS,
     fips_kdf::KATS,
+    fips_integrity::KATS,
 ]);
 
 /// Concatenate several `KatEntry` slices into a single fixed-size
@@ -67,6 +74,38 @@ fn noop_kat() -> Result<(), fips_module::SelfTestFailure> {
 }
 
 fn main() {
+    // Bootstrap shortcut: when invoked with `--fips-self-sign`, write
+    // the `.fipshmac` sidecar for the currently-running executable and
+    // exit. This is the one flow in the module that deliberately does
+    // not go through the power-up KATs — if the KATs already passed we
+    // would be signing a binary that was already verified, and if they
+    // did not pass we cannot reach `main` at all. Running the binary
+    // once with this flag immediately after `cargo build` is the
+    // intended way to prepare a freshly-compiled harness for normal
+    // boot. A production module would instead embed the MAC at the
+    // build server and never ship this subcommand; for Phase 1
+    // development it keeps the `cargo run` loop frictionless.
+    if std::env::args().any(|a| a == "--fips-self-sign") {
+        match std::env::current_exe() {
+            Ok(exe) => match fips_integrity::sign_exe(&exe) {
+                Ok(mac) => {
+                    let hex = fips_integrity::encode_hmac_hex(&mac);
+                    let hex_str = std::str::from_utf8(&hex).unwrap_or("<non-utf8>");
+                    println!("fips-self-sign: signed {} -> {}", exe.display(), hex_str);
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("fips-self-sign failed: {e}");
+                    return;
+                }
+            },
+            Err(e) => {
+                eprintln!("fips-self-sign: current_exe() failed: {e}");
+                return;
+            }
+        }
+    }
+
     match initialize_with_tests(POWER_UP_KATS) {
         Ok(()) => {
             println!("pqclib acvp-harness: module state = {}", state());
@@ -78,7 +117,7 @@ fn main() {
                 println!("  - {}", kat.name);
             }
             println!(
-                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF-Counter KATs run, no vectors dispatched yet."
+                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF + software integrity KATs run, no vectors dispatched yet."
             );
         }
         Err(Error::AlreadyInitialized) => {

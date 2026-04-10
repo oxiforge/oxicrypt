@@ -18,7 +18,8 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - `fips-hmac` — HMAC over all 11 approved hash variants.
 - `fips-kdf` — HKDF (RFC 5869) over all 11 HMACs, SP 800-108r1 KBKDF **Counter**, **Feedback**, and **Double-Pipeline Iteration** modes over all 11 HMACs.
 - `fips-test-vectors` — generated KAT constants sourced from vendored NIST ACVP-Server vectors.
-- `acvp-harness` — power-up KAT runner executing 68 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF.
+- `fips-integrity` — software/firmware integrity self-test (HMAC-SHA-256 over `current_exe()` vs `.fipshmac` sidecar) per FIPS 140-3 IG 10.3.A.
+- `acvp-harness` — power-up KAT runner executing 69 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF and the module binary integrity check.
 
 **ACVP/CAVP traceability (Phase 3 work pulled forward):**
 
@@ -31,7 +32,6 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 **Phase 1 remaining before it can be called closed:**
 
 - `fips-aes` ECB/CBC/CTR/GCM implementations and KATs.
-- Software integrity self-test mechanism (HMAC-SHA-256 over the module binary).
 
 ---
 
@@ -235,7 +235,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-sha`: SHA-1, SHA-2 family (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256)
 - [x] `fips-hmac`: HMAC for all SHA variants (11 approved hash variants, including SHA-3)
 - [x] Power-up KATs for Phase 1 hash/MAC/KDF algorithms (AES pending)
-- [ ] Software integrity self-test mechanism
+- [x] Software integrity self-test mechanism (`fips-integrity`: HMAC-SHA-256 over `current_exe()` vs `.fipshmac` sidecar, SP 800-108 IG 10.3.A; signing bootstrapped via `acvp-harness --fips-self-sign` or the standalone `fips-integrity-sign` tool)
 
 ### Phase 2: Asymmetric + DRBG (Weeks 5–10)
 
