@@ -76,7 +76,9 @@ pub fn sha384(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 }
 
 /// Expected digest for the FIPS 180-4 Appendix D.1 example:
-/// SHA-384("abc").
+/// SHA-384("abc"). Retained for the cross-check tests below; the
+/// power-up KAT uses a NIST CAVP SHS vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
     0xcb, 0x00, 0x75, 0x3f, 0x45, 0xa3, 0x5e, 0x8b, //
     0xb5, 0xa0, 0x3d, 0x69, 0x9a, 0xc6, 0x50, 0x07, //
@@ -87,10 +89,13 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA-384.
+///
+/// Sourced from NIST CAVP SHS (`SHA384ShortMsg.rsp`, Len=8) via
+/// `fips-test-vectors`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha384::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_ABC_DIGEST {
+    h.update(&fips_test_vectors::SHA_384_MSG);
+    if h.finalize() == fips_test_vectors::SHA_384_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)

@@ -313,26 +313,23 @@ pub fn sha256(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 // Power-up self-test (KAT)
 // ------------------------------------------------------------------------
 
-/// Expected digest for the FIPS 180-4 Appendix B.1 one-block example:
-/// SHA-256("abc").
-const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
-    0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, //
-    0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23, //
-    0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, //
-    0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad, //
-];
-
 /// Power-up KAT for SHA-256.
 ///
 /// Called by `fips_module::initialize_with_tests` during the
 /// `SelfTest` state. Uses [`Sha256::new_internal`] to bypass the
 /// operational-mode gate, since the whole point of the KAT is to run
 /// *before* the module is operational.
+///
+/// The message/digest pair is sourced from the NIST CAVP Secure Hash
+/// Standard (SHS) byte-oriented short-message test vectors
+/// (`SHA256ShortMsg.rsp`, Len=8); the constants are re-exported from
+/// the `fips-test-vectors` crate which pins the vendored file's
+/// SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha256::new_internal();
-    h.update(b"abc");
+    h.update(&fips_test_vectors::SHA_256_MSG);
     let digest = h.finalize();
-    if digest == KAT_ABC_DIGEST {
+    if digest == fips_test_vectors::SHA_256_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -346,8 +343,19 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{self_test, sha256, Sha256, DIGEST_SIZE, KAT_ABC_DIGEST};
+    use super::{self_test, sha256, Sha256, DIGEST_SIZE};
     use fips_module::{initialize_with_tests, KatEntry};
+
+    /// FIPS 180-4 Appendix B.1 one-block example: SHA-256("abc").
+    /// Retained for the cross-check tests below (streaming, empty
+    /// string, two-block message) since the power-up KAT now uses a
+    /// NIST CAVP vector via `fips_test_vectors`.
+    const KAT_ABC_DIGEST: [u8; 32] = [
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, //
+        0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23, //
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, //
+        0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad, //
+    ];
 
     /// Hex-decode a compile-time string literal into a fixed-size
     /// byte array. Test-only; avoids pulling in a hex crate.

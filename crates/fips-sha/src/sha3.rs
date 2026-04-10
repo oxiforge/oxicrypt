@@ -95,6 +95,9 @@ pub fn sha3_224(data: &[u8]) -> Result<[u8; SHA3_224_DIGEST_SIZE], Error> {
 }
 
 /// Expected digest for SHA3-224("abc") from FIPS 202 Appendix A.
+/// Retained for the cross-check tests below; the power-up KAT uses
+/// a NIST ACVP-Server vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_SHA3_224_ABC: [u8; SHA3_224_DIGEST_SIZE] = [
     0xe6, 0x42, 0x82, 0x4c, 0x3f, 0x8c, 0xf2, 0x4a, //
     0xd0, 0x92, 0x34, 0xee, 0x7d, 0x3c, 0x76, 0x6f, //
@@ -103,10 +106,14 @@ const KAT_SHA3_224_ABC: [u8; SHA3_224_DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA3-224.
+///
+/// Sourced from NIST ACVP-Server `SHA3-224-2.0/internalProjection.json`
+/// via `fips-test-vectors`; the selected tgId/tcId and the vendored
+/// slice file's SHA-256 are recorded in `vendor/nist/MANIFEST.toml`.
 pub fn self_test_224() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_224>::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_SHA3_224_ABC {
+    h.update(&fips_test_vectors::SHA3_224_MSG);
+    if h.finalize() == fips_test_vectors::SHA3_224_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -142,6 +149,9 @@ pub fn sha3_256(data: &[u8]) -> Result<[u8; SHA3_256_DIGEST_SIZE], Error> {
 }
 
 /// Expected digest for SHA3-256("abc") from FIPS 202 Appendix A.
+/// Retained for the cross-check tests below; the power-up KAT uses
+/// a NIST ACVP-Server vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_SHA3_256_ABC: [u8; SHA3_256_DIGEST_SIZE] = [
     0x3a, 0x98, 0x5d, 0xa7, 0x4f, 0xe2, 0x25, 0xb2, //
     0x04, 0x5c, 0x17, 0x2d, 0x6b, 0xd3, 0x90, 0xbd, //
@@ -150,10 +160,13 @@ const KAT_SHA3_256_ABC: [u8; SHA3_256_DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA3-256.
+///
+/// Sourced from NIST ACVP-Server `SHA3-256-2.0/internalProjection.json`
+/// via `fips-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_256>::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_SHA3_256_ABC {
+    h.update(&fips_test_vectors::SHA3_256_MSG);
+    if h.finalize() == fips_test_vectors::SHA3_256_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -189,6 +202,9 @@ pub fn sha3_384(data: &[u8]) -> Result<[u8; SHA3_384_DIGEST_SIZE], Error> {
 }
 
 /// Expected digest for SHA3-384("abc") from FIPS 202 Appendix A.
+/// Retained for the cross-check tests below; the power-up KAT uses
+/// a NIST ACVP-Server vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_SHA3_384_ABC: [u8; SHA3_384_DIGEST_SIZE] = [
     0xec, 0x01, 0x49, 0x82, 0x88, 0x51, 0x6f, 0xc9, //
     0x26, 0x45, 0x9f, 0x58, 0xe2, 0xc6, 0xad, 0x8d, //
@@ -199,10 +215,13 @@ const KAT_SHA3_384_ABC: [u8; SHA3_384_DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA3-384.
+///
+/// Sourced from NIST ACVP-Server `SHA3-384-2.0/internalProjection.json`
+/// via `fips-test-vectors`.
 pub fn self_test_384() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_384>::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_SHA3_384_ABC {
+    h.update(&fips_test_vectors::SHA3_384_MSG);
+    if h.finalize() == fips_test_vectors::SHA3_384_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -238,6 +257,9 @@ pub fn sha3_512(data: &[u8]) -> Result<[u8; SHA3_512_DIGEST_SIZE], Error> {
 }
 
 /// Expected digest for SHA3-512("abc") from FIPS 202 Appendix A.
+/// Retained for the cross-check tests below; the power-up KAT uses
+/// a NIST ACVP-Server vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_SHA3_512_ABC: [u8; SHA3_512_DIGEST_SIZE] = [
     0xb7, 0x51, 0x85, 0x0b, 0x1a, 0x57, 0x16, 0x8a, //
     0x56, 0x93, 0xcd, 0x92, 0x4b, 0x6b, 0x09, 0x6e, //
@@ -250,10 +272,13 @@ const KAT_SHA3_512_ABC: [u8; SHA3_512_DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA3-512.
+///
+/// Sourced from NIST ACVP-Server `SHA3-512-2.0/internalProjection.json`
+/// via `fips-test-vectors`.
 pub fn self_test_512() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_512>::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_SHA3_512_ABC {
+    h.update(&fips_test_vectors::SHA3_512_MSG);
+    if h.finalize() == fips_test_vectors::SHA3_512_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)

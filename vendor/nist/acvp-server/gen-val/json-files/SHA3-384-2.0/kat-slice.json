@@ -1,0 +1,26 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/SHA3-384-2.0/internalProjection.json",
+    "internalProjection_sha256": "e9eae46bd676dc82e911dcc3af92ef0093e0118615b62ab431086fce47574396",
+    "selected_tgId": 1,
+    "selected_tcId": 197
+  },
+  "algorithm": "SHA3-384",
+  "revision": "2.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 197,
+          "len": 40,
+          "msg": "C386D35FEC",
+          "md": "ECF7D5D32B3D7A374DF3F171C0DB7F5FA14716D93BF79C702283F2A12524758559DB4BEF7C282C35135C70CDBE09132E"
+        }
+      ]
+    }
+  ]
+}

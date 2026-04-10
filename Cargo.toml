@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/fips-module",
+    "crates/fips-test-vectors",
     "crates/fips-aes",
     "crates/fips-sha",
     "crates/fips-hmac",

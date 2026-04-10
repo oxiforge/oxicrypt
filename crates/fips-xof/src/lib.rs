@@ -174,7 +174,10 @@ pub fn shake256<const OUT_LEN: usize>(data: &[u8]) -> Result<[u8; OUT_LEN], Erro
 // Power-up self-tests
 // ========================================================================
 
-/// SHAKE128("") squeezed to 32 bytes — NIST CAVP / FIPS 202 example.
+/// SHAKE128("") squeezed to 32 bytes — FIPS 202 example, retained
+/// for the cross-check tests below. The power-up KAT uses a NIST
+/// ACVP-Server vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_SHAKE128_EMPTY_32: [u8; 32] = [
     0x7f, 0x9c, 0x2b, 0xa4, 0xe8, 0x8f, 0x82, 0x7d, //
     0x61, 0x60, 0x45, 0x50, 0x76, 0x05, 0x85, 0x3e, //
@@ -182,7 +185,10 @@ const KAT_SHAKE128_EMPTY_32: [u8; 32] = [
     0xeb, 0x1a, 0x6e, 0xac, 0xfa, 0x66, 0xef, 0x26, //
 ];
 
-/// SHAKE256("") squeezed to 64 bytes — NIST CAVP / FIPS 202 example.
+/// SHAKE256("") squeezed to 64 bytes — FIPS 202 example, retained
+/// for the cross-check tests below. The power-up KAT uses a NIST
+/// ACVP-Server vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_SHAKE256_EMPTY_64: [u8; 64] = [
     0x46, 0xb9, 0xdd, 0x2b, 0x0b, 0xa8, 0x8d, 0x13, //
     0x23, 0x3b, 0x3f, 0xeb, 0x74, 0x3e, 0xeb, 0x24, //
@@ -195,13 +201,17 @@ const KAT_SHAKE256_EMPTY_64: [u8; 64] = [
 ];
 
 /// Power-up KAT for SHAKE128.
+///
+/// Sourced from NIST ACVP-Server `SHAKE-128-FIPS202/internalProjection.json`
+/// via `fips-test-vectors`; the selected tgId/tcId and the vendored
+/// slice file's SHA-256 are recorded in `vendor/nist/MANIFEST.toml`.
 pub fn self_test_128() -> Result<(), SelfTestFailure> {
     let mut x = Shake128::new_internal();
-    x.update(b"");
+    x.update(&fips_test_vectors::SHAKE128_MSG);
     x.finalize();
-    let mut out = [0u8; 32];
+    let mut out = [0u8; fips_test_vectors::SHAKE128_OUT.len()];
     x.squeeze(&mut out);
-    if out == KAT_SHAKE128_EMPTY_32 {
+    if out == fips_test_vectors::SHAKE128_OUT {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -209,13 +219,16 @@ pub fn self_test_128() -> Result<(), SelfTestFailure> {
 }
 
 /// Power-up KAT for SHAKE256.
+///
+/// Sourced from NIST ACVP-Server `SHAKE-256-FIPS202/internalProjection.json`
+/// via `fips-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
     let mut x = Shake256::new_internal();
-    x.update(b"");
+    x.update(&fips_test_vectors::SHAKE256_MSG);
     x.finalize();
-    let mut out = [0u8; 64];
+    let mut out = [0u8; fips_test_vectors::SHAKE256_OUT.len()];
     x.squeeze(&mut out);
-    if out == KAT_SHAKE256_EMPTY_64 {
+    if out == fips_test_vectors::SHAKE256_OUT {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -225,11 +238,11 @@ pub fn self_test_256() -> Result<(), SelfTestFailure> {
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
-        name: "SHAKE128 KAT (FIPS 202 \"\" → 32B)",
+        name: "SHAKE128 KAT (NIST ACVP-Server SHAKE-128-FIPS202)",
         run: self_test_128,
     },
     KatEntry {
-        name: "SHAKE256 KAT (FIPS 202 \"\" → 64B)",
+        name: "SHAKE256 KAT (NIST ACVP-Server SHAKE-256-FIPS202)",
         run: self_test_256,
     },
 ];

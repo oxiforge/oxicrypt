@@ -1,0 +1,32 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/HMAC-SHA3-256-1.0/internalProjection.json",
+    "internalProjection_sha256": "3f39e5c04f0f581fa14e301bdae941c9889cba001050f68cf94d113bf47b3f39",
+    "selected_tgId": 7,
+    "selected_tcId": 451
+  },
+  "algorithm": "HMAC-SHA3-256",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 7,
+      "testType": "AFT",
+      "keyLen": 8,
+      "msgLen": 128,
+      "macLen": 80,
+      "tests": [
+        {
+          "tcId": 451,
+          "keyLen": 8,
+          "msgLen": 128,
+          "macLen": 80,
+          "key": "29",
+          "msg": "09285C57FA4941FCEA56ABE77B0C371B",
+          "mac": "8815266514CA84453D4E"
+        }
+      ]
+    }
+  ]
+}

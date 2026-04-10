@@ -251,17 +251,26 @@ pub fn sha1(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 // Power-up self-test
 // ------------------------------------------------------------------------
 
-/// SHA-1("abc") — FIPS 180-4 §A.1 example.
+/// SHA-1("abc") — FIPS 180-4 §A.1 example. Retained for the
+/// cross-check tests below; the power-up KAT uses a NIST CAVP SHS
+/// vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
     0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e, //
     0x25, 0x71, 0x78, 0x50, 0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d, //
 ];
 
 /// Power-up KAT for SHA-1.
+///
+/// The message/digest pair is sourced from the NIST CAVP Secure Hash
+/// Standard (SHS) byte-oriented short-message test vectors
+/// (`SHA1ShortMsg.rsp`, Len=8); the constants are re-exported from
+/// the `fips-test-vectors` crate, which pins the vendored file's
+/// SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha1::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_ABC_DIGEST {
+    h.update(&fips_test_vectors::SHA_1_MSG);
+    if h.finalize() == fips_test_vectors::SHA_1_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)

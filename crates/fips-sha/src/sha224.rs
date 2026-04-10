@@ -139,7 +139,10 @@ pub fn sha224(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for the FIPS 180-4 Appendix A example: SHA-224("abc").
+/// Expected digest for the FIPS 180-4 Appendix A example:
+/// SHA-224("abc"). Retained for the cross-check tests below; the
+/// power-up KAT uses a NIST CAVP SHS vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
     0x23, 0x09, 0x7d, 0x22, 0x34, 0x05, 0xd8, 0x22, //
     0x86, 0x42, 0xa4, 0x77, 0xbd, 0xa2, 0x55, 0xb3, //
@@ -148,10 +151,15 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA-224.
+///
+/// Sourced from the NIST CAVP Secure Hash Standard (SHS) byte-oriented
+/// short-message test vectors (`SHA224ShortMsg.rsp`, Len=8). Constants
+/// are re-exported from `fips-test-vectors`, which pins the vendored
+/// file's SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha224::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_ABC_DIGEST {
+    h.update(&fips_test_vectors::SHA_224_MSG);
+    if h.finalize() == fips_test_vectors::SHA_224_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)

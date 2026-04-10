@@ -1,0 +1,27 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/SHAKE-128-FIPS202/internalProjection.json",
+    "internalProjection_sha256": "1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db",
+    "selected_tgId": 1,
+    "selected_tcId": 128
+  },
+  "algorithm": "SHAKE-128",
+  "revision": "FIPS202",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 128,
+          "len": 8,
+          "outLen": 464,
+          "msg": "4B",
+          "md": "58A8694C7E0364217702E964EEAF927B0DA95486164F928A607E39561E138DEC14E213A506BB700EE7A1C99B77962B3E8EDB6F3756FD575041DD"
+        }
+      ]
+    }
+  ]
+}

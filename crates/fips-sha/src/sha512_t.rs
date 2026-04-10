@@ -95,6 +95,9 @@ pub fn sha512_224(data: &[u8]) -> Result<[u8; DIGEST_SIZE_224], Error> {
 }
 
 /// Expected digest for SHA-512/224("abc"), NIST CAVP example.
+/// Retained for the cross-check tests below; the power-up KAT uses
+/// a NIST CAVP SHS vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_ABC_DIGEST_224: [u8; DIGEST_SIZE_224] = [
     0x46, 0x34, 0x27, 0x0f, 0x70, 0x7b, 0x6a, 0x54, //
     0xda, 0xae, 0x75, 0x30, 0x46, 0x08, 0x42, 0xe2, //
@@ -103,10 +106,13 @@ const KAT_ABC_DIGEST_224: [u8; DIGEST_SIZE_224] = [
 ];
 
 /// Power-up KAT for SHA-512/224.
+///
+/// Sourced from NIST CAVP SHS (`SHA512_224ShortMsg.rsp`, Len=8) via
+/// `fips-test-vectors`.
 pub fn self_test_224() -> Result<(), SelfTestFailure> {
     let mut h = Sha512_224::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_ABC_DIGEST_224 {
+    h.update(&fips_test_vectors::SHA_512_224_MSG);
+    if h.finalize() == fips_test_vectors::SHA_512_224_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -185,6 +191,9 @@ pub fn sha512_256(data: &[u8]) -> Result<[u8; DIGEST_SIZE_256], Error> {
 }
 
 /// Expected digest for SHA-512/256("abc"), NIST CAVP example.
+/// Retained for the cross-check tests below; the power-up KAT uses
+/// a NIST CAVP SHS vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_ABC_DIGEST_256: [u8; DIGEST_SIZE_256] = [
     0x53, 0x04, 0x8e, 0x26, 0x81, 0x94, 0x1e, 0xf9, //
     0x9b, 0x2e, 0x29, 0xb7, 0x6b, 0x4c, 0x7d, 0xab, //
@@ -193,10 +202,13 @@ const KAT_ABC_DIGEST_256: [u8; DIGEST_SIZE_256] = [
 ];
 
 /// Power-up KAT for SHA-512/256.
+///
+/// Sourced from NIST CAVP SHS (`SHA512_256ShortMsg.rsp`, Len=8) via
+/// `fips-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
     let mut h = Sha512_256::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_ABC_DIGEST_256 {
+    h.update(&fips_test_vectors::SHA_512_256_MSG);
+    if h.finalize() == fips_test_vectors::SHA_512_256_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)

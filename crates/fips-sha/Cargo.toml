@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 fips-module = { path = "../fips-module" }
+fips-test-vectors = { path = "../fips-test-vectors" }

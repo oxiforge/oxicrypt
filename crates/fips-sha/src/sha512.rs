@@ -314,7 +314,9 @@ pub fn sha512(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 // ------------------------------------------------------------------------
 
 /// Expected digest for the FIPS 180-4 Appendix C.1 example:
-/// SHA-512("abc").
+/// SHA-512("abc"). Retained for the cross-check tests below; the
+/// power-up KAT uses a NIST CAVP SHS vector via `fips_test_vectors`.
+#[cfg(test)]
 const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
     0xdd, 0xaf, 0x35, 0xa1, 0x93, 0x61, 0x7a, 0xba, //
     0xcc, 0x41, 0x73, 0x49, 0xae, 0x20, 0x41, 0x31, //
@@ -327,10 +329,13 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 ];
 
 /// Power-up KAT for SHA-512.
+///
+/// Sourced from NIST CAVP SHS (`SHA512ShortMsg.rsp`, Len=8) via
+/// `fips-test-vectors`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha512::new_internal();
-    h.update(b"abc");
-    if h.finalize() == KAT_ABC_DIGEST {
+    h.update(&fips_test_vectors::SHA_512_MSG);
+    if h.finalize() == fips_test_vectors::SHA_512_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)

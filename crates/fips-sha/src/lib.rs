@@ -38,47 +38,47 @@ pub mod sha512_t;
 /// slice to `fips_module::initialize_with_tests`.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
-        name: "SHA-1 KAT (FIPS 180-4 Appendix A.1 \"abc\")",
+        name: "SHA-1 KAT (NIST CAVP SHA1ShortMsg Len=8)",
         run: sha1::self_test,
     },
     KatEntry {
-        name: "SHA-224 KAT (FIPS 180-4 Appendix A \"abc\")",
+        name: "SHA-224 KAT (NIST CAVP SHA224ShortMsg Len=8)",
         run: sha224::self_test,
     },
     KatEntry {
-        name: "SHA-256 KAT (FIPS 180-4 Appendix B \"abc\")",
+        name: "SHA-256 KAT (NIST CAVP SHA256ShortMsg Len=8)",
         run: sha256::self_test,
     },
     KatEntry {
-        name: "SHA-384 KAT (FIPS 180-4 Appendix D \"abc\")",
+        name: "SHA-384 KAT (NIST CAVP SHA384ShortMsg Len=8)",
         run: sha384::self_test,
     },
     KatEntry {
-        name: "SHA-512 KAT (FIPS 180-4 Appendix C \"abc\")",
+        name: "SHA-512 KAT (NIST CAVP SHA512ShortMsg Len=8)",
         run: sha512::self_test,
     },
     KatEntry {
-        name: "SHA-512/224 KAT (NIST CAVP \"abc\")",
+        name: "SHA-512/224 KAT (NIST CAVP SHA512_224ShortMsg Len=8)",
         run: sha512_t::self_test_224,
     },
     KatEntry {
-        name: "SHA-512/256 KAT (NIST CAVP \"abc\")",
+        name: "SHA-512/256 KAT (NIST CAVP SHA512_256ShortMsg Len=8)",
         run: sha512_t::self_test_256,
     },
     KatEntry {
-        name: "SHA3-224 KAT (FIPS 202 Appendix A \"abc\")",
+        name: "SHA3-224 KAT (NIST ACVP-Server SHA3-224-2.0)",
         run: sha3::self_test_224,
     },
     KatEntry {
-        name: "SHA3-256 KAT (FIPS 202 Appendix A \"abc\")",
+        name: "SHA3-256 KAT (NIST ACVP-Server SHA3-256-2.0)",
         run: sha3::self_test_256,
     },
     KatEntry {
-        name: "SHA3-384 KAT (FIPS 202 Appendix A \"abc\")",
+        name: "SHA3-384 KAT (NIST ACVP-Server SHA3-384-2.0)",
         run: sha3::self_test_384,
     },
     KatEntry {
-        name: "SHA3-512 KAT (FIPS 202 Appendix A \"abc\")",
+        name: "SHA3-512 KAT (NIST ACVP-Server SHA3-512-2.0)",
         run: sha3::self_test_512,
     },
 ];

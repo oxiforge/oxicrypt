@@ -239,112 +239,118 @@ pub type HmacSha3_512 = Hmac<fips_sha::sha3::Sha3<72, 64>, 72, 64>;
 // Power-up KATs
 // ----------------------------------------------------------------------
 //
-// RFC 4231 §4.2 test case 1 (also applicable to SHA-1 per RFC 2202
-// §3 test case 1) uses:
+// All HMAC power-up KATs are sourced from NIST ACVP-Server
+// `HMAC-<alg>-1.0/internalProjection.json` (pinned commit + per-file
+// SHA-256 recorded in `vendor/nist/MANIFEST.toml`) and re-exported via
+// the `fips-test-vectors` crate.
 //
-//   Key  = 0x0b repeated 20 times
-//   Data = "Hi There"
-//
-// For the variants not covered by RFC 4231 (SHA-512/224, SHA-512/256,
-// SHA-3 family) we use the same inputs and the digest computed by
-// OpenSSL 3.x, which is CAVS-validated. All 11 expected values can
-// be regenerated with:
-//
-//   printf 'Hi There' | openssl dgst -<alg> -mac HMAC \
-//     -macopt hexkey:0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
-
-const KAT_KEY: [u8; 20] = [0x0b; 20];
-const KAT_DATA: &[u8] = b"Hi There";
-
-/// HMAC-SHA-1 KAT from RFC 2202 §3 test case 1.
-const KAT_HMAC_SHA1: [u8; 20] = [
-    0xb6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xe2, 0x8b, 0xc0, 0xb6, 0xfb, 0x37, 0x8c, 0x8e,
-    0xf1, 0x46, 0xbe, 0x00,
-];
-/// HMAC-SHA-224 KAT from RFC 4231 §4.2 test case 1.
-const KAT_HMAC_SHA224: [u8; 28] = [
-    0x89, 0x6f, 0xb1, 0x12, 0x8a, 0xbb, 0xdf, 0x19, 0x68, 0x32, 0x10, 0x7c, 0xd4, 0x9d, 0xf3, 0x3f,
-    0x47, 0xb4, 0xb1, 0x16, 0x99, 0x12, 0xba, 0x4f, 0x53, 0x68, 0x4b, 0x22,
-];
-/// HMAC-SHA-256 KAT from RFC 4231 §4.2 test case 1.
-const KAT_HMAC_SHA256: [u8; 32] = [
-    0xb0, 0x34, 0x4c, 0x61, 0xd8, 0xdb, 0x38, 0x53, 0x5c, 0xa8, 0xaf, 0xce, 0xaf, 0x0b, 0xf1, 0x2b,
-    0x88, 0x1d, 0xc2, 0x00, 0xc9, 0x83, 0x3d, 0xa7, 0x26, 0xe9, 0x37, 0x6c, 0x2e, 0x32, 0xcf, 0xf7,
-];
-/// HMAC-SHA-384 KAT from RFC 4231 §4.2 test case 1.
-const KAT_HMAC_SHA384: [u8; 48] = [
-    0xaf, 0xd0, 0x39, 0x44, 0xd8, 0x48, 0x95, 0x62, 0x6b, 0x08, 0x25, 0xf4, 0xab, 0x46, 0x90, 0x7f,
-    0x15, 0xf9, 0xda, 0xdb, 0xe4, 0x10, 0x1e, 0xc6, 0x82, 0xaa, 0x03, 0x4c, 0x7c, 0xeb, 0xc5, 0x9c,
-    0xfa, 0xea, 0x9e, 0xa9, 0x07, 0x6e, 0xde, 0x7f, 0x4a, 0xf1, 0x52, 0xe8, 0xb2, 0xfa, 0x9c, 0xb6,
-];
-/// HMAC-SHA-512 KAT from RFC 4231 §4.2 test case 1.
-const KAT_HMAC_SHA512: [u8; 64] = [
-    0x87, 0xaa, 0x7c, 0xde, 0xa5, 0xef, 0x61, 0x9d, 0x4f, 0xf0, 0xb4, 0x24, 0x1a, 0x1d, 0x6c, 0xb0,
-    0x23, 0x79, 0xf4, 0xe2, 0xce, 0x4e, 0xc2, 0x78, 0x7a, 0xd0, 0xb3, 0x05, 0x45, 0xe1, 0x7c, 0xde,
-    0xda, 0xa8, 0x33, 0xb7, 0xd6, 0xb8, 0xa7, 0x02, 0x03, 0x8b, 0x27, 0x4e, 0xae, 0xa3, 0xf4, 0xe4,
-    0xbe, 0x9d, 0x91, 0x4e, 0xeb, 0x61, 0xf1, 0x70, 0x2e, 0x69, 0x6c, 0x20, 0x3a, 0x12, 0x68, 0x54,
-];
-/// HMAC-SHA-512/224 KAT computed via OpenSSL 3.x with the RFC 4231 test 1 inputs.
-const KAT_HMAC_SHA512_224: [u8; 28] = [
-    0xb2, 0x44, 0xba, 0x01, 0x30, 0x7c, 0x0e, 0x7a, 0x8c, 0xca, 0xad, 0x13, 0xb1, 0x06, 0x7a, 0x4c,
-    0xf6, 0xb9, 0x61, 0xfe, 0x0c, 0x6a, 0x20, 0xbd, 0xa3, 0xd9, 0x20, 0x39,
-];
-/// HMAC-SHA-512/256 KAT computed via OpenSSL 3.x with the RFC 4231 test 1 inputs.
-const KAT_HMAC_SHA512_256: [u8; 32] = [
-    0x9f, 0x91, 0x26, 0xc3, 0xd9, 0xc3, 0xc3, 0x30, 0xd7, 0x60, 0x42, 0x5c, 0xa8, 0xa2, 0x17, 0xe3,
-    0x1f, 0xea, 0xe3, 0x1b, 0xfe, 0x70, 0x19, 0x6f, 0xf8, 0x16, 0x42, 0xb8, 0x68, 0x40, 0x2e, 0xab,
-];
-/// HMAC-SHA3-224 KAT computed via OpenSSL 3.x with the RFC 4231 test 1 inputs.
-const KAT_HMAC_SHA3_224: [u8; 28] = [
-    0x3b, 0x16, 0x54, 0x6b, 0xbc, 0x7b, 0xe2, 0x70, 0x6a, 0x03, 0x1d, 0xca, 0xfd, 0x56, 0x37, 0x3d,
-    0x98, 0x84, 0x36, 0x76, 0x41, 0xd8, 0xc5, 0x9a, 0xf3, 0xc8, 0x60, 0xf7,
-];
-/// HMAC-SHA3-256 KAT computed via OpenSSL 3.x with the RFC 4231 test 1 inputs.
-const KAT_HMAC_SHA3_256: [u8; 32] = [
-    0xba, 0x85, 0x19, 0x23, 0x10, 0xdf, 0xfa, 0x96, 0xe2, 0xa3, 0xa4, 0x0e, 0x69, 0x77, 0x43, 0x51,
-    0x14, 0x0b, 0xb7, 0x18, 0x5e, 0x12, 0x02, 0xcd, 0xcc, 0x91, 0x75, 0x89, 0xf9, 0x5e, 0x16, 0xbb,
-];
-/// HMAC-SHA3-384 KAT computed via OpenSSL 3.x with the RFC 4231 test 1 inputs.
-const KAT_HMAC_SHA3_384: [u8; 48] = [
-    0x68, 0xd2, 0xdc, 0xf7, 0xfd, 0x4d, 0xdd, 0x0a, 0x22, 0x40, 0xc8, 0xa4, 0x37, 0x30, 0x5f, 0x61,
-    0xfb, 0x73, 0x34, 0xcf, 0xb5, 0xd0, 0x22, 0x6e, 0x1b, 0xc2, 0x7d, 0xc1, 0x0a, 0x2e, 0x72, 0x3a,
-    0x20, 0xd3, 0x70, 0xb4, 0x77, 0x43, 0x13, 0x0e, 0x26, 0xac, 0x7e, 0x3d, 0x53, 0x28, 0x86, 0xbd,
-];
-/// HMAC-SHA3-512 KAT computed via OpenSSL 3.x with the RFC 4231 test 1 inputs.
-const KAT_HMAC_SHA3_512: [u8; 64] = [
-    0xeb, 0x3f, 0xbd, 0x4b, 0x2e, 0xaa, 0xb8, 0xf5, 0xc5, 0x04, 0xbd, 0x3a, 0x41, 0x46, 0x5a, 0xac,
-    0xec, 0x15, 0x77, 0x0a, 0x7c, 0xab, 0xac, 0x53, 0x1e, 0x48, 0x2f, 0x86, 0x0b, 0x5e, 0xc7, 0xba,
-    0x47, 0xcc, 0xb2, 0xc6, 0xf2, 0xaf, 0xce, 0x8f, 0x88, 0xd2, 0x2b, 0x6d, 0xc6, 0x13, 0x80, 0xf2,
-    0x3a, 0x66, 0x8f, 0xd3, 0x88, 0x8b, 0xb8, 0x05, 0x37, 0xc0, 0xa0, 0xb8, 0x64, 0x07, 0x68, 0x9e,
-];
+// ACVP HMAC test groups exercise *truncated* MAC outputs — every
+// group carries a `macLen` strictly less than the full digest length.
+// To validate against an unmodified NIST vector we therefore compute
+// the full HMAC output and compare its leading `MAC_PREFIX.len()`
+// bytes against the expected prefix constant. This strategy follows
+// FIPS 140-3 IG 10.3.A, which requires each HMAC variant to be
+// individually known-answer tested but does not require that the KAT
+// be a full-length output.
 
 macro_rules! kat_fn {
-    ($name:ident, $alias:ty, $expected:ident) => {
+    ($name:ident, $alias:ty, $key:path, $msg:path, $prefix:path) => {
         /// Power-up KAT for this HMAC variant. Run by
         /// `fips_module::initialize_with_tests` during `SelfTest`.
+        ///
+        /// Sourced from NIST ACVP-Server HMAC-*-1.0; the KAT computes
+        /// the full HMAC and compares its leading `MAC_PREFIX.len()`
+        /// bytes against the truncated NIST expected value.
         pub fn $name() -> Result<(), SelfTestFailure> {
-            let mut m = <$alias>::new_internal(&KAT_KEY);
-            m.update(KAT_DATA);
-            if m.finalize() == $expected {
-                Ok(())
-            } else {
-                Err(SelfTestFailure)
+            let mut m = <$alias>::new_internal(&$key);
+            m.update(&$msg);
+            let out = m.finalize();
+            let prefix = &$prefix;
+            match out.get(..prefix.len()) {
+                Some(head) if head == prefix => Ok(()),
+                _ => Err(SelfTestFailure),
             }
         }
     };
 }
 
-kat_fn!(self_test_sha1, HmacSha1, KAT_HMAC_SHA1);
-kat_fn!(self_test_sha224, HmacSha224, KAT_HMAC_SHA224);
-kat_fn!(self_test_sha256, HmacSha256, KAT_HMAC_SHA256);
-kat_fn!(self_test_sha384, HmacSha384, KAT_HMAC_SHA384);
-kat_fn!(self_test_sha512, HmacSha512, KAT_HMAC_SHA512);
-kat_fn!(self_test_sha512_224, HmacSha512_224, KAT_HMAC_SHA512_224);
-kat_fn!(self_test_sha512_256, HmacSha512_256, KAT_HMAC_SHA512_256);
-kat_fn!(self_test_sha3_224, HmacSha3_224, KAT_HMAC_SHA3_224);
-kat_fn!(self_test_sha3_256, HmacSha3_256, KAT_HMAC_SHA3_256);
-kat_fn!(self_test_sha3_384, HmacSha3_384, KAT_HMAC_SHA3_384);
-kat_fn!(self_test_sha3_512, HmacSha3_512, KAT_HMAC_SHA3_512);
+kat_fn!(
+    self_test_sha1,
+    HmacSha1,
+    fips_test_vectors::HMAC_SHA_1_KEY,
+    fips_test_vectors::HMAC_SHA_1_MSG,
+    fips_test_vectors::HMAC_SHA_1_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha224,
+    HmacSha224,
+    fips_test_vectors::HMAC_SHA2_224_KEY,
+    fips_test_vectors::HMAC_SHA2_224_MSG,
+    fips_test_vectors::HMAC_SHA2_224_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha256,
+    HmacSha256,
+    fips_test_vectors::HMAC_SHA2_256_KEY,
+    fips_test_vectors::HMAC_SHA2_256_MSG,
+    fips_test_vectors::HMAC_SHA2_256_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha384,
+    HmacSha384,
+    fips_test_vectors::HMAC_SHA2_384_KEY,
+    fips_test_vectors::HMAC_SHA2_384_MSG,
+    fips_test_vectors::HMAC_SHA2_384_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha512,
+    HmacSha512,
+    fips_test_vectors::HMAC_SHA2_512_KEY,
+    fips_test_vectors::HMAC_SHA2_512_MSG,
+    fips_test_vectors::HMAC_SHA2_512_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha512_224,
+    HmacSha512_224,
+    fips_test_vectors::HMAC_SHA2_512_224_KEY,
+    fips_test_vectors::HMAC_SHA2_512_224_MSG,
+    fips_test_vectors::HMAC_SHA2_512_224_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha512_256,
+    HmacSha512_256,
+    fips_test_vectors::HMAC_SHA2_512_256_KEY,
+    fips_test_vectors::HMAC_SHA2_512_256_MSG,
+    fips_test_vectors::HMAC_SHA2_512_256_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha3_224,
+    HmacSha3_224,
+    fips_test_vectors::HMAC_SHA3_224_KEY,
+    fips_test_vectors::HMAC_SHA3_224_MSG,
+    fips_test_vectors::HMAC_SHA3_224_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha3_256,
+    HmacSha3_256,
+    fips_test_vectors::HMAC_SHA3_256_KEY,
+    fips_test_vectors::HMAC_SHA3_256_MSG,
+    fips_test_vectors::HMAC_SHA3_256_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha3_384,
+    HmacSha3_384,
+    fips_test_vectors::HMAC_SHA3_384_KEY,
+    fips_test_vectors::HMAC_SHA3_384_MSG,
+    fips_test_vectors::HMAC_SHA3_384_MAC_PREFIX
+);
+kat_fn!(
+    self_test_sha3_512,
+    HmacSha3_512,
+    fips_test_vectors::HMAC_SHA3_512_KEY,
+    fips_test_vectors::HMAC_SHA3_512_MSG,
+    fips_test_vectors::HMAC_SHA3_512_MAC_PREFIX
+);
 
 /// Power-up KAT inventory for all HMAC variants in this crate.
 ///
@@ -353,47 +359,47 @@ kat_fn!(self_test_sha3_512, HmacSha3_512, KAT_HMAC_SHA3_512);
 /// each variant has its own KAT — families do not share.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
-        name: "HMAC-SHA-1 KAT (RFC 2202 test 1)",
+        name: "HMAC-SHA-1 KAT (NIST ACVP-Server HMAC-SHA-1-1.0, truncated)",
         run: self_test_sha1,
     },
     KatEntry {
-        name: "HMAC-SHA-224 KAT (RFC 4231 test 1)",
+        name: "HMAC-SHA-224 KAT (NIST ACVP-Server HMAC-SHA2-224-1.0, truncated)",
         run: self_test_sha224,
     },
     KatEntry {
-        name: "HMAC-SHA-256 KAT (RFC 4231 test 1)",
+        name: "HMAC-SHA-256 KAT (NIST ACVP-Server HMAC-SHA2-256-1.0, truncated)",
         run: self_test_sha256,
     },
     KatEntry {
-        name: "HMAC-SHA-384 KAT (RFC 4231 test 1)",
+        name: "HMAC-SHA-384 KAT (NIST ACVP-Server HMAC-SHA2-384-1.0, truncated)",
         run: self_test_sha384,
     },
     KatEntry {
-        name: "HMAC-SHA-512 KAT (RFC 4231 test 1)",
+        name: "HMAC-SHA-512 KAT (NIST ACVP-Server HMAC-SHA2-512-1.0, truncated)",
         run: self_test_sha512,
     },
     KatEntry {
-        name: "HMAC-SHA-512/224 KAT (OpenSSL-derived, RFC 4231 inputs)",
+        name: "HMAC-SHA-512/224 KAT (NIST ACVP-Server HMAC-SHA2-512/224-1.0, truncated)",
         run: self_test_sha512_224,
     },
     KatEntry {
-        name: "HMAC-SHA-512/256 KAT (OpenSSL-derived, RFC 4231 inputs)",
+        name: "HMAC-SHA-512/256 KAT (NIST ACVP-Server HMAC-SHA2-512/256-1.0, truncated)",
         run: self_test_sha512_256,
     },
     KatEntry {
-        name: "HMAC-SHA3-224 KAT (OpenSSL-derived, RFC 4231 inputs)",
+        name: "HMAC-SHA3-224 KAT (NIST ACVP-Server HMAC-SHA3-224-1.0, truncated)",
         run: self_test_sha3_224,
     },
     KatEntry {
-        name: "HMAC-SHA3-256 KAT (OpenSSL-derived, RFC 4231 inputs)",
+        name: "HMAC-SHA3-256 KAT (NIST ACVP-Server HMAC-SHA3-256-1.0, truncated)",
         run: self_test_sha3_256,
     },
     KatEntry {
-        name: "HMAC-SHA3-384 KAT (OpenSSL-derived, RFC 4231 inputs)",
+        name: "HMAC-SHA3-384 KAT (NIST ACVP-Server HMAC-SHA3-384-1.0, truncated)",
         run: self_test_sha3_384,
     },
     KatEntry {
-        name: "HMAC-SHA3-512 KAT (OpenSSL-derived, RFC 4231 inputs)",
+        name: "HMAC-SHA3-512 KAT (NIST ACVP-Server HMAC-SHA3-512-1.0, truncated)",
         run: self_test_sha3_512,
     },
 ];

@@ -1,0 +1,57 @@
+# @generated — do not edit manually.
+# Source pins for NIST-derived KAT vectors.
+
+[acvp_server]
+commit = "3611942ea10c070dd8bc6afec5682d56c307de8a"
+url = "https://github.com/usnistgov/ACVP-Server"
+
+[cavp_shs]
+zip_url = "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/shs/shabytetestvectors.zip"
+
+[cavp_shs.vectors]
+SHA_1 = { file = "cavp-shs/shabytetestvectors/SHA1ShortMsg.rsp", len_bits = 8, sha256 = "be0991ddc5372932d55804b11713c9140d10435ef4b316a0773e3506eec79cda" }
+SHA_224 = { file = "cavp-shs/shabytetestvectors/SHA224ShortMsg.rsp", len_bits = 8, sha256 = "0dad6656c08f77252f6ccb789e42284fd61fc53bba30e83162800aa3d2aa939f" }
+SHA_256 = { file = "cavp-shs/shabytetestvectors/SHA256ShortMsg.rsp", len_bits = 8, sha256 = "75e1cb83994638481808e225b9eb0c1ebd0c232d952ac42b61abce6363be283c" }
+SHA_384 = { file = "cavp-shs/shabytetestvectors/SHA384ShortMsg.rsp", len_bits = 8, sha256 = "7ea7bcf00fadc20949fae63703e40681ddf288fea808471cb3cbc95f3ec16811" }
+SHA_512 = { file = "cavp-shs/shabytetestvectors/SHA512ShortMsg.rsp", len_bits = 8, sha256 = "e53a36c03609e5a3e3cc4b6e117a499db7864c23ec825c6cec99503a45f40764" }
+SHA_512_224 = { file = "cavp-shs/shabytetestvectors/SHA512_224ShortMsg.rsp", len_bits = 8, sha256 = "9b11fb25ff08d8c708e098a22d013c5d38c068d1e398eb573d2055c053bffe75" }
+SHA_512_256 = { file = "cavp-shs/shabytetestvectors/SHA512_256ShortMsg.rsp", len_bits = 8, sha256 = "d8d5008b73f90cb92a8f8d4d9af745809ceef47af4cbeb2ee245cc6b153f5223" }
+
+[acvp_server.sha3]
+SHA3_224 = { dir = "SHA3-224-2.0", tgId = 1, tcId = 312, sha256 = "9ae4b1480d15526b29498d442125dfcfe80d74fe74c1b56fa840b1fae702ae34" }
+SHA3_256 = { dir = "SHA3-256-2.0", tgId = 1, tcId = 87, sha256 = "dba4689436c7e440e61dc517210def3e8e09e50c0e9eff29ea66d89bdd0f2c63" }
+SHA3_384 = { dir = "SHA3-384-2.0", tgId = 1, tcId = 197, sha256 = "e9eae46bd676dc82e911dcc3af92ef0093e0118615b62ab431086fce47574396" }
+SHA3_512 = { dir = "SHA3-512-2.0", tgId = 1, tcId = 51, sha256 = "b0521468a178f7fd362d63319aa69b708885d08f0c71cee99ac70729f5bdf64b" }
+
+[acvp_server.shake]
+SHAKE128 = { dir = "SHAKE-128-FIPS202", tgId = 1, tcId = 128, out_bytes = 58, sha256 = "1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db" }
+SHAKE256 = { dir = "SHAKE-256-FIPS202", tgId = 1, tcId = 208, out_bytes = 56, sha256 = "a9348d17e009cad62a2baa70160353f5bca936a27116f60dd5811f39b91c6991" }
+
+[acvp_server.hmac]
+HMAC_SHA_1 = { dir = "HMAC-SHA-1-1.0", tgId = 5, tcId = 301, key_bits = 8, msg_bits = 128, mac_bits = 80, sha256 = "23e8cf16f428d18f0789ec380dbecd95caeee9683e2ab2dcb3ccdae7092a1842" }
+HMAC_SHA2_224 = { dir = "HMAC-SHA2-224-1.0", tgId = 8, tcId = 526, key_bits = 8, msg_bits = 128, mac_bits = 160, sha256 = "cb3ee0ba82bbd6e4fb5c831ccaa7e174b67100865f94764d64b7e7afaedf433d" }
+HMAC_SHA2_256 = { dir = "HMAC-SHA2-256-1.0", tgId = 11, tcId = 751, key_bits = 8, msg_bits = 128, mac_bits = 80, sha256 = "f1547839f024c72b0c1544e6943b4da5b4d8ee04563f011e7dc8697bc62c7e70" }
+HMAC_SHA2_384 = { dir = "HMAC-SHA2-384-1.0", tgId = 12, tcId = 826, key_bits = 8, msg_bits = 128, mac_bits = 80, sha256 = "3bb7565138f2d0aa1027b16a944ea85bb1bfd65b831d05cda9fd6a1d32b1fcb2" }
+HMAC_SHA2_512 = { dir = "HMAC-SHA2-512-1.0", tgId = 7, tcId = 451, key_bits = 8, msg_bits = 128, mac_bits = 88, sha256 = "def11b8e04ded943a0cbc53c1c179beceb431dea2791d9f428e5aa10b9e31be5" }
+HMAC_SHA2_512_224 = { dir = "HMAC-SHA2-512-224-1.0", tgId = 11, tcId = 751, key_bits = 8, msg_bits = 128, mac_bits = 88, sha256 = "0ea996e3933cd40c41a710888049d8a8c121636ef0e109e5ed4efa0f8430b203" }
+HMAC_SHA2_512_256 = { dir = "HMAC-SHA2-512-256-1.0", tgId = 8, tcId = 526, key_bits = 8, msg_bits = 128, mac_bits = 96, sha256 = "f4855274d6140080d20dbf897983c91e66ac006ebd6d47f69afb8955022176fc" }
+HMAC_SHA3_224 = { dir = "HMAC-SHA3-224-1.0", tgId = 9, tcId = 601, key_bits = 8, msg_bits = 128, mac_bits = 88, sha256 = "585c07f3f36e40ee4e5049a7a8caf48b5063a4a3334fdf1aaa723d0a6e7a5d61" }
+HMAC_SHA3_256 = { dir = "HMAC-SHA3-256-1.0", tgId = 7, tcId = 451, key_bits = 8, msg_bits = 128, mac_bits = 80, sha256 = "3f39e5c04f0f581fa14e301bdae941c9889cba001050f68cf94d113bf47b3f39" }
+HMAC_SHA3_384 = { dir = "HMAC-SHA3-384-1.0", tgId = 6, tcId = 376, key_bits = 8, msg_bits = 128, mac_bits = 88, sha256 = "da65bb225a53033bacb0bfec4cbe82477fc19027473e9245d93c844a72fd195e" }
+HMAC_SHA3_512 = { dir = "HMAC-SHA3-512-1.0", tgId = 6, tcId = 376, key_bits = 8, msg_bits = 128, mac_bits = 80, sha256 = "28b31e01b906c9afb8532898fd7c19e303a2d9829b691211714f5608c6801599" }
+
+[acvp_server.kbkdf_counter]
+dir = "KDF-1.0"
+sha256 = "9900da42897bc6ec6a42cd6844c37f05ff0b6ae830723cb61d53b6d560572090"
+HMAC_SHA_1 = { tgId = 454, tcId = 907, key_out_bits = 8 }
+HMAC_SHA2_224 = { tgId = 550, tcId = 1099, key_out_bits = 8 }
+HMAC_SHA2_256 = { tgId = 641, tcId = 1281, key_out_bits = 8 }
+HMAC_SHA2_384 = { tgId = 736, tcId = 1471, key_out_bits = 8 }
+HMAC_SHA2_512 = { tgId = 822, tcId = 1643, key_out_bits = 8 }
+HMAC_SHA2_512_224 = { tgId = 916, tcId = 1831, key_out_bits = 8 }
+HMAC_SHA2_512_256 = { tgId = 1008, tcId = 2015, key_out_bits = 8 }
+HMAC_SHA3_224 = { tgId = 1102, tcId = 2203, key_out_bits = 8 }
+HMAC_SHA3_256 = { tgId = 1191, tcId = 2381, key_out_bits = 8 }
+HMAC_SHA3_384 = { tgId = 1286, tcId = 2571, key_out_bits = 8 }
+HMAC_SHA3_512 = { tgId = 1372, tcId = 2743, key_out_bits = 8 }
+

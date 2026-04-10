@@ -61,6 +61,7 @@ version = "0.0.0"
 dependencies = [
  "fips-module",
  "fips-sha",
+ "fips-test-vectors",
 ]
 
 [[package]]
@@ -70,6 +71,7 @@ dependencies = [
  "fips-hmac",
  "fips-module",
  "fips-sha",
+ "fips-test-vectors",
 ]
 
 [[package]]
@@ -88,7 +90,12 @@ name = "fips-sha"
 version = "0.0.0"
 dependencies = [
  "fips-module",
+ "fips-test-vectors",
 ]
+
+[[package]]
+name = "fips-test-vectors"
+version = "0.0.0"
 
 [[package]]
 name = "fips-tls-kdf"
@@ -103,4 +110,5 @@ version = "0.0.0"
 dependencies = [
  "fips-module",
  "fips-sha",
+ "fips-test-vectors",
 ]
