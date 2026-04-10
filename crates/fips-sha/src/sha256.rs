@@ -233,57 +233,65 @@ impl Sha256 {
 
     /// SHA-256 compression function — one 512-bit block.
     fn compress(&mut self, block: &[u8; BLOCK_SIZE]) {
-        // 1. Prepare the message schedule W[0..64].
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            let off = i * 4;
-            w[i] = u32::from_be_bytes([block[off], block[off + 1], block[off + 2], block[off + 3]]);
-        }
-        for i in 16..64 {
-            w[i] = small_sigma1(w[i - 2])
-                .wrapping_add(w[i - 7])
-                .wrapping_add(small_sigma0(w[i - 15]))
-                .wrapping_add(w[i - 16]);
-        }
-
-        // 2. Initialize working vars from the current hash value.
-        let mut a = self.state[0];
-        let mut b = self.state[1];
-        let mut c = self.state[2];
-        let mut d = self.state[3];
-        let mut e = self.state[4];
-        let mut f = self.state[5];
-        let mut g = self.state[6];
-        let mut h = self.state[7];
-
-        // 3. The 64-round main loop.
-        for i in 0..64 {
-            let t1 = h
-                .wrapping_add(big_sigma1(e))
-                .wrapping_add(ch(e, f, g))
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(t1);
-            d = c;
-            c = b;
-            b = a;
-            a = t1.wrapping_add(t2);
-        }
-
-        // 4. Fold the working vars back into the hash state.
-        self.state[0] = self.state[0].wrapping_add(a);
-        self.state[1] = self.state[1].wrapping_add(b);
-        self.state[2] = self.state[2].wrapping_add(c);
-        self.state[3] = self.state[3].wrapping_add(d);
-        self.state[4] = self.state[4].wrapping_add(e);
-        self.state[5] = self.state[5].wrapping_add(f);
-        self.state[6] = self.state[6].wrapping_add(g);
-        self.state[7] = self.state[7].wrapping_add(h);
+        compress256(&mut self.state, block);
     }
+}
+
+/// SHA-256 compression function — one 512-bit block.
+///
+/// Exposed at the crate level so SHA-224 (FIPS 180-4 §6.3) can share
+/// the same core with a different initial hash value.
+pub(crate) fn compress256(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
+    // 1. Prepare the message schedule W[0..64].
+    let mut w = [0u32; 64];
+    for i in 0..16 {
+        let off = i * 4;
+        w[i] = u32::from_be_bytes([block[off], block[off + 1], block[off + 2], block[off + 3]]);
+    }
+    for i in 16..64 {
+        w[i] = small_sigma1(w[i - 2])
+            .wrapping_add(w[i - 7])
+            .wrapping_add(small_sigma0(w[i - 15]))
+            .wrapping_add(w[i - 16]);
+    }
+
+    // 2. Initialize working vars from the current hash value.
+    let mut a = state[0];
+    let mut b = state[1];
+    let mut c = state[2];
+    let mut d = state[3];
+    let mut e = state[4];
+    let mut f = state[5];
+    let mut g = state[6];
+    let mut h = state[7];
+
+    // 3. The 64-round main loop.
+    for i in 0..64 {
+        let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add(K[i])
+            .wrapping_add(w[i]);
+        let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+
+    // 4. Fold the working vars back into the hash state.
+    state[0] = state[0].wrapping_add(a);
+    state[1] = state[1].wrapping_add(b);
+    state[2] = state[2].wrapping_add(c);
+    state[3] = state[3].wrapping_add(d);
+    state[4] = state[4].wrapping_add(e);
+    state[5] = state[5].wrapping_add(f);
+    state[6] = state[6].wrapping_add(g);
+    state[7] = state[7].wrapping_add(h);
 }
 
 /// One-shot SHA-256: hash `data` and return the digest.
