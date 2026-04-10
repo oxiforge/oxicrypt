@@ -22,9 +22,11 @@
 
 use fips_module::KatEntry;
 
+pub mod keccak;
 pub mod sha1;
 pub mod sha224;
 pub mod sha256;
+pub mod sha3;
 pub mod sha384;
 pub mod sha512;
 pub mod sha512_t;
@@ -62,5 +64,21 @@ pub const KATS: &[KatEntry] = &[
     KatEntry {
         name: "SHA-512/256 KAT (NIST CAVP \"abc\")",
         run: sha512_t::self_test_256,
+    },
+    KatEntry {
+        name: "SHA3-224 KAT (FIPS 202 Appendix A \"abc\")",
+        run: sha3::self_test_224,
+    },
+    KatEntry {
+        name: "SHA3-256 KAT (FIPS 202 Appendix A \"abc\")",
+        run: sha3::self_test_256,
+    },
+    KatEntry {
+        name: "SHA3-384 KAT (FIPS 202 Appendix A \"abc\")",
+        run: sha3::self_test_384,
+    },
+    KatEntry {
+        name: "SHA3-512 KAT (FIPS 202 Appendix A \"abc\")",
+        run: sha3::self_test_512,
     },
 ];

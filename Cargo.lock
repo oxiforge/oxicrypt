@@ -8,6 +8,7 @@ version = "0.0.0"
 dependencies = [
  "fips-module",
  "fips-sha",
+ "fips-xof",
 ]
 
 [[package]]
@@ -96,4 +97,5 @@ name = "fips-xof"
 version = "0.0.0"
 dependencies = [
  "fips-module",
+ "fips-sha",
 ]
