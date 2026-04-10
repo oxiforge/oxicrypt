@@ -74,38 +74,13 @@ fn noop_kat() -> Result<(), fips_module::SelfTestFailure> {
 }
 
 fn main() {
-    // Bootstrap shortcut: when invoked with `--fips-self-sign`, write
-    // the `.fipshmac` sidecar for the currently-running executable and
-    // exit. This is the one flow in the module that deliberately does
-    // not go through the power-up KATs — if the KATs already passed we
-    // would be signing a binary that was already verified, and if they
-    // did not pass we cannot reach `main` at all. Running the binary
-    // once with this flag immediately after `cargo build` is the
-    // intended way to prepare a freshly-compiled harness for normal
-    // boot. A production module would instead embed the MAC at the
-    // build server and never ship this subcommand; for Phase 1
-    // development it keeps the `cargo run` loop frictionless.
-    if std::env::args().any(|a| a == "--fips-self-sign") {
-        match std::env::current_exe() {
-            Ok(exe) => match fips_integrity::sign_exe(&exe) {
-                Ok(mac) => {
-                    let hex = fips_integrity::encode_hmac_hex(&mac);
-                    let hex_str = std::str::from_utf8(&hex).unwrap_or("<non-utf8>");
-                    println!("fips-self-sign: signed {} -> {}", exe.display(), hex_str);
-                    return;
-                }
-                Err(e) => {
-                    eprintln!("fips-self-sign failed: {e}");
-                    return;
-                }
-            },
-            Err(e) => {
-                eprintln!("fips-self-sign: current_exe() failed: {e}");
-                return;
-            }
-        }
-    }
-
+    // Self-signing has deliberately been removed: the Linux kernel
+    // refuses `O_TRUNC` writes to a file that currently backs a
+    // process image (`ETXTBSY`), so a running executable cannot
+    // rewrite its own embedded integrity slot. The standard
+    // development workflow is to build the harness, then run
+    // `fips-integrity-sign --sign target/debug/acvp-harness` from a
+    // separate process, and only then execute the harness.
     match initialize_with_tests(POWER_UP_KATS) {
         Ok(()) => {
             println!("pqclib acvp-harness: module state = {}", state());

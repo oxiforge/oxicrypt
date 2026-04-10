@@ -30,7 +30,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use fips_integrity::{encode_hmac_hex, sign_exe, verify_exe_against_sidecar};
+use fips_integrity::{encode_hmac_hex, sign_exe, verify_exe};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -62,7 +62,7 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        "--verify" => match verify_exe_against_sidecar(&target) {
+        "--verify" => match verify_exe(&target) {
             Ok(()) => {
                 println!("verify ok: {}", target.display());
                 ExitCode::from(0)

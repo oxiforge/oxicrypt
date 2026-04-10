@@ -18,7 +18,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - `fips-hmac` — HMAC over all 11 approved hash variants.
 - `fips-kdf` — HKDF (RFC 5869) over all 11 HMACs, SP 800-108r1 KBKDF **Counter**, **Feedback**, and **Double-Pipeline Iteration** modes over all 11 HMACs.
 - `fips-test-vectors` — generated KAT constants sourced from vendored NIST ACVP-Server vectors.
-- `fips-integrity` — software/firmware integrity self-test (HMAC-SHA-256 over `current_exe()` vs `.fipshmac` sidecar) per FIPS 140-3 IG 10.3.A.
+- `fips-integrity` — software/firmware integrity self-test (HMAC-SHA-256 over `current_exe()` with an **embedded** 64-byte reserved slot `[HDR | MAC | FTR]`, populated at sign time and validated by magic-marker scan at boot) per FIPS 140-3 IG 10.3.A. The embedded-slot design (in place of a sidecar file) is what lets the same mechanism work on Linux/macOS/Windows command-line tools **and** on code-signed iOS `.app` bundles and Android APKs where post-install files cannot be added.
 - `acvp-harness` — power-up KAT runner executing 69 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF and the module binary integrity check.
 
 **ACVP/CAVP traceability (Phase 3 work pulled forward):**
@@ -235,7 +235,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-sha`: SHA-1, SHA-2 family (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256)
 - [x] `fips-hmac`: HMAC for all SHA variants (11 approved hash variants, including SHA-3)
 - [x] Power-up KATs for Phase 1 hash/MAC/KDF algorithms (AES pending)
-- [x] Software integrity self-test mechanism (`fips-integrity`: HMAC-SHA-256 over `current_exe()` vs `.fipshmac` sidecar, SP 800-108 IG 10.3.A; signing bootstrapped via `acvp-harness --fips-self-sign` or the standalone `fips-integrity-sign` tool)
+- [x] Software integrity self-test mechanism (`fips-integrity`: HMAC-SHA-256 over `current_exe()` with an embedded `[HDR | MAC | FTR]` slot populated by the external `fips-integrity-sign` tool, IG 10.3.A). Uniform mechanism across desktop, server, and code-signed mobile bundles — no sidecar files and no platform-specific ELF/Mach-O/PE parsing.
 
 ### Phase 2: Asymmetric + DRBG (Weeks 5–10)
 
