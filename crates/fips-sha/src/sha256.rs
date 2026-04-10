@@ -135,10 +135,14 @@ impl Sha256 {
         Ok(Self::new_internal())
     }
 
-    /// Private constructor used by [`self_test`], which runs *before*
-    /// the module is operational and therefore cannot go through the
-    /// gated [`Sha256::new`].
-    const fn new_internal() -> Self {
+    /// Constructor that bypasses the module state machine.
+    ///
+    /// Used by this crate's power-up KAT and by downstream crates
+    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// the module is still in `SelfTest`. Public callers must use
+    /// [`Sha256::new`] instead.
+    #[doc(hidden)]
+    pub const fn new_internal() -> Self {
         Self {
             state: H0,
             buffer: [0; BLOCK_SIZE],

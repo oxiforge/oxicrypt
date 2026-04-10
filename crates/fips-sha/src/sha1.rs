@@ -82,7 +82,14 @@ impl Sha1 {
         Ok(Self::new_internal())
     }
 
-    const fn new_internal() -> Self {
+    /// Construct without consulting the module state machine.
+    ///
+    /// Used by this crate's power-up KAT and by downstream crates
+    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// the module is still in `SelfTest`. Public callers must use
+    /// [`Sha1::new`] instead.
+    #[doc(hidden)]
+    pub const fn new_internal() -> Self {
         Self {
             state: H0,
             buffer: [0; BLOCK_SIZE],

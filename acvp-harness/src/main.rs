@@ -26,11 +26,9 @@ use fips_module::{initialize_with_tests, state, Error, KatEntry};
 /// inventory is trivially auditable from a single location, which is
 /// exactly what a CST lab will want to see during the Security
 /// Policy review.
-const POWER_UP_KATS: &[KatEntry] =
-    &concat_kats::<{ fips_sha::KATS.len() + fips_xof::KATS.len() }>(&[
-        fips_sha::KATS,
-        fips_xof::KATS,
-    ]);
+const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
+    { fips_sha::KATS.len() + fips_xof::KATS.len() + fips_hmac::KATS.len() },
+>(&[fips_sha::KATS, fips_xof::KATS, fips_hmac::KATS]);
 
 /// Concatenate several `KatEntry` slices into a single fixed-size
 /// array at compile time. `N` must equal the sum of the lengths of
@@ -74,7 +72,9 @@ fn main() {
             for kat in POWER_UP_KATS {
                 println!("  - {}", kat.name);
             }
-            println!("Phase 2 scaffold: SHA-1/2/3 + SHAKE KATs run, no vectors dispatched yet.");
+            println!(
+                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC KATs run, no vectors dispatched yet."
+            );
         }
         Err(Error::AlreadyInitialized) => {
             println!(

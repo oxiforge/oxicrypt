@@ -6,6 +6,7 @@ version = 4
 name = "acvp-harness"
 version = "0.0.0"
 dependencies = [
+ "fips-hmac",
  "fips-module",
  "fips-sha",
  "fips-xof",
@@ -58,6 +59,7 @@ name = "fips-hmac"
 version = "0.0.0"
 dependencies = [
  "fips-module",
+ "fips-sha",
 ]
 
 [[package]]

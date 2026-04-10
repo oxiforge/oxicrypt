@@ -36,8 +36,14 @@ pub struct Sha3<const RATE: usize, const OUT: usize> {
 }
 
 impl<const RATE: usize, const OUT: usize> Sha3<RATE, OUT> {
-    /// Private constructor used by self-tests during SelfTest state.
-    const fn new_internal() -> Self {
+    /// Constructor that bypasses the module state machine.
+    ///
+    /// Used by this crate's power-up KATs and by downstream crates
+    /// (fips-hmac) that need to instantiate a hash while the module
+    /// is still in `SelfTest`. Public callers must use the typed
+    /// constructors like `Sha3_256::new_256` instead.
+    #[doc(hidden)]
+    pub const fn new_internal() -> Self {
         Self {
             sponge: Sponge::new(),
             finalized: false,
