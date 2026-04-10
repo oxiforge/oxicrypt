@@ -10,6 +10,14 @@
 //!     with a 32-bit big-endian counter placed before the fixed
 //!     input string and the output length encoded as a 32-bit
 //!     big-endian bit count.
+//!   - **SP 800-108 Rev. 1 KBKDF in Feedback Mode** ([`Sp800_108Feedback`]),
+//!     per §4.2, in the counterLocation="none" form:
+//!     `K(0) = IV; K(i) = PRF(K_IN, K(i-1) || FixedData)`.
+//!   - **SP 800-108 Rev. 1 KBKDF in Double-Pipeline Iteration Mode**
+//!     ([`Sp800_108DoublePipeline`]), per §4.3, in the
+//!     counterLocation="none" form:
+//!     `A(0) = FixedData; A(i) = PRF(K_IN, A(i-1));`
+//!     `K(i) = PRF(K_IN, A(i) || FixedData)`.
 //!
 //! Every instantiation is parameterised by one of the 11 HMAC
 //! variants that [`fips_hmac`] exposes (SHA-1, SHA-2 family,
@@ -17,9 +25,8 @@
 //! approved for KDF use per SP 800-131A Rev. 2 even though SHA-1 is
 //! disallowed for digital signatures.
 //!
-//! SP 800-108 Rev. 1 Feedback and Double-Pipeline modes, plus
-//! SP 800-56A Rev. 3 ConcatKDF, are planned follow-on batches and do
-//! not appear in this crate yet.
+//! SP 800-56A Rev. 3 ConcatKDF is a planned follow-on batch and
+//! does not appear in this crate yet.
 //!
 //! # Design
 //!
@@ -36,9 +43,11 @@
 //!
 //! Per IG 10.3.A each KDF instantiation carries its own power-up
 //! KAT; KDF families do not share. The `KATS` slice exported from
-//! this crate currently holds 22 entries — 11 HKDF extract+expand
-//! round-trips plus 11 SP 800-108 Counter Mode derivations, all
-//! driven by fixed compile-time inputs for auditability.
+//! this crate currently holds 44 entries — 11 HKDF extract+expand
+//! round-trips plus 11 SP 800-108 Counter Mode derivations plus
+//! 11 SP 800-108 Feedback Mode derivations plus 11 SP 800-108
+//! Double-Pipeline Iteration Mode derivations, all driven by
+//! fixed compile-time inputs for auditability.
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(
@@ -745,7 +754,597 @@ kbkdf_kat_fn!(
 );
 
 // ======================================================================
-// Power-up KAT inventory (HKDF + SP 800-108 Counter Mode)
+// SP 800-108 Rev. 1 Feedback Mode (§4.2, counterLocation="none")
+// ======================================================================
+//
+// Recurrence:
+//     K(0) = IV
+//     K(i) = PRF(K_IN, K(i-1) || FixedData)       for i = 1..n
+//     KDF output = K(1) || K(2) || ... truncated to the requested
+//                  bit length.
+//
+// SP 800-108 §5.3 embeds this recurrence inside a larger fixed-input
+// string `Label || 0x00 || Context || [L]_32` which is passed
+// verbatim as `FixedData`. The public [`Sp800_108Feedback::derive`]
+// API builds that §5 blob for callers; the gateless KAT path
+// [`derive_with_fixed_data_internal`] accepts a pre-built FixedData
+// blob as supplied by NIST ACVP-Server KDF-1.0 vectors.
+
+/// Generic SP 800-108 Rev. 1 KBKDF in Feedback Mode (counterLocation=none).
+///
+/// `P` is the PRF (an HMAC instantiation) and `L` is the PRF output
+/// length in bytes. Users talk to the type aliases below
+/// ([`Sp800_108FeedbackHmacSha256`], etc.). The struct itself is
+/// zero-sized — KBKDF Feedback has no state to carry between calls;
+/// callers supply the IV explicitly on every derivation.
+pub struct Sp800_108Feedback<P: PrfHmac<L>, const L: usize> {
+    _m: PhantomData<fn() -> P>,
+}
+
+impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
+    /// Derives `out.len()` bytes of key material from `key`, `iv`,
+    /// `label`, and `context`, writing them into `out`.
+    ///
+    /// Enforces [`require_operational`]. Returns
+    /// [`KdfError::OutputTooLong`] if the derivation would require
+    /// `out.len() * 8` bits beyond what a 32-bit `[L]_32` field can
+    /// encode, matching the counter-mode bound.
+    pub fn derive(
+        key: &[u8],
+        iv: &[u8],
+        label: &[u8],
+        context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        require_operational()?;
+        Self::derive_internal(key, iv, label, context, out)
+    }
+
+    /// Gateless variant used by the boot-time KATs.
+    ///
+    /// Assembles the SP 800-108 §5.3 fixed-input blob
+    /// `Label || 0x00 || Context || [L]_32` and runs the feedback
+    /// recurrence via [`derive_with_fixed_data_pieces`].
+    #[doc(hidden)]
+    pub fn derive_internal(
+        key: &[u8],
+        iv: &[u8],
+        label: &[u8],
+        context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        let Some(bit_len) = out.len().checked_mul(8) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        let Ok(bit_len_u32) = u32::try_from(bit_len) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        let l_bytes: [u8; 4] = bit_len_u32.to_be_bytes();
+        Self::derive_with_fixed_data_pieces(key, iv, &[label, &[0x00], context, &l_bytes], out)
+    }
+
+    /// Gateless variant used by the boot-time KATs to exercise a
+    /// pre-built `fixed_data` blob exactly as NIST ACVP-Server
+    /// `KDF-1.0` Feedback Mode vectors provide it (counterLocation=
+    /// "none", zeroLengthIv=false).
+    #[doc(hidden)]
+    pub fn derive_with_fixed_data_internal(
+        key: &[u8],
+        iv: &[u8],
+        fixed_data: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        Self::derive_with_fixed_data_pieces(key, iv, &[fixed_data], out)
+    }
+
+    /// Shared feedback-mode loop. `fixed_data_pieces` is the ordered
+    /// list of byte slices that together form the SP 800-108 §5.3
+    /// fixed-input blob that follows `K(i-1)` in each PRF
+    /// invocation. `iv` is the bit string `K(0)` and may be of any
+    /// length (empty is supported for SP 800-108 zeroLengthIv=true,
+    /// though the power-up KATs exercise zeroLengthIv=false to cover
+    /// the IV path).
+    fn derive_with_fixed_data_pieces(
+        key: &[u8],
+        iv: &[u8],
+        fixed_data_pieces: &[&[u8]],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        // Output bit-length must fit in a u32 to match SP 800-108's
+        // `[L]_32` length encoding and the counter-mode bound.
+        let Some(bit_len) = out.len().checked_mul(8) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        if u32::try_from(bit_len).is_err() {
+            return Err(KdfError::OutputTooLong);
+        }
+
+        // First block: PRF(K, IV || FixedData).
+        let mut mac = P::prf_new(key);
+        mac.prf_update(iv);
+        for piece in fixed_data_pieces {
+            mac.prf_update(piece);
+        }
+        let mut prev: [u8; L] = mac.prf_finalize();
+
+        let mut written = 0usize;
+        let take = if out.len() < L { out.len() } else { L };
+        out[..take].copy_from_slice(&prev[..take]);
+        written += take;
+
+        // Remaining blocks: K(i) = PRF(K, K(i-1) || FixedData).
+        while written < out.len() {
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&prev);
+            for piece in fixed_data_pieces {
+                mac.prf_update(piece);
+            }
+            prev = mac.prf_finalize();
+
+            let remaining = out.len() - written;
+            let take = if remaining < L { remaining } else { L };
+            out[written..written + take].copy_from_slice(&prev[..take]);
+            written += take;
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------
+// Public type aliases — one feedback-mode KBKDF per approved HMAC
+// ----------------------------------------------------------------------
+
+/// SP 800-108 Feedback Mode over HMAC-SHA-1.
+pub type Sp800_108FeedbackHmacSha1 = Sp800_108Feedback<fips_hmac::HmacSha1, 20>;
+/// SP 800-108 Feedback Mode over HMAC-SHA-224.
+pub type Sp800_108FeedbackHmacSha224 = Sp800_108Feedback<fips_hmac::HmacSha224, 28>;
+/// SP 800-108 Feedback Mode over HMAC-SHA-256.
+pub type Sp800_108FeedbackHmacSha256 = Sp800_108Feedback<fips_hmac::HmacSha256, 32>;
+/// SP 800-108 Feedback Mode over HMAC-SHA-384.
+pub type Sp800_108FeedbackHmacSha384 = Sp800_108Feedback<fips_hmac::HmacSha384, 48>;
+/// SP 800-108 Feedback Mode over HMAC-SHA-512.
+pub type Sp800_108FeedbackHmacSha512 = Sp800_108Feedback<fips_hmac::HmacSha512, 64>;
+/// SP 800-108 Feedback Mode over HMAC-SHA-512/224.
+pub type Sp800_108FeedbackHmacSha512_224 = Sp800_108Feedback<fips_hmac::HmacSha512_224, 28>;
+/// SP 800-108 Feedback Mode over HMAC-SHA-512/256.
+pub type Sp800_108FeedbackHmacSha512_256 = Sp800_108Feedback<fips_hmac::HmacSha512_256, 32>;
+/// SP 800-108 Feedback Mode over HMAC-SHA3-224.
+pub type Sp800_108FeedbackHmacSha3_224 = Sp800_108Feedback<fips_hmac::HmacSha3_224, 28>;
+/// SP 800-108 Feedback Mode over HMAC-SHA3-256.
+pub type Sp800_108FeedbackHmacSha3_256 = Sp800_108Feedback<fips_hmac::HmacSha3_256, 32>;
+/// SP 800-108 Feedback Mode over HMAC-SHA3-384.
+pub type Sp800_108FeedbackHmacSha3_384 = Sp800_108Feedback<fips_hmac::HmacSha3_384, 48>;
+/// SP 800-108 Feedback Mode over HMAC-SHA3-512.
+pub type Sp800_108FeedbackHmacSha3_512 = Sp800_108Feedback<fips_hmac::HmacSha3_512, 64>;
+
+// ----------------------------------------------------------------------
+// SP 800-108 Feedback Mode power-up KATs
+// ----------------------------------------------------------------------
+//
+// Each KAT below is sourced from NIST ACVP-Server `KDF-1.0`
+// (`gen-val/json-files/KDF/internalProjection.json`) via the
+// `fips-test-vectors` crate. Each vector provides `keyIn`, `iv`
+// (non-zero-length), a pre-built `fixedData` blob, and a
+// (potentially truncated) `keyOut`. Consumers run
+// [`Sp800_108Feedback::derive_with_fixed_data_internal`] with the
+// vendored inputs and compare the leading `KEY_OUT.len()` bytes of
+// the derived output against the expected `KEY_OUT` slice.
+
+macro_rules! kbkdf_feedback_kat_fn {
+    ($name:ident, $alias:ty, $key_in:path, $iv:path, $fixed_data:path, $key_out:path) => {
+        /// Power-up KAT for this SP 800-108 Feedback Mode variant.
+        ///
+        /// Sourced from NIST ACVP-Server `KDF-1.0` via
+        /// `fips-test-vectors`; runs the derivation with the
+        /// vendored `iv` and `fixedData` blob and compares the
+        /// leading `KEY_OUT.len()` bytes against the expected
+        /// output.
+        pub fn $name() -> Result<(), SelfTestFailure> {
+            let key_out: &[u8] = &$key_out;
+            let mut out = [0u8; 64];
+            let Some(slice) = out.get_mut(..key_out.len()) else {
+                return Err(SelfTestFailure);
+            };
+            if <$alias>::derive_with_fixed_data_internal(&$key_in, &$iv, &$fixed_data, slice)
+                .is_err()
+            {
+                return Err(SelfTestFailure);
+            }
+            if slice == key_out {
+                Ok(())
+            } else {
+                Err(SelfTestFailure)
+            }
+        }
+    };
+}
+
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha1,
+    Sp800_108FeedbackHmacSha1,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha224,
+    Sp800_108FeedbackHmacSha224,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha256,
+    Sp800_108FeedbackHmacSha256,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha384,
+    Sp800_108FeedbackHmacSha384,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha512,
+    Sp800_108FeedbackHmacSha512,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha512_224,
+    Sp800_108FeedbackHmacSha512_224,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha512_256,
+    Sp800_108FeedbackHmacSha512_256,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha3_224,
+    Sp800_108FeedbackHmacSha3_224,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha3_256,
+    Sp800_108FeedbackHmacSha3_256,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha3_384,
+    Sp800_108FeedbackHmacSha3_384,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_FB_KEY_OUT
+);
+kbkdf_feedback_kat_fn!(
+    kbkdf_feedback_self_test_sha3_512,
+    Sp800_108FeedbackHmacSha3_512,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_FB_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_FB_IV,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_FB_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_FB_KEY_OUT
+);
+
+// ======================================================================
+// SP 800-108 Rev. 1 Double-Pipeline Iteration Mode (§4.3,
+// counterLocation="none")
+// ======================================================================
+//
+// Recurrence:
+//     A(0) = FixedData
+//     A(i) = PRF(K_IN, A(i-1))
+//     K(i) = PRF(K_IN, A(i) || FixedData)
+//     KDF output = K(1) || K(2) || ... truncated to the requested
+//                  bit length.
+//
+// Per SP 800-108 §4.3 the inner pipeline `A` is seeded from the
+// fixed input (not from an IV), so this mode does not take an IV
+// parameter. ACVP KDF-1.0 double-pipeline test groups still carry
+// an `iv` field in each test case, but that field is unused in the
+// counterLocation="none" form; it is not fed into the derivation
+// and is not materialised as a compile-time constant here.
+
+/// Generic SP 800-108 Rev. 1 KBKDF in Double-Pipeline Iteration Mode
+/// (counterLocation=none).
+///
+/// `P` is the PRF (an HMAC instantiation) and `L` is the PRF output
+/// length in bytes. Users talk to the type aliases below
+/// ([`Sp800_108DoublePipelineHmacSha256`], etc.).
+pub struct Sp800_108DoublePipeline<P: PrfHmac<L>, const L: usize> {
+    _m: PhantomData<fn() -> P>,
+}
+
+impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
+    /// Derives `out.len()` bytes of key material from `key`, `label`,
+    /// and `context`, writing them into `out`.
+    ///
+    /// Enforces [`require_operational`]. Returns
+    /// [`KdfError::OutputTooLong`] if the derivation would require
+    /// `out.len() * 8` bits beyond what a 32-bit `[L]_32` field can
+    /// encode, matching the counter-mode bound.
+    pub fn derive(
+        key: &[u8],
+        label: &[u8],
+        context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        require_operational()?;
+        Self::derive_internal(key, label, context, out)
+    }
+
+    /// Gateless variant used by the boot-time KATs.
+    ///
+    /// Assembles the SP 800-108 §5.4 fixed-input blob
+    /// `Label || 0x00 || Context || [L]_32` and runs the double-
+    /// pipeline recurrence via [`derive_with_fixed_data_pieces`].
+    #[doc(hidden)]
+    pub fn derive_internal(
+        key: &[u8],
+        label: &[u8],
+        context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        let Some(bit_len) = out.len().checked_mul(8) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        let Ok(bit_len_u32) = u32::try_from(bit_len) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        let l_bytes: [u8; 4] = bit_len_u32.to_be_bytes();
+        Self::derive_with_fixed_data_pieces(key, &[label, &[0x00], context, &l_bytes], out)
+    }
+
+    /// Gateless variant used by the boot-time KATs to exercise a
+    /// pre-built `fixed_data` blob exactly as NIST ACVP-Server
+    /// `KDF-1.0` Double-Pipeline Iteration Mode vectors provide it
+    /// (counterLocation="none").
+    #[doc(hidden)]
+    pub fn derive_with_fixed_data_internal(
+        key: &[u8],
+        fixed_data: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        Self::derive_with_fixed_data_pieces(key, &[fixed_data], out)
+    }
+
+    /// Shared double-pipeline loop. `fixed_data_pieces` is the
+    /// ordered list of byte slices that together form the SP 800-108
+    /// §5.4 fixed-input blob. The inner pipeline seed `A(0)` is
+    /// this same fixed-input blob.
+    fn derive_with_fixed_data_pieces(
+        key: &[u8],
+        fixed_data_pieces: &[&[u8]],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        // Output bit-length must fit in a u32 to match SP 800-108's
+        // `[L]_32` length encoding and the counter-mode bound.
+        let Some(bit_len) = out.len().checked_mul(8) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        if u32::try_from(bit_len).is_err() {
+            return Err(KdfError::OutputTooLong);
+        }
+
+        // First iteration of the inner pipeline:
+        //   A(1) = PRF(K, A(0)) = PRF(K, FixedData).
+        let mut mac = P::prf_new(key);
+        for piece in fixed_data_pieces {
+            mac.prf_update(piece);
+        }
+        let mut a: [u8; L] = mac.prf_finalize();
+
+        // First output block: K(1) = PRF(K, A(1) || FixedData).
+        let mut mac = P::prf_new(key);
+        mac.prf_update(&a);
+        for piece in fixed_data_pieces {
+            mac.prf_update(piece);
+        }
+        let mut k: [u8; L] = mac.prf_finalize();
+
+        let mut written = 0usize;
+        let take = if out.len() < L { out.len() } else { L };
+        out[..take].copy_from_slice(&k[..take]);
+        written += take;
+
+        while written < out.len() {
+            // A(i) = PRF(K, A(i-1)).
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&a);
+            a = mac.prf_finalize();
+
+            // K(i) = PRF(K, A(i) || FixedData).
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&a);
+            for piece in fixed_data_pieces {
+                mac.prf_update(piece);
+            }
+            k = mac.prf_finalize();
+
+            let remaining = out.len() - written;
+            let take = if remaining < L { remaining } else { L };
+            out[written..written + take].copy_from_slice(&k[..take]);
+            written += take;
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------
+// Public type aliases — one double-pipeline KBKDF per approved HMAC
+// ----------------------------------------------------------------------
+
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-1.
+pub type Sp800_108DoublePipelineHmacSha1 = Sp800_108DoublePipeline<fips_hmac::HmacSha1, 20>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-224.
+pub type Sp800_108DoublePipelineHmacSha224 = Sp800_108DoublePipeline<fips_hmac::HmacSha224, 28>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-256.
+pub type Sp800_108DoublePipelineHmacSha256 = Sp800_108DoublePipeline<fips_hmac::HmacSha256, 32>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-384.
+pub type Sp800_108DoublePipelineHmacSha384 = Sp800_108DoublePipeline<fips_hmac::HmacSha384, 48>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-512.
+pub type Sp800_108DoublePipelineHmacSha512 = Sp800_108DoublePipeline<fips_hmac::HmacSha512, 64>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-512/224.
+pub type Sp800_108DoublePipelineHmacSha512_224 =
+    Sp800_108DoublePipeline<fips_hmac::HmacSha512_224, 28>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA-512/256.
+pub type Sp800_108DoublePipelineHmacSha512_256 =
+    Sp800_108DoublePipeline<fips_hmac::HmacSha512_256, 32>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-224.
+pub type Sp800_108DoublePipelineHmacSha3_224 = Sp800_108DoublePipeline<fips_hmac::HmacSha3_224, 28>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-256.
+pub type Sp800_108DoublePipelineHmacSha3_256 = Sp800_108DoublePipeline<fips_hmac::HmacSha3_256, 32>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-384.
+pub type Sp800_108DoublePipelineHmacSha3_384 = Sp800_108DoublePipeline<fips_hmac::HmacSha3_384, 48>;
+/// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-512.
+pub type Sp800_108DoublePipelineHmacSha3_512 = Sp800_108DoublePipeline<fips_hmac::HmacSha3_512, 64>;
+
+// ----------------------------------------------------------------------
+// SP 800-108 Double-Pipeline Iteration Mode power-up KATs
+// ----------------------------------------------------------------------
+
+macro_rules! kbkdf_dp_kat_fn {
+    ($name:ident, $alias:ty, $key_in:path, $fixed_data:path, $key_out:path) => {
+        /// Power-up KAT for this SP 800-108 Double-Pipeline Iteration
+        /// Mode variant.
+        ///
+        /// Sourced from NIST ACVP-Server `KDF-1.0` via
+        /// `fips-test-vectors`; runs the derivation with the
+        /// vendored `fixedData` blob and compares the leading
+        /// `KEY_OUT.len()` bytes against the expected output.
+        pub fn $name() -> Result<(), SelfTestFailure> {
+            let key_out: &[u8] = &$key_out;
+            let mut out = [0u8; 64];
+            let Some(slice) = out.get_mut(..key_out.len()) else {
+                return Err(SelfTestFailure);
+            };
+            if <$alias>::derive_with_fixed_data_internal(&$key_in, &$fixed_data, slice).is_err() {
+                return Err(SelfTestFailure);
+            }
+            if slice == key_out {
+                Ok(())
+            } else {
+                Err(SelfTestFailure)
+            }
+        }
+    };
+}
+
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha1,
+    Sp800_108DoublePipelineHmacSha1,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA_1_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha224,
+    Sp800_108DoublePipelineHmacSha224,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_224_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha256,
+    Sp800_108DoublePipelineHmacSha256,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_256_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha384,
+    Sp800_108DoublePipelineHmacSha384,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_384_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha512,
+    Sp800_108DoublePipelineHmacSha512,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_512_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha512_224,
+    Sp800_108DoublePipelineHmacSha512_224,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_512_224_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha512_256,
+    Sp800_108DoublePipelineHmacSha512_256,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA2_512_256_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha3_224,
+    Sp800_108DoublePipelineHmacSha3_224,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_224_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha3_256,
+    Sp800_108DoublePipelineHmacSha3_256,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_256_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha3_384,
+    Sp800_108DoublePipelineHmacSha3_384,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_384_KBKDF_DP_KEY_OUT
+);
+kbkdf_dp_kat_fn!(
+    kbkdf_dp_self_test_sha3_512,
+    Sp800_108DoublePipelineHmacSha3_512,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_DP_KEY_IN,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_DP_FIXED_DATA,
+    fips_test_vectors::HMAC_SHA3_512_KBKDF_DP_KEY_OUT
+);
+
+// ======================================================================
+// Power-up KAT inventory
+// (HKDF + SP 800-108 Counter + Feedback + Double-Pipeline Modes)
 // ======================================================================
 
 /// Power-up KAT inventory for every KDF variant in this crate.
@@ -849,6 +1448,98 @@ pub const KATS: &[KatEntry] = &[
         name: "SP 800-108 Counter HMAC-SHA3-512 KAT (NIST ACVP-Server KDF-1.0, truncated)",
         run: kbkdf_counter_self_test_sha3_512,
     },
+    // --- SP 800-108 Feedback Mode KBKDF (11 entries) -----------------
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-1 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha1,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha224,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha256,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-384 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha384,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-512 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha512,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-512/224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha512_224,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA-512/256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha512_256,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA3-224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha3_224,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA3-256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha3_256,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA3-384 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha3_384,
+    },
+    KatEntry {
+        name: "SP 800-108 Feedback HMAC-SHA3-512 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_feedback_self_test_sha3_512,
+    },
+    // --- SP 800-108 Double-Pipeline Iteration Mode KBKDF (11 entries) -
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-1 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha1,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha224,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha256,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-384 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha384,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-512 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha512,
+    },
+    KatEntry {
+        name:
+            "SP 800-108 Double-Pipeline HMAC-SHA-512/224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha512_224,
+    },
+    KatEntry {
+        name:
+            "SP 800-108 Double-Pipeline HMAC-SHA-512/256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha512_256,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA3-224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha3_224,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA3-256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha3_256,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA3-384 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha3_384,
+    },
+    KatEntry {
+        name: "SP 800-108 Double-Pipeline HMAC-SHA3-512 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        run: kbkdf_dp_self_test_sha3_512,
+    },
 ];
 
 // ----------------------------------------------------------------------
@@ -867,8 +1558,19 @@ mod tests {
         kbkdf_counter_self_test_sha3_224, kbkdf_counter_self_test_sha3_256,
         kbkdf_counter_self_test_sha3_384, kbkdf_counter_self_test_sha3_512,
         kbkdf_counter_self_test_sha512, kbkdf_counter_self_test_sha512_224,
-        kbkdf_counter_self_test_sha512_256, HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512,
+        kbkdf_counter_self_test_sha512_256, kbkdf_dp_self_test_sha1, kbkdf_dp_self_test_sha224,
+        kbkdf_dp_self_test_sha256, kbkdf_dp_self_test_sha384, kbkdf_dp_self_test_sha3_224,
+        kbkdf_dp_self_test_sha3_256, kbkdf_dp_self_test_sha3_384, kbkdf_dp_self_test_sha3_512,
+        kbkdf_dp_self_test_sha512, kbkdf_dp_self_test_sha512_224, kbkdf_dp_self_test_sha512_256,
+        kbkdf_feedback_self_test_sha1, kbkdf_feedback_self_test_sha224,
+        kbkdf_feedback_self_test_sha256, kbkdf_feedback_self_test_sha384,
+        kbkdf_feedback_self_test_sha3_224, kbkdf_feedback_self_test_sha3_256,
+        kbkdf_feedback_self_test_sha3_384, kbkdf_feedback_self_test_sha3_512,
+        kbkdf_feedback_self_test_sha512, kbkdf_feedback_self_test_sha512_224,
+        kbkdf_feedback_self_test_sha512_256, HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512,
         KdfError, Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha3_256,
+        Sp800_108DoublePipelineHmacSha256, Sp800_108DoublePipelineHmacSha3_256,
+        Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha3_256,
     };
 
     // Local fixed inputs for the RFC 5869 §A.1 Test Case 1 cross-check
@@ -1157,5 +1859,221 @@ mod tests {
         Sp800_108CounterHmacSha256::derive(&KBKDF_KAT_KEY, KBKDF_KAT_LABEL, b"ctx B", &mut b)
             .unwrap();
         assert_ne!(a, b);
+    }
+
+    // ----- SP 800-108 Feedback Mode -------------------------------------
+
+    const KBKDF_FB_IV: [u8; 16] = [0x5a; 16];
+
+    #[test]
+    fn kbkdf_feedback_boot_self_tests_all_pass() {
+        assert!(kbkdf_feedback_self_test_sha1().is_ok());
+        assert!(kbkdf_feedback_self_test_sha224().is_ok());
+        assert!(kbkdf_feedback_self_test_sha256().is_ok());
+        assert!(kbkdf_feedback_self_test_sha384().is_ok());
+        assert!(kbkdf_feedback_self_test_sha512().is_ok());
+        assert!(kbkdf_feedback_self_test_sha512_224().is_ok());
+        assert!(kbkdf_feedback_self_test_sha512_256().is_ok());
+        assert!(kbkdf_feedback_self_test_sha3_224().is_ok());
+        assert!(kbkdf_feedback_self_test_sha3_256().is_ok());
+        assert!(kbkdf_feedback_self_test_sha3_384().is_ok());
+        assert!(kbkdf_feedback_self_test_sha3_512().is_ok());
+    }
+
+    #[test]
+    fn kbkdf_feedback_public_api_is_deterministic() {
+        ensure_initialized();
+        let mut a = [0u8; 42];
+        let mut b = [0u8; 42];
+        Sp800_108FeedbackHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            &KBKDF_FB_IV,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108FeedbackHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            &KBKDF_FB_IV,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut b,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, [0u8; 42]);
+    }
+
+    #[test]
+    fn kbkdf_feedback_distinct_ivs_diverge() {
+        // Per SP 800-108 §4.2, the IV seeds K(0), so different IVs
+        // must produce different outputs for the same (K, fixed data).
+        ensure_initialized();
+        let iv_a = [0x11u8; 16];
+        let iv_b = [0x22u8; 16];
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        Sp800_108FeedbackHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            &iv_a,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108FeedbackHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            &iv_b,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut b,
+        )
+        .unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn kbkdf_feedback_sha3_multi_block() {
+        ensure_initialized();
+        let mut a = [0u8; 80];
+        let mut b = [0u8; 80];
+        Sp800_108FeedbackHmacSha3_256::derive(
+            &KBKDF_KAT_KEY,
+            &KBKDF_FB_IV,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108FeedbackHmacSha3_256::derive(
+            &KBKDF_KAT_KEY,
+            &KBKDF_FB_IV,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut b,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    // ----- SP 800-108 Double-Pipeline Iteration Mode --------------------
+
+    #[test]
+    fn kbkdf_dp_boot_self_tests_all_pass() {
+        assert!(kbkdf_dp_self_test_sha1().is_ok());
+        assert!(kbkdf_dp_self_test_sha224().is_ok());
+        assert!(kbkdf_dp_self_test_sha256().is_ok());
+        assert!(kbkdf_dp_self_test_sha384().is_ok());
+        assert!(kbkdf_dp_self_test_sha512().is_ok());
+        assert!(kbkdf_dp_self_test_sha512_224().is_ok());
+        assert!(kbkdf_dp_self_test_sha512_256().is_ok());
+        assert!(kbkdf_dp_self_test_sha3_224().is_ok());
+        assert!(kbkdf_dp_self_test_sha3_256().is_ok());
+        assert!(kbkdf_dp_self_test_sha3_384().is_ok());
+        assert!(kbkdf_dp_self_test_sha3_512().is_ok());
+    }
+
+    #[test]
+    fn kbkdf_dp_public_api_is_deterministic() {
+        ensure_initialized();
+        let mut a = [0u8; 42];
+        let mut b = [0u8; 42];
+        Sp800_108DoublePipelineHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108DoublePipelineHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut b,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, [0u8; 42]);
+    }
+
+    #[test]
+    fn kbkdf_dp_distinct_contexts_diverge() {
+        ensure_initialized();
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        Sp800_108DoublePipelineHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            b"ctx A",
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108DoublePipelineHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            b"ctx B",
+            &mut b,
+        )
+        .unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn kbkdf_dp_sha3_multi_block() {
+        ensure_initialized();
+        let mut a = [0u8; 80];
+        let mut b = [0u8; 80];
+        Sp800_108DoublePipelineHmacSha3_256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108DoublePipelineHmacSha3_256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut b,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn kbkdf_three_modes_yield_distinct_output() {
+        // The three SP 800-108 modes must yield distinct output for
+        // the same (K, Label, Context, L) because their recurrences
+        // differ. Guards against accidental mode crosswiring.
+        ensure_initialized();
+        let mut c = [0u8; 32];
+        let mut f = [0u8; 32];
+        let mut d = [0u8; 32];
+        Sp800_108CounterHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut c,
+        )
+        .unwrap();
+        Sp800_108FeedbackHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            &KBKDF_FB_IV,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut f,
+        )
+        .unwrap();
+        Sp800_108DoublePipelineHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut d,
+        )
+        .unwrap();
+        assert_ne!(c, f);
+        assert_ne!(c, d);
+        assert_ne!(f, d);
     }
 }

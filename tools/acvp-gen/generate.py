@@ -265,6 +265,101 @@ def pick_kbkdf_counter_vector(kdf_json: dict, mac_mode: str) -> dict:
     return best
 
 
+def pick_kbkdf_feedback_vector(kdf_json: dict, mac_mode: str) -> dict:
+    """Pick a feedback-mode AFT test case for the given macMode.
+
+    Selection criteria — match SP 800-108 §4.2 in its simplest byte-
+    aligned form so the Rust power-up KAT stays short and the PRF loop
+    is the only thing being exercised:
+
+      * kdfMode == "feedback"
+      * counterLocation == "none"          (no counter block)
+      * zeroLengthIv == False              (IV path is exercised)
+      * keyOutLength > 0 and a multiple of 8 (byte-aligned output)
+
+    Prefer the smallest byte-aligned output available (usually 8 bits
+    = a single-byte `keyOut`, which still requires a full PRF block and
+    then truncation)."""
+    best = None
+    for tg in kdf_json["testGroups"]:
+        if (
+            tg.get("kdfMode") == "feedback"
+            and tg.get("counterLocation") == "none"
+            and tg.get("zeroLengthIv") is False
+            and tg.get("macMode") == mac_mode
+            and tg.get("testType") == "AFT"
+        ):
+            key_out_len = tg.get("keyOutLength", 0)
+            if key_out_len == 0 or key_out_len % 8 != 0:
+                continue
+            for tc in tg["tests"]:
+                if not tc.get("iv"):
+                    continue
+                key_in = bytes.fromhex(tc["keyIn"])
+                iv = bytes.fromhex(tc["iv"])
+                fixed = bytes.fromhex(tc["fixedData"])
+                key_out = bytes.fromhex(tc["keyOut"])
+                if best is None or key_out_len < best["key_out_len_bits"]:
+                    best = {
+                        "macMode": mac_mode,
+                        "tgId": tg["tgId"],
+                        "tcId": int(tc["tcId"]),
+                        "key_out_len_bits": key_out_len,
+                        "key_in_bytes": key_in,
+                        "iv_bytes": iv,
+                        "fixed_data_bytes": fixed,
+                        "key_out_bytes": key_out,
+                    }
+                break  # one tc per group is enough
+    if best is None:
+        raise RuntimeError(f"no KDF feedback AFT for {mac_mode}")
+    return best
+
+
+def pick_kbkdf_double_pipeline_vector(kdf_json: dict, mac_mode: str) -> dict:
+    """Pick a double-pipeline-iteration AFT test case for the given macMode.
+
+    Selection criteria — match SP 800-108 §4.3 in its simplest byte-
+    aligned form:
+
+      * kdfMode == "double pipeline iteration"
+      * counterLocation == "none"          (no counter block)
+      * keyOutLength > 0 and a multiple of 8 (byte-aligned output)
+
+    Per §4.3 the IV is unused (the inner pipeline seeds `A(0) = FixedData`),
+    so `zeroLengthIv` does not matter for output agreement. Prefer the
+    smallest byte-aligned output available."""
+    best = None
+    for tg in kdf_json["testGroups"]:
+        if (
+            tg.get("kdfMode") == "double pipeline iteration"
+            and tg.get("counterLocation") == "none"
+            and tg.get("macMode") == mac_mode
+            and tg.get("testType") == "AFT"
+        ):
+            key_out_len = tg.get("keyOutLength", 0)
+            if key_out_len == 0 or key_out_len % 8 != 0:
+                continue
+            for tc in tg["tests"]:
+                key_in = bytes.fromhex(tc["keyIn"])
+                fixed = bytes.fromhex(tc["fixedData"])
+                key_out = bytes.fromhex(tc["keyOut"])
+                if best is None or key_out_len < best["key_out_len_bits"]:
+                    best = {
+                        "macMode": mac_mode,
+                        "tgId": tg["tgId"],
+                        "tcId": int(tc["tcId"]),
+                        "key_out_len_bits": key_out_len,
+                        "key_in_bytes": key_in,
+                        "fixed_data_bytes": fixed,
+                        "key_out_bytes": key_out,
+                    }
+                break  # one tc per group is enough
+    if best is None:
+        raise RuntimeError(f"no KDF double-pipeline AFT for {mac_mode}")
+    return best
+
+
 # ---------------------------------------------------------------------------
 # ACVP KDA-HKDF-Sp800-56Cr2 selection
 # ---------------------------------------------------------------------------
@@ -566,21 +661,16 @@ def write_hmac_slice(out_dir: Path, algo_dir: str, tc: dict, src_sha256: str) ->
 def write_kdf_slice(
     out_dir: Path,
     algo_dir: str,
-    picks: list[dict],
+    counter_picks: list[dict],
+    feedback_picks: list[dict],
+    double_pipeline_picks: list[dict],
     src_sha256: str,
 ) -> None:
     d = out_dir / "acvp-server" / "gen-val" / "json-files" / algo_dir
     d.mkdir(parents=True, exist_ok=True)
-    slim = {
-        "_source": {
-            "repo": "usnistgov/ACVP-Server",
-            "commit": ACVP_COMMIT,
-            "path": f"gen-val/json-files/{algo_dir}/internalProjection.json",
-            "internalProjection_sha256": src_sha256,
-        },
-        "algorithm": "KDF",
-        "revision": "1.0",
-        "testGroups": [
+    groups: list[dict] = []
+    for p in counter_picks:
+        groups.append(
             {
                 "tgId": p["tgId"],
                 "kdfMode": "counter",
@@ -598,8 +688,59 @@ def write_kdf_slice(
                     }
                 ],
             }
-            for p in picks
-        ],
+        )
+    for p in feedback_picks:
+        groups.append(
+            {
+                "tgId": p["tgId"],
+                "kdfMode": "feedback",
+                "counterLocation": "none",
+                "counterLength": 0,
+                "zeroLengthIv": False,
+                "macMode": p["macMode"],
+                "keyOutLength": p["key_out_len_bits"],
+                "testType": "AFT",
+                "tests": [
+                    {
+                        "tcId": p["tcId"],
+                        "keyIn": p["key_in_bytes"].hex().upper(),
+                        "iv": p["iv_bytes"].hex().upper(),
+                        "fixedData": p["fixed_data_bytes"].hex().upper(),
+                        "keyOut": p["key_out_bytes"].hex().upper(),
+                    }
+                ],
+            }
+        )
+    for p in double_pipeline_picks:
+        groups.append(
+            {
+                "tgId": p["tgId"],
+                "kdfMode": "double pipeline iteration",
+                "counterLocation": "none",
+                "counterLength": 0,
+                "macMode": p["macMode"],
+                "keyOutLength": p["key_out_len_bits"],
+                "testType": "AFT",
+                "tests": [
+                    {
+                        "tcId": p["tcId"],
+                        "keyIn": p["key_in_bytes"].hex().upper(),
+                        "fixedData": p["fixed_data_bytes"].hex().upper(),
+                        "keyOut": p["key_out_bytes"].hex().upper(),
+                    }
+                ],
+            }
+        )
+    slim = {
+        "_source": {
+            "repo": "usnistgov/ACVP-Server",
+            "commit": ACVP_COMMIT,
+            "path": f"gen-val/json-files/{algo_dir}/internalProjection.json",
+            "internalProjection_sha256": src_sha256,
+        },
+        "algorithm": "KDF",
+        "revision": "1.0",
+        "testGroups": groups,
     }
     (d / "kat-slice.json").write_text(json.dumps(slim, indent=2) + "\n")
 
@@ -750,7 +891,8 @@ GENERATED_HEADER = """\
 //   * NIST CAVP Secure Hash Standard byte test vectors for SHA-1
 //     and the SHA-2 family (SHS ShortMsg).
 //   * NIST ACVP-Server gen-val/json-files for SHA-3, SHAKE, HMAC,
-//     SP 800-108 Counter Mode KDF, and SP 800-56C Rev 2 Two-Step
+//     SP 800-108 Rev. 1 KBKDF (Counter, Feedback, Double-Pipeline
+//     Iteration modes), and SP 800-56C Rev 2 Two-Step
 //     KDA-HKDF, pinned to commit
 //     """ + ACVP_COMMIT + """.
 """
@@ -980,10 +1122,10 @@ def main() -> int:
     manifest.append("[acvp_server.kbkdf_counter]")
     manifest.append(f'dir = "KDF-1.0"')
     manifest.append(f'sha256 = "{kdf_sha}"')
-    picks: list[dict] = []
+    counter_picks: list[dict] = []
     for stem, mac_mode in KBKDF_MAC_MODES:
         p = pick_kbkdf_counter_vector(kdf_doc, mac_mode)
-        picks.append(p)
+        counter_picks.append(p)
         rust_parts.append(
             f"// SP 800-108 Counter {mac_mode} — ACVP-Server KDF-1.0 "
             f"tgId={p['tgId']} tcId={p['tcId']}\n"
@@ -1017,8 +1159,139 @@ def main() -> int:
             f'{stem} = {{ tgId = {p["tgId"]}, tcId = {p["tcId"]}, '
             f'key_out_bits = {p["key_out_len_bits"]} }}'
         )
-    write_kdf_slice(vendor, "KDF-1.0", picks, kdf_sha)
     manifest.append("")
+
+    # --- KBKDF Feedback Mode (ACVP KDF-1.0) -----------------------------
+    rust_parts.append(
+        "// ===== SP 800-108 Feedback Mode (NIST ACVP-Server KDF-1.0) =====\n"
+    )
+    rust_parts.append(
+        "// Each entry is a feedback-mode, counterLocation=\"none\",\n"
+        "// zeroLengthIv=false ACVP test case exercising the pure\n"
+        "// SP 800-108 §4.2 recurrence\n"
+        "//     K(0) = IV\n"
+        "//     K(i) = PRF(K_IN, K(i-1) || FixedData)\n"
+        "// with the output stream equal to K(1) || K(2) || ... truncated\n"
+        "// to keyOutLength bits. The power-up KAT feeds IV, FixedData,\n"
+        "// and the truncated KeyOut directly into the derivation and\n"
+        "// compares bytewise.\n"
+    )
+    manifest.append("[acvp_server.kbkdf_feedback]")
+    manifest.append(f'dir = "KDF-1.0"')
+    manifest.append(f'sha256 = "{kdf_sha}"')
+    feedback_picks: list[dict] = []
+    for stem, mac_mode in KBKDF_MAC_MODES:
+        p = pick_kbkdf_feedback_vector(kdf_doc, mac_mode)
+        feedback_picks.append(p)
+        rust_parts.append(
+            f"// SP 800-108 Feedback {mac_mode} — ACVP-Server KDF-1.0 "
+            f"tgId={p['tgId']} tcId={p['tcId']}\n"
+            f"// keyOutLength = {p['key_out_len_bits']} bits "
+            f"({p['key_out_len_bits'] // 8} bytes)"
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_FB_KEY_IN",
+                p["key_in_bytes"],
+                f"SP 800-108 Feedback {mac_mode} keyIn for the power-up KAT.",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_FB_IV",
+                p["iv_bytes"],
+                f"SP 800-108 Feedback {mac_mode} IV (K(0)).",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_FB_FIXED_DATA",
+                p["fixed_data_bytes"],
+                f"SP 800-108 Feedback {mac_mode} fixedData.",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_FB_KEY_OUT",
+                p["key_out_bytes"],
+                f"SP 800-108 Feedback {mac_mode} expected keyOut "
+                f"({p['key_out_len_bits']} bits).",
+            )
+        )
+        rust_parts.append("")
+        manifest.append(
+            f'{stem} = {{ tgId = {p["tgId"]}, tcId = {p["tcId"]}, '
+            f'key_out_bits = {p["key_out_len_bits"]} }}'
+        )
+    manifest.append("")
+
+    # --- KBKDF Double-Pipeline Iteration Mode (ACVP KDF-1.0) ------------
+    rust_parts.append(
+        "// ===== SP 800-108 Double-Pipeline Iteration Mode "
+        "(NIST ACVP-Server KDF-1.0) =====\n"
+    )
+    rust_parts.append(
+        "// Each entry is a double-pipeline-iteration, counterLocation=\n"
+        "// \"none\" ACVP test case exercising the pure SP 800-108 §4.3\n"
+        "// recurrence\n"
+        "//     A(0) = FixedData\n"
+        "//     A(i) = PRF(K_IN, A(i-1))\n"
+        "//     K(i) = PRF(K_IN, A(i) || FixedData)\n"
+        "// The IV field is present in the ACVP test but unused in this\n"
+        "// mode (SP 800-108 §4.3 seeds the inner pipeline from FixedData).\n"
+        "// The power-up KAT feeds FixedData and the truncated KeyOut\n"
+        "// directly into the derivation and compares bytewise.\n"
+    )
+    manifest.append("[acvp_server.kbkdf_double_pipeline]")
+    manifest.append(f'dir = "KDF-1.0"')
+    manifest.append(f'sha256 = "{kdf_sha}"')
+    double_pipeline_picks: list[dict] = []
+    for stem, mac_mode in KBKDF_MAC_MODES:
+        p = pick_kbkdf_double_pipeline_vector(kdf_doc, mac_mode)
+        double_pipeline_picks.append(p)
+        rust_parts.append(
+            f"// SP 800-108 Double-Pipeline {mac_mode} — ACVP-Server KDF-1.0 "
+            f"tgId={p['tgId']} tcId={p['tcId']}\n"
+            f"// keyOutLength = {p['key_out_len_bits']} bits "
+            f"({p['key_out_len_bits'] // 8} bytes)"
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_DP_KEY_IN",
+                p["key_in_bytes"],
+                f"SP 800-108 Double-Pipeline {mac_mode} keyIn for the power-up KAT.",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_DP_FIXED_DATA",
+                p["fixed_data_bytes"],
+                f"SP 800-108 Double-Pipeline {mac_mode} fixedData.",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KBKDF_DP_KEY_OUT",
+                p["key_out_bytes"],
+                f"SP 800-108 Double-Pipeline {mac_mode} expected keyOut "
+                f"({p['key_out_len_bits']} bits).",
+            )
+        )
+        rust_parts.append("")
+        manifest.append(
+            f'{stem} = {{ tgId = {p["tgId"]}, tcId = {p["tcId"]}, '
+            f'key_out_bits = {p["key_out_len_bits"]} }}'
+        )
+    manifest.append("")
+
+    write_kdf_slice(
+        vendor,
+        "KDF-1.0",
+        counter_picks,
+        feedback_picks,
+        double_pipeline_picks,
+        kdf_sha,
+    )
 
     # --- KDA-HKDF-Sp800-56Cr2 Two-Step KDF -----------------------------
     rust_parts.append(

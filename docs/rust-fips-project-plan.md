@@ -6,6 +6,35 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 
 ---
 
+## 0. Current Status (as of 2026-04-10)
+
+**Phase position:** Most of the way through Phase 1 (Foundation), with an early pull-forward of ACVP/CAVP traceability work that formally belongs to Phase 3.
+
+**Implemented and landed on `main`:**
+
+- `fips-module` — state machine (`PowerOff → SelfTest → Operational | Error`), power-up KAT registry, approved-mode indicator.
+- `fips-sha` — SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256, full SHA-3 family.
+- `fips-xof` — SHAKE128, SHAKE256.
+- `fips-hmac` — HMAC over all 11 approved hash variants.
+- `fips-kdf` — HKDF (RFC 5869) over all 11 HMACs, SP 800-108r1 KBKDF **Counter**, **Feedback**, and **Double-Pipeline Iteration** modes over all 11 HMACs.
+- `fips-test-vectors` — generated KAT constants sourced from vendored NIST ACVP-Server vectors.
+- `acvp-harness` — power-up KAT runner executing 68 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF.
+
+**ACVP/CAVP traceability (Phase 3 work pulled forward):**
+
+- NIST `usnistgov/ACVP-Server` vendored at pinned commit `3611942ea10c070dd8bc6afec5682d56c307de8a` under `vendor/nist/` with a slim-slice strategy (per-algorithm `kat-slice.json` + `MANIFEST.toml` with SHA-256 metadata and selected tgId/tcIds).
+- Generator tooling in `tools/acvp-gen/` emits `crates/fips-test-vectors/src/generated.rs` from the vendored vectors, cross-validated against Python reference implementations.
+- Power-up KATs for SHA-1/2/3, SHAKE, HMAC, and HKDF have been retrofitted off legacy "OpenSSL-derived" / "RFC 5869" / "FIPS 180-4 Appendix" vectors onto ACVP-Server vectors, with the HKDF retrofit landing on SP 800-56C Rev 2 Two-Step KDA-HKDF (hybrid form, §5.9.2). The sole remaining non-ACVP KAT is `hkdf_self_test_sha1` on RFC 5869 §A.1 Test Case 1, because SHA-1 is out of scope for SP 800-56C Rev 2 — kept and explicitly labeled for auditors.
+
+**Not yet started (stub crates exist):** `fips-aes`, `fips-cmac`, `fips-drbg`, `fips-ecdh`, `fips-ecdsa`, `fips-eddsa`, `fips-rsa`, `fips-tls-kdf`.
+
+**Phase 1 remaining before it can be called closed:**
+
+- `fips-aes` ECB/CBC/CTR/GCM implementations and KATs.
+- Software integrity self-test mechanism (HMAC-SHA-256 over the module binary).
+
+---
+
 ## 1. Project Scope
 
 ### 1.1 In Scope
@@ -199,13 +228,13 @@ The `acvp-harness` binary implements the ACVP protocol client:
 
 **Goal:** Module boundary + core symmetric algorithms + self-test framework
 
-- [ ] Workspace scaffolding, CI pipeline (clippy, miri, cargo-fuzz)
-- [ ] `fips-module`: State machine, self-test runner, approved-mode indicator
+- [x] Workspace scaffolding, CI pipeline (clippy, miri, cargo-fuzz)
+- [x] `fips-module`: State machine, self-test runner, approved-mode indicator
 - [ ] `fips-aes`: AES-128/192/256 in ECB, CBC, CTR modes
 - [ ] `fips-aes`: AES-GCM (GHASH + CTR combination)
-- [ ] `fips-sha`: SHA-1, SHA-2 family (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256)
-- [ ] `fips-hmac`: HMAC for all SHA variants
-- [ ] Power-up KATs for all Phase 1 algorithms
+- [x] `fips-sha`: SHA-1, SHA-2 family (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256)
+- [x] `fips-hmac`: HMAC for all SHA variants (11 approved hash variants, including SHA-3)
+- [x] Power-up KATs for Phase 1 hash/MAC/KDF algorithms (AES pending)
 - [ ] Software integrity self-test mechanism
 
 ### Phase 2: Asymmetric + DRBG (Weeks 5–10)
@@ -226,13 +255,14 @@ The `acvp-harness` binary implements the ACVP protocol client:
 
 - [ ] `fips-aes`: AES-CCM, AES-KW, AES-KWP
 - [ ] `fips-cmac`: AES-CMAC
-- [ ] `fips-sha`: SHA-3 family, SHAKE128, SHAKE256
+- [x] `fips-sha`: SHA-3 family, SHAKE128, SHAKE256 (SHAKE lives in `fips-xof`)
 - [ ] `fips-eddsa`: Ed25519, Ed448
-- [ ] `fips-kdf`: SP 800-108r1, SP 800-56Cr2
+- [x] `fips-kdf`: SP 800-108r1 (Counter, Feedback, Double-Pipeline Iteration modes), SP 800-56Cr2 (HKDF KAT retrofit); HKDF (RFC 5869) over all 11 HMACs
 - [ ] `fips-tls-kdf`: TLS 1.2 / 1.3 PRF/HKDF
 - [ ] `fips-rsa`: OAEP
-- [ ] ACVP harness: registration + vector processing for all algorithms
-- [ ] Run against NIST sample vectors from `usnistgov/ACVP-Server`
+- [x] ACVP harness: scaffolding + power-up KAT runner (46 KATs wired)
+- [ ] ACVP harness: registration + vector processing for remaining algorithm families
+- [x] Run against NIST sample vectors from `usnistgov/ACVP-Server` (vendored at pinned commit `3611942e`; KATs sourced from vendored vectors with CAVP traceability)
 
 ### Phase 4: Hardening & Documentation (Weeks 17–22)
 

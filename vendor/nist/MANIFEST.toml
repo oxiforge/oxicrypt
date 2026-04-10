@@ -55,6 +55,36 @@ HMAC_SHA3_256 = { tgId = 1191, tcId = 2381, key_out_bits = 8 }
 HMAC_SHA3_384 = { tgId = 1286, tcId = 2571, key_out_bits = 8 }
 HMAC_SHA3_512 = { tgId = 1372, tcId = 2743, key_out_bits = 8 }
 
+[acvp_server.kbkdf_feedback]
+dir = "KDF-1.0"
+sha256 = "9900da42897bc6ec6a42cd6844c37f05ff0b6ae830723cb61d53b6d560572090"
+HMAC_SHA_1 = { tgId = 2187, tcId = 4373, key_out_bits = 8 }
+HMAC_SHA2_224 = { tgId = 2395, tcId = 4789, key_out_bits = 8 }
+HMAC_SHA2_256 = { tgId = 2603, tcId = 5205, key_out_bits = 8 }
+HMAC_SHA2_384 = { tgId = 2793, tcId = 5585, key_out_bits = 8 }
+HMAC_SHA2_512 = { tgId = 3001, tcId = 6001, key_out_bits = 8 }
+HMAC_SHA2_512_224 = { tgId = 3183, tcId = 6365, key_out_bits = 8 }
+HMAC_SHA2_512_256 = { tgId = 3391, tcId = 6781, key_out_bits = 8 }
+HMAC_SHA3_224 = { tgId = 3585, tcId = 7169, key_out_bits = 8 }
+HMAC_SHA3_256 = { tgId = 3793, tcId = 7585, key_out_bits = 8 }
+HMAC_SHA3_384 = { tgId = 3989, tcId = 7977, key_out_bits = 8 }
+HMAC_SHA3_512 = { tgId = 4197, tcId = 8393, key_out_bits = 8 }
+
+[acvp_server.kbkdf_double_pipeline]
+dir = "KDF-1.0"
+sha256 = "9900da42897bc6ec6a42cd6844c37f05ff0b6ae830723cb61d53b6d560572090"
+HMAC_SHA_1 = { tgId = 4781, tcId = 9561, key_out_bits = 8 }
+HMAC_SHA2_224 = { tgId = 4885, tcId = 9769, key_out_bits = 8 }
+HMAC_SHA2_256 = { tgId = 4989, tcId = 9977, key_out_bits = 8 }
+HMAC_SHA2_384 = { tgId = 5090, tcId = 10179, key_out_bits = 8 }
+HMAC_SHA2_512 = { tgId = 5194, tcId = 10387, key_out_bits = 8 }
+HMAC_SHA2_512_224 = { tgId = 5285, tcId = 10569, key_out_bits = 8 }
+HMAC_SHA2_512_256 = { tgId = 5389, tcId = 10777, key_out_bits = 8 }
+HMAC_SHA3_224 = { tgId = 5483, tcId = 10965, key_out_bits = 8 }
+HMAC_SHA3_256 = { tgId = 5587, tcId = 11173, key_out_bits = 8 }
+HMAC_SHA3_384 = { tgId = 5684, tcId = 11367, key_out_bits = 8 }
+HMAC_SHA3_512 = { tgId = 5788, tcId = 11575, key_out_bits = 8 }
+
 [acvp_server.kda_hkdf]
 dir = "KDA-HKDF-Sp800-56Cr2"
 sha256 = "8a31c66049aa816d93f7e200898a4bb484c0814ce5bc2bc9e7249c86e79ded50"

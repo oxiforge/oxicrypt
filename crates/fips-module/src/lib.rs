@@ -273,6 +273,13 @@ pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error> {
         Ordering::Acquire,
     );
     if cas.is_err() {
+        // Another thread is running (or has run) the self-tests. If
+        // it is still inside `SelfTest`, spin until it publishes a
+        // terminal state so racing callers don't observe the
+        // transient phase and trip `require_operational`.
+        while STATE.load(Ordering::Acquire) == State::SelfTest as u8 {
+            core::hint::spin_loop();
+        }
         return Err(Error::AlreadyInitialized);
     }
 
