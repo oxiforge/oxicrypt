@@ -211,23 +211,59 @@ pub trait SelfTest {
     fn run() -> Result<(), SelfTestFailure>;
 }
 
-/// Initializes the module.
+/// A power-up KAT registered with the module.
 ///
-/// This is the only way to move the state machine out of `PowerOff`.
-/// It transitions `PowerOff -> SelfTest`, executes every registered
-/// KAT, and then transitions `SelfTest -> Operational` on success or
-/// `SelfTest -> Error` on the first failure.
+/// Algorithm crates expose one or more `KatEntry` values that the
+/// top-level caller passes into [`initialize_with_tests`] at startup.
+/// The runner executes every entry sequentially before the module
+/// leaves the `SelfTest` state; a single failure latches the module
+/// into `Error` for the remainder of the process lifetime, per
+/// FIPS 140-3 Section 7.10 and SP 800-140B.
+///
+/// The function pointer signature takes no inputs on purpose: a KAT
+/// must run against compile-time-baked vectors only, never against
+/// caller-supplied data.
+#[derive(Debug, Clone, Copy)]
+pub struct KatEntry {
+    /// Stable identifier for the test. Surfaces in
+    /// [`Error::SelfTestFailed`] and audit logs. Must match the
+    /// [`SelfTest::NAME`] used for the underlying vector.
+    pub name: &'static str,
+    /// The test routine itself.
+    pub run: fn() -> Result<(), SelfTestFailure>,
+}
+
+/// Initializes the module with an empty KAT registry.
+///
+/// Convenience wrapper around [`initialize_with_tests`] for contexts
+/// that want to exercise only the state machine (notably
+/// `fips-module`'s own unit tests). Production callers of this crate
+/// must use [`initialize_with_tests`] with the full approved-service
+/// KAT set — a FIPS module that ships no self-tests is not compliant
+/// with SP 800-140B regardless of whether the state machine runs.
+pub fn initialize() -> Result<(), Error> {
+    initialize_with_tests(&[])
+}
+
+/// Initializes the module and runs every supplied power-up KAT.
+///
+/// This is the canonical entry point. It transitions
+/// `PowerOff -> SelfTest`, executes every entry in `tests` in order,
+/// and then transitions to `Operational` on success or to the
+/// terminal `Error` state on the first failure. The returned
+/// [`Error::SelfTestFailed`] carries the name of the failing test.
 ///
 /// Concurrent calls are safe: exactly one caller wins the
 /// `PowerOff -> SelfTest` CAS; losers receive
-/// [`Error::AlreadyInitialized`] and should consult [`state`].
+/// [`Error::AlreadyInitialized`] and should consult [`state`] to
+/// discover whether the winning call succeeded.
 ///
-/// # Phase 1 note
-///
-/// The test registry is currently empty, so this routine transitions
-/// straight to `Operational`. Registration of real KATs happens in
-/// Phase 2 when the first algorithm crates ship their implementations.
-pub fn initialize() -> Result<(), Error> {
+/// Note: the slice is passed **by reference**, not built up by magic.
+/// This repository deliberately avoids linker-section registration
+/// tricks: the full set of power-up tests is visible in source at
+/// every call site, which makes it straightforward to audit the
+/// module's test inventory against the Security Policy.
+pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error> {
     // Try to claim the SelfTest phase. Only the first caller in the
     // process lifetime succeeds.
     let cas = STATE.compare_exchange(
@@ -240,25 +276,19 @@ pub fn initialize() -> Result<(), Error> {
         return Err(Error::AlreadyInitialized);
     }
 
-    // --- Run power-up KATs ---
-    //
-    // The registry is empty in Phase 1. When algorithm crates begin
-    // shipping, each will register its tests and this block will
-    // iterate them. For now we keep the control-flow shape identical
-    // to what the real runner will use, so that landing actual tests
-    // is a mechanical change.
-    let kat_result: Result<(), Error> = Ok(());
-
-    match kat_result {
-        Ok(()) => {
-            STATE.store(State::Operational as u8, Ordering::Release);
-            Ok(())
-        }
-        Err(e) => {
+    for entry in tests {
+        let result = (entry.run)();
+        if result.is_err() {
+            // Latch the module into Error before returning. Any
+            // subsequent service call will be rejected by
+            // require_operational().
             STATE.store(State::Error as u8, Ordering::Release);
-            Err(e)
+            return Err(Error::SelfTestFailed { test: entry.name });
         }
     }
+
+    STATE.store(State::Operational as u8, Ordering::Release);
+    Ok(())
 }
 
 /// Forces the module into the terminal `Error` state.
@@ -297,10 +327,21 @@ extern crate alloc;
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
-        enter_error_state, initialize, is_operational, require_operational, reset_for_test, state,
-        Error, SelfTest, State,
+        enter_error_state, initialize, initialize_with_tests, is_operational, require_operational,
+        reset_for_test, state, Error, KatEntry, SelfTest, SelfTestFailure, State,
     };
     use alloc::string::ToString;
+
+    // Both of these helpers are used as `fn() -> Result<(), SelfTestFailure>`
+    // function pointers in `KatEntry`, so the `Result` wrapper is mandatory
+    // even though clippy sees each body as always returning the same variant.
+    #[allow(clippy::unnecessary_wraps)]
+    fn always_pass() -> Result<(), SelfTestFailure> {
+        Ok(())
+    }
+    fn always_fail() -> Result<(), SelfTestFailure> {
+        Err(SelfTestFailure)
+    }
 
     // All tests in this module share the single global `STATE`, so they
     // cannot run in parallel. `cargo test` in this crate must be invoked
@@ -368,22 +409,68 @@ mod tests {
         assert_eq!(State::Error.to_string(), "Error");
     }
 
-    // A trivial SelfTest implementation just to prove the trait
-    // compiles and can be named by other crates. We do not invoke
-    // it through `initialize` in Phase 1 because the registry is
-    // still empty; that arrives in Phase 2.
-    use super::SelfTestFailure;
+    #[test]
+    fn registry_runs_passing_tests_and_reaches_operational() {
+        reset_for_test();
+        let tests = [
+            KatEntry {
+                name: "dummy-pass-a",
+                run: always_pass,
+            },
+            KatEntry {
+                name: "dummy-pass-b",
+                run: always_pass,
+            },
+        ];
+        initialize_with_tests(&tests).unwrap();
+        assert_eq!(state(), State::Operational);
+    }
+
+    #[test]
+    fn registry_failing_test_latches_error_and_returns_name() {
+        reset_for_test();
+        let tests = [
+            KatEntry {
+                name: "dummy-pass",
+                run: always_pass,
+            },
+            KatEntry {
+                name: "dummy-fail",
+                run: always_fail,
+            },
+            // This third entry must never run.
+            KatEntry {
+                name: "dummy-unreached",
+                run: always_pass,
+            },
+        ];
+        match initialize_with_tests(&tests) {
+            Err(Error::SelfTestFailed { test: "dummy-fail" }) => {}
+            other => panic!("expected SelfTestFailed{{dummy-fail}}, got {other:?}"),
+        }
+        assert_eq!(state(), State::Error);
+        // Operational-only guard must reject calls from here on.
+        assert!(matches!(
+            require_operational(),
+            Err(Error::NotOperational {
+                current: State::Error
+            })
+        ));
+    }
+
+    // Trivial SelfTest implementation exercised outside the registry
+    // so the trait stays part of the compiled public surface.
     struct DummyTest;
     impl SelfTest for DummyTest {
-        const NAME: &'static str = "dummy-phase1-placeholder";
+        const NAME: &'static str = "dummy-trait-vector";
         fn run() -> Result<(), SelfTestFailure> {
             Ok(())
         }
     }
 
     #[test]
-    fn dummy_self_test_trait_object_is_usable() {
-        assert_eq!(DummyTest::NAME, "dummy-phase1-placeholder");
+    fn dummy_self_test_trait_is_usable() {
+        assert_eq!(DummyTest::NAME, "dummy-trait-vector");
         DummyTest::run().unwrap();
     }
 }

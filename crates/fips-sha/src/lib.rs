@@ -1,26 +1,35 @@
-//! SHA-1, SHA-2, SHA-3 hash functions per FIPS 180-4 / FIPS 202
+//! SHA-1, SHA-2, SHA-3 hash functions per FIPS 180-4 / FIPS 202.
 //!
 //! # Status
 //!
-//! Phase 1 scaffold. No algorithm code yet. The crate exists so that
-//! the workspace, CI, and `fips-module` wiring can be exercised end
-//! to end before real implementations land.
+//! Phase 2 (in progress). SHA-256 is implemented and shipped with a
+//! power-up KAT. SHA-1, the remaining SHA-2 variants, and the SHA-3
+//! family will land incrementally in subsequent commits; each brings
+//! its own registered KAT.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! use fips_sha::sha256;
+//! use fips_module::initialize_with_tests;
+//!
+//! initialize_with_tests(fips_sha::KATS).unwrap();
+//! let digest = sha256::sha256(b"abc").unwrap();
+//! ```
+
 #![no_std]
 #![forbid(unsafe_code)]
 
-/// Placeholder returning the crate name. Will be removed once real
-/// public API is added.
-#[doc(hidden)]
-pub const fn __phase1_placeholder() -> &'static str {
-    "fips_sha"
-}
+use fips_module::KatEntry;
 
-#[cfg(test)]
-mod tests {
-    use super::__phase1_placeholder;
+pub mod sha256;
 
-    #[test]
-    fn placeholder_name_matches_crate() {
-        assert_eq!(__phase1_placeholder(), "fips_sha");
-    }
-}
+/// Power-up KATs for every algorithm this crate implements.
+///
+/// Callers that are assembling the full module test inventory should
+/// concatenate `KATS` from every algorithm crate and pass the merged
+/// slice to `fips_module::initialize_with_tests`.
+pub const KATS: &[KatEntry] = &[KatEntry {
+    name: "SHA-256 KAT (FIPS 180-4 \"abc\")",
+    run: sha256::self_test,
+}];

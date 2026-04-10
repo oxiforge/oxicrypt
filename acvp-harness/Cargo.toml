@@ -16,3 +16,4 @@ path = "src/main.rs"
 
 [dependencies]
 fips-module = { path = "../crates/fips-module" }
+fips-sha = { path = "../crates/fips-sha" }
