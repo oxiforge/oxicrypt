@@ -22,6 +22,7 @@
 
 use fips_module::KatEntry;
 
+pub mod sha1;
 pub mod sha224;
 pub mod sha256;
 pub mod sha384;
@@ -34,6 +35,10 @@ pub mod sha512_t;
 /// concatenate `KATS` from every algorithm crate and pass the merged
 /// slice to `fips_module::initialize_with_tests`.
 pub const KATS: &[KatEntry] = &[
+    KatEntry {
+        name: "SHA-1 KAT (FIPS 180-4 Appendix A.1 \"abc\")",
+        run: sha1::self_test,
+    },
     KatEntry {
         name: "SHA-224 KAT (FIPS 180-4 Appendix A \"abc\")",
         run: sha224::self_test,
