@@ -266,6 +266,196 @@ def pick_kbkdf_counter_vector(kdf_json: dict, mac_mode: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ACVP KDA-HKDF-Sp800-56Cr2 selection
+# ---------------------------------------------------------------------------
+#
+# SP 800-56C Rev 2 §5 Two-Step KDF using HKDF, in "hybrid" form:
+#
+#     PRK = HMAC(salt, Z || T)       (Extract)
+#     OKM = HKDF-Expand(PRK, FixedInfo, L)
+#
+# where T is an auxiliary shared secret (SP 800-56Cr2 §5.9.2) and
+# FixedInfo is assembled per the §5.8 pattern declared in the ACVP
+# test group's `kdfConfiguration.fixedInfoPattern`. The underlying
+# primitive is a standard `HKDF::extract(salt, ikm)` call with
+# `ikm = Z || T`, followed by `HKDF::expand(FixedInfo, out)`, so the
+# HKDF primitive in fips-kdf is exercised unchanged.
+#
+# The FixedInfo encoder is evaluated here in Python so that the Rust
+# KAT can consume a single pre-encoded `FIXED_INFO` byte string.
+
+
+def _encode_party_info(party: dict) -> bytes:
+    """SP 800-56Cr2 §5.8: partyInfo = partyId || ephemeralData?."""
+    out = bytes.fromhex(party["partyId"])
+    if "ephemeralData" in party and party["ephemeralData"]:
+        out += bytes.fromhex(party["ephemeralData"])
+    return out
+
+
+def encode_fixed_info(pattern: str, tc: dict, tg: dict) -> bytes:
+    """Evaluate a SP 800-56Cr2 §5.8 fixedInfoPattern into raw bytes.
+
+    Only the components we actually see in KDA-HKDF-Sp800-56Cr2 test
+    groups are supported; adding a new one is a matter of extending
+    the match below. Unknown components raise, so silent mis-encoding
+    is impossible."""
+    parts = [p for p in pattern.split("||") if p]
+    kdf_cfg = tg["kdfConfiguration"]
+    blob = b""
+    for token in parts:
+        if token == "uPartyInfo":
+            blob += _encode_party_info(tc["fixedInfoPartyU"])
+        elif token == "vPartyInfo":
+            blob += _encode_party_info(tc["fixedInfoPartyV"])
+        elif token == "l":
+            # SP 800-56Cr2 §5.8: `l` encodes output length in bits as
+            # a 32-bit big-endian integer.
+            blob += int(kdf_cfg["l"]).to_bytes(4, "big")
+        elif token == "algorithmId":
+            blob += bytes.fromhex(kdf_cfg.get("algorithmId", ""))
+        elif token == "context":
+            blob += bytes.fromhex(kdf_cfg.get("context", ""))
+        elif token == "label":
+            blob += bytes.fromhex(kdf_cfg.get("label", ""))
+        elif token.startswith("literal[") and token.endswith("]"):
+            blob += bytes.fromhex(token[len("literal[") : -1])
+        else:
+            raise RuntimeError(f"unsupported fixedInfo token: {token!r}")
+    return blob
+
+
+_HASH_BY_HMAC_ALG = {
+    "SHA2-224": "sha224",
+    "SHA2-256": "sha256",
+    "SHA2-384": "sha384",
+    "SHA2-512": "sha512",
+    "SHA2-512/224": "sha512_224",
+    "SHA2-512/256": "sha512_256",
+    "SHA3-224": "sha3_224",
+    "SHA3-256": "sha3_256",
+    "SHA3-384": "sha3_384",
+    "SHA3-512": "sha3_512",
+}
+
+
+def _hkdf_reference(salt: bytes, ikm: bytes, info: bytes, length: int, alg: str) -> bytes:
+    """Python-side HKDF used only to cross-check the selected KAT."""
+    import hashlib
+    import hmac as _hmac
+
+    h_name = _HASH_BY_HMAC_ALG[alg]
+    # Use hashlib.new(name) which handles sha512_224/256 via "sha512_224"
+    # OpenSSL name when the direct attribute isn't exposed.
+    def _hfn(data: bytes = b""):
+        return hashlib.new(h_name, data)
+
+    prk = _hmac.new(salt, ikm, _hfn).digest()
+    out = b""
+    prev = b""
+    counter = 1
+    while len(out) < length:
+        prev = _hmac.new(prk, prev + info + bytes([counter]), _hfn).digest()
+        out += prev
+        counter += 1
+    return out[:length]
+
+
+def pick_kda_hkdf_vector(kda_doc: dict, hmac_alg: str) -> dict:
+    """Pick a hybrid SP 800-56Cr2 KDA-HKDF test case for the given hmacAlg.
+
+    Policy:
+      * only testType=AFT, multiExpansion=False, fixedInfoEncoding=concatenation
+      * only usesHybridSharedSecret=True (the ACVP-Server
+        KDA-HKDF-Sp800-56Cr2 family ships no non-hybrid groups)
+      * only `fixedInfoPattern` components we actually support
+      * output length must be a whole byte multiple
+      * prefer the smallest (z + t + fixedInfo) to keep generated.rs
+        manageable; break ties by (tgId, tcId) for reproducibility
+      * the selected vector is re-derived in Python and must agree
+        with the expected `dkm` byte-for-byte, otherwise we abort
+    """
+    best: dict | None = None
+    for tg in kda_doc["testGroups"]:
+        if "kdfConfiguration" not in tg:
+            continue
+        if tg.get("testType") != "AFT":
+            continue
+        if tg.get("multiExpansion"):
+            continue
+        if not tg.get("usesHybridSharedSecret"):
+            continue
+        cfg = tg["kdfConfiguration"]
+        if cfg.get("kdfType") != "hkdf":
+            continue
+        if cfg.get("hmacAlg") != hmac_alg:
+            continue
+        if cfg.get("fixedInfoEncoding") != "concatenation":
+            continue
+        l_bits = int(cfg["l"])
+        if l_bits <= 0 or l_bits % 8 != 0:
+            continue
+        pattern = cfg["fixedInfoPattern"]
+        # Check that every component of the pattern is one we support
+        # before attempting encoding.
+        supported = {"uPartyInfo", "vPartyInfo", "l", "algorithmId", "context", "label"}
+        parts = [p for p in pattern.split("||") if p]
+        if not all(
+            p in supported or (p.startswith("literal[") and p.endswith("]"))
+            for p in parts
+        ):
+            continue
+        for tc in tg["tests"]:
+            kp = tc["kdfParameter"]
+            z = bytes.fromhex(kp["z"])
+            t = bytes.fromhex(kp.get("t", ""))
+            salt = bytes.fromhex(kp["salt"])
+            dkm = bytes.fromhex(tc["dkm"])
+            try:
+                fixed_info = encode_fixed_info(pattern, tc, tg)
+            except RuntimeError:
+                continue
+            total = len(z) + len(t) + len(fixed_info) + len(dkm)
+            # Sanity check against a reference HKDF computation.
+            reference = _hkdf_reference(
+                salt, z + t, fixed_info, l_bits // 8, hmac_alg
+            )
+            if reference != dkm:
+                raise RuntimeError(
+                    f"KDA-HKDF vector mismatch for {hmac_alg} "
+                    f"tgId={tg['tgId']} tcId={tc['tcId']} — "
+                    f"check encoder or upstream data"
+                )
+            cand = {
+                "hmacAlg": hmac_alg,
+                "tgId": tg["tgId"],
+                "tcId": int(tc["tcId"]),
+                "fixedInfoPattern": pattern,
+                "l_bits": l_bits,
+                "salt_bytes": salt,
+                "z_bytes": z,
+                "t_bytes": t,
+                "ikm_bytes": z + t,  # hybrid: IKM = Z || T
+                "fixed_info_bytes": fixed_info,
+                "dkm_bytes": dkm,
+                "party_u": tc["fixedInfoPartyU"],
+                "party_v": tc["fixedInfoPartyV"],
+                "_total": total,
+            }
+            if best is None or cand["_total"] < best["_total"] or (
+                cand["_total"] == best["_total"]
+                and (cand["tgId"], cand["tcId"]) < (best["tgId"], best["tcId"])
+            ):
+                best = cand
+            # one tc per group is enough for the "smallest" heuristic
+            break
+    if best is None:
+        raise RuntimeError(f"no KDA-HKDF vector for {hmac_alg}")
+    best.pop("_total")
+    return best
+
+
+# ---------------------------------------------------------------------------
 # Slim JSON slice writers
 # ---------------------------------------------------------------------------
 
@@ -414,6 +604,61 @@ def write_kdf_slice(
     (d / "kat-slice.json").write_text(json.dumps(slim, indent=2) + "\n")
 
 
+def write_kda_hkdf_slice(
+    out_dir: Path,
+    algo_dir: str,
+    picks: list[dict],
+    src_sha256: str,
+) -> None:
+    d = out_dir / "acvp-server" / "gen-val" / "json-files" / algo_dir
+    d.mkdir(parents=True, exist_ok=True)
+    slim = {
+        "_source": {
+            "repo": "usnistgov/ACVP-Server",
+            "commit": ACVP_COMMIT,
+            "path": f"gen-val/json-files/{algo_dir}/internalProjection.json",
+            "internalProjection_sha256": src_sha256,
+        },
+        "algorithm": "KDA",
+        "mode": "HKDF",
+        "revision": "Sp800-56Cr2",
+        "testGroups": [
+            {
+                "tgId": p["tgId"],
+                "testType": "AFT",
+                "usesHybridSharedSecret": True,
+                "multiExpansion": False,
+                "kdfConfiguration": {
+                    "kdfType": "hkdf",
+                    "l": p["l_bits"],
+                    "fixedInfoPattern": p["fixedInfoPattern"],
+                    "fixedInfoEncoding": "concatenation",
+                    "hmacAlg": p["hmacAlg"],
+                },
+                "tests": [
+                    {
+                        "tcId": p["tcId"],
+                        "kdfParameter": {
+                            "salt": p["salt_bytes"].hex().upper(),
+                            "z": p["z_bytes"].hex().upper(),
+                            "t": p["t_bytes"].hex().upper(),
+                            "l": p["l_bits"],
+                            "fixedInfoPattern": p["fixedInfoPattern"],
+                            "fixedInputEncoding": "concatenation",
+                            "hmacAlg": p["hmacAlg"],
+                        },
+                        "fixedInfoPartyU": p["party_u"],
+                        "fixedInfoPartyV": p["party_v"],
+                        "dkm": p["dkm_bytes"].hex().upper(),
+                    }
+                ],
+            }
+            for p in picks
+        ],
+    }
+    (d / "kat-slice.json").write_text(json.dumps(slim, indent=2) + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -455,6 +700,23 @@ HMAC_ACVP_DIRS = [
     ("HMAC_SHA3_512", "HMAC-SHA3-512-1.0", "HMAC-SHA3-512"),
 ]
 
+KDA_HKDF_MAC_MODES = [
+    # SP 800-56Cr2 KDA-HKDF ACVP-Server coverage does *not* include
+    # HMAC-SHA-1 — SHA-1 is out of scope for SP 800-56C Rev 2 per NIST.
+    # HKDF-SHA-1 remains tested against RFC 5869 §A.1.
+    ("HKDF_SHA2_224", "SHA2-224", "SHA-224"),
+    ("HKDF_SHA2_256", "SHA2-256", "SHA-256"),
+    ("HKDF_SHA2_384", "SHA2-384", "SHA-384"),
+    ("HKDF_SHA2_512", "SHA2-512", "SHA-512"),
+    ("HKDF_SHA2_512_224", "SHA2-512/224", "SHA-512/224"),
+    ("HKDF_SHA2_512_256", "SHA2-512/256", "SHA-512/256"),
+    ("HKDF_SHA3_224", "SHA3-224", "SHA3-224"),
+    ("HKDF_SHA3_256", "SHA3-256", "SHA3-256"),
+    ("HKDF_SHA3_384", "SHA3-384", "SHA3-384"),
+    ("HKDF_SHA3_512", "SHA3-512", "SHA3-512"),
+]
+
+
 KBKDF_MAC_MODES = [
     ("HMAC_SHA_1", "HMAC-SHA-1"),
     ("HMAC_SHA2_224", "HMAC-SHA2-224"),
@@ -488,7 +750,8 @@ GENERATED_HEADER = """\
 //   * NIST CAVP Secure Hash Standard byte test vectors for SHA-1
 //     and the SHA-2 family (SHS ShortMsg).
 //   * NIST ACVP-Server gen-val/json-files for SHA-3, SHAKE, HMAC,
-//     and SP 800-108 Counter Mode KDF, pinned to commit
+//     SP 800-108 Counter Mode KDF, and SP 800-56C Rev 2 Two-Step
+//     KDA-HKDF, pinned to commit
 //     """ + ACVP_COMMIT + """.
 """
 
@@ -755,6 +1018,85 @@ def main() -> int:
             f'key_out_bits = {p["key_out_len_bits"]} }}'
         )
     write_kdf_slice(vendor, "KDF-1.0", picks, kdf_sha)
+    manifest.append("")
+
+    # --- KDA-HKDF-Sp800-56Cr2 Two-Step KDF -----------------------------
+    rust_parts.append(
+        "// ===== SP 800-56C Rev 2 Two-Step KDA-HKDF "
+        "(NIST ACVP-Server KDA-HKDF-Sp800-56Cr2) =====\n"
+    )
+    rust_parts.append(
+        "// Each entry is a hybrid SP 800-56Cr2 §5.9.2 test case where the\n"
+        "// HKDF-Extract input is `Z || T` (primary shared secret concatenated\n"
+        "// with auxiliary shared secret). The power-up KAT calls\n"
+        "// `Hkdf*::extract(Some(&SALT), &IKM)` followed by\n"
+        "// `.expand(&FIXED_INFO, &mut out)` and compares the leading\n"
+        "// `KEY_OUT.len()` bytes of the derivation against `*_KEY_OUT`.\n"
+        "// FixedInfo is pre-encoded by tools/acvp-gen/generate.py per\n"
+        "// SP 800-56Cr2 §5.8 so the Rust crypto surface is unchanged.\n"
+        "// SHA-1 is intentionally absent: the KDA-HKDF-Sp800-56Cr2 ACVP\n"
+        "// family does not publish SHA-1 vectors (SHA-1 is out of scope\n"
+        "// for SP 800-56C Rev 2).\n"
+    )
+    kda_src = args.acvp_cache / "KDA-HKDF-Sp800-56Cr2.json"
+    if not kda_src.exists():
+        print(f"missing ACVP file: {kda_src}", file=sys.stderr)
+        return 1
+    kda_sha = sha256_file(kda_src)
+    kda_doc = json.loads(kda_src.read_text())
+    manifest.append("[acvp_server.kda_hkdf]")
+    manifest.append('dir = "KDA-HKDF-Sp800-56Cr2"')
+    manifest.append(f'sha256 = "{kda_sha}"')
+    kda_picks: list[dict] = []
+    for stem, hmac_alg, display in KDA_HKDF_MAC_MODES:
+        p = pick_kda_hkdf_vector(kda_doc, hmac_alg)
+        kda_picks.append(p)
+        rust_parts.append(
+            f"// SP 800-56Cr2 Two-Step HKDF-{display} (hybrid) — "
+            f"ACVP-Server KDA-HKDF-Sp800-56Cr2 "
+            f"tgId={p['tgId']} tcId={p['tcId']}\n"
+            f"// hmacAlg={p['hmacAlg']}, fixedInfoPattern={p['fixedInfoPattern']}, "
+            f"L={p['l_bits']} bits ({p['l_bits'] // 8} bytes)\n"
+            f"// IKM = Z || T (SP 800-56Cr2 §5.9.2 hybrid)"
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_SALT",
+                p["salt_bytes"],
+                f"SP 800-56Cr2 Two-Step HKDF-{display} salt.",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_IKM",
+                p["ikm_bytes"],
+                f"SP 800-56Cr2 Two-Step HKDF-{display} IKM "
+                f"(Z || T; |Z|={len(p['z_bytes'])} bytes, "
+                f"|T|={len(p['t_bytes'])} bytes).",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_FIXED_INFO",
+                p["fixed_info_bytes"],
+                f"SP 800-56Cr2 Two-Step HKDF-{display} FixedInfo "
+                f"(pre-encoded per §5.8, pattern {p['fixedInfoPattern']}).",
+            )
+        )
+        rust_parts.append(
+            rust_byte_array(
+                f"{stem}_KEY_OUT",
+                p["dkm_bytes"],
+                f"SP 800-56Cr2 Two-Step HKDF-{display} expected DKM "
+                f"({p['l_bits']} bits).",
+            )
+        )
+        rust_parts.append("")
+        manifest.append(
+            f'{stem} = {{ tgId = {p["tgId"]}, tcId = {p["tcId"]}, '
+            f'l_bits = {p["l_bits"]}, hmacAlg = "{p["hmacAlg"]}" }}'
+        )
+    write_kda_hkdf_slice(vendor, "KDA-HKDF-Sp800-56Cr2", kda_picks, kda_sha)
     manifest.append("")
 
     # --- Write outputs --------------------------------------------------

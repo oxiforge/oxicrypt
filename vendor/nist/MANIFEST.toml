@@ -55,3 +55,17 @@ HMAC_SHA3_256 = { tgId = 1191, tcId = 2381, key_out_bits = 8 }
 HMAC_SHA3_384 = { tgId = 1286, tcId = 2571, key_out_bits = 8 }
 HMAC_SHA3_512 = { tgId = 1372, tcId = 2743, key_out_bits = 8 }
 
+[acvp_server.kda_hkdf]
+dir = "KDA-HKDF-Sp800-56Cr2"
+sha256 = "8a31c66049aa816d93f7e200898a4bb484c0814ce5bc2bc9e7249c86e79ded50"
+HKDF_SHA2_224 = { tgId = 15, tcId = 71, l_bits = 1024, hmacAlg = "SHA2-224" }
+HKDF_SHA2_256 = { tgId = 35, tcId = 171, l_bits = 1024, hmacAlg = "SHA2-256" }
+HKDF_SHA2_384 = { tgId = 41, tcId = 201, l_bits = 1024, hmacAlg = "SHA2-384" }
+HKDF_SHA2_512 = { tgId = 69, tcId = 341, l_bits = 1024, hmacAlg = "SHA2-512" }
+HKDF_SHA2_512_224 = { tgId = 85, tcId = 421, l_bits = 1024, hmacAlg = "SHA2-512/224" }
+HKDF_SHA2_512_256 = { tgId = 115, tcId = 571, l_bits = 1024, hmacAlg = "SHA2-512/256" }
+HKDF_SHA3_224 = { tgId = 123, tcId = 611, l_bits = 1024, hmacAlg = "SHA3-224" }
+HKDF_SHA3_256 = { tgId = 149, tcId = 741, l_bits = 1024, hmacAlg = "SHA3-256" }
+HKDF_SHA3_384 = { tgId = 171, tcId = 851, l_bits = 1024, hmacAlg = "SHA3-384" }
+HKDF_SHA3_512 = { tgId = 197, tcId = 981, l_bits = 1024, hmacAlg = "SHA3-512" }
+
