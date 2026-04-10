@@ -1,0 +1,82 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fips-module",
+    "crates/fips-aes",
+    "crates/fips-sha",
+    "crates/fips-hmac",
+    "crates/fips-drbg",
+    "crates/fips-rsa",
+    "crates/fips-ecdsa",
+    "crates/fips-ecdh",
+    "crates/fips-eddsa",
+    "crates/fips-kdf",
+    "crates/fips-xof",
+    "crates/fips-cmac",
+    "crates/fips-tls-kdf",
+    "acvp-harness",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.94"
+# License deliberately omitted at workspace level: not yet decided. All
+# member crates set `publish = false` so no LICENSE field is required.
+repository = "https://github.com/caraka/pqclib"
+publish = false
+
+# Phase 1 policy: zero third-party dependencies. All crypto is pure Rust,
+# written in-tree. Dependencies will be re-evaluated per-crate in later phases
+# and must be justified in the Security Policy before adoption.
+[workspace.dependencies]
+
+# Workspace-wide lints. These apply to every member crate via `[lints]
+# workspace = true` in each crate's Cargo.toml.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+# Treat clippy findings seriously in a crypto module.
+pedantic = { level = "warn", priority = -1 }
+# Carve-outs that would be noisy in crypto code and add little safety value:
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# NIST documents are full of identifiers like CTR_DRBG, EdDSA, SHA-3,
+# P-256 that doc_markdown wants wrapped in backticks. We prefer prose
+# that reads like the spec, so this lint is off globally.
+doc_markdown = "allow"
+# Deny patterns that have historically caused real bugs in crypto code:
+indexing_slicing = "deny"
+integer_division = "deny"
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "warn"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+# Side-channel hygiene: forbid arithmetic that silently wraps on secret data.
+# We will use explicit `wrapping_*` / `checked_*` when wrapping is intended.
+arithmetic_side_effects = "warn"
+
+[profile.release]
+# Reproducibility matters for the software integrity KAT. Keep optimization
+# aggressive but disable LTO for now so builds are deterministic across
+# toolchain patch versions; we'll revisit in Phase 4.
+opt-level = 3
+lto = false
+codegen-units = 1
+debug = false
+strip = "none"
+overflow-checks = false
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+overflow-checks = true
