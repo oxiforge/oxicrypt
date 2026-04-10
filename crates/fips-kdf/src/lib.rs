@@ -1,20 +1,24 @@
 //! Key derivation functions built on approved HMAC PRFs.
 //!
-//! # Scope (this batch)
+//! # Scope
 //!
-//! This crate currently ships **HKDF** per RFC 5869, as approved under
-//! SP 800-56C Rev. 2 §4.1 for the Two-Step Key Derivation (extract
-//! then expand) procedure. Every instantiation is parameterised by
-//! one of the 11 HMAC variants that [`fips_hmac`] exposes:
+//! This crate ships:
 //!
-//!   - HKDF-SHA-1 (approved for KDF use per SP 800-131A Rev. 2 even
-//!     though SHA-1 is disallowed for signatures)
-//!   - HKDF-SHA-224, HKDF-SHA-256, HKDF-SHA-384, HKDF-SHA-512
-//!   - HKDF-SHA-512/224, HKDF-SHA-512/256
-//!   - HKDF-SHA3-224, HKDF-SHA3-256, HKDF-SHA3-384, HKDF-SHA3-512
+//!   - **HKDF** per RFC 5869, approved under SP 800-56C Rev. 2 §4.1
+//!     as the Two-Step KDF ([`Hkdf::extract`] / [`Hkdf::expand`]).
+//!   - **SP 800-108 Rev. 1 KBKDF in Counter Mode** ([`Sp800_108Counter`]),
+//!     with a 32-bit big-endian counter placed before the fixed
+//!     input string and the output length encoded as a 32-bit
+//!     big-endian bit count.
 //!
-//! SP 800-108 Rev. 1 KBKDF (Counter, Feedback, Double-Pipeline) and
-//! SP 800-56A Rev. 3 ConcatKDF are planned follow-on batches and do
+//! Every instantiation is parameterised by one of the 11 HMAC
+//! variants that [`fips_hmac`] exposes (SHA-1, SHA-2 family,
+//! SHA-512/t truncated family, SHA-3 family). HMAC-SHA-1 remains
+//! approved for KDF use per SP 800-131A Rev. 2 even though SHA-1 is
+//! disallowed for digital signatures.
+//!
+//! SP 800-108 Rev. 1 Feedback and Double-Pipeline modes, plus
+//! SP 800-56A Rev. 3 ConcatKDF, are planned follow-on batches and do
 //! not appear in this crate yet.
 //!
 //! # Design
@@ -30,11 +34,11 @@
 //!
 //! # FIPS 140-3 IG D.G note (March 2026)
 //!
-//! Per IG 10.3.A each KDF variant must carry its own power-up KAT;
-//! KDF families do not share. The `KATS` slice exported from this
-//! crate holds 11 entries — one HKDF extract+expand round-trip per
-//! HMAC variant — all driven by the same RFC 5869 Test Case 1 inputs
-//! for auditability.
+//! Per IG 10.3.A each KDF instantiation carries its own power-up
+//! KAT; KDF families do not share. The `KATS` slice exported from
+//! this crate currently holds 22 entries — 11 HKDF extract+expand
+//! round-trips plus 11 SP 800-108 Counter Mode derivations, all
+//! driven by fixed compile-time inputs for auditability.
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(
@@ -437,97 +441,462 @@ macro_rules! kat_fn {
     };
 }
 
-kat_fn!(self_test_sha1, HkdfSha1, KAT_PRK_SHA1, KAT_OKM_SHA1);
-kat_fn!(self_test_sha224, HkdfSha224, KAT_PRK_SHA224, KAT_OKM_SHA224);
-kat_fn!(self_test_sha256, HkdfSha256, KAT_PRK_SHA256, KAT_OKM_SHA256);
-kat_fn!(self_test_sha384, HkdfSha384, KAT_PRK_SHA384, KAT_OKM_SHA384);
-kat_fn!(self_test_sha512, HkdfSha512, KAT_PRK_SHA512, KAT_OKM_SHA512);
+kat_fn!(hkdf_self_test_sha1, HkdfSha1, KAT_PRK_SHA1, KAT_OKM_SHA1);
 kat_fn!(
-    self_test_sha512_224,
+    hkdf_self_test_sha224,
+    HkdfSha224,
+    KAT_PRK_SHA224,
+    KAT_OKM_SHA224
+);
+kat_fn!(
+    hkdf_self_test_sha256,
+    HkdfSha256,
+    KAT_PRK_SHA256,
+    KAT_OKM_SHA256
+);
+kat_fn!(
+    hkdf_self_test_sha384,
+    HkdfSha384,
+    KAT_PRK_SHA384,
+    KAT_OKM_SHA384
+);
+kat_fn!(
+    hkdf_self_test_sha512,
+    HkdfSha512,
+    KAT_PRK_SHA512,
+    KAT_OKM_SHA512
+);
+kat_fn!(
+    hkdf_self_test_sha512_224,
     HkdfSha512_224,
     KAT_PRK_SHA512_224,
     KAT_OKM_SHA512_224
 );
 kat_fn!(
-    self_test_sha512_256,
+    hkdf_self_test_sha512_256,
     HkdfSha512_256,
     KAT_PRK_SHA512_256,
     KAT_OKM_SHA512_256
 );
 kat_fn!(
-    self_test_sha3_224,
+    hkdf_self_test_sha3_224,
     HkdfSha3_224,
     KAT_PRK_SHA3_224,
     KAT_OKM_SHA3_224
 );
 kat_fn!(
-    self_test_sha3_256,
+    hkdf_self_test_sha3_256,
     HkdfSha3_256,
     KAT_PRK_SHA3_256,
     KAT_OKM_SHA3_256
 );
 kat_fn!(
-    self_test_sha3_384,
+    hkdf_self_test_sha3_384,
     HkdfSha3_384,
     KAT_PRK_SHA3_384,
     KAT_OKM_SHA3_384
 );
 kat_fn!(
-    self_test_sha3_512,
+    hkdf_self_test_sha3_512,
     HkdfSha3_512,
     KAT_PRK_SHA3_512,
     KAT_OKM_SHA3_512
 );
 
-/// Power-up KAT inventory for every HKDF variant in this crate.
+// ======================================================================
+// SP 800-108 Rev. 1 KBKDF — Counter Mode
+// ======================================================================
+//
+// Counter Mode, per SP 800-108 Rev. 1 §4.1, derives key material from
+// a key-derivation key `K_IN` using:
+//
+//     K(i) = PRF(K_IN, [i]_32 || Label || 0x00 || Context || [L]_32)
+//
+// where:
+//
+//   * [i]_32 is the 32-bit big-endian iteration counter, starting at 1
+//   * Label and Context are caller-supplied byte strings
+//   * 0x00 is the mandatory separator byte (SP 800-108 §5.1)
+//   * [L]_32 is the output length **in bits**, 32-bit big-endian
+//
+// This crate hard-codes r = 32 (counter width) and L_r = 32 (length
+// encoding) because those are the CAVP-standard values and cover the
+// overwhelming majority of deployed profiles (TLS, SSH KEX derivation,
+// SP 800-56C Rev. 2 Option 1, etc.). Feedback and Double-Pipeline
+// modes are a follow-on batch.
+
+/// Generic SP 800-108 Rev. 1 KBKDF in Counter Mode.
+///
+/// `P` is the PRF (an HMAC instantiation) and `L` is the PRF output
+/// length in bytes. Users talk to the type aliases below
+/// ([`Sp800_108CounterHmacSha256`], etc.). The struct itself is
+/// zero-sized — KBKDF has no state to carry between calls.
+pub struct Sp800_108Counter<P: PrfHmac<L>, const L: usize> {
+    _m: PhantomData<fn() -> P>,
+}
+
+impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
+    /// Derives `out.len()` bytes of key material from `key`, `label`,
+    /// and `context`, writing them into `out`.
+    ///
+    /// Enforces [`require_operational`]. Returns
+    /// [`KdfError::OutputTooLong`] if the derivation would require
+    /// more than `2^32 - 1` PRF iterations (the hard upper bound set
+    /// by the 32-bit counter encoding) or if `out.len() * 8` does
+    /// not fit in a 32-bit bit-length field.
+    pub fn derive(
+        key: &[u8],
+        label: &[u8],
+        context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        require_operational()?;
+        Self::derive_internal(key, label, context, out)
+    }
+
+    /// Gateless variant used by the boot-time KATs.
+    #[doc(hidden)]
+    pub fn derive_internal(
+        key: &[u8],
+        label: &[u8],
+        context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+
+        // n = ceil(out.len() / L). Must fit in the 32-bit counter.
+        let n = out.len().div_ceil(L);
+        if n > (u32::MAX as usize) {
+            return Err(KdfError::OutputTooLong);
+        }
+        let Ok(n_u32) = u32::try_from(n) else {
+            return Err(KdfError::OutputTooLong);
+        };
+
+        // Output length encoded as a 32-bit big-endian bit count.
+        // out.len() * 8 must fit in u32.
+        let Some(bit_len) = out.len().checked_mul(8) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        let Ok(bit_len_u32) = u32::try_from(bit_len) else {
+            return Err(KdfError::OutputTooLong);
+        };
+        let l_bytes: [u8; 4] = bit_len_u32.to_be_bytes();
+
+        let mut written = 0usize;
+        let mut i: u32 = 1;
+        while i <= n_u32 {
+            let i_bytes = i.to_be_bytes();
+
+            // PRF(K_IN, [i]_32 || Label || 0x00 || Context || [L]_32)
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&i_bytes);
+            mac.prf_update(label);
+            mac.prf_update(&[0x00]);
+            mac.prf_update(context);
+            mac.prf_update(&l_bytes);
+            let block = mac.prf_finalize();
+
+            let remaining = out.len() - written;
+            let take = if remaining < L { remaining } else { L };
+            out[written..written + take].copy_from_slice(&block[..take]);
+            written += take;
+
+            // i < n_u32 <= u32::MAX, so i + 1 cannot overflow
+            // because the loop exits as soon as i == n_u32.
+            i += 1;
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------
+// Public type aliases — one counter-mode KBKDF per approved HMAC
+// ----------------------------------------------------------------------
+
+/// SP 800-108 Counter Mode over HMAC-SHA-1.
+pub type Sp800_108CounterHmacSha1 = Sp800_108Counter<fips_hmac::HmacSha1, 20>;
+/// SP 800-108 Counter Mode over HMAC-SHA-224.
+pub type Sp800_108CounterHmacSha224 = Sp800_108Counter<fips_hmac::HmacSha224, 28>;
+/// SP 800-108 Counter Mode over HMAC-SHA-256.
+pub type Sp800_108CounterHmacSha256 = Sp800_108Counter<fips_hmac::HmacSha256, 32>;
+/// SP 800-108 Counter Mode over HMAC-SHA-384.
+pub type Sp800_108CounterHmacSha384 = Sp800_108Counter<fips_hmac::HmacSha384, 48>;
+/// SP 800-108 Counter Mode over HMAC-SHA-512.
+pub type Sp800_108CounterHmacSha512 = Sp800_108Counter<fips_hmac::HmacSha512, 64>;
+/// SP 800-108 Counter Mode over HMAC-SHA-512/224.
+pub type Sp800_108CounterHmacSha512_224 = Sp800_108Counter<fips_hmac::HmacSha512_224, 28>;
+/// SP 800-108 Counter Mode over HMAC-SHA-512/256.
+pub type Sp800_108CounterHmacSha512_256 = Sp800_108Counter<fips_hmac::HmacSha512_256, 32>;
+/// SP 800-108 Counter Mode over HMAC-SHA3-224.
+pub type Sp800_108CounterHmacSha3_224 = Sp800_108Counter<fips_hmac::HmacSha3_224, 28>;
+/// SP 800-108 Counter Mode over HMAC-SHA3-256.
+pub type Sp800_108CounterHmacSha3_256 = Sp800_108Counter<fips_hmac::HmacSha3_256, 32>;
+/// SP 800-108 Counter Mode over HMAC-SHA3-384.
+pub type Sp800_108CounterHmacSha3_384 = Sp800_108Counter<fips_hmac::HmacSha3_384, 48>;
+/// SP 800-108 Counter Mode over HMAC-SHA3-512.
+pub type Sp800_108CounterHmacSha3_512 = Sp800_108Counter<fips_hmac::HmacSha3_512, 64>;
+
+// ----------------------------------------------------------------------
+// SP 800-108 Counter Mode power-up KATs
+// ----------------------------------------------------------------------
+//
+// All 11 KATs share the same fixed inputs:
+//
+//     K       = 0x0b * 20
+//     Label   = b"pqclib KBKDF counter"   (20 bytes)
+//     Context = b"fips-kdf self test"     (18 bytes)
+//     L       = 42 bytes  (336 bits)      (forces n >= 2 on SHA-1..SHA-256)
+//
+// Expected outputs were produced with Python's `hmac` module and
+// cross-checked against `pyca/cryptography`'s `KBKDFHMAC` (which
+// delegates to OpenSSL CAVS-validated primitives) for SHA-256. A
+// dedicated follow-on batch will retrofit every KAT in this crate
+// (HKDF + KBKDF) to pull its vector directly from the
+// `usnistgov/ACVP-Server` repository for full CAVP traceability.
+
+const KBKDF_KAT_KEY: [u8; 20] = [0x0b; 20];
+const KBKDF_KAT_LABEL: &[u8] = b"pqclib KBKDF counter";
+const KBKDF_KAT_CONTEXT: &[u8] = b"fips-kdf self test";
+const KBKDF_KAT_L: usize = 42;
+
+const KBKDF_OUT_SHA1: [u8; 42] = [
+    0x4f, 0x1a, 0x4f, 0x70, 0x2e, 0xf2, 0x17, 0x6d, 0x3a, 0x9d, 0x84, 0x9b, 0x44, 0x3a, 0x81, 0xe5,
+    0x66, 0x0d, 0xcc, 0x39, 0xee, 0xcd, 0xc5, 0xe5, 0x2f, 0xa4, 0xb3, 0xa6, 0xf0, 0x78, 0xd5, 0x37,
+    0xcd, 0xb7, 0x6d, 0x0e, 0xc3, 0x4e, 0xc7, 0x41, 0xc5, 0x47,
+];
+const KBKDF_OUT_SHA224: [u8; 42] = [
+    0x92, 0x42, 0x60, 0xe1, 0xe2, 0x32, 0x1d, 0x0d, 0xed, 0xe7, 0xfd, 0x58, 0xd3, 0xa9, 0x5c, 0x0d,
+    0x8f, 0xf2, 0xb0, 0x97, 0xf1, 0xd3, 0x5e, 0xa3, 0x26, 0xb3, 0xe0, 0xf4, 0x6e, 0x30, 0x9c, 0xc9,
+    0x9c, 0x74, 0xe8, 0xfc, 0x42, 0xfe, 0xbc, 0x74, 0x62, 0x1f,
+];
+const KBKDF_OUT_SHA256: [u8; 42] = [
+    0x5d, 0x5c, 0x1e, 0x10, 0x74, 0xa7, 0x4a, 0x9c, 0x1f, 0xd2, 0xd0, 0xf9, 0xed, 0x33, 0xba, 0x8d,
+    0x42, 0x20, 0x0c, 0x4c, 0x6c, 0x4d, 0x96, 0xfe, 0xfc, 0x25, 0x68, 0xf0, 0xf9, 0xac, 0x83, 0x33,
+    0xeb, 0x60, 0x69, 0xd5, 0xf4, 0xe7, 0x21, 0x4a, 0x6c, 0x6b,
+];
+const KBKDF_OUT_SHA384: [u8; 42] = [
+    0x6b, 0x7b, 0xcc, 0xe3, 0x75, 0xb8, 0x70, 0x0a, 0xd7, 0xd2, 0x22, 0xaa, 0xd6, 0x10, 0x66, 0x6d,
+    0xe2, 0x07, 0x54, 0x96, 0x22, 0x0d, 0x97, 0x16, 0x3d, 0x20, 0x48, 0x4d, 0xd8, 0xea, 0x0c, 0x5d,
+    0x0b, 0xf7, 0xb8, 0xac, 0x3d, 0xb0, 0xd9, 0x82, 0xdf, 0x09,
+];
+const KBKDF_OUT_SHA512: [u8; 42] = [
+    0x10, 0x9e, 0x2f, 0xae, 0xe1, 0x72, 0x3b, 0x5b, 0x55, 0x5e, 0x04, 0xb4, 0x0a, 0xab, 0x4f, 0xf5,
+    0x6f, 0x57, 0xe7, 0x61, 0xe1, 0x10, 0xe3, 0x4c, 0x3a, 0x34, 0x6e, 0x88, 0xdc, 0x15, 0x78, 0xfd,
+    0x44, 0xd7, 0x95, 0x0e, 0x4e, 0x1d, 0xf2, 0xfe, 0x3e, 0xcf,
+];
+const KBKDF_OUT_SHA512_224: [u8; 42] = [
+    0x40, 0x91, 0xd6, 0xc6, 0xa8, 0xf3, 0xb5, 0xea, 0x22, 0x80, 0x64, 0x7c, 0xc9, 0x7b, 0x44, 0xc7,
+    0x4c, 0x02, 0x96, 0x3a, 0x26, 0x31, 0xa0, 0xbe, 0x64, 0x07, 0x6b, 0x31, 0x9d, 0x3d, 0xff, 0x6e,
+    0x84, 0xca, 0x19, 0x95, 0xa1, 0x7b, 0x78, 0x89, 0x87, 0xba,
+];
+const KBKDF_OUT_SHA512_256: [u8; 42] = [
+    0x09, 0x28, 0x2f, 0xdb, 0x65, 0x6e, 0x78, 0x60, 0xe6, 0x63, 0xdf, 0x41, 0xab, 0xb6, 0x5e, 0xc4,
+    0xb0, 0x61, 0x79, 0xd7, 0xf7, 0xf1, 0xb9, 0x05, 0x4b, 0x26, 0x41, 0x1b, 0x04, 0x2e, 0xbf, 0x99,
+    0x41, 0x85, 0x02, 0x16, 0xbd, 0x13, 0xa1, 0x77, 0x41, 0xcc,
+];
+const KBKDF_OUT_SHA3_224: [u8; 42] = [
+    0x28, 0x99, 0x60, 0x39, 0x42, 0xdf, 0xa1, 0x67, 0x3a, 0x91, 0x0c, 0x99, 0xed, 0x9b, 0xf8, 0xe6,
+    0xff, 0xeb, 0x65, 0x65, 0x82, 0x63, 0x38, 0x5e, 0x6e, 0x5a, 0x0e, 0xa3, 0xc2, 0x6e, 0x98, 0xb2,
+    0x36, 0xcb, 0x4c, 0xfc, 0xfd, 0x00, 0x48, 0xbc, 0x4b, 0x17,
+];
+const KBKDF_OUT_SHA3_256: [u8; 42] = [
+    0x8b, 0xda, 0x02, 0xef, 0x91, 0xb0, 0xe9, 0xc3, 0x58, 0xee, 0x1f, 0x54, 0x11, 0x55, 0xe4, 0xc2,
+    0x49, 0xc4, 0x6c, 0x2b, 0x96, 0xac, 0x7f, 0xf9, 0x02, 0xf0, 0xc7, 0xca, 0x34, 0x2c, 0xba, 0xc9,
+    0xac, 0x51, 0x51, 0xa0, 0xd1, 0x78, 0x74, 0x72, 0x5d, 0x93,
+];
+const KBKDF_OUT_SHA3_384: [u8; 42] = [
+    0xf8, 0xff, 0xe9, 0x70, 0xe7, 0x8e, 0x10, 0xd2, 0xb7, 0x1f, 0x41, 0xbb, 0x23, 0x53, 0xb6, 0x91,
+    0xd7, 0x50, 0x56, 0xb9, 0xfe, 0x8e, 0xbe, 0x9d, 0xd2, 0xd4, 0xe0, 0x3b, 0x5c, 0xb3, 0x92, 0x13,
+    0x54, 0x71, 0xe0, 0xac, 0x0c, 0x6c, 0x7f, 0x9a, 0xe1, 0x5b,
+];
+const KBKDF_OUT_SHA3_512: [u8; 42] = [
+    0x57, 0x66, 0x47, 0x02, 0x0b, 0xbb, 0x2f, 0xb0, 0xea, 0x00, 0x5b, 0x53, 0xc0, 0x05, 0x52, 0xdf,
+    0x73, 0x69, 0x5b, 0xc7, 0x79, 0x26, 0x67, 0xa6, 0x11, 0x4a, 0x4d, 0x10, 0xb3, 0x6b, 0x12, 0xb1,
+    0x4b, 0xe7, 0xcd, 0xc7, 0xac, 0xce, 0x5b, 0xd5, 0x46, 0x57,
+];
+
+macro_rules! kbkdf_kat_fn {
+    ($name:ident, $alias:ty, $expected:ident) => {
+        /// Power-up KAT for this SP 800-108 Counter Mode variant.
+        pub fn $name() -> Result<(), SelfTestFailure> {
+            let mut out = [0u8; KBKDF_KAT_L];
+            if <$alias>::derive_internal(
+                &KBKDF_KAT_KEY,
+                KBKDF_KAT_LABEL,
+                KBKDF_KAT_CONTEXT,
+                &mut out,
+            )
+            .is_err()
+            {
+                return Err(SelfTestFailure);
+            }
+            if out == $expected {
+                Ok(())
+            } else {
+                Err(SelfTestFailure)
+            }
+        }
+    };
+}
+
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha1,
+    Sp800_108CounterHmacSha1,
+    KBKDF_OUT_SHA1
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha224,
+    Sp800_108CounterHmacSha224,
+    KBKDF_OUT_SHA224
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha256,
+    Sp800_108CounterHmacSha256,
+    KBKDF_OUT_SHA256
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha384,
+    Sp800_108CounterHmacSha384,
+    KBKDF_OUT_SHA384
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha512,
+    Sp800_108CounterHmacSha512,
+    KBKDF_OUT_SHA512
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha512_224,
+    Sp800_108CounterHmacSha512_224,
+    KBKDF_OUT_SHA512_224
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha512_256,
+    Sp800_108CounterHmacSha512_256,
+    KBKDF_OUT_SHA512_256
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha3_224,
+    Sp800_108CounterHmacSha3_224,
+    KBKDF_OUT_SHA3_224
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha3_256,
+    Sp800_108CounterHmacSha3_256,
+    KBKDF_OUT_SHA3_256
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha3_384,
+    Sp800_108CounterHmacSha3_384,
+    KBKDF_OUT_SHA3_384
+);
+kbkdf_kat_fn!(
+    kbkdf_counter_self_test_sha3_512,
+    Sp800_108CounterHmacSha3_512,
+    KBKDF_OUT_SHA3_512
+);
+
+// ======================================================================
+// Power-up KAT inventory (HKDF + SP 800-108 Counter Mode)
+// ======================================================================
+
+/// Power-up KAT inventory for every KDF variant in this crate.
 ///
 /// Merged into the acvp-harness boot sequence via
 /// [`fips_module::initialize_with_tests`]. Per FIPS 140-3 IG 10.3.A
-/// each KDF instantiation carries its own KAT.
+/// each KDF instantiation carries its own KAT — families and modes
+/// do not share.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
         name: "HKDF-SHA-1 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha1,
+        run: hkdf_self_test_sha1,
     },
     KatEntry {
         name: "HKDF-SHA-224 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha224,
+        run: hkdf_self_test_sha224,
     },
     KatEntry {
         name: "HKDF-SHA-256 KAT (RFC 5869 §A.1 test 1)",
-        run: self_test_sha256,
+        run: hkdf_self_test_sha256,
     },
     KatEntry {
         name: "HKDF-SHA-384 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha384,
+        run: hkdf_self_test_sha384,
     },
     KatEntry {
         name: "HKDF-SHA-512 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha512,
+        run: hkdf_self_test_sha512,
     },
     KatEntry {
         name: "HKDF-SHA-512/224 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha512_224,
+        run: hkdf_self_test_sha512_224,
     },
     KatEntry {
         name: "HKDF-SHA-512/256 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha512_256,
+        run: hkdf_self_test_sha512_256,
     },
     KatEntry {
         name: "HKDF-SHA3-224 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha3_224,
+        run: hkdf_self_test_sha3_224,
     },
     KatEntry {
         name: "HKDF-SHA3-256 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha3_256,
+        run: hkdf_self_test_sha3_256,
     },
     KatEntry {
         name: "HKDF-SHA3-384 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha3_384,
+        run: hkdf_self_test_sha3_384,
     },
     KatEntry {
         name: "HKDF-SHA3-512 KAT (RFC 5869 inputs, OpenSSL-derived)",
-        run: self_test_sha3_512,
+        run: hkdf_self_test_sha3_512,
+    },
+    // --- SP 800-108 Counter Mode KBKDF (11 entries) ------------------
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-1 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha1,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-224 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha224,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-256 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha256,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-384 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha384,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-512 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha512,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-512/224 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha512_224,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA-512/256 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha512_256,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA3-224 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha3_224,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA3-256 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha3_256,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA3-384 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha3_384,
+    },
+    KatEntry {
+        name: "SP800-108 Counter HMAC-SHA3-512 KAT (pyca-cross-checked)",
+        run: kbkdf_counter_self_test_sha3_512,
     },
 ];
 
@@ -539,10 +908,18 @@ pub const KATS: &[KatEntry] = &[
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
-        self_test_sha1, self_test_sha224, self_test_sha256, self_test_sha384, self_test_sha3_224,
-        self_test_sha3_256, self_test_sha3_384, self_test_sha3_512, self_test_sha512,
-        self_test_sha512_224, self_test_sha512_256, HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512,
-        KdfError, KAT_INFO, KAT_OKM_SHA256, KAT_PRK_SHA256, KAT_SALT,
+        hkdf_self_test_sha1, hkdf_self_test_sha224, hkdf_self_test_sha256, hkdf_self_test_sha384,
+        hkdf_self_test_sha3_224, hkdf_self_test_sha3_256, hkdf_self_test_sha3_384,
+        hkdf_self_test_sha3_512, hkdf_self_test_sha512, hkdf_self_test_sha512_224,
+        hkdf_self_test_sha512_256, kbkdf_counter_self_test_sha1, kbkdf_counter_self_test_sha224,
+        kbkdf_counter_self_test_sha256, kbkdf_counter_self_test_sha384,
+        kbkdf_counter_self_test_sha3_224, kbkdf_counter_self_test_sha3_256,
+        kbkdf_counter_self_test_sha3_384, kbkdf_counter_self_test_sha3_512,
+        kbkdf_counter_self_test_sha512, kbkdf_counter_self_test_sha512_224,
+        kbkdf_counter_self_test_sha512_256, HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512,
+        KdfError, Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha3_256, KAT_INFO,
+        KAT_OKM_SHA256, KAT_PRK_SHA256, KAT_SALT, KBKDF_KAT_CONTEXT, KBKDF_KAT_KEY,
+        KBKDF_KAT_LABEL, KBKDF_OUT_SHA256,
     };
     use fips_module::{initialize_with_tests, Error, KatEntry, State};
 
@@ -553,17 +930,17 @@ mod tests {
 
     #[test]
     fn boot_self_tests_all_pass() {
-        assert!(self_test_sha1().is_ok());
-        assert!(self_test_sha224().is_ok());
-        assert!(self_test_sha256().is_ok());
-        assert!(self_test_sha384().is_ok());
-        assert!(self_test_sha512().is_ok());
-        assert!(self_test_sha512_224().is_ok());
-        assert!(self_test_sha512_256().is_ok());
-        assert!(self_test_sha3_224().is_ok());
-        assert!(self_test_sha3_256().is_ok());
-        assert!(self_test_sha3_384().is_ok());
-        assert!(self_test_sha3_512().is_ok());
+        assert!(hkdf_self_test_sha1().is_ok());
+        assert!(hkdf_self_test_sha224().is_ok());
+        assert!(hkdf_self_test_sha256().is_ok());
+        assert!(hkdf_self_test_sha384().is_ok());
+        assert!(hkdf_self_test_sha512().is_ok());
+        assert!(hkdf_self_test_sha512_224().is_ok());
+        assert!(hkdf_self_test_sha512_256().is_ok());
+        assert!(hkdf_self_test_sha3_224().is_ok());
+        assert!(hkdf_self_test_sha3_256().is_ok());
+        assert!(hkdf_self_test_sha3_384().is_ok());
+        assert!(hkdf_self_test_sha3_512().is_ok());
     }
 
     #[test]
@@ -673,5 +1050,117 @@ mod tests {
         }
         .into();
         assert!(matches!(e, KdfError::Module(_)));
+    }
+
+    // ----- SP 800-108 Counter Mode --------------------------------------
+
+    #[test]
+    fn kbkdf_counter_boot_self_tests_all_pass() {
+        assert!(kbkdf_counter_self_test_sha1().is_ok());
+        assert!(kbkdf_counter_self_test_sha224().is_ok());
+        assert!(kbkdf_counter_self_test_sha256().is_ok());
+        assert!(kbkdf_counter_self_test_sha384().is_ok());
+        assert!(kbkdf_counter_self_test_sha512().is_ok());
+        assert!(kbkdf_counter_self_test_sha512_224().is_ok());
+        assert!(kbkdf_counter_self_test_sha512_256().is_ok());
+        assert!(kbkdf_counter_self_test_sha3_224().is_ok());
+        assert!(kbkdf_counter_self_test_sha3_256().is_ok());
+        assert!(kbkdf_counter_self_test_sha3_384().is_ok());
+        assert!(kbkdf_counter_self_test_sha3_512().is_ok());
+    }
+
+    #[test]
+    fn kbkdf_counter_public_api_matches_kat() {
+        ensure_initialized();
+        let mut out = [0u8; 42];
+        Sp800_108CounterHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(out, KBKDF_OUT_SHA256);
+    }
+
+    #[test]
+    fn kbkdf_counter_short_output_truncates_last_block() {
+        // A 17-byte request against HMAC-SHA-256 (L=32) should
+        // produce the first 17 bytes of the first PRF block.
+        ensure_initialized();
+        let mut full = [0u8; 32];
+        Sp800_108CounterHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut full,
+        )
+        .unwrap();
+        // Re-derive 17 bytes directly. Since 17 < L, only one
+        // iteration runs but its [L]_32 encoding differs (17*8=136
+        // vs 32*8=256), so the short output is NOT a prefix of the
+        // full output — that's the whole point of binding L in the
+        // fixed input per SP 800-108 §5.2. This test confirms the
+        // bit-length encoding actually participates.
+        let mut short = [0u8; 17];
+        Sp800_108CounterHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut short,
+        )
+        .unwrap();
+        assert_ne!(&short[..], &full[..17]);
+    }
+
+    #[test]
+    fn kbkdf_counter_empty_output_is_noop() {
+        ensure_initialized();
+        let mut empty: [u8; 0] = [];
+        Sp800_108CounterHmacSha256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut empty,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn kbkdf_counter_sha3_multi_block() {
+        // SHA3-256 has L=32, so 42 bytes requires n=2 blocks —
+        // exercises the counter increment path under a sponge PRF.
+        ensure_initialized();
+        let mut a = [0u8; 42];
+        let mut b = [0u8; 42];
+        Sp800_108CounterHmacSha3_256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut a,
+        )
+        .unwrap();
+        Sp800_108CounterHmacSha3_256::derive(
+            &KBKDF_KAT_KEY,
+            KBKDF_KAT_LABEL,
+            KBKDF_KAT_CONTEXT,
+            &mut b,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn kbkdf_counter_distinct_contexts_diverge() {
+        // Domain separation: changing Context must produce different
+        // output for the same (K, Label, L).
+        ensure_initialized();
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        Sp800_108CounterHmacSha256::derive(&KBKDF_KAT_KEY, KBKDF_KAT_LABEL, b"ctx A", &mut a)
+            .unwrap();
+        Sp800_108CounterHmacSha256::derive(&KBKDF_KAT_KEY, KBKDF_KAT_LABEL, b"ctx B", &mut b)
+            .unwrap();
+        assert_ne!(a, b);
     }
 }

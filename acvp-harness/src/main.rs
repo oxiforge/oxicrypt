@@ -78,7 +78,7 @@ fn main() {
                 println!("  - {}", kat.name);
             }
             println!(
-                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF KATs run, no vectors dispatched yet."
+                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF-Counter KATs run, no vectors dispatched yet."
             );
         }
         Err(Error::AlreadyInitialized) => {
