@@ -1,0 +1,25 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+*.rs.bk
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Fuzzing / profiling artifacts
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+*.profraw
+*.profdata
