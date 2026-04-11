@@ -11,5 +11,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+fips-drbg = { path = "../fips-drbg" }
 fips-module = { path = "../fips-module" }
 fips-sha = { path = "../fips-sha" }

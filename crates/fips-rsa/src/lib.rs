@@ -32,7 +32,10 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod bigint1024;
 pub mod bigint2048;
+pub mod keygen;
+pub mod mont1024;
 pub mod mont2048;
 pub mod pkcs1_v15;
 pub mod pss;
@@ -407,6 +410,67 @@ impl RsaPrivateKey2048 {
         require_operational()?;
         rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, salt)
             .ok_or(Error::InvalidInput)
+    }
+
+    /// Sign `msg` with RSASSA-PSS SHA-256, sampling a fresh `hLen`-byte
+    /// salt from the caller-supplied DRBG. This is the R4 DRBG-backed
+    /// PSS wrapper that FIPS 186-5 §5.4 recommends: the salt is fresh
+    /// per-signature so that signing the same message twice produces
+    /// two different signatures, avoiding multi-target attacks.
+    ///
+    /// The DRBG must be instantiated before calling. It is advanced by
+    /// exactly one `generate` call of [`pss::SLEN`] = 32 bytes per
+    /// invocation — callers running long signing campaigns should
+    /// re-seed according to their SP 800-90A reseed policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the FIPS module is no
+    /// longer operational, or [`Error::InvalidInput`] if the DRBG
+    /// reports a failure or the internal primitive rejects the pinned
+    /// key material.
+    pub fn sign_pss_sha256(
+        &self,
+        drbg: &mut fips_drbg::HmacDrbgSha256,
+        msg: &[u8],
+    ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
+        require_operational()?;
+        let mut salt = [0u8; pss::SLEN];
+        drbg.generate(None, &mut salt).map_err(|_| Error::InvalidInput)?;
+        rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, &salt)
+            .ok_or(Error::InvalidInput)
+    }
+
+    /// Generate a fresh RSA-2048 keypair using the caller-supplied
+    /// HMAC_DRBG-SHA-256 for all randomness, per FIPS 186-5 §A.1.1 /
+    /// §B.3.1. `e` must be an odd prime in `[65537, 2^64)` (in
+    /// practice, pass `65537`).
+    ///
+    /// The generated keypair is run through the IG 10.3.A pairwise
+    /// consistency test before the handle is returned — a `generate`
+    /// call that succeeds has already produced a sign/verify pair
+    /// that roundtrips a probe message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the FIPS module is not
+    /// yet operational. Returns [`Error::InvalidInput`] on any of:
+    ///
+    ///   * `e` fails the structural check (`e < 65537` or `e` even);
+    ///   * the DRBG rejects a request (e.g. not instantiated or
+    ///     reseed required);
+    ///   * the prime-candidate retry budget is exceeded;
+    ///   * the resulting keypair fails the pairwise consistency
+    ///     test (which indicates internal corruption).
+    pub fn generate(
+        drbg: &mut fips_drbg::HmacDrbgSha256,
+        e: u64,
+    ) -> Result<Self, Error> {
+        require_operational()?;
+        let km = keygen::generate_2048(drbg, e).map_err(|_| Error::InvalidInput)?;
+        let n_bytes = km.n.to_be_bytes();
+        let d_bytes = km.d.to_be_bytes();
+        Self::from_components(&n_bytes, e, &d_bytes)
     }
 }
 
@@ -872,6 +936,63 @@ mod tests {
             Err(Error::InvalidInput) => {}
             Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("PCT must reject a tampered d"),
+        }
+    }
+
+    /// End-to-end R4 smoke: generate a fresh keypair from a DRBG,
+    /// sign via the DRBG-backed PSS wrapper, verify with the gated
+    /// public API. This exercises the whole R4 surface in one shot.
+    #[test]
+    fn generate_then_pss_sign_and_verify() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r4-gen-pss",
+            run: self_test,
+        }]);
+
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(
+            b"pqclib-r4-e2e-entropy-input-001",
+            b"pqclib-r4-e2e-nonce",
+            b"",
+        )
+        .expect("drbg instantiates");
+
+        let sk =
+            RsaPrivateKey2048::generate(&mut drbg, 65537).expect("keygen + PCT succeeds");
+
+        // Two signatures over the same message must differ because
+        // the salt is sampled fresh per call, then both must verify.
+        let msg = b"pqclib R4: generate + PSS sign e2e";
+        let sig1 = sk
+            .sign_pss_sha256(&mut drbg, msg)
+            .expect("drbg-backed PSS sign #1");
+        let sig2 = sk
+            .sign_pss_sha256(&mut drbg, msg)
+            .expect("drbg-backed PSS sign #2");
+        assert_ne!(sig1, sig2, "PSS signatures must differ (fresh salt)");
+
+        let n = sk.modulus_bytes();
+        rsa_pss_verify_2048_sha256(n, 65537, msg, &sig1)
+            .expect("sig1 verifies");
+        rsa_pss_verify_2048_sha256(n, 65537, msg, &sig2)
+            .expect("sig2 verifies");
+    }
+
+    /// Sanity check: the `RsaPrivateKey2048::generate` path rejects
+    /// an invalid public exponent (even) without touching the DRBG.
+    #[test]
+    fn generate_rejects_even_exponent() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r4-reject-e",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r4-reject-e-entropy", b"nonce", b"")
+            .unwrap();
+        match RsaPrivateKey2048::generate(&mut drbg, 4) {
+            Err(Error::InvalidInput) => {}
+            Err(e) => panic!("unexpected error: {e:?}"),
+            Ok(_) => panic!("even e must be rejected"),
         }
     }
 }
