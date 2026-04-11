@@ -117,15 +117,34 @@ ACVP `internalProjection`-style vector sets end to end:
     /tmp/sha3_response.json
 ```
 
-Two handler families are wired up in R10: `SHA3-256` revision `2.0` AFT
-and `HMAC-SHA2-256` revision `1.0` AFT. Round-trip tests in
-`acvp-harness/tests/round_trip.rs` prove the dispatcher produces the
-same `md` / `mac` values NIST shipped in the vendored slices, byte for
-byte. The JSON parser and hex codec used by the harness are in-tree —
+R10 wired the first two handlers — `SHA3-256` revision `2.0` AFT and
+`HMAC-SHA2-256` revision `1.0` AFT — as a proof of the envelope layer.
+R12-A expanded that to seventeen AFT handlers (the full SHA-3 hashing
+family, both SHAKE XOFs, `HMAC-SHA-1`, and every `HMAC-SHA-2` /
+`HMAC-SHA-3` variant). R12-B then adds a **second envelope shape** for
+plain FIPS 180-4 hashing: CAVP SHS `.rsp` short-message byte vectors,
+accessed via a new `dispatch-shs` subcommand:
+
+```bash
+./target/debug/acvp-harness dispatch-shs SHA-256 \
+    vendor/nist/cavp-shs/shabytetestvectors/SHA256ShortMsg.rsp \
+    /tmp/sha256_response.json
+```
+
+Seven CAVP SHS handlers are wired in R12-B — `SHA-1`, `SHA-224`,
+`SHA-256`, `SHA-384`, `SHA-512`, `SHA-512/224`, `SHA-512/256` — because
+upstream `usnistgov/ACVP-Server` ships no top-level `SHA-*`, `SHA1-*`,
+or `SHA2-*` `internalProjection` directories at the pinned commit; R11′
+retired the earlier deferral that wrongly framed this as an ACVP-Server
+re-pin blocker. Round-trip tests in `acvp-harness/tests/round_trip.rs`
+and `acvp-harness/tests/shs_round_trip.rs` prove both dispatchers
+reproduce the vendored `md` / `mac` fields byte-for-byte across
+eighteen ACVP slices and seven CAVP SHS files. The JSON parser, hex
+codec, and CAVP SHS `.rsp` parser used by the harness are all in-tree —
 the validation binary has zero third-party dependencies, matching the
-module itself. Remaining algorithm families (SHA-2, SHAKE, HMAC-SHA3,
-HKDF, AES, DRBG, ECDSA, EdDSA, RSA) and remaining test types (MCT, LDT)
-slot into the same dispatcher without touching the envelope layer.
+module itself. Remaining algorithm families (HKDF, AES, DRBG, ECDSA,
+EdDSA, RSA) and remaining test types (MCT, LDT) slot into the same
+dispatchers without touching the envelope layers.
 
 ### Constant-time validation
 
@@ -150,7 +169,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: HKDF, AES, DRBG, ECDSA, EdDSA, RSA handlers; MCT and LDT test types. The SHA-3 hashing family, both SHAKE XOFs, and every HMAC variant are wired as of R12-A (17 AFT handlers total). SHA-2 dispatch will consume the already-vendored CAVP SHS byte-vectors via a second envelope shape — upstream `usnistgov/ACVP-Server` does not publish `SHA-*`/`SHA1-*`/`SHA2-*` `internalProjection` directories at all, so there is no ACVP-Server re-pin in the path.
+- ACVP harness vector dispatch: HKDF, AES, DRBG, ECDSA, EdDSA, RSA handlers; MCT and LDT test types. The SHA-3 hashing family, both SHAKE XOFs, and every HMAC variant are wired as of R12-A (17 AFT handlers on the ACVP envelope). R12-B then wired the full SHA-1 / SHA-2 family (seven handlers: SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256) on a second envelope shape over CAVP SHS `.rsp` byte vectors, because upstream `usnistgov/ACVP-Server` does not publish `SHA-*`/`SHA1-*`/`SHA2-*` `internalProjection` directories at all.
 
 ## License
 

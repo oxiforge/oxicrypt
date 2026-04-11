@@ -7,9 +7,18 @@
 //!   KAT inventory. This is what CI runs on every build to prove the
 //!   module still boots end to end.
 //! - `acvp-harness dispatch <prompt.json> <response.json>` — the
-//!   Phase 3 vector-set dispatcher: parse an ACVP `internalProjection`
-//!   slice from `<prompt.json>`, compute responses, and write them to
-//!   `<response.json>`.
+//!   Phase 3 ACVP vector-set dispatcher: parse an ACVP
+//!   `internalProjection` slice from `<prompt.json>`, compute
+//!   responses, and write them to `<response.json>`.
+//! - `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>`
+//!   — the R12-B second envelope: parse a CAVP SHS short-message
+//!   `.rsp` byte-vector file from `<prompt.rsp>`, dispatch every
+//!   record through the named handler (e.g. `SHA-256`, `SHA-512/224`),
+//!   and write a JSON response to `<response.json>`. CAVP SHS is the
+//!   only path for plain FIPS 180-4 hashing because upstream
+//!   `usnistgov/ACVP-Server` ships no top-level `SHA-*` vector
+//!   directories at the pinned commit — see §11.4 of the security
+//!   policy.
 //!
 //! Because this is a user-facing binary it is permitted to emit
 //! output to stdout/stderr — we override the workspace-wide
@@ -110,6 +119,10 @@ fn main() {
         run_dispatch_cli(&args);
         return;
     }
+    if args.len() >= 2 && args[1] == "dispatch-shs" {
+        run_dispatch_shs_cli(&args);
+        return;
+    }
 
     print_self_test_banner();
 }
@@ -128,8 +141,16 @@ fn print_self_test_banner() {
         "ACVP dispatch: {} handler(s) registered.",
         registry.len()
     );
+    let shs_registry = acvp_harness::shs::with_default_shs_handlers();
     println!(
-        "R10: SHA3-256 AFT + HMAC-SHA2-256 AFT wired; run `acvp-harness dispatch <prompt.json> <response.json>` to process a vector set."
+        "CAVP SHS dispatch: {} handler(s) registered.",
+        shs_registry.len()
+    );
+    println!(
+        "Run `acvp-harness dispatch <prompt.json> <response.json>` for an ACVP vector set,"
+    );
+    println!(
+        "or `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>` for a CAVP SHS file."
     );
 }
 
@@ -161,6 +182,50 @@ fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
         "pqclib acvp-harness: wrote ACVP response to {response_path} ({} test group(s))",
         response
             .get("testGroups")
+            .and_then(acvp_harness::json::JsonValue::as_array)
+            .map_or(0, <[_]>::len)
+    );
+    Ok(())
+}
+
+fn run_dispatch_shs_cli(args: &[String]) {
+    if args.len() != 5 {
+        eprintln!(
+            "usage: acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>"
+        );
+        eprintln!(
+            "  algorithm ∈ {{SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256}}"
+        );
+        return;
+    }
+    let algorithm = &args[2];
+    let prompt_path = &args[3];
+    let response_path = &args[4];
+    if let Err(msg) = run_dispatch_shs(algorithm, prompt_path, response_path) {
+        eprintln!("pqclib acvp-harness: dispatch-shs failed: {msg}");
+    }
+}
+
+fn run_dispatch_shs(
+    algorithm: &str,
+    prompt_path: &str,
+    response_path: &str,
+) -> Result<(), String> {
+    let text = std::fs::read_to_string(prompt_path)
+        .map_err(|e| format!("read {prompt_path}: {e}"))?;
+    let doc = acvp_harness::rsp::parse(&text)
+        .map_err(|e| format!("parse {prompt_path}: {e}"))?;
+    let registry = acvp_harness::shs::with_default_shs_handlers();
+    let response = acvp_harness::shs::process_shs(algorithm, &doc, &registry)
+        .map_err(|e| format!("dispatch-shs: {e}"))?;
+    let mut out = acvp_harness::json::to_pretty_string(&response);
+    out.push('\n');
+    std::fs::write(response_path, out)
+        .map_err(|e| format!("write {response_path}: {e}"))?;
+    println!(
+        "pqclib acvp-harness: wrote CAVP SHS response to {response_path} ({} test case(s))",
+        response
+            .get("testCases")
             .and_then(acvp_harness::json::JsonValue::as_array)
             .map_or(0, <[_]>::len)
     );

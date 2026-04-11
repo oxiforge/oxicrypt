@@ -7,18 +7,32 @@
 //! algorithm AFT dispatchers — lives here so that integration tests
 //! in `tests/` can exercise it directly without shelling out.
 //!
-//! # R10 scope
+//! # Dispatch scope
 //!
-//! Phase 3 slice one: vector dispatch for two algorithms.
+//! Phase 3 is being landed in chunks. As of R12-B the harness carries
+//! **two** envelope shapes:
 //!
-//! - `SHA3-256` revision `2.0`, Algorithm Functional Test (AFT)
-//! - `HMAC-SHA2-256` revision `1.0`, Algorithm Functional Test (AFT)
+//! - ACVP `internalProjection.json` — the shape `usnistgov/ACVP-Server`
+//!   publishes. R10 wired two handlers on it (SHA3-256, HMAC-SHA2-256);
+//!   R12-A expanded that to seventeen (the entire SHA-3 hashing
+//!   family, both SHAKE XOFs, HMAC-SHA-1, and every HMAC-SHA-2 /
+//!   HMAC-SHA-3 variant). The dispatcher lives in [`dispatch`] and the
+//!   per-algorithm handlers under [`handlers`].
+//! - CAVP SHS `.rsp` byte vectors — the *second envelope shape*
+//!   landed in R12-B. R11′ recorded the reason: upstream ACVP-Server
+//!   ships no top-level `SHA-*`, `SHA1-*`, or `SHA2-*` vector
+//!   directories at the pinned commit, so the SHA-2 family has to
+//!   ride CAVP SHS instead. The parser lives in [`rsp`], the
+//!   dispatcher in [`shs`], and the seven handlers
+//!   (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224,
+//!   SHA-512/256) in [`handlers::shs`].
 //!
-//! Everything else — SHA-2, SHAKE, HMAC-SHA3, HKDF, AES, DRBG, the
-//! Monte Carlo and Large Data tests — is intentionally out of scope
-//! for this chunk. The dispatcher is designed so those handlers slot
-//! in without touching the dispatch or envelope layers; see
-//! [`dispatch::with_default_handlers`] for the extension point.
+//! Everything else — HKDF, AES, DRBG, ECDSA, EdDSA, RSA, the Monte
+//! Carlo and Large Data tests — is intentionally out of scope for
+//! these chunks. Both dispatchers are designed so future handlers
+//! slot in without touching the envelope layers; see
+//! [`dispatch::with_default_handlers`] and
+//! [`shs::with_default_shs_handlers`] for the extension points.
 //!
 //! # Module gating
 //!
@@ -54,6 +68,8 @@ pub mod envelope;
 pub mod handlers;
 pub mod hex;
 pub mod json;
+pub mod rsp;
+pub mod shs;
 
 /// Convenience wrapper: run `fips_module::initialize()` and treat
 /// `AlreadyInitialized` as success.
