@@ -24,6 +24,7 @@ dependencies = [
  "fips-drbg",
  "fips-ecdh",
  "fips-ecdsa",
+ "fips-eddsa",
  "fips-module",
  "fips-rsa",
 ]
@@ -74,6 +75,7 @@ dependencies = [
 name = "fips-eddsa"
 version = "0.0.0"
 dependencies = [
+ "fips-drbg",
  "fips-module",
  "fips-sha",
 ]

@@ -13,3 +13,4 @@ workspace = true
 [dependencies]
 fips-module = { path = "../fips-module" }
 fips-sha = { path = "../fips-sha" }
+fips-drbg = { path = "../fips-drbg" }

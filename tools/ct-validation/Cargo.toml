@@ -12,6 +12,7 @@ description = "dudect-style constant-time validation harness for pqclib"
 fips-rsa = { path = "../../crates/fips-rsa" }
 fips-ecdsa = { path = "../../crates/fips-ecdsa" }
 fips-ecdh = { path = "../../crates/fips-ecdh" }
+fips-eddsa = { path = "../../crates/fips-eddsa" }
 fips-drbg = { path = "../../crates/fips-drbg" }
 fips-module = { path = "../../crates/fips-module" }
 

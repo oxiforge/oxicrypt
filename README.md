@@ -59,7 +59,11 @@ its published source.
   constructed `EcdsaP256PrivateKey` (FIPS 186-5 §6.4, §A.2). Full
   SEC1 public-key validation (SP 800-56Ar3 §5.6.2.3.3) on verify.
   ECDH P-256 (SP 800-56Ar3 §5.7.1.2 ECC CDH) with RFC 5903 §8.1
-  power-up KAT.
+  power-up KAT. Ed25519 deterministic sign/verify per RFC 8032
+  and FIPS 186-5 §7.8 with a DRBG-backed `Ed25519PrivateKey`
+  handle, RFC 8032 §5.1.5 scalar clamping, non-cofactored verify
+  equation, canonical-`S` rejection, and an IG 10.3.A sign-and-
+  verify pairwise consistency test on every constructed handle.
 - **Module integrity** — HMAC-SHA-256 software/firmware integrity check
   over `current_exe()` with an embedded 64-byte reserved slot populated at
   sign time and validated by magic-marker scan at boot (FIPS 140-3
@@ -114,9 +118,10 @@ cargo run -p ct-validation --release -- --samples 500000 ecdsa_p256_scalar_inver
 ```
 
 `tools/ct-validation` is a dudect-style paired fixed-vs-random timing
-harness that runs Welch's t-test with percentile cropping across six
+harness that runs Welch's t-test with percentile cropping across seven
 CSP-touching primitives (`mont2048`/`mont1024` `pow_secret`, OAEP decode,
-P-256 scalar-mul, P-256 scalar invert, ECDH P-256 CDH). Verdicts: `|t|≥5`
+P-256 scalar-mul, P-256 scalar invert, ECDH P-256 CDH, and Ed25519
+base-point scalar mult). Verdicts: `|t|≥5`
 is `LEAK`, `|t|≥3` is `WARN`, else `CLEAN`. The harness found and the
 same R8 change fixed two real leaks — a data-dependent carry-propagation
 early exit in the `fips-ecdsa` Montgomery reducer and an identity
@@ -127,7 +132,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 
 ### In flight
 
-- EdDSA, ECDSA P-384 / P-521
+- Ed448, ECDSA P-384 / P-521
 - ACVP harness vector dispatch (Phase 3)
 
 ## License

@@ -11,6 +11,7 @@
 pub mod ecdh_cdh;
 pub mod ecdsa_scalar_invert;
 pub mod ecdsa_scalar_mul;
+pub mod eddsa_scalar_mul;
 pub mod oaep_decode;
 pub mod rsa_mont1024_pow_secret;
 pub mod rsa_mont2048_pow_secret;
@@ -30,6 +31,7 @@ pub fn all_target_names() -> &'static [&'static str] {
         "ecdsa_p256_scalar_mul",
         "ecdsa_p256_scalar_invert",
         "ecdh_p256_cdh",
+        "eddsa_ed25519_scalar_mul",
     ]
 }
 
@@ -43,6 +45,7 @@ pub fn run_by_name(name: &str, cfg: &RunConfig) -> Option<VerdictReport> {
         "ecdsa_p256_scalar_mul" => Some(ecdsa_scalar_mul::run(cfg)),
         "ecdsa_p256_scalar_invert" => Some(ecdsa_scalar_invert::run(cfg)),
         "ecdh_p256_cdh" => Some(ecdh_cdh::run(cfg)),
+        "eddsa_ed25519_scalar_mul" => Some(eddsa_scalar_mul::run(cfg)),
         _ => None,
     }
 }

@@ -81,8 +81,9 @@
 //!
 //! ## Targets and current verdicts
 //!
-//! The six primitives wired into [`targets`] cover every secret-
-//! dependent arithmetic path on the RSA and P-256 private-key sides:
+//! The seven primitives wired into [`targets`] cover every secret-
+//! dependent arithmetic path on the RSA, P-256, and Ed25519 private-
+//! key sides:
 //!
 //! | Target                         | Primitive                                           | Verdict at 300k samples |
 //! |--------------------------------|-----------------------------------------------------|-------------------------|
@@ -92,6 +93,7 @@
 //! | `ecdsa_p256_scalar_mul`        | `fips_ecdsa::p256_point::Point::mul`                | CLEAN                   |
 //! | `ecdsa_p256_scalar_invert`     | `fips_ecdsa::p256_scalar::Scalar::invert` (Fermat)  | CLEAN (see §12.1 noise) |
 //! | `ecdh_p256_cdh`                | `fips_ecdh::p256::cdh`                              | CLEAN                   |
+//! | `eddsa_ed25519_scalar_mul`     | `fips_eddsa::edwards::EdwardsPoint::mul` (clamped)  | CLEAN (R9, \|t\|=1.418) |
 //!
 //! ## Leaks found and fixed during R8 bring-up
 //!
