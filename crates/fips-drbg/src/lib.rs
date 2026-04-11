@@ -5,7 +5,8 @@
 //! * CTR_DRBG (§10.2) with AES-128/192/256, both `no df` and `use df`
 //!   variants. See [`ctr`].
 //! * Hash_DRBG (§10.1.1) over SHA-256/384/512. See [`hash`].
-//! * HMAC_DRBG lands in a subsequent batch.
+//! * HMAC_DRBG (§10.1.2) over HMAC-SHA-256/384/512. See [`hmac`].
+//! * SP 800-90A §11.3 health tests. See [`health`].
 //!
 //! # Power-up KATs
 //!
@@ -16,6 +17,7 @@
 
 pub mod ctr;
 pub mod hash;
+pub mod health;
 pub mod hmac;
 pub mod kat;
 

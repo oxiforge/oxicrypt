@@ -24,11 +24,17 @@
 //! HMAC_DRBG path drives the `HMAC_DRBG_Update` helper and the
 //! `V = HMAC(K, V)` output loop.
 //!
-//! That's 12 KATs total. FIPS 140-3 IG 10.3.A requires exercising
+//! On top of the value-level KATs, three SP 800-90A §11.3 health
+//! tests (CTR_DRBG, Hash_DRBG, HMAC_DRBG) run the error paths
+//! required by §11.3.2 — generate-before-instantiate, reseed-counter
+//! ceiling, and post-uninstantiate access — from [`crate::health`].
+//!
+//! That's 15 KATs total. FIPS 140-3 IG 10.3.A requires exercising
 //! every approved configuration of the DRBG at power-up; the `no df`
 //! KATs cover the core Update/Generate state machine, the `use df`
-//! KATs additionally cover the derivation function path, and the
-//! Hash/HMAC_DRBG KATs cover two separate SP 800-90A mechanisms.
+//! KATs additionally cover the derivation function path, the
+//! Hash/HMAC_DRBG KATs cover two separate SP 800-90A mechanisms, and
+//! the health tests cover the §11.3.2 error-path requirements.
 
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
@@ -36,6 +42,7 @@ use fips_module::{KatEntry, SelfTestFailure};
 
 use crate::ctr::{CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256};
 use crate::hash::{HashDrbgSha256, HashDrbgSha384, HashDrbgSha512};
+use crate::health::{run_ctr_drbg_health, run_hash_drbg_health, run_hmac_drbg_health};
 use crate::hmac::{HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512};
 
 // ----------------------------------------------------------------------
@@ -510,5 +517,17 @@ pub const KATS: &[KatEntry] = &[
     KatEntry {
         name: "HMAC_DRBG SHA-512 KAT (NIST CAVP DRBGVS HMAC_DRBG.rsp Count=0)",
         run: run_hmac_sha512,
+    },
+    KatEntry {
+        name: "CTR_DRBG (AES-128 use df) SP 800-90A §11.3 health test",
+        run: run_ctr_drbg_health,
+    },
+    KatEntry {
+        name: "Hash_DRBG (SHA-256) SP 800-90A §11.3 health test",
+        run: run_hash_drbg_health,
+    },
+    KatEntry {
+        name: "HMAC_DRBG (SHA-256) SP 800-90A §11.3 health test",
+        run: run_hmac_drbg_health,
     },
 ];

@@ -307,6 +307,15 @@ impl<H: HmacAlg> HmacDrbg<H> {
         self.reseed_counter = 0;
         self.instantiated = false;
     }
+
+    /// Health-test helper: force the reseed counter above the
+    /// SP 800-90A §10.1.2 ceiling so the next `generate` call
+    /// returns [`DrbgError::ReseedRequired`]. Used only by the
+    /// §11.3 power-up health tests.
+    #[doc(hidden)]
+    pub fn debug_force_reseed_ceiling(&mut self) {
+        self.reseed_counter = HMAC_DRBG_RESEED_INTERVAL + 1;
+    }
 }
 
 impl<H: HmacAlg> Default for HmacDrbg<H> {

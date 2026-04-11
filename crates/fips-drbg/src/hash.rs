@@ -275,6 +275,15 @@ impl<H: HashAlg> HashDrbg<H> {
         self.instantiated = false;
     }
 
+    /// Health-test helper: force the reseed counter above the
+    /// SP 800-90A §10.1.1 ceiling so the next `generate` call
+    /// returns [`DrbgError::ReseedRequired`]. Used only by the
+    /// §11.3 power-up health tests.
+    #[doc(hidden)]
+    pub fn debug_force_reseed_ceiling(&mut self) {
+        self.reseed_counter = HASH_DRBG_RESEED_INTERVAL + 1;
+    }
+
     /// `Hashgen(requested_bytes, V)` — SP 800-90A §10.1.1.4 step 3.
     fn hashgen(&mut self, out: &mut [u8]) {
         let mut data = [0u8; MAX_SEEDLEN];

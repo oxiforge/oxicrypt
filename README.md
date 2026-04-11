@@ -17,7 +17,8 @@ compliance mapping.
 ## Status
 
 **Phase 2 — in progress.** The cryptographic core is taking shape under the
-power-up self-test harness, with 110 KATs running green and every vector
+power-up self-test harness, with 113 KATs running green — 110 CAVP-sourced
+known-answer tests plus 3 SP 800-90A §11.3 DRBG health tests, every vector
 traceable to its published source.
 
 ### Implemented (with power-up KATs)
@@ -30,7 +31,9 @@ traceable to its published source.
   `no df` and `use df` variants; Hash_DRBG (SP 800-90A §10.1.1) over
   SHA-256, SHA-384, and SHA-512 with the §10.3.1 `Hash_df` derivation
   function; HMAC_DRBG (SP 800-90A §10.1.2) over HMAC-SHA-256,
-  HMAC-SHA-384, and HMAC-SHA-512.
+  HMAC-SHA-384, and HMAC-SHA-512; SP 800-90A §11.3 error-path health
+  tests (generate-before-instantiate, reseed-counter ceiling,
+  post-uninstantiate access) for each mechanism.
 - **KDF** — SP 800-108r1 Counter / Feedback / Double-Pipeline Iteration
   modes (`fips-kdf`); SP 800-56C Rev 2 Two-Step KDA-HKDF; RFC 5869 HKDF
   over all eleven HMACs.
@@ -66,13 +69,12 @@ cargo build -p acvp-harness -p fips-integrity
 ./target/debug/acvp-harness
 ```
 
-The harness performs module-boundary initialization, runs the 107 power-up
+The harness performs module-boundary initialization, runs the 113 power-up
 KATs, runs the software integrity self-test, and prints the full KAT
 inventory.
 
 ### In flight
 
-- DRBG health tests (SP 800-90A §11.3) wired into power-up self-tests
 - RSA (PKCS#1 v1.5, PSS, OAEP), ECDSA, EdDSA, ECDH
 - ACVP harness vector dispatch (Phase 3)
 
