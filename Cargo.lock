@@ -61,6 +61,7 @@ name = "fips-eddsa"
 version = "0.0.0"
 dependencies = [
  "fips-module",
+ "fips-sha",
 ]
 
 [[package]]

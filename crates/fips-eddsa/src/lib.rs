@@ -24,6 +24,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod ed25519;
 pub mod edwards;
 pub mod field;
 pub mod scalar;
