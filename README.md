@@ -17,9 +17,10 @@ compliance mapping.
 ## Status
 
 **Phase 2 — in progress.** The cryptographic core is taking shape under the
-power-up self-test harness, with 113 KATs running green — 110 CAVP-sourced
-known-answer tests plus 3 SP 800-90A §11.3 DRBG health tests, every vector
-traceable to its published source.
+power-up self-test harness, with 122 KATs running green — 119 CAVP-sourced
+known-answer tests (including 9 SP 800-90A §9.3 prediction-resistance DRBG
+KATs) plus 3 SP 800-90A §11.3 DRBG health tests, every vector traceable to
+its published source.
 
 ### Implemented (with power-up KATs)
 
@@ -31,9 +32,11 @@ traceable to its published source.
   `no df` and `use df` variants; Hash_DRBG (SP 800-90A §10.1.1) over
   SHA-256, SHA-384, and SHA-512 with the §10.3.1 `Hash_df` derivation
   function; HMAC_DRBG (SP 800-90A §10.1.2) over HMAC-SHA-256,
-  HMAC-SHA-384, and HMAC-SHA-512; SP 800-90A §11.3 error-path health
-  tests (generate-before-instantiate, reseed-counter ceiling,
-  post-uninstantiate access) for each mechanism.
+  HMAC-SHA-384, and HMAC-SHA-512; SP 800-90A §9.3 prediction-resistance
+  generate API with CAVP `drbgvectors_pr_true` KATs for every Hash/HMAC
+  mechanism and for each CTR_DRBG AES key size; SP 800-90A §11.3
+  error-path health tests (generate-before-instantiate, reseed-counter
+  ceiling, post-uninstantiate access) for each mechanism.
 - **KDF** — SP 800-108r1 Counter / Feedback / Double-Pipeline Iteration
   modes (`fips-kdf`); SP 800-56C Rev 2 Two-Step KDA-HKDF; RFC 5869 HKDF
   over all eleven HMACs.
@@ -69,7 +72,7 @@ cargo build -p acvp-harness -p fips-integrity
 ./target/debug/acvp-harness
 ```
 
-The harness performs module-boundary initialization, runs the 113 power-up
+The harness performs module-boundary initialization, runs the 122 power-up
 KATs, runs the software integrity self-test, and prints the full KAT
 inventory.
 
