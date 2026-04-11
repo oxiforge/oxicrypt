@@ -46,12 +46,37 @@
 //! while `fips-module` is still in the `SelfTest` state, before
 //! `require_operational()` would allow it.
 //!
+//! # Power-up self-tests
+//!
+//! [`KATS`] ships one pinned vector per HMAC variant (11 in
+//! total). Each entry runs independently at module power-up
+//! per FIPS 140-3 IG 10.3.A; families do not share KATs even
+//! when the hash cores are related.
+//!
+//! # Sensitive security parameters
+//!
+//! - **HMAC key** — CSP. Provided by the caller as a byte slice
+//!   of arbitrary length, normalized to `K0` inside the HMAC
+//!   state. The caller is responsible for zeroizing the
+//!   original key buffer once it hands off to HMAC; the HMAC
+//!   state itself holds only the derived inner/outer hash
+//!   state, which is reset by `new`/`reset` and goes away when
+//!   the frame drops.
+//!
+//! # FIPS module gating
+//!
+//! Public `Hmac<H, B, L>` constructors gate on
+//! [`fips_module::require_operational`]; the hidden
+//! `*_internal` surface is used by the HMAC KAT runner itself
+//! and by downstream consumers (HKDF, KBKDF, HMAC_DRBG) that
+//! need to run during `SelfTest`.
+//!
 //! # FIPS 140-3 IG D.G note (March 2026)
 //!
-//! HMAC is an approved MAC per SP 800-107 Rev. 1 and an approved
-//! PRF per SP 800-108. HMAC-SHA-1 remains approved for MAC and KDF
-//! use even though SHA-1 is disallowed for digital signature
-//! generation (SP 800-131A Rev. 2).
+//! HMAC is an approved MAC per SP 800-107 Rev. 1 and an
+//! approved PRF per SP 800-108. HMAC-SHA-1 remains approved
+//! for MAC and KDF use even though SHA-1 is disallowed for
+//! digital signature generation (SP 800-131A Rev. 2).
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(

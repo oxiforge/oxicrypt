@@ -1,34 +1,100 @@
-//! RSA signature generation and verification per FIPS 186-5 §5.4 /
-//! RFC 8017 §8.
+//! RSA-2048 signature generation, verification, and key generation
+//! per FIPS 186-5 / RFC 8017.
 //!
-//! # Status
+//! # Approved services
 //!
-//! Chunks R1 and R2 are live. R1 landed the fixed-width big-int
-//! stack ([`bigint2048`] / [`mont2048`]) plus RSASSA-PKCS1-v1_5
-//! verify with SHA-256. R2 adds the private-key side: a
-//! constant-time 4-bit windowed Montgomery ladder
-//! ([`mont2048::MontCtx2048::pow_secret`]), an
-//! [`RsaPrivateKey2048`] handle that runs the FIPS 140-3 IG 10.3.A
-//! pairwise consistency test at construction, and a gated sign
-//! entry point [`RsaPrivateKey2048::sign_pkcs1_v15_sha256`]. The
-//! power-up KAT is extended to cover both verify and sign against
-//! a pinned `(n, e, d, msg, sig)` tuple.
+//! | Service | Spec | Entry point |
+//! |---------|------|-------------|
+//! | RSASSA-PKCS1-v1_5 verify, SHA-256 | FIPS 186-5 §5.4 / RFC 8017 §8.2 | [`rsa_pkcs1_v15_verify_2048_sha256`] |
+//! | RSASSA-PKCS1-v1_5 sign, SHA-256   | FIPS 186-5 §5.4 / RFC 8017 §8.2 | [`RsaPrivateKey2048::sign_pkcs1_v15_sha256`] |
+//! | RSASSA-PSS verify, SHA-256, MGF1  | FIPS 186-5 §5.4 / RFC 8017 §8.1 | [`rsa_pss_verify_2048_sha256`] |
+//! | RSASSA-PSS sign, SHA-256, MGF1    | FIPS 186-5 §5.4 / RFC 8017 §8.1 | [`RsaPrivateKey2048::sign_pss_sha256_with_salt`] and [`RsaPrivateKey2048::sign_pss_sha256`] |
+//! | RSA key generation                | FIPS 186-5 §A.1.1 / §B.3.1      | [`RsaPrivateKey2048::generate`] |
+//!
+//! The PSS scheme uses MGF1-SHA-256 with `sLen = hLen = 32` and
+//! `emBits = 2047` per FIPS 186-5 §5.4 and RFC 8017 §9.1. The PSS
+//! sign surface is duplicated: a caller-supplied-salt form (used
+//! by the power-up KAT and by deterministic-reproducibility tests)
+//! and a DRBG-backed form that samples a fresh salt per call.
 //!
 //! # FIPS 186-5 §5.1 modulus size
 //!
-//! Only `|n| = 2048` bits is accepted. Verification of legacy 1024-
-//! or 1280-bit RSA signatures is outside the approved boundary and
-//! this crate deliberately has no code path for it. Extension to
-//! RSA-3072 and RSA-4096 will land when the corresponding
-//! fixed-width big-int types are added.
+//! Only `|n| = 2048` bits is accepted. Verification of legacy
+//! 1024- or 1280-bit RSA signatures is outside the approved
+//! boundary and this crate deliberately has no code path for it.
+//! Extension to RSA-3072 / RSA-4096 is scheduled for a later
+//! chunk and requires new fixed-width big-int types; the code is
+//! structured so `mont2048` / `mont1024` can be forked by
+//! width without disturbing the higher-level scheme code.
+//!
+//! # Power-up self-tests
+//!
+//! [`self_test`] runs one pinned PKCS#1 v1.5 sign-and-verify KAT
+//! and one pinned PSS sign-and-verify KAT. Both use hidden
+//! `*_internal` primitives that bypass
+//! [`fips_module::require_operational`] so they can execute while
+//! the module is still in `SelfTest`. Keygen is **not** on the
+//! power-up path — it is too slow in debug builds — but is
+//! regression-covered by a pinned-DRBG-seed KAT in
+//! [`keygen`]'s test module.
+//!
+//! # Conditional self-tests
+//!
+//! Every [`RsaPrivateKey2048`] — whether constructed from bytes
+//! via [`RsaPrivateKey2048::from_components`] or freshly
+//! generated via [`RsaPrivateKey2048::generate`] — goes through
+//! the FIPS 140-3 IG 10.3.A **pairwise consistency test** before
+//! the handle is returned: the constructor signs a fixed
+//! all-zeros message, verifies the signature back with the
+//! public key, and rejects the key on any mismatch. This
+//! catches both import-time corruption and any accidental
+//! divergence in a freshly-generated `(n, d)` pair.
+//!
+//! # Sensitive security parameters (SSPs)
+//!
+//! - **Public key components** (`n`, `e`) — public, not SSPs.
+//! - **Private exponent** (`d`) — CSP. Held inside
+//!   [`RsaPrivateKey2048`] as a fixed-width byte array; the
+//!   constant-time Montgomery ladder in
+//!   [`mont2048::MontCtx2048::pow_secret`] is the only path that
+//!   ever observes it during signing.
+//! - **Prime factors** (`p`, `q`) — CSPs during keygen only;
+//!   this crate does not retain them after `d` is derived, so
+//!   there is no CRT-form private-key surface yet. CRT and
+//!   Bellcore fault-detection are scheduled for a later chunk.
+//! - **PSS salt** — ephemeral CSP; sampled from the caller's
+//!   HMAC_DRBG, consumed inside a single signing operation, and
+//!   dropped when the stack frame unwinds.
+//!
+//! Zeroization of the long-lived private-key storage is tracked
+//! separately by the crate-wide hardening pass; all short-lived
+//! intermediates live on the stack and go away with the frame.
+//!
+//! # Side-channel posture
+//!
+//! - Signing uses
+//!   [`mont2048::MontCtx2048::pow_secret`] — a 4-bit windowed
+//!   constant-time Montgomery ladder that never branches on
+//!   private-exponent bits and never indexes a table with a
+//!   secret.
+//! - Verification uses `mont2048::MontCtx2048::pow_public_u64`,
+//!   which is explicitly **not** constant-time in the public
+//!   exponent `e`; that is acceptable because `e` is public.
+//! - Miller-Rabin during keygen uses
+//!   [`mont1024::MontCtx1024::pow_public_u1024`], which is
+//!   non-constant-time in the witness exponent; that is
+//!   acceptable because the candidate prime is not yet a
+//!   committed key and timing information cannot be correlated
+//!   with any bit of a final key.
 //!
 //! # FIPS module gating
 //!
-//! [`rsa_pkcs1_v15_verify_2048_sha256`] and
-//! [`RsaPrivateKey2048::sign_pkcs1_v15_sha256`] call
-//! [`fips_module::require_operational`] before doing any work; a
-//! hidden `*_internal` pair bypasses the gate so the power-up KAT
-//! in [`self_test`] can run while the module is still in `SelfTest`.
+//! Every public service routes through
+//! [`fips_module::require_operational`]. A hidden `*_internal`
+//! twin of each primitive bypasses the gate so
+//! [`self_test`] can run while the module is still in
+//! `SelfTest`. Callers in application code should never need to
+//! touch the `*_internal` surface; it is `#[doc(hidden)]`.
 #![no_std]
 #![forbid(unsafe_code)]
 

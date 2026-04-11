@@ -1,11 +1,24 @@
 //! Software integrity self-test for the pqclib FIPS module.
 //!
+//! # Approved service
+//!
+//! | Service | Standard | Entry point |
+//! |---------|----------|-------------|
+//! | Module binary integrity check | FIPS 140-3 §7.10 / IG 10.3.A | [`integrity_self_test`] |
+//!
 //! This crate implements the power-up integrity check required by
 //! FIPS 140-3 IG 10.3.A (as of March 2026). The check verifies that
 //! the module binary on disk has not been modified since it was
 //! signed by recomputing an HMAC-SHA-256 over the exact file bytes of
 //! the currently-running executable and comparing against a
 //! reference MAC embedded **inside** the binary at a reserved slot.
+//!
+//! # Sensitive security parameters
+//!
+//! None. The integrity HMAC key is public build-time material (see
+//! "HMAC key policy" below); the MAC itself is public, and the
+//! module binary bytes are public. No CSPs pass through this
+//! crate's API.
 //!
 //! # Design: embedded slot
 //!

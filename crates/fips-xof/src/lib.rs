@@ -1,24 +1,42 @@
 //! SHAKE128 / SHAKE256 extendable-output functions per FIPS 202 §6.2.
 //!
-//! # Status
+//! # Approved algorithms
 //!
-//! Phase 2. SHAKE128 and SHAKE256 are implemented on top of the
-//! shared Keccak-f[1600] permutation and sponge exposed by
-//! `fips_sha::keccak`. cSHAKE, KMAC, and the SP 800-185 family will
-//! land in later phases.
+//! | Algorithm | Standard | Rate (bytes) | Capacity (bits) |
+//! |-----------|----------|--------------|-----------------|
+//! | SHAKE128 | FIPS 202 §6.2 | 168 | 256 |
+//! | SHAKE256 | FIPS 202 §6.2 | 136 | 512 |
 //!
-//! # Rate and domain separation
-//!
-//! SHAKE128 uses rate = 1344 bits = 168 bytes (capacity 256).
-//! SHAKE256 uses rate = 1088 bits = 136 bytes (capacity 512).
-//! Both use the SHAKE domain-separation byte 0x1f (FIPS 202 §B.2).
+//! Both use the SHAKE domain-separation byte `0x1f`
+//! (FIPS 202 §B.2) and share the Keccak-f\[1600\] permutation
+//! and sponge exposed by `fips_sha::keccak`. cSHAKE, KMAC, and
+//! the rest of the SP 800-185 family are not yet in scope.
 //!
 //! # API shape
 //!
-//! SHAKE is an XOF, not a hash: the output length is chosen by the
-//! caller at squeeze time, not fixed at construction. The streaming
-//! API is `new → update* → finalize → squeeze*`. `squeeze` may be
-//! called repeatedly for arbitrarily long output.
+//! SHAKE is an XOF, not a hash: the output length is chosen by
+//! the caller at squeeze time, not fixed at construction. The
+//! streaming API is `new → update* → finalize → squeeze*`.
+//! `squeeze` may be called repeatedly for arbitrarily long
+//! output.
+//!
+//! # Power-up self-tests
+//!
+//! [`KATS`] exposes one pinned SHAKE128 and one pinned SHAKE256
+//! vector, with the squeeze length matched to the NIST ACVP
+//! reference output.
+//!
+//! # Sensitive security parameters
+//!
+//! None. SHAKE is a keyless public primitive; all inputs and
+//! outputs are public.
+//!
+//! # FIPS module gating
+//!
+//! Public SHAKE entry points gate on
+//! [`fips_module::require_operational`] and expose a hidden
+//! `*_internal` surface for in-module consumers (e.g. a future
+//! SP 800-185 KMAC) that need to run during `SelfTest`.
 
 #![no_std]
 #![forbid(unsafe_code)]

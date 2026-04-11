@@ -1,5 +1,11 @@
 //! ECDH per SP 800-56Ar3.
 //!
+//! # Approved services
+//!
+//! | Service | Standard | Entry point |
+//! |---------|----------|-------------|
+//! | P-256 ECC CDH shared secret | SP 800-56Ar3 §5.7.1.2 | [`compute_shared_secret_p256`] |
+//!
 //! Currently supports only curve P-256 via the SP 800-56Ar3
 //! §5.7.1.2 "elliptic curve Diffie-Hellman" primitive (ECC CDH):
 //!
@@ -25,16 +31,40 @@
 //! these checks causes [`compute_shared_secret_p256`] to return an
 //! error *without* performing the scalar multiplication.
 //!
+//! # Power-up self-tests
+//!
+//! [`self_test`] runs the RFC 5903 §8.1 ECDH-P-256 test vector in
+//! both directions (`d_i * Q_r` and `d_r * Q_i`) and also checks
+//! that a tampered peer key is rejected by public-key validation.
+//!
+//! # Conditional self-tests
+//!
+//! Full peer-public-key validation per SP 800-56Ar3 §5.6.2.3.3 is
+//! a conditional test that runs on every ECDH call. Private-scalar
+//! canonicality (`1 ≤ d < n`) is checked alongside.
+//!
+//! # Sensitive security parameters
+//!
+//! - **Private key `d`** (`[u8; 32]`) — CSP. Canonicalized to a
+//!   `Scalar` in-place and not retained beyond the call.
+//! - **Shared secret `Z`** (`[u8; 32]`) — CSP. Returned raw; the
+//!   caller is responsible for feeding it into an SP 800-56Cr2
+//!   extractor before use as keying material.
+//! - **Peer public key `Q`** — public. Subject to full validation.
+//!
+//! # Side-channel posture
+//!
+//! Scalar multiplication is constant-time in `d` via the underlying
+//! `fips-ecdsa::p256_point` ladder; public-key validation branches
+//! only on public data. Level-1 disclosure only.
+//!
 //! # FIPS module gating
 //!
 //! The public entry point gates on
 //! [`fips_module::require_operational`]; a hidden
-//! [`compute_shared_secret_p256_internal`] primitive bypasses the
+//! `compute_shared_secret_p256_internal` primitive bypasses the
 //! gate so the power-up KAT in [`self_test`] can run while the
-//! module is still in `SelfTest`. The KAT runs the RFC 5903 §8.1
-//! ECDH-P-256 test vector in both directions
-//! (`d_i * Q_r` and `d_r * Q_i`) and also checks that a tampered
-//! peer key is rejected.
+//! module is still in `SelfTest`.
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(

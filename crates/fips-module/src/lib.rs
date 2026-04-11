@@ -1,13 +1,15 @@
 //! FIPS 140-3 Level 1 module boundary.
 //!
-//! This crate defines the **cryptographic module boundary** per FIPS 140-3
-//! Section 7.2. Every approved service in the workspace routes through the
-//! state machine here: no algorithm is permitted to produce output until the
-//! power-up self-tests have run and the module has entered the `Operational`
-//! state. On any self-test failure the module enters a terminal `Error`
-//! state in which all subsequent calls are rejected.
+//! This crate defines the **cryptographic module boundary** per
+//! FIPS 140-3 Section 7.2 and the service-gating plumbing every
+//! other crate in the workspace depends on. No algorithm is
+//! permitted to produce output until the power-up self-tests have
+//! run and the module has entered the `Operational` state; on any
+//! self-test failure the module latches into a terminal `Error`
+//! state and rejects every subsequent call for the remainder of
+//! the process lifetime.
 //!
-//! # State machine
+//! # State machine (FIPS 140-3 §7.2)
 //!
 //! ```text
 //!    ┌──────────┐  initialize() ┌───────────┐  all KATs pass  ┌──────────────┐
@@ -22,21 +24,62 @@
 //!                                └─────────┘
 //! ```
 //!
-//! # Phase 1 scope
+//! # What this crate ships
 //!
-//! This file defines the state machine, the `SelfTest` trait, the global
-//! state accessors, and the module `Error` type. It deliberately ships
-//! **no actual self-tests** yet — the test registry is empty and
-//! [`initialize`] will move the module straight from `SelfTest` to
-//! `Operational`. Real KATs land in later phases as each algorithm crate
-//! gains an implementation.
+//! - [`State`] and the transition machine (`PowerOff →
+//!   SelfTest → Operational | Error`).
+//! - [`initialize_with_tests`] — the canonical one-shot entry
+//!   point that the top-level caller uses to run every approved
+//!   algorithm's power-up KAT before opening the service
+//!   interface. [`initialize`] is a thin wrapper for the empty
+//!   registry case (used only by this crate's own unit tests).
+//! - [`require_operational`] — the gate that every approved
+//!   service in every other crate calls on entry. Returns
+//!   [`Error::NotOperational`] (with the observed state) on any
+//!   pre-`Operational` or post-`Error` call.
+//! - [`enter_error_state`] — irreversible transition into the
+//!   terminal error state, called by conditional self-tests
+//!   (pairwise consistency, DRBG health) when they detect a
+//!   failure.
+//! - [`KatEntry`] and the [`SelfTest`] trait — the registry
+//!   shape that algorithm crates use to expose their power-up
+//!   KATs.
+//!
+//! The test registry is **not** assembled by linker-section
+//! tricks: callers pass an explicit `&[KatEntry]` slice. That
+//! means the full set of power-up tests is visible in source at
+//! every call site, which makes it straightforward to audit the
+//! module's power-up inventory against the Security Policy.
+//!
+//! # Sensitive security parameters (SSPs)
+//!
+//! This crate holds **no SSPs** of its own. It only gates
+//! access to other crates that do. Secret material lives in the
+//! algorithm crates that own it (e.g. `fips-rsa`'s
+//! `RsaPrivateKey2048`, `fips-drbg`'s DRBG states). The error
+//! latch here does not perform SSP zeroization on its own — each
+//! owning crate is responsible for ensuring its SSPs are
+//! dropped when the process restarts following a transition into
+//! the `Error` state.
+//!
+//! # FIPS 140-3 / SP 800-140B mapping
+//!
+//! | SP 800-140B / IG clause | Implementation |
+//! |-------------------------|----------------|
+//! | §7.10 power-up self-tests | [`initialize_with_tests`] runs every registered [`KatEntry`] sequentially; the first failure latches [`State::Error`]. |
+//! | §7.10 conditional self-tests | Algorithm crates call [`enter_error_state`] on detecting a pairwise-consistency or DRBG-health failure. |
+//! | IG 9.5.A approved-mode indicator | [`is_operational`] / [`state`] — queryable at runtime. |
+//! | IG 10.3.A software integrity | Delegated to `fips-integrity` (separate crate), wired in as the first KAT by the top-level caller. |
 //!
 //! # Thread safety
 //!
-//! State is stored in a single `AtomicU8` and is safe to read from any
-//! thread. `initialize` uses compare-and-swap to guarantee the self-test
-//! phase runs exactly once per process lifetime even under concurrent
-//! first-calls.
+//! State is stored in a single `AtomicU8` and is safe to read
+//! from any thread. [`initialize_with_tests`] uses a
+//! compare-and-swap to guarantee the self-test phase runs
+//! exactly once per process lifetime even under concurrent
+//! first-calls; racing losers spin on the `SelfTest` state byte
+//! so they do not observe the transient phase and then receive
+//! [`Error::AlreadyInitialized`].
 
 #![no_std]
 #![forbid(unsafe_code)]

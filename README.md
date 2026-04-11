@@ -43,11 +43,32 @@ its published source.
 - **Symmetric** — AES-128/192/256 block cipher (FIPS 197); ECB, CBC, CTR,
   GCM, and CCM modes (SP 800-38A / SP 800-38C / SP 800-38D); Key Wrap (KW)
   and Key Wrap with Padding (KWP) per SP 800-38F / RFC 3394 / RFC 5649.
+- **RSA** — RSA-2048 PKCS#1 v1.5 and PSS sign/verify (FIPS 186-5 §5.4–5.5),
+  RSA-2048 probable-prime keygen per FIPS 186-5 §A.1.3 with a pairwise
+  consistency test (IG 10.3.A) and a pinned-DRBG-seed regression KAT.
+  CRT sign path with Bellcore fault-check lands in R5.
+- **Elliptic curves** — ECDSA P-256 sign (caller-supplied `k`), verify,
+  and public-key derivation (FIPS 186-5 §6.4), with full SEC1 public-key
+  validation (SP 800-56Ar3 §5.6.2.3.3). ECDH P-256 (SP 800-56Ar3 §5.7.1.2
+  ECC CDH) with RFC 5903 §8.1 power-up KAT.
 - **Module integrity** — HMAC-SHA-256 software/firmware integrity check
   over `current_exe()` with an embedded 64-byte reserved slot populated at
   sign time and validated by magic-marker scan at boot (FIPS 140-3
   IG 10.3.A). Designed to work identically on Linux/macOS/Windows CLIs and
   on code-signed iOS `.app` bundles and Android APKs.
+
+### Documentation
+
+- **Rustdoc** — every `fips-*` crate's `lib.rs` header follows a common
+  template: approved-services table, power-up self-tests, conditional
+  self-tests, sensitive security parameters, side-channel posture, and
+  FIPS-module gating. Build the full doc tree with
+  `cargo doc --workspace --no-deps` and browse `target/doc`.
+- **Security Policy (alpha draft)** —
+  [`docs/security-policy/security-policy.md`](docs/security-policy/security-policy.md)
+  follows the SP 800-140Br1 Annex A section order and is kept in sync
+  with the rustdoc headers at every commit. Sections that still need a
+  human decision are marked `TODO`.
 
 ### ACVP / CAVP traceability
 
@@ -78,7 +99,8 @@ inventory.
 
 ### In flight
 
-- RSA (PKCS#1 v1.5, PSS, OAEP), ECDSA, EdDSA, ECDH
+- RSA CRT sign path with Bellcore fault-check (R5), RSA OAEP (R6),
+  EdDSA, ECDSA P-384 / P-521
 - ACVP harness vector dispatch (Phase 3)
 
 ## License

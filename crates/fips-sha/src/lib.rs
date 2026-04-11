@@ -1,11 +1,45 @@
-//! SHA-1, SHA-2, SHA-3 hash functions per FIPS 180-4 / FIPS 202.
+//! Approved hash functions: SHA-1, the SHA-2 family, and the
+//! SHA-3 family.
 //!
-//! # Status
+//! # Approved algorithms
 //!
-//! Phase 2 (in progress). SHA-224, SHA-256, SHA-384, SHA-512,
-//! SHA-512/224, and SHA-512/256 are implemented and shipped with
-//! power-up KATs. SHA-1 and the SHA-3 family will land incrementally
-//! in subsequent commits; each brings its own registered KAT.
+//! | Algorithm | Standard | Module |
+//! |-----------|----------|--------|
+//! | SHA-1       | FIPS 180-4 §6.1 | [`sha1`] |
+//! | SHA-224     | FIPS 180-4 §6.3 | [`sha224`] |
+//! | SHA-256     | FIPS 180-4 §6.2 | [`sha256`] |
+//! | SHA-384     | FIPS 180-4 §6.5 | [`sha384`] |
+//! | SHA-512     | FIPS 180-4 §6.4 | [`sha512`] |
+//! | SHA-512/224 | FIPS 180-4 §6.7 | [`sha512_t`] |
+//! | SHA-512/256 | FIPS 180-4 §6.7 | [`sha512_t`] |
+//! | SHA3-224    | FIPS 202 §6.1  | [`sha3`]    |
+//! | SHA3-256    | FIPS 202 §6.1  | [`sha3`]    |
+//! | SHA3-384    | FIPS 202 §6.1  | [`sha3`]    |
+//! | SHA3-512    | FIPS 202 §6.1  | [`sha3`]    |
+//!
+//! SHA-1 is retained as an **approved hash for legacy use and
+//! non-digital-signature KDF/HMAC contexts** per SP 800-131A
+//! Rev. 2. It is **not** approved for new digital-signature
+//! generation; `fips-rsa` and `fips-ecdsa` do not expose any
+//! SHA-1 sign path.
+//!
+//! # Power-up self-tests
+//!
+//! [`KATS`] exposes one [`fips_module::KatEntry`] per algorithm,
+//! driven by short-message vectors sourced from NIST CAVP
+//! (SHA-1, SHA-2 family) and ACVP-Server (SHA-3 family).
+//!
+//! # Sensitive security parameters
+//!
+//! None. Hash functions are keyless public primitives; all
+//! inputs and outputs are public.
+//!
+//! # FIPS module gating
+//!
+//! Hash primitives that are used directly by callers gate on
+//! [`fips_module::require_operational`]. Internal consumers
+//! (HMAC, KDFs, DRBGs) reach into the hidden `*_internal`
+//! surface so they keep working during `SelfTest`.
 //!
 //! # Usage
 //!

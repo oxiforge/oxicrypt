@@ -8,7 +8,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 
 ## 0. Current Status (as of 2026-04-11)
 
-**Phase position:** Phase 1 closed; solidly into Phase 2 (Asymmetric + DRBG). All P0 symmetric/hash/DRBG/KDF work has landed, ECDSA/ECDH are done, and `fips-rsa` has a working verify-and-sign pipeline for PKCS#1 v1.5 and PSS plus probable-prime key generation. CRT-form private keys with Bellcore fault-detection are the last Phase-2 RSA item.
+**Phase position:** Phase 1 closed; solidly into Phase 2 (Asymmetric + DRBG). All P0 symmetric/hash/DRBG/KDF work has landed, ECDSA/ECDH are done, and `fips-rsa` has a working verify-and-sign pipeline for PKCS#1 v1.5 and PSS plus probable-prime key generation. CRT-form private keys with Bellcore fault-detection are the last Phase-2 RSA item. Chunk **D1** (documentation pass) has landed: every fleshed-out crate's rustdoc header follows a common SP 800-140Br1-shaped template, and `docs/security-policy/security-policy.md` is an alpha draft that tracks the code at each commit.
 
 **Implemented and landed on `main`:**
 
@@ -40,6 +40,13 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - `fips-rsa` CRT-form private keys (p, q, dP, dQ, qInv) with Shamir-style verify-after-sign Bellcore fault-detection on the CRT sign path. Deliberately slid out of the keygen chunk because the keygen work was already large; CRT will sit alongside the existing non-CRT sign path.
 - Pairwise consistency test coverage for ECDSA and (eventual) EdDSA keygen at the same IG 10.3.A level as the RSA PCT.
 - `dudect`-style constant-time validation across the three asymmetric crates.
+
+**Documentation policy (applies from D1 forward):** every commit that
+touches a crate also refreshes (1) that crate's rustdoc header, (2)
+the Security Policy draft at `docs/security-policy/security-policy.md`,
+(3) the README if user-facing status changes, and (4) this project
+plan. The four doc updates ship in the same commit as the code — see
+`CLAUDE.md` for the full rule.
 
 ---
 
@@ -303,8 +310,9 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [ ] Constant-time audit of all secret-dependent operations
 - [ ] Fuzzing campaign: all algorithm entry points via `cargo-fuzz`
 - [ ] Memory safety analysis with Miri
-- [ ] Draft Security Policy document per SP 800-140D template
-- [ ] Finalize API documentation
+- [x] Draft Security Policy skeleton (alpha, SP 800-140Br1 section order) — pulled forward into chunk D1 on 2026-04-11; lives at `docs/security-policy/security-policy.md`. Needs human editing to resolve TODO markers before formal versioning.
+- [x] First rustdoc pass across all fleshed-out crates (chunk D1, 2026-04-11)
+- [ ] Finalize API documentation (post-human-editing)
 - [ ] Non-approved mode testing and mode indicator verification
 - [ ] Performance benchmarks and optimization pass
 

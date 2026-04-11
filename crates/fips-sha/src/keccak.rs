@@ -1,10 +1,10 @@
-//! Keccak-f[1600] permutation and a sponge construction.
+//! Keccak-f\[1600\] permutation and a sponge construction.
 //!
 //! This module implements the shared primitive used by SHA-3
 //! (fixed-length) and SHAKE (XOF). The SHA-3 family is specified in
 //! FIPS 202, which defines:
 //!
-//!   KECCAK-p[1600, 24]  — the 1600-bit permutation (a.k.a. Keccak-f)
+//!   KECCAK-p\[1600, 24\]  — the 1600-bit permutation (a.k.a. Keccak-f)
 //!   SPONGE[f, pad, r]    — the sponge construction
 //!   SHA3-n, SHAKE-n      — concrete instances of SPONGE
 //!
@@ -35,7 +35,7 @@
 /// Width of the Keccak state, in lanes. Each lane is a `u64`.
 pub const LANES: usize = 25;
 
-/// Number of rounds in Keccak-f[1600].
+/// Number of rounds in Keccak-f\[1600\].
 pub const ROUNDS: usize = 24;
 
 /// Round constants RC from FIPS 202 §3.2.5.
@@ -75,7 +75,7 @@ const RHO: [u32; LANES] = [
     18, 2, 61, 56, 14, //
 ];
 
-/// Keccak-f[1600] permutation.
+/// Keccak-f\[1600\] permutation.
 ///
 /// In-place; operates on a state of 25 `u64` lanes. Implements the
 /// θ, ρ, π, χ, ι step mapping exactly as specified in FIPS 202 §3.2.
@@ -126,7 +126,7 @@ pub fn keccak_f1600(state: &mut [u64; LANES]) {
 
 /// Keccak sponge with a configurable rate.
 ///
-/// Implements SPONGE[KECCAK-p[1600,24], pad10*1, r] from FIPS 202
+/// Implements SPONGE\[KECCAK-p\[1600,24\], pad10*1, r\] from FIPS 202
 /// §4. The rate `RATE_BYTES` is given in bytes and must be a
 /// multiple of 8 (all FIPS 202 rates are). The capacity is
 /// implicitly `1600 - 8*RATE_BYTES` bits.

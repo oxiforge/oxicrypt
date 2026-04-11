@@ -39,15 +39,36 @@
 //! aliases ([`HkdfSha256`], etc.) — the adapter is `#[doc(hidden)]`
 //! and not covered by semver.
 //!
-//! # FIPS 140-3 IG D.G note (March 2026)
+//! # Power-up self-tests
 //!
-//! Per IG 10.3.A each KDF instantiation carries its own power-up
-//! KAT; KDF families do not share. The `KATS` slice exported from
-//! this crate currently holds 44 entries — 11 HKDF extract+expand
-//! round-trips plus 11 SP 800-108 Counter Mode derivations plus
-//! 11 SP 800-108 Feedback Mode derivations plus 11 SP 800-108
-//! Double-Pipeline Iteration Mode derivations, all driven by
-//! fixed compile-time inputs for auditability.
+//! Per IG 10.3.A each KDF instantiation carries its own
+//! power-up KAT; KDF families do not share. [`KATS`] exposes
+//! 44 entries total — 11 HKDF extract+expand round-trips plus
+//! 11 SP 800-108 Counter Mode derivations plus 11 SP 800-108
+//! Feedback Mode derivations plus 11 SP 800-108 Double-Pipeline
+//! Iteration Mode derivations, all driven by fixed compile-time
+//! inputs for auditability.
+//!
+//! # Sensitive security parameters
+//!
+//! - **Input keying material (IKM)** to HKDF-Extract — CSP
+//!   supplied by the caller (e.g. an ECDH shared secret). The
+//!   caller retains ownership and is responsible for zeroizing
+//!   its own IKM buffer once HKDF has consumed it.
+//! - **Pseudo-random key (PRK)** produced by HKDF-Extract — CSP.
+//!   Held inside the [`Hkdf`] handle between `extract` and
+//!   `expand`; lives only as long as the handle is in scope.
+//! - **SP 800-108 key-derivation key (`K_IN`)** — CSP supplied
+//!   by the caller, not retained beyond the derivation call.
+//! - **Output keying material (OKM)** — CSP returned to the
+//!   caller. Its classification depends on downstream use.
+//!
+//! # FIPS module gating
+//!
+//! Every public KDF entry point calls
+//! [`fips_module::require_operational`]; the KAT runners reach
+//! into the `*_internal` HMAC surface so they can execute while
+//! the module is still in `SelfTest`.
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(
