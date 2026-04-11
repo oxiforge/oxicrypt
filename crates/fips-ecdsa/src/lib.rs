@@ -1,26 +1,19 @@
-//! ECDSA (P-256, P-384, P-521) per FIPS 186-5
+//! ECDSA (P-256, P-384, P-521) per FIPS 186-5.
 //!
 //! # Status
 //!
-//! Phase 1 scaffold. No algorithm code yet. The crate exists so that
-//! the workspace, CI, and `fips-module` wiring can be exercised end
-//! to end before real implementations land.
+//! Phase 2, in progress. Build order (bottom-up, per curve):
+//!
+//!   * [`p256_field`] — arithmetic in `GF(p)` for P-256 with
+//!     `p = 2^256 - 2^224 + 2^192 + 2^96 - 1`. Montgomery form,
+//!     four 64-bit limbs, constant-time, `no_std`.
+//!
+//! Scalar field arithmetic mod the group order, Jacobian point
+//! representation, constant-time scalar multiplication, SEC1
+//! encoding, and FIPS 186-5 keygen / sign / verify land in subsequent
+//! commits. P-384 and P-521 are deferred until P-256 is complete and
+//! gated by power-up KATs.
 #![no_std]
 #![forbid(unsafe_code)]
 
-/// Placeholder returning the crate name. Will be removed once real
-/// public API is added.
-#[doc(hidden)]
-pub const fn __phase1_placeholder() -> &'static str {
-    "fips_ecdsa"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::__phase1_placeholder;
-
-    #[test]
-    fn placeholder_name_matches_crate() {
-        assert_eq!(__phase1_placeholder(), "fips_ecdsa");
-    }
-}
+pub mod p256_field;
