@@ -69,6 +69,20 @@ const D2: FieldElement = FieldElement([
     0x0002_406d_9dc5_6dff,
 ]);
 
+/// The edwards25519 curve coefficient
+/// `d = -121665 · 121666⁻¹ (mod p)`.
+///
+/// Used by the RFC 8032 §5.1.3 point decompression routine to recover
+/// the x-coordinate from a compressed y-coordinate. Five-limb
+/// radix-2⁵¹ encoding cross-checked in [`tests::d_matches_python`].
+const D: FieldElement = FieldElement([
+    0x0003_4dca_1359_78a3,
+    0x0001_a828_3b15_6ebd,
+    0x0005_e7a2_6001_c029,
+    0x0007_39c6_63a0_3cbb,
+    0x0005_2036_cee2_b6ff,
+]);
+
 /// The Ed25519 base point `B`, projected into extended
 /// twisted-Edwards coordinates `(X : Y : Z : T)` with `Z = 1` and
 /// `T = X · Y`.
@@ -262,9 +276,107 @@ impl EdwardsPoint {
             z: f * g,
         }
     }
+
+    /// Compress a point to 32 bytes per RFC 8032 §5.1.2.
+    ///
+    /// Converts from extended `(X : Y : Z : T)` coordinates to affine
+    /// `(x, y)` by multiplying by `Z⁻¹`, encodes the y-coordinate as 32
+    /// little-endian bytes, and overwrites the most significant bit of
+    /// the last byte with the least significant bit of the canonical
+    /// x-coordinate (the "sign" bit).
+    pub fn compress(&self) -> [u8; 32] {
+        let z_inv = self.z.invert();
+        let x = self.x * z_inv;
+        let y = self.y * z_inv;
+        let mut out = y.to_bytes();
+        // Fold x's parity into the high bit of the last byte.
+        out[31] |= x.is_negative() << 7;
+        out
+    }
+
+    /// Decompress 32 bytes back to a curve point per RFC 8032 §5.1.3.
+    ///
+    /// Returns `None` if the bytes do not encode a valid point. The
+    /// checks performed, in order, are:
+    ///
+    ///   1. The y-coordinate is strictly less than `p` (non-canonical
+    ///      encodings are rejected, matching RFC 8032's requirement
+    ///      that decoding fails when the decoded integer is ≥ p).
+    ///   2. The equation `x² = (y² − 1) / (d·y² + 1)` has a solution
+    ///      in GF(p). The candidate square root is computed as
+    ///      `(u·v³) · (u·v⁷)^((p−5)/8)`; if squaring gives `u` we
+    ///      take it directly, if it gives `−u` we multiply by
+    ///      `√(−1)`, otherwise the point is invalid.
+    ///   3. If the recovered `x` is zero and the encoded sign bit is
+    ///      1, decoding fails (there is no signed variant of zero).
+    ///   4. Otherwise, the recovered `x` is negated when its parity
+    ///      disagrees with the encoded sign bit.
+    ///
+    /// The returned point is in extended coordinates with `Z = 1` and
+    /// `T = x · y`. This routine is **not** constant time with respect
+    /// to the validity of its input — invalid encodings are rejected
+    /// via early returns — but the decoding of a valid point takes a
+    /// fixed amount of work.
+    pub fn decompress(bytes: &[u8; 32]) -> Option<EdwardsPoint> {
+        // Split off the sign bit and mask it out of the y bytes.
+        let sign_bit = bytes[31] >> 7;
+        let mut y_bytes = *bytes;
+        y_bytes[31] &= 0x7f;
+
+        // Load y and reject non-canonical encodings: the value must be
+        // strictly less than p, i.e. the 255-bit integer represented
+        // by y_bytes must round-trip through the canonical encoder.
+        let y = FieldElement::from_bytes(&y_bytes);
+        if y.to_bytes() != y_bytes {
+            return None;
+        }
+
+        // u = y² − 1, v = d·y² + 1.
+        let y_sq = y.square();
+        let u = y_sq - FieldElement::ONE;
+        let v = D * y_sq + FieldElement::ONE;
+
+        // Candidate x = (u · v³) · (u · v⁷)^((p−5)/8).
+        let v3 = v.square() * v;
+        let v7 = v3.square() * v;
+        let uv7 = u * v7;
+        let x_cand = u * v3 * uv7.pow_p_5_8();
+
+        // Check v · x² against ±u.
+        let vx2 = v * x_cand.square();
+        let correct_sign = vx2.ct_eq(&u);
+        let flipped_sign = vx2.ct_eq(&(-u));
+
+        let x_flipped = x_cand * FieldElement::SQRT_M1;
+        let mut x = FieldElement::conditional_select(&x_cand, &x_flipped, flipped_sign);
+
+        if correct_sign == 0 && flipped_sign == 0 {
+            // Neither root works; no square root exists.
+            return None;
+        }
+
+        // If x == 0 and sign bit is 1, the point is invalid.
+        if x.is_zero() == 1 && sign_bit == 1 {
+            return None;
+        }
+
+        // Force x's parity to match the encoded sign bit.
+        let needs_neg = u8::from(x.is_negative() != sign_bit);
+        let neg_x = -x;
+        x = FieldElement::conditional_select(&x, &neg_x, needs_neg);
+
+        let t = x * y;
+        Some(EdwardsPoint {
+            x,
+            y,
+            z: FieldElement::ONE,
+            t,
+        })
+    }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -483,5 +595,102 @@ mod tests {
         let y_aff = two_b.y * z_inv;
         assert_eq!(x_aff.to_bytes(), TWO_B_X);
         assert_eq!(y_aff.to_bytes(), TWO_B_Y);
+    }
+
+    #[test]
+    fn d_matches_python() {
+        // Python: d = (-121665 * pow(121666, -1, p)) % p
+        // little-endian 32-byte encoding:
+        const D_BYTES: [u8; 32] = [
+            0xa3, 0x78, 0x59, 0x13, 0xca, 0x4d, 0xeb, 0x75, 0xab, 0xd8, 0x41, 0x41, 0x4d, 0x0a,
+            0x70, 0x00, 0x98, 0xe8, 0x79, 0x77, 0x79, 0x40, 0xc7, 0x8c, 0x73, 0xfe, 0x6f, 0x2b,
+            0xee, 0x6c, 0x03, 0x52,
+        ];
+        assert_eq!(D.to_bytes(), D_BYTES);
+    }
+
+    #[test]
+    fn compress_base_point() {
+        // B has x-coordinate with LSB 0 (Bx[0] == 0x1a), so the
+        // compressed encoding is just the little-endian encoding of
+        // y = 4/5 with the high bit of the last byte cleared — which
+        // is exactly BASE_Y_BYTES because 0x66 already has high bit 0.
+        assert_eq!(EdwardsPoint::BASE.compress(), BASE_Y_BYTES);
+    }
+
+    #[test]
+    fn compress_identity() {
+        // Identity is (0, 1). y=1 encodes to 0x01 in byte 0, and
+        // x=0 has LSB 0 so the high bit of byte 31 stays 0.
+        let expected = {
+            let mut e = [0u8; 32];
+            e[0] = 1;
+            e
+        };
+        assert_eq!(EdwardsPoint::IDENTITY.compress(), expected);
+    }
+
+    #[test]
+    fn decompress_base_point_round_trip() {
+        let compressed = EdwardsPoint::BASE.compress();
+        let recovered = EdwardsPoint::decompress(&compressed)
+            .expect("base point should decompress");
+        assert_eq!(recovered.ct_eq(&EdwardsPoint::BASE), 1);
+    }
+
+    #[test]
+    fn decompress_identity_round_trip() {
+        let compressed = EdwardsPoint::IDENTITY.compress();
+        let recovered = EdwardsPoint::decompress(&compressed)
+            .expect("identity should decompress");
+        assert_eq!(recovered.ct_eq(&EdwardsPoint::IDENTITY), 1);
+    }
+
+    #[test]
+    fn compress_decompress_round_trip_multiples_of_base() {
+        // Walk a handful of multiples of B through compress/decompress
+        // and confirm we recover the same point.
+        let mut p = EdwardsPoint::IDENTITY;
+        for i in 0..16 {
+            let bytes = p.compress();
+            let Some(q) = EdwardsPoint::decompress(&bytes) else {
+                panic!("iteration {i} failed: bytes={bytes:02x?}")
+            };
+            assert_eq!(q.ct_eq(&p), 1, "iteration {i} decoded wrong point");
+            p = p.add(&EdwardsPoint::BASE);
+        }
+    }
+
+    #[test]
+    fn decompress_rejects_noncanonical_y() {
+        // y = p is not canonical: from_bytes masks the high bit so y
+        // decodes as 0 < p, but the round-trip check in decompress
+        // sees the original bytes differ from the canonical encoding
+        // of 0 and rejects them. Use y = p exactly.
+        let mut y_p: [u8; 32] = [
+            0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0x7f,
+        ];
+        // Ensure the sign bit is clear (it already is, 0x7f).
+        y_p[31] &= 0x7f;
+        assert!(EdwardsPoint::decompress(&y_p).is_none());
+    }
+
+    #[test]
+    fn decompress_rejects_non_square() {
+        // Choose y = 2. Then u = y²−1 = 3, v = d·y²+1 = 4d+1. u/v is
+        // not a quadratic residue mod p (verified in Python below), so
+        // decompression must fail:
+        //
+        //   p = 2**255 - 19
+        //   d = (-121665 * pow(121666, -1, p)) % p
+        //   u = (2*2 - 1) % p
+        //   v = (d*4 + 1) % p
+        //   legendre = pow(u * pow(v, -1, p), (p-1)//2, p)
+        //   # legendre == p - 1, i.e. -1: non-square
+        let mut bytes = [0u8; 32];
+        bytes[0] = 2;
+        assert!(EdwardsPoint::decompress(&bytes).is_none());
     }
 }

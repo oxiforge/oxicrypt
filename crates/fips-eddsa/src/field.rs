@@ -70,6 +70,18 @@ impl FieldElement {
     /// The multiplicative identity, `1`.
     pub const ONE: FieldElement = FieldElement([1, 0, 0, 0, 0]);
 
+    /// A square root of `-1` in GF(p), specifically
+    /// `2^((p-1)/4) mod p`. Needed by the RFC 8032 §5.1.3 point
+    /// decoding routine to swap candidate square roots when the first
+    /// candidate produces `-u` instead of `u`.
+    pub const SQRT_M1: FieldElement = FieldElement([
+        0x0006_1b27_4a0e_a0b0,
+        0x0000_d5a5_fc8f_189d,
+        0x0007_ef5e_9cbd_0c60,
+        0x0007_8595_a680_4c9e,
+        0x0002_b832_4804_fc1d,
+    ]);
+
     /// Load a field element from 32 little-endian bytes.
     ///
     /// The high bit of the last byte is ignored, matching RFC 8032
@@ -266,12 +278,20 @@ impl FieldElement {
     }
 
     /// Negate a field element: `-self mod p`.
+    ///
+    /// Reduces the input first, then subtracts each canonical limb
+    /// from the corresponding limb of `2·p`. Reducing up front is
+    /// necessary because a freshly-added or -subtracted element may
+    /// carry limbs that exceed `2^52`; without the reduce the
+    /// `wrapping_sub` against `2·p`'s limbs can underflow and produce
+    /// a value that the trailing `reduce` cannot recover.
     pub fn negate(&self) -> FieldElement {
-        // 2*p in limb form; adding this to any element keeps it
-        // non-negative and ≡ 0 (mod p).
+        // 2*p in limb form; adding this to any canonical element keeps
+        // it non-negative and ≡ 0 (mod p).
         const TWO_P_0: u64 = (1u64 << 52) - 38;
         const TWO_P_OTHER: u64 = (1u64 << 52) - 2;
-        let l = &self.0;
+        let reduced = self.reduce();
+        let l = &reduced.0;
         FieldElement([
             TWO_P_0.wrapping_sub(l[0]),
             TWO_P_OTHER.wrapping_sub(l[1]),
@@ -415,6 +435,63 @@ impl FieldElement {
         let z_250_0 = z_250_50.multiply(&z_50_0);
         let z_255_5 = z_250_0.pow2k(5);
         z_255_5.multiply(&z11)
+    }
+
+    /// Raise to the power `(p - 5) / 8 = 2^252 - 3`.
+    ///
+    /// This exponent is the one needed by RFC 8032 §5.1.3 to compute
+    /// the candidate square root of `u / v` as
+    /// `u · v^3 · (u · v^7)^((p-5)/8)`. The addition chain mirrors the
+    /// one used by `invert` up through `z_250_0 = self^(2^250 - 1)`,
+    /// and finishes with two squarings and one multiply to reach
+    /// `self^(2^252 - 3)`.
+    pub fn pow_p_5_8(&self) -> FieldElement {
+        let z1 = *self;
+        let z2 = z1.square();
+        let z8 = z2.pow2k(2);
+        let z9 = z1.multiply(&z8);
+        let z11 = z2.multiply(&z9);
+        let z22 = z11.square();
+        let z_5_0 = z9.multiply(&z22);
+        let z_10_5 = z_5_0.pow2k(5);
+        let z_10_0 = z_10_5.multiply(&z_5_0);
+        let z_20_10 = z_10_0.pow2k(10);
+        let z_20_0 = z_20_10.multiply(&z_10_0);
+        let z_40_20 = z_20_0.pow2k(20);
+        let z_40_0 = z_40_20.multiply(&z_20_0);
+        let z_50_10 = z_40_0.pow2k(10);
+        let z_50_0 = z_50_10.multiply(&z_10_0);
+        let z_100_50 = z_50_0.pow2k(50);
+        let z_100_0 = z_100_50.multiply(&z_50_0);
+        let z_200_100 = z_100_0.pow2k(100);
+        let z_200_0 = z_200_100.multiply(&z_100_0);
+        let z_250_50 = z_200_0.pow2k(50);
+        let z_250_0 = z_250_50.multiply(&z_50_0);
+        // z_250_0 = self^(2^250 - 1).
+        // (z_250_0)^4 = self^(2^252 - 4). Multiply by self to get
+        // self^(2^252 - 3) = self^((p - 5) / 8).
+        let z_252_4 = z_250_0.pow2k(2);
+        z_252_4.multiply(&z1)
+    }
+
+    /// Constant-time `is_zero` check.
+    ///
+    /// Returns `1` if the element represents the zero of GF(p) and `0`
+    /// otherwise. Reduces to canonical form first so non-canonical
+    /// representations of zero also return `1`.
+    pub fn is_zero(&self) -> u8 {
+        self.ct_eq(&FieldElement::ZERO)
+    }
+
+    /// Constant-time sign bit in the RFC 8032 sense.
+    ///
+    /// Returns the least significant bit of the canonical (fully
+    /// reduced) byte encoding, which is `1` iff the canonical integer
+    /// is odd. RFC 8032 §5.1.2 uses this as the sign bit when
+    /// compressing a point.
+    pub fn is_negative(&self) -> u8 {
+        let bytes = self.to_bytes();
+        bytes[0] & 1
     }
 }
 
@@ -560,6 +637,24 @@ mod tests {
     }
 
     #[test]
+    fn negate_handles_un_reduced_input() {
+        // Regression for a bug where `negate` underflowed when its
+        // input carried limbs > 2^51 (as produced by `Sub` before a
+        // reduction pass). We build `u = (y² − 1)` without an
+        // intervening reduce, negate it, and verify that `u + (−u)`
+        // canonicalizes to zero.
+        let y = FieldElement::from_bytes(&[
+            0xd4, 0xb4, 0xf5, 0x78, 0x48, 0x68, 0xc3, 0x02, 0x04, 0x03, 0x24, 0x67, 0x17, 0xec,
+            0x16, 0x9f, 0xf7, 0x9e, 0x26, 0x60, 0x8e, 0xa1, 0x26, 0xa1, 0xab, 0x69, 0xee, 0x77,
+            0xd1, 0xb1, 0x67, 0x12,
+        ]);
+        let u = y.square() - FieldElement::ONE;
+        let neg_u = -u;
+        let sum = u + neg_u;
+        assert_eq!(sum.to_bytes(), ZERO_BYTES);
+    }
+
+    #[test]
     fn neg_roundtrip() {
         let two = FieldElement::from_bytes(&TWO_BYTES);
         let sum = two + two.negate();
@@ -676,6 +771,45 @@ mod tests {
         let a = FieldElement::from_bytes(&[0x29u8; 32]);
         let result = a.invert().multiply(&a);
         assert_eq!(result.to_bytes(), ONE_BYTES);
+    }
+
+    #[test]
+    fn sqrt_m1_squared_is_minus_one() {
+        // SQRT_M1^2 should equal -1 (mod p).
+        let sq = FieldElement::SQRT_M1.square();
+        let minus_one = -FieldElement::ONE;
+        assert_eq!(sq.to_bytes(), minus_one.to_bytes());
+    }
+
+    #[test]
+    fn pow_p_5_8_of_one_is_one() {
+        let out = FieldElement::ONE.pow_p_5_8();
+        assert_eq!(out.to_bytes(), ONE_BYTES);
+    }
+
+    #[test]
+    fn pow_p_5_8_matches_known_value() {
+        // Python: p = 2**255 - 19; hex(pow(2, (p-5)//8, p))
+        //   = 0x55c1924027e0ef8595a6804c9efdebd397a18c035697f23c62770d93a507504f
+        //   little-endian bytes: 4f5007a5...92c155.
+        let two = FieldElement::from_bytes(&TWO_BYTES);
+        let out = two.pow_p_5_8();
+        let expected: [u8; 32] = [
+            0x4f, 0x50, 0x07, 0xa5, 0x93, 0x0d, 0x77, 0x62, 0x3c, 0xf2, 0x97, 0x56, 0x03, 0x8c,
+            0xa1, 0x97, 0xd3, 0xeb, 0xfd, 0x9e, 0x4c, 0x80, 0xa6, 0x95, 0x85, 0xef, 0xe0, 0x27,
+            0x40, 0x92, 0xc1, 0x55,
+        ];
+        assert_eq!(out.to_bytes(), expected);
+    }
+
+    #[test]
+    fn is_negative_and_is_zero() {
+        assert_eq!(FieldElement::ZERO.is_zero(), 1);
+        assert_eq!(FieldElement::ONE.is_zero(), 0);
+        assert_eq!(FieldElement::ZERO.is_negative(), 0);
+        assert_eq!(FieldElement::ONE.is_negative(), 1);
+        let two = FieldElement::from_bytes(&TWO_BYTES);
+        assert_eq!(two.is_negative(), 0);
     }
 
     #[test]
