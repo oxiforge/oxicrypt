@@ -140,6 +140,36 @@ impl U2048 {
         (U2048 { limbs }, borrow)
     }
 
+    /// Constant-time conditional select.
+    ///
+    /// If `mask == u64::MAX`, returns `a`. If `mask == 0`, returns `b`.
+    /// Any other value of `mask` yields undefined output (the intent
+    /// is that callers always pass one of the two sentinel values,
+    /// e.g. by computing `mask = 0u64.wrapping_sub(cond as u64)`).
+    ///
+    /// Used by the windowed modular-exponentiation ladder in
+    /// [`crate::mont2048::MontCtx2048::pow_secret`] to perform a
+    /// secret-index table lookup without branching on the index.
+    pub fn conditional_select(mask: u64, a: &U2048, b: &U2048) -> U2048 {
+        let mut out = [0u64; LIMBS];
+        for i in 0..LIMBS {
+            out[i] = (a.limbs[i] & mask) | (b.limbs[i] & !mask);
+        }
+        U2048 { limbs: out }
+    }
+
+    /// Extract a 4-bit nibble at the given nibble-position, counting
+    /// from the least-significant end. `nibble_index = 0` returns the
+    /// low nibble of `limbs[0]`; `nibble_index = 511` returns the top
+    /// nibble of `limbs[LIMBS - 1]`. Panics in debug if the index is
+    /// out of range.
+    pub fn nibble(&self, nibble_index: usize) -> u8 {
+        debug_assert!(nibble_index < LIMBS * 16);
+        let limb = nibble_index >> 4; // /16
+        let pos = nibble_index & 0xf; // %16
+        ((self.limbs[limb] >> (4 * pos)) & 0xf) as u8
+    }
+
     /// Conditional subtract: if `self >= other`, return `self - other`;
     /// else return `self`. Constant time in the operand values, not
     /// in the branch. Used for the final "reduce one `n`" step that
@@ -248,6 +278,31 @@ mod tests {
         let (diff, borrow) = U2048::ZERO.subtracting(&one);
         assert_eq!(diff, U2048 { limbs: [0xffff_ffff_ffff_ffff; LIMBS] });
         assert_eq!(borrow, 1);
+    }
+
+    #[test]
+    fn conditional_select_picks_a_or_b() {
+        let a = U2048 { limbs: [0xaa; LIMBS] };
+        let b = U2048 { limbs: [0x55; LIMBS] };
+        let pick_a = U2048::conditional_select(u64::MAX, &a, &b);
+        let pick_b = U2048::conditional_select(0, &a, &b);
+        assert_eq!(pick_a, a);
+        assert_eq!(pick_b, b);
+    }
+
+    #[test]
+    fn nibble_reads_little_endian_from_bottom() {
+        // Low limb = 0xfedcba9876543210; nibbles 0..16 should be 0,1,2,...,f.
+        let mut limbs = [0u64; LIMBS];
+        limbs[0] = 0xfedc_ba98_7654_3210;
+        let x = U2048 { limbs };
+        for i in 0..16 {
+            assert_eq!(x.nibble(i), i as u8);
+        }
+        // Everything above limb 0 is zero.
+        for i in 16..LIMBS * 16 {
+            assert_eq!(x.nibble(i), 0);
+        }
     }
 
     #[test]

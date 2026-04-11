@@ -29,7 +29,21 @@
 
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use fips_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
+use fips_sha::sha256::{Sha256, DIGEST_SIZE as SHA256_DIGEST_SIZE};
+
+/// One-shot `SHA-256` that bypasses the module operational gate.
+///
+/// Used by the RSA sign/verify primitives which are themselves gated
+/// at a higher level (or invoked from the power-up KAT where no gate
+/// applies). Keeping the bypass behind a hidden helper keeps
+/// `fips-sha::sha256::sha256` out of callers that also want to run
+/// during `SelfTest`.
+#[doc(hidden)]
+pub fn sha256_internal(msg: &[u8]) -> [u8; SHA256_DIGEST_SIZE] {
+    let mut h = Sha256::new_internal();
+    h.update(msg);
+    h.finalize()
+}
 
 /// DER prefix for a SHA-256 DigestInfo: `SEQUENCE { AlgorithmIdentifier
 /// { id-sha256, NULL }, OCTET STRING [32 bytes] }`. Does not include

@@ -21,8 +21,11 @@
 //! [`MontCtx2048::pow_public_u64`] is **not** constant time in the
 //! exponent bits and is meant for public-key operations only
 //! (RSA verify uses this path with the public exponent `e`). A
-//! constant-time window-scheduled exponentiator for private-key
-//! operations will land in the R2 chunk.
+//! [`MontCtx2048::pow_secret`] is the constant-time, 4-bit-windowed
+//! ladder for private-key operations: the exponent is consumed at a
+//! fixed rate (512 nibbles per call, regardless of value) and the
+//! table lookup uses a blinding scan so the secret exponent never
+//! drives a branch or an index.
 
 #![allow(
     clippy::indexing_slicing,
@@ -255,6 +258,66 @@ impl MontCtx2048 {
         }
         self.from_mont(&acc)
     }
+
+    /// Compute `base^exp mod n` where `exp` is a secret 2048-bit
+    /// integer. Uses a fixed-schedule 4-bit window ladder: for every
+    /// one of the 512 exponent nibbles we square four times and then
+    /// multiply by a table entry read via a constant-time scan. No
+    /// per-call work depends on the value of `exp`.
+    ///
+    /// The implementation follows the classic "always-multiply"
+    /// precomputed-table ladder; `acc` starts at the Montgomery
+    /// representative of `1`, so the first iteration's nibble
+    /// corresponds to the high nibble of `exp`.
+    ///
+    /// # FIPS note
+    ///
+    /// This is the private-key exponentiation path. It is used for
+    /// RSASSA-PKCS1-v1_5 sign (and, in a later chunk, PSS sign). The
+    /// constant-time guarantee protects against timing-based recovery
+    /// of `d` in side-channel-exposed environments, matching
+    /// IG D.G's expectation that secret-dependent operations not leak
+    /// through execution time on common general-purpose CPUs.
+    pub fn pow_secret(&self, base: &U2048, exp: &U2048) -> U2048 {
+        // Precompute table[i] = base^i · R mod n for i in 0..16.
+        // Entry 0 is the Montgomery form of 1; entry 1 is base in
+        // Montgomery form; entries 2..16 chain from there.
+        let mut table = [U2048::ZERO; 16];
+        table[0] = self.one_mont;
+        table[1] = self.to_mont(base);
+        for i in 2..16 {
+            table[i] = self.mont_mul(&table[i - 1], &table[1]);
+        }
+
+        // Run the ladder from the top nibble down.
+        let mut acc = self.one_mont;
+        // LIMBS * 16 = 512 nibbles total for a 2048-bit exponent.
+        for nibble_index in (0..LIMBS * 16).rev() {
+            // Four squarings = one "shift left by 4 nibble positions"
+            // of the accumulated exponent.
+            acc = self.mont_mul(&acc, &acc);
+            acc = self.mont_mul(&acc, &acc);
+            acc = self.mont_mul(&acc, &acc);
+            acc = self.mont_mul(&acc, &acc);
+
+            // Constant-time table lookup for table[nibble].
+            let nibble = exp.nibble(nibble_index);
+            let mut selected = U2048::ZERO;
+            for i in 0..16u8 {
+                // Build a word-wide mask: all ones iff i == nibble.
+                let diff = (i ^ nibble) as u64;
+                // `diff` is zero iff i == nibble. Turn that into a
+                // 1-bit flag in bit 0, then extend to a full mask.
+                let is_eq = (diff.wrapping_sub(1) >> 63) & 1;
+                // Hit: is_eq==1, mask all ones. Miss: mask zero.
+                let mask = 0u64.wrapping_sub(is_eq);
+                selected = U2048::conditional_select(mask, &table[i as usize], &selected);
+            }
+            acc = self.mont_mul(&acc, &selected);
+        }
+
+        self.from_mont(&acc)
+    }
 }
 
 #[cfg(test)]
@@ -349,6 +412,52 @@ mod tests {
         let big = ctx.pow_public_u64(&small(2), 65537);
         assert_eq!(big.is_zero(), 0);
         assert_eq!(big.ct_lt(&ctx.n), 1);
+    }
+
+    fn u2048_from_u64(x: u64) -> U2048 {
+        let mut limbs = [0u64; LIMBS];
+        limbs[0] = x;
+        U2048 { limbs }
+    }
+
+    #[test]
+    fn pow_secret_matches_pow_public_for_small_exponents() {
+        let n = synthetic_modulus(321);
+        let ctx = MontCtx2048::new(n).unwrap();
+        let base = small(7);
+        for exp in [0u64, 1, 2, 3, 17, 65537, 0xdead_beef] {
+            let want = ctx.pow_public_u64(&base, exp);
+            let got = ctx.pow_secret(&base, &u2048_from_u64(exp));
+            assert_eq!(
+                want, got,
+                "pow_secret disagreed with pow_public_u64 for exp={exp}"
+            );
+        }
+    }
+
+    #[test]
+    fn pow_secret_handles_zero_base_and_one_base() {
+        let n = synthetic_modulus(555);
+        let ctx = MontCtx2048::new(n).unwrap();
+        // 0^e = 0 for any e > 0. (0^0 isn't tested; pow_secret always
+        // runs the full ladder and produces 1 for exp=0 by virtue of
+        // acc never being multiplied by anything other than table[0]
+        // = 1_mont; but we leave that edge case to pow_public_u64.)
+        let zero = U2048::ZERO;
+        let big_exp = u2048_from_u64(12345);
+        assert_eq!(ctx.pow_secret(&zero, &big_exp), U2048::ZERO);
+        // 1^e = 1.
+        let one = small(1);
+        assert_eq!(ctx.pow_secret(&one, &big_exp), small(1));
+    }
+
+    #[test]
+    fn pow_secret_exp_zero_is_one() {
+        let n = synthetic_modulus(777);
+        let ctx = MontCtx2048::new(n).unwrap();
+        let base = small(42);
+        let r = ctx.pow_secret(&base, &U2048::ZERO);
+        assert_eq!(r, small(1));
     }
 
     #[test]
