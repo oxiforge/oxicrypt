@@ -8,7 +8,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 
 ## 0. Current Status (as of 2026-04-11)
 
-**Phase position:** Phase 1 closed; solidly into Phase 2 (Asymmetric + DRBG). All P0 symmetric/hash/DRBG/KDF work has landed, ECDSA/ECDH are done, and `fips-rsa` has a working verify-and-sign pipeline for PKCS#1 v1.5 and PSS plus probable-prime key generation. CRT-form private keys with Bellcore fault-detection are the last Phase-2 RSA item. Chunk **D1** (documentation pass) has landed: every fleshed-out crate's rustdoc header follows a common SP 800-140Br1-shaped template, and `docs/security-policy/security-policy.md` is an alpha draft that tracks the code at each commit.
+**Phase position:** Phase 1 closed; solidly into Phase 2 (Asymmetric + DRBG). All P0 symmetric/hash/DRBG/KDF work has landed, ECDSA/ECDH are done, and `fips-rsa` now has a full PKCS#1 v1.5 and PSS sign/verify pipeline with both a non-CRT ladder and a CRT-form Garner recombine path carrying Shamir/Bellcore verify-after-sign, plus probable-prime key generation that lands freshly-generated keys directly on the CRT path. Chunk **D1** (documentation pass) has landed: every fleshed-out crate's rustdoc header follows a common SP 800-140Br1-shaped template, and `docs/security-policy/security-policy.md` is an alpha draft that tracks the code at each commit.
 
 **Implemented and landed on `main`:**
 
@@ -37,7 +37,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 
 **Phase 2 remaining before it can be called closed:**
 
-- `fips-rsa` CRT-form private keys (p, q, dP, dQ, qInv) with Shamir-style verify-after-sign Bellcore fault-detection on the CRT sign path. Deliberately slid out of the keygen chunk because the keygen work was already large; CRT will sit alongside the existing non-CRT sign path.
+- ~~`fips-rsa` CRT-form private keys (p, q, dP, dQ, qInv) with Shamir-style verify-after-sign Bellcore fault-detection on the CRT sign path.~~ **Landed in R5.** Garner recombine runs on `MontCtx1024` with the secret-exponent ladder `pow_secret`, qInv is computed by keygen via Fermat (`q^(p−2) mod p`) to sidestep a latent overflow bug in `bigint1024::modinv_odd` for top-bit-set moduli, and `RsaPrivateKey2048` now carries an `Option<CrtComponents>` so both construction pathways (`from_components` non-CRT / `from_components_crt` CRT) and `sign_pkcs1_v15_sha256` / `sign_pss_sha256_with_salt` dispatch automatically. Fresh `generate` output lands on the CRT path by default.
 - Pairwise consistency test coverage for ECDSA and (eventual) EdDSA keygen at the same IG 10.3.A level as the RSA PCT.
 - `dudect`-style constant-time validation across the three asymmetric crates.
 
@@ -278,7 +278,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-rsa`: PKCS#1 v1.5 verify and sign (non-CRT, constant-time windowed Montgomery ladder)
 - [x] `fips-rsa`: RSASSA-PSS SHA-256 sign/verify with MGF1
 - [x] `fips-rsa`: Key generation via FIPS 186-5 §A.1.1 / §B.3.1 probable primes + DRBG-backed `sign_pss_sha256` wrapper
-- [ ] `fips-rsa`: CRT-form private keys with Bellcore (verify-after-sign) fault-detection
+- [x] `fips-rsa`: CRT-form private keys with Bellcore/Shamir verify-after-sign fault-detection (R5 — Garner recombine over mont1024, wired through PKCS#1 v1.5 and PSS sign entry points, with a byte-exact CRT↔non-CRT equivalence test and a dP-tamper fault-injection test)
 - [~] `fips-ecdsa`: P-256/SHA-256 keygen + sign + verify landed; P-384 and P-521 deferred
 - [x] `fips-ecdh`: ECDH per SP 800-56Ar3 (P-256)
 - [x] Pairwise consistency tests for RSA keygen (IG 10.3.A, wired inside `from_components`)

@@ -280,6 +280,19 @@ impl U1024 {
 /// Preconditions:
 ///   * `m` is odd and `m >= 3`.
 ///   * `a > 0` and `a < m`.
+///
+/// # Known limitation — top-bit-set moduli
+///
+/// The intermediate coefficients `x1`, `x2` are maintained in
+/// `[0, 2m)`. When `m` has bit 1023 set (as is the case for every
+/// 1024-bit RSA prime factor), `2m ≥ 2^1024`, which does not fit in a
+/// [`U1024`]; the halving and conditional-subtract steps can then
+/// silently wrap and produce a wrong (non-inverse) result. The
+/// existing call sites in this crate only use small-modulus inputs,
+/// so this limitation has not been fixed. Do **not** call this
+/// routine with a 1024-bit prime modulus; use
+/// [`crate::mont1024::MontCtx1024::pow_public_u1024`] for
+/// Fermat-style inversion instead (`q^(p−2) mod p`).
 pub fn modinv_odd(a: &U1024, m: &U1024) -> Option<U1024> {
     debug_assert!(m.is_odd() == 1);
     if a.is_zero() == 1 {

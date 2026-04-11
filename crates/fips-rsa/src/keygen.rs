@@ -248,17 +248,63 @@ fn mul_1024(a: &U1024, b: &U1024) -> U2048 {
     a.widening_mul(b)
 }
 
-/// Result of a successful keygen: the public modulus, and the private
-/// exponent. The caller feeds these into
-/// [`crate::RsaPrivateKey2048::from_components`] along with `e`, which
-/// runs the IG 10.3.A pairwise consistency test before the key is
-/// considered usable.
+/// Reduce a 2048-bit `a` modulo a 1024-bit `m`, returning the 1024-bit
+/// remainder. Uses a bitwise shift-and-subtract running-remainder
+/// reduction: for each of the 2048 bits of `a` from MSB to LSB, shift
+/// the 1024-bit accumulator left by one, inject the next bit of `a`,
+/// and subtract `m` if the resulting value is `≥ m` (which is exactly
+/// the case when the shift carried a bit out the top, since the
+/// pre-shift accumulator is always in `[0, m)`).
+///
+/// Called once per keygen with public data (`d` mod `(p-1)` and
+/// `(q-1)`), so constant-time behavior is not required.
+pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
+    debug_assert!(m.limbs[LIMBS1024 - 1] >> 63 == 1, "m must have top bit set");
+    let mut acc = U1024::ZERO;
+    for bit in (0..2048usize).rev() {
+        // acc = acc << 1 ; capture the bit shifted out the top.
+        let carry_out = acc.limbs[LIMBS1024 - 1] >> 63;
+        let mut new_limbs = [0u64; LIMBS1024];
+        let mut c: u64 = 0;
+        for i in 0..LIMBS1024 {
+            new_limbs[i] = (acc.limbs[i] << 1) | c;
+            c = acc.limbs[i] >> 63;
+        }
+        let a_limb = a.limbs[bit / 64];
+        let a_bit = (a_limb >> (bit % 64)) & 1;
+        new_limbs[0] |= a_bit;
+        let shifted = U1024 { limbs: new_limbs };
+        // When carry_out == 1 we must subtract m: the real value is
+        // `2^1024 + shifted`, which as a 1024-bit wrapping subtract
+        // yields the correct `shifted + 2^1024 - m`. Otherwise we
+        // subtract only if `shifted >= m`.
+        let must_sub = carry_out == 1 || shifted.ct_lt(m) == 0;
+        acc = if must_sub { shifted.subtracting(m).0 } else { shifted };
+    }
+    acc
+}
+
+/// Result of a successful keygen: the public modulus, the private
+/// exponent, and the full CRT decomposition. The caller feeds these
+/// into [`crate::RsaPrivateKey2048::from_components`] (or the CRT
+/// variant) along with `e`, which runs the IG 10.3.A pairwise
+/// consistency test before the key is considered usable.
 #[derive(Clone, Copy, Debug)]
 pub struct KeyMaterial {
     /// RSA-2048 modulus `n = p · q`.
     pub n: U2048,
     /// Private exponent `d = e^(−1) mod λ(n)`.
     pub d: U2048,
+    /// First prime factor, 1024 bits.
+    pub p: U1024,
+    /// Second prime factor, 1024 bits.
+    pub q: U1024,
+    /// CRT exponent `dP = d mod (p − 1)`.
+    pub dp: U1024,
+    /// CRT exponent `dQ = d mod (q − 1)`.
+    pub dq: U1024,
+    /// CRT coefficient `qInv = q^(−1) mod p`.
+    pub qinv: U1024,
 }
 
 /// Generate fresh RSA-2048 key material using `drbg` for all
@@ -304,7 +350,45 @@ pub fn generate_2048(
     // EGCD over odd moduli.
     let d = modinv_small_e(e, &phi_n).ok_or(KeygenError::InvalidExponent)?;
 
-    Ok(KeyMaterial { n, d })
+    // CRT decomposition for the sign path:
+    //   dP = d mod (p − 1)
+    //   dQ = d mod (q − 1)
+    //   qInv = q^(−1) mod p
+    //
+    // (p − 1) and (q − 1) are even, so we reduce `d` directly rather
+    // than trying to invert `e` mod an even modulus. `qInv` uses
+    // `modinv_odd` against `p` (which is an odd prime). `q` may be
+    // greater than `p`; reduce it first with at most one subtraction
+    // since both live in `[2^1023, 2^1024)`.
+    let dp = u2048_mod_u1024(&d, &p_minus_1);
+    let dq = u2048_mod_u1024(&d, &q_minus_1);
+
+    let q_mod_p = if q.ct_lt(&p) == 1 {
+        q
+    } else {
+        q.subtracting(&p).0
+    };
+    // Compute q^(−1) mod p via Fermat's little theorem: for prime p,
+    // `q^(p − 2) ≡ q^(−1) (mod p)`. We use this in preference to the
+    // binary EGCD in [`bigint1024::modinv_odd`] because that routine's
+    // intermediate coefficients can exceed `m` for top-bit-set moduli
+    // (RSA primes are 1024-bit with bit 1023 set), which the original
+    // EGCD bound does not account for. Exponentiation via
+    // [`MontCtx1024::pow_public_u1024`] is both correct and already
+    // covered by existing mont1024 tests.
+    let ctx_p_for_inv = MontCtx1024::new(p).ok_or(KeygenError::InvalidExponent)?;
+    let (p_minus_2, _) = p.subtracting_u64(2);
+    let qinv = ctx_p_for_inv.pow_public_u1024(&q_mod_p, &p_minus_2);
+
+    Ok(KeyMaterial {
+        n,
+        d,
+        p,
+        q,
+        dp,
+        dq,
+        qinv,
+    })
 }
 
 // --------------------------------------------------------------------

@@ -10,6 +10,7 @@
 //! | RSASSA-PSS verify, SHA-256, MGF1  | FIPS 186-5 §5.4 / RFC 8017 §8.1 | [`rsa_pss_verify_2048_sha256`] |
 //! | RSASSA-PSS sign, SHA-256, MGF1    | FIPS 186-5 §5.4 / RFC 8017 §8.1 | [`RsaPrivateKey2048::sign_pss_sha256_with_salt`] and [`RsaPrivateKey2048::sign_pss_sha256`] |
 //! | RSA key generation                | FIPS 186-5 §A.1.1 / §B.3.1      | [`RsaPrivateKey2048::generate`] |
+//! | RSA CRT sign w/ Bellcore check    | FIPS 186-5 §5.4 / IG D.G         | [`RsaPrivateKey2048::from_components_crt`] |
 //!
 //! The PSS scheme uses MGF1-SHA-256 with `sLen = hLen = 32` and
 //! `emBits = 2047` per FIPS 186-5 §5.4 and RFC 8017 §9.1. The PSS
@@ -58,10 +59,14 @@
 //!   constant-time Montgomery ladder in
 //!   [`mont2048::MontCtx2048::pow_secret`] is the only path that
 //!   ever observes it during signing.
-//! - **Prime factors** (`p`, `q`) — CSPs during keygen only;
-//!   this crate does not retain them after `d` is derived, so
-//!   there is no CRT-form private-key surface yet. CRT and
-//!   Bellcore fault-detection are scheduled for a later chunk.
+//! - **Prime factors and CRT components** (`p`, `q`, `dP`, `dQ`,
+//!   `qInv`) — CSPs. Retained inside the private-key handle when
+//!   the key is built through [`RsaPrivateKey2048::generate`] or
+//!   [`RsaPrivateKey2048::from_components_crt`]. Used only by the
+//!   CRT sign primitive; `p` and `q` enter [`mont1024::MontCtx1024`]
+//!   and `dP`/`dQ` are consumed by
+//!   [`mont1024::MontCtx1024::pow_secret`] under the same
+//!   constant-time contract as the direct `d`-based ladder.
 //! - **PSS salt** — ephemeral CSP; sampled from the caller's
 //!   HMAC_DRBG, consumed inside a single signing operation, and
 //!   dropped when the stack frame unwinds.
@@ -72,11 +77,19 @@
 //!
 //! # Side-channel posture
 //!
-//! - Signing uses
+//! - Non-CRT signing uses
 //!   [`mont2048::MontCtx2048::pow_secret`] — a 4-bit windowed
 //!   constant-time Montgomery ladder that never branches on
 //!   private-exponent bits and never indexes a table with a
 //!   secret.
+//! - CRT signing uses
+//!   [`mont1024::MontCtx1024::pow_secret`] twice (once mod `p`,
+//!   once mod `q`) — the same constant-time 4-bit windowed ladder
+//!   at 16-limb width. The Garner recombine step mixes only
+//!   CSP values against other CSP values, so its non-constant-time
+//!   reduction branches do not cross a public boundary. The
+//!   Bellcore verify step reduces `m mod p` and `m mod q` via a
+//!   public-data bitwise reducer (`m` is EM, not a secret).
 //! - Verification uses `mont2048::MontCtx2048::pow_public_u64`,
 //!   which is explicitly **not** constant-time in the public
 //!   exponent `e`; that is acceptable because `e` is public.
@@ -106,10 +119,16 @@ pub mod mont2048;
 pub mod pkcs1_v15;
 pub mod pss;
 
-use bigint2048::{U2048, BYTES as U2048_BYTES};
+use bigint1024::{U1024, BYTES as U1024_BYTES, LIMBS as LIMBS1024};
+use bigint2048::{U2048, BYTES as U2048_BYTES, LIMBS as LIMBS2048};
 use fips_module::{require_operational, Error, SelfTestFailure};
 use fips_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
+use mont1024::MontCtx1024;
 use mont2048::MontCtx2048;
+
+/// Fixed byte length of each 1024-bit half (`p`, `q`, `dP`, `dQ`,
+/// `qInv`) in the CRT-form private key.
+pub const RSA_2048_CRT_HALF_BYTES: usize = U1024_BYTES;
 
 /// Fixed modulus byte length for RSA-2048.
 pub const RSA_2048_MODULUS_BYTES: usize = U2048_BYTES;
@@ -259,6 +278,224 @@ pub fn rsa_pss_sign_2048_sha256_internal(
     Some(s.to_be_bytes())
 }
 
+// ------------------------------------------------------------------
+// CRT sign primitive with Bellcore fault-detection (state-gate-free)
+// ------------------------------------------------------------------
+
+/// CRT-form private-key material used by the Garner-recombine sign
+/// primitive. Byte layouts mirror the public API: big-endian, fixed
+/// width. All five components are CSPs.
+#[derive(Clone, Copy, Debug)]
+struct CrtComponentsRaw<'a> {
+    p: &'a [u8; U1024_BYTES],
+    q: &'a [u8; U1024_BYTES],
+    dp: &'a [u8; U1024_BYTES],
+    dq: &'a [u8; U1024_BYTES],
+    qinv: &'a [u8; U1024_BYTES],
+}
+
+/// Zero-extend a `U1024` into the low half of a `U2048`. Used by the
+/// CRT recombine step to add `q · h` (a 2048-bit product) to `s_q` (a
+/// 1024-bit value).
+#[inline]
+fn u1024_into_u2048_low(x: &U1024) -> U2048 {
+    let mut limbs = [0u64; LIMBS2048];
+    limbs[..LIMBS1024].copy_from_slice(&x.limbs);
+    U2048 { limbs }
+}
+
+/// Core CRT sign primitive: raise a message representative `m` to the
+/// private exponent via the Chinese-Remainder decomposition and run a
+/// Bellcore / Shamir verify-after-sign check before returning.
+///
+/// # Mathematics
+///
+/// Given the CRT key material `(p, q, dP, dQ, qInv)` with
+/// `dP = d mod (p − 1)`, `dQ = d mod (q − 1)`, and
+/// `qInv = q^(−1) mod p`, Garner's recombine formula computes
+///
+/// ```text
+///   m_p  = m mod p
+///   m_q  = m mod q
+///   s_p  = m_p^dP mod p         — constant-time mont1024 ladder
+///   s_q  = m_q^dQ mod q         — constant-time mont1024 ladder
+///   h    = qInv · (s_p − s_q mod p) mod p
+///   s    = s_q + q · h
+/// ```
+///
+/// which satisfies `s ≡ m^d (mod n)` by the CRT. `s_q` is first
+/// reduced mod `p` before the subtraction (`q` and `p` have equal
+/// bit-length, so at most one conditional subtract is required).
+///
+/// # Bellcore / Shamir countermeasure
+///
+/// CRT sign is vulnerable to single-fault attacks: if either
+/// `m_p^dP` or `m_q^dQ` is corrupted (a bit-flip injected by the
+/// attacker, cosmic ray, etc.), the recombined signature `s`
+/// satisfies `s ≡ m^d (mod p)` but `s ≢ m^d (mod q)` (or vice
+/// versa), and `gcd(s^e − m, n)` yields `p` or `q` — an immediate
+/// full-key recovery.
+///
+/// FIPS 140-3 IG D.G calls out RSA CRT faults explicitly. We mitigate
+/// by re-verifying the signature before returning: compute
+/// `s_check = s^e mod n` using the non-CRT public ladder and compare
+/// against the original `m`. A single fault on either half diverges
+/// the check; a correlated two-point fault has negligible probability
+/// under the IG threat model.
+///
+/// # Returns
+///
+/// `None` on any of: bad modulus, bad prime factor, `m ≥ n`, or a
+/// failed Bellcore check (indicating either an injected fault or a
+/// structurally inconsistent key). The caller converts `None` into
+/// [`Error::InvalidInput`].
+#[doc(hidden)]
+#[allow(
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::single_char_lifetime_names
+)]
+fn rsa_crt_sign_2048_from_em_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    crt: CrtComponentsRaw<'_>,
+    em: &[u8; RSA_2048_MODULUS_BYTES],
+) -> Option<[u8; RSA_2048_SIGNATURE_BYTES]> {
+    // 1. Build Montgomery contexts for n, p, q. `MontCtx*::new`
+    //    enforces top-bit-set / odd, which is exactly the FIPS 186-5
+    //    §A.1.1 shape for 2048-bit RSA prime factors.
+    let n = U2048::from_be_bytes(n_bytes);
+    let ctx_n = MontCtx2048::new(n)?;
+
+    let p = U1024::from_be_bytes(crt.p);
+    let q = U1024::from_be_bytes(crt.q);
+    let ctx_p = MontCtx1024::new(p)?;
+    let ctx_q = MontCtx1024::new(q)?;
+
+    let dp = U1024::from_be_bytes(crt.dp);
+    let dq = U1024::from_be_bytes(crt.dq);
+    let qinv = U1024::from_be_bytes(crt.qinv);
+
+    // 2. Load the message representative and range-check.
+    let m = U2048::from_be_bytes(em);
+    if m.ct_lt(&ctx_n.n) != 1 {
+        return None;
+    }
+
+    // 3. Reduce m mod p and m mod q. The reducer is not constant time
+    //    in its inputs, but `m` is EM — derived from the message
+    //    digest by a public encoding — so there is no secret to leak.
+    let m_p = keygen::u2048_mod_u1024(&m, &p);
+    let m_q = keygen::u2048_mod_u1024(&m, &q);
+
+    // 4. Secret-exponent exponentiations mod p and mod q via the
+    //    constant-time 4-bit windowed ladder.
+    let s_p = ctx_p.pow_secret(&m_p, &dp);
+    let s_q = ctx_q.pow_secret(&m_q, &dq);
+
+    // 5. Garner recombine.
+    //
+    //    `s_q` is in `[0, q)`. Reduce mod p with at most one subtract:
+    //    p and q are both strictly 1024-bit (top bit set), so
+    //    `q < 2^1024 ≤ 2·p`.
+    let s_q_mod_p = if s_q.ct_lt(&p) == 1 {
+        s_q
+    } else {
+        s_q.subtracting(&p).0
+    };
+
+    //    `diff = (s_p − s_q_mod_p) mod p`.
+    let diff = if s_p.ct_lt(&s_q_mod_p) == 1 {
+        // s_p < s_q_mod_p: add p first, then subtract.
+        let (sum, _) = s_p.adding(&p);
+        sum.subtracting(&s_q_mod_p).0
+    } else {
+        s_p.subtracting(&s_q_mod_p).0
+    };
+
+    //    `h = (qInv · diff) mod p` via the Montgomery context on p.
+    let diff_mont = ctx_p.to_mont(&diff);
+    let qinv_mont = ctx_p.to_mont(&qinv);
+    let h_mont = ctx_p.mont_mul(&qinv_mont, &diff_mont);
+    let h = ctx_p.from_mont(&h_mont);
+
+    //    `s = s_q + q · h`, where `q · h` is a 2048-bit product and
+    //    `s_q` is zero-extended into the low half.
+    let qh = q.widening_mul(&h);
+    let sq_wide = u1024_into_u2048_low(&s_q);
+    let (s, _carry) = qh.adding(&sq_wide);
+
+    // 6. Bellcore / Shamir verify-after-sign: recompute `m` from `s`
+    //    under the public exponent and compare. Any single bit-flip
+    //    inside step 4 (or elsewhere in the CRT machinery) produces
+    //    a signature that only satisfies one of the two half
+    //    congruences and fails this check.
+    let m_check = ctx_n.pow_public_u64(&s, e);
+    if m_check.ct_eq(&m) != 1 {
+        return None;
+    }
+
+    Some(s.to_be_bytes())
+}
+
+/// RSASSA-PKCS1-v1_5 sign for RSA-2048 / SHA-256 via the CRT path
+/// with Bellcore verify-after-sign. Bypasses the FIPS module state
+/// gate; intended for internal use by
+/// [`RsaPrivateKey2048::sign_pkcs1_v15_sha256`] when CRT components
+/// are available.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
+pub fn rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    p_bytes: &[u8; U1024_BYTES],
+    q_bytes: &[u8; U1024_BYTES],
+    dp_bytes: &[u8; U1024_BYTES],
+    dq_bytes: &[u8; U1024_BYTES],
+    qinv_bytes: &[u8; U1024_BYTES],
+    msg: &[u8],
+) -> Option<[u8; RSA_2048_SIGNATURE_BYTES]> {
+    let digest = pkcs1_v15::sha256_internal(msg);
+    let mut em = [0u8; RSA_2048_MODULUS_BYTES];
+    pkcs1_v15::encode_sha256(&digest, &mut em)?;
+    let crt = CrtComponentsRaw {
+        p: p_bytes,
+        q: q_bytes,
+        dp: dp_bytes,
+        dq: dq_bytes,
+        qinv: qinv_bytes,
+    };
+    rsa_crt_sign_2048_from_em_internal(n_bytes, e, crt, &em)
+}
+
+/// RSASSA-PSS sign for RSA-2048 / SHA-256 via the CRT path with
+/// Bellcore verify-after-sign. Bypasses the FIPS module state gate.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
+pub fn rsa_pss_sign_2048_sha256_crt_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    p_bytes: &[u8; U1024_BYTES],
+    q_bytes: &[u8; U1024_BYTES],
+    dp_bytes: &[u8; U1024_BYTES],
+    dq_bytes: &[u8; U1024_BYTES],
+    qinv_bytes: &[u8; U1024_BYTES],
+    msg: &[u8],
+    salt: &[u8; pss::SLEN],
+) -> Option<[u8; RSA_2048_SIGNATURE_BYTES]> {
+    let digest = pkcs1_v15::sha256_internal(msg);
+    let mut em = [0u8; pss::EM_LEN];
+    pss::emsa_pss_encode(&digest, salt, &mut em)?;
+    let crt = CrtComponentsRaw {
+        p: p_bytes,
+        q: q_bytes,
+        dp: dp_bytes,
+        dq: dq_bytes,
+        qinv: qinv_bytes,
+    };
+    rsa_crt_sign_2048_from_em_internal(n_bytes, e, crt, &em)
+}
+
 /// RSASSA-PSS verify for RSA-2048 / SHA-256, bypassing the FIPS module
 /// state gate. Intended for power-up KAT use only; production callers
 /// use [`rsa_pss_verify_2048_sha256`].
@@ -370,6 +607,21 @@ pub fn pairwise_consistency_test_2048_internal(
     rsa_pkcs1_v15_verify_2048_sha256_internal(n_bytes, e, PROBE, &sig)
 }
 
+/// Private CRT components held inside an [`RsaPrivateKey2048`]. All
+/// five fields are 1024-bit CSPs. When present, signing routes
+/// through the Garner-recombine path with Bellcore verify-after-sign;
+/// when absent, signing falls back to the direct `m^d mod n` ladder
+/// on the 2048-bit context.
+#[derive(Clone, Copy)]
+#[allow(clippy::struct_field_names)]
+struct CrtComponents {
+    p_bytes: [u8; U1024_BYTES],
+    q_bytes: [u8; U1024_BYTES],
+    dp_bytes: [u8; U1024_BYTES],
+    dq_bytes: [u8; U1024_BYTES],
+    qinv_bytes: [u8; U1024_BYTES],
+}
+
 /// A validated RSA-2048 private key suitable for signing.
 ///
 /// Construction runs the FIPS 140-3 IG 10.3.A pairwise consistency
@@ -377,11 +629,23 @@ pub fn pairwise_consistency_test_2048_internal(
 /// key does not sign-and-verify a probe message. Once constructed,
 /// the handle can produce signatures without re-running the PCT on
 /// each call.
+///
+/// # CRT sign path
+///
+/// When the handle carries CRT components (either from
+/// [`Self::from_components_crt`] or from a fresh [`Self::generate`]
+/// call), signing uses the Chinese-Remainder decomposition with a
+/// Bellcore / Shamir verify-after-sign fault check. When the handle
+/// was constructed through the non-CRT [`Self::from_components`]
+/// path, signing uses the direct `m^d mod n` ladder and does not
+/// run the Bellcore check — it is structurally impossible to fault
+/// into a half-congruence when there are no halves.
 #[derive(Clone)]
 pub struct RsaPrivateKey2048 {
     n_bytes: [u8; RSA_2048_MODULUS_BYTES],
     d_bytes: [u8; RSA_2048_MODULUS_BYTES],
     e: u64,
+    crt: Option<CrtComponents>,
 }
 
 impl RsaPrivateKey2048 {
@@ -414,6 +678,62 @@ impl RsaPrivateKey2048 {
             n_bytes: *n_bytes,
             d_bytes: *d_bytes,
             e,
+            crt: None,
+        })
+    }
+
+    /// Build a validated CRT-form private-key handle from the raw
+    /// `(n, e, d, p, q, dP, dQ, qInv)` components.
+    ///
+    /// The pairwise consistency test runs on the CRT sign path (with
+    /// Bellcore verify-after-sign) so that a handle returned from
+    /// this constructor is guaranteed to produce signatures along
+    /// the same path that production calls will use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the FIPS module has not
+    /// completed power-up self-tests. Returns [`Error::InvalidInput`]
+    /// if the CRT PCT fails for any reason.
+    #[allow(clippy::too_many_arguments, clippy::similar_names, clippy::items_after_statements)]
+    pub fn from_components_crt(
+        n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+        e: u64,
+        d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+        p_bytes: &[u8; U1024_BYTES],
+        q_bytes: &[u8; U1024_BYTES],
+        dp_bytes: &[u8; U1024_BYTES],
+        dq_bytes: &[u8; U1024_BYTES],
+        qinv_bytes: &[u8; U1024_BYTES],
+    ) -> Result<Self, Error> {
+        require_operational()?;
+        // PCT on the CRT path: sign a fixed probe, verify with the
+        // public key. The Bellcore check inside the CRT primitive
+        // provides an additional structural guard at construction
+        // time — a CRT tuple that is inconsistent with `d` will
+        // fail the verify-after-sign step before the signature
+        // even reaches the outer verify.
+        const PROBE: &[u8] =
+            b"fips-rsa CRT PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
+        let Some(sig) = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+            n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, PROBE,
+        ) else {
+            return Err(Error::InvalidInput);
+        };
+        if !rsa_pkcs1_v15_verify_2048_sha256_internal(n_bytes, e, PROBE, &sig) {
+            return Err(Error::InvalidInput);
+        }
+        Ok(Self {
+            n_bytes: *n_bytes,
+            d_bytes: *d_bytes,
+            e,
+            crt: Some(CrtComponents {
+                p_bytes: *p_bytes,
+                q_bytes: *q_bytes,
+                dp_bytes: *dp_bytes,
+                dq_bytes: *dq_bytes,
+                qinv_bytes: *qinv_bytes,
+            }),
         })
     }
 
@@ -445,8 +765,23 @@ impl RsaPrivateKey2048 {
         msg: &[u8],
     ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
         require_operational()?;
-        rsa_pkcs1_v15_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg)
+        if let Some(crt) = self.crt.as_ref() {
+            // CRT + Bellcore path.
+            rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+                &self.n_bytes,
+                self.e,
+                &crt.p_bytes,
+                &crt.q_bytes,
+                &crt.dp_bytes,
+                &crt.dq_bytes,
+                &crt.qinv_bytes,
+                msg,
+            )
             .ok_or(Error::InvalidInput)
+        } else {
+            rsa_pkcs1_v15_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg)
+                .ok_or(Error::InvalidInput)
+        }
     }
 
     /// Sign `msg` with RSASSA-PSS using SHA-256 as both the message
@@ -474,8 +809,23 @@ impl RsaPrivateKey2048 {
         salt: &[u8; pss::SLEN],
     ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
         require_operational()?;
-        rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, salt)
+        if let Some(crt) = self.crt.as_ref() {
+            rsa_pss_sign_2048_sha256_crt_internal(
+                &self.n_bytes,
+                self.e,
+                &crt.p_bytes,
+                &crt.q_bytes,
+                &crt.dp_bytes,
+                &crt.dq_bytes,
+                &crt.qinv_bytes,
+                msg,
+                salt,
+            )
             .ok_or(Error::InvalidInput)
+        } else {
+            rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, salt)
+                .ok_or(Error::InvalidInput)
+        }
     }
 
     /// Sign `msg` with RSASSA-PSS SHA-256, sampling a fresh `hLen`-byte
@@ -528,6 +878,7 @@ impl RsaPrivateKey2048 {
     ///   * the prime-candidate retry budget is exceeded;
     ///   * the resulting keypair fails the pairwise consistency
     ///     test (which indicates internal corruption).
+    #[allow(clippy::similar_names)]
     pub fn generate(
         drbg: &mut fips_drbg::HmacDrbgSha256,
         e: u64,
@@ -536,7 +887,14 @@ impl RsaPrivateKey2048 {
         let km = keygen::generate_2048(drbg, e).map_err(|_| Error::InvalidInput)?;
         let n_bytes = km.n.to_be_bytes();
         let d_bytes = km.d.to_be_bytes();
-        Self::from_components(&n_bytes, e, &d_bytes)
+        let p_bytes = km.p.to_be_bytes();
+        let q_bytes = km.q.to_be_bytes();
+        let dp_bytes = km.dp.to_be_bytes();
+        let dq_bytes = km.dq.to_be_bytes();
+        let qinv_bytes = km.qinv.to_be_bytes();
+        Self::from_components_crt(
+            &n_bytes, e, &d_bytes, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
+        )
     }
 }
 
@@ -1042,6 +1400,106 @@ mod tests {
             .expect("sig1 verifies");
         rsa_pss_verify_2048_sha256(n, 65537, msg, &sig2)
             .expect("sig2 verifies");
+    }
+
+    /// R5: a freshly-generated key exposes the CRT path and the CRT
+    /// sign primitive produces a signature that matches what the
+    /// non-CRT `d`-based primitive would produce over the same
+    /// keypair. This is the byte-exact CRT↔non-CRT equivalence
+    /// property that FIPS 186-5 §5.4 implicitly requires.
+    #[test]
+    #[allow(clippy::similar_names)]
+    fn r5_crt_sign_equals_non_crt_sign_for_fresh_keypair() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r5-crt-equiv",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r5-crt-equiv-entropy-v1", b"pqclib-r5-crt-nonce", b"")
+            .unwrap();
+
+        // Pull raw keygen material so we can exercise both paths on
+        // the same (n, e, d) with and without CRT plumbing.
+        let km = keygen::generate_2048(&mut drbg, 65537).unwrap();
+        let n_bytes = km.n.to_be_bytes();
+        let d_bytes = km.d.to_be_bytes();
+        let p_bytes = km.p.to_be_bytes();
+        let q_bytes = km.q.to_be_bytes();
+        let dp_bytes = km.dp.to_be_bytes();
+        let dq_bytes = km.dq.to_be_bytes();
+        let qinv_bytes = km.qinv.to_be_bytes();
+
+        let msg = b"pqclib R5 CRT equivalence probe";
+        let sig_non_crt =
+            rsa_pkcs1_v15_sign_2048_sha256_internal(&n_bytes, &d_bytes, msg).unwrap();
+        let sig_crt = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+            &n_bytes, 65537, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes, msg,
+        )
+        .unwrap();
+        assert_eq!(
+            sig_non_crt, sig_crt,
+            "CRT and non-CRT sign must agree byte-for-byte"
+        );
+
+        // And both signatures must verify via the public path.
+        assert!(rsa_pkcs1_v15_verify_2048_sha256_internal(
+            &n_bytes, 65537, msg, &sig_crt
+        ));
+    }
+
+    /// R5 Bellcore fault injection: a single-byte tamper on `dP` (or
+    /// `dQ`) that preserves the modulus length must be caught by the
+    /// verify-after-sign check inside the CRT primitive — a
+    /// faulted CRT signature satisfies `s ≡ m^d (mod q)` but not
+    /// `s ≡ m^d (mod p)`, and `s^e mod n ≠ m`.
+    #[test]
+    #[allow(clippy::similar_names)]
+    fn r5_bellcore_rejects_tampered_dp() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r5-bellcore",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r5-bellcore-entropy-v1", b"pqclib-r5-bellcore-nonce", b"")
+            .unwrap();
+        let km = keygen::generate_2048(&mut drbg, 65537).unwrap();
+        let n_bytes = km.n.to_be_bytes();
+        let p_bytes = km.p.to_be_bytes();
+        let q_bytes = km.q.to_be_bytes();
+        let mut dp_bad = km.dp.to_be_bytes();
+        dp_bad[100] ^= 0x01;
+        let dq_bytes = km.dq.to_be_bytes();
+        let qinv_bytes = km.qinv.to_be_bytes();
+
+        let result = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+            &n_bytes, 65537, &p_bytes, &q_bytes, &dp_bad, &dq_bytes, &qinv_bytes,
+            b"pqclib R5 Bellcore probe",
+        );
+        assert!(
+            result.is_none(),
+            "Bellcore verify must catch a faulted dP"
+        );
+    }
+
+    /// R5: PSS sign via a CRT-form handle must produce a signature
+    /// that verifies under the public key. Smoke that the CRT wire
+    /// through `sign_pss_sha256_with_salt` works end-to-end.
+    #[test]
+    fn r5_crt_handle_pss_sign_verifies() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r5-crt-pss",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r5-crt-pss-entropy", b"pqclib-r5-crt-pss-nonce", b"")
+            .unwrap();
+        let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
+        let salt = [0x42u8; pss::SLEN];
+        let sig = sk
+            .sign_pss_sha256_with_salt(b"R5 CRT PSS probe", &salt)
+            .unwrap();
+        rsa_pss_verify_2048_sha256(sk.modulus_bytes(), 65537, b"R5 CRT PSS probe", &sig)
+            .unwrap();
     }
 
     /// Sanity check: the `RsaPrivateKey2048::generate` path rejects

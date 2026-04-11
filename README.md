@@ -46,7 +46,9 @@ its published source.
 - **RSA** — RSA-2048 PKCS#1 v1.5 and PSS sign/verify (FIPS 186-5 §5.4–5.5),
   RSA-2048 probable-prime keygen per FIPS 186-5 §A.1.3 with a pairwise
   consistency test (IG 10.3.A) and a pinned-DRBG-seed regression KAT.
-  CRT sign path with Bellcore fault-check lands in R5.
+  CRT sign path (Garner recombine over 1024-bit Montgomery contexts)
+  with Shamir/Bellcore verify-after-sign per IG D.G, wired through
+  both PKCS#1 v1.5 and PSS sign entry points.
 - **Elliptic curves** — ECDSA P-256 sign (caller-supplied `k`), verify,
   and public-key derivation (FIPS 186-5 §6.4), with full SEC1 public-key
   validation (SP 800-56Ar3 §5.6.2.3.3). ECDH P-256 (SP 800-56Ar3 §5.7.1.2
@@ -99,8 +101,7 @@ inventory.
 
 ### In flight
 
-- RSA CRT sign path with Bellcore fault-check (R5), RSA OAEP (R6),
-  EdDSA, ECDSA P-384 / P-521
+- RSA OAEP (R6), EdDSA, ECDSA P-384 / P-521
 - ACVP harness vector dispatch (Phase 3)
 
 ## License

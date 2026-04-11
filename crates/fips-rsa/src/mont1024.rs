@@ -1,29 +1,31 @@
 //! Montgomery arithmetic for 1024-bit odd moduli.
 //!
-//! Narrow cousin of [`crate::mont2048`]. Used by [`crate::keygen`] to
-//! run Miller-Rabin primality testing on 1024-bit prime candidates:
-//! Miller-Rabin needs repeated modular exponentiation `a^d mod n`,
-//! and CIOS Montgomery multiplication in a 16-limb context is the
-//! cheap path.
+//! Narrow cousin of [`crate::mont2048`]. Two distinct roles:
+//!
+//!   * **Key generation.** [`crate::keygen`] runs Miller-Rabin
+//!     primality testing on 1024-bit prime candidates via
+//!     [`MontCtx1024::pow_public_u1024`]. Witness exponentiation is
+//!     public relative to the candidate's acceptance state, so the
+//!     left-to-right ladder there is intentionally **not** constant
+//!     time in the exponent.
+//!
+//!   * **CRT sign path.** Once the key is built, each half-modulus
+//!     `p` and `q` is used by [`MontCtx1024::pow_secret`] to raise
+//!     the message representative to `dP = d mod (p-1)` and
+//!     `dQ = d mod (q-1)` during RSA sign (Garner recombine). The
+//!     exponents `dP`/`dQ` are secret, so this path uses a
+//!     fixed-schedule 4-bit windowed ladder with constant-time table
+//!     lookup — mirror of [`crate::mont2048::MontCtx2048::pow_secret`]
+//!     at 16-limb width.
 //!
 //! # Constant-time contract
 //!
-//! The moduli passed to this module during keygen (candidate primes
-//! `p`, `q`) are values whose *correctness* is public (either they
-//! pass MR or they don't), but whose *exact bit pattern* is secret
-//! once chosen. However, at the moment we are running MR on a
-//! candidate, the candidate is not yet a private key — its identity
-//! as a "to-be-accepted" prime is still a function of public randomness
-//! from the caller-supplied DRBG, and no information flows from the
-//! MR result back to anything an attacker can observe without also
-//! learning `p`. We therefore use [`MontCtx1024::pow_public_u1024`]
-//! for witness exponentiation, which is **not** constant time in the
-//! exponent.
-//!
-//! Once key generation is complete, this module is not used further —
-//! the modulus handed to [`crate::mont2048`] for sign/verify is the
-//! wide `n = p·q`, and the 1024-bit halves never re-enter Montgomery
-//! arithmetic.
+//! `pow_public_u64` and `pow_public_u1024` are **not** constant time
+//! in the exponent and must only be used with public exponents (e.g.
+//! Miller-Rabin witness exponents during keygen). `pow_secret` is
+//! constant-time in the exponent (fixed schedule, constant-time table
+//! lookup) and is the only path permitted for the secret CRT exponents
+//! `dP`/`dQ` on the RSA sign path.
 
 #![allow(
     clippy::indexing_slicing,
@@ -226,6 +228,55 @@ impl MontCtx1024 {
         }
         self.from_mont(&acc)
     }
+
+    /// Compute `base^exp mod n` where `exp` is a secret 1024-bit
+    /// integer. Fixed-schedule 4-bit window ladder: for each of the
+    /// 256 exponent nibbles we square four times and then multiply by
+    /// a table entry chosen via a constant-time scan. No per-call
+    /// work depends on `exp`.
+    ///
+    /// Mirror of [`crate::mont2048::MontCtx2048::pow_secret`] at
+    /// 16-limb width. Used on the RSA CRT sign path for `m_p = c^dP
+    /// mod p` and `m_q = c^dQ mod q`, where `dP`/`dQ` are secret.
+    ///
+    /// # FIPS note
+    ///
+    /// The constant-time guarantee here is the same rationale as the
+    /// 2048-bit sibling: per IG D.G, secret-dependent operations must
+    /// not leak through execution time on common general-purpose
+    /// CPUs. `dP` and `dQ` are CSPs (they reveal `d mod (p-1)` and
+    /// `d mod (q-1)` respectively); leaking them would compromise the
+    /// private key.
+    pub fn pow_secret(&self, base: &U1024, exp: &U1024) -> U1024 {
+        // Precompute table[i] = base^i · R mod n for i in 0..16.
+        let mut table = [U1024::ZERO; 16];
+        table[0] = self.one_mont;
+        table[1] = self.to_mont(base);
+        for i in 2..16 {
+            table[i] = self.mont_mul(&table[i - 1], &table[1]);
+        }
+
+        // LIMBS * 16 = 256 nibbles total for a 1024-bit exponent.
+        let mut acc = self.one_mont;
+        for nibble_index in (0..LIMBS * 16).rev() {
+            acc = self.mont_mul(&acc, &acc);
+            acc = self.mont_mul(&acc, &acc);
+            acc = self.mont_mul(&acc, &acc);
+            acc = self.mont_mul(&acc, &acc);
+
+            let nibble = exp.nibble(nibble_index);
+            let mut selected = U1024::ZERO;
+            for i in 0..16u8 {
+                let diff = (i ^ nibble) as u64;
+                let is_eq = (diff.wrapping_sub(1) >> 63) & 1;
+                let mask = 0u64.wrapping_sub(is_eq);
+                selected = U1024::conditional_select(mask, &table[i as usize], &selected);
+            }
+            acc = self.mont_mul(&acc, &selected);
+        }
+
+        self.from_mont(&acc)
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +357,36 @@ mod tests {
             let got = ctx.pow_public_u1024(&base, &small(exp));
             assert_eq!(want, got, "disagreed at exp={exp}");
         }
+    }
+
+    #[test]
+    fn pow_secret_matches_pow_public_u64_for_small_exps() {
+        let n = synthetic_modulus(4242);
+        let ctx = MontCtx1024::new(n).unwrap();
+        let base = small(7);
+        for exp in [0u64, 1, 2, 3, 17, 65537, 0xdead_beef] {
+            let want = ctx.pow_public_u64(&base, exp);
+            let got = ctx.pow_secret(&base, &small(exp));
+            assert_eq!(want, got, "disagreed at exp={exp}");
+        }
+    }
+
+    #[test]
+    fn pow_secret_matches_pow_public_u1024_on_wide_exp() {
+        let n = synthetic_modulus(0xcafe_f00d);
+        let ctx = MontCtx1024::new(n).unwrap();
+        let base = small(5);
+        // Build a non-trivial 1024-bit exponent reduced mod n.
+        let mut exp_limbs = [0u64; LIMBS];
+        let mut x: u64 = 0x1234_5678_9abc_def0;
+        for i in 0..LIMBS {
+            x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            exp_limbs[i] = x;
+        }
+        let exp = U1024 { limbs: exp_limbs };
+        let want = ctx.pow_public_u1024(&base, &exp);
+        let got = ctx.pow_secret(&base, &exp);
+        assert_eq!(want, got);
     }
 
     #[test]
