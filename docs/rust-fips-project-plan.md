@@ -20,7 +20,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - `fips-aes` — AES-128/192/256 in ECB, CBC, CTR, GCM, CCM, KW, KWP modes with power-up KATs.
 - `fips-cmac` — AES-CMAC.
 - `fips-drbg` — CTR_DRBG (AES-128/192/256, no df + use df), Hash_DRBG (SHA-256/384/512), HMAC_DRBG (SHA-256/384/512), SP 800-90A §11.3 health tests, §9.3 prediction-resistance generate API.
-- `fips-ecdsa` — ECDSA P-256/SHA-256 sign, verify, power-up KAT.
+- `fips-ecdsa` — ECDSA P-256/SHA-256 sign (caller-supplied `k` and DRBG-backed random-`k` wrapper), verify, and power-up KAT. FIPS 186-5 §A.2.2 DRBG-backed key generation via `EcdsaP256PrivateKey::generate` with an IG 10.3.A pairwise consistency test on every constructor path (keygen + import); the PCT uses the same rejection sampler that the production sign path consumes, so one code path covers both.
 - `fips-ecdh` — ECDH P-256 with full public-key validation and KAT (SP 800-56Ar3).
 - `fips-rsa` — RSA-2048 PKCS#1 v1.5 verify, sign (non-CRT) via constant-time 4-bit windowed Montgomery ladder, RSASSA-PSS SHA-256 sign/verify with MGF1 (sLen=hLen=32, emBits=2047), FIPS 186-5 §A.1.1 / §B.3.1 probable-prime key generation with 5-round Miller-Rabin (Table B.1 nlen=2048), DRBG-backed `sign_pss_sha256` wrapper that samples a fresh salt, IG 10.3.A pairwise consistency test on all generated and imported keys. RSAES-OAEP encrypt/decrypt (RFC 8017 §7.1, SP 800-56Br2 KTS-OAEP) with SHA-256/MGF1-SHA-256, a Manger-resistant single-accumulator decode, and a CRT decrypt path that shares the Bellcore-protected private-exponent primitive with CRT sign. Uses `bigint2048` / `mont2048` and narrow `bigint1024` / `mont1024` twins for Miller-Rabin.
 - `fips-test-vectors` — generated KAT constants sourced from vendored NIST ACVP-Server vectors.
@@ -38,7 +38,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 **Phase 2 remaining before it can be called closed:**
 
 - ~~`fips-rsa` CRT-form private keys (p, q, dP, dQ, qInv) with Shamir-style verify-after-sign Bellcore fault-detection on the CRT sign path.~~ **Landed in R5.** Garner recombine runs on `MontCtx1024` with the secret-exponent ladder `pow_secret`, qInv is computed by keygen via Fermat (`q^(p−2) mod p`) to sidestep a latent overflow bug in `bigint1024::modinv_odd` for top-bit-set moduli, and `RsaPrivateKey2048` now carries an `Option<CrtComponents>` so both construction pathways (`from_components` non-CRT / `from_components_crt` CRT) and `sign_pkcs1_v15_sha256` / `sign_pss_sha256_with_salt` dispatch automatically. Fresh `generate` output lands on the CRT path by default.
-- Pairwise consistency test coverage for ECDSA and (eventual) EdDSA keygen at the same IG 10.3.A level as the RSA PCT.
+- ~~Pairwise consistency test coverage for ECDSA keygen at the same IG 10.3.A level as the RSA PCT.~~ **Landed in R7.** A new `p256_keygen` module owns the FIPS 186-5 §A.2.2 rejection sampler, and `EcdsaP256PrivateKey::{generate, from_bytes}` run a sign-and-verify PCT against a fixed probe using a freshly DRBG-sampled `k`. The same sampler backs the random-`k` `sign_sha256` wrapper, so the PCT exercises the exact code path production sign calls will use. EdDSA PCT follows when the `fips-eddsa` crate lands.
 - `dudect`-style constant-time validation across the three asymmetric crates.
 
 **Documentation policy (applies from D1 forward):** every commit that
@@ -279,10 +279,10 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-rsa`: RSASSA-PSS SHA-256 sign/verify with MGF1
 - [x] `fips-rsa`: Key generation via FIPS 186-5 §A.1.1 / §B.3.1 probable primes + DRBG-backed `sign_pss_sha256` wrapper
 - [x] `fips-rsa`: CRT-form private keys with Bellcore/Shamir verify-after-sign fault-detection (R5 — Garner recombine over mont1024, wired through PKCS#1 v1.5 and PSS sign entry points, with a byte-exact CRT↔non-CRT equivalence test and a dP-tamper fault-injection test)
-- [~] `fips-ecdsa`: P-256/SHA-256 keygen + sign + verify landed; P-384 and P-521 deferred
+- [~] `fips-ecdsa`: P-256/SHA-256 keygen (DRBG-backed via FIPS 186-5 §A.2.2 rejection sampler, R7), caller-`k` and DRBG-backed random-`k` sign, verify all landed; P-384 and P-521 deferred
 - [x] `fips-ecdh`: ECDH per SP 800-56Ar3 (P-256)
 - [x] Pairwise consistency tests for RSA keygen (IG 10.3.A, wired inside `from_components`)
-- [ ] Pairwise consistency tests for ECDSA / EdDSA keygen
+- [~] Pairwise consistency tests for ECDSA keygen (IG 10.3.A, wired inside `EcdsaP256PrivateKey::{generate, from_bytes}`, R7); EdDSA PCT deferred until `fips-eddsa` lands
 - [ ] Constant-time validation: verify with `dudect` or timing leak tests
 
 ### Phase 3: Extended Algorithms + ACVP (Weeks 11–16)

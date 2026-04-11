@@ -6,6 +6,8 @@
 //! |---------|----------|-------------|
 //! | P-256 public-key derivation | FIPS 186-5 §6.2.1 | [`p256_ecdsa::derive_public_key`] |
 //! | P-256 ECDSA sign (caller-supplied `k`) | FIPS 186-5 §6.4.1 | [`p256_ecdsa::sign_with_k`] |
+//! | P-256 ECDSA sign (DRBG-sampled `k`) | FIPS 186-5 §6.4.1, §A.2.2 | [`p256_ecdsa::EcdsaP256PrivateKey::sign_sha256`] |
+//! | P-256 ECDSA keygen (DRBG-sampled `d`) | FIPS 186-5 §A.2.2 | [`p256_ecdsa::EcdsaP256PrivateKey::generate`] |
 //! | P-256 ECDSA verify | FIPS 186-5 §6.4.2 | [`p256_ecdsa::verify`] |
 //!
 //! P-384 and P-521 are deferred; they will reuse the same
@@ -30,10 +32,21 @@
 //!
 //! # Sign API shape
 //!
-//! `sign_with_k` takes the per-signature nonce `k` as an explicit
-//! argument; deterministic nonce generation per RFC 6979 and
-//! random-k sampling through `fips-drbg` land as wrapper services
-//! once both CAVP-K and hedged-signature vectors pass.
+//! Two entry points:
+//!
+//!   * [`p256_ecdsa::sign_with_k`] — raw primitive taking the per-
+//!     signature nonce `k` as an explicit argument. This is the
+//!     shape used by FIPS 186-5 / CAVP KATs that pin `k`, and by
+//!     internal test code; it must never be called with a reused `k`.
+//!   * [`p256_ecdsa::EcdsaP256PrivateKey::sign_sha256`] — DRBG-backed
+//!     wrapper that samples a fresh `k` from an approved HMAC_DRBG
+//!     on every call via the FIPS 186-5 §A.2.2 rejection sampler in
+//!     [`p256_keygen`]. This is the path production code should use.
+//!
+//! RFC 6979 deterministic signing is deliberately **not** offered
+//! here: FIPS 186-5 §6.4 mandates an approved RBG for `k`, and
+//! operator discipline around `k` reuse is enforced by the
+//! DRBG-backed wrapper taking ownership of the sampler.
 //!
 //! # Power-up self-tests
 //!
@@ -49,19 +62,25 @@
 //!   curve, not-identity, and order-n membership inside
 //!   [`p256_point`] before verify proceeds. Failures surface as
 //!   a single generic error variant.
-//! - **Pairwise consistency test** (IG 10.3.A): after keygen,
-//!   the derived public key must successfully verify a sample
-//!   signature made with the fresh private key. Implementation
-//!   lives with the future random-keygen wrapper.
+//! - **Pairwise consistency test** (IG 10.3.A): every
+//!   [`p256_ecdsa::EcdsaP256PrivateKey`] constructor (keygen or
+//!   import) runs a sign-and-verify PCT against a fixed probe
+//!   message using a freshly DRBG-sampled `k`; the derived public
+//!   key must accept the probe signature or construction returns an
+//!   error. This exercises the sampler, the sign primitive, and
+//!   `verify_internal` on the same code paths that production calls
+//!   will use.
 //!
 //! # Sensitive security parameters
 //!
 //! - **Private key `d`** (`[u8; 32]`) — CSP. Consumed by
 //!   `derive_public_key` / `sign_with_k`; not retained beyond
 //!   the call.
-//! - **Per-signature nonce `k`** — CSP. Caller-supplied in the
-//!   current API; must be unpredictable and single-use per
-//!   FIPS 186-5 §6.4.1. Reuse under the same key reveals `d`.
+//! - **Per-signature nonce `k`** — CSP. In the DRBG-backed sign
+//!   wrapper, `k` is sampled fresh on every call by the FIPS 186-5
+//!   §A.2.2 rejection sampler; in [`p256_ecdsa::sign_with_k`] the
+//!   caller supplies `k` and is responsible for unpredictability
+//!   and single-use discipline. Reuse under the same key reveals `d`.
 //! - **Public key `Q`** — public. Subject to full validation
 //!   on import.
 //! - **Signature `(r, s)`** — public output.
@@ -86,5 +105,6 @@
 
 pub mod p256_ecdsa;
 pub mod p256_field;
+pub mod p256_keygen;
 pub mod p256_point;
 pub mod p256_scalar;

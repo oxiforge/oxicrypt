@@ -52,10 +52,14 @@ its published source.
   encrypt/decrypt with SHA-256/MGF1-SHA-256 (RFC 8017 §7.1,
   SP 800-56Br2 KTS-OAEP), Manger-resistant decode, and CRT decrypt
   path sharing the Bellcore-protected private-exponent primitive.
-- **Elliptic curves** — ECDSA P-256 sign (caller-supplied `k`), verify,
-  and public-key derivation (FIPS 186-5 §6.4), with full SEC1 public-key
-  validation (SP 800-56Ar3 §5.6.2.3.3). ECDH P-256 (SP 800-56Ar3 §5.7.1.2
-  ECC CDH) with RFC 5903 §8.1 power-up KAT.
+- **Elliptic curves** — ECDSA P-256 sign (caller-supplied `k` and
+  DRBG-backed random-`k` wrapper), verify, public-key derivation,
+  and DRBG-backed key generation via FIPS 186-5 §A.2.2 rejection
+  sampling with an IG 10.3.A pairwise consistency test on every
+  constructed `EcdsaP256PrivateKey` (FIPS 186-5 §6.4, §A.2). Full
+  SEC1 public-key validation (SP 800-56Ar3 §5.6.2.3.3) on verify.
+  ECDH P-256 (SP 800-56Ar3 §5.7.1.2 ECC CDH) with RFC 5903 §8.1
+  power-up KAT.
 - **Module integrity** — HMAC-SHA-256 software/firmware integrity check
   over `current_exe()` with an embedded 64-byte reserved slot populated at
   sign time and validated by magic-marker scan at boot (FIPS 140-3
