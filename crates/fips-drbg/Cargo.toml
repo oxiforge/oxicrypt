@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 fips-module = { path = "../fips-module" }
+fips-aes = { path = "../fips-aes" }

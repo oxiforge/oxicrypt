@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 fips-aes = { path = "../crates/fips-aes" }
 fips-cmac = { path = "../crates/fips-cmac" }
+fips-drbg = { path = "../crates/fips-drbg" }
 fips-module = { path = "../crates/fips-module" }
 fips-sha = { path = "../crates/fips-sha" }
 fips-xof = { path = "../crates/fips-xof" }

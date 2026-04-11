@@ -8,6 +8,7 @@ version = "0.0.0"
 dependencies = [
  "fips-aes",
  "fips-cmac",
+ "fips-drbg",
  "fips-hmac",
  "fips-integrity",
  "fips-kdf",
@@ -35,6 +36,7 @@ dependencies = [
 name = "fips-drbg"
 version = "0.0.0"
 dependencies = [
+ "fips-aes",
  "fips-module",
 ]
 
