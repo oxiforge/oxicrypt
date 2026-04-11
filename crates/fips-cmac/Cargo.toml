@@ -11,4 +11,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+fips-aes = { path = "../fips-aes" }
 fips-module = { path = "../fips-module" }

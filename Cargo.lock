@@ -7,6 +7,7 @@ name = "acvp-harness"
 version = "0.0.0"
 dependencies = [
  "fips-aes",
+ "fips-cmac",
  "fips-hmac",
  "fips-integrity",
  "fips-kdf",
@@ -26,6 +27,7 @@ dependencies = [
 name = "fips-cmac"
 version = "0.0.0"
 dependencies = [
+ "fips-aes",
  "fips-module",
 ]
 
