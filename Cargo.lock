@@ -38,6 +38,7 @@ version = "0.0.0"
 dependencies = [
  "fips-aes",
  "fips-module",
+ "fips-sha",
 ]
 
 [[package]]

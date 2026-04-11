@@ -4,7 +4,8 @@
 //!
 //! * CTR_DRBG (§10.2) with AES-128/192/256, both `no df` and `use df`
 //!   variants. See [`ctr`].
-//! * Hash_DRBG and HMAC_DRBG land in subsequent batches.
+//! * Hash_DRBG (§10.1.1) over SHA-256/384/512. See [`hash`].
+//! * HMAC_DRBG lands in a subsequent batch.
 //!
 //! # Power-up KATs
 //!
@@ -14,10 +15,15 @@
 #![forbid(unsafe_code)]
 
 pub mod ctr;
+pub mod hash;
 pub mod kat;
 
 pub use ctr::{
     Aes128Factory, Aes192Factory, Aes256Factory, CipherFactory, CtrDrbg, CtrDrbgAes128,
     CtrDrbgAes192, CtrDrbgAes256, DrbgError, MAX_DF_INPUT,
+};
+pub use hash::{
+    HashAlg, HashDrbg, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512, Sha256Alg, Sha384Alg,
+    Sha512Alg, HASH_DRBG_MAX_DF_INPUT,
 };
 pub use kat::KATS;
