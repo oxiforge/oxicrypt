@@ -247,6 +247,24 @@ impl FieldElement {
         (((x.wrapping_sub(1)) >> 31) & 1) as u8
     }
 
+    /// Constant-time conditional select.
+    ///
+    /// Returns `a` when `choice == 0` and `b` when `choice == 1`.
+    /// `choice` must be `0` or `1`; any other value is a bug (it
+    /// produces a garbage output but does not leak the inputs).
+    /// Implemented as a branchless masked XOR so the running time
+    /// and memory access pattern are identical for both paths.
+    pub fn conditional_select(a: &FieldElement, b: &FieldElement, choice: u8) -> FieldElement {
+        let mask = u64::from(choice).wrapping_neg();
+        FieldElement([
+            a.0[0] ^ (mask & (a.0[0] ^ b.0[0])),
+            a.0[1] ^ (mask & (a.0[1] ^ b.0[1])),
+            a.0[2] ^ (mask & (a.0[2] ^ b.0[2])),
+            a.0[3] ^ (mask & (a.0[3] ^ b.0[3])),
+            a.0[4] ^ (mask & (a.0[4] ^ b.0[4])),
+        ])
+    }
+
     /// Negate a field element: `-self mod p`.
     pub fn negate(&self) -> FieldElement {
         // 2*p in limb form; adding this to any element keeps it

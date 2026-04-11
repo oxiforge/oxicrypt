@@ -53,6 +53,7 @@
 )]
 
 use crate::field::FieldElement;
+use crate::scalar::Scalar;
 
 /// `2 · d (mod p)`, where `d = -121665 · 121666⁻¹ (mod p)` is the
 /// edwards25519 curve coefficient.
@@ -185,6 +186,50 @@ impl EdwardsPoint {
         }
     }
 
+    /// Constant-time conditional select on every coordinate.
+    ///
+    /// Returns `a` when `choice == 0` and `b` when `choice == 1`.
+    /// Delegates to [`FieldElement::conditional_select`] per limb,
+    /// so the running time is independent of both `choice` and the
+    /// coordinate values.
+    pub fn conditional_select(
+        a: &EdwardsPoint,
+        b: &EdwardsPoint,
+        choice: u8,
+    ) -> EdwardsPoint {
+        EdwardsPoint {
+            x: FieldElement::conditional_select(&a.x, &b.x, choice),
+            y: FieldElement::conditional_select(&a.y, &b.y, choice),
+            z: FieldElement::conditional_select(&a.z, &b.z, choice),
+            t: FieldElement::conditional_select(&a.t, &b.t, choice),
+        }
+    }
+
+    /// Variable-base scalar multiplication: `[k] · self`.
+    ///
+    /// Implemented as a constant-time MSB-first double-and-add
+    /// (Montgomery-ladder–equivalent for Edwards points): for every
+    /// bit of the 256-bit scalar `k`, the accumulator is doubled and
+    /// then conditionally updated to `Q + self` if the bit is 1.
+    /// The conditional is a branchless per-coordinate select so the
+    /// control flow and memory access pattern are independent of the
+    /// scalar value.
+    ///
+    /// Note: this ladder runs 256 doublings and 256 point additions
+    /// unconditionally, which is ample for Ed25519 sign / verify and
+    /// keeps the implementation simple and auditable. A windowed or
+    /// fixed-base comb can be layered on later if performance needs
+    /// it.
+    pub fn mul(&self, scalar: &Scalar) -> EdwardsPoint {
+        let mut q = EdwardsPoint::IDENTITY;
+        for i in (0..256).rev() {
+            q = q.double();
+            let t = q.add(self);
+            q = EdwardsPoint::conditional_select(&q, &t, scalar.bit(i));
+        }
+        q
+    }
+
     /// Point doubling on edwards25519.
     ///
     /// Uses the dedicated doubling formula from Hisil et al.
@@ -301,6 +346,109 @@ mod tests {
         let sum = b.add(&b);
         let dbl = b.double();
         assert_eq!(sum.ct_eq(&dbl), 1);
+    }
+
+    // Convert an extended-coordinate point to affine bytes for
+    // comparison against Python-computed fixtures.
+    fn affine_bytes(p: &EdwardsPoint) -> ([u8; 32], [u8; 32]) {
+        let z_inv = p.z.invert();
+        let x = p.x * z_inv;
+        let y = p.y * z_inv;
+        (x.to_bytes(), y.to_bytes())
+    }
+
+    fn scalar_from_u64(k: u64) -> Scalar {
+        let mut b = [0u8; 32];
+        b[0..8].copy_from_slice(&k.to_le_bytes());
+        Scalar::from_bytes(&b)
+    }
+
+    #[test]
+    fn scalar_mul_zero_is_identity() {
+        let q = EdwardsPoint::BASE.mul(&Scalar::ZERO);
+        assert_eq!(q.ct_eq(&EdwardsPoint::IDENTITY), 1);
+    }
+
+    #[test]
+    fn scalar_mul_one_is_input() {
+        let q = EdwardsPoint::BASE.mul(&Scalar::ONE);
+        assert_eq!(q.ct_eq(&EdwardsPoint::BASE), 1);
+    }
+
+    #[test]
+    fn scalar_mul_two_equals_double() {
+        let q = EdwardsPoint::BASE.mul(&scalar_from_u64(2));
+        assert_eq!(q.ct_eq(&EdwardsPoint::BASE.double()), 1);
+    }
+
+    #[test]
+    fn scalar_mul_small_multiples_match_python() {
+        // Affine (x, y) of k·B for k ∈ {3, 5, 8, 16}, computed in
+        // Python with the pure affine add-and-double reference.
+        let cases: [(u64, [u8; 32], [u8; 32]); 4] = [
+            (
+                3,
+                [
+                    92, 226, 248, 211, 95, 72, 98, 172, 134, 72, 98, 129, 25, 152, 67, 99, 58,
+                    200, 218, 62, 116, 174, 244, 31, 73, 143, 146, 34, 74, 156, 174, 103,
+                ],
+                [
+                    212, 180, 245, 120, 72, 104, 195, 2, 4, 3, 36, 103, 23, 236, 22, 159, 247,
+                    158, 38, 96, 142, 161, 38, 161, 171, 105, 238, 119, 209, 177, 103, 18,
+                ],
+            ),
+            (
+                5,
+                [
+                    51, 242, 46, 50, 192, 156, 64, 145, 165, 225, 27, 62, 249, 25, 40, 92, 222,
+                    165, 45, 209, 247, 124, 239, 252, 123, 88, 227, 173, 62, 167, 253, 73,
+                ],
+                [
+                    237, 200, 118, 214, 131, 31, 210, 16, 93, 11, 67, 137, 202, 46, 40, 49, 102,
+                    70, 146, 137, 20, 110, 44, 224, 111, 174, 254, 152, 178, 37, 72, 95,
+                ],
+            ),
+            (
+                8,
+                [
+                    200, 132, 165, 8, 188, 253, 135, 59, 153, 139, 105, 128, 123, 198, 58, 235,
+                    147, 207, 78, 248, 92, 45, 134, 66, 182, 113, 215, 151, 95, 225, 66, 103,
+                ],
+                [
+                    180, 185, 55, 252, 169, 91, 47, 30, 147, 228, 30, 98, 252, 60, 120, 129, 143,
+                    243, 138, 102, 9, 111, 173, 110, 121, 115, 229, 201, 0, 6, 211, 33,
+                ],
+            ),
+            (
+                16,
+                [
+                    248, 249, 40, 108, 109, 89, 178, 89, 116, 35, 191, 231, 51, 141, 87, 9, 145,
+                    156, 36, 8, 21, 43, 226, 184, 238, 58, 229, 39, 6, 134, 164, 35,
+                ],
+                [
+                    235, 39, 103, 193, 55, 171, 122, 216, 39, 156, 7, 142, 255, 17, 106, 176,
+                    120, 110, 173, 58, 46, 15, 152, 159, 114, 195, 127, 130, 242, 150, 150, 112,
+                ],
+            ),
+        ];
+        for (k, xx, yy) in cases {
+            let q = EdwardsPoint::BASE.mul(&scalar_from_u64(k));
+            let (x, y) = affine_bytes(&q);
+            assert_eq!(x, xx, "k = {k}");
+            assert_eq!(y, yy, "k = {k}");
+        }
+    }
+
+    #[test]
+    fn scalar_mul_by_group_order_is_identity() {
+        // [L]·B == O, since B has prime order L.
+        let l = Scalar::from_bytes(&[
+            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
+            0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x10,
+        ]);
+        let q = EdwardsPoint::BASE.mul(&l);
+        assert_eq!(q.ct_eq(&EdwardsPoint::IDENTITY), 1);
     }
 
     #[test]

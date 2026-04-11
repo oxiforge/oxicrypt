@@ -141,6 +141,26 @@ impl Scalar {
         &self.limbs
     }
 
+    /// Return the `i`-th bit of the scalar as `0` or `1`.
+    ///
+    /// Bit `0` is the LSB; the scalar is treated as a 256-bit
+    /// little-endian integer. Values of `i >= 256` return `0`.
+    /// Constant time in the scalar value; the index `i` is a public
+    /// loop counter in every caller in this crate.
+    #[inline]
+    pub(crate) fn bit(&self, i: usize) -> u8 {
+        if i >= 256 {
+            return 0;
+        }
+        // Bit `i` lives in limb `i >> 5`, shifted by `i & 31`. The
+        // bit-twiddling form avoids `clippy::integer_division` while
+        // matching the semantics of `i / 32` and `i % 32` for the
+        // only value range this helper accepts.
+        let word = i >> 5;
+        let shift = i & 31;
+        ((self.limbs[word] >> shift) & 1) as u8
+    }
+
     /// Constant-time test for the zero scalar.
     ///
     /// Returns `1` if every limb is zero, `0` otherwise.
