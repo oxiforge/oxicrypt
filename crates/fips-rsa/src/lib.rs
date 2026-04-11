@@ -35,6 +35,7 @@
 pub mod bigint2048;
 pub mod mont2048;
 pub mod pkcs1_v15;
+pub mod pss;
 
 use bigint2048::{U2048, BYTES as U2048_BYTES};
 use fips_module::{require_operational, Error, SelfTestFailure};
@@ -148,6 +149,77 @@ pub fn rsa_pkcs1_v15_sign_2048_sha256_internal(
 }
 
 // ------------------------------------------------------------------
+// Core PSS primitives (state-gate-free)
+// ------------------------------------------------------------------
+
+/// RSASSA-PSS sign for RSA-2048 / SHA-256 with `sLen = hLen = 32`,
+/// bypassing the FIPS module state gate. Intended for power-up KAT
+/// and for the gated public API wrappers.
+///
+/// The caller supplies the salt. The KAT path passes a pinned salt;
+/// production callers supply fresh randomness. Returns `None` for the
+/// same structural reasons as [`rsa_pkcs1_v15_sign_2048_sha256_internal`]
+/// (bad modulus, `d ≥ n`, or EMSA-PSS encode failure, which again
+/// cannot happen for the pinned parameter triple but is plumbed for
+/// symmetry).
+#[doc(hidden)]
+pub fn rsa_pss_sign_2048_sha256_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    msg: &[u8],
+    salt: &[u8; pss::SLEN],
+) -> Option<[u8; RSA_2048_SIGNATURE_BYTES]> {
+    let n = U2048::from_be_bytes(n_bytes);
+    let ctx = MontCtx2048::new(n)?;
+
+    let d = U2048::from_be_bytes(d_bytes);
+    if d.ct_lt(&ctx.n) != 1 {
+        return None;
+    }
+
+    // EMSA-PSS-ENCODE the SHA-256 digest of msg into a 256-byte EM.
+    let digest = pkcs1_v15::sha256_internal(msg);
+    let mut em = [0u8; pss::EM_LEN];
+    pss::emsa_pss_encode(&digest, salt, &mut em)?;
+
+    // RFC 8017 §8.1.1 step 2a/b: m = OS2IP(EM), s = RSASP1(K, m).
+    // The top bit of EM is cleared (emBits = 2047 < 8·emLen = 2048),
+    // so m < 2^2047 < n and the ladder never wraps.
+    let m = U2048::from_be_bytes(&em);
+    let s = ctx.pow_secret(&m, &d);
+    Some(s.to_be_bytes())
+}
+
+/// RSASSA-PSS verify for RSA-2048 / SHA-256, bypassing the FIPS module
+/// state gate. Intended for power-up KAT use only; production callers
+/// use [`rsa_pss_verify_2048_sha256`].
+#[doc(hidden)]
+pub fn rsa_pss_verify_2048_sha256_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    msg: &[u8],
+    sig_bytes: &[u8; RSA_2048_SIGNATURE_BYTES],
+) -> bool {
+    let n = U2048::from_be_bytes(n_bytes);
+    let Some(ctx) = MontCtx2048::new(n) else {
+        return false;
+    };
+
+    // RFC 8017 §8.1.2 step 1: length check is implicit; step 2a: OS2IP.
+    let s = U2048::from_be_bytes(sig_bytes);
+    if s.ct_lt(&ctx.n) != 1 {
+        return false;
+    }
+
+    // §5.2.2 RSAVP1: m = s^e mod n.
+    let m = ctx.pow_public_u64(&s, e);
+    let em = m.to_be_bytes();
+
+    let digest = pkcs1_v15::sha256_internal(msg);
+    pss::emsa_pss_verify(&digest, &em)
+}
+
+// ------------------------------------------------------------------
 // Public verify API (gated)
 // ------------------------------------------------------------------
 
@@ -171,6 +243,29 @@ pub fn rsa_pkcs1_v15_verify_2048_sha256(
 ) -> Result<(), Error> {
     require_operational()?;
     if rsa_pkcs1_v15_verify_2048_sha256_internal(n_bytes, e, msg, sig_bytes) {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput)
+    }
+}
+
+/// Verify an RSASSA-PSS signature over `msg` under the 2048-bit public
+/// key `(n_bytes, e)` using SHA-256 as both the message hash and the
+/// MGF1 hash, with salt length fixed to `hLen = 32` bytes.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the FIPS module has not
+/// finished power-up self-tests. Returns [`Error::InvalidInput`] if
+/// the signature does not verify for any reason.
+pub fn rsa_pss_verify_2048_sha256(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    msg: &[u8],
+    sig_bytes: &[u8; RSA_2048_SIGNATURE_BYTES],
+) -> Result<(), Error> {
+    require_operational()?;
+    if rsa_pss_verify_2048_sha256_internal(n_bytes, e, msg, sig_bytes) {
         Ok(())
     } else {
         Err(Error::InvalidInput)
@@ -284,6 +379,35 @@ impl RsaPrivateKey2048 {
         rsa_pkcs1_v15_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg)
             .ok_or(Error::InvalidInput)
     }
+
+    /// Sign `msg` with RSASSA-PSS using SHA-256 as both the message
+    /// hash and the MGF1 hash, with the caller-supplied salt. Returns
+    /// a 256-byte signature on success.
+    ///
+    /// # Salt sourcing
+    ///
+    /// Exposing the salt to the caller rather than internally sampling
+    /// it keeps the crate free of a randomness dependency in R3. The
+    /// R4 keygen chunk will add a DRBG-backed wrapper
+    /// (`sign_pss_sha256`) that samples a fresh `hLen`-byte salt and
+    /// then calls this method. FIPS 186-5 §5.4 permits any
+    /// `sLen ∈ [0, hLen]`; we fix it at `hLen` to keep the KAT
+    /// deterministic and match the IG 10.3.A recommendation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the FIPS module is no
+    /// longer operational at call time, or [`Error::InvalidInput`] if
+    /// the internal primitive rejects the pinned key material.
+    pub fn sign_pss_sha256_with_salt(
+        &self,
+        msg: &[u8],
+        salt: &[u8; pss::SLEN],
+    ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
+        require_operational()?;
+        rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, salt)
+            .ok_or(Error::InvalidInput)
+    }
 }
 
 // ------------------------------------------------------------------
@@ -363,30 +487,74 @@ const KAT_SIG_BYTES: [u8; 256] = [
     0x2c, 0x27, 0xc7, 0xa1, 0x6a, 0x87, 0xa7, 0x21, 0x86, 0x89, 0xec, 0xe6, 0x73, 0x3d, 0xf4, 0xcd,
 ];
 
+/// Pinned PSS salt used by the power-up KAT. Derived deterministically
+/// from `SHA-256("pqclib-pss-kat-salt-v1")` and fixed at 32 bytes
+/// (`sLen = hLen`). The value itself is not secret — it is the fresh
+/// salt a correctly-implemented PSS signer would have sampled on the
+/// one invocation that produced `KAT_PSS_SIG_BYTES`.
+const KAT_PSS_SALT: [u8; 32] = [
+    0x2f, 0x2f, 0x43, 0x3a, 0xbc, 0x18, 0x81, 0x24, 0x32, 0xdd, 0x17, 0xa9, 0x40, 0xb3, 0x88, 0xb6,
+    0x39, 0x3b, 0x39, 0x98, 0x63, 0x5e, 0xce, 0x23, 0x89, 0xca, 0xf0, 0x7d, 0x34, 0x78, 0xb7, 0x27,
+];
+
+/// Message covered by the PSS KAT signature.
+const KAT_PSS_MSG: &[u8] = b"pqclib FIPS RSA-2048 PSS SHA-256 power-up KAT";
+
+/// Pinned RSASSA-PSS signature of `KAT_PSS_MSG` under `(KAT_N, KAT_D)`
+/// with salt `KAT_PSS_SALT`.
+const KAT_PSS_SIG_BYTES: [u8; 256] = [
+    0x97, 0x9a, 0x30, 0xd1, 0xd9, 0x2e, 0x5b, 0x7f, 0x23, 0x5f, 0x53, 0xf0, 0xc8, 0x27, 0xbd, 0xe1,
+    0xee, 0x89, 0x06, 0xc4, 0x4d, 0x80, 0xba, 0x1b, 0x8d, 0x65, 0xc9, 0x4e, 0xbd, 0x34, 0x00, 0xd9,
+    0x33, 0xa3, 0xf4, 0x76, 0xe0, 0x71, 0x5d, 0xea, 0xc4, 0x56, 0x8c, 0xda, 0xcb, 0x4b, 0xee, 0xea,
+    0x1b, 0xaf, 0x47, 0xbd, 0x0d, 0xcc, 0x3d, 0x40, 0x8f, 0x79, 0xc7, 0xa9, 0x6d, 0x0d, 0xe2, 0x7f,
+    0x07, 0x23, 0x05, 0x10, 0x65, 0xfd, 0x38, 0xab, 0x6c, 0x6c, 0x5d, 0x1a, 0x67, 0x1d, 0xa4, 0xd9,
+    0x2a, 0x61, 0x84, 0xb1, 0xbf, 0xf0, 0x7a, 0xba, 0x53, 0xf4, 0xb5, 0x50, 0x98, 0x90, 0x22, 0xcb,
+    0x6a, 0xb2, 0x9e, 0x6c, 0x0d, 0xf9, 0x0b, 0x41, 0xdd, 0x4c, 0x45, 0x66, 0x13, 0x20, 0xfc, 0x77,
+    0x1e, 0x49, 0x4a, 0x2b, 0xcc, 0x2f, 0xc1, 0xde, 0x86, 0x50, 0xe7, 0x47, 0x44, 0xc1, 0xf7, 0xeb,
+    0x92, 0x8c, 0xbb, 0xb3, 0x48, 0xff, 0x0c, 0xdb, 0xce, 0xb7, 0x8f, 0xb4, 0x45, 0xb5, 0xad, 0xfa,
+    0xd6, 0x53, 0xef, 0xd6, 0x89, 0x6a, 0x59, 0x6c, 0x3a, 0x90, 0xa9, 0x71, 0xdd, 0x15, 0x41, 0x8c,
+    0x51, 0x01, 0x0a, 0xea, 0xc6, 0x30, 0x67, 0x5a, 0xec, 0x1b, 0x06, 0xbc, 0xb8, 0xf9, 0x75, 0x24,
+    0x4c, 0xbc, 0x3e, 0x3d, 0x5c, 0x84, 0x8e, 0xce, 0x23, 0xe8, 0x54, 0x03, 0x64, 0xb6, 0xef, 0x30,
+    0xfd, 0x9e, 0xd4, 0x6c, 0x91, 0x94, 0x9d, 0x6c, 0xb5, 0x83, 0xfa, 0xc4, 0x69, 0xb6, 0x6b, 0x62,
+    0x2f, 0x91, 0x8d, 0xb7, 0x02, 0xbc, 0xbf, 0xd5, 0x8c, 0x39, 0xa6, 0xc6, 0x4e, 0xc1, 0xf3, 0x8e,
+    0x1c, 0x9c, 0xb2, 0x46, 0xed, 0x07, 0xf8, 0xe1, 0xa2, 0xf2, 0x82, 0x09, 0xf5, 0xbf, 0xe2, 0x5d,
+    0x56, 0xbd, 0x5d, 0xe2, 0x2c, 0x70, 0x39, 0xfe, 0xb1, 0x1b, 0xde, 0x87, 0x74, 0x2a, 0x89, 0x31,
+];
+
 // ------------------------------------------------------------------
 // Power-up known-answer test
 // ------------------------------------------------------------------
 
-/// Power-up KAT for the RSA-2048 PKCS#1 v1.5 / SHA-256 services.
+/// Power-up KAT for the RSA-2048 PKCS#1 v1.5 / PSS SHA-256 services.
 ///
-/// Runs four checks against the pinned `(n, e, d, msg, sig)` tuple:
+/// Runs, against the pinned `(n, e, d)` keypair:
 ///
-/// 1. Verify: the pinned signature verifies under `(n, e, msg)`.
-/// 2. Tamper: flipping the last byte of the signature is rejected.
-/// 3. Sign: signing the pinned message under `(n, d)` reproduces the
-///    pinned signature byte-for-byte — this simultaneously exercises
-///    the constant-time windowed ladder and the EMSA encoder.
-/// 4. Pairwise consistency: the `(n, e, d)` triple passes the
-///    standalone PCT used by [`RsaPrivateKey2048::from_components`].
+/// 1. PKCS#1 v1.5 verify of the pinned signature.
+/// 2. PKCS#1 v1.5 tamper-rejection (flip the trailing byte).
+/// 3. PKCS#1 v1.5 sign reproduces the pinned signature byte-for-byte,
+///    exercising the constant-time windowed ladder and EMSA encoder.
+/// 4. Pairwise consistency on `(n, e, d)` for PKCS#1 v1.5.
+/// 5. PSS sign with the pinned salt reproduces the pinned PSS
+///    signature byte-for-byte, exercising MGF1, EMSA-PSS-ENCODE and
+///    the same ladder path.
+/// 6. PSS verify of the pinned PSS signature succeeds, exercising
+///    EMSA-PSS-VERIFY and the public-exponent ladder.
+/// 7. PSS tamper-rejection: flipping a byte in the `maskedDB` portion
+///    of the signature is rejected — this specifically catches
+///    breakage in the MGF1 mask recovery path, which a tamper on the
+///    trailing `0xbc` would not.
 pub fn self_test() -> Result<(), SelfTestFailure> {
+    // PKCS#1 v1.5 verify (positive).
     if !rsa_pkcs1_v15_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_MSG, &KAT_SIG_BYTES) {
         return Err(SelfTestFailure);
     }
+    // PKCS#1 v1.5 verify (tamper).
     let mut tampered = KAT_SIG_BYTES;
     tampered[255] ^= 0x01;
     if rsa_pkcs1_v15_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_MSG, &tampered) {
         return Err(SelfTestFailure);
     }
+    // PKCS#1 v1.5 sign (KAT reproduction).
     let Some(produced) =
         rsa_pkcs1_v15_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_D_BYTES, KAT_MSG)
     else {
@@ -395,7 +563,40 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     if produced != KAT_SIG_BYTES {
         return Err(SelfTestFailure);
     }
+    // PCT.
     if !pairwise_consistency_test_2048_internal(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES) {
+        return Err(SelfTestFailure);
+    }
+    // PSS sign (KAT reproduction).
+    let Some(pss_produced) = rsa_pss_sign_2048_sha256_internal(
+        &KAT_N_BYTES,
+        &KAT_D_BYTES,
+        KAT_PSS_MSG,
+        &KAT_PSS_SALT,
+    ) else {
+        return Err(SelfTestFailure);
+    };
+    if pss_produced != KAT_PSS_SIG_BYTES {
+        return Err(SelfTestFailure);
+    }
+    // PSS verify (positive).
+    if !rsa_pss_verify_2048_sha256_internal(
+        &KAT_N_BYTES,
+        KAT_E,
+        KAT_PSS_MSG,
+        &KAT_PSS_SIG_BYTES,
+    ) {
+        return Err(SelfTestFailure);
+    }
+    // PSS verify (tamper inside maskedDB, not the trailer).
+    let mut pss_tampered = KAT_PSS_SIG_BYTES;
+    pss_tampered[10] ^= 0x01;
+    if rsa_pss_verify_2048_sha256_internal(
+        &KAT_N_BYTES,
+        KAT_E,
+        KAT_PSS_MSG,
+        &pss_tampered,
+    ) {
         return Err(SelfTestFailure);
     }
     Ok(())
@@ -535,6 +736,128 @@ mod tests {
         assert_eq!(sig, KAT_SIG_BYTES);
         rsa_pkcs1_v15_verify_2048_sha256(&KAT_N_BYTES, KAT_E, KAT_MSG, &sig)
             .expect("freshly produced signature verifies");
+    }
+
+    #[test]
+    fn pss_kat_sign_reproduces_pinned_signature() {
+        let produced = rsa_pss_sign_2048_sha256_internal(
+            &KAT_N_BYTES,
+            &KAT_D_BYTES,
+            KAT_PSS_MSG,
+            &KAT_PSS_SALT,
+        )
+        .unwrap();
+        assert_eq!(produced, KAT_PSS_SIG_BYTES);
+    }
+
+    #[test]
+    fn pss_kat_positive_verifies() {
+        assert!(rsa_pss_verify_2048_sha256_internal(
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_PSS_MSG,
+            &KAT_PSS_SIG_BYTES
+        ));
+    }
+
+    #[test]
+    fn pss_rejects_flipped_trailer() {
+        let mut bad = KAT_PSS_SIG_BYTES;
+        bad[255] ^= 0x01;
+        assert!(!rsa_pss_verify_2048_sha256_internal(
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_PSS_MSG,
+            &bad
+        ));
+    }
+
+    #[test]
+    fn pss_rejects_tamper_in_masked_db() {
+        // A flip inside the maskedDB half of the signature perturbs
+        // the recovered DB once MGF1 unmasks it, which should fail
+        // either the PS-zeroes check or the H' compare.
+        let mut bad = KAT_PSS_SIG_BYTES;
+        bad[0] ^= 0x40;
+        assert!(!rsa_pss_verify_2048_sha256_internal(
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_PSS_MSG,
+            &bad
+        ));
+    }
+
+    #[test]
+    fn pss_rejects_wrong_message() {
+        let bad_msg = b"pqclib FIPS RSA-2048 PSS SHA-256 power-up KAT (tampered)";
+        assert!(!rsa_pss_verify_2048_sha256_internal(
+            &KAT_N_BYTES,
+            KAT_E,
+            bad_msg,
+            &KAT_PSS_SIG_BYTES
+        ));
+    }
+
+    #[test]
+    fn pss_sign_verify_roundtrips_across_salts_and_messages() {
+        let messages: [&[u8]; 4] = [
+            b"",
+            b"a",
+            b"The quick brown fox jumps over the lazy dog",
+            &[0x5au8; 512],
+        ];
+        let salts: [[u8; 32]; 2] = [[0u8; 32], [0xa5u8; 32]];
+        for msg in messages {
+            for salt in &salts {
+                let sig = rsa_pss_sign_2048_sha256_internal(
+                    &KAT_N_BYTES,
+                    &KAT_D_BYTES,
+                    msg,
+                    salt,
+                )
+                .unwrap();
+                assert!(rsa_pss_verify_2048_sha256_internal(
+                    &KAT_N_BYTES,
+                    KAT_E,
+                    msg,
+                    &sig
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn pss_cross_scheme_signature_does_not_verify_as_pkcs1() {
+        // A PSS signature must not accidentally verify as a PKCS#1
+        // v1.5 signature over the same message, and vice-versa.
+        assert!(!rsa_pkcs1_v15_verify_2048_sha256_internal(
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_PSS_MSG,
+            &KAT_PSS_SIG_BYTES
+        ));
+        assert!(!rsa_pss_verify_2048_sha256_internal(
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_MSG,
+            &KAT_SIG_BYTES
+        ));
+    }
+
+    #[test]
+    fn private_key_sign_pss_then_public_verify() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-pkcs1v15-sha256",
+            run: self_test,
+        }]);
+        let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES)
+            .expect("pinned keypair passes PCT");
+        let sig = sk
+            .sign_pss_sha256_with_salt(KAT_PSS_MSG, &KAT_PSS_SALT)
+            .expect("module operational, PSS sign succeeds");
+        assert_eq!(sig, KAT_PSS_SIG_BYTES);
+        rsa_pss_verify_2048_sha256(&KAT_N_BYTES, KAT_E, KAT_PSS_MSG, &sig)
+            .expect("pinned PSS signature verifies via gated API");
     }
 
     #[test]
