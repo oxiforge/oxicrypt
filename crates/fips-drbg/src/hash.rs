@@ -267,6 +267,24 @@ impl<H: HashAlg> HashDrbg<H> {
         Ok(())
     }
 
+    /// Hash_DRBG Generate with prediction resistance —
+    /// SP 800-90A §9.3.1 step 7.
+    ///
+    /// Equivalent to `reseed(entropy, additional_input)` followed by
+    /// `generate(None, out)`, matching the §9.3.1 step 7.1/7.2
+    /// sequence where the additional input is consumed by the reseed
+    /// and the subsequent generate is invoked with a Null additional
+    /// input.
+    pub fn generate_pr(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.reseed(entropy, additional_input)?;
+        self.generate(None, out)
+    }
+
     /// Zeroise and mark the instance uninstantiated.
     pub fn uninstantiate(&mut self) {
         self.v = [0u8; MAX_SEEDLEN];
@@ -455,6 +473,28 @@ mod tests {
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
         assert_eq!(out, expected);
+    }
+
+    // Consistency check for §9.3.1 prediction-resistance generate.
+    #[test]
+    fn generate_pr_matches_reseed_then_generate() {
+        let entropy: [u8; 32] = [0x11u8; 32];
+        let nonce: [u8; 16] = [0x22u8; 16];
+        let reseed_e: [u8; 32] = [0x33u8; 32];
+        let reseed_ai: [u8; 12] = [0x44u8; 12];
+
+        let mut a = HashDrbgSha256::new();
+        a.instantiate(&entropy, &nonce, &[]).unwrap();
+        let mut out_a = [0u8; 80];
+        a.generate_pr(&reseed_e, &reseed_ai, &mut out_a).unwrap();
+
+        let mut b = HashDrbgSha256::new();
+        b.instantiate(&entropy, &nonce, &[]).unwrap();
+        b.reseed(&reseed_e, &reseed_ai).unwrap();
+        let mut out_b = [0u8; 80];
+        b.generate(None, &mut out_b).unwrap();
+
+        assert_eq!(out_a, out_b);
     }
 
     #[test]

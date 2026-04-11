@@ -369,6 +369,38 @@ impl<F: CipherFactory> CtrDrbg<F> {
         Ok(())
     }
 
+    /// CTR_DRBG Generate with prediction resistance, `no df` variant —
+    /// SP 800-90A §9.3.1 step 7 (`prediction_resistance_request = True`).
+    ///
+    /// Equivalent to `reseed_no_df(seed_material)` immediately
+    /// followed by `generate_no_df(None, out)`, matching the
+    /// §9.3.1 step 7.1/7.2 sequence where the additional input
+    /// supplied by the caller is consumed by the reseed and the
+    /// subsequent generate is invoked with a Null additional input.
+    pub fn generate_no_df_pr(
+        &mut self,
+        seed_material: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.reseed_no_df(seed_material)?;
+        self.generate_no_df(None, out)
+    }
+
+    /// CTR_DRBG Generate with prediction resistance, `use df` variant —
+    /// SP 800-90A §9.3.1 step 7.
+    ///
+    /// Equivalent to `reseed_df(entropy, additional_input)` followed
+    /// by `generate_df(None, out)`.
+    pub fn generate_df_pr(
+        &mut self,
+        entropy: &[u8],
+        additional_input: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        self.reseed_df(entropy, additional_input)?;
+        self.generate_df(None, out)
+    }
+
     /// Zeroise and mark the instance uninstantiated.
     pub fn uninstantiate(&mut self) {
         self.key = [0u8; MAX_KEY_LEN];
@@ -672,6 +704,50 @@ mod tests {
         drbg.generate_df(None, &mut out).unwrap();
         drbg.generate_df(None, &mut out).unwrap();
         assert_eq!(out, expected);
+    }
+
+    // Consistency check for §9.3.1 prediction-resistance generate:
+    // both `no df` and `use df` paths must satisfy
+    // generate_pr(e, ai) == reseed(e, ai) + generate(None).
+    #[test]
+    fn generate_df_pr_matches_reseed_then_generate() {
+        let entropy: [u8; 16] = [0x11u8; 16];
+        let nonce: [u8; 8] = [0x22u8; 8];
+        let reseed_e: [u8; 16] = [0x33u8; 16];
+        let reseed_ai: [u8; 8] = [0x44u8; 8];
+
+        let mut a = CtrDrbgAes128::new();
+        a.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        let mut out_a = [0u8; 48];
+        a.generate_df_pr(&reseed_e, &reseed_ai, &mut out_a).unwrap();
+
+        let mut b = CtrDrbgAes128::new();
+        b.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        b.reseed_df(&reseed_e, &reseed_ai).unwrap();
+        let mut out_b = [0u8; 48];
+        b.generate_df(None, &mut out_b).unwrap();
+
+        assert_eq!(out_a, out_b);
+    }
+
+    #[test]
+    fn generate_no_df_pr_matches_reseed_then_generate() {
+        // AES-128 no df: seed_material must be exactly SEED_LEN = 32 bytes.
+        let seed_init: [u8; 32] = [0xaau8; 32];
+        let seed_reseed: [u8; 32] = [0xbbu8; 32];
+
+        let mut a = CtrDrbgAes128::new();
+        a.instantiate_no_df(&seed_init).unwrap();
+        let mut out_a = [0u8; 48];
+        a.generate_no_df_pr(&seed_reseed, &mut out_a).unwrap();
+
+        let mut b = CtrDrbgAes128::new();
+        b.instantiate_no_df(&seed_init).unwrap();
+        b.reseed_no_df(&seed_reseed).unwrap();
+        let mut out_b = [0u8; 48];
+        b.generate_no_df(None, &mut out_b).unwrap();
+
+        assert_eq!(out_a, out_b);
     }
 
     #[test]
