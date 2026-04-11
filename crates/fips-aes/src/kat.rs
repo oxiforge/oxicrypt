@@ -34,6 +34,7 @@
 use fips_module::{KatEntry, SelfTestFailure};
 
 use crate::block::{Aes128Key, Aes192Key, Aes256Key};
+use crate::kw::{kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap};
 use crate::modes::{cbc_decrypt, cbc_encrypt, ctr_xor, gcm_decrypt, gcm_encrypt};
 
 // ----------------------------------------------------------------------
@@ -403,6 +404,223 @@ fn self_test_gcm_aes256() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
+// ----------------------------------------------------------------------
+// KW — RFC 3394 §4 / SP 800-38F §6.2
+// ----------------------------------------------------------------------
+//
+// RFC 3394 §4.1 through §4.6 publish six canonical KW test vectors
+// across the KEK × wrapped-key cross product. We run all six at
+// power-up so every combination of (AES-128 / AES-192 / AES-256 KEK)
+// × (128-bit / 192-bit / 256-bit wrapped key) that has a published
+// vector is exercised in both the wrap and unwrap directions.
+
+const RFC3394_PT_128: [u8; 16] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+];
+const RFC3394_PT_192: [u8; 24] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+];
+const RFC3394_PT_256: [u8; 32] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+];
+
+// §4.1 — AES-128 KEK wrapping a 128-bit key
+const RFC3394_41_KEK: [u8; 16] = [
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+];
+const RFC3394_41_CT: [u8; 24] = [
+    0x1F, 0xA6, 0x8B, 0x0A, 0x81, 0x12, 0xB4, 0x47, 0xAE, 0xF3, 0x4B, 0xD8, 0xFB, 0x5A, 0x7B, 0x82,
+    0x9D, 0x3E, 0x86, 0x23, 0x71, 0xD2, 0xCF, 0xE5,
+];
+
+// §4.2 — AES-192 KEK wrapping a 128-bit key
+const RFC3394_42_KEK: [u8; 24] = [
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+];
+const RFC3394_42_CT: [u8; 24] = [
+    0x96, 0x77, 0x8B, 0x25, 0xAE, 0x6C, 0xA4, 0x35, 0xF9, 0x2B, 0x5B, 0x97, 0xC0, 0x50, 0xAE, 0xD2,
+    0x46, 0x8A, 0xB8, 0xA1, 0x7A, 0xD8, 0x4E, 0x5D,
+];
+
+// §4.3 — AES-256 KEK wrapping a 128-bit key
+const RFC3394_43_KEK: [u8; 32] = [
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+];
+const RFC3394_43_CT: [u8; 24] = [
+    0x64, 0xE8, 0xC3, 0xF9, 0xCE, 0x0F, 0x5B, 0xA2, 0x63, 0xE9, 0x77, 0x79, 0x05, 0x81, 0x8A, 0x2A,
+    0x93, 0xC8, 0x19, 0x1E, 0x7D, 0x6E, 0x8A, 0xE7,
+];
+
+// §4.4 — AES-192 KEK wrapping a 192-bit key
+const RFC3394_44_CT: [u8; 32] = [
+    0x03, 0x1D, 0x33, 0x26, 0x4E, 0x15, 0xD3, 0x32, 0x68, 0xF2, 0x4E, 0xC2, 0x60, 0x74, 0x3E, 0xDC,
+    0xE1, 0xC6, 0xC7, 0xDD, 0xEE, 0x72, 0x5A, 0x93, 0x6B, 0xA8, 0x14, 0x91, 0x5C, 0x67, 0x62, 0xD2,
+];
+
+// §4.5 — AES-256 KEK wrapping a 192-bit key
+const RFC3394_45_CT: [u8; 32] = [
+    0xA8, 0xF9, 0xBC, 0x16, 0x12, 0xC6, 0x8B, 0x3F, 0xF6, 0xE6, 0xF4, 0xFB, 0xE3, 0x0E, 0x71, 0xE4,
+    0x76, 0x9C, 0x8B, 0x80, 0xA3, 0x2C, 0xB8, 0x95, 0x8C, 0xD5, 0xD1, 0x7D, 0x6B, 0x25, 0x4D, 0xA1,
+];
+
+// §4.6 — AES-256 KEK wrapping a 256-bit key
+const RFC3394_46_CT: [u8; 40] = [
+    0x28, 0xC9, 0xF4, 0x04, 0xC4, 0xB8, 0x10, 0xF4, 0xCB, 0xCC, 0xB3, 0x5C, 0xFB, 0x87, 0xF8, 0x26,
+    0x3F, 0x57, 0x86, 0xE2, 0xD8, 0x0E, 0xD3, 0x26, 0xCB, 0xC7, 0xF0, 0xE7, 0x1A, 0x99, 0xF4, 0x3B,
+    0xFB, 0x98, 0x8B, 0x9B, 0x7A, 0x02, 0xDD, 0x21,
+];
+
+fn self_test_kw_aes128_pt128() -> Result<(), SelfTestFailure> {
+    let k = Aes128Key::new(&RFC3394_41_KEK);
+    let mut ct = [0u8; 24];
+    kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC3394_41_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 16];
+    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != RFC3394_PT_128 {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+fn self_test_kw_aes192_pt128() -> Result<(), SelfTestFailure> {
+    let k = Aes192Key::new(&RFC3394_42_KEK);
+    let mut ct = [0u8; 24];
+    kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC3394_42_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 16];
+    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != RFC3394_PT_128 {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+fn self_test_kw_aes256_pt128() -> Result<(), SelfTestFailure> {
+    let k = Aes256Key::new(&RFC3394_43_KEK);
+    let mut ct = [0u8; 24];
+    kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC3394_43_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 16];
+    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != RFC3394_PT_128 {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+fn self_test_kw_aes192_pt192() -> Result<(), SelfTestFailure> {
+    let k = Aes192Key::new(&RFC3394_42_KEK);
+    let mut ct = [0u8; 32];
+    kw_wrap(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC3394_44_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 24];
+    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != RFC3394_PT_192 {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+fn self_test_kw_aes256_pt192() -> Result<(), SelfTestFailure> {
+    let k = Aes256Key::new(&RFC3394_43_KEK);
+    let mut ct = [0u8; 32];
+    kw_wrap(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC3394_45_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 24];
+    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != RFC3394_PT_192 {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+fn self_test_kw_aes256_pt256() -> Result<(), SelfTestFailure> {
+    let k = Aes256Key::new(&RFC3394_43_KEK);
+    let mut ct = [0u8; 40];
+    kw_wrap(&k, &RFC3394_PT_256, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC3394_46_CT {
+        return Err(SelfTestFailure);
+    }
+    let mut back = [0u8; 32];
+    kw_unwrap(&k, &ct, &mut back).map_err(|_| SelfTestFailure)?;
+    if back != RFC3394_PT_256 {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+// ----------------------------------------------------------------------
+// KWP — RFC 5649 §6 / SP 800-38F §6.3
+// ----------------------------------------------------------------------
+//
+// RFC 5649 publishes two AES-192 KWP test vectors that between them
+// exercise both KWP code paths: a 7-byte plaintext (single-AES-block
+// direct encrypt path) and a 20-byte plaintext (multi-semiblock W
+// loop path). Running both ensures both KWP-AE branches are tested
+// at power-up.
+
+const RFC5649_KEK: [u8; 24] = [
+    0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1, 0x6e, 0xa1,
+    0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
+];
+const RFC5649_PT_7: [u8; 7] = [0x46, 0x6f, 0x72, 0x50, 0x61, 0x73, 0x69];
+const RFC5649_CT_7: [u8; 16] = [
+    0xaf, 0xbe, 0xb0, 0xf0, 0x7d, 0xfb, 0xf5, 0x41, 0x92, 0x00, 0xf2, 0xcc, 0xb5, 0x0b, 0xb2, 0x4f,
+];
+const RFC5649_PT_20: [u8; 20] = [
+    0xc3, 0x7b, 0x7e, 0x64, 0x92, 0x58, 0x43, 0x40, 0xbe, 0xd1, 0x22, 0x07, 0x80, 0x89, 0x41, 0x15,
+    0x50, 0x68, 0xf7, 0x38,
+];
+const RFC5649_CT_20: [u8; 32] = [
+    0x13, 0x8b, 0xde, 0xaa, 0x9b, 0x8f, 0xa7, 0xfc, 0x61, 0xf9, 0x77, 0x42, 0xe7, 0x22, 0x48, 0xee,
+    0x5a, 0xe6, 0xae, 0x53, 0x60, 0xd1, 0xae, 0x6a, 0x5f, 0x54, 0xf3, 0x73, 0xfa, 0x54, 0x3b, 0x6a,
+];
+
+fn self_test_kwp_aes192_7() -> Result<(), SelfTestFailure> {
+    let k = Aes192Key::new(&RFC5649_KEK);
+    let mut ct = [0u8; 16];
+    kwp_wrap(&k, &RFC5649_PT_7, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC5649_CT_7 {
+        return Err(SelfTestFailure);
+    }
+    let mut scratch = [0u8; 8];
+    let mli = kwp_unwrap(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
+    if mli != RFC5649_PT_7.len() || scratch[..mli] != RFC5649_PT_7[..] {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
+fn self_test_kwp_aes192_20() -> Result<(), SelfTestFailure> {
+    let k = Aes192Key::new(&RFC5649_KEK);
+    let mut ct = [0u8; 32];
+    kwp_wrap(&k, &RFC5649_PT_20, &mut ct).map_err(|_| SelfTestFailure)?;
+    if ct != RFC5649_CT_20 {
+        return Err(SelfTestFailure);
+    }
+    let mut scratch = [0u8; 24];
+    let mli = kwp_unwrap(&k, &ct, &mut scratch).map_err(|_| SelfTestFailure)?;
+    if mli != RFC5649_PT_20.len() || scratch[..mli] != RFC5649_PT_20[..] {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
 /// Power-up KAT inventory for fips-aes. Wired into the acvp-harness
 /// boot sequence via `fips_module::initialize_with_tests`.
 pub const KATS: &[KatEntry] = &[
@@ -454,30 +672,49 @@ pub const KATS: &[KatEntry] = &[
         name: "AES-256-GCM KAT (SP 800-38D / McGrew-Viega Case 15, encrypt+decrypt)",
         run: self_test_gcm_aes256,
     },
+    KatEntry {
+        name: "AES-128-KW KAT (RFC 3394 §4.1, wrap+unwrap 128-bit key)",
+        run: self_test_kw_aes128_pt128,
+    },
+    KatEntry {
+        name: "AES-192-KW KAT (RFC 3394 §4.2, wrap+unwrap 128-bit key)",
+        run: self_test_kw_aes192_pt128,
+    },
+    KatEntry {
+        name: "AES-256-KW KAT (RFC 3394 §4.3, wrap+unwrap 128-bit key)",
+        run: self_test_kw_aes256_pt128,
+    },
+    KatEntry {
+        name: "AES-192-KW KAT (RFC 3394 §4.4, wrap+unwrap 192-bit key)",
+        run: self_test_kw_aes192_pt192,
+    },
+    KatEntry {
+        name: "AES-256-KW KAT (RFC 3394 §4.5, wrap+unwrap 192-bit key)",
+        run: self_test_kw_aes256_pt192,
+    },
+    KatEntry {
+        name: "AES-256-KW KAT (RFC 3394 §4.6, wrap+unwrap 256-bit key)",
+        run: self_test_kw_aes256_pt256,
+    },
+    KatEntry {
+        name: "AES-192-KWP KAT (RFC 5649 §6, 7-byte plaintext / single-block path)",
+        run: self_test_kwp_aes192_7,
+    },
+    KatEntry {
+        name: "AES-192-KWP KAT (RFC 5649 §6, 20-byte plaintext / multi-semiblock path)",
+        run: self_test_kwp_aes192_20,
+    },
 ];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{
-        self_test_cbc_aes128, self_test_cbc_aes192, self_test_cbc_aes256, self_test_ctr_aes128,
-        self_test_ctr_aes192, self_test_ctr_aes256, self_test_ecb_aes128, self_test_ecb_aes192,
-        self_test_ecb_aes256, self_test_gcm_aes128, self_test_gcm_aes192, self_test_gcm_aes256,
-    };
+    use super::KATS;
 
     #[test]
     fn all_kats_pass() {
-        self_test_ecb_aes128().unwrap();
-        self_test_ecb_aes192().unwrap();
-        self_test_ecb_aes256().unwrap();
-        self_test_cbc_aes128().unwrap();
-        self_test_cbc_aes192().unwrap();
-        self_test_cbc_aes256().unwrap();
-        self_test_ctr_aes128().unwrap();
-        self_test_ctr_aes192().unwrap();
-        self_test_ctr_aes256().unwrap();
-        self_test_gcm_aes128().unwrap();
-        self_test_gcm_aes192().unwrap();
-        self_test_gcm_aes256().unwrap();
+        for kat in KATS {
+            (kat.run)().unwrap_or_else(|_| panic!("KAT failed: {}", kat.name));
+        }
     }
 }

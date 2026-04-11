@@ -23,8 +23,12 @@ members = [
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.94"
-# License deliberately omitted at workspace level: not yet decided. All
-# member crates set `publish = false` so no LICENSE field is required.
+# PolyForm Noncommercial 1.0.0 is not in the SPDX license list, so we
+# cannot use a bare `license = "..."` identifier. `license-file` points
+# at the LICENSE at the workspace root and Cargo treats the crate as
+# appropriately licensed. All member crates still set `publish = false`
+# so we never actually hit crates.io's SPDX requirement either.
+license-file = "LICENSE"
 repository = "https://github.com/caraka/pqclib"
 publish = false
 

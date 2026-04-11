@@ -96,7 +96,7 @@ fn main() {
                 println!("  - {}", kat.name);
             }
             println!(
-                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF + AES (ECB/CBC/CTR/GCM) + AES-CMAC + software integrity KATs run, no vectors dispatched yet."
+                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF + AES (ECB/CBC/CTR/GCM/KW/KWP) + AES-CMAC + software integrity KATs run, no vectors dispatched yet."
             );
         }
         Err(Error::AlreadyInitialized) => {

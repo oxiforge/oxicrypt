@@ -11,8 +11,12 @@
 //!   * Counter (CTR) — SP 800-38A §6.5
 //!   * Galois/Counter Mode (GCM) — SP 800-38D (96-bit IV, 128-bit tag)
 //!
-//! Additional modes (CCM, KW/KWP, CMAC) are deferred to Phase 3 per
-//! the project plan.
+//! Also includes the two wrapping modes from SP 800-38F:
+//!
+//!   * Key Wrap (KW) — §6.2 / RFC 3394
+//!   * Key Wrap with Padding (KWP) — §6.3 / RFC 5649
+//!
+//! The remaining mode (CCM) is deferred to a follow-up commit.
 //!
 //! # Power-up KATs
 //!
@@ -34,10 +38,12 @@
 
 pub mod block;
 pub mod kat;
+pub mod kw;
 pub mod modes;
 
 pub use block::{Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE};
 pub use kat::KATS;
+pub use kw::{kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap, KWP_IV_PREFIX, KW_DEFAULT_IV};
 pub use modes::{
     cbc_decrypt, cbc_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt, gcm_decrypt, gcm_encrypt,
     BlockCipher, ModeError,
