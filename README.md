@@ -48,7 +48,10 @@ its published source.
   consistency test (IG 10.3.A) and a pinned-DRBG-seed regression KAT.
   CRT sign path (Garner recombine over 1024-bit Montgomery contexts)
   with Shamir/Bellcore verify-after-sign per IG D.G, wired through
-  both PKCS#1 v1.5 and PSS sign entry points.
+  both PKCS#1 v1.5 and PSS sign entry points. RSA-2048 OAEP
+  encrypt/decrypt with SHA-256/MGF1-SHA-256 (RFC 8017 §7.1,
+  SP 800-56Br2 KTS-OAEP), Manger-resistant decode, and CRT decrypt
+  path sharing the Bellcore-protected private-exponent primitive.
 - **Elliptic curves** — ECDSA P-256 sign (caller-supplied `k`), verify,
   and public-key derivation (FIPS 186-5 §6.4), with full SEC1 public-key
   validation (SP 800-56Ar3 §5.6.2.3.3). ECDH P-256 (SP 800-56Ar3 §5.7.1.2
@@ -101,7 +104,7 @@ inventory.
 
 ### In flight
 
-- RSA OAEP (R6), EdDSA, ECDSA P-384 / P-521
+- EdDSA, ECDSA P-384 / P-521
 - ACVP harness vector dispatch (Phase 3)
 
 ## License

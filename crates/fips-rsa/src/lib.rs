@@ -116,6 +116,7 @@ pub mod bigint2048;
 pub mod keygen;
 pub mod mont1024;
 pub mod mont2048;
+pub mod oaep;
 pub mod pkcs1_v15;
 pub mod pss;
 
@@ -304,9 +305,20 @@ fn u1024_into_u2048_low(x: &U1024) -> U2048 {
     U2048 { limbs }
 }
 
-/// Core CRT sign primitive: raise a message representative `m` to the
-/// private exponent via the Chinese-Remainder decomposition and run a
-/// Bellcore / Shamir verify-after-sign check before returning.
+/// Core CRT private-exponent primitive: raise a 256-byte input
+/// representative `x` to `d mod n` via the Chinese-Remainder
+/// decomposition and run a Bellcore / Shamir verify-after-exponent
+/// check before returning.
+///
+/// # Shared math for sign and decrypt
+///
+/// RSASSA sign (`s = EM^d mod n`) and RSAES decrypt (`m = C^d mod n`)
+/// are the same primitive up to the name of the input buffer. This
+/// routine is the single implementation both paths dispatch through.
+/// The Bellcore check is symmetric as well: sign verifies
+/// `s^e mod n == EM`, decrypt verifies `m^e mod n == C`. In both cases
+/// a single fault on either CRT half flips exactly one of the two
+/// congruences and is caught.
 ///
 /// # Mathematics
 ///
@@ -315,37 +327,37 @@ fn u1024_into_u2048_low(x: &U1024) -> U2048 {
 /// `qInv = q^(−1) mod p`, Garner's recombine formula computes
 ///
 /// ```text
-///   m_p  = m mod p
-///   m_q  = m mod q
-///   s_p  = m_p^dP mod p         — constant-time mont1024 ladder
-///   s_q  = m_q^dQ mod q         — constant-time mont1024 ladder
-///   h    = qInv · (s_p − s_q mod p) mod p
-///   s    = s_q + q · h
+///   x_p  = x mod p
+///   x_q  = x mod q
+///   y_p  = x_p^dP mod p         — constant-time mont1024 ladder
+///   y_q  = x_q^dQ mod q         — constant-time mont1024 ladder
+///   h    = qInv · (y_p − y_q mod p) mod p
+///   y    = y_q + q · h
 /// ```
 ///
-/// which satisfies `s ≡ m^d (mod n)` by the CRT. `s_q` is first
+/// which satisfies `y ≡ x^d (mod n)` by the CRT. `y_q` is first
 /// reduced mod `p` before the subtraction (`q` and `p` have equal
 /// bit-length, so at most one conditional subtract is required).
 ///
 /// # Bellcore / Shamir countermeasure
 ///
-/// CRT sign is vulnerable to single-fault attacks: if either
-/// `m_p^dP` or `m_q^dQ` is corrupted (a bit-flip injected by the
-/// attacker, cosmic ray, etc.), the recombined signature `s`
-/// satisfies `s ≡ m^d (mod p)` but `s ≢ m^d (mod q)` (or vice
-/// versa), and `gcd(s^e − m, n)` yields `p` or `q` — an immediate
-/// full-key recovery.
+/// CRT sign/decrypt is vulnerable to single-fault attacks: if either
+/// `x_p^dP` or `x_q^dQ` is corrupted (a bit-flip injected by the
+/// attacker, cosmic ray, etc.), the recombined `y` satisfies
+/// `y ≡ x^d (mod p)` but `y ≢ x^d (mod q)` (or vice versa), and
+/// `gcd(y^e − x, n)` yields `p` or `q` — an immediate full-key
+/// recovery.
 ///
 /// FIPS 140-3 IG D.G calls out RSA CRT faults explicitly. We mitigate
-/// by re-verifying the signature before returning: compute
-/// `s_check = s^e mod n` using the non-CRT public ladder and compare
-/// against the original `m`. A single fault on either half diverges
+/// by re-verifying the output before returning: compute
+/// `x_check = y^e mod n` using the non-CRT public ladder and compare
+/// against the original `x`. A single fault on either half diverges
 /// the check; a correlated two-point fault has negligible probability
 /// under the IG threat model.
 ///
 /// # Returns
 ///
-/// `None` on any of: bad modulus, bad prime factor, `m ≥ n`, or a
+/// `None` on any of: bad modulus, bad prime factor, `x ≥ n`, or a
 /// failed Bellcore check (indicating either an injected fault or a
 /// structurally inconsistent key). The caller converts `None` into
 /// [`Error::InvalidInput`].
@@ -355,12 +367,12 @@ fn u1024_into_u2048_low(x: &U1024) -> U2048 {
     clippy::similar_names,
     clippy::single_char_lifetime_names
 )]
-fn rsa_crt_sign_2048_from_em_internal(
+fn rsa_crt_2048_private_exp_internal(
     n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
     e: u64,
     crt: CrtComponentsRaw<'_>,
-    em: &[u8; RSA_2048_MODULUS_BYTES],
-) -> Option<[u8; RSA_2048_SIGNATURE_BYTES]> {
+    input: &[u8; RSA_2048_MODULUS_BYTES],
+) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
     // 1. Build Montgomery contexts for n, p, q. `MontCtx*::new`
     //    enforces top-bit-set / odd, which is exactly the FIPS 186-5
     //    §A.1.1 shape for 2048-bit RSA prime factors.
@@ -376,41 +388,42 @@ fn rsa_crt_sign_2048_from_em_internal(
     let dq = U1024::from_be_bytes(crt.dq);
     let qinv = U1024::from_be_bytes(crt.qinv);
 
-    // 2. Load the message representative and range-check.
-    let m = U2048::from_be_bytes(em);
-    if m.ct_lt(&ctx_n.n) != 1 {
+    // 2. Load the input representative and range-check.
+    let x = U2048::from_be_bytes(input);
+    if x.ct_lt(&ctx_n.n) != 1 {
         return None;
     }
 
-    // 3. Reduce m mod p and m mod q. The reducer is not constant time
-    //    in its inputs, but `m` is EM — derived from the message
-    //    digest by a public encoding — so there is no secret to leak.
-    let m_p = keygen::u2048_mod_u1024(&m, &p);
-    let m_q = keygen::u2048_mod_u1024(&m, &q);
+    // 3. Reduce x mod p and x mod q. The reducer is not constant time
+    //    in its inputs, but `x` is either EM (derived from a public
+    //    message digest) or a ciphertext (already on the wire) — in
+    //    both cases it is public input, not a secret.
+    let x_p = keygen::u2048_mod_u1024(&x, &p);
+    let x_q = keygen::u2048_mod_u1024(&x, &q);
 
     // 4. Secret-exponent exponentiations mod p and mod q via the
     //    constant-time 4-bit windowed ladder.
-    let s_p = ctx_p.pow_secret(&m_p, &dp);
-    let s_q = ctx_q.pow_secret(&m_q, &dq);
+    let y_p = ctx_p.pow_secret(&x_p, &dp);
+    let y_q = ctx_q.pow_secret(&x_q, &dq);
 
     // 5. Garner recombine.
     //
-    //    `s_q` is in `[0, q)`. Reduce mod p with at most one subtract:
+    //    `y_q` is in `[0, q)`. Reduce mod p with at most one subtract:
     //    p and q are both strictly 1024-bit (top bit set), so
     //    `q < 2^1024 ≤ 2·p`.
-    let s_q_mod_p = if s_q.ct_lt(&p) == 1 {
-        s_q
+    let y_q_mod_p = if y_q.ct_lt(&p) == 1 {
+        y_q
     } else {
-        s_q.subtracting(&p).0
+        y_q.subtracting(&p).0
     };
 
-    //    `diff = (s_p − s_q_mod_p) mod p`.
-    let diff = if s_p.ct_lt(&s_q_mod_p) == 1 {
-        // s_p < s_q_mod_p: add p first, then subtract.
-        let (sum, _) = s_p.adding(&p);
-        sum.subtracting(&s_q_mod_p).0
+    //    `diff = (y_p − y_q_mod_p) mod p`.
+    let diff = if y_p.ct_lt(&y_q_mod_p) == 1 {
+        // y_p < y_q_mod_p: add p first, then subtract.
+        let (sum, _) = y_p.adding(&p);
+        sum.subtracting(&y_q_mod_p).0
     } else {
-        s_p.subtracting(&s_q_mod_p).0
+        y_p.subtracting(&y_q_mod_p).0
     };
 
     //    `h = (qInv · diff) mod p` via the Montgomery context on p.
@@ -419,23 +432,25 @@ fn rsa_crt_sign_2048_from_em_internal(
     let h_mont = ctx_p.mont_mul(&qinv_mont, &diff_mont);
     let h = ctx_p.from_mont(&h_mont);
 
-    //    `s = s_q + q · h`, where `q · h` is a 2048-bit product and
-    //    `s_q` is zero-extended into the low half.
+    //    `y = y_q + q · h`, where `q · h` is a 2048-bit product and
+    //    `y_q` is zero-extended into the low half.
     let qh = q.widening_mul(&h);
-    let sq_wide = u1024_into_u2048_low(&s_q);
-    let (s, _carry) = qh.adding(&sq_wide);
+    let yq_wide = u1024_into_u2048_low(&y_q);
+    let (y, _carry) = qh.adding(&yq_wide);
 
-    // 6. Bellcore / Shamir verify-after-sign: recompute `m` from `s`
-    //    under the public exponent and compare. Any single bit-flip
+    // 6. Bellcore / Shamir verify-after-exponent: recompute `x` from
+    //    `y` under the public exponent and compare. Any single bit-flip
     //    inside step 4 (or elsewhere in the CRT machinery) produces
-    //    a signature that only satisfies one of the two half
-    //    congruences and fails this check.
-    let m_check = ctx_n.pow_public_u64(&s, e);
-    if m_check.ct_eq(&m) != 1 {
+    //    an output that only satisfies one of the two half
+    //    congruences and fails this check. Applies identically to
+    //    sign (y = signature, x = EM) and decrypt (y = message
+    //    representative, x = ciphertext).
+    let x_check = ctx_n.pow_public_u64(&y, e);
+    if x_check.ct_eq(&x) != 1 {
         return None;
     }
 
-    Some(s.to_be_bytes())
+    Some(y.to_be_bytes())
 }
 
 /// RSASSA-PKCS1-v1_5 sign for RSA-2048 / SHA-256 via the CRT path
@@ -465,7 +480,7 @@ pub fn rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
         dq: dq_bytes,
         qinv: qinv_bytes,
     };
-    rsa_crt_sign_2048_from_em_internal(n_bytes, e, crt, &em)
+    rsa_crt_2048_private_exp_internal(n_bytes, e, crt, &em)
 }
 
 /// RSASSA-PSS sign for RSA-2048 / SHA-256 via the CRT path with
@@ -493,7 +508,130 @@ pub fn rsa_pss_sign_2048_sha256_crt_internal(
         dq: dq_bytes,
         qinv: qinv_bytes,
     };
-    rsa_crt_sign_2048_from_em_internal(n_bytes, e, crt, &em)
+    rsa_crt_2048_private_exp_internal(n_bytes, e, crt, &em)
+}
+
+// ------------------------------------------------------------------
+// OAEP primitives (state-gate-free)
+// ------------------------------------------------------------------
+
+/// RSAES-OAEP encrypt for RSA-2048 / SHA-256 with a caller-supplied
+/// OAEP seed, bypassing the FIPS module state gate.
+///
+/// The caller owns the randomness contract: in production callers the
+/// seed must be a fresh `hLen`-byte draw from an approved DRBG; in
+/// KAT and test harnesses a pinned seed is passed so the encryption
+/// output is byte-reproducible. The encode→integer conversion always
+/// yields `m < n` because `EM[0] = 0x00`, so `m < 2^2040 < n`.
+///
+/// Returns `None` if the modulus is not a strict 2048-bit odd integer,
+/// if `msg.len() > oaep::MAX_MSG_LEN`, or (for completeness) if the
+/// OAEP encode step fails internally.
+#[doc(hidden)]
+pub fn rsa_oaep_encrypt_2048_sha256_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    label: &[u8],
+    msg: &[u8],
+    seed: &[u8; oaep::HLEN],
+) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
+    let n = U2048::from_be_bytes(n_bytes);
+    let ctx_n = MontCtx2048::new(n)?;
+
+    // EME-OAEP-ENCODE into a k-byte buffer.
+    let mut em = [0u8; oaep::K];
+    oaep::emsa_oaep_encode(label, msg, seed, &mut em)?;
+
+    // RSAEP: c = m^e mod n via the public-exponent ladder. `pow_public_u64`
+    // is explicitly non-constant-time in `e`, which is fine because `e`
+    // is part of the public key and the input `m` is attacker-known.
+    let m = U2048::from_be_bytes(&em);
+    let c = ctx_n.pow_public_u64(&m, e);
+    Some(c.to_be_bytes())
+}
+
+/// RSAES-OAEP decrypt for RSA-2048 / SHA-256 via the **non-CRT**
+/// private-exponent path, bypassing the FIPS module state gate.
+///
+/// Used by [`RsaPrivateKey2048::decrypt_oaep_sha256`] when the private
+/// key handle was built via [`RsaPrivateKey2048::from_components`]
+/// (no CRT material). Writes the recovered plaintext into `out` and
+/// returns `Some(mLen)` on success, `None` on any failure.
+///
+/// Every failure mode collapses to `None` without revealing which
+/// check failed — this is the crate-side half of the Manger-resistance
+/// contract; the OAEP decoder handles the per-byte half.
+///
+/// Unlike the CRT path, there is no Bellcore verify-after-decrypt
+/// here: with only a single 2048-bit ladder there is no CRT halves to
+/// disagree on, so a single injected fault simply yields a wrong
+/// plaintext that fails the OAEP structural checks and is rejected by
+/// the decoder. There is no routine that leaks `p` or `q` from a
+/// non-CRT fault.
+#[doc(hidden)]
+pub fn rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    label: &[u8],
+    ct: &[u8; RSA_2048_MODULUS_BYTES],
+    out: &mut [u8; oaep::MAX_MSG_LEN],
+) -> Option<usize> {
+    let n = U2048::from_be_bytes(n_bytes);
+    let ctx_n = MontCtx2048::new(n)?;
+
+    let d = U2048::from_be_bytes(d_bytes);
+    if d.ct_lt(&ctx_n.n) != 1 {
+        return None;
+    }
+
+    // §7.1.2 step 1 length check is implicit in the fixed array size.
+    // §5.1.2 RSADP step 1: c ∈ [0, n − 1].
+    let c = U2048::from_be_bytes(ct);
+    if c.ct_lt(&ctx_n.n) != 1 {
+        return None;
+    }
+
+    // RSADP: m = c^d mod n via the constant-time secret-exponent ladder.
+    let m = ctx_n.pow_secret(&c, &d);
+    let em = m.to_be_bytes();
+
+    oaep::emsa_oaep_decode(label, &em, out)
+}
+
+/// RSAES-OAEP decrypt for RSA-2048 / SHA-256 via the **CRT** path with
+/// Bellcore verify-after-decrypt per FIPS 140-3 IG D.G, bypassing the
+/// FIPS module state gate.
+///
+/// Dispatches through the same
+/// [`rsa_crt_2048_private_exp_internal`] that the CRT sign path uses —
+/// the math is identical. The Bellcore check here reads as
+/// `m^e mod n == c`: a single fault on either `dP` or `dQ` half will
+/// fail the check and the routine returns `None` rather than handing
+/// back a message that leaks `p` or `q`.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
+pub fn rsa_oaep_decrypt_2048_sha256_crt_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    p_bytes: &[u8; U1024_BYTES],
+    q_bytes: &[u8; U1024_BYTES],
+    dp_bytes: &[u8; U1024_BYTES],
+    dq_bytes: &[u8; U1024_BYTES],
+    qinv_bytes: &[u8; U1024_BYTES],
+    label: &[u8],
+    ct: &[u8; RSA_2048_MODULUS_BYTES],
+    out: &mut [u8; oaep::MAX_MSG_LEN],
+) -> Option<usize> {
+    let crt = CrtComponentsRaw {
+        p: p_bytes,
+        q: q_bytes,
+        dp: dp_bytes,
+        dq: dq_bytes,
+        qinv: qinv_bytes,
+    };
+    // CRT exponent + Bellcore verify-after-decrypt on the ciphertext.
+    let em = rsa_crt_2048_private_exp_internal(n_bytes, e, crt, ct)?;
+    oaep::emsa_oaep_decode(label, &em, out)
 }
 
 /// RSASSA-PSS verify for RSA-2048 / SHA-256, bypassing the FIPS module
@@ -576,6 +714,36 @@ pub fn rsa_pss_verify_2048_sha256(
     } else {
         Err(Error::InvalidInput)
     }
+}
+
+/// Encrypt `msg` under the 2048-bit public key `(n_bytes, e)` using
+/// RSAES-OAEP with SHA-256 for both the label hash and the MGF1 hash.
+/// The caller supplies an HMAC-DRBG-SHA-256 from which a fresh
+/// `hLen = 32`-byte OAEP seed is drawn per call.
+///
+/// `msg.len()` must be at most [`oaep::MAX_MSG_LEN`] = 190 bytes;
+/// longer messages are rejected with [`Error::InvalidInput`]. The
+/// `label` parameter is bound into the ciphertext via `lHash` per RFC
+/// 8017 §7.1.1 — decryption with a different label will fail.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the FIPS module has not
+/// completed power-up self-tests. Returns [`Error::InvalidInput`] on
+/// modulus rejection, DRBG failure, or oversize message.
+pub fn rsa_oaep_encrypt_2048_sha256(
+    drbg: &mut fips_drbg::HmacDrbgSha256,
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    label: &[u8],
+    msg: &[u8],
+) -> Result<[u8; RSA_2048_MODULUS_BYTES], Error> {
+    require_operational()?;
+    let mut seed = [0u8; oaep::HLEN];
+    drbg.generate(None, &mut seed)
+        .map_err(|_| Error::InvalidInput)?;
+    rsa_oaep_encrypt_2048_sha256_internal(n_bytes, e, label, msg, &seed)
+        .ok_or(Error::InvalidInput)
 }
 
 // ------------------------------------------------------------------
@@ -857,6 +1025,74 @@ impl RsaPrivateKey2048 {
             .ok_or(Error::InvalidInput)
     }
 
+    /// Decrypt an RSAES-OAEP ciphertext using SHA-256 for both the
+    /// label hash and the MGF1 hash. Writes the recovered plaintext
+    /// into `out` and returns the plaintext length on success.
+    ///
+    /// The `label` must match the one used at encryption time — an
+    /// empty label is the conventional default for KEM-style use.
+    /// The `out` buffer is sized to [`oaep::MAX_MSG_LEN`] = 190 bytes,
+    /// the largest plaintext an RSA-2048 SHA-256 OAEP ciphertext can
+    /// carry; the returned length may be anywhere in `[0, 190]`.
+    ///
+    /// # Bellcore protection
+    ///
+    /// If this handle was built through [`Self::from_components_crt`]
+    /// or [`Self::generate`] (both of which retain the CRT components),
+    /// decryption runs through the same Garner recombine + Bellcore
+    /// verify-after-decrypt primitive as the sign path per FIPS 140-3
+    /// IG D.G. A single fault on either CRT half is caught and
+    /// collapsed into a generic `InvalidInput`, so a corrupted
+    /// decryption never leaks `p` or `q` to the caller.
+    ///
+    /// # Manger resistance
+    ///
+    /// All OAEP decode failures — bad `Y` byte, `lHash'` mismatch,
+    /// malformed `PS`, missing `0x01` delimiter, wrong label — return
+    /// the same [`Error::InvalidInput`] without revealing which check
+    /// failed, and the decode routine runs MGF1 unmask to completion
+    /// regardless of where the first failure occurred. See
+    /// [`oaep::emsa_oaep_decode`] for the contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] if the FIPS module is no
+    /// longer operational at call time, or [`Error::InvalidInput`] on
+    /// any decode failure or internal rejection by the private-key
+    /// primitive.
+    pub fn decrypt_oaep_sha256(
+        &self,
+        label: &[u8],
+        ct: &[u8; RSA_2048_MODULUS_BYTES],
+        out: &mut [u8; oaep::MAX_MSG_LEN],
+    ) -> Result<usize, Error> {
+        require_operational()?;
+        if let Some(crt) = self.crt.as_ref() {
+            rsa_oaep_decrypt_2048_sha256_crt_internal(
+                &self.n_bytes,
+                self.e,
+                &crt.p_bytes,
+                &crt.q_bytes,
+                &crt.dp_bytes,
+                &crt.dq_bytes,
+                &crt.qinv_bytes,
+                label,
+                ct,
+                out,
+            )
+            .ok_or(Error::InvalidInput)
+        } else {
+            rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+                &self.n_bytes,
+                &self.d_bytes,
+                label,
+                ct,
+                out,
+            )
+            .ok_or(Error::InvalidInput)
+        }
+    }
+
     /// Generate a fresh RSA-2048 keypair using the caller-supplied
     /// HMAC_DRBG-SHA-256 for all randomness, per FIPS 186-5 §A.1.1 /
     /// §B.3.1. `e` must be an odd prime in `[65537, 2^64)` (in
@@ -1101,7 +1337,12 @@ pub const __SHA256_DIGEST_SIZE: usize = SHA256_DIGEST_SIZE;
 // ------------------------------------------------------------------
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::expect_used,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use fips_module::{initialize_with_tests, KatEntry};
@@ -1517,6 +1758,282 @@ mod tests {
             Err(Error::InvalidInput) => {}
             Err(e) => panic!("unexpected error: {e:?}"),
             Ok(_) => panic!("even e must be rejected"),
+        }
+    }
+
+    // --------------------------------------------------------------
+    // R6: RSAES-OAEP encrypt/decrypt (SHA-256, MGF1-SHA-256)
+    // --------------------------------------------------------------
+
+    /// R6: non-CRT round-trip with a pinned seed. Encrypts under the
+    /// power-up KAT public key and decrypts through the non-CRT handle
+    /// to reach the `pow_secret` ladder path.
+    #[test]
+    fn r6_oaep_roundtrip_nocrt_handle() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-nocrt",
+            run: self_test,
+        }]);
+        let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES).unwrap();
+        let seed = [0x5au8; oaep::HLEN];
+        let label: &[u8] = b"";
+        let msg: &[u8] = b"R6 OAEP non-CRT roundtrip payload";
+        let ct = rsa_oaep_encrypt_2048_sha256_internal(
+            sk.modulus_bytes(),
+            sk.public_exponent(),
+            label,
+            msg,
+            &seed,
+        )
+        .unwrap();
+        let mut out = [0u8; oaep::MAX_MSG_LEN];
+        let mlen = sk.decrypt_oaep_sha256(label, &ct, &mut out).unwrap();
+        assert_eq!(mlen, msg.len());
+        assert_eq!(&out[..mlen], msg);
+    }
+
+    /// R6: CRT round-trip via a freshly generated keypair. Exercises
+    /// the `rsa_oaep_decrypt_2048_sha256_crt_internal` path and its
+    /// Bellcore verify-after-decrypt.
+    #[test]
+    fn r6_oaep_roundtrip_crt_handle() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-crt",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r6-oaep-crt-entropy", b"pqclib-r6-oaep-crt-nonce", b"")
+            .unwrap();
+        let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
+
+        let seed = [0xc3u8; oaep::HLEN];
+        let label: &[u8] = b"context-R6";
+        let msg: &[u8] = b"R6 OAEP CRT path payload, variable length.";
+        let ct = rsa_oaep_encrypt_2048_sha256_internal(
+            sk.modulus_bytes(),
+            sk.public_exponent(),
+            label,
+            msg,
+            &seed,
+        )
+        .unwrap();
+
+        let mut out = [0u8; oaep::MAX_MSG_LEN];
+        let mlen = sk.decrypt_oaep_sha256(label, &ct, &mut out).unwrap();
+        assert_eq!(mlen, msg.len());
+        assert_eq!(&out[..mlen], msg);
+    }
+
+    /// R6: CRT and non-CRT decrypt paths recover the same plaintext
+    /// from the same ciphertext. Proves the `rsa_crt_2048_private_exp_internal`
+    /// shared core is byte-exact equivalent to the direct
+    /// `mont2048::pow_secret` ladder on decrypt too.
+    #[test]
+    fn r6_oaep_crt_and_nocrt_agree_on_decryption() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-agree",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r6-oaep-agree-entropy", b"pqclib-r6-oaep-agree-nonce", b"")
+            .unwrap();
+        let sk_crt = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
+        let sk_nocrt = RsaPrivateKey2048::from_components(
+            sk_crt.modulus_bytes(),
+            sk_crt.public_exponent(),
+            &sk_crt.d_bytes,
+        )
+        .unwrap();
+
+        let seed = [0x77u8; oaep::HLEN];
+        let label: &[u8] = b"equivalence";
+        let msg: &[u8] = b"same ct, two paths, one plaintext";
+        let ct = rsa_oaep_encrypt_2048_sha256_internal(
+            sk_crt.modulus_bytes(),
+            sk_crt.public_exponent(),
+            label,
+            msg,
+            &seed,
+        )
+        .unwrap();
+
+        let mut out_crt = [0u8; oaep::MAX_MSG_LEN];
+        let mlen_crt = sk_crt.decrypt_oaep_sha256(label, &ct, &mut out_crt).unwrap();
+
+        let mut out_nocrt = [0u8; oaep::MAX_MSG_LEN];
+        let mlen_nocrt = sk_nocrt
+            .decrypt_oaep_sha256(label, &ct, &mut out_nocrt)
+            .unwrap();
+
+        assert_eq!(mlen_crt, mlen_nocrt);
+        assert_eq!(&out_crt[..mlen_crt], &out_nocrt[..mlen_nocrt]);
+        assert_eq!(&out_crt[..mlen_crt], msg);
+    }
+
+    /// R6: flipping a bit in `dP` on a CRT handle causes the Bellcore
+    /// verify-after-decrypt to fail, matching the analogous R5 test
+    /// for sign. Proves the CRT decrypt path is fault-protected.
+    #[test]
+    fn r6_oaep_bellcore_rejects_tampered_dp() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-bellcore",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(
+            b"pqclib-r6-oaep-bellcore-entropy",
+            b"pqclib-r6-oaep-bellcore-nonce",
+            b"",
+        )
+        .unwrap();
+        let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
+
+        // Build a legitimate ciphertext first.
+        let seed = [0x11u8; oaep::HLEN];
+        let label: &[u8] = b"";
+        let msg: &[u8] = b"R6 bellcore-on-decrypt probe";
+        let ct = rsa_oaep_encrypt_2048_sha256_internal(
+            sk.modulus_bytes(),
+            sk.public_exponent(),
+            label,
+            msg,
+            &seed,
+        )
+        .unwrap();
+
+        // Tamper `dP` on a clone of the CRT material and build a
+        // handle via the direct internal to avoid the PCT rejecting
+        // at construction time.
+        let crt = sk.crt.as_ref().unwrap();
+        let mut bad_dp = crt.dp_bytes;
+        bad_dp[0] ^= 0x01;
+
+        let mut out = [0u8; oaep::MAX_MSG_LEN];
+        let result = rsa_oaep_decrypt_2048_sha256_crt_internal(
+            sk.modulus_bytes(),
+            sk.public_exponent(),
+            &crt.p_bytes,
+            &crt.q_bytes,
+            &bad_dp,
+            &crt.dq_bytes,
+            &crt.qinv_bytes,
+            label,
+            &ct,
+            &mut out,
+        );
+        assert!(
+            result.is_none(),
+            "Bellcore verify-after-decrypt must reject a tampered dP"
+        );
+    }
+
+    /// R6: decryption with a different label than the one bound into
+    /// the ciphertext must fail — this tests the `lHash'` compare
+    /// rather than the structural `PS`/`0x01` checks.
+    #[test]
+    fn r6_oaep_decrypt_rejects_wrong_label() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-label",
+            run: self_test,
+        }]);
+        let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES).unwrap();
+        let seed = [0u8; oaep::HLEN];
+        let ct = rsa_oaep_encrypt_2048_sha256_internal(
+            sk.modulus_bytes(),
+            sk.public_exponent(),
+            b"alpha",
+            b"test",
+            &seed,
+        )
+        .unwrap();
+
+        let mut out = [0u8; oaep::MAX_MSG_LEN];
+        match sk.decrypt_oaep_sha256(b"beta", &ct, &mut out) {
+            Err(Error::InvalidInput) => {}
+            Err(e) => panic!("unexpected error: {e:?}"),
+            Ok(n) => panic!("label mismatch must reject, got mLen={n}"),
+        }
+    }
+
+    /// R6: decryption of a ciphertext that has been modified on the
+    /// wire must fail. A single bit-flip in the ciphertext propagates
+    /// through the ladder into a completely randomised EM; the OAEP
+    /// decoder rejects it via one or more of its structural checks.
+    #[test]
+    fn r6_oaep_decrypt_rejects_tampered_ciphertext() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-ct-tamper",
+            run: self_test,
+        }]);
+        let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES).unwrap();
+        let seed = [0u8; oaep::HLEN];
+        let mut ct = rsa_oaep_encrypt_2048_sha256_internal(
+            sk.modulus_bytes(),
+            sk.public_exponent(),
+            b"",
+            b"tamper-me",
+            &seed,
+        )
+        .unwrap();
+        ct[128] ^= 0x01;
+        let mut out = [0u8; oaep::MAX_MSG_LEN];
+        assert!(sk.decrypt_oaep_sha256(b"", &ct, &mut out).is_err());
+    }
+
+    /// R6: the public DRBG-backed encrypt entry point advances the
+    /// DRBG and produces a different ciphertext from the same
+    /// plaintext on two consecutive calls — i.e. OAEP is genuinely
+    /// randomised through the caller-supplied DRBG.
+    #[test]
+    fn r6_oaep_encrypt_drbg_produces_distinct_ciphertexts() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-drbg",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(b"pqclib-r6-oaep-drbg-entropy", b"pqclib-r6-oaep-drbg-nonce", b"")
+            .unwrap();
+        let msg: &[u8] = b"randomised OAEP";
+        let ct1 =
+            rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
+        let ct2 =
+            rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
+        assert_ne!(ct1, ct2);
+
+        // Both still decrypt to the same plaintext.
+        let sk = RsaPrivateKey2048::from_components(&KAT_N_BYTES, KAT_E, &KAT_D_BYTES).unwrap();
+        let mut out1 = [0u8; oaep::MAX_MSG_LEN];
+        let mut out2 = [0u8; oaep::MAX_MSG_LEN];
+        let l1 = sk.decrypt_oaep_sha256(b"", &ct1, &mut out1).unwrap();
+        let l2 = sk.decrypt_oaep_sha256(b"", &ct2, &mut out2).unwrap();
+        assert_eq!(l1, msg.len());
+        assert_eq!(l2, msg.len());
+        assert_eq!(&out1[..l1], msg);
+        assert_eq!(&out2[..l2], msg);
+    }
+
+    /// R6: encrypting an oversize message must be rejected by the
+    /// public entry point without touching the DRBG past the single
+    /// seed draw. (We don't observe the DRBG state here, but we do
+    /// observe the error.)
+    #[test]
+    fn r6_oaep_encrypt_rejects_oversize_message() {
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-2048-r6-oaep-oversize",
+            run: self_test,
+        }]);
+        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        drbg.instantiate(
+            b"pqclib-r6-oaep-oversize-entropy",
+            b"pqclib-r6-oaep-oversize-nonce",
+            b"",
+        )
+        .unwrap();
+        let too_big = [0u8; oaep::MAX_MSG_LEN + 1];
+        match rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", &too_big) {
+            Err(Error::InvalidInput) => {}
+            Err(e) => panic!("unexpected error: {e:?}"),
+            Ok(_) => panic!("oversize OAEP plaintext must be rejected"),
         }
     }
 }
