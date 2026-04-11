@@ -6,9 +6,9 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 
 ---
 
-## 0. Current Status (as of 2026-04-10)
+## 0. Current Status (as of 2026-04-11)
 
-**Phase position:** Most of the way through Phase 1 (Foundation), with an early pull-forward of ACVP/CAVP traceability work that formally belongs to Phase 3.
+**Phase position:** Phase 1 closed; solidly into Phase 2 (Asymmetric + DRBG). All P0 symmetric/hash/DRBG/KDF work has landed, ECDSA/ECDH are done, and `fips-rsa` has a working verify-and-sign pipeline for PKCS#1 v1.5 and PSS plus probable-prime key generation. CRT-form private keys with Bellcore fault-detection are the last Phase-2 RSA item.
 
 **Implemented and landed on `main`:**
 
@@ -17,9 +17,15 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - `fips-xof` — SHAKE128, SHAKE256.
 - `fips-hmac` — HMAC over all 11 approved hash variants.
 - `fips-kdf` — HKDF (RFC 5869) over all 11 HMACs, SP 800-108r1 KBKDF **Counter**, **Feedback**, and **Double-Pipeline Iteration** modes over all 11 HMACs.
+- `fips-aes` — AES-128/192/256 in ECB, CBC, CTR, GCM, CCM, KW, KWP modes with power-up KATs.
+- `fips-cmac` — AES-CMAC.
+- `fips-drbg` — CTR_DRBG (AES-128/192/256, no df + use df), Hash_DRBG (SHA-256/384/512), HMAC_DRBG (SHA-256/384/512), SP 800-90A §11.3 health tests, §9.3 prediction-resistance generate API.
+- `fips-ecdsa` — ECDSA P-256/SHA-256 sign, verify, power-up KAT.
+- `fips-ecdh` — ECDH P-256 with full public-key validation and KAT (SP 800-56Ar3).
+- `fips-rsa` — RSA-2048 PKCS#1 v1.5 verify, sign (non-CRT) via constant-time 4-bit windowed Montgomery ladder, RSASSA-PSS SHA-256 sign/verify with MGF1 (sLen=hLen=32, emBits=2047), FIPS 186-5 §A.1.1 / §B.3.1 probable-prime key generation with 5-round Miller-Rabin (Table B.1 nlen=2048), DRBG-backed `sign_pss_sha256` wrapper that samples a fresh salt, IG 10.3.A pairwise consistency test on all generated and imported keys. Uses `bigint2048` / `mont2048` and narrow `bigint1024` / `mont1024` twins for Miller-Rabin.
 - `fips-test-vectors` — generated KAT constants sourced from vendored NIST ACVP-Server vectors.
 - `fips-integrity` — software/firmware integrity self-test (HMAC-SHA-256 over `current_exe()` with an **embedded** 64-byte reserved slot `[HDR | MAC | FTR]`, populated at sign time and validated by magic-marker scan at boot) per FIPS 140-3 IG 10.3.A. The embedded-slot design (in place of a sidecar file) is what lets the same mechanism work on Linux/macOS/Windows command-line tools **and** on code-signed iOS `.app` bundles and Android APKs where post-install files cannot be added.
-- `acvp-harness` — power-up KAT runner executing 122 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF/AES (ECB/CBC/CTR/GCM/CCM/KW/KWP)/AES-CMAC/CTR/Hash/HMAC_DRBG (including 9 SP 800-90A §9.3 prediction-resistance DRBG KATs from `drbgvectors_pr_true`), the three SP 800-90A §11.3 DRBG health tests, and the module binary integrity check.
+- `acvp-harness` — power-up KAT runner executing 122 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF/AES (ECB/CBC/CTR/GCM/CCM/KW/KWP)/AES-CMAC/CTR/Hash/HMAC_DRBG (including 9 SP 800-90A §9.3 prediction-resistance DRBG KATs from `drbgvectors_pr_true`), the three SP 800-90A §11.3 DRBG health tests, and the module binary integrity check. RSA/ECDSA/ECDH KAT wiring into the harness is still pending.
 
 **ACVP/CAVP traceability (Phase 3 work pulled forward):**
 
@@ -27,11 +33,13 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - Generator tooling in `tools/acvp-gen/` emits `crates/fips-test-vectors/src/generated.rs` from the vendored vectors, cross-validated against Python reference implementations.
 - Power-up KATs for SHA-1/2/3, SHAKE, HMAC, and HKDF have been retrofitted off legacy "OpenSSL-derived" / "RFC 5869" / "FIPS 180-4 Appendix" vectors onto ACVP-Server vectors, with the HKDF retrofit landing on SP 800-56C Rev 2 Two-Step KDA-HKDF (hybrid form, §5.9.2). The sole remaining non-ACVP KAT is `hkdf_self_test_sha1` on RFC 5869 §A.1 Test Case 1, because SHA-1 is out of scope for SP 800-56C Rev 2 — kept and explicitly labeled for auditors.
 
-**Not yet started (stub crates exist):** `fips-aes`, `fips-cmac`, `fips-drbg`, `fips-ecdh`, `fips-ecdsa`, `fips-eddsa`, `fips-rsa`, `fips-tls-kdf`.
+**Not yet started (stub crates exist):** `fips-eddsa`, `fips-tls-kdf`.
 
-**Phase 1 remaining before it can be called closed:**
+**Phase 2 remaining before it can be called closed:**
 
-- `fips-aes` ECB/CBC/CTR/GCM implementations and KATs.
+- `fips-rsa` CRT-form private keys (p, q, dP, dQ, qInv) with Shamir-style verify-after-sign Bellcore fault-detection on the CRT sign path. Deliberately slid out of the keygen chunk because the keygen work was already large; CRT will sit alongside the existing non-CRT sign path.
+- Pairwise consistency test coverage for ECDSA and (eventual) EdDSA keygen at the same IG 10.3.A level as the RSA PCT.
+- `dudect`-style constant-time validation across the three asymmetric crates.
 
 ---
 
@@ -260,10 +268,14 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-drbg`: SP 800-90A §11.3 error-path health tests (CTR/Hash/HMAC_DRBG)
 - [x] `fips-drbg`: SP 800-90A §9.3 prediction-resistance generate API (CTR/Hash/HMAC_DRBG); power-up KATs pending vendoring of `drbgvectors_pr_true`
 - [~] CRNGT on DRBG output — deferred as not required by FIPS 140-3 IG D.G (March 2026); see §4.2 note
-- [ ] `fips-rsa`: Key generation (provable/probable primes per FIPS 186-5 Appendix A), PKCS#1 v1.5, PSS
-- [ ] `fips-ecdsa`: P-256, P-384, P-521 field arithmetic, keygen, sign, verify
-- [ ] `fips-ecdh`: ECDH per SP 800-56Ar3
-- [ ] Pairwise consistency tests for all keygen operations
+- [x] `fips-rsa`: PKCS#1 v1.5 verify and sign (non-CRT, constant-time windowed Montgomery ladder)
+- [x] `fips-rsa`: RSASSA-PSS SHA-256 sign/verify with MGF1
+- [x] `fips-rsa`: Key generation via FIPS 186-5 §A.1.1 / §B.3.1 probable primes + DRBG-backed `sign_pss_sha256` wrapper
+- [ ] `fips-rsa`: CRT-form private keys with Bellcore (verify-after-sign) fault-detection
+- [~] `fips-ecdsa`: P-256/SHA-256 keygen + sign + verify landed; P-384 and P-521 deferred
+- [x] `fips-ecdh`: ECDH per SP 800-56Ar3 (P-256)
+- [x] Pairwise consistency tests for RSA keygen (IG 10.3.A, wired inside `from_components`)
+- [ ] Pairwise consistency tests for ECDSA / EdDSA keygen
 - [ ] Constant-time validation: verify with `dudect` or timing leak tests
 
 ### Phase 3: Extended Algorithms + ACVP (Weeks 11–16)
