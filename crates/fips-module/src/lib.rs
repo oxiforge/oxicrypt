@@ -153,6 +153,14 @@ pub enum Error {
     /// is authoritative; the race loser should read [`state`] to find
     /// out.
     AlreadyInitialized,
+    /// A cryptographic service was called with input bytes that do not
+    /// encode a valid domain element (for example, a scalar that is
+    /// zero or not less than the group order, or a point that is not
+    /// a canonical encoding on the curve). This is distinct from a
+    /// self-test failure: the module is still operational; the caller
+    /// supplied out-of-range bytes. Algorithm primitives should return
+    /// this rather than silently substituting a default.
+    InvalidInput,
 }
 
 impl fmt::Display for Error {
@@ -168,6 +176,7 @@ impl fmt::Display for Error {
                 write!(f, "FIPS conditional self-test failed: {reason}")
             }
             Self::AlreadyInitialized => f.write_str("FIPS module already initialized"),
+            Self::InvalidInput => f.write_str("invalid input to FIPS service"),
         }
     }
 }
