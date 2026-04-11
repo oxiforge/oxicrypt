@@ -55,10 +55,9 @@
 /// module. Equivalent to the encoding used by ref10
 /// (`crypto_sign/ed25519/ref10/sc_reduce.c`).
 ///
-/// Currently only consumed by the unit-test cross-check against
-/// [`L_BYTES`]; the reduction primitive landing in the follow-up
-/// commit will use it directly.
-#[allow(dead_code)]
+/// Cross-checked against [`L_BYTES`] by the module unit tests and
+/// consumed by [`reduce_wide`] / [`muladd`] via the Barrett reduction
+/// below.
 pub(crate) const L_LIMBS: [u32; 8] = [
     0x5cf5_d3ed,
     0x5812_631a,
@@ -136,9 +135,7 @@ impl Scalar {
 
     /// Access the underlying limb array. `pub(crate)` so the rest of
     /// the `fips-eddsa` crate can build reduction routines on top
-    /// without exposing the representation publicly. Will be used by
-    /// the reduction primitive landing in the follow-up commit.
-    #[allow(dead_code)]
+    /// without exposing the representation publicly.
     #[inline]
     pub(crate) fn limbs(&self) -> &[u32; 8] {
         &self.limbs
@@ -191,6 +188,202 @@ pub fn is_canonical_encoding(bytes: &[u8; 32]) -> bool {
     }
     // Canonical iff strictly less than L: lt == 1.
     lt == 1
+}
+
+/// Barrett reduction precomputation
+/// `MU = floor(2^512 / L) = 0x...eb2106215d086329a7ed9ce5a30a2c131b`.
+///
+/// Nine `u32` limbs (little-endian) because `MU` is 260 bits wide —
+/// the top limb holds only the four bits `0xF`. Used exclusively by
+/// [`reduce_wide`].
+const MU_LIMBS: [u32; 9] = [
+    0x0a2c_131b,
+    0xed9c_e5a3,
+    0x0863_29a7,
+    0x2106_215d,
+    0xffff_ffeb,
+    0xffff_ffff,
+    0xffff_ffff,
+    0xffff_ffff,
+    0x0000_000f,
+];
+
+/// Schoolbook multiplication of two little-endian `u32`-limb bignums.
+///
+/// Implemented in closed form because the `M` and `N` we care about
+/// are small (at most 16 × 9), so the double-loop version with a
+/// `u64` carry per row is both compact and constant-time with respect
+/// to the limb *values* — every iteration executes unconditionally.
+///
+/// Invariant used by every row: each partial product
+/// `u32 × u32 + u32 + u64_carry` always fits in `u64` because
+/// `(2^32-1)^2 + 2·(2^32-1) = 2^64 - 1`.
+fn wide_mul<const M: usize, const N: usize, const MN: usize>(
+    a: &[u32; M],
+    b: &[u32; N],
+) -> [u32; MN] {
+    debug_assert!(MN == M + N);
+    let mut out = [0u32; MN];
+    for i in 0..M {
+        let ai = u64::from(a[i]);
+        let mut carry: u64 = 0;
+        for j in 0..N {
+            let p = ai * u64::from(b[j]) + u64::from(out[i + j]) + carry;
+            out[i + j] = p as u32;
+            carry = p >> 32;
+        }
+        out[i + N] = carry as u32;
+    }
+    out
+}
+
+/// Subtract `b` from `a` in place over `LEN` little-endian `u32`
+/// limbs, returning the final borrow (0 or 1). Constant-time.
+fn sub_assign_borrow<const LEN: usize>(a: &mut [u32; LEN], b: &[u32; LEN]) -> u32 {
+    let mut borrow: u64 = 0;
+    for i in 0..LEN {
+        let diff = u64::from(a[i])
+            .wrapping_sub(u64::from(b[i]))
+            .wrapping_sub(borrow);
+        a[i] = diff as u32;
+        borrow = (diff >> 32) & 1;
+    }
+    borrow as u32
+}
+
+/// One conditional subtraction of `L` (9-limb form, top limb zero).
+///
+/// If the current `r` is `≥ L` the subtracted result replaces `r`;
+/// otherwise `r` is left unchanged. Constant time in the value of
+/// `r`: both paths execute the same arithmetic and the selection is
+/// done with a bitmask.
+fn cond_sub_l_9(r: &mut [u32; 9]) {
+    let l9: [u32; 9] = [
+        L_LIMBS[0], L_LIMBS[1], L_LIMBS[2], L_LIMBS[3],
+        L_LIMBS[4], L_LIMBS[5], L_LIMBS[6], L_LIMBS[7],
+        0,
+    ];
+    let mut tmp = *r;
+    let borrow = sub_assign_borrow::<9>(&mut tmp, &l9);
+    // borrow == 0 → r was ≥ L → keep tmp
+    // borrow == 1 → r was  < L → keep r
+    let keep_tmp_mask = borrow.wrapping_sub(1); // 0xFFFF_FFFF if borrow==0
+    let keep_r_mask = !keep_tmp_mask;
+    for i in 0..9 {
+        r[i] = (tmp[i] & keep_tmp_mask) | (r[i] & keep_r_mask);
+    }
+}
+
+/// Reduce a 64-byte little-endian integer `x` (any value in
+/// `[0, 2^512)`) modulo `L` and return it as a canonical [`Scalar`].
+///
+/// Barrett reduction with `mu = floor(2^512 / L)`:
+///
+/// ```text
+/// q̂ = floor(x · mu / 2^512)
+/// r = x − q̂ · L          (mod 2^288)
+/// while r ≥ L: r −= L
+/// ```
+///
+/// Because `L < 2^253` and `mu < 2^260`, the quotient estimate `q̂`
+/// undershoots the true quotient by at most two, so `r < 3L < 2^255`
+/// and at most two conditional subtractions suffice. We perform three
+/// for a safety margin; the extra pass is a no-op when `r < L`.
+///
+/// The function is constant-time in the value of `x`. It is used for
+/// the `SHA512(…) mod L` step in RFC 8032 §5.1.6 / §5.1.7 and by
+/// [`muladd`] below.
+pub fn reduce_wide(x_bytes: &[u8; 64]) -> Scalar {
+    // Load the 64 input bytes as sixteen little-endian u32 limbs.
+    let mut x = [0u32; 16];
+    for (i, limb) in x.iter_mut().enumerate() {
+        let off = i * 4;
+        *limb = u32::from(x_bytes[off])
+            | (u32::from(x_bytes[off + 1]) << 8)
+            | (u32::from(x_bytes[off + 2]) << 16)
+            | (u32::from(x_bytes[off + 3]) << 24);
+    }
+
+    // q_full = x * MU, 16+9 = 25 limbs.
+    let q_full: [u32; 25] = wide_mul::<16, 9, 25>(&x, &MU_LIMBS);
+
+    // q̂ = q_full >> 512 — i.e. the top 9 limbs.
+    let mut q_hat = [0u32; 9];
+    q_hat.copy_from_slice(&q_full[16..25]);
+
+    // q̂ · L, 9+8 = 17 limbs.
+    let ql_full: [u32; 17] = wide_mul::<9, 8, 17>(&q_hat, &L_LIMBS);
+
+    // r = x − q̂·L, computed over 17 limbs so cancellation in the
+    // high limbs is honored. x is zero-extended from 16 → 17 limbs.
+    // The true result is in `[0, 3L)` which fits in 255 bits, so the
+    // high limbs of `r` end up zero after subtraction.
+    let mut r17 = [0u32; 17];
+    r17[..16].copy_from_slice(&x);
+    let _ = sub_assign_borrow::<17>(&mut r17, &ql_full);
+
+    // Reuse only the low 9 limbs (288 bits) for the conditional
+    // subtractions. `r < 3L < 2^255` so limbs above index 8 are zero.
+    let mut r = [0u32; 9];
+    r.copy_from_slice(&r17[..9]);
+    debug_assert!(r17[9..].iter().all(|&w| w == 0));
+
+    // Up to three conditional subtractions of L.
+    cond_sub_l_9(&mut r);
+    cond_sub_l_9(&mut r);
+    cond_sub_l_9(&mut r);
+
+    // Result fits in the low 8 limbs; top limb must be zero.
+    debug_assert!(r[8] == 0);
+    let mut limbs = [0u32; 8];
+    limbs.copy_from_slice(&r[..8]);
+    Scalar { limbs }
+}
+
+/// Compute `(a · b + c) mod L` and return it as a canonical scalar.
+///
+/// Used throughout RFC 8032 §5.1.6 for the signing equation
+/// `S = (r + k · s) mod L`. Constant time in `a`, `b`, and `c`.
+pub fn muladd(a: &Scalar, b: &Scalar, c: &Scalar) -> Scalar {
+    // Full 256×256 → 512-bit product.
+    let ab: [u32; 16] = wide_mul::<8, 8, 16>(a.limbs(), b.limbs());
+
+    // Add c (8 limbs) into the low half; propagate the carry up.
+    let mut sum = ab;
+    let mut carry: u64 = 0;
+    let c_limbs = c.limbs();
+    for (i, item) in sum.iter_mut().take(8).enumerate() {
+        let s = u64::from(*item) + u64::from(c_limbs[i]) + carry;
+        *item = s as u32;
+        carry = s >> 32;
+    }
+    for item in sum.iter_mut().skip(8) {
+        let s = u64::from(*item) + carry;
+        *item = s as u32;
+        carry = s >> 32;
+    }
+    // `a·b + c < 2·2^512`, so any residual carry lives outside the
+    // 16-limb buffer. Because `a,b,c < 2^256`, the actual value fits
+    // in 513 bits — but the high bit beyond 2^512 is effectively a
+    // "17th limb worth 1". Since 2^512 ≡ L · mu + (2^512 mod L) and
+    // (2^512 mod L) < L, that extra bit can only shift the true
+    // quotient by a small constant, still bounded by our 3×
+    // conditional-subtract loop below. We absorb it by simply
+    // discarding — proof: `a,b,c ≤ L − 1` in the signing use case, so
+    // `a·b + c ≤ (L−1)^2 + (L−1) = L² − L < L·2^253 < 2^506`, well
+    // under 2^512 and carry is always 0 here.
+    debug_assert!(carry == 0);
+
+    // Re-serialize to bytes and run the wide reduction.
+    let mut wide = [0u8; 64];
+    for (i, limb) in sum.iter().enumerate() {
+        let off = i * 4;
+        wide[off] = *limb as u8;
+        wide[off + 1] = (*limb >> 8) as u8;
+        wide[off + 2] = (*limb >> 16) as u8;
+        wide[off + 3] = (*limb >> 24) as u8;
+    }
+    reduce_wide(&wide)
 }
 
 #[cfg(test)]
@@ -284,5 +477,171 @@ mod tests {
         let mut bytes = [0xffu8; 32];
         bytes[31] = 0x0f;
         assert!(is_canonical_encoding(&bytes));
+    }
+
+    // --- Barrett reduction test vectors ------------------------------
+    // Ground truth computed in Python with authoritative
+    //   L = 2**252 + 27742317777372353535851937790883648493
+    // and `x % L`. The bytes are little-endian. Vectors cover the
+    // interesting boundary cases: 0, 1, L-1, L, L+1, 2L, 2^256-1,
+    // 2^512-1, and one "middle" value chosen to exercise every limb.
+
+    fn wide(bytes: &[u8]) -> [u8; 64] {
+        let mut out = [0u8; 64];
+        out[..bytes.len()].copy_from_slice(bytes);
+        out
+    }
+
+    #[test]
+    fn reduce_wide_zero() {
+        assert_eq!(reduce_wide(&[0u8; 64]).to_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn reduce_wide_one() {
+        let mut w = [0u8; 64];
+        w[0] = 1;
+        let mut expected = [0u8; 32];
+        expected[0] = 1;
+        assert_eq!(reduce_wide(&w).to_bytes(), expected);
+    }
+
+    #[test]
+    fn reduce_wide_l_minus_one() {
+        let mut w = [0u8; 64];
+        w[..32].copy_from_slice(&L_BYTES);
+        w[0] -= 1;
+        let mut expected = L_BYTES;
+        expected[0] -= 1;
+        assert_eq!(reduce_wide(&w).to_bytes(), expected);
+    }
+
+    #[test]
+    fn reduce_wide_l_exact() {
+        let mut w = [0u8; 64];
+        w[..32].copy_from_slice(&L_BYTES);
+        assert_eq!(reduce_wide(&w).to_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn reduce_wide_l_plus_one() {
+        let mut w = [0u8; 64];
+        w[..32].copy_from_slice(&L_BYTES);
+        w[0] += 1;
+        let mut expected = [0u8; 32];
+        expected[0] = 1;
+        assert_eq!(reduce_wide(&w).to_bytes(), expected);
+    }
+
+    #[test]
+    fn reduce_wide_two_l() {
+        // 2*L, little-endian, computed once in Python.
+        let input: [u8; 32] = [
+            218, 167, 235, 185, 52, 198, 36, 176, 172, 57, 239, 69, 189, 243, 189, 41, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32,
+        ];
+        assert_eq!(reduce_wide(&wide(&input)).to_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn reduce_wide_two_256_minus_one() {
+        let input = [0xffu8; 32];
+        // 2^256 - 1 mod L
+        let expected: [u8; 32] = [
+            28, 149, 152, 141, 116, 49, 236, 214, 112, 207, 125, 115, 244, 91, 239, 198, 254, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 15,
+        ];
+        assert_eq!(reduce_wide(&wide(&input)).to_bytes(), expected);
+    }
+
+    #[test]
+    fn reduce_wide_two_512_minus_one() {
+        let input = [0xffu8; 64];
+        let expected: [u8; 32] = [
+            0, 15, 156, 68, 227, 17, 6, 164, 71, 147, 133, 104, 167, 27, 14, 208, 101, 190, 245,
+            23, 210, 115, 236, 206, 61, 154, 48, 124, 27, 65, 153, 3,
+        ];
+        assert_eq!(reduce_wide(&input).to_bytes(), expected);
+    }
+
+    #[test]
+    fn reduce_wide_mid_512() {
+        let input: [u8; 64] = [
+            119, 102, 85, 68, 51, 34, 17, 0, 255, 238, 221, 204, 187, 170, 0, 153, 136, 119, 102,
+            85, 68, 51, 34, 17, 0, 153, 136, 119, 85, 68, 187, 204, 221, 238, 34, 255, 0, 17, 153,
+            136, 119, 102, 85, 68, 51, 34, 17, 237, 254, 206, 250, 237, 254, 13, 240, 190, 186,
+            254, 202, 239, 190, 173, 222, 0,
+        ];
+        let expected: [u8; 32] = [
+            45, 121, 145, 135, 134, 70, 14, 143, 74, 244, 239, 216, 217, 62, 98, 13, 224, 52, 147,
+            244, 122, 131, 90, 206, 37, 229, 255, 26, 195, 234, 190, 8,
+        ];
+        assert_eq!(reduce_wide(&input).to_bytes(), expected);
+    }
+
+    // --- muladd test vectors -----------------------------------------
+
+    #[test]
+    fn muladd_zero() {
+        let z = Scalar::ZERO;
+        let o = Scalar::ONE;
+        assert_eq!(muladd(&z, &z, &z).to_bytes(), [0u8; 32]);
+        assert_eq!(muladd(&z, &o, &z).to_bytes(), [0u8; 32]);
+        assert_eq!(muladd(&o, &z, &z).to_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn muladd_one_times_l_minus_one_plus_five() {
+        // (1 * (L-1) + 5) mod L = 4
+        let mut l_minus_one = L_BYTES;
+        l_minus_one[0] -= 1;
+        let mut c_bytes = [0u8; 32];
+        c_bytes[0] = 5;
+        let r = muladd(
+            &Scalar::ONE,
+            &Scalar::from_bytes(&l_minus_one),
+            &Scalar::from_bytes(&c_bytes),
+        );
+        let mut expected = [0u8; 32];
+        expected[0] = 4;
+        assert_eq!(r.to_bytes(), expected);
+    }
+
+    #[test]
+    fn muladd_both_big_identity() {
+        // (L-1)^2 + (L-1) = L^2 - L ≡ 0 (mod L)
+        let mut l_minus_one = L_BYTES;
+        l_minus_one[0] -= 1;
+        let a = Scalar::from_bytes(&l_minus_one);
+        let r = muladd(&a, &a, &a);
+        assert_eq!(r.to_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn muladd_general() {
+        // Python ground truth: a,b,c are three random 256-bit values
+        // already pre-reduced mod L. Expected = (a*b + c) mod L.
+        let a: [u8; 32] = [
+            126, 214, 43, 178, 227, 58, 162, 66, 99, 123, 7, 188, 29, 72, 164, 194, 204, 187, 64,
+            211, 231, 120, 135, 205, 66, 169, 115, 76, 186, 88, 234, 10,
+        ];
+        let b: [u8; 32] = [
+            198, 22, 131, 141, 140, 129, 45, 54, 37, 186, 189, 2, 177, 226, 211, 220, 68, 233,
+            229, 144, 80, 170, 172, 111, 139, 95, 100, 41, 185, 28, 129, 15,
+        ];
+        let c: [u8; 32] = [
+            255, 128, 43, 219, 195, 103, 36, 199, 194, 101, 32, 180, 136, 2, 0, 135, 35, 96, 228,
+            143, 14, 37, 145, 160, 137, 199, 161, 44, 12, 234, 156, 12,
+        ];
+        let expected: [u8; 32] = [
+            233, 241, 235, 1, 96, 147, 57, 16, 37, 178, 95, 33, 137, 163, 196, 20, 178, 30, 78,
+            176, 33, 160, 247, 108, 199, 186, 31, 186, 33, 142, 218, 2,
+        ];
+        let r = muladd(
+            &Scalar::from_bytes(&a),
+            &Scalar::from_bytes(&b),
+            &Scalar::from_bytes(&c),
+        );
+        assert_eq!(r.to_bytes(), expected);
     }
 }
