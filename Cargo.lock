@@ -46,6 +46,7 @@ dependencies = [
 name = "fips-ecdh"
 version = "0.0.0"
 dependencies = [
+ "fips-ecdsa",
  "fips-module",
 ]
 

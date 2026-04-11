@@ -39,9 +39,9 @@ use crate::p256_field::Fp;
 use crate::p256_scalar::Scalar;
 
 /// The curve constant `b` for P-256, big-endian SEC1 encoding. Pinned
-/// from SP 800-186. Used by the point-decompression routine in
-/// chunk 3 (SEC1 encoding / keygen / sign / verify).
-#[allow(dead_code)]
+/// from SP 800-186. Used by [`Point::is_on_curve_affine`] and
+/// [`Point::from_sec1_uncompressed_validated`] to enforce membership
+/// in the curve group during SP 800-56Ar3 public-key validation.
 pub(crate) const B_BYTES: [u8; 32] = [
     0x5a, 0xc6, 0x35, 0xd8, 0xaa, 0x3a, 0x93, 0xe7, 0xb3, 0xeb, 0xbd, 0x55, 0x76, 0x98, 0x86, 0xbc,
     0x65, 0x1d, 0x06, 0xb0, 0xcc, 0x53, 0xb0, 0xf6, 0x3b, 0xce, 0x3c, 0x3e, 0x27, 0xd2, 0x60, 0x4b,
@@ -298,6 +298,69 @@ impl Point {
             z: Fp::conditional_select(&a.z, &b.z, choice),
         }
     }
+
+    /// The P-256 curve constant `b`, decoded into an [`Fp`]. The
+    /// `unwrap_or` branch is unreachable because `B_BYTES` is a pinned
+    /// constant strictly less than `p`; the fallback keeps this callable
+    /// from a `const`-free context without `expect`.
+    fn b_constant() -> Fp {
+        Fp::from_bytes(&B_BYTES).unwrap_or(Fp::ZERO)
+    }
+
+    /// Constant-time on-curve check for an affine point `(x, y)`.
+    /// Returns `1` iff `y^2 ≡ x^3 - 3·x + b (mod p)`, `0` otherwise.
+    ///
+    /// Independent of any secret scalar, this routine is intended for
+    /// public-key validation per SP 800-56Ar3 §5.6.2.3.3 step 3, where
+    /// the inputs are peer-supplied and therefore already public.
+    pub fn is_on_curve_affine(x: &Fp, y: &Fp) -> u8 {
+        // lhs = y^2
+        let lhs = y.square();
+        // rhs = x^3 - 3x + b = x*(x^2 - 3) + b
+        let x2 = x.square();
+        let three = Fp::ONE.add(&Fp::ONE).add(&Fp::ONE);
+        let x2_minus_3 = x2.sub(&three);
+        let x_cubed_minus_3x = x.mul(&x2_minus_3);
+        let rhs = x_cubed_minus_3x.add(&Self::b_constant());
+        lhs.ct_eq(&rhs)
+    }
+
+    /// Decode an uncompressed SEC1 public key `0x04 || X || Y` and
+    /// perform SP 800-56Ar3 §5.6.2.3.3 "full" public-key validation:
+    ///
+    ///   1. Check that `Q != O` (the identity — enforced by rejecting
+    ///      an all-zero encoding once both coordinates are parsed).
+    ///   2. Check that `x_Q, y_Q ∈ [0, p-1]` (enforced by
+    ///      [`Fp::from_bytes`], which rejects non-canonical encodings).
+    ///   3. Check that `y^2 ≡ x^3 - 3·x + b (mod p)`.
+    ///
+    /// Step 4 ("`n·Q = O`") is vacuous for P-256 because its cofactor
+    /// is 1 and the curve order `n` equals the group order.
+    ///
+    /// Returns the decoded [`Point`] in Jacobian coordinates with
+    /// `Z = 1`, or `None` on any validation failure.
+    pub fn from_sec1_uncompressed_validated(pk_bytes: &[u8; 65]) -> Option<Point> {
+        if pk_bytes[0] != 0x04 {
+            return None;
+        }
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        x_bytes.copy_from_slice(&pk_bytes[1..33]);
+        y_bytes.copy_from_slice(&pk_bytes[33..65]);
+        let x = Fp::from_bytes(&x_bytes)?;
+        let y = Fp::from_bytes(&y_bytes)?;
+        // Reject the encoding of the point at infinity as `(0, 0)`.
+        // P-256 does not have (0, 0) on the curve so the on-curve
+        // check below would also catch it, but being explicit here
+        // keeps the intent obvious.
+        if x.is_zero() == 1 && y.is_zero() == 1 {
+            return None;
+        }
+        if Self::is_on_curve_affine(&x, &y) != 1 {
+            return None;
+        }
+        Some(Point { x, y, z: Fp::ONE })
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +519,95 @@ mod tests {
         assert_affine_eq(&g.mul(&small(4)), G4_X, G4_Y);
         assert_affine_eq(&g.mul(&small(5)), G5_X, G5_Y);
         assert_affine_eq(&g.mul(&small(10)), G10_X, G10_Y);
+    }
+
+    #[test]
+    fn on_curve_accepts_generator() {
+        let gx = fp(G1_X);
+        let gy = fp(G1_Y);
+        assert_eq!(Point::is_on_curve_affine(&gx, &gy), 1);
+    }
+
+    #[test]
+    fn on_curve_accepts_small_multiples() {
+        for (x_bytes, y_bytes) in [
+            (G2_X, G2_Y),
+            (G3_X, G3_Y),
+            (G4_X, G4_Y),
+            (G5_X, G5_Y),
+            (G10_X, G10_Y),
+        ] {
+            let x = fp(x_bytes);
+            let y = fp(y_bytes);
+            assert_eq!(Point::is_on_curve_affine(&x, &y), 1);
+        }
+    }
+
+    #[test]
+    fn on_curve_rejects_tampered_point() {
+        let gx = fp(G1_X);
+        let mut gy_bytes = G1_Y;
+        gy_bytes[31] ^= 0x01;
+        let gy = fp(gy_bytes);
+        assert_eq!(Point::is_on_curve_affine(&gx, &gy), 0);
+    }
+
+    #[test]
+    fn on_curve_rejects_zero_point() {
+        // (0, 0) is not on the curve: 0 ≠ 0 + 0 + b.
+        assert_eq!(Point::is_on_curve_affine(&Fp::ZERO, &Fp::ZERO), 0);
+    }
+
+    #[test]
+    fn validated_decoder_accepts_generator() {
+        let mut pk = [0u8; 65];
+        pk[0] = 0x04;
+        pk[1..33].copy_from_slice(&G1_X);
+        pk[33..65].copy_from_slice(&G1_Y);
+        assert!(Point::from_sec1_uncompressed_validated(&pk).is_some());
+    }
+
+    #[test]
+    fn validated_decoder_rejects_off_curve() {
+        let mut pk = [0u8; 65];
+        pk[0] = 0x04;
+        pk[1..33].copy_from_slice(&G1_X);
+        let mut bad_y = G1_Y;
+        bad_y[31] ^= 0x01;
+        pk[33..65].copy_from_slice(&bad_y);
+        assert!(Point::from_sec1_uncompressed_validated(&pk).is_none());
+    }
+
+    #[test]
+    fn validated_decoder_rejects_wrong_header() {
+        let mut pk = [0u8; 65];
+        pk[0] = 0x02; // compressed — not supported
+        pk[1..33].copy_from_slice(&G1_X);
+        pk[33..65].copy_from_slice(&G1_Y);
+        assert!(Point::from_sec1_uncompressed_validated(&pk).is_none());
+    }
+
+    #[test]
+    fn validated_decoder_rejects_zero_zero() {
+        let mut pk = [0u8; 65];
+        pk[0] = 0x04;
+        // x and y already zero.
+        assert!(Point::from_sec1_uncompressed_validated(&pk).is_none());
+    }
+
+    #[test]
+    fn validated_decoder_rejects_non_canonical_x() {
+        // x = p is not canonical — Fp::from_bytes rejects it.
+        let mut pk = [0u8; 65];
+        pk[0] = 0x04;
+        let p_bytes: [u8; 32] = [
+            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff,
+        ];
+        pk[1..33].copy_from_slice(&p_bytes);
+        pk[33..65].copy_from_slice(&G1_Y);
+        assert!(Point::from_sec1_uncompressed_validated(&pk).is_none());
     }
 
     #[test]

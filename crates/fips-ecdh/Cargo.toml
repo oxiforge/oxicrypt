@@ -11,4 +11,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+fips-ecdsa = { path = "../fips-ecdsa" }
 fips-module = { path = "../fips-module" }

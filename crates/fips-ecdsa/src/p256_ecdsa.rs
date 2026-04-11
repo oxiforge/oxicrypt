@@ -33,7 +33,6 @@
 use fips_module::{require_operational, Error, SelfTestFailure};
 use fips_sha::sha256::Sha256;
 
-use crate::p256_field::Fp;
 use crate::p256_point::Point;
 use crate::p256_scalar::Scalar;
 
@@ -247,32 +246,13 @@ fn encode_public_key(q: &Point) -> Option<[u8; PUBLIC_KEY_LEN]> {
     Some(out)
 }
 
-/// Decode an uncompressed SEC1 public-key encoding. Returns `None`
-/// for anything that is not a canonical `0x04 || X || Y` where both
-/// `X` and `Y` are canonical field elements strictly less than `p`.
-///
-/// This does **not** check that the decoded point lies on the curve
-/// — the verify routine relies on the cofactor-1 property of P-256
-/// and the final equation check to detect off-curve points. A
-/// stricter `decode_public_key_on_curve` will land alongside point
-/// compression in a subsequent commit; for FIPS 186-5 §6.4.2 the
-/// field-element canonicalization done here is what the spec
-/// requires at parse time.
+/// Decode an uncompressed SEC1 public-key encoding with full SP
+/// 800-56Ar3 §5.6.2.3.3 public-key validation. Delegates to
+/// [`Point::from_sec1_uncompressed_validated`]; any off-curve or
+/// non-canonical input returns `None` and causes `verify` to return
+/// `false`.
 fn decode_public_key(pk_bytes: &[u8; PUBLIC_KEY_LEN]) -> Option<Point> {
-    if pk_bytes[0] != 0x04 {
-        return None;
-    }
-    let mut x_bytes = [0u8; 32];
-    let mut y_bytes = [0u8; 32];
-    x_bytes.copy_from_slice(&pk_bytes[1..33]);
-    y_bytes.copy_from_slice(&pk_bytes[33..65]);
-    let x = Fp::from_bytes(&x_bytes)?;
-    let y = Fp::from_bytes(&y_bytes)?;
-    Some(Point {
-        x,
-        y,
-        z: Fp::ONE,
-    })
+    Point::from_sec1_uncompressed_validated(pk_bytes)
 }
 
 /// Sum two Jacobian points by converting the right-hand operand to
