@@ -14,3 +14,4 @@ workspace = true
 fips-module = { path = "../fips-module" }
 fips-aes = { path = "../fips-aes" }
 fips-sha = { path = "../fips-sha" }
+fips-hmac = { path = "../fips-hmac" }

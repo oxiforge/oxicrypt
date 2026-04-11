@@ -17,7 +17,7 @@ compliance mapping.
 ## Status
 
 **Phase 2 — in progress.** The cryptographic core is taking shape under the
-power-up self-test harness, with 107 KATs running green and every vector
+power-up self-test harness, with 110 KATs running green and every vector
 traceable to its published source.
 
 ### Implemented (with power-up KATs)
@@ -29,7 +29,8 @@ traceable to its published source.
 - **DRBG** — CTR_DRBG (SP 800-90A §10.2) with AES-128/192/256, in both
   `no df` and `use df` variants; Hash_DRBG (SP 800-90A §10.1.1) over
   SHA-256, SHA-384, and SHA-512 with the §10.3.1 `Hash_df` derivation
-  function.
+  function; HMAC_DRBG (SP 800-90A §10.1.2) over HMAC-SHA-256,
+  HMAC-SHA-384, and HMAC-SHA-512.
 - **KDF** — SP 800-108r1 Counter / Feedback / Double-Pipeline Iteration
   modes (`fips-kdf`); SP 800-56C Rev 2 Two-Step KDA-HKDF; RFC 5869 HKDF
   over all eleven HMACs.
@@ -71,7 +72,6 @@ inventory.
 
 ### In flight
 
-- HMAC_DRBG (SP 800-90A §10.1.2)
 - DRBG health tests (SP 800-90A §11.3) wired into power-up self-tests
 - RSA (PKCS#1 v1.5, PSS, OAEP), ECDSA, EdDSA, ECDH
 - ACVP harness vector dispatch (Phase 3)

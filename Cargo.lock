@@ -37,6 +37,7 @@ name = "fips-drbg"
 version = "0.0.0"
 dependencies = [
  "fips-aes",
+ "fips-hmac",
  "fips-module",
  "fips-sha",
 ]

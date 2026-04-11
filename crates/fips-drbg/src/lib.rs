@@ -16,6 +16,7 @@
 
 pub mod ctr;
 pub mod hash;
+pub mod hmac;
 pub mod kat;
 
 pub use ctr::{
@@ -25,5 +26,9 @@ pub use ctr::{
 pub use hash::{
     HashAlg, HashDrbg, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512, Sha256Alg, Sha384Alg,
     Sha512Alg, HASH_DRBG_MAX_DF_INPUT,
+};
+pub use hmac::{
+    HmacAlg, HmacDrbg, HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512, HmacSha256Alg,
+    HmacSha384Alg, HmacSha512Alg, HMAC_DRBG_MAX_PROVIDED,
 };
 pub use kat::KATS;
