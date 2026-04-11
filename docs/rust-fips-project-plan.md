@@ -184,8 +184,21 @@ Each algorithm requires at least one Known Answer Test using a hardcoded input/o
 **Conditional Self-Tests:**
 
 - Pairwise consistency test on every RSA, ECDSA, EdDSA key generation
-- DRBG health test on instantiate and reseed
-- Continuous Random Number Generator Test (CRNGT) on DRBG output — note: required under FIPS 140-3 IG
+- DRBG health tests per SP 800-90A §11.3 (instantiate/generate/reseed
+  error paths, reseed-counter ceiling, post-uninstantiate access) —
+  wired as three power-up KATs in `fips-drbg::health`
+- Continuous Random Number Generator Test (CRNGT) — **not applicable**
+  under FIPS 140-3 IG D.G (March 2026). IG D.G removes CRNGT-on-DRBG-
+  output as a required conditional test (SP 800-90A DRBGs are
+  designed not to emit duplicate output blocks, and the §11.3 error-
+  path health tests already cover the DRBG health-check line item).
+  SP 800-90B §4.4 entropy-source health tests (Repetition Count Test,
+  Adaptive Proportion Test) remain a requirement for modules that
+  bundle a noise source, but per §4.4 below pqclib consumes
+  caller-supplied entropy and does not include a noise source inside
+  the cryptographic boundary, so those tests are the responsibility
+  of the upstream entropy source (the OS CSPRNG or hardware RNG that
+  the caller has CAVP-validated separately)
 
 ### 4.3 Key Zeroization
 
@@ -245,8 +258,8 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-drbg`: Hash_DRBG (SHA-256/384/512, §10.3.1 Hash_df)
 - [x] `fips-drbg`: HMAC_DRBG (SHA-256/384/512)
 - [x] `fips-drbg`: SP 800-90A §11.3 error-path health tests (CTR/Hash/HMAC_DRBG)
-- [ ] `fips-drbg`: prediction-resistance variants
-- [ ] CRNGT on DRBG output
+- [x] `fips-drbg`: SP 800-90A §9.3 prediction-resistance generate API (CTR/Hash/HMAC_DRBG); power-up KATs pending vendoring of `drbgvectors_pr_true`
+- [~] CRNGT on DRBG output — deferred as not required by FIPS 140-3 IG D.G (March 2026); see §4.2 note
 - [ ] `fips-rsa`: Key generation (provable/probable primes per FIPS 186-5 Appendix A), PKCS#1 v1.5, PSS
 - [ ] `fips-ecdsa`: P-256, P-384, P-521 field arithmetic, keygen, sign, verify
 - [ ] `fips-ecdh`: ECDH per SP 800-56Ar3
