@@ -17,3 +17,5 @@
 #![forbid(unsafe_code)]
 
 pub mod p256_field;
+pub mod p256_point;
+pub mod p256_scalar;
