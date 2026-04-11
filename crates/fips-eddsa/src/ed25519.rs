@@ -11,12 +11,12 @@
 //!     formulation `[S]B == R + [k]A` without multiplication by the
 //!     cofactor.
 //!
-//! The SHA-512 calls use [`fips_sha::sha512::Sha512::new_internal`]
-//! so that Ed25519 can run while the enclosing module is still in the
-//! `SelfTest` state (mirrors the pattern in `fips-hmac`). The public
-//! wrappers are the ones that should be called during normal operation
-//! and will eventually be gated behind `require_operational` once the
-//! power-up KATs for Ed25519 are wired in.
+//! All three gate on [`fips_module::require_operational`] so that
+//! callers cannot invoke Ed25519 before the module has finished its
+//! power-up KATs (SP 800-140F / FIPS 140-3 IG D.G). The KATs
+//! themselves go through the `*_internal` helpers, which skip the
+//! gate. SHA-512 is reached via `Sha512::new_internal`, mirroring
+//! the pattern in `fips-hmac` and `fips-kdf`.
 
 #![allow(
     clippy::indexing_slicing,
@@ -24,6 +24,7 @@
     clippy::similar_names
 )]
 
+use fips_module::{require_operational, Error, SelfTestFailure};
 use fips_sha::sha512::Sha512;
 
 use crate::edwards::EdwardsPoint;
@@ -60,9 +61,11 @@ fn sha512_cat(parts: &[&[u8]]) -> [u8; 64] {
     h.finalize()
 }
 
-/// Derive the Ed25519 public key (compressed A = `[s]B`) from a
-/// 32-byte seed. This is RFC 8032 §5.1.5.
-pub fn keygen(seed: &[u8; SEED_LEN]) -> [u8; PUBLIC_KEY_LEN] {
+/// Internal Ed25519 keygen. Skips the module-operational gate so it
+/// can run from the power-up KAT; public callers should use
+/// [`keygen`] instead.
+#[doc(hidden)]
+pub fn keygen_internal(seed: &[u8; SEED_LEN]) -> [u8; PUBLIC_KEY_LEN] {
     let h = sha512_cat(&[seed]);
     let mut s_bytes = [0u8; 32];
     s_bytes.copy_from_slice(&h[..32]);
@@ -71,9 +74,11 @@ pub fn keygen(seed: &[u8; SEED_LEN]) -> [u8; PUBLIC_KEY_LEN] {
     EdwardsPoint::BASE.mul(&s).compress()
 }
 
-/// Sign `message` under `seed` and return the 64-byte Ed25519
-/// signature. This is RFC 8032 §5.1.6 (pure Ed25519, no context).
-pub fn sign(seed: &[u8; SEED_LEN], message: &[u8]) -> [u8; SIGNATURE_LEN] {
+/// Internal Ed25519 sign. Skips the module-operational gate so it
+/// can run from the power-up KAT; public callers should use
+/// [`sign`] instead.
+#[doc(hidden)]
+pub fn sign_internal(seed: &[u8; SEED_LEN], message: &[u8]) -> [u8; SIGNATURE_LEN] {
     // h = SHA512(seed); split into scalar half and prefix half.
     let h = sha512_cat(&[seed]);
     let mut s_bytes = [0u8; 32];
@@ -103,25 +108,12 @@ pub fn sign(seed: &[u8; SEED_LEN], message: &[u8]) -> [u8; SIGNATURE_LEN] {
     sig
 }
 
-/// Strict, non-cofactored Ed25519 signature verification per
-/// FIPS 186-5 §7.8.2. Returns `true` iff the signature is valid.
-///
-/// This check:
-///
-///   * decodes `A` from `public_key` (RFC 8032 §5.1.3 canonical decode;
-///     `decompress` already rejects non-canonical `y` encodings and
-///     non-square `u/v`);
-///   * decodes `R` from `signature[..32]`;
-///   * requires `S = signature[32..]` to be a canonical integer in
-///     `[0, L)` (RFC 8032 §5.1.7 step 2);
-///   * recomputes `k = SHA512(R || A || M) mod L`;
-///   * accepts iff `[S]B == R + [k]A`.
-///
-/// The final equality test runs on compressed encodings, so it is a
-/// byte-for-byte comparison of two canonical 32-byte strings and is
-/// not subject to the cofactor ambiguity that plagues batch verifiers.
+/// Internal Ed25519 verify. Skips the module-operational gate so it
+/// can run from the power-up KAT; public callers should use
+/// [`verify`] instead.
+#[doc(hidden)]
 #[must_use]
-pub fn verify(
+pub fn verify_internal(
     public_key: &[u8; PUBLIC_KEY_LEN],
     message: &[u8],
     signature: &[u8; SIGNATURE_LEN],
@@ -132,12 +124,13 @@ pub fn verify(
     let mut s_bytes = [0u8; 32];
     s_bytes.copy_from_slice(&signature[32..]);
 
-    // Step 2: reject non-canonical S.
+    // RFC 8032 §5.1.7 step 2: reject non-canonical S.
     if !is_canonical_encoding(&s_bytes) {
         return false;
     }
 
-    // Decode A and R.
+    // Decode A and R. `decompress` already enforces canonical y
+    // encoding and the quadratic-residue check.
     let Some(a_point) = EdwardsPoint::decompress(public_key) else {
         return false;
     };
@@ -150,6 +143,10 @@ pub fn verify(
     let k = reduce_wide(&k_hash);
 
     // Compute sB and R + kA, then compare compressed encodings.
+    // Comparing canonical encodings sidesteps the cofactor ambiguity
+    // that batch-verification APIs have to reason about and matches
+    // the strict / non-cofactored equation `[S]B == R + [k]A` that
+    // FIPS 186-5 §7.8.2 step 10 requires.
     let s_scalar = Scalar::from_bytes(&s_bytes);
     let sb = EdwardsPoint::BASE.mul(&s_scalar);
     let ka = a_point.mul(&k);
@@ -158,10 +155,101 @@ pub fn verify(
     sb.compress() == rhs.compress()
 }
 
+/// Derive the Ed25519 public key (compressed `A = [s]B`) from a
+/// 32-byte seed.
+///
+/// Returns [`Error::NotOperational`] if the containing FIPS module
+/// is not in the `Operational` state.
+pub fn keygen(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
+    require_operational()?;
+    Ok(keygen_internal(seed))
+}
+
+/// Sign `message` under `seed` and return the 64-byte Ed25519
+/// signature.
+///
+/// Returns [`Error::NotOperational`] if the containing FIPS module
+/// is not in the `Operational` state.
+pub fn sign(seed: &[u8; SEED_LEN], message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
+    require_operational()?;
+    Ok(sign_internal(seed, message))
+}
+
+/// Strict, non-cofactored Ed25519 signature verification per
+/// FIPS 186-5 §7.8.2. Returns `Ok(true)` iff the signature is valid.
+///
+/// Returns [`Error::NotOperational`] if the containing FIPS module
+/// is not in the `Operational` state.
+pub fn verify(
+    public_key: &[u8; PUBLIC_KEY_LEN],
+    message: &[u8],
+    signature: &[u8; SIGNATURE_LEN],
+) -> Result<bool, Error> {
+    require_operational()?;
+    Ok(verify_internal(public_key, message, signature))
+}
+
+// ------------------------------------------------------------------
+// Power-up self-test
+// ------------------------------------------------------------------
+
+/// KAT seed from RFC 8032 §7.1 TEST 1.
+const KAT_SEED: [u8; 32] = [
+    0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+    0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+];
+
+/// Expected compressed public key for [`KAT_SEED`], from RFC 8032
+/// §7.1 TEST 1.
+const KAT_PUBLIC_KEY: [u8; 32] = [
+    0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
+    0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+];
+
+/// Expected signature of the empty message from RFC 8032 §7.1 TEST 1,
+/// cross-checked against pyca/cryptography.
+const KAT_SIGNATURE: [u8; 64] = [
+    0xe5, 0x56, 0x43, 0x00, 0xc3, 0x60, 0xac, 0x72, 0x90, 0x86, 0xe2, 0xcc, 0x80, 0x6e, 0x82, 0x8a,
+    0x84, 0x87, 0x7f, 0x1e, 0xb8, 0xe5, 0xd9, 0x74, 0xd8, 0x73, 0xe0, 0x65, 0x22, 0x49, 0x01, 0x55,
+    0x5f, 0xb8, 0x82, 0x15, 0x90, 0xa3, 0x3b, 0xac, 0xc6, 0x1e, 0x39, 0x70, 0x1c, 0xf9, 0xb4, 0x6b,
+    0xd2, 0x5b, 0xf5, 0xf0, 0x59, 0x5b, 0xbe, 0x24, 0x65, 0x51, 0x41, 0x43, 0x8e, 0x7a, 0x10, 0x0b,
+];
+
+/// Power-up KAT for Ed25519, run as part of the FIPS module
+/// initialization. Exercises all three of keygen, sign, and verify
+/// on the same RFC 8032 §7.1 TEST 1 vector, then runs a negative
+/// verification on a tampered signature so that a broken verifier
+/// that returned `true` unconditionally would also be caught.
+pub fn self_test() -> Result<(), SelfTestFailure> {
+    // Positive: keygen + sign + verify must all match the KAT.
+    let pk = keygen_internal(&KAT_SEED);
+    if pk != KAT_PUBLIC_KEY {
+        return Err(SelfTestFailure);
+    }
+    let sig = sign_internal(&KAT_SEED, &[]);
+    if sig != KAT_SIGNATURE {
+        return Err(SelfTestFailure);
+    }
+    if !verify_internal(&KAT_PUBLIC_KEY, &[], &KAT_SIGNATURE) {
+        return Err(SelfTestFailure);
+    }
+
+    // Negative: a signature with a flipped byte must be rejected.
+    // Catches a broken verifier that always returns `true`.
+    let mut tampered = KAT_SIGNATURE;
+    tampered[0] ^= 0x01;
+    if verify_internal(&KAT_PUBLIC_KEY, &[], &tampered) {
+        return Err(SelfTestFailure);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
+    use fips_module::{initialize_with_tests, KatEntry};
 
     // RFC 8032 §7.1 test vectors (pure Ed25519).
     //
@@ -257,14 +345,14 @@ mod tests {
     #[test]
     fn rfc8032_keygen_matches() {
         for v in &rfc8032_vectors() {
-            assert_eq!(keygen(&v.sk), v.pk);
+            assert_eq!(keygen_internal(&v.sk), v.pk);
         }
     }
 
     #[test]
     fn rfc8032_sign_matches() {
         for v in &rfc8032_vectors() {
-            let got = sign(&v.sk, v.msg);
+            let got = sign_internal(&v.sk, v.msg);
             assert_eq!(got, v.sig, "signature mismatch");
         }
     }
@@ -272,7 +360,7 @@ mod tests {
     #[test]
     fn rfc8032_verify_accepts() {
         for v in &rfc8032_vectors() {
-            assert!(verify(&v.pk, v.msg, &v.sig));
+            assert!(verify_internal(&v.pk, v.msg, &v.sig));
         }
     }
 
@@ -280,7 +368,7 @@ mod tests {
     fn verify_rejects_tampered_message() {
         let v = &rfc8032_vectors()[1];
         let bad = [v.msg[0] ^ 0x01];
-        assert!(!verify(&v.pk, &bad, &v.sig));
+        assert!(!verify_internal(&v.pk, &bad, &v.sig));
     }
 
     #[test]
@@ -288,20 +376,20 @@ mod tests {
         let v = &rfc8032_vectors()[0];
         let mut bad = v.sig;
         bad[0] ^= 0x01;
-        assert!(!verify(&v.pk, v.msg, &bad));
+        assert!(!verify_internal(&v.pk, v.msg, &bad));
     }
 
     #[test]
     fn verify_rejects_wrong_public_key() {
         let v0 = &rfc8032_vectors()[0];
         let v1 = &rfc8032_vectors()[1];
-        assert!(!verify(&v1.pk, v0.msg, &v0.sig));
+        assert!(!verify_internal(&v1.pk, v0.msg, &v0.sig));
     }
 
     #[test]
     fn verify_rejects_non_canonical_s() {
-        // Take a valid signature and replace S with L itself. L is not
-        // canonical (step 2 of §5.1.7 requires S < L).
+        // Take a valid signature and replace S with L itself. L is
+        // not canonical (RFC 8032 §5.1.7 step 2 requires S < L).
         let l_bytes: [u8; 32] = [
             0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
             0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -310,6 +398,32 @@ mod tests {
         let v = &rfc8032_vectors()[0];
         let mut bad = v.sig;
         bad[32..].copy_from_slice(&l_bytes);
-        assert!(!verify(&v.pk, v.msg, &bad));
+        assert!(!verify_internal(&v.pk, v.msg, &bad));
+    }
+
+    #[test]
+    fn self_test_passes() {
+        self_test().unwrap();
+    }
+
+    #[test]
+    fn public_api_gated_on_operational() {
+        // Until the module is initialized, the public API returns
+        // NotOperational. After `initialize_with_tests` runs the
+        // Ed25519 KAT, the public API works.
+        let entries = &[KatEntry {
+            name: "ed25519_power_up_kat",
+            run: self_test,
+        }];
+        // If any other test in this process already initialized the
+        // module, `initialize_with_tests` returns AlreadyInitialized;
+        // that's also a state in which the public API must work.
+        let _ = initialize_with_tests(entries);
+
+        let pk = keygen(&KAT_SEED).unwrap();
+        assert_eq!(pk, KAT_PUBLIC_KEY);
+        let sig = sign(&KAT_SEED, &[]).unwrap();
+        assert_eq!(sig, KAT_SIGNATURE);
+        assert!(verify(&KAT_PUBLIC_KEY, &[], &KAT_SIGNATURE).unwrap());
     }
 }
