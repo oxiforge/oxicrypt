@@ -148,14 +148,47 @@ impl Default for Registry {
 /// Construct a [`Registry`] populated with every algorithm handler
 /// the harness currently knows how to dispatch.
 ///
-/// R10 wires up two handlers: SHA3-256 AFT and HMAC-SHA2-256 AFT.
-/// Future chunks add SHA-2, SHAKE, AES, DRBG, etc. — each one a single
-/// `register` line in this function.
+/// R10 wired the first two handlers — SHA3-256 AFT and HMAC-SHA2-256
+/// AFT — end-to-end. R12-A expanded the SHA-3 hashing family, both
+/// SHAKE XOFs, and every HMAC variant except HMAC-SHA2-256 (which
+/// stays in its R10 module), bringing the total to seventeen
+/// AFT handlers:
+///
+/// - `SHA3-224`, `SHA3-256`, `SHA3-384`, `SHA3-512` (revision `2.0`)
+/// - `SHAKE-128`, `SHAKE-256` (revision `FIPS202`)
+/// - `HMAC-SHA-1` (revision `1.0`)
+/// - `HMAC-SHA2-{224,256,384,512}` and the two truncated
+///   `HMAC-SHA2-512/{224,256}` variants (revision `1.0`)
+/// - `HMAC-SHA3-{224,256,384,512}` (revision `1.0`)
+///
+/// Each new variant is a single `register` line — future chunks add
+/// AES, DRBG, ECDSA, EdDSA, RSA, plus MCT/LDT test types on the same
+/// plumbing.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
     let mut r = Registry::new();
+    // SHA-3 family (fixed-output hashing, revision 2.0)
+    r.register(Box::new(handlers::sha3::Sha3_224Handler));
     r.register(Box::new(handlers::sha3_256::Sha3_256Handler));
+    r.register(Box::new(handlers::sha3::Sha3_384Handler));
+    r.register(Box::new(handlers::sha3::Sha3_512Handler));
+    // SHAKE XOFs (revision FIPS202)
+    r.register(Box::new(handlers::shake::Shake128Handler));
+    r.register(Box::new(handlers::shake::Shake256Handler));
+    // HMAC-SHA-1 (legacy, revision 1.0)
+    r.register(Box::new(handlers::hmac::HmacSha1Handler));
+    // HMAC-SHA-2 family (revision 1.0)
+    r.register(Box::new(handlers::hmac::HmacSha2_224Handler));
     r.register(Box::new(handlers::hmac_sha2_256::HmacSha2_256Handler));
+    r.register(Box::new(handlers::hmac::HmacSha2_384Handler));
+    r.register(Box::new(handlers::hmac::HmacSha2_512Handler));
+    r.register(Box::new(handlers::hmac::HmacSha2_512_224Handler));
+    r.register(Box::new(handlers::hmac::HmacSha2_512_256Handler));
+    // HMAC-SHA-3 family (revision 1.0)
+    r.register(Box::new(handlers::hmac::HmacSha3_224Handler));
+    r.register(Box::new(handlers::hmac::HmacSha3_256Handler));
+    r.register(Box::new(handlers::hmac::HmacSha3_384Handler));
+    r.register(Box::new(handlers::hmac::HmacSha3_512Handler));
     r
 }
 
@@ -206,11 +239,31 @@ mod tests {
     #[test]
     fn registry_lookup() {
         let r = with_default_handlers();
+        // R10 handlers
         assert!(r.find("SHA3-256", "2.0").is_some());
         assert!(r.find("HMAC-SHA2-256", "1.0").is_some());
+        // R12-A SHA-3 family
+        assert!(r.find("SHA3-224", "2.0").is_some());
+        assert!(r.find("SHA3-384", "2.0").is_some());
+        assert!(r.find("SHA3-512", "2.0").is_some());
+        // R12-A SHAKE XOFs
+        assert!(r.find("SHAKE-128", "FIPS202").is_some());
+        assert!(r.find("SHAKE-256", "FIPS202").is_some());
+        // R12-A HMAC family
+        assert!(r.find("HMAC-SHA-1", "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-224", "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-384", "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-512", "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-512/224", "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-512/256", "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-224", "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-256", "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-384", "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-512", "1.0").is_some());
+        // Negative lookups
         assert!(r.find("SHA3-256", "9.9").is_none());
         assert!(r.find("UNKNOWN", "1.0").is_none());
-        assert_eq!(r.len(), 2);
+        assert_eq!(r.len(), 17);
         assert!(!r.is_empty());
     }
 

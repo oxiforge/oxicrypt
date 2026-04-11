@@ -150,7 +150,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: SHAKE, HMAC-SHA3, HKDF, AES, DRBG, ECDSA, EdDSA, RSA handlers; MCT and LDT test types. SHA-2 dispatch will consume the already-vendored CAVP SHS byte-vectors via a second envelope shape — upstream `usnistgov/ACVP-Server` does not publish `SHA-*`/`SHA1-*`/`SHA2-*` `internalProjection` directories at all, so there is no ACVP-Server re-pin in the path.
+- ACVP harness vector dispatch: HKDF, AES, DRBG, ECDSA, EdDSA, RSA handlers; MCT and LDT test types. The SHA-3 hashing family, both SHAKE XOFs, and every HMAC variant are wired as of R12-A (17 AFT handlers total). SHA-2 dispatch will consume the already-vendored CAVP SHS byte-vectors via a second envelope shape — upstream `usnistgov/ACVP-Server` does not publish `SHA-*`/`SHA1-*`/`SHA2-*` `internalProjection` directories at all, so there is no ACVP-Server re-pin in the path.
 
 ## License
 
