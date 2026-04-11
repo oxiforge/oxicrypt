@@ -15,6 +15,7 @@ name = "acvp-harness"
 path = "src/main.rs"
 
 [dependencies]
+fips-aes = { path = "../crates/fips-aes" }
 fips-module = { path = "../crates/fips-module" }
 fips-sha = { path = "../crates/fips-sha" }
 fips-xof = { path = "../crates/fips-xof" }

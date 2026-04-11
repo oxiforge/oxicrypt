@@ -32,6 +32,7 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
             + fips_xof::KATS.len()
             + fips_hmac::KATS.len()
             + fips_kdf::KATS.len()
+            + fips_aes::KATS.len()
             + fips_integrity::KATS.len()
     },
 >(&[
@@ -39,6 +40,7 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
     fips_xof::KATS,
     fips_hmac::KATS,
     fips_kdf::KATS,
+    fips_aes::KATS,
     fips_integrity::KATS,
 ]);
 
@@ -92,7 +94,7 @@ fn main() {
                 println!("  - {}", kat.name);
             }
             println!(
-                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF + software integrity KATs run, no vectors dispatched yet."
+                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF + AES (ECB/CBC/CTR/GCM) + software integrity KATs run, no vectors dispatched yet."
             );
         }
         Err(Error::AlreadyInitialized) => {
