@@ -82,10 +82,19 @@ pub enum ModeError {
     /// GCM: IV length is not 12 bytes (Phase 1 only supports the
     /// common 96-bit IV form).
     InvalidIvLength,
-    /// GCM: authentication tag did not verify.
+    /// GCM/CCM: authentication tag did not verify.
     TagMismatch,
-    /// GCM: buffer length mismatch between `ciphertext` and `out`.
+    /// GCM/CCM: buffer length mismatch between `ciphertext` and `out`.
     LengthMismatch,
+    /// CCM: nonce length is outside the SP 800-38C range (7..=13).
+    InvalidNonceLength,
+    /// CCM: tag length is not in {4, 6, 8, 10, 12, 14, 16}.
+    InvalidTagLength,
+    /// CCM: plaintext is too long for the chosen nonce length
+    /// (`Plen >= 2^(8*(15 - Nlen))`).
+    InvalidPayloadLength,
+    /// CCM: associated data exceeds the SP 800-38C §A.2.2 cap.
+    InvalidAadLength,
 }
 
 // ----------------------------------------------------------------------

@@ -17,7 +17,7 @@ compliance mapping.
 ## Status
 
 **Phase 2 — in progress.** The cryptographic core is taking shape under the
-power-up self-test harness, with 95 KATs running green and every vector
+power-up self-test harness, with 98 KATs running green and every vector
 traceable to its published source.
 
 ### Implemented (with power-up KATs)
@@ -30,8 +30,8 @@ traceable to its published source.
   modes (`fips-kdf`); SP 800-56C Rev 2 Two-Step KDA-HKDF; RFC 5869 HKDF
   over all eleven HMACs.
 - **Symmetric** — AES-128/192/256 block cipher (FIPS 197); ECB, CBC, CTR,
-  and GCM modes (SP 800-38A / SP 800-38D); Key Wrap (KW) and Key Wrap with
-  Padding (KWP) per SP 800-38F / RFC 3394 / RFC 5649.
+  GCM, and CCM modes (SP 800-38A / SP 800-38C / SP 800-38D); Key Wrap (KW)
+  and Key Wrap with Padding (KWP) per SP 800-38F / RFC 3394 / RFC 5649.
 - **Module integrity** — HMAC-SHA-256 software/firmware integrity check
   over `current_exe()` with an embedded 64-byte reserved slot populated at
   sign time and validated by magic-marker scan at boot (FIPS 140-3
@@ -50,7 +50,8 @@ traceable to its published source.
 - Every SHA, SHAKE, HMAC, HKDF, AES, and AES-CMAC KAT carries a citation
   to its source document (FIPS 197 Appendix C, SP 800-38A Appendix F,
   McGrew-Viega Appendix B, SP 800-38B Appendix D, RFC 3394 §4,
-  RFC 5649 §6, and the ACVP-Server slim slices).
+  RFC 5649 §6, NIST CAVP CCMVS VPT vectors, and the ACVP-Server slim
+  slices).
 
 ### Running the harness
 
@@ -60,13 +61,12 @@ cargo build -p acvp-harness -p fips-integrity
 ./target/debug/acvp-harness
 ```
 
-The harness performs module-boundary initialization, runs the 95 power-up
+The harness performs module-boundary initialization, runs the 98 power-up
 KATs, runs the software integrity self-test, and prints the full KAT
 inventory.
 
 ### In flight
 
-- AES-CCM (SP 800-38C)
 - DRBG family (SP 800-90A CTR_DRBG / Hash_DRBG / HMAC_DRBG)
 - RSA (PKCS#1 v1.5, PSS, OAEP), ECDSA, EdDSA, ECDH
 - ACVP harness vector dispatch (Phase 3)

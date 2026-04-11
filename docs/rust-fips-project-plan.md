@@ -19,7 +19,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 - `fips-kdf` — HKDF (RFC 5869) over all 11 HMACs, SP 800-108r1 KBKDF **Counter**, **Feedback**, and **Double-Pipeline Iteration** modes over all 11 HMACs.
 - `fips-test-vectors` — generated KAT constants sourced from vendored NIST ACVP-Server vectors.
 - `fips-integrity` — software/firmware integrity self-test (HMAC-SHA-256 over `current_exe()` with an **embedded** 64-byte reserved slot `[HDR | MAC | FTR]`, populated at sign time and validated by magic-marker scan at boot) per FIPS 140-3 IG 10.3.A. The embedded-slot design (in place of a sidecar file) is what lets the same mechanism work on Linux/macOS/Windows command-line tools **and** on code-signed iOS `.app` bundles and Android APKs where post-install files cannot be added.
-- `acvp-harness` — power-up KAT runner executing 95 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF/AES (ECB/CBC/CTR/GCM/KW/KWP)/AES-CMAC and the module binary integrity check.
+- `acvp-harness` — power-up KAT runner executing 98 KATs green across SHA/SHA-3/SHAKE/HMAC/HKDF/KBKDF/AES (ECB/CBC/CTR/GCM/CCM/KW/KWP)/AES-CMAC and the module binary integrity check.
 
 **ACVP/CAVP traceability (Phase 3 work pulled forward):**
 
@@ -253,7 +253,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 
 **Goal:** P1 algorithms, ACVP harness, comprehensive test coverage
 
-- [ ] `fips-aes`: AES-CCM
+- [x] `fips-aes`: AES-CCM
 - [x] `fips-aes`: AES-KW, AES-KWP
 - [x] `fips-cmac`: AES-CMAC
 - [x] `fips-sha`: SHA-3 family, SHAKE128, SHAKE256 (SHAKE lives in `fips-xof`)
@@ -261,7 +261,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-kdf`: SP 800-108r1 (Counter, Feedback, Double-Pipeline Iteration modes), SP 800-56Cr2 (HKDF KAT retrofit); HKDF (RFC 5869) over all 11 HMACs
 - [ ] `fips-tls-kdf`: TLS 1.2 / 1.3 PRF/HKDF
 - [ ] `fips-rsa`: OAEP
-- [x] ACVP harness: scaffolding + power-up KAT runner (95 KATs wired)
+- [x] ACVP harness: scaffolding + power-up KAT runner (98 KATs wired)
 - [ ] ACVP harness: registration + vector processing for remaining algorithm families
 - [x] Run against NIST sample vectors from `usnistgov/ACVP-Server` (vendored at pinned commit `3611942e`; KATs sourced from vendored vectors with CAVP traceability)
 
