@@ -1,0 +1,27 @@
+[package]
+name = "ct-validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+description = "dudect-style constant-time validation harness for pqclib"
+
+[dependencies]
+fips-rsa = { path = "../../crates/fips-rsa" }
+fips-ecdsa = { path = "../../crates/fips-ecdsa" }
+fips-ecdh = { path = "../../crates/fips-ecdh" }
+fips-drbg = { path = "../../crates/fips-drbg" }
+fips-module = { path = "../../crates/fips-module" }
+
+[lib]
+name = "ct_validation"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ct-validation"
+path = "src/bin/ct_validation.rs"
+
+[lints]
+workspace = true

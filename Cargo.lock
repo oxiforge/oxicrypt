@@ -18,6 +18,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ct-validation"
+version = "0.0.0"
+dependencies = [
+ "fips-drbg",
+ "fips-ecdh",
+ "fips-ecdsa",
+ "fips-module",
+ "fips-rsa",
+]
+
+[[package]]
 name = "fips-aes"
 version = "0.0.0"
 dependencies = [

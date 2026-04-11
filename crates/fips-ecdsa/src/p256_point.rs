@@ -255,6 +255,77 @@ impl Point {
         }
     }
 
+    /// Jacobian mixed addition specialised for the scalar-mul ladder:
+    /// always computes the full "normal" EFD `madd-2007-bl` formula
+    /// with no early returns, and CT-selects against the degenerate
+    /// `self == identity` result at the end.
+    ///
+    /// This exists because [`Point::add_mixed`] short-circuits with
+    /// `if self.is_identity() == 1 { return ... }` on the identity —
+    /// for external callers that's fine, but inside the ladder the
+    /// accumulator *is* the identity for every iteration before the
+    /// first set bit of the scalar, so the short-circuit makes the
+    /// per-iteration cycle count depend on the number of leading
+    /// zero bits. dudect catches that as a multi-sigma leak on
+    /// `Point::mul` and therefore on `ecdh_p256_cdh`.
+    ///
+    /// The equal-points / point-plus-negation exceptional cases that
+    /// [`add_mixed`](Self::add_mixed) handles with `h.is_zero()` are
+    /// **not** handled here. In the ladder they can only fire if the
+    /// running accumulator equals `±self`, which for a 256-bit scalar
+    /// happens with probability ≈ `256 · 2⁻²⁵⁶` — not an
+    /// observable timing artifact and not a correctness concern for
+    /// the secret-scalar use cases (ECDSA sign, ECDH CDH). Callers
+    /// that need those paths should use [`Point::add_mixed`].
+    fn add_mixed_ct(&self, other_x: &Fp, other_y: &Fp) -> Point {
+        let z1z1 = self.z.square();
+        let u2 = other_x.mul(&z1z1);
+        let s2 = other_y.mul(&self.z).mul(&z1z1);
+        let h = u2.sub(&self.x);
+        let r_raw = s2.sub(&self.y);
+
+        let hh = h.square();
+        let i = {
+            let two = hh.add(&hh);
+            two.add(&two)
+        };
+        let j = h.mul(&i);
+        let r = r_raw.add(&r_raw);
+        let v = self.x.mul(&i);
+
+        let x3 = {
+            let r2 = r.square();
+            let two_v = v.add(&v);
+            r2.sub(&j).sub(&two_v)
+        };
+        let y3 = {
+            let v_minus_x3 = v.sub(&x3);
+            let rvx = r.mul(&v_minus_x3);
+            let two_y1_j = {
+                let y1j = self.y.mul(&j);
+                y1j.add(&y1j)
+            };
+            rvx.sub(&two_y1_j)
+        };
+        let z3 = {
+            let z1_plus_h = self.z.add(&h);
+            z1_plus_h.square().sub(&z1z1).sub(&hh)
+        };
+
+        let normal = Point {
+            x: x3,
+            y: y3,
+            z: z3,
+        };
+        // "if self was the identity, the result is just (other, 1)".
+        let other_as_jac = Point {
+            x: *other_x,
+            y: *other_y,
+            z: Fp::ONE,
+        };
+        Point::conditional_select(&normal, &other_as_jac, self.is_identity())
+    }
+
     /// Constant-time scalar multiplication `[k] self` using the
     /// left-to-right binary ladder with masked add.
     ///
@@ -262,10 +333,19 @@ impl Point {
     /// `candidate = current + self_affine`, and conditionally
     /// replaces `current` with `candidate` based on the scalar bit.
     /// Both the add and the select are performed unconditionally so
-    /// the timing is independent of the scalar. The input point is
-    /// converted to affine once up front — that inversion depends on
-    /// `self.z`, which is a public curve parameter for the generator
-    /// case (`z = 1`).
+    /// the timing is independent of the scalar. The mixed-add uses
+    /// the dedicated [`Self::add_mixed_ct`] helper that does **not**
+    /// short-circuit on the identity accumulator; that short-circuit
+    /// used to make the per-iteration cycle count depend on the
+    /// number of leading zero bits of the scalar, which dudect (see
+    /// `tools/ct-validation` and §12.1) picked up as a multi-sigma
+    /// leak on `ecdsa_p256_scalar_mul` and `ecdh_p256_cdh`.
+    ///
+    /// The input point is converted to affine once up front — that
+    /// inversion depends on `self.z`, which is a public curve
+    /// parameter for the generator case (`z = 1`). For ECDH `d · Q`
+    /// it depends on the peer's public key `Q`, which is also public
+    /// by definition.
     pub fn mul(&self, k: &Scalar) -> Point {
         // Precompute `self` in affine form so the inner loop uses
         // mixed addition.
@@ -281,7 +361,7 @@ impl Point {
             for bit_idx in (0..8).rev() {
                 acc = acc.double();
                 let bit = (byte >> bit_idx) & 1;
-                let candidate = acc.add_mixed(&ax, &ay);
+                let candidate = acc.add_mixed_ct(&ax, &ay);
                 acc = Point::conditional_select(&acc, &candidate, bit);
             }
         }

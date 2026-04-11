@@ -334,16 +334,18 @@ fn mont_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
             t[i + j] = sum as u64;
             carry = sum >> 64;
         }
-        // Propagate the tail carry through t[i+4..9]. Loop bounds are
-        // a public parameter (limb count), not secret.
+        // Propagate the tail carry through t[i+4..9] unconditionally.
+        // Earlier versions short-circuited with `if carry == 0 { break; }`,
+        // which made the loop iteration count depend on whether the
+        // intermediate carry happened to be zero — the ct-validation
+        // harness picked that up as a large leak on `Fp::mul`. The full
+        // chain is at most five add-with-carry steps, so iterating the
+        // fixed upper bound is cheap and restores constant time.
         let mut k = i + 4;
         while k < 9 {
             let sum = (t[k] as u128) + carry;
             t[k] = sum as u64;
             carry = sum >> 64;
-            if carry == 0 {
-                break;
-            }
             k += 1;
         }
         // Any residual carry beyond t[8] would indicate

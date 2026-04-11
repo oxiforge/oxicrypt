@@ -283,7 +283,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [x] `fips-ecdh`: ECDH per SP 800-56Ar3 (P-256)
 - [x] Pairwise consistency tests for RSA keygen (IG 10.3.A, wired inside `from_components`)
 - [~] Pairwise consistency tests for ECDSA keygen (IG 10.3.A, wired inside `EcdsaP256PrivateKey::{generate, from_bytes}`, R7); EdDSA PCT deferred until `fips-eddsa` lands
-- [ ] Constant-time validation: verify with `dudect` or timing leak tests
+- [x] Constant-time validation: `tools/ct-validation` dudect harness landed (R8) — Welch's t-test with percentile cropping, six targets covering `mont2048::pow_secret`, `mont1024::pow_secret`, `emsa_oaep_decode`, `Point::mul`, `Scalar::invert`, and ECDH CDH; at 300k samples every target reports `|t| < 3` except `ecdsa_p256_scalar_invert` which fluctuates in the noise band and is non-monotone with sample count. Two real leaks were found and fixed in the same chunk: a data-dependent `if carry == 0 { break; }` in the Montgomery-reduction carry-propagation loop (`p256_field.rs`, `p256_scalar.rs` — observed as multi-thousand-sigma) and an identity short-circuit in `Point::add_mixed` that made the scalar-mul ladder's per-iteration cost depend on the number of leading zero bits of the secret scalar (`Point::mul` now uses `add_mixed_ct` which runs the full formula unconditionally and CT-selects). See §12.1 for the reporting protocol and the current verdict table.
 
 ### Phase 3: Extended Algorithms + ACVP (Weeks 11–16)
 

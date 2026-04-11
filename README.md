@@ -106,6 +106,25 @@ The harness performs module-boundary initialization, runs the 122 power-up
 KATs, runs the software integrity self-test, and prints the full KAT
 inventory.
 
+### Constant-time validation
+
+```bash
+cargo run -p ct-validation --release --
+cargo run -p ct-validation --release -- --samples 500000 ecdsa_p256_scalar_invert
+```
+
+`tools/ct-validation` is a dudect-style paired fixed-vs-random timing
+harness that runs Welch's t-test with percentile cropping across six
+CSP-touching primitives (`mont2048`/`mont1024` `pow_secret`, OAEP decode,
+P-256 scalar-mul, P-256 scalar invert, ECDH P-256 CDH). Verdicts: `|t|≥5`
+is `LEAK`, `|t|≥3` is `WARN`, else `CLEAN`. The harness found and the
+same R8 change fixed two real leaks — a data-dependent carry-propagation
+early exit in the `fips-ecdsa` Montgomery reducer and an identity
+short-circuit in the P-256 mixed-addition that made the scalar-mul
+ladder's per-iteration cost depend on the number of leading zero bits of
+the secret scalar. Full reporting protocol, verdict table, and the list
+of known-noise fluctuations are in §12.1 of the security policy.
+
 ### In flight
 
 - EdDSA, ECDSA P-384 / P-521

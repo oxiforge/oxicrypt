@@ -17,6 +17,7 @@ members = [
     "crates/fips-tls-kdf",
     "crates/fips-integrity",
     "acvp-harness",
+    "tools/ct-validation",
 ]
 
 [workspace.package]

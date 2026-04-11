@@ -324,14 +324,19 @@ fn mont_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
             t[i + j] = sum as u64;
             carry = sum >> 64;
         }
+        // Propagate the tail carry through t[i+4..9] unconditionally.
+        // An earlier draft had an `if carry == 0 { break; }` here,
+        // which made the iteration count depend on whether the
+        // intermediate carry happened to be zero — that is a secret-
+        // dependent branch and the ct-validation harness picked it up
+        // as a multi-thousand-sigma leak on `Scalar::mul` / `invert`.
+        // Iterating the fixed upper bound is cheap (at most five
+        // add-with-carry steps) and restores constant time.
         let mut k = i + 4;
         while k < 9 {
             let sum = (t[k] as u128) + carry;
             t[k] = sum as u64;
             carry = sum >> 64;
-            if carry == 0 {
-                break;
-            }
             k += 1;
         }
         debug_assert!(carry == 0);
