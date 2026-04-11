@@ -1,8 +1,15 @@
 //! ACVP harness binary.
 //!
-//! Phase 1 scaffold. Real registration, vector dispatch, and JSON
-//! handling arrive in Phase 3. Today this binary only exists so the
-//! workspace builds and links against `fips-module` end to end.
+//! The binary wraps the [`acvp_harness`] library with a tiny CLI:
+//!
+//! - `acvp-harness` (no args) — the Phase 1/2 default: run the
+//!   power-up self-tests and print a short summary of the wired-up
+//!   KAT inventory. This is what CI runs on every build to prove the
+//!   module still boots end to end.
+//! - `acvp-harness dispatch <prompt.json> <response.json>` — the
+//!   Phase 3 vector-set dispatcher: parse an ACVP `internalProjection`
+//!   slice from `<prompt.json>`, compute responses, and write them to
+//!   `<response.json>`.
 //!
 //! Because this is a user-facing binary it is permitted to emit
 //! output to stdout/stderr — we override the workspace-wide
@@ -88,30 +95,74 @@ fn main() {
     // `fips-integrity-sign --sign target/debug/acvp-harness` from a
     // separate process, and only then execute the harness.
     match initialize_with_tests(POWER_UP_KATS) {
-        Ok(()) => {
-            println!("pqclib acvp-harness: module state = {}", state());
-            println!(
-                "Power-up self-tests passed: {} KAT(s).",
-                POWER_UP_KATS.len()
-            );
-            for kat in POWER_UP_KATS {
-                println!("  - {}", kat.name);
-            }
-            println!(
-                "Phase 2 scaffold: SHA-1/2/3 + SHAKE + HMAC + HKDF + KBKDF + AES (ECB/CBC/CTR/GCM/CCM/KW/KWP) + AES-CMAC + CTR/Hash/HMAC_DRBG + software integrity KATs run, no vectors dispatched yet."
-            );
-        }
-        Err(Error::AlreadyInitialized) => {
-            println!(
-                "pqclib acvp-harness: module already initialized, state = {}",
-                state()
-            );
-        }
+        Ok(()) | Err(Error::AlreadyInitialized) => {}
         Err(e) => {
             eprintln!("pqclib acvp-harness: initialization failed: {e}");
             // Deliberately not using `std::process::exit` here so the
             // scaffold stays minimal; we will introduce a proper
-            // CLI error type in Phase 3.
+            // CLI error type in a later phase.
+            return;
         }
     }
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && args[1] == "dispatch" {
+        run_dispatch_cli(&args);
+        return;
+    }
+
+    print_self_test_banner();
+}
+
+fn print_self_test_banner() {
+    println!("pqclib acvp-harness: module state = {}", state());
+    println!(
+        "Power-up self-tests passed: {} KAT(s).",
+        POWER_UP_KATS.len()
+    );
+    for kat in POWER_UP_KATS {
+        println!("  - {}", kat.name);
+    }
+    let registry = acvp_harness::dispatch::with_default_handlers();
+    println!(
+        "ACVP dispatch: {} handler(s) registered.",
+        registry.len()
+    );
+    println!(
+        "R10: SHA3-256 AFT + HMAC-SHA2-256 AFT wired; run `acvp-harness dispatch <prompt.json> <response.json>` to process a vector set."
+    );
+}
+
+fn run_dispatch_cli(args: &[String]) {
+    if args.len() != 4 {
+        eprintln!("usage: acvp-harness dispatch <prompt.json> <response.json>");
+        return;
+    }
+    let prompt_path = &args[2];
+    let response_path = &args[3];
+    if let Err(msg) = run_dispatch(prompt_path, response_path) {
+        eprintln!("pqclib acvp-harness: dispatch failed: {msg}");
+    }
+}
+
+fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(prompt_path)
+        .map_err(|e| format!("read {prompt_path}: {e}"))?;
+    let prompt = acvp_harness::json::parse(&text)
+        .map_err(|e| format!("parse {prompt_path}: {e}"))?;
+    let registry = acvp_harness::dispatch::with_default_handlers();
+    let response = acvp_harness::dispatch::process(&prompt, &registry)
+        .map_err(|e| format!("dispatch: {e}"))?;
+    let mut out = acvp_harness::json::to_pretty_string(&response);
+    out.push('\n');
+    std::fs::write(response_path, out)
+        .map_err(|e| format!("write {response_path}: {e}"))?;
+    println!(
+        "pqclib acvp-harness: wrote ACVP response to {response_path} ({} test group(s))",
+        response
+            .get("testGroups")
+            .and_then(acvp_harness::json::JsonValue::as_array)
+            .map_or(0, <[_]>::len)
+    );
+    Ok(())
 }

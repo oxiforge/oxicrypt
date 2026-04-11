@@ -108,7 +108,24 @@ cargo build -p acvp-harness -p fips-integrity
 
 The harness performs module-boundary initialization, runs the 122 power-up
 KATs, runs the software integrity self-test, and prints the full KAT
-inventory.
+inventory. As of R10 it also gains a `dispatch` subcommand that processes
+ACVP `internalProjection`-style vector sets end to end:
+
+```bash
+./target/debug/acvp-harness dispatch \
+    vendor/nist/acvp-server/gen-val/json-files/SHA3-256-2.0/kat-slice.json \
+    /tmp/sha3_response.json
+```
+
+Two handler families are wired up in R10: `SHA3-256` revision `2.0` AFT
+and `HMAC-SHA2-256` revision `1.0` AFT. Round-trip tests in
+`acvp-harness/tests/round_trip.rs` prove the dispatcher produces the
+same `md` / `mac` values NIST shipped in the vendored slices, byte for
+byte. The JSON parser and hex codec used by the harness are in-tree —
+the validation binary has zero third-party dependencies, matching the
+module itself. Remaining algorithm families (SHA-2, SHAKE, HMAC-SHA3,
+HKDF, AES, DRBG, ECDSA, EdDSA, RSA) and remaining test types (MCT, LDT)
+slot into the same dispatcher without touching the envelope layer.
 
 ### Constant-time validation
 
@@ -133,7 +150,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch (Phase 3)
+- ACVP harness vector dispatch: SHA-2 (blocked on ACVP-Server re-pin), SHAKE, HMAC-SHA3, HKDF, AES, DRBG, ECDSA, EdDSA, RSA handlers; MCT and LDT test types
 
 ## License
 

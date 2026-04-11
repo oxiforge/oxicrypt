@@ -243,7 +243,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 
 ### 5.2 Implementation Plan
 
-- Use `serde` / `serde_json` for ACVP JSON schema handling
+- **Zero third-party dependencies**: ACVP JSON handling uses an in-tree recursive-descent parser (`acvp-harness/src/json.rs`, R10) and an in-tree uppercase-hex codec (`acvp-harness/src/hex.rs`); `serde` / `serde_json` are deliberately not used so the CMVP supply-chain story on the validation binary matches the story on the module
 - One module per algorithm family matching ACVP spec IDs
 - Test locally against NIST's sample vectors (available on GitHub: `usnistgov/ACVP-Server`)
 - Integration test suite that runs all sample vectors and compares against expected outputs
@@ -298,7 +298,8 @@ The `acvp-harness` binary implements the ACVP protocol client:
 - [ ] `fips-tls-kdf`: TLS 1.2 / 1.3 PRF/HKDF
 - [x] `fips-rsa`: OAEP (R6 — RFC 8017 §7.1 RSAES-OAEP with SHA-256/MGF1-SHA-256, Manger-resistant decode with single-accumulator structural checks, CRT decrypt path sharing the Bellcore-protected private-exponent primitive with CRT sign, DRBG-backed `rsa_oaep_encrypt_2048_sha256` entry point, `RsaPrivateKey2048::decrypt_oaep_sha256` method)
 - [x] ACVP harness: scaffolding + power-up KAT runner (122 KATs wired, including §9.3 PR DRBG KATs)
-- [ ] ACVP harness: registration + vector processing for remaining algorithm families
+- [~] ACVP harness: vector-set dispatch (R10 — hand-rolled in-tree JSON parser with bounded-depth recursive descent, typed envelope layer over `algorithm`/`revision`/`testGroups`, `AlgorithmHandler` trait + registry, `acvp-harness dispatch <prompt.json> <response.json>` CLI subcommand gated on `require_operational`, and two algorithms wired end-to-end: SHA3-256 revision 2.0 AFT and HMAC-SHA2-256 revision 1.0 AFT, both round-tripping the vendored `internalProjection` slices byte-for-byte in integration tests; zero third-party dependencies preserved — no `serde_json`). Remaining: SHA-2, SHAKE, HMAC-SHA3, HKDF, AES, DRBG, ECDSA, EdDSA, RSA handler families, plus MCT/LDT test types. SHA-2 dispatch is blocked on the pinned ACVP-Server commit not containing SHA2-*-2.0 directories; that re-pin is deferred to a future workspace-wide chunk so it does not pollute the dispatch plumbing work.
+- [ ] ACVP harness: registration + remaining algorithm families (continued from above)
 - [x] Run against NIST sample vectors from `usnistgov/ACVP-Server` (vendored at pinned commit `3611942e`; KATs sourced from vendored vectors with CAVP traceability)
 
 ### Phase 4: Hardening & Documentation (Weeks 17–22)
