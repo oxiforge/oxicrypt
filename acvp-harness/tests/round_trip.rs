@@ -2823,3 +2823,37 @@ fn parallelhashxof_256_aft_round_trip() {
         "ParallelHashXOF-256",
     );
 }
+
+// ── R57: KMAC / KMACXOF MVT (MAC Verification Test) ───────────────
+
+#[test]
+fn kmac_128_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMAC-128-1.0/mvt-slice.json",
+        "KMAC-128 MVT",
+    );
+}
+
+#[test]
+fn kmac_256_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMAC-256-1.0/mvt-slice.json",
+        "KMAC-256 MVT",
+    );
+}
+
+#[test]
+fn kmacxof_128_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMACXOF-128-1.0/mvt-slice.json",
+        "KMACXOF-128 MVT",
+    );
+}
+
+#[test]
+fn kmacxof_256_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMACXOF-256-1.0/mvt-slice.json",
+        "KMACXOF-256 MVT",
+    );
+}

@@ -283,6 +283,14 @@
 //! - [`parallelhash`] — `ParallelHashXOF-128`, `ParallelHashXOF-256`
 //!   revision `1.0`, AFT with configurable block size B and XOF output
 //!
+//! R57 adds KMAC / KMACXOF MVT (MAC Verification Test) support:
+//!
+//! - [`kmac`] — `KMAC-128`, `KMAC-256`, `KMACXOF-128`, `KMACXOF-256`
+//!   revision `1.0`, MVT with `testPassed` boolean response. The shared
+//!   `handle_kmac_group` driver now accepts both AFT and MVT test types;
+//!   per-test input parsing is extracted into `parse_kmac_test`. MVT
+//!   vectors include both valid and bit-flipped (invalid) MAC groups.
+//!
 //! All SP 800-185 and PBKDF vectors are self-generated because the
 //! NIST ACVP-Server at the pinned commit ships no cSHAKE/KMAC/
 //! TupleHash/ParallelHash/PBKDF vector directories.

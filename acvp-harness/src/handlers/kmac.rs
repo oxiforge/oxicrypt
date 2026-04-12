@@ -1,8 +1,13 @@
-//! KMAC-128 / KMAC-256 and KMACXOF-128 / KMACXOF-256 AFT handlers.
+//! KMAC-128 / KMAC-256 and KMACXOF-128 / KMACXOF-256 AFT + MVT handlers.
 //!
 //! Targets self-generated ACVP slices with `algorithm = "KMAC-128"`,
-//! `"KMAC-256"`, `"KMACXOF-128"`, or `"KMACXOF-256"`, `revision = "1.0"`,
-//! `testType = "AFT"`.
+//! `"KMAC-256"`, `"KMACXOF-128"`, or `"KMACXOF-256"`, `revision = "1.0"`.
+//!
+//! Two test types are supported:
+//!
+//! - **AFT** (Algorithm Functional Test): compute the MAC and return it.
+//! - **MVT** (MAC Verification Test): compute the MAC, compare against
+//!   the supplied `mac` field, return `testPassed`.
 //!
 //! Each test case carries:
 //!
@@ -12,8 +17,10 @@
 //! - `msgLen` (bits) — message length
 //! - `macLen` (bits) — requested tag length
 //! - `hexCustomization` (hex) — customization string S
+//! - `mac` (hex, MVT only) — expected MAC to verify against
 //!
-//! Response field: `mac` (hex).
+//! AFT response field: `mac` (hex).
+//! MVT response field: `testPassed` (bool).
 //!
 //! The XOF variants use the squeeze pattern (`finalize()` + `squeeze()`)
 //! rather than `finalize_into()`, producing extendable output.
@@ -112,7 +119,89 @@ impl AlgorithmHandler for KmacXof256Handler {
     }
 }
 
-/// Shared group driver for KMAC AFT.
+/// Whether the group is AFT (compute) or MVT (verify).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KmacTestType {
+    Aft,
+    Mvt,
+}
+
+/// Parsed inputs from one KMAC test case.
+struct KmacTestInputs {
+    key: Vec<u8>,
+    msg: Vec<u8>,
+    s: Vec<u8>,
+    mac_bytes: usize,
+}
+
+/// Parse key, msg, customization string, and mac length from a test case.
+fn parse_kmac_test(t: &JsonValue) -> Result<KmacTestInputs, DispatchError> {
+    let key_len_bits = t
+        .get("keyLen")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("keyLen"))?;
+    let msg_len_bits = t
+        .get("msgLen")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("msgLen"))?;
+    let mac_len_bits = t
+        .get("macLen")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("macLen"))?;
+    if !key_len_bits.is_multiple_of(8)
+        || !msg_len_bits.is_multiple_of(8)
+        || !mac_len_bits.is_multiple_of(8)
+    {
+        return Err(DispatchError::Unsupported(
+            "KMAC with non-byte-aligned lengths",
+        ));
+    }
+    let key_bytes = (key_len_bits / 8) as usize;
+    let msg_bytes = (msg_len_bits / 8) as usize;
+    let mac_bytes = (mac_len_bits / 8) as usize;
+
+    let key_hex = t
+        .get("key")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("key"))?;
+    let key_full = hex::decode(key_hex)?;
+    if key_full.len() < key_bytes {
+        return Err(DispatchError::Crypto(
+            "KMAC: hex `key` shorter than declared `keyLen`",
+        ));
+    }
+    let key = key_full[..key_bytes].to_vec();
+
+    let msg_hex = t
+        .get("msg")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("msg"))?;
+    let msg_full = if msg_hex.is_empty() {
+        Vec::new()
+    } else {
+        hex::decode(msg_hex)?
+    };
+    if msg_full.len() < msg_bytes {
+        return Err(DispatchError::Crypto(
+            "KMAC: hex `msg` shorter than declared `msgLen`",
+        ));
+    }
+    let msg = if msg_bytes == 0 { Vec::new() } else { msg_full[..msg_bytes].to_vec() };
+
+    let s_hex = t
+        .get("hexCustomization")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("");
+    let s = if s_hex.is_empty() {
+        Vec::new()
+    } else {
+        hex::decode(s_hex)?
+    };
+
+    Ok(KmacTestInputs { key, msg, s, mac_bytes })
+}
+
+/// Shared group driver for KMAC AFT and MVT.
 fn handle_kmac_group<F>(
     group: &JsonValue,
     mut compute: F,
@@ -124,13 +213,15 @@ where
         .get("tgId")
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tgId"))?;
-    let test_type = group
+    let test_type = match group
         .get("testType")
         .and_then(JsonValue::as_str)
-        .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
-        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
-    }
+        .ok_or(DispatchError::MissingField("testType"))?
+    {
+        "AFT" => KmacTestType::Aft,
+        "MVT" => KmacTestType::Mvt,
+        other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
+    };
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -141,78 +232,35 @@ where
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
-        let key_len_bits = t
-            .get("keyLen")
-            .and_then(JsonValue::as_u64)
-            .ok_or(DispatchError::MissingField("keyLen"))?;
-        let msg_len_bits = t
-            .get("msgLen")
-            .and_then(JsonValue::as_u64)
-            .ok_or(DispatchError::MissingField("msgLen"))?;
-        let mac_len_bits = t
-            .get("macLen")
-            .and_then(JsonValue::as_u64)
-            .ok_or(DispatchError::MissingField("macLen"))?;
-        if !key_len_bits.is_multiple_of(8)
-            || !msg_len_bits.is_multiple_of(8)
-            || !mac_len_bits.is_multiple_of(8)
-        {
-            return Err(DispatchError::Unsupported(
-                "KMAC AFT with non-byte-aligned lengths",
-            ));
-        }
-        let key_bytes = (key_len_bits / 8) as usize;
-        let msg_bytes = (msg_len_bits / 8) as usize;
-        let mac_bytes = (mac_len_bits / 8) as usize;
+        let inp = parse_kmac_test(t)?;
 
-        let key_hex = t
-            .get("key")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("key"))?;
-        let key = hex::decode(key_hex)?;
-        if key.len() < key_bytes {
-            return Err(DispatchError::Crypto(
-                "KMAC AFT: hex `key` shorter than declared `keyLen`",
-            ));
-        }
-        let key_used = &key[..key_bytes];
+        let mut out_buf = vec![0u8; inp.mac_bytes];
+        compute(&inp.key, &inp.msg, &inp.s, &mut out_buf)?;
 
-        let msg_hex = t
-            .get("msg")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("msg"))?;
-        let msg = if msg_hex.is_empty() {
-            Vec::new()
-        } else {
-            hex::decode(msg_hex)?
+        let resp = match test_type {
+            KmacTestType::Aft => JsonValue::Object(vec![
+                ("tcId".to_string(), JsonValue::Number(tc_id)),
+                (
+                    "mac".to_string(),
+                    JsonValue::String(hex::encode_upper(&out_buf)),
+                ),
+            ]),
+            KmacTestType::Mvt => {
+                let expected_hex = t
+                    .get("mac")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("mac"))?;
+                let expected_mac = hex::decode(expected_hex)?;
+                // Constant-comparison isn't required here — ACVP test
+                // vectors are public. Just compare computed tags.
+                let passed = out_buf.as_slice() == expected_mac.as_slice();
+                JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(tc_id)),
+                    ("testPassed".to_string(), JsonValue::Bool(passed)),
+                ])
+            }
         };
-        if msg.len() < msg_bytes {
-            return Err(DispatchError::Crypto(
-                "KMAC AFT: hex `msg` shorter than declared `msgLen`",
-            ));
-        }
-        let msg_used = if msg_bytes == 0 { &[] as &[u8] } else { &msg[..msg_bytes] };
-
-        // Customization string S (hex-encoded).
-        let s_hex = t
-            .get("hexCustomization")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("");
-        let s = if s_hex.is_empty() {
-            Vec::new()
-        } else {
-            hex::decode(s_hex)?
-        };
-
-        let mut out_buf = vec![0u8; mac_bytes];
-        compute(key_used, msg_used, &s, &mut out_buf)?;
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(tc_id)),
-            (
-                "mac".to_string(),
-                JsonValue::String(hex::encode_upper(&out_buf)),
-            ),
-        ]));
+        results.push(resp);
     }
     Ok(JsonValue::Object(vec![
         ("tgId".to_string(), JsonValue::Number(group_id)),
