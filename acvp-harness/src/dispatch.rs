@@ -221,7 +221,11 @@ impl Default for Registry {
 /// R18 adds five asymmetric signature-verification and key-validation
 /// handlers — `ECDSA` sigVer + keyVer (P-256/SHA2-256), `EDDSA`
 /// sigVer + keyVer (ED-25519, pure), and `RSA` sigVer
-/// (RSA-2048/PKCS#1v1.5/SHA2-256, GDT) — reaching thirty-four
+/// (RSA-2048/PKCS#1v1.5/SHA2-256, GDT).
+///
+/// R19 adds two SigGen handlers — `ECDSA` sigGen (P-256/SHA2-256,
+/// deterministic via caller-supplied `k`) and `EDDSA` sigGen
+/// (ED-25519, pure, naturally deterministic) — reaching thirty-six
 /// registered handlers.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
@@ -265,12 +269,14 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::drbg::CtrDrbgHandler));
     r.register(Box::new(handlers::drbg::HashDrbgHandler));
     r.register(Box::new(handlers::drbg::HmacDrbgHandler));
-    // ECDSA sigVer + keyVer (R18: P-256 / SHA2-256, FIPS186-5)
+    // ECDSA sigVer + keyVer + sigGen (R18/R19: P-256 / SHA2-256, FIPS186-5)
     r.register(Box::new(handlers::ecdsa::EcdsaSigVerHandler));
     r.register(Box::new(handlers::ecdsa::EcdsaKeyVerHandler));
-    // EdDSA sigVer + keyVer (R18: ED-25519, pure, 1.0)
+    r.register(Box::new(handlers::ecdsa::EcdsaSigGenHandler));
+    // EdDSA sigVer + keyVer + sigGen (R18/R19: ED-25519, pure, 1.0)
     r.register(Box::new(handlers::eddsa::EddsaSigVerHandler));
     r.register(Box::new(handlers::eddsa::EddsaKeyVerHandler));
+    r.register(Box::new(handlers::eddsa::EddsaSigGenHandler));
     // RSA sigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
     r.register(Box::new(handlers::rsa::RsaSigVerHandler));
     r
@@ -366,18 +372,21 @@ mod tests {
         assert!(r.find("ctrDRBG", None, "1.0").is_some());
         assert!(r.find("hashDRBG", None, "1.0").is_some());
         assert!(r.find("hmacDRBG", None, "1.0").is_some());
-        // R18 ECDSA / EdDSA / RSA
+        // R18 ECDSA / EdDSA / RSA verification
         assert!(r.find("ECDSA", Some("sigVer"), "FIPS186-5").is_some());
         assert!(r.find("ECDSA", Some("keyVer"), "FIPS186-5").is_some());
         assert!(r.find("EDDSA", Some("sigVer"), "1.0").is_some());
         assert!(r.find("EDDSA", Some("keyVer"), "1.0").is_some());
         assert!(r.find("RSA", Some("sigVer"), "FIPS186-5").is_some());
+        // R19 ECDSA / EdDSA SigGen
+        assert!(r.find("ECDSA", Some("sigGen"), "FIPS186-5").is_some());
+        assert!(r.find("EDDSA", Some("sigGen"), "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 34);
+        assert_eq!(r.len(), 36);
         assert!(!r.is_empty());
     }
 

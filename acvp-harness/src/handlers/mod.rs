@@ -56,8 +56,15 @@
 //! - [`rsa`] — `RSA` / `sigVer`, revision `FIPS186-5`
 //!   (RSA-2048 PKCS#1 v1.5 / SHA2-256, GDT test type)
 //!
+//! R19 adds SigGen handlers for deterministic round-trip testing:
+//!
+//! - [`ecdsa`] — `ECDSA` / `sigGen` (P-256 / SHA2-256, deterministic
+//!   via caller-supplied `k`)
+//! - [`eddsa`] — `EDDSA` / `sigGen` (ED-25519, pure, naturally
+//!   deterministic)
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
-//! additional asymmetric modes (SigGen, PSS, larger key sizes).
+//! additional modes (PSS, larger key sizes).
 
 pub mod aes;
 pub mod cmac;

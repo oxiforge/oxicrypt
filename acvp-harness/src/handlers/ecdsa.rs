@@ -1,7 +1,7 @@
-//! ECDSA ACVP handlers — `sigVer` and `keyVer` modes, revision
-//! `FIPS186-5`.
+//! ECDSA ACVP handlers — `sigVer`, `keyVer`, and `sigGen` modes,
+//! revision `FIPS186-5`.
 //!
-//! Two modes, each dispatched as a separate handler:
+//! Three modes, each dispatched as a separate handler:
 //!
 //! - **SigVer** (`ECDSA` / `sigVer` / `FIPS186-5`): Given a message,
 //!   public key (qx, qy), and signature (r, s), verify the ECDSA
@@ -9,6 +9,10 @@
 //! - **KeyVer** (`ECDSA` / `keyVer` / `FIPS186-5`): Given a public key
 //!   (qx, qy), validate that it is a valid point on the curve and
 //!   return `testPassed`.
+//! - **SigGen** (`ECDSA` / `sigGen` / `FIPS186-5`): Given a group-level
+//!   private key `d` and per-test nonce `k` plus `message`, sign and
+//!   return `(r, s)`. Deterministic because the ACVP vectors supply
+//!   both `d` and `k`.
 //!
 //! Only P-256 with SHA-256 is supported (the pqclib configuration).
 //! Unsupported curves or hash algorithms produce
@@ -55,6 +59,29 @@ impl AlgorithmHandler for EcdsaKeyVerHandler {
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keyver_group(group)
+    }
+}
+
+// ── SigGen handler ──────────────────────────────────────────────────
+
+/// ECDSA SigGen AFT dispatcher.
+///
+/// The ACVP SigGen vectors supply a group-level private key `d` and a
+/// per-test nonce `k`, making the output fully deterministic.
+pub struct EcdsaSigGenHandler;
+
+impl AlgorithmHandler for EcdsaSigGenHandler {
+    fn algorithm(&self) -> &'static str {
+        "ECDSA"
+    }
+    fn mode(&self) -> Option<&'static str> {
+        Some("sigGen")
+    }
+    fn revision(&self) -> &'static str {
+        "FIPS186-5"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_siggen_group(group)
     }
 }
 
@@ -194,6 +221,100 @@ fn handle_keyver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
             ("testPassed".to_string(), JsonValue::Bool(passed)),
+        ]));
+    }
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("tests".to_string(), JsonValue::Array(results)),
+    ]))
+}
+
+// ── SigGen group driver ─────────────────────────────────────────────
+
+fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
+    let tg_id = group
+        .get("tgId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tgId"))?;
+    let test_type = group
+        .get("testType")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("testType"))?;
+    if test_type != "AFT" {
+        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
+    }
+
+    let curve = group
+        .get("curve")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("curve"))?;
+    if curve != "P-256" {
+        return Err(DispatchError::Unsupported("ECDSA SigGen: only P-256 is supported"));
+    }
+    let hash_alg = group
+        .get("hashAlg")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("hashAlg"))?;
+    if hash_alg != "SHA2-256" {
+        return Err(DispatchError::Unsupported(
+            "ECDSA SigGen: only SHA2-256 is supported",
+        ));
+    }
+
+    // Group-level private key.
+    let d_bytes = hex::decode(
+        group
+            .get("d")
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField("d"))?,
+    )?;
+    let d: [u8; 32] = d_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| DispatchError::Crypto("ECDSA SigGen: d is not 32 bytes"))?;
+
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for t in tests {
+        let test_case_id = t
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+
+        let message = hex::decode(
+            t.get("message")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("message"))?,
+        )?;
+        let k_bytes = hex::decode(
+            t.get("k")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("k"))?,
+        )?;
+        let k: [u8; 32] = k_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("ECDSA SigGen: k is not 32 bytes"))?;
+
+        let sig = fips_ecdsa::p256_ecdsa::sign_with_k(&d, &message, &k)
+            .map_err(|_| DispatchError::Crypto("ECDSA SigGen: sign_with_k failed"))?;
+
+        // Split 64-byte signature into r (first 32) and s (last 32).
+        results.push(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(test_case_id)),
+            (
+                "r".to_string(),
+                JsonValue::String(hex::encode_upper(&sig[..32])),
+            ),
+            (
+                "s".to_string(),
+                JsonValue::String(hex::encode_upper(&sig[32..])),
+            ),
         ]));
     }
 

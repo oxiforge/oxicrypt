@@ -185,11 +185,15 @@ validation. EdDSA SigVer exercises RFC 8032 §5.1.5 verification
 with canonical-S rejection and non-cofactored verify. RSA SigVer
 dispatches via fips-rsa's PKCS#1v1.5 verify with a group-level
 (n, e) key and per-test (message, signature) pairs.
+R19 adds two SigGen handlers — `ECDSA` sigGen (P-256/SHA2-256,
+deterministic via caller-supplied `k` from the ACVP vector) and
+`EDDSA` sigGen (ED-25519, pure, naturally deterministic) —
+reaching thirty-six registered handlers.
 Round-trip tests in `acvp-harness/tests/round_trip.rs` and
 `acvp-harness/tests/shs_round_trip.rs` prove all four dispatchers
-reproduce the vendored answer fields byte-for-byte across thirty-seven
-ACVP slices (thirty AFT + two MCT + five verification) and seven
-CAVP SHS files. The JSON parser, hex codec, and CAVP SHS `.rsp`
+reproduce the vendored answer fields byte-for-byte across thirty-nine
+ACVP slices (thirty AFT + two MCT + five verification + two SigGen)
+and seven CAVP SHS files. The JSON parser, hex codec, and CAVP SHS `.rsp`
 parser used by the harness are all in-tree — the validation binary
 has zero third-party dependencies, matching the module itself.
 Remaining test types (MCT for other modes, LDT) and additional
@@ -219,7 +223,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: SigGen handlers, PSS SigVer, MCT for remaining modes, LDT test type. Thirty-four handlers (including ECDSA/EdDSA/RSA verification) and the ECB/CBC MCT engine are wired as of R18.
+- ACVP harness vector dispatch: PSS SigVer, MCT for remaining modes, LDT test type. Thirty-six handlers (including ECDSA/EdDSA SigGen and verification, RSA SigVer) and the ECB/CBC MCT engine are wired as of R19.
 
 ## License
 

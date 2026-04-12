@@ -1,6 +1,7 @@
-//! EdDSA ACVP handlers — `sigVer` and `keyVer` modes, revision `1.0`.
+//! EdDSA ACVP handlers — `sigVer`, `keyVer`, and `sigGen` modes,
+//! revision `1.0`.
 //!
-//! Two modes, each dispatched as a separate handler:
+//! Three modes, each dispatched as a separate handler:
 //!
 //! - **SigVer** (`EDDSA` / `sigVer` / `1.0`): Given a message, public
 //!   key (`q`), and `signature`, verify the Ed25519 signature and
@@ -9,6 +10,10 @@
 //! - **KeyVer** (`EDDSA` / `keyVer` / `1.0`): Given a public key (`q`),
 //!   validate that it is a valid compressed Edwards point and return
 //!   `testPassed`.
+//! - **SigGen** (`EDDSA` / `sigGen` / `1.0`): Given a group-level
+//!   seed `d` and per-test `message`, sign and return `signature`.
+//!   Deterministic because Ed25519 is fully deterministic given the
+//!   seed.
 //!
 //! Only the `ED-25519` curve is supported. `ED-448` groups produce
 //! `DispatchError::Unsupported`.
@@ -54,6 +59,26 @@ impl AlgorithmHandler for EddsaKeyVerHandler {
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keyver_group(group)
+    }
+}
+
+// ── SigGen handler ──────────────────────────────────────────────────
+
+/// EdDSA SigGen AFT dispatcher.
+pub struct EddsaSigGenHandler;
+
+impl AlgorithmHandler for EddsaSigGenHandler {
+    fn algorithm(&self) -> &'static str {
+        "EDDSA"
+    }
+    fn mode(&self) -> Option<&'static str> {
+        Some("sigGen")
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_siggen_group(group)
     }
 }
 
@@ -183,6 +208,89 @@ fn handle_keyver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
             ("testPassed".to_string(), JsonValue::Bool(passed)),
+        ]));
+    }
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("tests".to_string(), JsonValue::Array(results)),
+    ]))
+}
+
+// ── SigGen group driver ─────────────────────────────────────────────
+
+fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
+    let tg_id = group
+        .get("tgId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tgId"))?;
+    let test_type = group
+        .get("testType")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("testType"))?;
+    if test_type != "AFT" {
+        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
+    }
+
+    let curve = group
+        .get("curve")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("curve"))?;
+    if curve != "ED-25519" {
+        return Err(DispatchError::Unsupported(
+            "EdDSA SigGen: only ED-25519 is supported",
+        ));
+    }
+
+    let pre_hash = group
+        .get("preHash")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    if pre_hash {
+        return Err(DispatchError::Unsupported(
+            "EdDSA SigGen: Ed25519ph (preHash=true) is not supported",
+        ));
+    }
+
+    // Group-level seed.
+    let d_bytes = hex::decode(
+        group
+            .get("d")
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField("d"))?,
+    )?;
+    let seed: [u8; 32] = d_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| DispatchError::Crypto("EdDSA SigGen: d is not 32 bytes"))?;
+
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for t in tests {
+        let test_case_id = t
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+
+        let message = hex::decode(
+            t.get("message")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("message"))?,
+        )?;
+
+        let sig = fips_eddsa::ed25519::sign(&seed, &message)
+            .map_err(|_| DispatchError::Crypto("EdDSA SigGen: sign failed"))?;
+
+        results.push(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(test_case_id)),
+            (
+                "signature".to_string(),
+                JsonValue::String(hex::encode_upper(&sig)),
+            ),
         ]));
     }
 

@@ -1223,6 +1223,62 @@ fn ecdsa_keyver_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// ECDSA SigGen (R19: P-256 / SHA2-256, FIPS186-5, deterministic k)
+// Answer fields: `r` and `s` (both hex strings).
+// ----------------------------------------------------------------------
+
+/// Round-trip driver for ECDSA SigGen where answers are two separate
+/// hex string fields (`r` and `s`).
+fn assert_ecdsa_siggen_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected_r = collect_answers(&slice, "r");
+    let expected_s = collect_answers(&slice, "s");
+    assert!(
+        !expected_r.is_empty(),
+        "{label}: no test cases with r/s fields"
+    );
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "r");
+    strip_field(&mut prompt, "s");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+    let got_r = collect_answers(&response, "r");
+    let got_s = collect_answers(&response, "s");
+
+    assert_eq!(got_r.len(), expected_r.len(), "{label}: r count mismatch");
+    assert_eq!(got_s.len(), expected_s.len(), "{label}: s count mismatch");
+
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_r.iter().zip(got_r.iter()) {
+        assert_eq!(exp_tc, got_tc, "{label}: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "{label}: r mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_s.iter().zip(got_s.iter()) {
+        assert_eq!(exp_tc, got_tc, "{label}: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "{label}: s mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+#[test]
+fn ecdsa_siggen_round_trip() {
+    assert_ecdsa_siggen_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-sigGen-FIPS186-5/kat-slice.json",
+        "ECDSA-sigGen",
+    );
+}
+
+// ----------------------------------------------------------------------
 // EdDSA SigVer + KeyVer (R18: ED-25519, pure, 1.0)
 // ----------------------------------------------------------------------
 
@@ -1239,6 +1295,19 @@ fn eddsa_keyver_round_trip() {
     assert_bool_round_trip(
         "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-keyVer-1.0/kat-slice.json",
         "EDDSA-keyVer",
+    );
+}
+
+// ----------------------------------------------------------------------
+// EdDSA SigGen (R19: ED-25519, pure, 1.0, deterministic)
+// ----------------------------------------------------------------------
+
+#[test]
+fn eddsa_siggen_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-sigGen-1.0/kat-slice.json",
+        "signature",
+        "EDDSA-sigGen",
     );
 }
 
