@@ -21,8 +21,8 @@
 //! - AEAD decrypt / KW unwrap tests include `testPassed` cases
 //!   where tag/ICV verification is expected to fail — the handler
 //!   returns `{tcId, testPassed: false}` for those.
-//! - MCT (`testType = "MCT"`) groups are rejected as
-//!   `UnsupportedTestType`; the MCT engine comes in a later chunk.
+//! - MCT (`testType = "MCT"`) is implemented for ECB and CBC modes
+//!   with the full 100×1000 iteration loop and key-schedule update.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -168,14 +168,29 @@ fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, Dispa
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
-        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
-    }
     let direction = parse_direction(group)?;
     let key_len_bits = group
         .get("keyLen")
         .and_then(JsonValue::as_u64)
         .ok_or(DispatchError::MissingField("keyLen"))?;
+    if test_type == "MCT" {
+        // MCT is supported for ECB and CBC only.
+        match mode {
+            AesMode::Ecb | AesMode::Cbc => {
+                return handle_aes_mct_group(
+                    group, mode, direction, tg_id, key_len_bits,
+                );
+            }
+            _ => {
+                return Err(DispatchError::UnsupportedTestType(
+                    "MCT (not supported for this AES mode)".to_string(),
+                ));
+            }
+        }
+    }
+    if test_type != "AFT" {
+        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
+    }
     // AEAD modes carry group-level tag/nonce length metadata.
     let group_meta = GroupMeta::from_group(group, mode)?;
     let tests = group
@@ -901,6 +916,379 @@ fn dispatch_kw_unwrap(
         Err(_) => Err(DispatchError::Crypto(
             "fips_aes::kw_unwrap returned Err",
         )),
+    }
+}
+
+// ---- MCT engine (ECB / CBC) ----------------------------------------
+
+/// Number of outer iterations in an AES MCT test.
+const MCT_OUTER: usize = 100;
+
+/// Number of inner iterations per outer iteration.
+const MCT_INNER: usize = 1000;
+
+/// Handle a complete MCT group. Each group has exactly one test with
+/// initial `key` and `pt` (encrypt) or `ct` (decrypt), plus `iv` for
+/// CBC. The handler runs the MCT algorithm and emits a `resultsArray`
+/// with `MCT_OUTER` entries.
+fn handle_aes_mct_group(
+    group: &JsonValue,
+    mode: AesMode,
+    direction: Direction,
+    tg_id: i64,
+    key_len_bits: u64,
+) -> Result<JsonValue, DispatchError> {
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+    if tests.is_empty() {
+        return Err(DispatchError::MissingField("tests (empty)"));
+    }
+    let t = &tests[0];
+    let test_case_id = t
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+
+    let key_bytes = decode_hex_field(t, "key")?;
+    // Encrypt uses `pt` as the initial input; decrypt uses `ct`.
+    let input_field = match direction {
+        Direction::Encrypt => "pt",
+        Direction::Decrypt => "ct",
+    };
+    let input_bytes = decode_hex_field(t, input_field)?;
+
+    let results_array = match mode {
+        AesMode::Ecb => mct_ecb(direction, key_len_bits, &key_bytes, &input_bytes)?,
+        AesMode::Cbc => {
+            let iv_bytes = decode_hex_field(t, "iv")?;
+            mct_cbc(direction, key_len_bits, &key_bytes, &iv_bytes, &input_bytes)?
+        }
+        _ => unreachable!(),
+    };
+
+    let test_resp = JsonValue::Object(vec![
+        ("tcId".to_string(), JsonValue::Number(test_case_id)),
+        ("resultsArray".to_string(), JsonValue::Array(results_array)),
+    ]);
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("tests".to_string(), JsonValue::Array(vec![test_resp])),
+    ]))
+}
+
+/// AES-ECB MCT algorithm (ACVP-AES-ECB §6.2).
+///
+/// For encrypt:
+///   Key[0] = initial key; Input[0] = initial pt
+///   For i = 0..MCT_OUTER:
+///     For j = 0..MCT_INNER:
+///       Output[j] = AES_ECB(Key[i], Input[j])
+///       Input[j+1] = Output[j]
+///     resultsArray[i] = {key: Key[i], pt: Input[0], ct: Output[999]}
+///     Key[i+1] = key_update(Key[i], Output[998], Output[999])
+///     Input[0] = Output[999]
+fn mct_ecb(
+    direction: Direction,
+    key_len_bits: u64,
+    initial_key: &[u8],
+    initial_input: &[u8],
+) -> Result<Vec<JsonValue>, DispatchError> {
+    let key_len = initial_key.len();
+    let mut key = initial_key.to_vec();
+    let mut input = initial_input.to_vec();
+    let mut results = Vec::with_capacity(MCT_OUTER);
+
+    for _i in 0..MCT_OUTER {
+        let (input_label, output_label) = match direction {
+            Direction::Encrypt => ("pt", "ct"),
+            Direction::Decrypt => ("ct", "pt"),
+        };
+        let saved_input = input.clone();
+        let mut prev_output = vec![0u8; BLOCK_SIZE];
+        let mut output = vec![0u8; BLOCK_SIZE];
+
+        for j in 0..MCT_INNER {
+            if j > 0 {
+                prev_output.copy_from_slice(&output);
+            }
+            ecb_one_block(direction, key_len_bits, &key, &input, &mut output)?;
+            input.copy_from_slice(&output);
+            if j == 0 {
+                prev_output.copy_from_slice(&output);
+            }
+        }
+        // prev_output = Output[998] (for j < MCT_INNER-1, captured above)
+        // Actually: after the loop, prev_output = Output[MCT_INNER-2],
+        // output = Output[MCT_INNER-1]. But we need to be precise:
+        // j=0: output=O[0], prev_output set to O[0] after
+        // j=1: prev_output=O[0], output=O[1]
+        // j=999: prev_output=O[998], output=O[999] ✓
+
+        let mut entry = vec![
+            (
+                "key".to_string(),
+                JsonValue::String(hex::encode_upper(&key)),
+            ),
+            (
+                input_label.to_string(),
+                JsonValue::String(hex::encode_upper(&saved_input)),
+            ),
+            (
+                output_label.to_string(),
+                JsonValue::String(hex::encode_upper(&output)),
+            ),
+        ];
+        // CBC also has IV but ECB doesn't — this is ECB so no IV needed.
+        let _ = &mut entry; // suppress unused_mut if refactored
+        results.push(JsonValue::Object(entry));
+
+        // Key update.
+        mct_key_update(&mut key, key_len, &prev_output, &output);
+        input.copy_from_slice(&output);
+    }
+
+    Ok(results)
+}
+
+/// AES-CBC MCT algorithm (ACVP-AES-CBC §6.2).
+///
+/// For encrypt:
+///   Key[0] = initial key; IV[0] = initial iv; PT[0] = initial pt
+///   For i = 0..MCT_OUTER:
+///     For j = 0..MCT_INNER:
+///       if j == 0: CT[0] = AES_CBC_Encrypt(Key[i], IV[i], PT[0])
+///       else:      CT[j] = AES_CBC_Encrypt(Key[i], CT[j-1], PT[j])
+///       if j == 0: PT[1] = IV[i]
+///       else:      PT[j+1] = CT[j-1]
+///     resultsArray[i] = {key, iv, pt, ct}
+///     Key[i+1] = key_update(Key[i], CT[998], CT[999])
+///     IV[i+1] = CT[999]
+///     PT[0] = CT[998]
+fn mct_cbc(
+    direction: Direction,
+    key_len_bits: u64,
+    initial_key: &[u8],
+    initial_iv: &[u8],
+    initial_input: &[u8],
+) -> Result<Vec<JsonValue>, DispatchError> {
+    let key_len = initial_key.len();
+    let mut key = initial_key.to_vec();
+    let mut iv = initial_iv.to_vec();
+    let mut input = initial_input.to_vec();
+    let mut results = Vec::with_capacity(MCT_OUTER);
+
+    for _i in 0..MCT_OUTER {
+        let (input_label, output_label) = match direction {
+            Direction::Encrypt => ("pt", "ct"),
+            Direction::Decrypt => ("ct", "pt"),
+        };
+        let saved_key = key.clone();
+        let saved_iv = iv.clone();
+        let saved_input = input.clone();
+
+        let mut prev_output = vec![0u8; BLOCK_SIZE];
+        let mut output = vec![0u8; BLOCK_SIZE];
+        let mut cur_iv = iv.clone();
+
+        for j in 0..MCT_INNER {
+            if j > 0 {
+                prev_output.copy_from_slice(&output);
+            }
+            // Save the current input before it's overwritten —
+            // decrypt needs it for the next IV (IV[j+1] = CT[j]).
+            let saved_input = input.clone();
+            cbc_one_block(direction, key_len_bits, &key, &cur_iv, &input, &mut output)?;
+
+            // Update for next iteration:
+            match direction {
+                Direction::Encrypt => {
+                    // IV for next = CT[j] (current output).
+                    cur_iv.copy_from_slice(&output);
+                    // Next PT = previous CT (or IV for j=0).
+                    if j == 0 {
+                        input.copy_from_slice(&iv);
+                        prev_output.copy_from_slice(&output);
+                    } else {
+                        input.copy_from_slice(&prev_output);
+                    }
+                }
+                Direction::Decrypt => {
+                    // IV for next = CT[j] (current input, saved above).
+                    cur_iv.copy_from_slice(&saved_input);
+                    // Next CT = previous PT (or IV for j=0).
+                    if j == 0 {
+                        prev_output.copy_from_slice(&output);
+                        input.copy_from_slice(&iv);
+                    } else {
+                        input.copy_from_slice(&prev_output);
+                    }
+                }
+            }
+        }
+        // After loop: prev_output = Output[998], output = Output[999]
+
+        results.push(JsonValue::Object(vec![
+            (
+                "key".to_string(),
+                JsonValue::String(hex::encode_upper(&saved_key)),
+            ),
+            (
+                "iv".to_string(),
+                JsonValue::String(hex::encode_upper(&saved_iv)),
+            ),
+            (
+                input_label.to_string(),
+                JsonValue::String(hex::encode_upper(&saved_input)),
+            ),
+            (
+                output_label.to_string(),
+                JsonValue::String(hex::encode_upper(&output)),
+            ),
+        ]));
+
+        // Key update.
+        mct_key_update(&mut key, key_len, &prev_output, &output);
+        iv.copy_from_slice(&output);
+        input.copy_from_slice(&prev_output);
+    }
+
+    Ok(results)
+}
+
+/// Single-block ECB operation used by the MCT inner loop.
+fn ecb_one_block(
+    direction: Direction,
+    key_len_bits: u64,
+    key: &[u8],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), DispatchError> {
+    let r = match key_len_bits {
+        128 => {
+            let k: [u8; 16] = key.try_into().map_err(|_| {
+                DispatchError::Crypto("MCT ECB: key length")
+            })?;
+            let c = Aes128Key::new(&k);
+            match direction {
+                Direction::Encrypt => ecb_encrypt(&c, input, output),
+                Direction::Decrypt => ecb_decrypt(&c, input, output),
+            }
+        }
+        192 => {
+            let k: [u8; 24] = key.try_into().map_err(|_| {
+                DispatchError::Crypto("MCT ECB: key length")
+            })?;
+            let c = Aes192Key::new(&k);
+            match direction {
+                Direction::Encrypt => ecb_encrypt(&c, input, output),
+                Direction::Decrypt => ecb_decrypt(&c, input, output),
+            }
+        }
+        256 => {
+            let k: [u8; 32] = key.try_into().map_err(|_| {
+                DispatchError::Crypto("MCT ECB: key length")
+            })?;
+            let c = Aes256Key::new(&k);
+            match direction {
+                Direction::Encrypt => ecb_encrypt(&c, input, output),
+                Direction::Decrypt => ecb_decrypt(&c, input, output),
+            }
+        }
+        _ => return Err(DispatchError::Crypto("MCT: unsupported keyLen")),
+    };
+    r.map_err(|_| DispatchError::Crypto("MCT ECB: encrypt/decrypt failed"))
+}
+
+/// Single-block CBC operation used by the MCT inner loop.
+fn cbc_one_block(
+    direction: Direction,
+    key_len_bits: u64,
+    key: &[u8],
+    iv: &[u8],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), DispatchError> {
+    let iv16: [u8; 16] = iv.try_into().map_err(|_| {
+        DispatchError::Crypto("MCT CBC: IV not 16 bytes")
+    })?;
+    let r = match key_len_bits {
+        128 => {
+            let k: [u8; 16] = key.try_into().map_err(|_| {
+                DispatchError::Crypto("MCT CBC: key length")
+            })?;
+            let c = Aes128Key::new(&k);
+            match direction {
+                Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
+                Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
+            }
+        }
+        192 => {
+            let k: [u8; 24] = key.try_into().map_err(|_| {
+                DispatchError::Crypto("MCT CBC: key length")
+            })?;
+            let c = Aes192Key::new(&k);
+            match direction {
+                Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
+                Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
+            }
+        }
+        256 => {
+            let k: [u8; 32] = key.try_into().map_err(|_| {
+                DispatchError::Crypto("MCT CBC: key length")
+            })?;
+            let c = Aes256Key::new(&k);
+            match direction {
+                Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
+                Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
+            }
+        }
+        _ => return Err(DispatchError::Crypto("MCT: unsupported keyLen")),
+    };
+    r.map_err(|_| DispatchError::Crypto("MCT CBC: encrypt/decrypt failed"))
+}
+
+/// MCT key schedule update.
+///
+/// - 128-bit: Key[i+1] = Key[i] XOR Output[999]
+/// - 192-bit: Key[i+1] = Key[i] XOR (last 8 bytes of Output[998] || Output[999])
+/// - 256-bit: Key[i+1] = Key[i] XOR (Output[998] || Output[999])
+fn mct_key_update(
+    key: &mut [u8],
+    key_len: usize,
+    prev_output: &[u8],
+    last_output: &[u8],
+) {
+    match key_len {
+        16 => {
+            // 128-bit: XOR with last output block
+            for (k, o) in key.iter_mut().zip(last_output.iter()) {
+                *k ^= o;
+            }
+        }
+        24 => {
+            // 192-bit: XOR with last 8 bytes of prev_output || last_output
+            // = 24 bytes total
+            let tail8 = &prev_output[BLOCK_SIZE - 8..];
+            for (k, o) in key[..8].iter_mut().zip(tail8.iter()) {
+                *k ^= o;
+            }
+            for (k, o) in key[8..].iter_mut().zip(last_output.iter()) {
+                *k ^= o;
+            }
+        }
+        32 => {
+            // 256-bit: XOR with prev_output || last_output
+            for (k, o) in key[..16].iter_mut().zip(prev_output.iter()) {
+                *k ^= o;
+            }
+            for (k, o) in key[16..].iter_mut().zip(last_output.iter()) {
+                *k ^= o;
+            }
+        }
+        _ => {}
     }
 }
 

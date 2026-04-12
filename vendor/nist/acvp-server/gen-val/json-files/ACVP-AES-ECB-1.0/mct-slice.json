@@ -1,0 +1,259 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/ACVP-AES-ECB-1.0/internalProjection.json",
+    "internalProjection_sha256": "a804bbe1b4efbb775ec5a365245739ffaedad50f43d91b07ede26733e0f3b256"
+  },
+  "algorithm": "ACVP-AES-ECB",
+  "revision": "1.0",
+  "isMct": true,
+  "testGroups": [
+    {
+      "tgId": 31,
+      "testType": "MCT",
+      "internalTestType": "MCT",
+      "direction": "encrypt",
+      "keyLen": 128,
+      "tests": [
+        {
+          "tcId": 2139,
+          "pt": "48780CAD1399AB77792B4A54532D969B",
+          "key": "F9C81A828442E55CCFA8ADA81FDA628D",
+          "resultsArray": [
+            {
+              "key": "F9C81A828442E55CCFA8ADA81FDA628D",
+              "pt": "48780CAD1399AB77792B4A54532D969B",
+              "ct": "D77F30F95E6960E0CA051FDB5925A057"
+            },
+            {
+              "key": "2EB72A7BDA2B85BC05ADB27346FFC2DA",
+              "pt": "D77F30F95E6960E0CA051FDB5925A057",
+              "ct": "A5864BE7AEC95FB4BDD62E2DD3B351CE"
+            },
+            {
+              "key": "8B31619C74E2DA08B87B9C5E954C9314",
+              "pt": "A5864BE7AEC95FB4BDD62E2DD3B351CE",
+              "ct": "05DA1F2C1D4BBA1E4A4E173B40D650D6"
+            },
+            {
+              "key": "8EEB7EB069A96016F2358B65D59AC3C2",
+              "pt": "05DA1F2C1D4BBA1E4A4E173B40D650D6",
+              "ct": "F61969E941CED5B62455341710E03F5B"
+            },
+            {
+              "key": "78F217592867B5A0D660BF72C57AFC99",
+              "pt": "F61969E941CED5B62455341710E03F5B",
+              "ct": "99730A4911F3FFABAA576ABAF9F5E724"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tgId": 32,
+      "testType": "MCT",
+      "internalTestType": "MCT",
+      "direction": "encrypt",
+      "keyLen": 192,
+      "tests": [
+        {
+          "tcId": 2140,
+          "pt": "5C34A83492AE96F0EBA0878CF7D67151",
+          "key": "00067C0474FFD5E4828CBD3D82E1C5DF8A4BB4E229DA15B0",
+          "resultsArray": [
+            {
+              "key": "00067C0474FFD5E4828CBD3D82E1C5DF8A4BB4E229DA15B0",
+              "pt": "5C34A83492AE96F0EBA0878CF7D67151",
+              "ct": "5835CA3DA6CB8E53B51BC97AFA8AA759"
+            },
+            {
+              "key": "C77C10AC4C9D5D93DAB97700242A4B8C3F507D98D350B2E9",
+              "pt": "5835CA3DA6CB8E53B51BC97AFA8AA759",
+              "ct": "D8E24FB74E234388D4D12816C4786F35"
+            },
+            {
+              "key": "3B156154AC56EDAF025B38B76A090804EB81558E1728DDDC",
+              "pt": "D8E24FB74E234388D4D12816C4786F35",
+              "ct": "A0F5F9F8279012BEA4727D102C401CD9"
+            },
+            {
+              "key": "7EE742A403011513A2AEC14F4D991ABA4FF3289E3B68C105",
+              "pt": "A0F5F9F8279012BEA4727D102C401CD9",
+              "ct": "BDD0D0329F23E69D5ECC4D88047687DC"
+            },
+            {
+              "key": "35CC90332A43FA7A1F7E117DD2BAFC27113F65163F1E46D9",
+              "pt": "BDD0D0329F23E69D5ECC4D88047687DC",
+              "ct": "79E75566A58CE4CA06FA3B65744B720C"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tgId": 33,
+      "testType": "MCT",
+      "internalTestType": "MCT",
+      "direction": "encrypt",
+      "keyLen": 256,
+      "tests": [
+        {
+          "tcId": 2141,
+          "pt": "91313BCF90B97DED3838D83201F50AFA",
+          "key": "2522E36A8A83AC46D9992E304F7C77C80110665A6520B9DE95405CB0685AF9BA",
+          "resultsArray": [
+            {
+              "key": "2522E36A8A83AC46D9992E304F7C77C80110665A6520B9DE95405CB0685AF9BA",
+              "pt": "91313BCF90B97DED3838D83201F50AFA",
+              "ct": "C481608B77825CF31A79D2F78F3014B6"
+            },
+            {
+              "key": "93DF88C73CB1EEC61BC938051D0D18FFC59106D112A2E52D8F398E47E76AED0C",
+              "pt": "C481608B77825CF31A79D2F78F3014B6",
+              "ct": "AF9C330AB5E3802147365ED53F144EEC"
+            },
+            {
+              "key": "D93190D194E827B697ABD8E3E7713D9C6A0D35DBA741650CC80FD092D87EA3E0",
+              "pt": "AF9C330AB5E3802147365ED53F144EEC",
+              "ct": "57856F4141B36980ACE5EC6FDD12A8DF"
+            },
+            {
+              "key": "4BAFD9D0A78386CA651EEF0E7F1FC4733D885A9AE6F20C8C64EA3CFD056C0B3F",
+              "pt": "57856F4141B36980ACE5EC6FDD12A8DF",
+              "ct": "DB5D5F2B0C413B0CED7DA781D981AF7E"
+            },
+            {
+              "key": "1CEA2BB818BBB9FE96CBDAD63102D661E6D505B1EAB3378089979B7CDCEDA441",
+              "pt": "DB5D5F2B0C413B0CED7DA781D981AF7E",
+              "ct": "2B79F43E3E6AE8465C1BBC7171CD339A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tgId": 34,
+      "testType": "MCT",
+      "internalTestType": "MCT",
+      "direction": "decrypt",
+      "keyLen": 128,
+      "tests": [
+        {
+          "tcId": 2142,
+          "key": "6400D35228328CDAE4079017AFCA61C8",
+          "ct": "C4865EBDC0546CAE335FBE386198FDA5",
+          "resultsArray": [
+            {
+              "key": "6400D35228328CDAE4079017AFCA61C8",
+              "pt": "22A3E7E2CAE9EA190A5140B51165AB49",
+              "ct": "C4865EBDC0546CAE335FBE386198FDA5"
+            },
+            {
+              "key": "46A334B0E2DB66C3EE56D0A2BEAFCA81",
+              "pt": "2FC2EF42003B679559A5466F917AE8F1",
+              "ct": "22A3E7E2CAE9EA190A5140B51165AB49"
+            },
+            {
+              "key": "6961DBF2E2E00156B7F396CD2FD52270",
+              "pt": "D4F2D3B9F248FFBD3EBB5CE83350C198",
+              "ct": "2FC2EF42003B679559A5466F917AE8F1"
+            },
+            {
+              "key": "BD93084B10A8FEEB8948CA251C85E3E8",
+              "pt": "7D5CE9DFED34562DDE2FC761CB24AD24",
+              "ct": "D4F2D3B9F248FFBD3EBB5CE83350C198"
+            },
+            {
+              "key": "C0CFE194FD9CA8C657670D44D7A14ECC",
+              "pt": "BEC6D9B05B60EB70CEBEC0A475DCD0C1",
+              "ct": "7D5CE9DFED34562DDE2FC761CB24AD24"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tgId": 35,
+      "testType": "MCT",
+      "internalTestType": "MCT",
+      "direction": "decrypt",
+      "keyLen": 192,
+      "tests": [
+        {
+          "tcId": 2143,
+          "key": "CB2F265977B9BC4FE3AF8FFE82AB52B948CD94E70DC4E9B8",
+          "ct": "8AB2894D08619DC8365BDE53AE52C7D6",
+          "resultsArray": [
+            {
+              "key": "CB2F265977B9BC4FE3AF8FFE82AB52B948CD94E70DC4E9B8",
+              "pt": "571ED021D1816902DC6C135DF36DC458",
+              "ct": "8AB2894D08619DC8365BDE53AE52C7D6"
+            },
+            {
+              "key": "CC3D026CFDD54A84B4B15FDF532A3BBB94A187BAFEA92DE0",
+              "pt": "642CD96143F7FBBD8FC16CE8CE483D0D",
+              "ct": "571ED021D1816902DC6C135DF36DC458"
+            },
+            {
+              "key": "30D1D09523EACA1DD09D86BE10DDC0061B60EB5230E110ED",
+              "pt": "D464676552DCD2DACB17EC63AC5B4366",
+              "ct": "642CD96143F7FBBD8FC16CE8CE483D0D"
+            },
+            {
+              "key": "2C6336F6109DCC8A04F9E1DB420112DCD07707319CBA538B",
+              "pt": "4B649227A7CCA1D30675E8BBECF8C2EF",
+              "ct": "D464676552DCD2DACB17EC63AC5B4366"
+            },
+            {
+              "key": "1D432C352F26FCC94F9D73FCE5CDB30FD602EF8A70429164",
+              "pt": "191A35689E6BD2AB602A2C1023270C66",
+              "ct": "4B649227A7CCA1D30675E8BBECF8C2EF"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tgId": 36,
+      "testType": "MCT",
+      "internalTestType": "MCT",
+      "direction": "decrypt",
+      "keyLen": 256,
+      "tests": [
+        {
+          "tcId": 2144,
+          "key": "CA867D44E4550CD1DFCF3D6366D403A4A9D7CFC148C503A21A78C8AE4723460D",
+          "ct": "9326D0839BC578268E0508D4C599700D",
+          "resultsArray": [
+            {
+              "key": "CA867D44E4550CD1DFCF3D6366D403A4A9D7CFC148C503A21A78C8AE4723460D",
+              "pt": "6D2B5D31712D929C386DB7B073B7A45E",
+              "ct": "9326D0839BC578268E0508D4C599700D"
+            },
+            {
+              "key": "8AE2E0E0CBE4F50109FCC1EBE5585957C4FC92F039E8913E22157F1E3494E253",
+              "pt": "31D238052FFD58D5EAC442A3692B2627",
+              "ct": "6D2B5D31712D929C386DB7B073B7A45E"
+            },
+            {
+              "key": "C8A740F0C21966FA1C1983CA82AAAC64F52EAAF51615C9EBC8D13DBD5DBFC474",
+              "pt": "972A4DAA9137ED23CE0C0105273F6057",
+              "ct": "31D238052FFD58D5EAC442A3692B2627"
+            },
+            {
+              "key": "A448FD707EBE9CC8CDBADA6F532280CE6204E75F872224C806DD3CB87A80A423",
+              "pt": "050DA0BC7E6CDF8AA319793DFA5EC062",
+              "ct": "972A4DAA9137ED23CE0C0105273F6057"
+            },
+            {
+              "key": "797D036D56A2E006CA68FCE8426667FB670947E3F94EFB42A5C4458580DE6441",
+              "pt": "B3B58CA5BD604EA174D113940E217EAF",
+              "ct": "050DA0BC7E6CDF8AA319793DFA5EC062"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -153,15 +153,23 @@ sizes (128/192/256), in both directions. R14-B completes the AES
 mode set with `ACVP-AES-{GCM, CCM, KW, KWP}-1.0` AFT handlers,
 including AEAD decrypt / key-unwrap `testPassed` verification for
 tag/ICV mismatch cases — reaching twenty-five registered handlers.
+R15 adds the MCT (Monte Carlo Test) engine for `ACVP-AES-ECB` and
+`ACVP-AES-CBC`, implementing the full 100×1000 iteration loop with
+per-key-size key-schedule update (128-bit XOR, 192-bit tail-8
+concatenation, 256-bit two-block XOR) and direction-aware CBC IV
+feedback — six vendored MCT groups (3 key sizes × 2 directions per
+mode) are verified against the first five resultsArray entries from
+each NIST reference vector.
 Round-trip tests in `acvp-harness/tests/round_trip.rs` and
 `acvp-harness/tests/shs_round_trip.rs` prove all four dispatchers
-reproduce the vendored answer fields byte-for-byte across twenty-six
-ACVP slices and seven CAVP SHS files. The JSON parser, hex
-codec, and CAVP SHS `.rsp` parser used by the harness are all in-tree —
-the validation binary has zero third-party dependencies, matching the
-module itself. Remaining algorithm families (AES, DRBG, ECDSA,
-EdDSA, RSA) and remaining test types (MCT, LDT) slot into the same
-dispatchers without touching the envelope layers.
+reproduce the vendored answer fields byte-for-byte across twenty-eight
+ACVP slices (twenty-six AFT + two MCT) and seven CAVP SHS files. The
+JSON parser, hex codec, and CAVP SHS `.rsp` parser used by the harness
+are all in-tree — the validation binary has zero third-party
+dependencies, matching the module itself. Remaining algorithm families
+(DRBG, ECDSA, EdDSA, RSA) and remaining test types (MCT for other
+modes, LDT) slot into the same dispatchers without touching the
+envelope layers.
 
 ### Constant-time validation
 
@@ -186,7 +194,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: DRBG, ECDSA, EdDSA, RSA handlers; MCT and LDT test types. The SHA-3 hashing family, both SHAKE XOFs, and every HMAC variant are wired as of R12-A (17 AFT handlers on the ACVP envelope). R12-B then wired the full SHA-1 / SHA-2 family (seven handlers: SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256) on a second envelope shape over CAVP SHS `.rsp` byte vectors, because upstream `usnistgov/ACVP-Server` does not publish `SHA-*`/`SHA1-*`/`SHA2-*` `internalProjection` directories at all. R13 wired `KDA-HKDF-Sp800-56Cr2` (ten HMAC instantiations, hybrid shared-secret form) as the first mode-keyed ACVP handler. R14-A added the first three AES block-cipher AFT handlers — `ACVP-AES-{ECB, CBC, CTR}-1.0` over all three key sizes in both directions. R14-B completed the AES mode set with `ACVP-AES-{GCM, CCM, KW, KWP}-1.0` AFT handlers including AEAD decrypt / key-unwrap `testPassed` verification.
+- ACVP harness vector dispatch: DRBG, ECDSA, EdDSA, RSA handlers; MCT for remaining modes, LDT test type. Twenty-five AFT handlers and the ECB/CBC MCT engine are wired as of R15. R14-A/R14-B completed all seven AES mode AFT handlers; R15 added the AES MCT engine for ECB and CBC (100×1000 iteration loop with key-schedule update).
 
 ## License
 

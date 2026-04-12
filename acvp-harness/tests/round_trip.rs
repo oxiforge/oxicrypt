@@ -762,6 +762,145 @@ fn aes_kwp_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// AES MCT (R15): ECB / CBC Monte Carlo Tests
+//
+// Each MCT group has exactly one test with initial parameters.
+// The handler runs the 100×1000 iteration loop and produces a
+// `resultsArray` with 100 entries. The vendored mct-slice.json
+// files contain only the first 5 entries (ra_limit=5), so we
+// compare only those.
+// ----------------------------------------------------------------------
+
+/// Collect expected MCT resultsArray entries from a vendored slice.
+/// Returns `(tcId, Vec<(key, value)>)` for each entry, so we can
+/// compare field-by-field in a case-insensitive way.
+/// One entry in a resultsArray: field name → hex value (uppercased).
+type MctEntry = Vec<(String, String)>;
+
+fn collect_mct_expected(v: &JsonValue) -> Vec<(i64, Vec<MctEntry>)> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            let Some(ra) = t.get("resultsArray").and_then(JsonValue::as_array) else {
+                continue;
+            };
+            let entries: Vec<Vec<(String, String)>> = ra
+                .iter()
+                .map(|entry| {
+                    let JsonValue::Object(kvs) = entry else {
+                        return Vec::new();
+                    };
+                    kvs.iter()
+                        .filter_map(|(k, val)| {
+                            val.as_str().map(|s| (k.clone(), s.to_ascii_uppercase()))
+                        })
+                        .collect()
+                })
+                .collect();
+            out.push((tc_id, entries));
+        }
+    }
+    out
+}
+
+fn assert_mct_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_mct_expected(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} produced no expected MCT answers"
+    );
+
+    // Strip resultsArray from the prompt.
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "resultsArray");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    // Collect response resultsArray entries.
+    let got = collect_mct_expected(&response);
+
+    assert_eq!(
+        got.len(),
+        expected.len(),
+        "{label}: response has {} MCT tests, expected {}",
+        got.len(),
+        expected.len()
+    );
+
+    for (exp, got_entry) in expected.iter().zip(got.iter()) {
+        assert_eq!(
+            exp.0, got_entry.0,
+            "{label}: tcId mismatch"
+        );
+        let exp_entries = &exp.1;
+        let got_entries = &got_entry.1;
+        // Only compare the first N entries (the vendored slice is trimmed).
+        let compare_len = exp_entries.len();
+        assert!(
+            got_entries.len() >= compare_len,
+            "{label}: tcId {}: response has {} resultsArray entries, expected at least {}",
+            exp.0,
+            got_entries.len(),
+            compare_len
+        );
+        for (idx, (exp_ra, got_ra)) in exp_entries
+            .iter()
+            .zip(got_entries.iter())
+            .enumerate()
+        {
+            for (exp_k, exp_v) in exp_ra {
+                let got_v = got_ra
+                    .iter()
+                    .find(|(k, _)| k == exp_k)
+                    .map_or_else(
+                        || {
+                            panic!(
+                                "{label}: tcId {} resultsArray[{idx}]: missing field {exp_k:?}",
+                                exp.0
+                            )
+                        },
+                        |(_, v)| v.as_str(),
+                    );
+                assert_eq!(
+                    exp_v, got_v,
+                    "{label}: tcId {} resultsArray[{idx}] field {exp_k:?} mismatch",
+                    exp.0
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn aes_ecb_mct_round_trip() {
+    assert_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-ECB-1.0/mct-slice.json",
+        "ACVP-AES-ECB-MCT",
+    );
+}
+
+#[test]
+fn aes_cbc_mct_round_trip() {
+    assert_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CBC-1.0/mct-slice.json",
+        "ACVP-AES-CBC-MCT",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

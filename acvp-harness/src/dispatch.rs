@@ -203,9 +203,14 @@ impl Default for Registry {
 /// - `ACVP-AES-GCM`, `ACVP-AES-CCM`, `ACVP-AES-KW`, `ACVP-AES-KWP`
 ///   (revision `1.0`) — R14-B AFT with AEAD `testPassed` verification
 ///
+/// R15 adds the MCT (Monte Carlo Test) engine for ECB and CBC
+/// (100×1000 iteration loop, key-schedule update, direction-aware
+/// CBC IV feedback). The same handler structs serve both AFT and MCT
+/// test types — the `handle_group` impl routes on `testType`.
+///
 /// Each new variant is a single `register` line — future chunks add
-/// DRBG, ECDSA, EdDSA, RSA, plus MCT/LDT test types on the same
-/// plumbing.
+/// DRBG, ECDSA, EdDSA, RSA, plus MCT for remaining modes and LDT
+/// on the same plumbing.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
     let mut r = Registry::new();
