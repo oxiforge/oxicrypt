@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 fips-module = { path = "../fips-module" }
+fips-kdf = { path = "../fips-kdf" }
+fips-hmac = { path = "../fips-hmac" }

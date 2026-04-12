@@ -17,6 +17,7 @@ dependencies = [
  "fips-module",
  "fips-rsa",
  "fips-sha",
+ "fips-tls-kdf",
  "fips-xof",
 ]
 
@@ -139,6 +140,8 @@ version = "0.0.0"
 name = "fips-tls-kdf"
 version = "0.0.0"
 dependencies = [
+ "fips-hmac",
+ "fips-kdf",
  "fips-module",
 ]
 

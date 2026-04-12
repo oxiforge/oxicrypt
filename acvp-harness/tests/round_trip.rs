@@ -1412,6 +1412,71 @@ fn rsa_decprim_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// TLS v1.2 KDF (RFC 7627, answer fields `masterSecret` + `keyBlock`)
+// ----------------------------------------------------------------------
+
+/// TLS v1.2 KDF round-trip: check both `masterSecret` and `keyBlock`
+/// in every test case across all groups.
+fn assert_tls12_kdf_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected_ms = collect_answers(&slice, "masterSecret");
+    let expected_kb = collect_answers(&slice, "keyBlock");
+    assert!(
+        !expected_ms.is_empty(),
+        "{label}: no masterSecret answers"
+    );
+    assert_eq!(
+        expected_ms.len(),
+        expected_kb.len(),
+        "{label}: masterSecret/keyBlock count mismatch"
+    );
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "masterSecret");
+    strip_field(&mut prompt, "keyBlock");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+    let got_ms = collect_answers(&response, "masterSecret");
+    let got_kb = collect_answers(&response, "keyBlock");
+
+    assert_eq!(
+        got_ms.len(),
+        expected_ms.len(),
+        "{label}: response has {} masterSecret, expected {}",
+        got_ms.len(),
+        expected_ms.len()
+    );
+    for (i, ((exp_tc, exp_ms), (got_tc, got_ms))) in
+        expected_ms.iter().zip(got_ms.iter()).enumerate()
+    {
+        assert_eq!(exp_tc, got_tc, "{label}: tcId mismatch at {i}");
+        assert_eq!(
+            exp_ms.to_ascii_uppercase(),
+            *got_ms,
+            "{label}: masterSecret mismatch for tcId {exp_tc}"
+        );
+        let (_, exp_kb) = &expected_kb[i];
+        let (_, got_kb_val) = &got_kb[i];
+        assert_eq!(
+            exp_kb.to_ascii_uppercase(),
+            *got_kb_val,
+            "{label}: keyBlock mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+#[test]
+fn tls12_kdf_rfc7627_round_trip() {
+    assert_tls12_kdf_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/TLS-v1.2-KDF-RFC7627/kat-slice.json",
+        "TLS-v1.2-KDF-RFC7627",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

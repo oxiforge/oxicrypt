@@ -26,4 +26,5 @@ fips-sha = { path = "../crates/fips-sha" }
 fips-xof = { path = "../crates/fips-xof" }
 fips-hmac = { path = "../crates/fips-hmac" }
 fips-kdf = { path = "../crates/fips-kdf" }
+fips-tls-kdf = { path = "../crates/fips-tls-kdf" }
 fips-integrity = { path = "../crates/fips-integrity" }

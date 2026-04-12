@@ -76,6 +76,12 @@
 //!   check, both `standard` (non-CRT) and `crt` (Bellcore) key
 //!   modes
 //!
+//! R22 adds the TLS v1.2 KDF (Extended Master Secret) handler:
+//!
+//! - [`tls12_kdf`] — `TLS-v1.2` / `KDF` revision `RFC7627`,
+//!   RFC 7627 Extended Master Secret derivation via the TLS 1.2 PRF
+//!   (RFC 5246 §5) over SHA2-{256,384,512}
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -94,3 +100,4 @@ pub mod sha3;
 pub mod sha3_256;
 pub mod shake;
 pub mod shs;
+pub mod tls12_kdf;
