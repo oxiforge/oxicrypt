@@ -2506,3 +2506,23 @@ fn rsa_keygen_round_trip() {
         );
     }
 }
+
+// ----------------------------------------------------------------------
+// RSA primitive lifecycle (R44: sigPrim + decPrim, shared DRBG key)
+// ----------------------------------------------------------------------
+
+#[test]
+fn rsa_sigprim_lifecycle_round_trip() {
+    assert_sigprim_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-SignaturePrimitive-2.0/lifecycle-slice.json",
+        "RSA-sigPrim-lifecycle",
+    );
+}
+
+#[test]
+fn rsa_decprim_lifecycle_round_trip() {
+    assert_decprim_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-decryptionPrimitive-Sp800-56Br2/lifecycle-slice.json",
+        "RSA-decPrim-lifecycle",
+    );
+}

@@ -227,6 +227,17 @@
 //!   (R37/R39), with encrypt + CRT decrypt + non-CRT decrypt groups
 //!   proving keyGen→OAEP encrypt→decrypt pipeline consistency
 //!
+//! R44 adds RSA primitive lifecycle slices:
+//!
+//! - [`rsa_sigprim`] — self-generated `RSA` / `signaturePrimitive`
+//!   lifecycle vectors reusing the RSA lifecycle DRBG-generated key,
+//!   with standard (`d`) and CRT (Bellcore) groups proving
+//!   keyGen→signaturePrimitive consistency across key representations
+//! - [`rsa_decprim`] — self-generated `RSA` / `decryptionPrimitive`
+//!   lifecycle vectors sharing the same key and input message
+//!   representatives as the sigPrim slice, proving sigPrim/decPrim
+//!   cross-handler agreement (both compute `input^d mod n`)
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
