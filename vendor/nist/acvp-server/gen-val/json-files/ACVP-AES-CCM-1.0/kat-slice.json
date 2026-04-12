@@ -1,0 +1,252 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/ACVP-AES-CCM-1.0/internalProjection.json",
+    "internalProjection_sha256": "cb5dbd94b8eb6257ccb8d62b98f97277a29902a4be431ccdd1c932b0d34b6756"
+  },
+  "algorithm": "ACVP-AES-CCM",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "internalTestType": "VariableAssociatedData",
+      "direction": "encrypt",
+      "keyLen": 128,
+      "ivLen": 104,
+      "payloadLen": 256,
+      "aadLen": 0,
+      "tagLen": 128,
+      "tests": [
+        {
+          "tcId": 1,
+          "testPassed": true,
+          "pt": "41E2C125D41E372DA9A4786D22A10BA4B04C3467454DA0B4B8C6920FEA641585",
+          "key": "B4CE71A01A783C7851D19132B3B06E9A",
+          "aad": "",
+          "iv": "73D7BCBA710C109945F7936CD4",
+          "ct": "CAF31B083FD6EF0641713EB49F28F1CDB6FBB138251DB94F6FC59BCCDF0E23092CCD1C202526873D0CCD6053C79AEEAF"
+        },
+        {
+          "tcId": 2,
+          "testPassed": true,
+          "pt": "D3C4BA14918B573AE54EF7AB5DCD6958F698DB29E312E5858832D601D8CA65C2",
+          "key": "07797E6F5265ECFBA63E3D83250AC993",
+          "aad": "",
+          "iv": "4AA99EE516CB3C5E4C678A90ED",
+          "ct": "BAE4D57E7E41B39B346E4FF56AC127AC5353F5488AB9C1A109E0E8C92C52AA185024593BB35C3C91131CB8DEC150CF18"
+        },
+        {
+          "tcId": 3,
+          "testPassed": true,
+          "pt": "833C7B7EA0EF937E7B41E70C748E6EA078E05AE3C0D3CDAD8907A85730A0187E",
+          "key": "3FB40CE448090B41344808CA2BF3FD8E",
+          "aad": "",
+          "iv": "B9C3B124D796FA88E65D720973",
+          "ct": "5B4F9D24C7E3DE85BB3D07820C1781FC0EB30B7D41DB8DD325D6BC6897E31AC3BD7232A6C7D1775ECA2C5A6366B04E0B"
+        }
+      ]
+    },
+    {
+      "tgId": 35,
+      "testType": "AFT",
+      "internalTestType": "VariableAssociatedData",
+      "direction": "encrypt",
+      "keyLen": 192,
+      "ivLen": 104,
+      "payloadLen": 256,
+      "aadLen": 0,
+      "tagLen": 128,
+      "tests": [
+        {
+          "tcId": 341,
+          "testPassed": true,
+          "pt": "8ED6A956C1C39600711E813969BB078C4274CD0B3C70D942A7B9D57E825FE657",
+          "key": "D5B5D0E41C23A2D965ED37D771F100B415EEBF5F0E96E7B2",
+          "aad": "",
+          "iv": "372489E1029850F811E782EEC7",
+          "ct": "85C27F693899036BC49DFD3253251F2E246165DDB7022F951CC05D6BE859AB6DFB46D50E317FA7556F5C3F32960DA24E"
+        },
+        {
+          "tcId": 342,
+          "testPassed": true,
+          "pt": "A723760814E419F2744B514C0D55F2FA3EE2CA92E2A69A84609FB0DB0DF4249D",
+          "key": "4CA4B7F85FBD9823F492636D10CB66E36C516EC0A0CFC56B",
+          "aad": "",
+          "iv": "FBCC77FE770D588BCBC21B7FD8",
+          "ct": "2A2F21900A81C3DB868B4BD92B940CF948000C1764E3BB22409FDF4A5A32F3D1E8C9C65864E83CFD33A40895C3A876B6"
+        },
+        {
+          "tcId": 343,
+          "testPassed": true,
+          "pt": "3D52D90006CB9421DB7887A27642916B61CB6EFDB7E87A1CDE4B9A6BD2B87A0C",
+          "key": "844DAD1F213C93453B73A3923E5CA5907628F5356D4225B4",
+          "aad": "",
+          "iv": "2BD703AA2843DE45CFD7B0DC01",
+          "ct": "672356D4F4B5CCE0D7F6DCB88C3E501C8F3C18F4AB395DE4887258532EA5D120CB9AEBCF963D7EC0CC95FCB3C6FC4CA8"
+        }
+      ]
+    },
+    {
+      "tgId": 69,
+      "testType": "AFT",
+      "internalTestType": "VariableAssociatedData",
+      "direction": "encrypt",
+      "keyLen": 256,
+      "ivLen": 104,
+      "payloadLen": 256,
+      "aadLen": 0,
+      "tagLen": 128,
+      "tests": [
+        {
+          "tcId": 681,
+          "testPassed": true,
+          "pt": "3FD12F99C1B5ADD71413F811BB8A7EB277AD2462DB32F07536C52F5B0D8FBC96",
+          "key": "469C0479AD357AA89E0D15D54C1B8047DD4E08338D70D7A17EF5FE9AEF7ADB7B",
+          "aad": "",
+          "iv": "8739190C88B4DCBDA98660F31E",
+          "ct": "836906FA9F2056F327091C157992A65826DA38D4F559AD2F1661BFEF41096A94DC2021B8EDC942BB9BEC4C11BF467C65"
+        },
+        {
+          "tcId": 682,
+          "testPassed": true,
+          "pt": "8D73C77BE6B9C8094E763EF398998B994E380D0B380A59D5E39409D433FA8838",
+          "key": "0E67AD500B2AAC11FA4C9F9DFD91B6B75EBB7A91DF1F2238CEBDA159365C27D2",
+          "aad": "",
+          "iv": "1FD15FCBCEF7F401B0E4667DE6",
+          "ct": "BAD28D8FD213851E93444F03A6123A0A6A083DFE814CA8A9B1A21C17C5AA26D77E83FCD2D4D8B78A7D3EB1C50F75336A"
+        },
+        {
+          "tcId": 683,
+          "testPassed": true,
+          "pt": "B64B32B51B96FE1EF7811A18EDBAB44719465B001457F6C2636029C90E70C9C1",
+          "key": "8FAD4493CBEF7847A67B113FFBE0CA07DEBFBDE5493DA34AB62D693721B3BF92",
+          "aad": "",
+          "iv": "DD75A30486DDE124A84182A0AB",
+          "ct": "7E204C238502C24D6BF447BD660DF5D4020758CE5C2F9455C54EAA706D2E643C43692093169A059CAE1E3A107B2A34A4"
+        }
+      ]
+    },
+    {
+      "tgId": 244,
+      "testType": "AFT",
+      "internalTestType": "DecryptionVerification",
+      "direction": "decrypt",
+      "keyLen": 128,
+      "ivLen": 72,
+      "payloadLen": 0,
+      "aadLen": 0,
+      "tagLen": 32,
+      "tests": [
+        {
+          "tcId": 2431,
+          "testPassed": false,
+          "pt": "",
+          "key": "A65730106BBAD3ECF7ECD1461FFC6DFF",
+          "aad": "",
+          "iv": "D7943148E93385FC90",
+          "ct": "10459451"
+        },
+        {
+          "tcId": 2432,
+          "testPassed": false,
+          "pt": "",
+          "key": "ABE9B469CCC496657B5D74A88FAEB753",
+          "aad": "",
+          "iv": "44ABB753F802174DAD",
+          "ct": "2F71D1F8"
+        },
+        {
+          "tcId": 2433,
+          "testPassed": false,
+          "pt": "",
+          "key": "E3B4D388C31FF190B3A6E55F1F9CB3B2",
+          "aad": "",
+          "iv": "A0091EFF19E983BB74",
+          "ct": "79AF6AA0"
+        }
+      ]
+    },
+    {
+      "tgId": 440,
+      "testType": "AFT",
+      "internalTestType": "DecryptionVerification",
+      "direction": "decrypt",
+      "keyLen": 192,
+      "ivLen": 72,
+      "payloadLen": 0,
+      "aadLen": 0,
+      "tagLen": 32,
+      "tests": [
+        {
+          "tcId": 4391,
+          "testPassed": true,
+          "pt": "",
+          "key": "635CFEDFA1EFEC56D26AE648CA37896C5E47174AF058888C",
+          "aad": "",
+          "iv": "E0E19D97651B62D84F",
+          "ct": "E0FC3BB8"
+        },
+        {
+          "tcId": 4392,
+          "testPassed": true,
+          "pt": "",
+          "key": "359F806F46AE5B286F9EF72E379B624C10DF25B37189F169",
+          "aad": "",
+          "iv": "60654083D3FF84B54C",
+          "ct": "CDAA7445"
+        },
+        {
+          "tcId": 4393,
+          "testPassed": true,
+          "pt": "",
+          "key": "C0141135B5C738BCB2994BBA772C8D44EBCD8AF4BA9BF699",
+          "aad": "",
+          "iv": "D8205E01604205D005",
+          "ct": "243A4971"
+        }
+      ]
+    },
+    {
+      "tgId": 636,
+      "testType": "AFT",
+      "internalTestType": "DecryptionVerification",
+      "direction": "decrypt",
+      "keyLen": 256,
+      "ivLen": 72,
+      "payloadLen": 0,
+      "aadLen": 0,
+      "tagLen": 32,
+      "tests": [
+        {
+          "tcId": 6351,
+          "testPassed": true,
+          "pt": "",
+          "key": "BE3DBC3E690FE37606B1209DAED44E3D2969A264E58C6B15D258F324708FA405",
+          "aad": "",
+          "iv": "A431322B78C1330468",
+          "ct": "44DCBA86"
+        },
+        {
+          "tcId": 6352,
+          "testPassed": true,
+          "pt": "",
+          "key": "1AC7DAFE5382FB8EE795E2373D26B6CB1725736D569A9529D47FC8BA7A40A386",
+          "aad": "",
+          "iv": "C9E8DC4CE83017D6FE",
+          "ct": "CB18DE13"
+        },
+        {
+          "tcId": 6353,
+          "testPassed": false,
+          "pt": "",
+          "key": "D1596FCA8EABD195339E70BDBB7F0C370B280E53FA9394D7FF0C839619C6BB68",
+          "aad": "",
+          "iv": "DF36A0D3B8C2DBAFD9",
+          "ct": "2C0FEDDA"
+        }
+      ]
+    }
+  ]
+}

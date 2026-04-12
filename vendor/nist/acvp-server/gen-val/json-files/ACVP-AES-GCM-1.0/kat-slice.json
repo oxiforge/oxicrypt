@@ -1,0 +1,110 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/ACVP-AES-GCM-1.0/internalProjection.json",
+    "internalProjection_sha256": "0703118c1f751f32cdb8d32b8e54d5f80eb9bbe7bb99b83a6b0221cb40b34f0e"
+  },
+  "algorithm": "ACVP-AES-GCM",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "internalTestType": "AFT",
+      "direction": "encrypt",
+      "keyLen": 128,
+      "ivLen": 96,
+      "ivGen": "external",
+      "ivGenMode": "8.2.2",
+      "payloadLen": 0,
+      "aadLen": 120,
+      "tagLen": 128,
+      "algoMode": "ACVP-AES-GCM-1.0",
+      "tests": [
+        {
+          "tcId": 1,
+          "testPassed": true,
+          "deferred": false,
+          "pt": "",
+          "key": "4B2CBE2158F5D6A28CC798DF4F99F777",
+          "aad": "4607F76F4FDA85DAFDC8CE085E0CE5",
+          "iv": "3851BAF79831605B75086E79",
+          "ct": "",
+          "tag": "9E557D92647C1510D4101EBEED0C52DD"
+        },
+        {
+          "tcId": 2,
+          "testPassed": true,
+          "deferred": false,
+          "pt": "",
+          "key": "32E106F67A99F89788D168BEB6596400",
+          "aad": "65FC70A3CC2E0F14B3C56216881F8C",
+          "iv": "491F4B2DF6D0288DB54716B6",
+          "ct": "",
+          "tag": "6A7BBCDB4834109B6AA067B5358D94F3"
+        },
+        {
+          "tcId": 3,
+          "testPassed": true,
+          "deferred": false,
+          "pt": "",
+          "key": "15BF034EE6DC3DA6296EE138B90FC0CE",
+          "aad": "EDDE20197C7DED0B293B061F349840",
+          "iv": "DE8CB48EE0F1CB57F4E9FFB5",
+          "ct": "",
+          "tag": "72445E31C5DF05DFA2CCBA54AE385DFD"
+        }
+      ]
+    },
+    {
+      "tgId": 3,
+      "testType": "AFT",
+      "internalTestType": "AFT",
+      "direction": "decrypt",
+      "keyLen": 128,
+      "ivLen": 96,
+      "ivGen": "external",
+      "ivGenMode": "8.2.2",
+      "payloadLen": 0,
+      "aadLen": 0,
+      "tagLen": 128,
+      "algoMode": "ACVP-AES-GCM-1.0",
+      "tests": [
+        {
+          "tcId": 31,
+          "testPassed": true,
+          "deferred": false,
+          "pt": "",
+          "key": "5A074F4193A394042148393F36978218",
+          "aad": "",
+          "iv": "F386BC91CF56892786F040C9",
+          "ct": "",
+          "tag": "11F81B02AF3CC35AE0908D459C4FDB16"
+        },
+        {
+          "tcId": 32,
+          "testPassed": true,
+          "deferred": false,
+          "pt": "",
+          "key": "85369A3731D4BB1014042A8F8E3ED26B",
+          "aad": "",
+          "iv": "FC0BBCF647E3941D58F4EAB7",
+          "ct": "",
+          "tag": "238514DE053AF269F1E9FF01F09ADB29"
+        },
+        {
+          "tcId": 33,
+          "testPassed": false,
+          "deferred": false,
+          "pt": "",
+          "key": "886293D80F8E625971AE9436F8F4D50E",
+          "aad": "",
+          "iv": "22CD533018836F78FC884872",
+          "ct": "",
+          "tag": "D4B42FAEDDB5E9523921C1C29144A449"
+        }
+      ]
+    }
+  ]
+}

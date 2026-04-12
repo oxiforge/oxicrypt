@@ -915,6 +915,109 @@ AES_ACVP_AFT_MODES = [
     ("ACVP-AES-CTR", "ACVP-AES-CTR-1.0", True),
 ]
 
+# R14-B: AEAD / Key-wrap AES modes.
+AES_ACVP_AEAD_MODES = [
+    # (algorithm, acvp_dir, picker_fn_name)
+    ("ACVP-AES-GCM", "ACVP-AES-GCM-1.0", "gcm"),
+    ("ACVP-AES-CCM", "ACVP-AES-CCM-1.0", "ccm"),
+    ("ACVP-AES-KW", "ACVP-AES-KW-1.0", "kw"),
+    ("ACVP-AES-KWP", "ACVP-AES-KWP-1.0", "kw"),
+]
+
+
+def pick_aes_gcm_groups(
+    doc: dict,
+    *,
+    tests_per_group: int = 3,
+) -> list[dict]:
+    """Pick GCM AFT groups filtered for Phase-1 constraints:
+    ivLen = 96, tagLen = 128, ivGen = external."""
+    picked: dict[tuple[str, int], dict] = {}
+    for g in doc["testGroups"]:
+        if g.get("testType") != "AFT":
+            continue
+        if g.get("ivLen") != 96:
+            continue
+        if g.get("tagLen") != 128:
+            continue
+        if g.get("ivGen") != "external":
+            continue
+        key = (g["direction"], g["keyLen"])
+        if key in picked:
+            continue
+        tests = g["tests"][:tests_per_group]
+        if not tests:
+            continue
+        trimmed = {k: v for k, v in g.items() if k != "tests"}
+        trimmed["tests"] = tests
+        picked[key] = trimmed
+    order = [
+        ("encrypt", 128), ("encrypt", 192), ("encrypt", 256),
+        ("decrypt", 128), ("decrypt", 192), ("decrypt", 256),
+    ]
+    return [picked[k] for k in order if k in picked]
+
+
+def pick_aes_ccm_groups(
+    doc: dict,
+    *,
+    tests_per_group: int = 3,
+) -> list[dict]:
+    """Pick CCM AFT groups with byte-aligned ivLen, payloadLen, aadLen,
+    tagLen. One group per (direction, keyLen)."""
+    picked: dict[tuple[str, int], dict] = {}
+    for g in doc["testGroups"]:
+        if g.get("testType") != "AFT":
+            continue
+        if g.get("payloadLen", 0) % 8 != 0:
+            continue
+        if g.get("aadLen", 0) % 8 != 0:
+            continue
+        if g.get("ivLen", 0) % 8 != 0:
+            continue
+        if g.get("tagLen", 0) % 8 != 0:
+            continue
+        key = (g["direction"], g["keyLen"])
+        if key in picked:
+            continue
+        tests = g["tests"][:tests_per_group]
+        if not tests:
+            continue
+        trimmed = {k: v for k, v in g.items() if k != "tests"}
+        trimmed["tests"] = tests
+        picked[key] = trimmed
+    order = [
+        ("encrypt", 128), ("encrypt", 192), ("encrypt", 256),
+        ("decrypt", 128), ("decrypt", 192), ("decrypt", 256),
+    ]
+    return [picked[k] for k in order if k in picked]
+
+
+def pick_aes_kw_groups(
+    doc: dict,
+    *,
+    tests_per_group: int = 3,
+) -> list[dict]:
+    """Pick KW/KWP AFT groups: one per (direction, keyLen)."""
+    picked: dict[tuple[str, int], dict] = {}
+    for g in doc["testGroups"]:
+        if g.get("testType") != "AFT":
+            continue
+        key = (g["direction"], g["keyLen"])
+        if key in picked:
+            continue
+        tests = g["tests"][:tests_per_group]
+        if not tests:
+            continue
+        trimmed = {k: v for k, v in g.items() if k != "tests"}
+        trimmed["tests"] = tests
+        picked[key] = trimmed
+    order = [
+        ("encrypt", 128), ("encrypt", 192), ("encrypt", 256),
+        ("decrypt", 128), ("decrypt", 192), ("decrypt", 256),
+    ]
+    return [picked[k] for k in order if k in picked]
+
 
 KDA_HKDF_MAC_MODES = [
     # SP 800-56Cr2 KDA-HKDF ACVP-Server coverage does *not* include
@@ -1468,6 +1571,33 @@ def main() -> int:
             tests_per_group=3,
             require_byte_aligned=require_byte_aligned,
         )
+        write_aes_slice(vendor, algo_dir, algorithm, groups, sha)
+        total_tests = sum(len(g["tests"]) for g in groups)
+        key = algo_dir.replace("-", "_").replace(".", "_")
+        manifest.append(
+            f'{key} = {{ dir = "{algo_dir}", groups = {len(groups)}, '
+            f'tests = {total_tests}, sha256 = "{sha}" }}'
+        )
+    manifest.append("")
+
+    # --- AES AEAD / Key-wrap AFT (R14-B) --------------------------------
+    # GCM, CCM, KW, KWP — vendored slim slices with testPassed fields
+    # preserved for AEAD decrypt / unwrap verification.
+    AES_AEAD_PICKERS = {
+        "gcm": pick_aes_gcm_groups,
+        "ccm": pick_aes_ccm_groups,
+        "kw": pick_aes_kw_groups,
+    }
+    for algorithm, algo_dir, picker_name in AES_ACVP_AEAD_MODES:
+        src = args.acvp_cache / f"{algo_dir}.json"
+        if not src.exists():
+            print(f"missing ACVP file: {src}", file=sys.stderr)
+            return 1
+        sha = sha256_file(src)
+        raw = json.loads(src.read_text())
+        doc = raw[1] if isinstance(raw, list) else raw
+        picker = AES_AEAD_PICKERS[picker_name]
+        groups = picker(doc, tests_per_group=3)
         write_aes_slice(vendor, algo_dir, algorithm, groups, sha)
         total_tests = sum(len(g["tests"]) for g in groups)
         key = algo_dir.replace("-", "_").replace(".", "_")

@@ -490,6 +490,278 @@ fn aes_ctr_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// AES AEAD / key-wrap AFT (R14-B): GCM / CCM / KW / KWP
+//
+// These modes have richer response shapes than ECB/CBC/CTR:
+//
+// - GCM encrypt → {tcId, ct, tag}
+// - GCM decrypt → {tcId, testPassed} (+ pt if testPassed)
+// - CCM encrypt → {tcId, ct}  (ct includes appended tag)
+// - CCM/KW/KWP decrypt → {tcId, testPassed} (+ pt if testPassed)
+// - KW/KWP encrypt → {tcId, ct}
+//
+// The test helper collects expected answers from the vendored slice
+// (which includes all fields including testPassed), strips them from
+// the prompt, dispatches, and then compares the response.
+// ----------------------------------------------------------------------
+
+/// An expected answer from a single AEAD/wrap test case.
+#[derive(Debug)]
+enum AeadExpected {
+    /// Encrypt: expected ct (and optionally tag for GCM).
+    Encrypt {
+        tc_id: i64,
+        ct: String,
+        tag: Option<String>,
+    },
+    /// Decrypt/unwrap: expected testPassed and (if passed) pt.
+    Decrypt {
+        tc_id: i64,
+        test_passed: bool,
+        pt: Option<String>,
+    },
+}
+
+fn collect_aead_expected(v: &JsonValue) -> Vec<AeadExpected> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let direction = g.get("direction").and_then(JsonValue::as_str).unwrap_or("");
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            match direction {
+                "encrypt" => {
+                    let ct = t
+                        .get("ct")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let tag = t.get("tag").and_then(JsonValue::as_str).map(str::to_string);
+                    out.push(AeadExpected::Encrypt { tc_id, ct, tag });
+                }
+                "decrypt" => {
+                    let test_passed = t
+                        .get("testPassed")
+                        .and_then(JsonValue::as_bool)
+                        .unwrap_or(true);
+                    let pt = if test_passed {
+                        t.get("pt").and_then(JsonValue::as_str).map(str::to_string)
+                    } else {
+                        None
+                    };
+                    out.push(AeadExpected::Decrypt {
+                        tc_id,
+                        test_passed,
+                        pt,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Strip AEAD answer fields from the prompt:
+/// - encrypt tests: remove `ct` and `tag`
+/// - decrypt tests: remove `pt` and `testPassed`
+fn strip_aead_answers_in_place(v: &mut JsonValue) {
+    let JsonValue::Object(root_kvs) = v else {
+        return;
+    };
+    let groups = root_kvs.iter_mut().find_map(|(k, val)| {
+        if k == "testGroups" {
+            if let JsonValue::Array(a) = val {
+                Some(a)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+    let Some(groups) = groups else {
+        return;
+    };
+    for g in groups.iter_mut() {
+        let JsonValue::Object(g_kvs) = g else {
+            continue;
+        };
+        let direction: String = g_kvs
+            .iter()
+            .find_map(|(k, val)| {
+                if k == "direction" {
+                    val.as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let strip_fields: &[&str] = match direction.as_str() {
+            "encrypt" => &["ct", "tag"],
+            "decrypt" => &["pt", "testPassed"],
+            _ => continue,
+        };
+        let tests = g_kvs.iter_mut().find_map(|(k, val)| {
+            if k == "tests" {
+                if let JsonValue::Array(a) = val {
+                    Some(a)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        let Some(tests) = tests else {
+            continue;
+        };
+        for t in tests.iter_mut() {
+            if let JsonValue::Object(kvs) = t {
+                kvs.retain(|(k, _)| !strip_fields.contains(&k.as_str()));
+            }
+        }
+    }
+}
+
+fn assert_aead_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_aead_expected(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} produced no expected answers"
+    );
+
+    let mut prompt = slice.clone();
+    strip_aead_answers_in_place(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    // Collect response tests keyed by tcId for comparison.
+    let mut resp_tests: std::collections::HashMap<i64, &JsonValue> =
+        std::collections::HashMap::new();
+    if let Some(groups) = response.get("testGroups").and_then(JsonValue::as_array) {
+        for g in groups {
+            if let Some(tests) = g.get("tests").and_then(JsonValue::as_array) {
+                for t in tests {
+                    if let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) {
+                        resp_tests.insert(tc_id, t);
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        resp_tests.len(),
+        expected.len(),
+        "{label}: response has {} cases, expected {}",
+        resp_tests.len(),
+        expected.len()
+    );
+
+    for exp in &expected {
+        match exp {
+            AeadExpected::Encrypt { tc_id, ct, tag } => {
+                let t = resp_tests
+                    .get(tc_id)
+                    .unwrap_or_else(|| panic!("{label}: missing tcId {tc_id} in response"));
+                let got_ct = t
+                    .get("ct")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_else(|| panic!("{label}: missing ct for tcId {tc_id}"));
+                assert_eq!(
+                    ct.to_ascii_uppercase(),
+                    got_ct,
+                    "{label}: ct mismatch for tcId {tc_id}"
+                );
+                if let Some(exp_tag) = tag {
+                    let got_tag = t
+                        .get("tag")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or_else(|| panic!("{label}: missing tag for tcId {tc_id}"));
+                    assert_eq!(
+                        exp_tag.to_ascii_uppercase(),
+                        got_tag,
+                        "{label}: tag mismatch for tcId {tc_id}"
+                    );
+                }
+            }
+            AeadExpected::Decrypt {
+                tc_id,
+                test_passed,
+                pt,
+            } => {
+                let t = resp_tests
+                    .get(tc_id)
+                    .unwrap_or_else(|| panic!("{label}: missing tcId {tc_id} in response"));
+                let got_passed = t
+                    .get("testPassed")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or_else(|| panic!("{label}: missing testPassed for tcId {tc_id}"));
+                assert_eq!(
+                    *test_passed, got_passed,
+                    "{label}: testPassed mismatch for tcId {tc_id}"
+                );
+                if let Some(exp_pt) = pt {
+                    let got_pt = t
+                        .get("pt")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or_else(|| panic!("{label}: missing pt for tcId {tc_id}"));
+                    assert_eq!(
+                        exp_pt.to_ascii_uppercase(),
+                        got_pt,
+                        "{label}: pt mismatch for tcId {tc_id}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn aes_gcm_aft_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-GCM-1.0/kat-slice.json",
+        "ACVP-AES-GCM",
+    );
+}
+
+#[test]
+fn aes_ccm_aft_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CCM-1.0/kat-slice.json",
+        "ACVP-AES-CCM",
+    );
+}
+
+#[test]
+fn aes_kw_aft_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-KW-1.0/kat-slice.json",
+        "ACVP-AES-KW",
+    );
+}
+
+#[test]
+fn aes_kwp_aft_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-KWP-1.0/kat-slice.json",
+        "ACVP-AES-KWP",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

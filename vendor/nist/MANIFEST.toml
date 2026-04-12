@@ -103,4 +103,8 @@ HKDF_SHA3_512 = { tgId = 197, tcId = 981, l_bits = 1024, hmacAlg = "SHA3-512" }
 ACVP_AES_ECB_1_0 = { dir = "ACVP-AES-ECB-1.0", groups = 6, tests = 18, sha256 = "a804bbe1b4efbb775ec5a365245739ffaedad50f43d91b07ede26733e0f3b256" }
 ACVP_AES_CBC_1_0 = { dir = "ACVP-AES-CBC-1.0", groups = 6, tests = 18, sha256 = "b6d11e684b279a384f27f4f711319dc2542bbe55f568bd8f11d5567a1df4a1df" }
 ACVP_AES_CTR_1_0 = { dir = "ACVP-AES-CTR-1.0", groups = 6, tests = 18, sha256 = "22cd3bb1666cc14231e5435a2f0c163e83c70a65ba353284828975a983a46a59" }
+ACVP_AES_GCM_1_0 = { dir = "ACVP-AES-GCM-1.0", groups = 2, tests = 6, sha256 = "0703118c1f751f32cdb8d32b8e54d5f80eb9bbe7bb99b83a6b0221cb40b34f0e" }
+ACVP_AES_CCM_1_0 = { dir = "ACVP-AES-CCM-1.0", groups = 6, tests = 18, sha256 = "cb5dbd94b8eb6257ccb8d62b98f97277a29902a4be431ccdd1c932b0d34b6756" }
+ACVP_AES_KW_1_0 = { dir = "ACVP-AES-KW-1.0", groups = 6, tests = 18, sha256 = "0dbc9c1ff82d56ef21513fc396ba3d458ab8872d85bdac25052887ca2f25da9d" }
+ACVP_AES_KWP_1_0 = { dir = "ACVP-AES-KWP-1.0", groups = 6, tests = 18, sha256 = "701c7ff377042d6b3cbe269a5fb7a42889c7f8f40ec923258e22c18319829ed4" }
 
