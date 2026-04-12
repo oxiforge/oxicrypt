@@ -28,6 +28,10 @@ SHA3_224_MCT = { dir = "SHA3-224-2.0", file = "mct-slice.json", groups = 1, test
 SHA3_256_MCT = { dir = "SHA3-256-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "a1b3b8f1052ee1b72c1fa93a75558a47f505d2ff1d0f01d5514e5c342c350b2c" }
 SHA3_384_MCT = { dir = "SHA3-384-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "2e04fbcc38a75927d12a8e9eb944225eba048db53c44b7a5e65d64fb583b32f5" }
 SHA3_512_MCT = { dir = "SHA3-512-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "012c21b85bb60d92bcde72cc61576f5d1e96b66bbbb2403f47d0e5e4c882a227" }
+SHA3_224_LDT = { dir = "SHA3-224-2.0", file = "ldt-slice.json", groups = 1, tests = 3, testType = "LDT", sha256 = "32046c25a51e5075752d7419727461dcf7e4feab8adb290953b19c96caf9a5f2" }
+SHA3_256_LDT = { dir = "SHA3-256-2.0", file = "ldt-slice.json", groups = 1, tests = 3, testType = "LDT", sha256 = "c52a405126eeea0039d0b774b7201750dd0ee30f5bd28e81a8f195be49f00ea5" }
+SHA3_384_LDT = { dir = "SHA3-384-2.0", file = "ldt-slice.json", groups = 1, tests = 3, testType = "LDT", sha256 = "813a59fc745d259e5451fd9ce566982c8c365b01538d1d1611bd23c9afac0e8a" }
+SHA3_512_LDT = { dir = "SHA3-512-2.0", file = "ldt-slice.json", groups = 1, tests = 3, testType = "LDT", sha256 = "4626e9fa3deae2357dc788f4220b11ec1e1a6abf7036709b5900fd5ec7557e86" }
 
 [acvp_server.shake]
 SHAKE128 = { dir = "SHAKE-128-FIPS202", tgId = 1, tcId = 128, out_bytes = 58, sha256 = "1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db" }

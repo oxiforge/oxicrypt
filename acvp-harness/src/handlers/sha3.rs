@@ -1,7 +1,7 @@
-//! SHA3-224 / SHA3-384 / SHA3-512 AFT + MCT handlers.
+//! SHA3-224 / SHA3-384 / SHA3-512 AFT + MCT + LDT handlers.
 //!
 //! Targets ACVP `algorithm = "SHA3-{224,384,512}"`, `revision = "2.0"`,
-//! `testType ∈ {"AFT", "MCT"}`. SHA3-256 lives in its own
+//! `testType ∈ {"AFT", "MCT", "LDT"}`. SHA3-256 lives in its own
 //! [`super::sha3_256`] module because it was wired up in R10 — this
 //! module provides the other three fixed-output members of the SHA-3
 //! family so R12-A can close out the SHA-3 hashing side of the
@@ -21,6 +21,11 @@
 //! Each MCT group has a single test carrying an initial `msg` (the
 //! seed) and the response carries a `resultsArray` with one `md`
 //! entry per outer iteration.
+//!
+//! SHA-3 LDT (Large Data Test) hashes a large message constructed by
+//! repeating a short content pattern to a specified `fullLength`.
+//! Uses the incremental `Sha3::update` API to stream chunks without
+//! materializing the entire expanded message in memory.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -43,11 +48,20 @@ impl AlgorithmHandler for Sha3_224Handler {
         "2.0"
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        handle_hash_group(group, "SHA3-224", |msg| {
-            fips_sha::sha3::sha3_224(msg)
-                .map(|d| d.to_vec())
-                .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_224 returned Err"))
-        })
+        handle_hash_group(
+            group,
+            "SHA3-224",
+            |msg| {
+                fips_sha::sha3::sha3_224(msg)
+                    .map(|d| d.to_vec())
+                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_224 returned Err"))
+            },
+            |content, full_bytes| {
+                ldt_stream::<{ fips_sha::sha3::SHA3_224_RATE }, { fips_sha::sha3::SHA3_224_DIGEST_SIZE }>(
+                    content, full_bytes,
+                )
+            },
+        )
     }
 }
 
@@ -59,11 +73,20 @@ impl AlgorithmHandler for Sha3_384Handler {
         "2.0"
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        handle_hash_group(group, "SHA3-384", |msg| {
-            fips_sha::sha3::sha3_384(msg)
-                .map(|d| d.to_vec())
-                .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_384 returned Err"))
-        })
+        handle_hash_group(
+            group,
+            "SHA3-384",
+            |msg| {
+                fips_sha::sha3::sha3_384(msg)
+                    .map(|d| d.to_vec())
+                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_384 returned Err"))
+            },
+            |content, full_bytes| {
+                ldt_stream::<{ fips_sha::sha3::SHA3_384_RATE }, { fips_sha::sha3::SHA3_384_DIGEST_SIZE }>(
+                    content, full_bytes,
+                )
+            },
+        )
     }
 }
 
@@ -75,23 +98,39 @@ impl AlgorithmHandler for Sha3_512Handler {
         "2.0"
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        handle_hash_group(group, "SHA3-512", |msg| {
-            fips_sha::sha3::sha3_512(msg)
-                .map(|d| d.to_vec())
-                .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_512 returned Err"))
-        })
+        handle_hash_group(
+            group,
+            "SHA3-512",
+            |msg| {
+                fips_sha::sha3::sha3_512(msg)
+                    .map(|d| d.to_vec())
+                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_512 returned Err"))
+            },
+            |content, full_bytes| {
+                ldt_stream::<{ fips_sha::sha3::SHA3_512_RATE }, { fips_sha::sha3::SHA3_512_DIGEST_SIZE }>(
+                    content, full_bytes,
+                )
+            },
+        )
     }
 }
 
-/// Shared group driver: dispatches AFT and MCT groups for a SHA-3
-/// variant. `label` is a static string used for diagnostic errors only.
-pub(crate) fn handle_hash_group<F>(
+/// Shared group driver: dispatches AFT, MCT, and LDT groups for a
+/// SHA-3 variant. `label` is a static string used for diagnostic
+/// errors only.
+///
+/// `compute` is the one-shot hash function (for AFT/MCT).
+/// `ldt_compute` is the streaming LDT hash function that takes a
+/// content pattern and the total message length in bytes.
+pub(crate) fn handle_hash_group<F, L>(
     group: &JsonValue,
     label: &'static str,
     mut compute: F,
+    mut ldt_compute: L,
 ) -> Result<JsonValue, DispatchError>
 where
     F: FnMut(&[u8]) -> Result<Vec<u8>, DispatchError>,
+    L: FnMut(&[u8], u64) -> Result<Vec<u8>, DispatchError>,
 {
     let tg_id = group
         .get("tgId")
@@ -118,6 +157,20 @@ where
             ]))
         }
         "MCT" => handle_mct_group(tg_id, group, &mut compute),
+        "LDT" => {
+            let tests = group
+                .get("tests")
+                .and_then(JsonValue::as_array)
+                .ok_or(DispatchError::MissingField("tests"))?;
+            let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+            for t in tests {
+                results.push(run_ldt_case(t, &mut ldt_compute)?);
+            }
+            Ok(JsonValue::Object(vec![
+                ("tgId".to_string(), JsonValue::Number(tg_id)),
+                ("tests".to_string(), JsonValue::Array(results)),
+            ]))
+        }
         _ => Err(DispatchError::UnsupportedTestType(test_type.to_string())),
     }
 }
@@ -234,4 +287,101 @@ where
         ("tgId".to_string(), JsonValue::Number(tg_id)),
         ("tests".to_string(), JsonValue::Array(vec![test_result])),
     ]))
+}
+
+// ---- LDT engine (SHA-3) -------------------------------------------------
+
+/// Handle a single LDT test case. Parses the `largeMsg` object to
+/// extract `content`, `contentLength`, `fullLength`, and
+/// `expansionTechnique`, then delegates to `ldt_compute`.
+fn run_ldt_case<L>(
+    t: &JsonValue,
+    ldt_compute: &mut L,
+) -> Result<JsonValue, DispatchError>
+where
+    L: FnMut(&[u8], u64) -> Result<Vec<u8>, DispatchError>,
+{
+    let tc_id = t
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+
+    let large_msg = t
+        .get("largeMsg")
+        .ok_or(DispatchError::MissingField("largeMsg"))?;
+
+    let content_hex = large_msg
+        .get("content")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("largeMsg.content"))?;
+    let content_length_bits = large_msg
+        .get("contentLength")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("largeMsg.contentLength"))?;
+    let full_length_bits = large_msg
+        .get("fullLength")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("largeMsg.fullLength"))?;
+    let technique = large_msg
+        .get("expansionTechnique")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("largeMsg.expansionTechnique"))?;
+
+    if technique != "repeating" {
+        return Err(DispatchError::Unsupported(
+            "LDT: only 'repeating' expansion technique is supported",
+        ));
+    }
+    if content_length_bits % 8 != 0 || full_length_bits % 8 != 0 {
+        return Err(DispatchError::Unsupported(
+            "LDT: non-byte-aligned lengths are not supported",
+        ));
+    }
+
+    let content = hex::decode(content_hex)?;
+    let content_bytes = (content_length_bits / 8) as usize;
+    if content.len() < content_bytes {
+        return Err(DispatchError::Crypto(
+            "LDT: content hex shorter than declared contentLength",
+        ));
+    }
+    let pattern = &content[..content_bytes];
+
+    let full_bytes = full_length_bits / 8;
+    let md = ldt_compute(pattern, full_bytes)?;
+
+    Ok(JsonValue::Object(vec![
+        ("tcId".to_string(), JsonValue::Number(tc_id)),
+        ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
+    ]))
+}
+
+/// Streaming LDT hasher: feeds the repeating `pattern` into an
+/// incremental `Sha3<RATE, OUT>` hasher until `full_bytes` total
+/// bytes have been absorbed. Streams in chunks to avoid materializing
+/// the full expanded message.
+pub(crate) fn ldt_stream<const RATE: usize, const OUT: usize>(
+    pattern: &[u8],
+    full_bytes: u64,
+) -> Result<Vec<u8>, DispatchError> {
+    if pattern.is_empty() {
+        return Err(DispatchError::Crypto("LDT: empty content pattern"));
+    }
+    let mut hasher = fips_sha::sha3::Sha3::<RATE, OUT>::new_internal();
+    let pat_len = pattern.len() as u64;
+    let mut remaining = full_bytes;
+
+    // Feed full copies of the pattern.
+    while remaining >= pat_len {
+        hasher.update(pattern);
+        remaining -= pat_len;
+    }
+    // Feed the fractional tail (if fullLength is not a multiple of contentLength).
+    if remaining > 0 {
+        let tail = usize::try_from(remaining)
+            .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
+        hasher.update(&pattern[..tail]);
+    }
+
+    Ok(hasher.finalize().to_vec())
 }

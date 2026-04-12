@@ -184,8 +184,14 @@
 //!   for each sig type), proving the sigGen→sigVer pipeline is
 //!   consistent across both padding modes and key representations
 //!
-//! Later chunks will add remaining test types (LDT) and
-//! additional modes (larger key sizes).
+//! R38 adds SHA-3 Large Data Test (LDT) support:
+//!
+//! - [`sha3`] and [`sha3_256`] — `SHA3-{224,256,384,512}` / `LDT`
+//!   revision `2.0`, streaming hash over repeating-pattern expanded
+//!   messages (up to multi-MB), using the incremental `Sha3::update`
+//!   API to avoid materializing the full message in memory
+//!
+//! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
 pub mod cmac;

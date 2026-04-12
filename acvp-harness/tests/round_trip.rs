@@ -942,6 +942,46 @@ fn sha3_512_mct_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// SHA-3 LDT (R38): Large Data Test, repeating-pattern expansion
+// ----------------------------------------------------------------------
+
+#[test]
+fn sha3_224_ldt_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-224-2.0/ldt-slice.json",
+        "md",
+        "SHA3-224-LDT",
+    );
+}
+
+#[test]
+fn sha3_256_ldt_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-256-2.0/ldt-slice.json",
+        "md",
+        "SHA3-256-LDT",
+    );
+}
+
+#[test]
+fn sha3_384_ldt_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-384-2.0/ldt-slice.json",
+        "md",
+        "SHA3-384-LDT",
+    );
+}
+
+#[test]
+fn sha3_512_ldt_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-512-2.0/ldt-slice.json",
+        "md",
+        "SHA3-512-LDT",
+    );
+}
+
+// ----------------------------------------------------------------------
 // CMAC-AES AFT (R16): gen + ver
 //
 // `gen` groups produce a `mac` answer; `ver` groups produce

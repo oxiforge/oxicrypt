@@ -1,0 +1,43 @@
+{
+  "_source": "pqclib self-generated SHA-3 LDT vectors",
+  "algorithm": "SHA3-512",
+  "revision": "2.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "LDT",
+      "tests": [
+        {
+          "tcId": 1,
+          "largeMsg": {
+            "content": "61",
+            "contentLength": 8,
+            "fullLength": 8388608,
+            "expansionTechnique": "repeating"
+          },
+          "md": "1E6A20BDC8B757C6FBE0812604B32F38CB3D7DFEC7CC4581BE78D2CC3C89F101729057DEB759319D6AB5EFC99A3E1B5779B4AA77090E61CDC99B2C336A3E0D85"
+        },
+        {
+          "tcId": 2,
+          "largeMsg": {
+            "content": "DE",
+            "contentLength": 8,
+            "fullLength": 4194304,
+            "expansionTechnique": "repeating"
+          },
+          "md": "60019163BBB91F436448FE05FBA6D9F16EDC1C8A85F3844CE08A3C898CA5038EBC0A7F880248EB4A5C044927C1485F1601C01F9FD8CC767EE70938B918AA16D7"
+        },
+        {
+          "tcId": 3,
+          "largeMsg": {
+            "content": "FF",
+            "contentLength": 8,
+            "fullLength": 16777216,
+            "expansionTechnique": "repeating"
+          },
+          "md": "AF93D16C4540E7610F513CD31BBED4D038913673DD1757C09522E20B7619EA2EC2885F9CB67E657E1968F80C388B6BA01D79E7A23D17DC6EB0F58509A0658C2F"
+        }
+      ]
+    }
+  ]
+}

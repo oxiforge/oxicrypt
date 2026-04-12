@@ -1,0 +1,43 @@
+{
+  "_source": "pqclib self-generated SHA-3 LDT vectors",
+  "algorithm": "SHA3-256",
+  "revision": "2.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "LDT",
+      "tests": [
+        {
+          "tcId": 1,
+          "largeMsg": {
+            "content": "61",
+            "contentLength": 8,
+            "fullLength": 8388608,
+            "expansionTechnique": "repeating"
+          },
+          "md": "5048A5DA1F1212329F4B7FBFCAE42C03C5378312C643085410661FDB3569B50A"
+        },
+        {
+          "tcId": 2,
+          "largeMsg": {
+            "content": "DE",
+            "contentLength": 8,
+            "fullLength": 4194304,
+            "expansionTechnique": "repeating"
+          },
+          "md": "F7BCD8FE4411882F8EC4A49FCE2F225F692EF363D4403D3569AC37877D0CE082"
+        },
+        {
+          "tcId": 3,
+          "largeMsg": {
+            "content": "FF",
+            "contentLength": 8,
+            "fullLength": 16777216,
+            "expansionTechnique": "repeating"
+          },
+          "md": "2B9D259845615E9F2840297569AF9FF94C17793E0FDD013D88A277D46437E1E8"
+        }
+      ]
+    }
+  ]
+}
