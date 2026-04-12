@@ -95,11 +95,14 @@
 //!   both non-CRT (`d`) and CRT (Bellcore verify-after-sign) key
 //!   modes
 //!
-//! R25 adds RSA SigGen (both padding modes):
+//! R25 adds RSA SigGen (both padding modes) and PSS SigVer coverage:
 //!
 //! - [`rsa_siggen`] — `RSA` / `sigGen` revision `FIPS186-5`,
 //!   PKCS#1v1.5 (non-CRT, `d`) and PSS (CRT + Bellcore,
 //!   `sLen = hLen = 32`) over SHA2-256 / RSA-2048
+//! - [`rsa`] — extended RSA SigVer coverage with PSS groups
+//!   (`pss-kat-slice.json`), exercising both valid and invalid
+//!   (bit-flipped) PSS signatures
 //!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).

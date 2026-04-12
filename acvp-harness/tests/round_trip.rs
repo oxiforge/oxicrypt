@@ -1323,6 +1323,14 @@ fn rsa_sigver_round_trip() {
     );
 }
 
+#[test]
+fn rsa_pss_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-sigVer-FIPS186-5/pss-kat-slice.json",
+        "RSA-PSS-sigVer",
+    );
+}
+
 // ----------------------------------------------------------------------
 // SP 800-108r1 KBKDF (R20: counter / feedback / double pipeline, answer
 // field `keyOut`)
