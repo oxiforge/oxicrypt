@@ -148,6 +148,13 @@
 //!   FIPS 186-5 §A.1.1/§B.3.1, returning `(n, d, e, p, q, dP,
 //!   dQ, qInv)`, with self-generated vectors
 //!
+//! R33 adds RSA SigGen cross-product coverage:
+//!
+//! - [`rsa_siggen`] — extended to support `keyMode` dispatch:
+//!   `pkcs1v1.5` + CRT (Bellcore-protected PKCS#1v1.5 sign)
+//!   and `pss` + standard (non-CRT PSS sign), completing the
+//!   full (sigType × keyMode) cross-product
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 

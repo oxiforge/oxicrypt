@@ -5,11 +5,17 @@
 //!
 //! Supported configurations:
 //! - `sigType = "pkcs1v1.5"`, `modulo = 2048`, `hashAlg = "SHA2-256"`
-//!   — non-CRT path (group provides `n`, `e`, `d`)
+//!   — non-CRT path (group provides `n`, `e`, `d`), or CRT path
+//!   with `keyMode = "crt"` (group provides CRT components)
 //! - `sigType = "pss"`, `modulo = 2048`, `hashAlg = "SHA2-256"`,
 //!   `saltLen = 32` — CRT path (group provides `n`, `e`, CRT
 //!   components `p`, `q`, `dmp1`, `dmq1`, `iqmp`; each test
-//!   supplies a fixed `salt`)
+//!   supplies a fixed `salt`), or non-CRT path with
+//!   `keyMode = "standard"` (group provides `n`, `d`)
+//!
+//! All four combinations of (sigType × keyMode) are supported.
+//! The CRT path uses Bellcore verify-after-sign per FIPS 140-3
+//! IG D.G.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -125,10 +131,56 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
 
+    // If keyMode is absent, infer from sigType for backwards
+    // compatibility with upstream vectors: pkcs1v1.5 defaults to
+    // "standard" (non-CRT, d-only), pss defaults to "crt".
+    let key_mode = group
+        .get("keyMode")
+        .and_then(JsonValue::as_str)
+        .unwrap_or(match sig_type {
+            "pss" => "crt",
+            _ => "standard",
+        });
+
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
-    match sig_type {
-        "pkcs1v1.5" => {
+    match (sig_type, key_mode) {
+        ("pkcs1v1.5", "crt") => {
+            // CRT: group carries n, e, p, q, dmp1, dmq1, iqmp.
+            let n: [u8; N_BYTES] = decode_fixed(group, "n")?;
+            let e_bytes = decode_hex_field(group, "e")?;
+            let e = bytes_to_u64(&e_bytes)?;
+            let p: [u8; HALF_BYTES] = decode_fixed(group, "p")?;
+            let q: [u8; HALF_BYTES] = decode_fixed(group, "q")?;
+            let dp: [u8; HALF_BYTES] = decode_fixed(group, "dmp1")?;
+            let dq: [u8; HALF_BYTES] = decode_fixed(group, "dmq1")?;
+            let qinv: [u8; HALF_BYTES] = decode_fixed(group, "iqmp")?;
+
+            for tc in tests {
+                let test_case_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
+                    .ok_or(DispatchError::MissingField("tcId"))?;
+
+                let message = decode_hex_field(tc, "message")?;
+
+                let sig = fips_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+                    &n, e, &p, &q, &dp, &dq, &qinv, &message,
+                )
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: PKCS#1v1.5 CRT sign failed",
+                ))?;
+
+                results.push(JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "signature".to_string(),
+                        JsonValue::String(hex::encode_upper(&sig)),
+                    ),
+                ]));
+            }
+        }
+        ("pkcs1v1.5", _) => {
             // Non-CRT: group carries n, d.
             let n: [u8; N_BYTES] = decode_fixed(group, "n")?;
             let d: [u8; N_BYTES] = decode_fixed(group, "d")?;
@@ -155,7 +207,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 ]));
             }
         }
-        "pss" => {
+        ("pss", "crt") => {
             // CRT: group carries n, e, p, q, dmp1, dmq1, iqmp.
             let n: [u8; N_BYTES] = decode_fixed(group, "n")?;
             let e_bytes = decode_hex_field(group, "e")?;
@@ -179,6 +231,34 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
                 .ok_or(DispatchError::Crypto("RSA SigGen: PSS CRT sign failed"))?;
+
+                results.push(JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "signature".to_string(),
+                        JsonValue::String(hex::encode_upper(&sig)),
+                    ),
+                ]));
+            }
+        }
+        ("pss", _) => {
+            // Non-CRT PSS: group carries n, d; each test supplies salt.
+            let n: [u8; N_BYTES] = decode_fixed(group, "n")?;
+            let d: [u8; N_BYTES] = decode_fixed(group, "d")?;
+
+            for tc in tests {
+                let test_case_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
+                    .ok_or(DispatchError::MissingField("tcId"))?;
+
+                let message = decode_hex_field(tc, "message")?;
+                let salt: [u8; 32] = decode_fixed(tc, "salt")?;
+
+                let sig = fips_rsa::rsa_pss_sign_2048_sha256_internal(
+                    &n, &d, &message, &salt,
+                )
+                .ok_or(DispatchError::Crypto("RSA SigGen: PSS sign failed"))?;
 
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),

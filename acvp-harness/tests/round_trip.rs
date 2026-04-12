@@ -1749,6 +1749,14 @@ fn rsa_siggen_round_trip() {
     );
 }
 
+#[test]
+fn rsa_siggen_cross_round_trip() {
+    assert_rsa_siggen_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-sigGen-FIPS186-5/cross-kat-slice.json",
+        "RSA-sigGen-cross",
+    );
+}
+
 // ----------------------------------------------------------------------
 // KAS-ECC-SSC (R26: P-256 ECDH shared secret, answer field `z`)
 // ----------------------------------------------------------------------
