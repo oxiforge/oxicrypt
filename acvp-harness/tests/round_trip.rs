@@ -1100,6 +1100,40 @@ fn cmac_aes_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// DRBG families (revision 1.0, answer field `returnedBits`)
+// R17 — CTR_DRBG (AES-128/192/256, ±df, ±pr),
+//        Hash_DRBG (SHA2-256/384/512, ±pr),
+//        HMAC_DRBG (SHA2-256/384/512, ±pr)
+// ----------------------------------------------------------------------
+
+#[test]
+fn ctr_drbg_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ctrDRBG-1.0/kat-slice.json",
+        "returnedBits",
+        "ctrDRBG",
+    );
+}
+
+#[test]
+fn hash_drbg_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/hashDRBG-1.0/kat-slice.json",
+        "returnedBits",
+        "hashDRBG",
+    );
+}
+
+#[test]
+fn hmac_drbg_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/hmacDRBG-1.0/kat-slice.json",
+        "returnedBits",
+        "hmacDRBG",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

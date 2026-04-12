@@ -115,3 +115,8 @@ CMAC_AES_1_0 = { dir = "CMAC-AES-1.0", groups = 6, tests = 18, sha256 = "b48bb17
 ACVP_AES_ECB_MCT_1_0 = { dir = "ACVP-AES-ECB-1.0", file = "mct-slice.json", groups = 6, tests = 6, ra_limit = 5, sha256 = "a33d4a82b1534c70d686e5ca8dea202781267c6cb5d96e096d0010930af49db1" }
 ACVP_AES_CBC_MCT_1_0 = { dir = "ACVP-AES-CBC-1.0", file = "mct-slice.json", groups = 6, tests = 6, ra_limit = 5, sha256 = "fbcf31f9dc34e33d375a2502c7cea0d1e505bd2323b66873ff970e72160e77e3" }
 
+[acvp_server.drbg]
+ctrDRBG_1_0  = { dir = "ctrDRBG-1.0",  groups = 12, tests = 36, modes = ["AES-128","AES-192","AES-256"], sha256 = "c2a8c915127a1f7930899a5ca4dd724d6844b4b38dcfa2a148e04e79ff78dca6" }
+hashDRBG_1_0 = { dir = "hashDRBG-1.0", groups = 6,  tests = 18, modes = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "88766cd928dcb6a38aa6ccd30245d24a438e7a4597a71f8c9ef4dd19a29c0b06" }
+hmacDRBG_1_0 = { dir = "hmacDRBG-1.0", groups = 6,  tests = 18, modes = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "74b9ee97b24944eadc66f63497763eab45848dc04d977ea69be8b926b9b930f4" }
+

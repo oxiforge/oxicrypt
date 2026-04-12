@@ -42,11 +42,16 @@
 //! AFT handlers in [`aes`]. R15 added the MCT engine for ECB and CBC.
 //! R16 added [`cmac`] — CMAC-AES gen/ver (SP 800-38B).
 //!
-//! Later chunks will add DRBG, ECDSA, EdDSA, RSA, plus MCT and LDT
+//! R17 adds the three DRBG family handlers — [`drbg`] — covering
+//! `ctrDRBG` (AES-128/192/256, with/without DF, with/without PR),
+//! `hashDRBG` (SHA2-256/384/512), and `hmacDRBG` (SHA2-256/384/512).
+//!
+//! Later chunks will add ECDSA, EdDSA, RSA, plus MCT and LDT
 //! test types, on the same plumbing.
 
 pub mod aes;
 pub mod cmac;
+pub mod drbg;
 pub mod hmac;
 pub mod hmac_sha2_256;
 pub mod kda_hkdf;

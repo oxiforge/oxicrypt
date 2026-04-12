@@ -212,8 +212,14 @@ impl Default for Registry {
 /// (compute MAC) and ver (verify MAC / `testPassed`) directions over
 /// all three AES key sizes.
 ///
+/// R17 adds three DRBG family handlers — `ctrDRBG`, `hashDRBG`, and
+/// `hmacDRBG` (all revision `1.0`) — covering CTR_DRBG AES-128/192/256
+/// with and without derivation function, Hash_DRBG SHA2-256/384/512,
+/// and HMAC_DRBG SHA2-256/384/512, each with and without prediction
+/// resistance, reaching twenty-nine registered handlers.
+///
 /// Each new variant is a single `register` line — future chunks add
-/// DRBG, ECDSA, EdDSA, RSA, plus MCT for remaining modes and LDT
+/// ECDSA, EdDSA, RSA, plus MCT for remaining modes and LDT
 /// on the same plumbing.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
@@ -253,6 +259,10 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::aes::AesCcmHandler));
     r.register(Box::new(handlers::aes::AesKwHandler));
     r.register(Box::new(handlers::aes::AesKwpHandler));
+    // DRBG families (R17: ctrDRBG / hashDRBG / hmacDRBG)
+    r.register(Box::new(handlers::drbg::CtrDrbgHandler));
+    r.register(Box::new(handlers::drbg::HashDrbgHandler));
+    r.register(Box::new(handlers::drbg::HmacDrbgHandler));
     r
 }
 
@@ -342,12 +352,16 @@ mod tests {
         assert!(r.find("ACVP-AES-KWP", None, "1.0").is_some());
         // R16 CMAC-AES
         assert!(r.find("CMAC-AES", None, "1.0").is_some());
+        // R17 DRBG families
+        assert!(r.find("ctrDRBG", None, "1.0").is_some());
+        assert!(r.find("hashDRBG", None, "1.0").is_some());
+        assert!(r.find("hmacDRBG", None, "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 26);
+        assert_eq!(r.len(), 29);
         assert!(!r.is_empty());
     }
 

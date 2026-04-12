@@ -49,8 +49,10 @@ const MAX_OUTLEN: usize = 64;
 const MAX_SEEDLEN: usize = 111;
 /// Upper bound on the total length of `entropy || nonce || personalization`
 /// (or `V || entropy || additional_input`) buffered for a single
-/// `Hash_df` call.
-pub const HASH_DRBG_MAX_DF_INPUT: usize = 256;
+/// `Hash_df` call. Sized to accommodate the largest ACVP payload:
+/// SHA2-512 with `entropy(320) + nonce(64) + perso(256) = 640`, plus
+/// headroom for the `V || entropy || additional` reseed path.
+pub const HASH_DRBG_MAX_DF_INPUT: usize = 768;
 /// Maximum output bytes per `generate` call (2^19 bits ≈ 64 KiB).
 const HASH_DRBG_MAX_BITS_PER_REQ: usize = 1 << 16;
 /// SP 800-90A Table 2 reseed interval.

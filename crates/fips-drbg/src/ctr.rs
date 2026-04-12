@@ -48,10 +48,10 @@ const MAX_SEED_LEN: usize = MAX_KEY_LEN + OUTLEN; // 48
 /// Upper bound on the length of any single byte string the DF is asked
 /// to process (`entropy || nonce || personalization_string`).
 ///
-/// Chosen to accommodate AES-256 with the SP 800-90A "minimum nonce"
-/// (`0.5 * security_strength`) plus a personalization string up to
-/// `seedlen`, with plenty of headroom for ACVP test vectors.
-pub const MAX_DF_INPUT: usize = 128;
+/// Chosen to accommodate the largest ACVP instantiate payload:
+/// AES-256 with `entropy(48) + nonce(48) + personalization(48) = 144`,
+/// rounded up to a convenient power of two.
+pub const MAX_DF_INPUT: usize = 192;
 /// SP 800-90A Table 3: maximum reseed interval for CTR_DRBG is `2^48`.
 const RESEED_INTERVAL: u64 = 1u64 << 48;
 

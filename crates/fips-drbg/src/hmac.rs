@@ -38,7 +38,7 @@ const MAX_OUTLEN: usize = 64;
 /// power-up KATs and internal use. Applications use the streaming
 /// interface, so this only bounds the stack scratch buffer used by
 /// instantiate / reseed / generate.
-pub const HMAC_DRBG_MAX_PROVIDED: usize = 256;
+pub const HMAC_DRBG_MAX_PROVIDED: usize = 768;
 /// SP 800-90A Table 2 reseed interval for HMAC_DRBG: 2^48 requests.
 const HMAC_DRBG_RESEED_INTERVAL: u64 = 1u64 << 48;
 /// Maximum output bytes per single `generate` call.
