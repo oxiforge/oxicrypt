@@ -23,7 +23,12 @@
 //! per `(algorithm, slice)` pair, each invoking a shared round-trip
 //! runner so a new handler is typically a three-line test.
 
-#![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::similar_names
+)]
 
 use acvp_harness::{dispatch, ensure_initialized, json, json::JsonValue};
 
@@ -1659,4 +1664,156 @@ fn kas_ecc_ssc_round_trip() {
         "z",
         "KAS-ECC-SSC",
     );
+}
+
+// ----------------------------------------------------------------------
+// RSA OAEP encrypt/decrypt (R27: RSA-2048 / SHA2-256, RFC8017)
+// ----------------------------------------------------------------------
+
+/// The OAEP slice contains two groups with different answer fields:
+/// - encrypt (direction=encrypt) → answer field `ct`
+/// - decrypt (direction=decrypt) → answer fields `pt`, `ptLen`
+///
+/// We strip answer fields *per-group* (encrypt: strip `ct` from its
+/// tests; decrypt: strip `pt`+`ptLen` from its tests), then dispatch
+/// and verify each direction's outputs.
+fn strip_oaep_answers(prompt: &mut JsonValue) {
+    let JsonValue::Object(top) = prompt else {
+        return;
+    };
+    let Some((_, groups_val)) = top.iter_mut().find(|(k, _)| k == "testGroups") else {
+        return;
+    };
+    let JsonValue::Array(groups) = groups_val else {
+        return;
+    };
+    for g in groups.iter_mut() {
+        let dir = g
+            .get("direction")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("")
+            .to_string();
+        let JsonValue::Object(g_kvs) = g else {
+            continue;
+        };
+        let Some((_, tests_val)) = g_kvs.iter_mut().find(|(k, _)| k == "tests") else {
+            continue;
+        };
+        let JsonValue::Array(tests) = tests_val else {
+            continue;
+        };
+        for tc in tests.iter_mut() {
+            match dir.as_str() {
+                "encrypt" => strip_field(tc, "ct"),
+                "decrypt" => {
+                    strip_field(tc, "pt");
+                    strip_field(tc, "ptLen");
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Collect `(tcId, value)` pairs for `field` only from groups whose
+/// `direction` matches.
+fn collect_answers_for_direction(
+    v: &JsonValue,
+    field: &str,
+    direction: &str,
+) -> Vec<(i64, String)> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let dir = g
+            .get("direction")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("");
+        if dir != direction {
+            continue;
+        }
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            let Some(val) = t.get(field).and_then(JsonValue::as_str) else {
+                continue;
+            };
+            out.push((tc_id, val.to_string()));
+        }
+    }
+    out
+}
+
+#[test]
+fn rsa_oaep_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/kat-slice.json",
+    );
+
+    // Collect expected answers from the correct groups only.
+    let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
+    let expected_pt = collect_answers_for_direction(&slice, "pt", "decrypt");
+
+    assert!(
+        !expected_ct.is_empty(),
+        "RSA-OAEP: no encrypt tests with field ct"
+    );
+    assert!(
+        !expected_pt.is_empty(),
+        "RSA-OAEP: no decrypt tests with field pt"
+    );
+
+    // Strip answer fields per-group to create the prompt.
+    let mut prompt = slice.clone();
+    strip_oaep_answers(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("RSA-OAEP: dispatch failed: {e}"));
+
+    // Verify encrypt direction (ct).  The response doesn't carry
+    // `direction`, but the encrypt group is first (tgId 1) and the
+    // decrypt group doesn't produce `ct`, so a global collect is fine
+    // for the response side.
+    let got_ct = collect_answers(&response, "ct");
+    assert_eq!(
+        got_ct.len(),
+        expected_ct.len(),
+        "RSA-OAEP encrypt: response has {} cases, expected {}",
+        got_ct.len(),
+        expected_ct.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_ct.iter().zip(got_ct.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP encrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP encrypt: ct mismatch for tcId {exp_tc}"
+        );
+    }
+
+    // Verify decrypt direction (pt).
+    let got_pt = collect_answers(&response, "pt");
+    assert_eq!(
+        got_pt.len(),
+        expected_pt.len(),
+        "RSA-OAEP decrypt: response has {} cases, expected {}",
+        got_pt.len(),
+        expected_pt.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_pt.iter().zip(got_pt.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP decrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP decrypt: pt mismatch for tcId {exp_tc}"
+        );
+    }
 }

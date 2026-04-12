@@ -110,6 +110,13 @@
 //!   `Sp800-56Ar3`, P-256 ECDH shared secret `Z = x(d * Q)` per
 //!   SP 800-56Ar3 §5.7.1.2
 //!
+//! R27 adds the RSA OAEP encrypt/decrypt handler:
+//!
+//! - [`rsa_oaep`] — `RSA` / `OAEP` revision `RFC8017`,
+//!   RSAES-OAEP encrypt (RFC 8017 §7.1.1, deterministic with
+//!   caller-supplied seed) and decrypt (§7.1.2, non-CRT) over
+//!   RSA-2048 / SHA2-256 with empty label
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -126,6 +133,7 @@ pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;
 pub mod rsa_decprim;
+pub mod rsa_oaep;
 pub mod rsa_siggen;
 pub mod rsa_sigprim;
 pub mod sha3;

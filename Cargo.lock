@@ -9,6 +9,7 @@ dependencies = [
  "fips-aes",
  "fips-cmac",
  "fips-drbg",
+ "fips-ecdh",
  "fips-ecdsa",
  "fips-eddsa",
  "fips-hmac",
