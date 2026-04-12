@@ -1,7 +1,8 @@
-//! TupleHash-128 / TupleHash-256 AFT handlers.
+//! TupleHash-128 / TupleHash-256 and TupleHashXOF-128 / TupleHashXOF-256 AFT handlers.
 //!
-//! Targets self-generated ACVP slices with `algorithm = "TupleHash-128"` or
-//! `"TupleHash-256"`, `revision = "1.0"`, `testType = "AFT"`.
+//! Targets self-generated ACVP slices with `algorithm = "TupleHash-128"`,
+//! `"TupleHash-256"`, `"TupleHashXOF-128"`, or `"TupleHashXOF-256"`,
+//! `revision = "1.0"`, `testType = "AFT"`.
 //!
 //! Each test case carries:
 //!
@@ -11,13 +12,16 @@
 //!
 //! Response field: `md` (hex).
 //!
+//! The XOF variants use the squeeze pattern (`finalize()` + `squeeze()`)
+//! rather than `finalize_into()`, producing extendable output.
+//!
 //! Since the NIST ACVP-Server at the pinned commit ships no TupleHash
 //! vector directories, all vectors are self-generated.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{TupleHash128, TupleHash256};
+use fips_xof::{TupleHash128, TupleHash256, TupleHashXof128, TupleHashXof256};
 
 /// TupleHash-128 AFT handler.
 pub struct TupleHash128Handler;
@@ -60,6 +64,54 @@ impl AlgorithmHandler for TupleHash256Handler {
                 h.update(elem);
             }
             h.finalize_into(out);
+            Ok(())
+        })
+    }
+}
+
+/// TupleHashXOF-128 AFT handler.
+pub struct TupleHashXof128Handler;
+
+/// TupleHashXOF-256 AFT handler.
+pub struct TupleHashXof256Handler;
+
+impl AlgorithmHandler for TupleHashXof128Handler {
+    fn algorithm(&self) -> &'static str {
+        "TupleHashXOF-128"
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_tuplehash_group(group, |elements: &[Vec<u8>], s: &[u8], out: &mut [u8]| {
+            let mut h = TupleHashXof128::new(s)
+                .map_err(|_| DispatchError::Crypto("TupleHashXof128::new returned Err"))?;
+            for elem in elements {
+                h.update(elem);
+            }
+            h.finalize();
+            h.squeeze(out);
+            Ok(())
+        })
+    }
+}
+
+impl AlgorithmHandler for TupleHashXof256Handler {
+    fn algorithm(&self) -> &'static str {
+        "TupleHashXOF-256"
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_tuplehash_group(group, |elements: &[Vec<u8>], s: &[u8], out: &mut [u8]| {
+            let mut h = TupleHashXof256::new(s)
+                .map_err(|_| DispatchError::Crypto("TupleHashXof256::new returned Err"))?;
+            for elem in elements {
+                h.update(elem);
+            }
+            h.finalize();
+            h.squeeze(out);
             Ok(())
         })
     }

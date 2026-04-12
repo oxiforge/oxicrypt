@@ -1,7 +1,9 @@
-//! ParallelHash-128 / ParallelHash-256 AFT handlers.
+//! ParallelHash-128 / ParallelHash-256 and ParallelHashXOF-128 / ParallelHashXOF-256
+//! AFT handlers.
 //!
-//! Targets self-generated ACVP slices with `algorithm = "ParallelHash-128"`
-//! or `"ParallelHash-256"`, `revision = "1.0"`, `testType = "AFT"`.
+//! Targets self-generated ACVP slices with `algorithm = "ParallelHash-128"`,
+//! `"ParallelHash-256"`, `"ParallelHashXOF-128"`, or `"ParallelHashXOF-256"`,
+//! `revision = "1.0"`, `testType = "AFT"`.
 //!
 //! Each test case carries:
 //!
@@ -17,13 +19,16 @@
 //!
 //! Response field: `md` (hex).
 //!
+//! The XOF variants use the squeeze pattern (`finalize()` + `squeeze()`)
+//! rather than `finalize_into()`, producing extendable output.
+//!
 //! Since the NIST ACVP-Server at the pinned commit ships no ParallelHash
 //! vector directories, all vectors are self-generated.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{ParallelHash128, ParallelHash256};
+use fips_xof::{ParallelHash128, ParallelHash256, ParallelHashXof128, ParallelHashXof256};
 
 /// ParallelHash-128 AFT handler.
 pub struct ParallelHash128Handler;
@@ -62,6 +67,50 @@ impl AlgorithmHandler for ParallelHash256Handler {
                 .map_err(|_| DispatchError::Crypto("ParallelHash256::new returned Err"))?;
             h.update(msg);
             h.finalize_into(out);
+            Ok(())
+        })
+    }
+}
+
+/// ParallelHashXOF-128 AFT handler.
+pub struct ParallelHashXof128Handler;
+
+/// ParallelHashXOF-256 AFT handler.
+pub struct ParallelHashXof256Handler;
+
+impl AlgorithmHandler for ParallelHashXof128Handler {
+    fn algorithm(&self) -> &'static str {
+        "ParallelHashXOF-128"
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_parallelhash_group(group, |msg, block_size, s, out| {
+            let mut h = ParallelHashXof128::new(block_size, s)
+                .map_err(|_| DispatchError::Crypto("ParallelHashXof128::new returned Err"))?;
+            h.update(msg);
+            h.finalize();
+            h.squeeze(out);
+            Ok(())
+        })
+    }
+}
+
+impl AlgorithmHandler for ParallelHashXof256Handler {
+    fn algorithm(&self) -> &'static str {
+        "ParallelHashXOF-256"
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_parallelhash_group(group, |msg, block_size, s, out| {
+            let mut h = ParallelHashXof256::new(block_size, s)
+                .map_err(|_| DispatchError::Crypto("ParallelHashXof256::new returned Err"))?;
+            h.update(msg);
+            h.finalize();
+            h.squeeze(out);
             Ok(())
         })
     }

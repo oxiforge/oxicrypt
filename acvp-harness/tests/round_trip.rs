@@ -2767,3 +2767,59 @@ fn pbkdf2_aft_round_trip() {
         "PBKDF2",
     );
 }
+
+// ── R56: SP 800-185 XOF variants ───────────────────────────────────
+
+#[test]
+fn kmacxof_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMACXOF-128-1.0/kat-slice.json",
+        "mac",
+        "KMACXOF-128",
+    );
+}
+
+#[test]
+fn kmacxof_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMACXOF-256-1.0/kat-slice.json",
+        "mac",
+        "KMACXOF-256",
+    );
+}
+
+#[test]
+fn tuplehashxof_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/TupleHashXOF-128-1.0/kat-slice.json",
+        "md",
+        "TupleHashXOF-128",
+    );
+}
+
+#[test]
+fn tuplehashxof_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/TupleHashXOF-256-1.0/kat-slice.json",
+        "md",
+        "TupleHashXOF-256",
+    );
+}
+
+#[test]
+fn parallelhashxof_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ParallelHashXOF-128-1.0/kat-slice.json",
+        "md",
+        "ParallelHashXOF-128",
+    );
+}
+
+#[test]
+fn parallelhashxof_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ParallelHashXOF-256-1.0/kat-slice.json",
+        "md",
+        "ParallelHashXOF-256",
+    );
+}

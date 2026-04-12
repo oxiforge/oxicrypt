@@ -1,7 +1,8 @@
-//! KMAC-128 / KMAC-256 AFT handlers.
+//! KMAC-128 / KMAC-256 and KMACXOF-128 / KMACXOF-256 AFT handlers.
 //!
-//! Targets self-generated ACVP slices with `algorithm = "KMAC-128"` or
-//! `"KMAC-256"`, `revision = "1.0"`, `testType = "AFT"`.
+//! Targets self-generated ACVP slices with `algorithm = "KMAC-128"`,
+//! `"KMAC-256"`, `"KMACXOF-128"`, or `"KMACXOF-256"`, `revision = "1.0"`,
+//! `testType = "AFT"`.
 //!
 //! Each test case carries:
 //!
@@ -14,13 +15,16 @@
 //!
 //! Response field: `mac` (hex).
 //!
+//! The XOF variants use the squeeze pattern (`finalize()` + `squeeze()`)
+//! rather than `finalize_into()`, producing extendable output.
+//!
 //! Since the NIST ACVP-Server at the pinned commit ships no KMAC
 //! vector directories, all vectors are self-generated.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{Kmac128, Kmac256};
+use fips_xof::{Kmac128, Kmac256, KmacXof128, KmacXof256};
 
 /// KMAC-128 AFT handler.
 pub struct Kmac128Handler;
@@ -59,6 +63,50 @@ impl AlgorithmHandler for Kmac256Handler {
                 .map_err(|_| DispatchError::Crypto("Kmac256::new returned Err"))?;
             m.update(msg);
             m.finalize_into(out);
+            Ok(())
+        })
+    }
+}
+
+/// KMACXOF-128 AFT handler.
+pub struct KmacXof128Handler;
+
+/// KMACXOF-256 AFT handler.
+pub struct KmacXof256Handler;
+
+impl AlgorithmHandler for KmacXof128Handler {
+    fn algorithm(&self) -> &'static str {
+        "KMACXOF-128"
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_kmac_group(group, |key, msg, s, out| {
+            let mut m = KmacXof128::new(key, s)
+                .map_err(|_| DispatchError::Crypto("KmacXof128::new returned Err"))?;
+            m.update(msg);
+            m.finalize();
+            m.squeeze(out);
+            Ok(())
+        })
+    }
+}
+
+impl AlgorithmHandler for KmacXof256Handler {
+    fn algorithm(&self) -> &'static str {
+        "KMACXOF-256"
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_kmac_group(group, |key, msg, s, out| {
+            let mut m = KmacXof256::new(key, s)
+                .map_err(|_| DispatchError::Crypto("KmacXof256::new returned Err"))?;
+            m.update(msg);
+            m.finalize();
+            m.squeeze(out);
             Ok(())
         })
     }

@@ -272,6 +272,17 @@
 //!   `hmacAlg` selection across SHA-1, SHA2, and SHA3 HMAC
 //!   instantiations, per SP 800-132 / RFC 8018 §5.2
 //!
+//! R56 adds SP 800-185 XOF variant handlers — KMACXOF, TupleHashXOF,
+//! and ParallelHashXOF — completing the SP 800-185 derived-function
+//! coverage:
+//!
+//! - [`kmac`] — `KMACXOF-128`, `KMACXOF-256` revision `1.0`, AFT with
+//!   keyed XOF output via `finalize()` + `squeeze()` pattern
+//! - [`tuplehash`] — `TupleHashXOF-128`, `TupleHashXOF-256` revision
+//!   `1.0`, AFT with tuple-element array and XOF squeeze output
+//! - [`parallelhash`] — `ParallelHashXOF-128`, `ParallelHashXOF-256`
+//!   revision `1.0`, AFT with configurable block size B and XOF output
+//!
 //! All SP 800-185 and PBKDF vectors are self-generated because the
 //! NIST ACVP-Server at the pinned commit ships no cSHAKE/KMAC/
 //! TupleHash/ParallelHash/PBKDF vector directories.

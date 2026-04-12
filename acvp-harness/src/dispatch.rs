@@ -311,6 +311,13 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::tuplehash::TupleHash256Handler));
     r.register(Box::new(handlers::parallelhash::ParallelHash128Handler));
     r.register(Box::new(handlers::parallelhash::ParallelHash256Handler));
+    // SP 800-185 XOF variants (R56: self-generated vectors)
+    r.register(Box::new(handlers::kmac::KmacXof128Handler));
+    r.register(Box::new(handlers::kmac::KmacXof256Handler));
+    r.register(Box::new(handlers::tuplehash::TupleHashXof128Handler));
+    r.register(Box::new(handlers::tuplehash::TupleHashXof256Handler));
+    r.register(Box::new(handlers::parallelhash::ParallelHashXof128Handler));
+    r.register(Box::new(handlers::parallelhash::ParallelHashXof256Handler));
     // PBKDF2 (SP 800-132 / RFC 8018, R55: self-generated vectors)
     r.register(Box::new(handlers::pbkdf2::Pbkdf2Handler));
     r
@@ -446,12 +453,19 @@ mod tests {
         assert!(r.find("ParallelHash-256", None, "1.0").is_some());
         // R55 PBKDF2
         assert!(r.find("PBKDF", None, "1.0").is_some());
+        // R56 SP 800-185 XOF variants
+        assert!(r.find("KMACXOF-128", None, "1.0").is_some());
+        assert!(r.find("KMACXOF-256", None, "1.0").is_some());
+        assert!(r.find("TupleHashXOF-128", None, "1.0").is_some());
+        assert!(r.find("TupleHashXOF-256", None, "1.0").is_some());
+        assert!(r.find("ParallelHashXOF-128", None, "1.0").is_some());
+        assert!(r.find("ParallelHashXOF-256", None, "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 56);
+        assert_eq!(r.len(), 62);
         assert!(!r.is_empty());
     }
 

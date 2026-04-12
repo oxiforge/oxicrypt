@@ -1,0 +1,47 @@
+{
+  "algorithm": "TupleHashXOF-256",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 1,
+          "outLen": 512,
+          "tuple": ["000102", "101112131415"],
+          "hexCustomization": "",
+          "md": "03DED4610ED6450A1E3F8BC44951D14FBC384AB0EFE57B000DF6B6DF5AAE7CD568E77377DAF13F37EC75CF5FC598B6841D51DD207C991CD45D210BA60AC52EB9"
+        },
+        {
+          "tcId": 2,
+          "outLen": 512,
+          "tuple": ["000102", "101112131415"],
+          "hexCustomization": "4D79205475706C6520417070",
+          "md": "6483CB3C9952EB20E830AF4785851FC597EE3BF93BB7602C0EF6A65D741AECA7E63C3B128981AA05C6D27438C79D2754BB1B7191F125D6620FCA12CE658B2442"
+        },
+        {
+          "tcId": 3,
+          "outLen": 512,
+          "tuple": ["ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"],
+          "hexCustomization": "",
+          "md": "6F3A7DEA343AE92EAC9752C3AF8D2D1F7602A6C6EDE744AA0C64D47B9BCDC38A334D50463591C8475624FFD0864DB89D23A0BF46061165DEC31935892C559966"
+        },
+        {
+          "tcId": 4,
+          "outLen": 512,
+          "tuple": ["01", "0203", "040506"],
+          "hexCustomization": "547269706C65",
+          "md": "70B2DCEFB950C8C82122AE738D45C352DEA5A5AF6A16BFC3ABD5A133B358D9B544F3DEF3C782E568C8DB2E099AE3DEEF5A7761AA64A066492EA8A13069C5602D"
+        },
+        {
+          "tcId": 5,
+          "outLen": 512,
+          "tuple": ["", "FF"],
+          "hexCustomization": "",
+          "md": "49C4FEBA2805FBDA020241F2F29C3F5248ABFE451F8CBE4AEB4545580493ABA542D15E53350E959C51199488F60392194B24F859278BE40BCBE0EA354175AA31"
+        }
+      ]
+    }
+  ]
+}
