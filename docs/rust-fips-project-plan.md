@@ -14,7 +14,7 @@ This project aims to develop a pure-Rust cryptographic library that meets FIPS 1
 
 - `fips-module` — state machine (`PowerOff → SelfTest → Operational | Error`), power-up KAT registry, approved-mode indicator.
 - `fips-sha` — SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256, full SHA-3 family.
-- `fips-xof` — SHAKE128, SHAKE256.
+- `fips-xof` — SHAKE128/256, cSHAKE128/256, KMAC128/256, KMACXOF128/256, TupleHash128/256, TupleHashXOF128/256, ParallelHash128/256, ParallelHashXOF128/256.
 - `fips-hmac` — HMAC over all 11 approved hash variants.
 - `fips-kdf` — HKDF (RFC 5869) over all 11 HMACs, SP 800-108r1 KBKDF **Counter**, **Feedback**, and **Double-Pipeline Iteration** modes over all 11 HMACs.
 - `fips-aes` — AES-128/192/256 in ECB, CBC, CTR, GCM, CCM, KW, KWP modes with power-up KATs.
@@ -92,7 +92,7 @@ rust-fips-crypto/
 │   ├── fips-ecdh/            # ECDH (SP 800-56Ar3)
 │   ├── fips-eddsa/           # Ed25519, Ed448 (FIPS 186-5)
 │   ├── fips-kdf/             # SP 800-108 KDF, SP 800-56C, HKDF, PBKDF2 (conditional)
-│   ├── fips-xof/             # SHAKE128, SHAKE256, cSHAKE, KMAC
+│   ├── fips-xof/             # SHAKE, cSHAKE, KMAC, TupleHash, ParallelHash
 │   ├── fips-cmac/            # AES-CMAC
 │   └── fips-tls-kdf/         # TLS 1.2/1.3 KDF (SP 800-135)
 ├── acvp-harness/             # ACVP JSON test vector client
@@ -306,7 +306,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 
 **Goal:** Security policy, side-channel hardening, audit readiness
 
-- [~] `fips-xof`: cSHAKE landed (R49 — SP 800-185 §3, CShake128/CShake256 with bytepad prefix, domain 0x04, empty-N-S fallback to SHAKE); KMAC128/KMAC256 landed (R50 — SP 800-185 §4, KmacCore<RATE> generic absorbs `bytepad(encode_string(K), rate)` then message then `right_encode(L)`, finalized through cSHAKE with N="KMAC"; streaming `Kmac{128,256}` types + one-shot `kmac{128,256}` wrappers; two power-up KATs from NIST KMAC_samples.pdf — Sample #1 KMAC128 and Sample #5 KMAC256; `fips_xof::KATS` now 6 entries); KMACXOF128/KMACXOF256 landed (R51 — SP 800-185 §4.3.1, XOF variant with `right_encode(0)`, streaming `KmacXof{128,256}` types + one-shot `kmacxof{128,256}` wrappers; two power-up KATs cross-checked against pycryptodome cSHAKE_XOF; `fips_xof::KATS` now 8 entries); TupleHash128/TupleHash256 + TupleHashXOF128/TupleHashXOF256 landed (R52 — SP 800-185 §5/§5.3.1, TupleHashCore<RATE> wraps each update element with encode_string for unambiguous tuple framing, fixed-output and XOF variants; two power-up KATs from SP 800-185 §A.3/§A.4 Sample #1; `fips_xof::KATS` now 10 entries)
+- [~] `fips-xof`: cSHAKE landed (R49 — SP 800-185 §3, CShake128/CShake256 with bytepad prefix, domain 0x04, empty-N-S fallback to SHAKE); KMAC128/KMAC256 landed (R50 — SP 800-185 §4, KmacCore<RATE> generic absorbs `bytepad(encode_string(K), rate)` then message then `right_encode(L)`, finalized through cSHAKE with N="KMAC"; streaming `Kmac{128,256}` types + one-shot `kmac{128,256}` wrappers; two power-up KATs from NIST KMAC_samples.pdf — Sample #1 KMAC128 and Sample #5 KMAC256; `fips_xof::KATS` now 6 entries); KMACXOF128/KMACXOF256 landed (R51 — SP 800-185 §4.3.1, XOF variant with `right_encode(0)`, streaming `KmacXof{128,256}` types + one-shot `kmacxof{128,256}` wrappers; two power-up KATs cross-checked against pycryptodome cSHAKE_XOF; `fips_xof::KATS` now 8 entries); TupleHash128/TupleHash256 + TupleHashXOF128/TupleHashXOF256 landed (R52 — SP 800-185 §5/§5.3.1, TupleHashCore<RATE> wraps each update element with encode_string for unambiguous tuple framing, fixed-output and XOF variants; two power-up KATs from SP 800-185 §A.3/§A.4 Sample #1; `fips_xof::KATS` now 10 entries); ParallelHash128/ParallelHash256 + ParallelHashXOF128/ParallelHashXOF256 landed (R53 — SP 800-185 §6/§6.3.1, ParallelHashCore<RATE, INNER_LEN> splits input into B-byte blocks, hashes each through inner SHAKE to INNER_LEN bytes, feeds `left_encode(B) || inner_hashes || right_encode(n) || right_encode(L)` through outer cSHAKE with N="ParallelHash"; streaming API buffers up to B bytes; XOF variant uses `right_encode(0)`; ParallelHash128 KAT from NIST ParallelHash_samples.pdf Sample #1, ParallelHash256 KAT cross-checked against pycryptodome; `fips_xof::KATS` now 12 entries; 55 unit tests pass)
 - [ ] PBKDF2 (P2)
 - [ ] Constant-time audit of all secret-dependent operations
 - [ ] Fuzzing campaign: all algorithm entry points via `cargo-fuzz`

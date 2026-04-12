@@ -1,7 +1,11 @@
 //! SHAKE128 / SHAKE256 extendable-output functions per FIPS 202 §6.2,
 //! cSHAKE128 / cSHAKE256 per SP 800-185 §3, KMAC128 / KMAC256
-//! keyed message authentication codes per SP 800-185 §4, and
-//! KMACXOF128 / KMACXOF256 XOF variants per SP 800-185 §4.3.1.
+//! keyed message authentication codes per SP 800-185 §4,
+//! KMACXOF128 / KMACXOF256 XOF variants per SP 800-185 §4.3.1,
+//! TupleHash128 / TupleHash256 per SP 800-185 §5,
+//! TupleHashXOF128 / TupleHashXOF256 per SP 800-185 §5.3.1,
+//! ParallelHash128 / ParallelHash256 per SP 800-185 §6, and
+//! ParallelHashXOF128 / ParallelHashXOF256 per SP 800-185 §6.3.1.
 //!
 //! # Approved algorithms
 //!
@@ -19,6 +23,10 @@
 //! | TupleHash256 | SP 800-185 §5 | 136 | 512 |
 //! | TupleHashXOF128 | SP 800-185 §5.3.1 | 168 | 256 |
 //! | TupleHashXOF256 | SP 800-185 §5.3.1 | 136 | 512 |
+//! | ParallelHash128 | SP 800-185 §6 | 168 | 256 |
+//! | ParallelHash256 | SP 800-185 §6 | 136 | 512 |
+//! | ParallelHashXOF128 | SP 800-185 §6.3.1 | 168 | 256 |
+//! | ParallelHashXOF256 | SP 800-185 §6.3.1 | 136 | 512 |
 //!
 //! SHAKE uses the domain-separation byte `0x1f` (FIPS 202 §B.2);
 //! cSHAKE uses `0x04` (SP 800-185 §3.1) and prepends a
@@ -30,7 +38,10 @@
 //! `right_encode(0)` instead of `right_encode(L)`, enabling XOF-mode
 //! output of arbitrary length. TupleHash (§5) hashes tuples of byte
 //! strings with unambiguous element separation via `encode_string`;
-//! TupleHashXOF is its XOF variant.
+//! TupleHashXOF is its XOF variant. ParallelHash (§6) splits input
+//! into `B`-byte blocks, hashes each with an inner SHAKE, then feeds
+//! the concatenated inner-hash outputs through an outer cSHAKE with
+//! `N = "ParallelHash"`; ParallelHashXOF is its XOF variant.
 //!
 //! # API shape
 //!
@@ -42,15 +53,18 @@
 //! uses `new → update* → finalize → squeeze*` like SHAKE/cSHAKE.
 //! TupleHash uses `new → update* → finalize_into` (each `update`
 //! adds one tuple element); TupleHashXOF uses
-//! `new → update* → finalize → squeeze*`.
+//! `new → update* → finalize → squeeze*`. ParallelHash uses
+//! `new(block_size, s) → update* → finalize_into`; ParallelHashXOF
+//! uses `new(block_size, s) → update* → finalize → squeeze*`.
 //!
 //! # Power-up self-tests
 //!
 //! [`KATS`] exposes one pinned SHAKE128, one pinned SHAKE256,
 //! one pinned cSHAKE128, one pinned cSHAKE256, one pinned KMAC128,
 //! one pinned KMAC256, one pinned KMACXOF128, one pinned
-//! KMACXOF256, one pinned TupleHash128, and one pinned
-//! TupleHash256 vector.
+//! KMACXOF256, one pinned TupleHash128, one pinned TupleHash256,
+//! one pinned ParallelHash128, and one pinned ParallelHash256
+//! vector.
 //!
 //! # Sensitive security parameters
 //!
@@ -978,6 +992,297 @@ impl TupleHashXof256 {
 }
 
 // ========================================================================
+// ParallelHash — SP 800-185 §6
+// ========================================================================
+
+/// Internal ParallelHash state, parameterized by sponge rate and
+/// inner-hash output length `INNER_LEN` (32 for PH128, 64 for PH256).
+///
+/// Implements SP 800-185 §6:
+///
+/// ```text
+/// ParallelHash(X, B, L, S):
+///   1. n = ⌈len(X) / B⌉
+///   2. For j = 0..n-1: Hj = inner_hash(Xj, INNER_LEN*8)
+///   3. newX = left_encode(B) || H0 || H1 || ... || right_encode(n) || right_encode(L)
+///   4. return cSHAKE(newX, L, "ParallelHash", S)
+/// ```
+///
+/// The inner hash is `cSHAKE(Xj, INNER_LEN*8, "", "")` which reduces
+/// to plain SHAKE (FIPS 202).
+///
+/// # Streaming API
+///
+/// Because ParallelHash must buffer full B-byte blocks (each block is
+/// independently hashed), the streaming API buffers up to `B` bytes
+/// internally and flushes blocks to the inner hash as they complete.
+/// The maximum block size is 8192 bytes.
+struct ParallelHashCore<const RATE: usize, const INNER_LEN: usize> {
+    /// Outer cSHAKE accumulates `left_encode(B)` + inner-hash outputs.
+    outer: CShakeCore<RATE>,
+    /// Per-block buffer. Blocks are flushed when `buf_pos == block_size`.
+    buf: [u8; 8192],
+    /// Current write position in `buf`.
+    buf_pos: usize,
+    /// Block size `B` in bytes.
+    block_size: usize,
+    /// Number of complete blocks hashed so far.
+    block_count: usize,
+}
+
+impl<const RATE: usize, const INNER_LEN: usize> ParallelHashCore<RATE, INNER_LEN> {
+    /// Create a new ParallelHash core.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `block_size == 0` or `block_size > 8192`.
+    fn new_internal(block_size: usize, s: &[u8]) -> Self {
+        assert!(block_size > 0, "ParallelHash block_size must be > 0");
+        assert!(
+            block_size <= 8192,
+            "ParallelHash block_size must be <= 8192"
+        );
+        let mut outer = CShakeCore::<RATE>::new_internal(b"ParallelHash", s);
+        // Absorb left_encode(B)
+        let mut buf = [0u8; 9];
+        let len = left_encode(block_size, &mut buf);
+        outer.update(&buf[..len]);
+        Self {
+            outer,
+            buf: [0u8; 8192],
+            buf_pos: 0,
+            block_size,
+            block_count: 0,
+        }
+    }
+
+    /// Feed data into the hasher. Full B-byte blocks are immediately
+    /// hashed through the inner SHAKE and the result absorbed into the
+    /// outer cSHAKE; a trailing partial block is buffered.
+    fn update(&mut self, data: &[u8]) {
+        let mut offset = 0;
+        while offset < data.len() {
+            let space = self.block_size - self.buf_pos;
+            let chunk = if data.len() - offset < space {
+                data.len() - offset
+            } else {
+                space
+            };
+            self.buf[self.buf_pos..self.buf_pos + chunk]
+                .copy_from_slice(&data[offset..offset + chunk]);
+            self.buf_pos += chunk;
+            offset += chunk;
+            if self.buf_pos == self.block_size {
+                self.flush_block();
+            }
+        }
+    }
+
+    /// Hash the current block buffer through inner SHAKE and absorb
+    /// the INNER_LEN-byte result into the outer cSHAKE.
+    fn flush_block(&mut self) {
+        let mut inner = ShakeCore::<RATE>::new_internal();
+        inner.update(&self.buf[..self.buf_pos]);
+        inner.finalize();
+        let mut h = [0u8; 64]; // max INNER_LEN is 64
+        inner.squeeze(&mut h[..INNER_LEN]);
+        self.outer.update(&h[..INNER_LEN]);
+        self.block_count += 1;
+        self.buf_pos = 0;
+    }
+
+    /// Finalize for fixed-length output. Flushes the trailing partial
+    /// block (if any), appends `right_encode(n) || right_encode(L)`,
+    /// finalizes the outer cSHAKE, and squeezes `out.len()` bytes.
+    fn finalize_into(&mut self, out: &mut [u8]) {
+        // Flush trailing partial block
+        if self.buf_pos > 0 {
+            self.flush_block();
+        }
+        // right_encode(n)
+        let mut buf = [0u8; 9];
+        let len = right_encode(self.block_count, &mut buf);
+        self.outer.update(&buf[..len]);
+        // right_encode(L) where L = output length in bits
+        let len = right_encode(out.len() * 8, &mut buf);
+        self.outer.update(&buf[..len]);
+        self.outer.finalize();
+        self.outer.squeeze(out);
+    }
+
+    /// Finalize for XOF output. Flushes the trailing partial block
+    /// (if any), appends `right_encode(n) || right_encode(0)`, and
+    /// finalizes the outer cSHAKE. Call `squeeze` afterwards.
+    fn finalize_xof(&mut self) {
+        if self.buf_pos > 0 {
+            self.flush_block();
+        }
+        let mut buf = [0u8; 9];
+        let len = right_encode(self.block_count, &mut buf);
+        self.outer.update(&buf[..len]);
+        // right_encode(0) = 0x00 0x01
+        self.outer.update(&[0x00, 0x01]);
+        self.outer.finalize();
+    }
+
+    /// Squeeze `out.len()` bytes from the XOF. Only valid after
+    /// `finalize_xof`.
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.outer.squeeze(out);
+    }
+}
+
+// ── ParallelHash128 ─────────────────────────────────────────────────
+
+/// ParallelHash128 (SP 800-185 §6).
+///
+/// Splits the input into `B`-byte blocks, hashes each with an inner
+/// SHAKE128 to 256 bits, then feeds the concatenated inner hashes
+/// through an outer cSHAKE128 with `N = "ParallelHash"`.
+pub struct ParallelHash128 {
+    core: ParallelHashCore<SHAKE128_RATE, 32>,
+}
+
+impl ParallelHash128 {
+    /// Creates a new instance with block size `block_size` and
+    /// customization string `s`, gated on module state.
+    pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(block_size, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(block_size: usize, s: &[u8]) -> Self {
+        Self {
+            core: ParallelHashCore::new_internal(block_size, s),
+        }
+    }
+
+    /// Feeds `data` into the hasher.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes and writes the hash to `out`.
+    pub fn finalize_into(&mut self, out: &mut [u8]) {
+        self.core.finalize_into(out);
+    }
+}
+
+/// ParallelHash256 (SP 800-185 §6).
+///
+/// Like [`ParallelHash128`] but with 512-bit security: the inner hash
+/// is SHAKE256 squeezed to 512 bits and the outer is cSHAKE256.
+pub struct ParallelHash256 {
+    core: ParallelHashCore<SHAKE256_RATE, 64>,
+}
+
+impl ParallelHash256 {
+    /// Creates a new instance with block size `block_size` and
+    /// customization string `s`, gated on module state.
+    pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(block_size, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(block_size: usize, s: &[u8]) -> Self {
+        Self {
+            core: ParallelHashCore::new_internal(block_size, s),
+        }
+    }
+
+    /// Feeds `data` into the hasher.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes and writes the hash to `out`.
+    pub fn finalize_into(&mut self, out: &mut [u8]) {
+        self.core.finalize_into(out);
+    }
+}
+
+// ── ParallelHashXOF128 ──────────────────────────────────────────────
+
+/// ParallelHashXOF128 (SP 800-185 §6.3.1).
+///
+/// XOF variant of ParallelHash128 — uses `right_encode(0)` to signal
+/// arbitrary-length output.
+pub struct ParallelHashXof128 {
+    core: ParallelHashCore<SHAKE128_RATE, 32>,
+}
+
+impl ParallelHashXof128 {
+    /// Creates a new instance, gated on module state.
+    pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(block_size, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(block_size: usize, s: &[u8]) -> Self {
+        Self {
+            core: ParallelHashCore::new_internal(block_size, s),
+        }
+    }
+
+    /// Feeds `data` into the hasher.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes the XOF. Call [`squeeze`](ParallelHashXof128::squeeze)
+    /// afterwards.
+    pub fn finalize(&mut self) {
+        self.core.finalize_xof();
+    }
+
+    /// Squeezes `out.len()` bytes. May be called repeatedly.
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        self.core.squeeze(out);
+    }
+}
+
+/// ParallelHashXOF256 (SP 800-185 §6.3.1).
+///
+/// XOF variant of ParallelHash256.
+pub struct ParallelHashXof256 {
+    core: ParallelHashCore<SHAKE256_RATE, 64>,
+}
+
+impl ParallelHashXof256 {
+    /// Creates a new instance, gated on module state.
+    pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(block_size, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(block_size: usize, s: &[u8]) -> Self {
+        Self {
+            core: ParallelHashCore::new_internal(block_size, s),
+        }
+    }
+
+    /// Feeds `data` into the hasher.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes the XOF. Call [`squeeze`](ParallelHashXof256::squeeze)
+    /// afterwards.
+    pub fn finalize(&mut self) {
+        self.core.finalize_xof();
+    }
+
+    /// Squeezes `out.len()` bytes. May be called repeatedly.
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        self.core.squeeze(out);
+    }
+}
+
+// ========================================================================
 // Power-up self-tests
 // ========================================================================
 
@@ -1287,6 +1592,73 @@ pub fn self_test_tuplehash256() -> Result<(), SelfTestFailure> {
     }
 }
 
+// ── ParallelHash128 KAT ──────────────────────────────────────────────
+
+/// ParallelHash128 KAT data: NIST ParallelHash_samples Sample #1.
+///
+/// Data = 24 bytes, B = 8, S = "", L = 256 bits.
+const KAT_PH128_DATA: [u8; 24] = [
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+];
+
+/// Expected ParallelHash128 output (Sample #1, 32 bytes).
+const KAT_PH128_EXPECTED: [u8; 32] = [
+    0xba, 0x8d, 0xc1, 0xd1, 0xd9, 0x79, 0x33, 0x1d,
+    0x3f, 0x81, 0x36, 0x03, 0xc6, 0x7f, 0x72, 0x60,
+    0x9a, 0xb5, 0xe4, 0x4b, 0x94, 0xa0, 0xb8, 0xf9,
+    0xaf, 0x46, 0x51, 0x44, 0x54, 0xa2, 0xb4, 0xf5,
+];
+
+/// Power-up known-answer test for ParallelHash128.
+///
+/// NIST `ParallelHash_samples.pdf` Sample #1:
+/// `ParallelHash128(data, B=8, "", 256)`.
+pub fn self_test_parallelhash128() -> Result<(), SelfTestFailure> {
+    let mut h = ParallelHash128::new_internal(8, b"");
+    h.update(&KAT_PH128_DATA);
+    let mut out = [0u8; 32];
+    h.finalize_into(&mut out);
+    if out == KAT_PH128_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
+// ── ParallelHash256 KAT ──────────────────────────────────────────────
+
+/// Expected ParallelHash256 output (Sample #1 equivalent, 64 bytes).
+///
+/// `ParallelHash256(KAT_PH128_DATA, B=8, "", 512)`.
+/// Cross-checked via pycryptodome cSHAKE256_XOF with N="ParallelHash".
+const KAT_PH256_EXPECTED: [u8; 64] = [
+    0xbc, 0x1e, 0xf1, 0x24, 0xda, 0x34, 0x49, 0x5e,
+    0x94, 0x8e, 0xad, 0x20, 0x7d, 0xd9, 0x84, 0x22,
+    0x35, 0xda, 0x43, 0x2d, 0x2b, 0xbc, 0x54, 0xb4,
+    0xc1, 0x10, 0xe6, 0x4c, 0x45, 0x11, 0x05, 0x53,
+    0x1b, 0x7f, 0x2a, 0x3e, 0x0c, 0xe0, 0x55, 0xc0,
+    0x28, 0x05, 0xe7, 0xc2, 0xde, 0x1f, 0xb7, 0x46,
+    0xaf, 0x97, 0xa1, 0xdd, 0x01, 0xf4, 0x3b, 0x82,
+    0x4e, 0x31, 0xb8, 0x76, 0x12, 0x41, 0x04, 0x29,
+];
+
+/// Power-up known-answer test for ParallelHash256.
+///
+/// `ParallelHash256(KAT_PH128_DATA, B=8, "", 512)`.
+pub fn self_test_parallelhash256() -> Result<(), SelfTestFailure> {
+    let mut h = ParallelHash256::new_internal(8, b"");
+    h.update(&KAT_PH128_DATA);
+    let mut out = [0u8; 64];
+    h.finalize_into(&mut out);
+    if out == KAT_PH256_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
@@ -1329,6 +1701,14 @@ pub const KATS: &[KatEntry] = &[
         name: "TupleHash256 KAT (SP 800-185 §A.4 Sample #1)",
         run: self_test_tuplehash256,
     },
+    KatEntry {
+        name: "ParallelHash128 KAT (NIST ParallelHash_samples #1, SP 800-185 §6)",
+        run: self_test_parallelhash128,
+    },
+    KatEntry {
+        name: "ParallelHash256 KAT (SP 800-185 §6, pycryptodome cross-check)",
+        run: self_test_parallelhash256,
+    },
 ];
 
 // ========================================================================
@@ -1342,9 +1722,11 @@ mod tests {
         self_test_128, self_test_256, self_test_cshake128, self_test_cshake256,
         self_test_kmac128, self_test_kmac256, self_test_kmacxof128,
         self_test_kmacxof256, self_test_tuplehash128, self_test_tuplehash256,
+        self_test_parallelhash128, self_test_parallelhash256,
         shake128, shake256, CShake128, CShake256, Kmac128, Kmac256,
         KmacXof128, KmacXof256, Shake128, Shake256, TupleHash128,
         TupleHash256, TupleHashXof128, TupleHashXof256,
+        ParallelHash128, ParallelHash256, ParallelHashXof128, ParallelHashXof256,
         KAT_SHAKE128_EMPTY_32, KAT_SHAKE256_EMPTY_64,
     };
     use fips_module::{initialize_with_tests, KatEntry};
@@ -1409,6 +1791,14 @@ mod tests {
             KatEntry {
                 name: "tuplehash256-bootstrap",
                 run: self_test_tuplehash256,
+            },
+            KatEntry {
+                name: "parallelhash128-bootstrap",
+                run: self_test_parallelhash128,
+            },
+            KatEntry {
+                name: "parallelhash256-bootstrap",
+                run: self_test_parallelhash256,
             },
         ]);
     }
@@ -2010,5 +2400,251 @@ mod tests {
         h2.finalize_into(&mut out2);
 
         assert_ne!(out1, out2, "different tuples must produce different hashes");
+    }
+
+    // ── ParallelHash tests ──────────────────────────────────────
+
+    #[test]
+    fn parallelhash128_self_test_passes() {
+        self_test_parallelhash128().unwrap();
+    }
+
+    #[test]
+    fn parallelhash256_self_test_passes() {
+        self_test_parallelhash256().unwrap();
+    }
+
+    #[test]
+    fn parallelhash128_sample2() {
+        // NIST ParallelHash_samples Sample #2: B=8, S="Parallel Data"
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let expected: [u8; 32] = hex(
+            "fc484dcb3f84dceedc353438151bee58157d6efed0445a81f165e495795b7206",
+        );
+        let mut h = ParallelHash128::new_internal(8, b"Parallel Data");
+        h.update(&data);
+        let mut out = [0u8; 32];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhash128_sample3() {
+        // NIST ParallelHash_samples Sample #3: B=12, S="Parallel Data", 72-byte data
+        let data: [u8; 72] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0A, 0x0B, 0x10, 0x11, 0x12, 0x13,
+            0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+            0x28, 0x29, 0x2A, 0x2B, 0x30, 0x31, 0x32, 0x33,
+            0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+            0x48, 0x49, 0x4A, 0x4B, 0x50, 0x51, 0x52, 0x53,
+            0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B,
+        ];
+        let expected: [u8; 32] = hex(
+            "f7fd5312896c6685c828af7e2adb97e393e7f8d54e3c2ea4b95e5aca3796e8fc",
+        );
+        let mut h = ParallelHash128::new_internal(12, b"Parallel Data");
+        h.update(&data);
+        let mut out = [0u8; 32];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhash128_streaming_matches_oneshot() {
+        // Feed data in small chunks; must match single-call result.
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let mut h1 = ParallelHash128::new_internal(8, b"");
+        h1.update(&data);
+        let mut out1 = [0u8; 32];
+        h1.finalize_into(&mut out1);
+
+        let mut h2 = ParallelHash128::new_internal(8, b"");
+        for byte in &data {
+            h2.update(core::slice::from_ref(byte));
+        }
+        let mut out2 = [0u8; 32];
+        h2.finalize_into(&mut out2);
+
+        assert_eq!(out1, out2);
+    }
+
+    #[test]
+    fn parallelhash256_sample2() {
+        // ParallelHash256: B=8, S="Parallel Data", same 24-byte data
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let expected: [u8; 64] = hex(
+            "cdf15289b54f6212b4bc270528b49526006dd9b54e2b6add1ef6900dda3963bb\
+             33a72491f236969ca8afaea29c682d47a393c065b38e29fae651a2091c833110",
+        );
+        let mut h = ParallelHash256::new_internal(8, b"Parallel Data");
+        h.update(&data);
+        let mut out = [0u8; 64];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhash128_different_block_sizes_differ() {
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let mut h1 = ParallelHash128::new_internal(8, b"");
+        h1.update(&data);
+        let mut out1 = [0u8; 32];
+        h1.finalize_into(&mut out1);
+
+        let mut h2 = ParallelHash128::new_internal(12, b"");
+        h2.update(&data);
+        let mut out2 = [0u8; 32];
+        h2.finalize_into(&mut out2);
+
+        assert_ne!(out1, out2, "different block sizes must produce different hashes");
+    }
+
+    // ── ParallelHashXOF tests ───────────────────────────────────
+
+    #[test]
+    fn parallelhashxof128_sample1() {
+        // ParallelHashXOF128: B=8, S="", data=24 bytes, squeeze 32
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let expected: [u8; 32] = hex(
+            "fe47d661e49ffe5b7d999922c062356750caf552985b8e8ce6667f2727c3c8d3",
+        );
+        let mut h = ParallelHashXof128::new_internal(8, b"");
+        h.update(&data);
+        h.finalize();
+        let mut out = [0u8; 32];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhashxof128_sample2() {
+        // ParallelHashXOF128: B=8, S="Parallel Data", 32-byte squeeze
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let expected: [u8; 32] = hex(
+            "ea2a793140820f7a128b8eb70a9439f93257c6e6e79b4a540d291d6dae7098d7",
+        );
+        let mut h = ParallelHashXof128::new_internal(8, b"Parallel Data");
+        h.update(&data);
+        h.finalize();
+        let mut out = [0u8; 32];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhashxof256_sample1() {
+        // ParallelHashXOF256: B=8, S="", data=24 bytes, squeeze 64
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let expected: [u8; 64] = hex(
+            "c10a052722614684144d28474850b410757e3cba87651ba167a5cbddff7f4666\
+             75fbf84bcae7378ac444be681d729499afca667fb879348bfdda427863c82f1c",
+        );
+        let mut h = ParallelHashXof256::new_internal(8, b"");
+        h.update(&data);
+        h.finalize();
+        let mut out = [0u8; 64];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhashxof256_sample2() {
+        // ParallelHashXOF256: B=8, S="Parallel Data", squeeze 64
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let expected: [u8; 64] = hex(
+            "538e105f1a22f44ed2f5cc1674fbd40be803d9c99bf5f8d90a2c8193f3fe6ea7\
+             68e5c1a20987e2c9c65febed03887a51d35624ed12377594b5585541dc377efc",
+        );
+        let mut h = ParallelHashXof256::new_internal(8, b"Parallel Data");
+        h.update(&data);
+        h.finalize();
+        let mut out = [0u8; 64];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parallelhashxof128_differs_from_parallelhash128() {
+        // XOF variant must differ from fixed-output due to right_encode(0) ≠ right_encode(L).
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let mut fixed = ParallelHash128::new_internal(8, b"");
+        fixed.update(&data);
+        let mut out_fixed = [0u8; 32];
+        fixed.finalize_into(&mut out_fixed);
+
+        let mut xof = ParallelHashXof128::new_internal(8, b"");
+        xof.update(&data);
+        xof.finalize();
+        let mut out_xof = [0u8; 32];
+        xof.squeeze(&mut out_xof);
+
+        assert_ne!(out_fixed, out_xof, "ParallelHash and ParallelHashXOF must differ");
+    }
+
+    #[test]
+    fn parallelhashxof128_incremental_squeeze() {
+        // Two 16-byte squeezes must equal one 32-byte squeeze.
+        let data: [u8; 24] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        ];
+        let mut h1 = ParallelHashXof128::new_internal(8, b"");
+        h1.update(&data);
+        h1.finalize();
+        let mut full = [0u8; 32];
+        h1.squeeze(&mut full);
+
+        let mut h2 = ParallelHashXof128::new_internal(8, b"");
+        h2.update(&data);
+        h2.finalize();
+        let mut part_a = [0u8; 16];
+        let mut part_b = [0u8; 16];
+        h2.squeeze(&mut part_a);
+        h2.squeeze(&mut part_b);
+
+        let mut combined = [0u8; 32];
+        combined[..16].copy_from_slice(&part_a);
+        combined[16..].copy_from_slice(&part_b);
+        assert_eq!(full, combined);
     }
 }
