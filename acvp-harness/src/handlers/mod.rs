@@ -95,6 +95,12 @@
 //!   both non-CRT (`d`) and CRT (Bellcore verify-after-sign) key
 //!   modes
 //!
+//! R25 adds RSA SigGen (both padding modes):
+//!
+//! - [`rsa_siggen`] — `RSA` / `sigGen` revision `FIPS186-5`,
+//!   PKCS#1v1.5 (non-CRT, `d`) and PSS (CRT + Bellcore,
+//!   `sLen = hLen = 32`) over SHA2-256 / RSA-2048
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -110,6 +116,7 @@ pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;
 pub mod rsa_decprim;
+pub mod rsa_siggen;
 pub mod rsa_sigprim;
 pub mod sha3;
 pub mod sha3_256;

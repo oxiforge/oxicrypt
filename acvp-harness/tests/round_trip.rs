@@ -1592,3 +1592,50 @@ fn envelope_preserved_in_response() {
         Some("2.0")
     );
 }
+
+// ----------------------------------------------------------------------
+// RSA SigGen (R25: PKCS#1v1.5 + PSS, FIPS186-5, answer = `signature`)
+// ----------------------------------------------------------------------
+
+/// Round-trip driver for RSA SigGen: the answer field is `signature`.
+fn assert_rsa_siggen_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+
+    let expected_sig = collect_answers(&slice, "signature");
+    assert!(
+        !expected_sig.is_empty(),
+        "{label}: no test cases with signature field"
+    );
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "signature");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    let got_sig = collect_answers(&response, "signature");
+    assert_eq!(
+        got_sig.len(),
+        expected_sig.len(),
+        "{label}: signature count mismatch"
+    );
+
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_sig.iter().zip(got_sig.iter()) {
+        assert_eq!(exp_tc, got_tc, "{label}: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "{label}: signature mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+#[test]
+fn rsa_siggen_round_trip() {
+    assert_rsa_siggen_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-sigGen-FIPS186-5/kat-slice.json",
+        "RSA-sigGen",
+    );
+}
