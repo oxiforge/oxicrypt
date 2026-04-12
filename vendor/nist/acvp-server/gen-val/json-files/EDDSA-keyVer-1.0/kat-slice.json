@@ -1,0 +1,44 @@
+{
+  "vsId": 0,
+  "algorithm": "EDDSA",
+  "mode": "keyVer",
+  "revision": "1.0",
+  "isSample": true,
+  "testGroups": [
+    {
+      "tgId": 1,
+      "curve": "ED-25519",
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 1,
+          "testPassed": false,
+          "reason": "point not on curve",
+          "d": "D470756402E6B84BFFBC498C993C001F92B153B3D4F01757DA706804287C4259",
+          "q": "5BC0D8831F8D7FB200E32DAF36C54BF2808E69D40BD48BD915DF585B2696C166"
+        },
+        {
+          "tcId": 2,
+          "testPassed": true,
+          "reason": "none",
+          "d": "9FCF6CA888B9E34E44D184E269E94F9A7452F67C46A565AF8BF710A5D46668B4",
+          "q": "CF1BD87814E4113E9CAB4D5B95A4F85EA04BAC9EB70053023B1D201A85225072"
+        },
+        {
+          "tcId": 3,
+          "testPassed": true,
+          "reason": "none",
+          "d": "69D5EC4BA51EDE42EBC3836DE815581235513596B448DC19A0B0A3338CF26FCA",
+          "q": "EB0E59A5D0EC784B3EFC7E5A86DFBD244789E5B384A652A43DC0968974E83571"
+        },
+        {
+          "tcId": 4,
+          "testPassed": false,
+          "reason": "point not on curve",
+          "d": "477EB09FAD4D6BF6307FD06611BA30F80C0246C2F82F768E9D56A8C2362BB8DB",
+          "q": "FBB4F7945F521A5CB169883477E9DFAFA14767FD4D973D8FD3667C46253F5943"
+        }
+      ]
+    }
+  ]
+}

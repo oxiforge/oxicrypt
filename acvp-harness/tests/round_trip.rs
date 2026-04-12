@@ -1134,6 +1134,127 @@ fn hmac_drbg_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// Verification round-trip helper
+//
+// For ACVP families where the answer is `testPassed` (a boolean),
+// we strip the field, dispatch, and compare the boolean result for
+// every test case.
+// ----------------------------------------------------------------------
+
+/// Collect `(tcId, testPassed)` pairs from every test in every group.
+fn collect_bool_answers(v: &JsonValue) -> Vec<(i64, bool)> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            let Some(passed) = t.get("testPassed").and_then(JsonValue::as_bool) else {
+                continue;
+            };
+            out.push((tc_id, passed));
+        }
+    }
+    out
+}
+
+/// Round-trip driver for verification tests where the answer field is
+/// `testPassed` (a boolean). Strips `testPassed` (and optionally
+/// `reason`) from the prompt, dispatches, and asserts that every
+/// test case's `testPassed` matches the vendored reference.
+fn assert_bool_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_bool_answers(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} has no test cases with testPassed"
+    );
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "testPassed");
+    strip_field(&mut prompt, "reason");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+    let got = collect_bool_answers(&response);
+
+    assert_eq!(
+        got.len(),
+        expected.len(),
+        "{label}: response has {} cases, expected {}",
+        got.len(),
+        expected.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected.iter().zip(got.iter()) {
+        assert_eq!(exp_tc, got_tc, "{label}: tcId mismatch");
+        assert_eq!(
+            exp_val, got_val,
+            "{label}: testPassed mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+// ----------------------------------------------------------------------
+// ECDSA SigVer + KeyVer (R18: P-256 / SHA2-256, FIPS186-5)
+// ----------------------------------------------------------------------
+
+#[test]
+fn ecdsa_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-sigVer-FIPS186-5/kat-slice.json",
+        "ECDSA-sigVer",
+    );
+}
+
+#[test]
+fn ecdsa_keyver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-keyVer-FIPS186-5/kat-slice.json",
+        "ECDSA-keyVer",
+    );
+}
+
+// ----------------------------------------------------------------------
+// EdDSA SigVer + KeyVer (R18: ED-25519, pure, 1.0)
+// ----------------------------------------------------------------------
+
+#[test]
+fn eddsa_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-sigVer-1.0/kat-slice.json",
+        "EDDSA-sigVer",
+    );
+}
+
+#[test]
+fn eddsa_keyver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-keyVer-1.0/kat-slice.json",
+        "EDDSA-keyVer",
+    );
+}
+
+// ----------------------------------------------------------------------
+// RSA SigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
+// ----------------------------------------------------------------------
+
+#[test]
+fn rsa_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-sigVer-FIPS186-5/kat-slice.json",
+        "RSA-sigVer",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

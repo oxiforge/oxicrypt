@@ -216,11 +216,13 @@ impl Default for Registry {
 /// `hmacDRBG` (all revision `1.0`) — covering CTR_DRBG AES-128/192/256
 /// with and without derivation function, Hash_DRBG SHA2-256/384/512,
 /// and HMAC_DRBG SHA2-256/384/512, each with and without prediction
-/// resistance, reaching twenty-nine registered handlers.
+/// resistance.
 ///
-/// Each new variant is a single `register` line — future chunks add
-/// ECDSA, EdDSA, RSA, plus MCT for remaining modes and LDT
-/// on the same plumbing.
+/// R18 adds five asymmetric signature-verification and key-validation
+/// handlers — `ECDSA` sigVer + keyVer (P-256/SHA2-256), `EDDSA`
+/// sigVer + keyVer (ED-25519, pure), and `RSA` sigVer
+/// (RSA-2048/PKCS#1v1.5/SHA2-256, GDT) — reaching thirty-four
+/// registered handlers.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
     let mut r = Registry::new();
@@ -263,6 +265,14 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::drbg::CtrDrbgHandler));
     r.register(Box::new(handlers::drbg::HashDrbgHandler));
     r.register(Box::new(handlers::drbg::HmacDrbgHandler));
+    // ECDSA sigVer + keyVer (R18: P-256 / SHA2-256, FIPS186-5)
+    r.register(Box::new(handlers::ecdsa::EcdsaSigVerHandler));
+    r.register(Box::new(handlers::ecdsa::EcdsaKeyVerHandler));
+    // EdDSA sigVer + keyVer (R18: ED-25519, pure, 1.0)
+    r.register(Box::new(handlers::eddsa::EddsaSigVerHandler));
+    r.register(Box::new(handlers::eddsa::EddsaKeyVerHandler));
+    // RSA sigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
+    r.register(Box::new(handlers::rsa::RsaSigVerHandler));
     r
 }
 
@@ -356,12 +366,18 @@ mod tests {
         assert!(r.find("ctrDRBG", None, "1.0").is_some());
         assert!(r.find("hashDRBG", None, "1.0").is_some());
         assert!(r.find("hmacDRBG", None, "1.0").is_some());
+        // R18 ECDSA / EdDSA / RSA
+        assert!(r.find("ECDSA", Some("sigVer"), "FIPS186-5").is_some());
+        assert!(r.find("ECDSA", Some("keyVer"), "FIPS186-5").is_some());
+        assert!(r.find("EDDSA", Some("sigVer"), "1.0").is_some());
+        assert!(r.find("EDDSA", Some("keyVer"), "1.0").is_some());
+        assert!(r.find("RSA", Some("sigVer"), "FIPS186-5").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 29);
+        assert_eq!(r.len(), 34);
         assert!(!r.is_empty());
     }
 

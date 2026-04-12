@@ -1,0 +1,40 @@
+{
+  "vsId": 0,
+  "algorithm": "ECDSA",
+  "mode": "keyVer",
+  "revision": "FIPS186-5",
+  "isSample": true,
+  "testGroups": [
+    {
+      "tgId": 2,
+      "curve": "P-256",
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 4,
+          "testPassed": true,
+          "reason": "none",
+          "d": "7E25D5338947A963674B34DC1199FE705AA26E73264538ED0789F616382AE2CB",
+          "qx": "7E01D79021449D59C97CE27DD7221110ACFD86BFC11255058981EA2D20ECA111",
+          "qy": "EADA8CDBAE1835A6CB19F3D36F91C0B30394808DC3A9FAA3333D9DEB8E7E7CEB"
+        },
+        {
+          "tcId": 5,
+          "testPassed": false,
+          "reason": "x or y out of range",
+          "d": "6510EA8FB676FD7A0AFA16E6424EFD2B35078B69A26E4A8DAF73244E367B354B",
+          "qx": "0153E4349D53D820D44172A0424D82D8A2570A60C9A81819C974FB79A49786B967",
+          "qy": "5B8BA4EDFC093EAE4CBB88E09C88909B57066B9C35F4FD8A274C52522322FF52"
+        },
+        {
+          "tcId": 6,
+          "testPassed": false,
+          "reason": "point not on curve",
+          "d": "C1ACDD136C32F040EAF79455AA7BABA0F4797134D94E640148EBE4D0329EDD3A",
+          "qx": "618CF3688603AE38589C95AFF36ED517EA4AD327A295BBDBBD88202DDBA4B980",
+          "qy": "CD5E352F7F7ED94515EA7EEF8AC8191F792DD34F0BEDF8034C29EB462E92EDE3"
+        }
+      ]
+    }
+  ]
+}

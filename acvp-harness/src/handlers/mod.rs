@@ -46,15 +46,28 @@
 //! `ctrDRBG` (AES-128/192/256, with/without DF, with/without PR),
 //! `hashDRBG` (SHA2-256/384/512), and `hmacDRBG` (SHA2-256/384/512).
 //!
-//! Later chunks will add ECDSA, EdDSA, RSA, plus MCT and LDT
-//! test types, on the same plumbing.
+//! R18 adds asymmetric signature-verification and key-validation
+//! handlers:
+//!
+//! - [`ecdsa`] — `ECDSA` / `sigVer` and `keyVer`, revision `FIPS186-5`
+//!   (P-256 / SHA2-256)
+//! - [`eddsa`] — `EDDSA` / `sigVer` and `keyVer`, revision `1.0`
+//!   (ED-25519, pure Ed25519 only — no prehash)
+//! - [`rsa`] — `RSA` / `sigVer`, revision `FIPS186-5`
+//!   (RSA-2048 PKCS#1 v1.5 / SHA2-256, GDT test type)
+//!
+//! Later chunks will add remaining test types (MCT, LDT) and
+//! additional asymmetric modes (SigGen, PSS, larger key sizes).
 
 pub mod aes;
 pub mod cmac;
 pub mod drbg;
+pub mod ecdsa;
+pub mod eddsa;
 pub mod hmac;
 pub mod hmac_sha2_256;
 pub mod kda_hkdf;
+pub mod rsa;
 pub mod sha3;
 pub mod sha3_256;
 pub mod shake;

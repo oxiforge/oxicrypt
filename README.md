@@ -171,16 +171,30 @@ registered handlers. Each handler walks the ACVP `otherInput` array
 to sequence instantiate / reseed / generate operations, including
 the SP 800-90A §9.3 prediction-resistance path where each generate
 call carries its own entropy input.
+R18 adds five asymmetric signature-verification and key-validation
+handlers — `ECDSA` sigVer + keyVer (P-256/SHA2-256, revision
+`FIPS186-5`), `EDDSA` sigVer + keyVer (ED-25519, pure Ed25519,
+revision `1.0`), and `RSA` sigVer (RSA-2048/PKCS#1v1.5/SHA2-256,
+revision `FIPS186-5`, GDT test type) — reaching thirty-four
+registered handlers. All five handlers use the `(algorithm, mode,
+revision)` dispatch key, introducing the first mode-keyed handlers
+outside the KDF family. ECDSA SigVer assembles the 65-byte SEC1
+public key and 64-byte (r‖s) signature from per-field hex inputs;
+KeyVer validates via the full SP 800-56Ar3 §5.6.2.3.3 point
+validation. EdDSA SigVer exercises RFC 8032 §5.1.5 verification
+with canonical-S rejection and non-cofactored verify. RSA SigVer
+dispatches via fips-rsa's PKCS#1v1.5 verify with a group-level
+(n, e) key and per-test (message, signature) pairs.
 Round-trip tests in `acvp-harness/tests/round_trip.rs` and
 `acvp-harness/tests/shs_round_trip.rs` prove all four dispatchers
-reproduce the vendored answer fields byte-for-byte across thirty-two
-ACVP slices (thirty AFT + two MCT) and seven CAVP SHS files. The
-JSON parser, hex codec, and CAVP SHS `.rsp` parser used by the harness
-are all in-tree — the validation binary has zero third-party
-dependencies, matching the module itself. Remaining algorithm families
-(ECDSA, EdDSA, RSA) and remaining test types (MCT for other
-modes, LDT) slot into the same dispatchers without touching the
-envelope layers.
+reproduce the vendored answer fields byte-for-byte across thirty-seven
+ACVP slices (thirty AFT + two MCT + five verification) and seven
+CAVP SHS files. The JSON parser, hex codec, and CAVP SHS `.rsp`
+parser used by the harness are all in-tree — the validation binary
+has zero third-party dependencies, matching the module itself.
+Remaining test types (MCT for other modes, LDT) and additional
+asymmetric modes (SigGen, PSS) slot into the same dispatchers
+without touching the envelope layers.
 
 ### Constant-time validation
 
@@ -205,7 +219,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: ECDSA, EdDSA, RSA handlers; MCT for remaining modes, LDT test type. Twenty-nine handlers (including three DRBG families) and the ECB/CBC MCT engine are wired as of R17.
+- ACVP harness vector dispatch: SigGen handlers, PSS SigVer, MCT for remaining modes, LDT test type. Thirty-four handlers (including ECDSA/EdDSA/RSA verification) and the ECB/CBC MCT engine are wired as of R18.
 
 ## License
 

@@ -120,3 +120,14 @@ ctrDRBG_1_0  = { dir = "ctrDRBG-1.0",  groups = 12, tests = 36, modes = ["AES-12
 hashDRBG_1_0 = { dir = "hashDRBG-1.0", groups = 6,  tests = 18, modes = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "88766cd928dcb6a38aa6ccd30245d24a438e7a4597a71f8c9ef4dd19a29c0b06" }
 hmacDRBG_1_0 = { dir = "hmacDRBG-1.0", groups = 6,  tests = 18, modes = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "74b9ee97b24944eadc66f63497763eab45848dc04d977ea69be8b926b9b930f4" }
 
+[acvp_server.ecdsa]
+ECDSA_sigVer_FIPS186_5  = { dir = "ECDSA-sigVer-FIPS186-5",  groups = 1, tests = 7,  curve = "P-256", hashAlg = "SHA2-256", sha256 = "17d4b404e4904d615e0b332dd0b30f505c3d9576928eb8529a4da7c691a34839" }
+ECDSA_keyVer_FIPS186_5  = { dir = "ECDSA-keyVer-FIPS186-5",  groups = 1, tests = 3,  curve = "P-256", sha256 = "f43caa0d4743fc2c950b9dcc4fbd5c9780eed1c3f913cebdd6fc407188a6279c" }
+
+[acvp_server.eddsa]
+EDDSA_sigVer_1_0  = { dir = "EDDSA-sigVer-1.0",  groups = 1, tests = 5,  curve = "ED-25519", preHash = false, sha256 = "cd2e096046ff67c2e10258b0ddbb7765cf89d9fa4082f367d663e2bf3e4d808a" }
+EDDSA_keyVer_1_0  = { dir = "EDDSA-keyVer-1.0",  groups = 1, tests = 4,  curve = "ED-25519", sha256 = "5b105ef8c59d674ff90bc7ffba3ba19bd417a3f88a3b67c76ea2e966eaf23b73" }
+
+[acvp_server.rsa]
+RSA_sigVer_FIPS186_5  = { dir = "RSA-sigVer-FIPS186-5",  groups = 6, tests = 36, modulo = 2048, sigType = "pkcs1v1.5", hashAlg = "SHA2-256", sha256 = "ae3443aefa70e5277fa3f18b62ef07ceb4e5243441806acb6167ac1f51205269" }
+
