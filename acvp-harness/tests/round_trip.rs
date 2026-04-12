@@ -1987,6 +1987,76 @@ fn rsa_oaep_crt_round_trip() {
     }
 }
 
+/// Combined OAEP slice: one key, three groups (encrypt, CRT decrypt,
+/// non-CRT decrypt).  Groups 2 and 3 decrypt the same ciphertexts,
+/// proving CRT/non-CRT path equivalence.
+#[test]
+fn rsa_oaep_combined_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/combined-kat-slice.json",
+    );
+
+    // Collect expected answers from the correct groups only.
+    let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
+    let expected_pt = collect_answers_for_direction(&slice, "pt", "decrypt");
+
+    assert!(
+        !expected_ct.is_empty(),
+        "RSA-OAEP combined: no encrypt tests with field ct"
+    );
+    // Both decrypt groups contribute to expected_pt (10 total).
+    assert!(
+        expected_pt.len() >= 10,
+        "RSA-OAEP combined: expected at least 10 decrypt tests, got {}",
+        expected_pt.len()
+    );
+
+    // Strip answer fields per-group to create the prompt.
+    let mut prompt = slice.clone();
+    strip_oaep_answers(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("RSA-OAEP combined: dispatch failed: {e}"));
+
+    // Verify encrypt direction (ct).
+    let got_ct = collect_answers(&response, "ct");
+    assert_eq!(
+        got_ct.len(),
+        expected_ct.len(),
+        "RSA-OAEP combined encrypt: response has {} cases, expected {}",
+        got_ct.len(),
+        expected_ct.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_ct.iter().zip(got_ct.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP combined encrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP combined encrypt: ct mismatch for tcId {exp_tc}"
+        );
+    }
+
+    // Verify decrypt direction (pt) — both CRT and non-CRT groups.
+    let got_pt = collect_answers(&response, "pt");
+    assert_eq!(
+        got_pt.len(),
+        expected_pt.len(),
+        "RSA-OAEP combined decrypt: response has {} cases, expected {}",
+        got_pt.len(),
+        expected_pt.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_pt.iter().zip(got_pt.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP combined decrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP combined decrypt: pt mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
 #[test]
 fn rsa_keygen_round_trip() {
     ensure_initialized().unwrap();

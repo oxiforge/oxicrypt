@@ -429,7 +429,7 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 46);
+        assert_eq!(r.len(), 47);
         assert!(!r.is_empty());
     }
 

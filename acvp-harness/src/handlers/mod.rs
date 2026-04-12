@@ -155,6 +155,13 @@
 //!   and `pss` + standard (non-CRT PSS sign), completing the
 //!   full (sigType × keyMode) cross-product
 //!
+//! R34 adds a combined RSA OAEP path-equivalence slice:
+//!
+//! - [`rsa_oaep`] — `RSA` / `OAEP` revision `RFC8017`, combined
+//!   three-group vector file (encrypt + CRT decrypt + non-CRT
+//!   decrypt) sharing one key, proving both private-key paths
+//!   produce identical plaintext from the same ciphertexts
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 
