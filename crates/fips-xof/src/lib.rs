@@ -15,6 +15,10 @@
 //! | KMAC256    | SP 800-185 §4   | 136 | 512 |
 //! | KMACXOF128 | SP 800-185 §4.3.1 | 168 | 256 |
 //! | KMACXOF256 | SP 800-185 §4.3.1 | 136 | 512 |
+//! | TupleHash128 | SP 800-185 §5 | 168 | 256 |
+//! | TupleHash256 | SP 800-185 §5 | 136 | 512 |
+//! | TupleHashXOF128 | SP 800-185 §5.3.1 | 168 | 256 |
+//! | TupleHashXOF256 | SP 800-185 §5.3.1 | 136 | 512 |
 //!
 //! SHAKE uses the domain-separation byte `0x1f` (FIPS 202 §B.2);
 //! cSHAKE uses `0x04` (SP 800-185 §3.1) and prepends a
@@ -24,7 +28,9 @@
 //! absorbing `bytepad(encode_string(K), rate) || X || right_encode(L)`
 //! as the cSHAKE message. KMACXOF is identical except it appends
 //! `right_encode(0)` instead of `right_encode(L)`, enabling XOF-mode
-//! output of arbitrary length.
+//! output of arbitrary length. TupleHash (§5) hashes tuples of byte
+//! strings with unambiguous element separation via `encode_string`;
+//! TupleHashXOF is its XOF variant.
 //!
 //! # API shape
 //!
@@ -34,13 +40,17 @@
 //! repeatedly for arbitrarily long output. KMAC uses
 //! `new → update* → finalize_into` for fixed-length tags. KMACXOF
 //! uses `new → update* → finalize → squeeze*` like SHAKE/cSHAKE.
+//! TupleHash uses `new → update* → finalize_into` (each `update`
+//! adds one tuple element); TupleHashXOF uses
+//! `new → update* → finalize → squeeze*`.
 //!
 //! # Power-up self-tests
 //!
 //! [`KATS`] exposes one pinned SHAKE128, one pinned SHAKE256,
 //! one pinned cSHAKE128, one pinned cSHAKE256, one pinned KMAC128,
-//! one pinned KMAC256, one pinned KMACXOF128, and one pinned
-//! KMACXOF256 vector.
+//! one pinned KMAC256, one pinned KMACXOF128, one pinned
+//! KMACXOF256, one pinned TupleHash128, and one pinned
+//! TupleHash256 vector.
 //!
 //! # Sensitive security parameters
 //!
@@ -756,6 +766,218 @@ pub fn kmacxof256<const OUT_LEN: usize>(
 }
 
 // ========================================================================
+// TupleHash — SP 800-185 §5
+// ========================================================================
+
+/// Internal TupleHash state, parameterized by sponge rate.
+///
+/// Implements SP 800-185 §5:
+///
+/// ```text
+/// TupleHash(X, L, S) = cSHAKE(encode_string(X[0]) || … ||
+///     encode_string(X[n-1]) || right_encode(L), L, "TupleHash", S)
+/// ```
+///
+/// Each [`update`](TupleHashCore::update) call adds one tuple element.
+#[derive(Clone)]
+struct TupleHashCore<const RATE: usize> {
+    cshake: CShakeCore<RATE>,
+}
+
+impl<const RATE: usize> TupleHashCore<RATE> {
+    /// Create a new TupleHash core with customization string `s`.
+    fn new_internal(s: &[u8]) -> Self {
+        Self {
+            cshake: CShakeCore::<RATE>::new_internal(b"TupleHash", s),
+        }
+    }
+
+    /// Add one tuple element. Wraps `element` with `encode_string`.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn update(&mut self, element: &[u8]) {
+        let mut buf = [0u8; 9];
+        let len = left_encode(element.len() * 8, &mut buf);
+        self.cshake.update(&buf[..len]);
+        if !element.is_empty() {
+            self.cshake.update(element);
+        }
+    }
+
+    /// Finalize for fixed-output: append `right_encode(out_len_bits)`,
+    /// then finalize the underlying cSHAKE and squeeze `out.len()`
+    /// bytes.
+    fn finalize_into(&mut self, out: &mut [u8]) {
+        let mut buf = [0u8; 9];
+        #[allow(clippy::arithmetic_side_effects)]
+        let len = right_encode(out.len() * 8, &mut buf);
+        self.cshake.update(&buf[..len]);
+        self.cshake.finalize();
+        self.cshake.squeeze(out);
+    }
+
+    /// Finalize for XOF: append `right_encode(0)`, then finalize the
+    /// underlying cSHAKE. Call [`squeeze`](TupleHashCore::squeeze)
+    /// afterwards.
+    fn finalize_xof(&mut self) {
+        self.cshake.update(&[0x00, 0x01]);
+        self.cshake.finalize();
+    }
+
+    /// Squeeze output bytes (XOF mode only, after `finalize_xof`).
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.cshake.squeeze(out);
+    }
+}
+
+/// TupleHash128 (SP 800-185 §5).
+///
+/// Hashes a tuple of byte strings with unambiguous element
+/// separation. Each [`update`](TupleHash128::update) call adds one
+/// tuple element; the final hash is obtained via
+/// [`finalize_into`](TupleHash128::finalize_into).
+#[derive(Clone)]
+pub struct TupleHash128 {
+    core: TupleHashCore<SHAKE128_RATE>,
+}
+
+impl TupleHash128 {
+    /// Creates a new instance, gated on module state.
+    pub fn new(s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(s: &[u8]) -> Self {
+        Self {
+            core: TupleHashCore::new_internal(s),
+        }
+    }
+
+    /// Adds one tuple element.
+    pub fn update(&mut self, element: &[u8]) {
+        self.core.update(element);
+    }
+
+    /// Finalizes and writes the hash into `out`.
+    pub fn finalize_into(&mut self, out: &mut [u8]) {
+        self.core.finalize_into(out);
+    }
+}
+
+/// TupleHash256 (SP 800-185 §5).
+///
+/// 256-bit security strength variant of TupleHash.
+#[derive(Clone)]
+pub struct TupleHash256 {
+    core: TupleHashCore<SHAKE256_RATE>,
+}
+
+impl TupleHash256 {
+    /// Creates a new instance, gated on module state.
+    pub fn new(s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(s: &[u8]) -> Self {
+        Self {
+            core: TupleHashCore::new_internal(s),
+        }
+    }
+
+    /// Adds one tuple element.
+    pub fn update(&mut self, element: &[u8]) {
+        self.core.update(element);
+    }
+
+    /// Finalizes and writes the hash into `out`.
+    pub fn finalize_into(&mut self, out: &mut [u8]) {
+        self.core.finalize_into(out);
+    }
+}
+
+/// TupleHashXOF128 (SP 800-185 §5.3.1).
+///
+/// XOF variant of TupleHash128 — uses `right_encode(0)` to signal
+/// arbitrary-length output.
+#[derive(Clone)]
+pub struct TupleHashXof128 {
+    core: TupleHashCore<SHAKE128_RATE>,
+}
+
+impl TupleHashXof128 {
+    /// Creates a new instance, gated on module state.
+    pub fn new(s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(s: &[u8]) -> Self {
+        Self {
+            core: TupleHashCore::new_internal(s),
+        }
+    }
+
+    /// Adds one tuple element.
+    pub fn update(&mut self, element: &[u8]) {
+        self.core.update(element);
+    }
+
+    /// Finalizes the XOF. Call [`squeeze`](TupleHashXof128::squeeze)
+    /// afterwards.
+    pub fn finalize(&mut self) {
+        self.core.finalize_xof();
+    }
+
+    /// Squeezes `out.len()` bytes. May be called repeatedly.
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        self.core.squeeze(out);
+    }
+}
+
+/// TupleHashXOF256 (SP 800-185 §5.3.1).
+///
+/// XOF variant of TupleHash256.
+#[derive(Clone)]
+pub struct TupleHashXof256 {
+    core: TupleHashCore<SHAKE256_RATE>,
+}
+
+impl TupleHashXof256 {
+    /// Creates a new instance, gated on module state.
+    pub fn new(s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(s: &[u8]) -> Self {
+        Self {
+            core: TupleHashCore::new_internal(s),
+        }
+    }
+
+    /// Adds one tuple element.
+    pub fn update(&mut self, element: &[u8]) {
+        self.core.update(element);
+    }
+
+    /// Finalizes the XOF. Call [`squeeze`](TupleHashXof256::squeeze)
+    /// afterwards.
+    pub fn finalize(&mut self) {
+        self.core.finalize_xof();
+    }
+
+    /// Squeezes `out.len()` bytes. May be called repeatedly.
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        self.core.squeeze(out);
+    }
+}
+
+// ========================================================================
 // Power-up self-tests
 // ========================================================================
 
@@ -1011,6 +1233,60 @@ pub fn self_test_kmacxof256() -> Result<(), SelfTestFailure> {
     }
 }
 
+// ── TupleHash KATs ──────────────────────────────────────────────
+
+/// TupleHash128 KAT expected output (32 bytes).
+/// SP 800-185 §A.3 Sample #1: X = ("000102", "101112131415"), S = "",
+/// L = 256. Verified against pycryptodome `TupleHash128`.
+const KAT_TUPLEHASH128_EXPECTED: [u8; 32] = [
+    0xc5, 0xd8, 0x78, 0x6c, 0x1a, 0xfb, 0x9b, 0x82,
+    0x11, 0x1a, 0xb3, 0x4b, 0x65, 0xb2, 0xc0, 0x04,
+    0x8f, 0xa6, 0x4e, 0x6d, 0x48, 0xe2, 0x63, 0x26,
+    0x4c, 0xe1, 0x70, 0x7d, 0x3f, 0xfc, 0x8e, 0xd1,
+];
+
+/// Power-up known-answer test for TupleHash128.
+pub fn self_test_tuplehash128() -> Result<(), SelfTestFailure> {
+    let mut h = TupleHash128::new_internal(b"");
+    h.update(&[0x00, 0x01, 0x02]);
+    h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+    let mut out = [0u8; 32];
+    h.finalize_into(&mut out);
+    if out == KAT_TUPLEHASH128_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
+/// TupleHash256 KAT expected output (64 bytes).
+/// SP 800-185 §A.4 Sample #1: X = ("000102", "101112131415"), S = "",
+/// L = 512. Verified against pycryptodome `TupleHash256`.
+const KAT_TUPLEHASH256_EXPECTED: [u8; 64] = [
+    0xcf, 0xb7, 0x05, 0x8c, 0xac, 0xa5, 0xe6, 0x68,
+    0xf8, 0x1a, 0x12, 0xa2, 0x0a, 0x21, 0x95, 0xce,
+    0x97, 0xa9, 0x25, 0xf1, 0xdb, 0xa3, 0xe7, 0x44,
+    0x9a, 0x56, 0xf8, 0x22, 0x01, 0xec, 0x60, 0x73,
+    0x11, 0xac, 0x26, 0x96, 0xb1, 0xab, 0x5e, 0xa2,
+    0x35, 0x2d, 0xf1, 0x42, 0x3b, 0xde, 0x7b, 0xd4,
+    0xbb, 0x78, 0xc9, 0xae, 0xd1, 0xa8, 0x53, 0xc7,
+    0x86, 0x72, 0xf9, 0xeb, 0x23, 0xbb, 0xe1, 0x94,
+];
+
+/// Power-up known-answer test for TupleHash256.
+pub fn self_test_tuplehash256() -> Result<(), SelfTestFailure> {
+    let mut h = TupleHash256::new_internal(b"");
+    h.update(&[0x00, 0x01, 0x02]);
+    h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+    let mut out = [0u8; 64];
+    h.finalize_into(&mut out);
+    if out == KAT_TUPLEHASH256_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
@@ -1045,6 +1321,14 @@ pub const KATS: &[KatEntry] = &[
         name: "KMACXOF256 KAT (SP 800-185 §4.3.1, pycryptodome cross-check)",
         run: self_test_kmacxof256,
     },
+    KatEntry {
+        name: "TupleHash128 KAT (SP 800-185 §A.3 Sample #1)",
+        run: self_test_tuplehash128,
+    },
+    KatEntry {
+        name: "TupleHash256 KAT (SP 800-185 §A.4 Sample #1)",
+        run: self_test_tuplehash256,
+    },
 ];
 
 // ========================================================================
@@ -1057,8 +1341,10 @@ mod tests {
     use super::{
         self_test_128, self_test_256, self_test_cshake128, self_test_cshake256,
         self_test_kmac128, self_test_kmac256, self_test_kmacxof128,
-        self_test_kmacxof256, shake128, shake256, CShake128, CShake256,
-        Kmac128, Kmac256, KmacXof128, KmacXof256, Shake128, Shake256,
+        self_test_kmacxof256, self_test_tuplehash128, self_test_tuplehash256,
+        shake128, shake256, CShake128, CShake256, Kmac128, Kmac256,
+        KmacXof128, KmacXof256, Shake128, Shake256, TupleHash128,
+        TupleHash256, TupleHashXof128, TupleHashXof256,
         KAT_SHAKE128_EMPTY_32, KAT_SHAKE256_EMPTY_64,
     };
     use fips_module::{initialize_with_tests, KatEntry};
@@ -1115,6 +1401,14 @@ mod tests {
             KatEntry {
                 name: "kmacxof256-bootstrap",
                 run: self_test_kmacxof256,
+            },
+            KatEntry {
+                name: "tuplehash128-bootstrap",
+                run: self_test_tuplehash128,
+            },
+            KatEntry {
+                name: "tuplehash256-bootstrap",
+                run: self_test_tuplehash256,
             },
         ]);
     }
@@ -1545,5 +1839,176 @@ mod tests {
         two.squeeze(&mut out2);
 
         assert_eq!(out1, out2);
+    }
+
+    // ── TupleHash tests ─────────────────────────────────────────
+
+    #[test]
+    fn tuplehash128_self_test_passes() {
+        self_test_tuplehash128().unwrap();
+    }
+
+    #[test]
+    fn tuplehash256_self_test_passes() {
+        self_test_tuplehash256().unwrap();
+    }
+
+    #[test]
+    fn tuplehash128_sample2() {
+        // SP 800-185 §A.3 Sample #2: X = ("000102", "101112131415"),
+        // S = "My Tuple App", L = 256
+        let expected: [u8; 32] = hex(
+            "75cdb20ff4db1154e841d758e24160c54bae86eb8c13e7f5f40eb35588e96dfb",
+        );
+        let mut h = TupleHash128::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        let mut out = [0u8; 32];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehash128_sample3() {
+        // SP 800-185 §A.3 Sample #3: X = ("000102", "101112131415",
+        // "202122232425262728"), S = "My Tuple App", L = 256
+        let expected: [u8; 32] = hex(
+            "e60f202c89a2631eda8d4c588ca5fd07f39e5151998deccf973adb3804bb6e84",
+        );
+        let mut h = TupleHash128::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.update(&[0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28]);
+        let mut out = [0u8; 32];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehash256_sample2() {
+        // SP 800-185 §A.4 Sample #2: S = "My Tuple App"
+        let expected: [u8; 64] = hex(
+            "147c2191d5ed7efd98dbd96d7ab5a11692576f5fe2a5065f3e33de6bba9f3aa1\
+             c4e9a068a289c61c95aab30aee1e410b0b607de3620e24a4e3bf9852a1d4367e",
+        );
+        let mut h = TupleHash256::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        let mut out = [0u8; 64];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehash256_sample3() {
+        // SP 800-185 §A.4 Sample #3: three elements, S = "My Tuple App"
+        let expected: [u8; 64] = hex(
+            "45000be63f9b6bfd89f54717670f69a9bc763591a4f05c50d68891a744bcc6e7\
+             d6d5b5e82c018da999ed35b0bb49c9678e526abd8e85c13ed254021db9e790ce",
+        );
+        let mut h = TupleHash256::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.update(&[0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28]);
+        let mut out = [0u8; 64];
+        h.finalize_into(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehashxof128_sample1() {
+        // TupleHashXOF128: X = ("000102", "101112131415"), S = "", out = 32
+        let expected: [u8; 32] = hex(
+            "2f103cd7c32320353495c68de1a8129245c6325f6f2a3d608d92179c96e68488",
+        );
+        let mut h = TupleHashXof128::new_internal(b"");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.finalize();
+        let mut out = [0u8; 32];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehashxof128_sample2() {
+        // TupleHashXOF128: S = "My Tuple App"
+        let expected: [u8; 32] = hex(
+            "3fc8ad69453128292859a18b6c67d7ad85f01b32815e22ce839c49ec374e9b9a",
+        );
+        let mut h = TupleHashXof128::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.finalize();
+        let mut out = [0u8; 32];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehashxof128_sample3() {
+        // TupleHashXOF128: three elements, S = "My Tuple App"
+        let expected: [u8; 32] = hex(
+            "900fe16cad098d28e74d632ed852f99daab7f7df4d99e775657885b4bf76d6f8",
+        );
+        let mut h = TupleHashXof128::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.update(&[0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28]);
+        h.finalize();
+        let mut out = [0u8; 32];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehashxof256_sample1() {
+        // TupleHashXOF256: X = ("000102", "101112131415"), S = "", out = 64
+        let expected: [u8; 64] = hex(
+            "03ded4610ed6450a1e3f8bc44951d14fbc384ab0efe57b000df6b6df5aae7cd5\
+             68e77377daf13f37ec75cf5fc598b6841d51dd207c991cd45d210ba60ac52eb9",
+        );
+        let mut h = TupleHashXof256::new_internal(b"");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.finalize();
+        let mut out = [0u8; 64];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehashxof256_sample2() {
+        // TupleHashXOF256: S = "My Tuple App"
+        let expected: [u8; 64] = hex(
+            "6483cb3c9952eb20e830af4785851fc597ee3bf93bb7602c0ef6a65d741aeca7\
+             e63c3b128981aa05c6d27438c79d2754bb1b7191f125d6620fca12ce658b2442",
+        );
+        let mut h = TupleHashXof256::new_internal(b"My Tuple App");
+        h.update(&[0x00, 0x01, 0x02]);
+        h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+        h.finalize();
+        let mut out = [0u8; 64];
+        h.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn tuplehash128_differs_from_raw_concat() {
+        // TupleHash("AB", "C") must differ from TupleHash("A", "BC")
+        // due to encode_string framing.
+        let mut h1 = TupleHash128::new_internal(b"");
+        h1.update(b"AB");
+        h1.update(b"C");
+        let mut out1 = [0u8; 32];
+        h1.finalize_into(&mut out1);
+
+        let mut h2 = TupleHash128::new_internal(b"");
+        h2.update(b"A");
+        h2.update(b"BC");
+        let mut out2 = [0u8; 32];
+        h2.finalize_into(&mut out2);
+
+        assert_ne!(out1, out2, "different tuples must produce different hashes");
     }
 }
