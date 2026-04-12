@@ -1413,6 +1413,36 @@ fn eddsa_keygen_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// EdDSA Lifecycle (R35: keyGen + sigGen + sigVer, shared seeds)
+// ----------------------------------------------------------------------
+
+#[test]
+fn eddsa_lifecycle_keygen_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-keyGen-1.0/lifecycle-slice.json",
+        "q",
+        "EDDSA-keyGen-lifecycle",
+    );
+}
+
+#[test]
+fn eddsa_lifecycle_siggen_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-sigGen-1.0/lifecycle-slice.json",
+        "signature",
+        "EDDSA-sigGen-lifecycle",
+    );
+}
+
+#[test]
+fn eddsa_lifecycle_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-sigVer-1.0/lifecycle-slice.json",
+        "EDDSA-sigVer-lifecycle",
+    );
+}
+
+// ----------------------------------------------------------------------
 // RSA SigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
 // ----------------------------------------------------------------------
 

@@ -162,6 +162,13 @@
 //!   decrypt) sharing one key, proving both private-key paths
 //!   produce identical plaintext from the same ciphertexts
 //!
+//! R35 adds EdDSA lifecycle cross-validation slices:
+//!
+//! - [`eddsa`] — three self-generated lifecycle vector files
+//!   sharing the same five Ed25519 seeds across `keyGen`,
+//!   `sigGen`, and `sigVer` modes, proving the full
+//!   keyGen→sigGen→sigVer pipeline is consistent per key
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 
