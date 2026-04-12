@@ -122,7 +122,7 @@ pub mod pss;
 
 use bigint1024::{U1024, BYTES as U1024_BYTES, LIMBS as LIMBS1024};
 use bigint2048::{U2048, BYTES as U2048_BYTES, LIMBS as LIMBS2048};
-use fips_module::{require_operational, Error, SelfTestFailure};
+use fips_module::{require_operational, Error, KatEntry, SelfTestFailure};
 use fips_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
 use mont1024::MontCtx1024;
 use mont2048::MontCtx2048;
@@ -1501,6 +1501,12 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     }
     Ok(())
 }
+
+/// Power-up KATs exported by this crate.
+pub const KATS: &[KatEntry] = &[KatEntry {
+    name: "RSA KAT (PKCS#1v1.5+PSS sign+verify+tamper+PCT, FIPS 186-5)",
+    run: self_test,
+}];
 
 // Silence an otherwise-unused re-export: downstream users of the
 // crate may want the hash length constant without pulling in

@@ -76,7 +76,7 @@
 
 use fips_ecdsa::p256_point::Point;
 use fips_ecdsa::p256_scalar::Scalar;
-use fips_module::{require_operational, Error, SelfTestFailure};
+use fips_module::{require_operational, Error, KatEntry, SelfTestFailure};
 
 /// Length of a P-256 private-key scalar in bytes.
 pub const PRIVATE_KEY_LEN: usize = 32;
@@ -215,6 +215,12 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 
     Ok(())
 }
+
+/// Power-up KATs exported by this crate.
+pub const KATS: &[KatEntry] = &[KatEntry {
+    name: "ECDH-P256 KAT (RFC 5903 §8.1 both directions + tamper, SP 800-56Ar3)",
+    run: self_test,
+}];
 
 // ------------------------------------------------------------------
 // Tests

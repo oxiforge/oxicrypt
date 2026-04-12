@@ -72,7 +72,15 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use fips_module::KatEntry;
+
 pub mod ed25519;
 pub mod edwards;
 pub mod field;
 pub mod scalar;
+
+/// Power-up KATs exported by this crate.
+pub const KATS: &[KatEntry] = &[KatEntry {
+    name: "Ed25519 KAT (keygen+sign+verify round-trip, RFC 8032)",
+    run: ed25519::self_test,
+}];

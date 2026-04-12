@@ -103,8 +103,16 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use fips_module::KatEntry;
+
 pub mod p256_ecdsa;
 pub mod p256_field;
 pub mod p256_keygen;
 pub mod p256_point;
 pub mod p256_scalar;
+
+/// Power-up KATs exported by this crate.
+pub const KATS: &[KatEntry] = &[KatEntry {
+    name: "ECDSA-P256 KAT (sign+verify round-trip, FIPS 186-5)",
+    run: p256_ecdsa::self_test,
+}];

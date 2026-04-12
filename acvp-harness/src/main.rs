@@ -52,6 +52,10 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
             + fips_cmac::KATS.len()
             + fips_drbg::KATS.len()
             + fips_integrity::KATS.len()
+            + fips_ecdsa::KATS.len()
+            + fips_eddsa::KATS.len()
+            + fips_rsa::KATS.len()
+            + fips_ecdh::KATS.len()
     },
 >(&[
     fips_sha::KATS,
@@ -62,6 +66,10 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
     fips_cmac::KATS,
     fips_drbg::KATS,
     fips_integrity::KATS,
+    fips_ecdsa::KATS,
+    fips_eddsa::KATS,
+    fips_rsa::KATS,
+    fips_ecdh::KATS,
 ]);
 
 /// Concatenate several `KatEntry` slices into a single fixed-size
