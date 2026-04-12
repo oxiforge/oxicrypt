@@ -2299,6 +2299,10 @@ fn rsa_oaep_crt_round_trip() {
 /// Combined OAEP slice: one key, three groups (encrypt, CRT decrypt,
 /// non-CRT decrypt).  Groups 2 and 3 decrypt the same ciphertexts,
 /// proving CRT/non-CRT path equivalence.
+///
+/// R43 lifecycle slice follows the same shape but uses the RSA lifecycle
+/// DRBG-generated key (shared with keyGen/sigGen/sigVer lifecycle slices),
+/// proving keyGen→OAEP encrypt→decrypt pipeline consistency.
 #[test]
 fn rsa_oaep_combined_round_trip() {
     ensure_initialized().unwrap();
@@ -2362,6 +2366,69 @@ fn rsa_oaep_combined_round_trip() {
             exp_val.to_ascii_uppercase(),
             *got_val,
             "RSA-OAEP combined decrypt: pt mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+/// RSA OAEP lifecycle: keyGen→encrypt→decrypt with shared DRBG key.
+#[test]
+fn rsa_oaep_lifecycle_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/lifecycle-slice.json",
+    );
+
+    let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
+    let expected_pt = collect_answers_for_direction(&slice, "pt", "decrypt");
+
+    assert!(
+        !expected_ct.is_empty(),
+        "RSA-OAEP lifecycle: no encrypt tests with field ct"
+    );
+    assert!(
+        expected_pt.len() >= 10,
+        "RSA-OAEP lifecycle: expected at least 10 decrypt tests, got {}",
+        expected_pt.len()
+    );
+
+    let mut prompt = slice.clone();
+    strip_oaep_answers(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("RSA-OAEP lifecycle: dispatch failed: {e}"));
+
+    let got_ct = collect_answers(&response, "ct");
+    assert_eq!(
+        got_ct.len(),
+        expected_ct.len(),
+        "RSA-OAEP lifecycle encrypt: response has {} cases, expected {}",
+        got_ct.len(),
+        expected_ct.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_ct.iter().zip(got_ct.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP lifecycle encrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP lifecycle encrypt: ct mismatch for tcId {exp_tc}"
+        );
+    }
+
+    let got_pt = collect_answers(&response, "pt");
+    assert_eq!(
+        got_pt.len(),
+        expected_pt.len(),
+        "RSA-OAEP lifecycle decrypt: response has {} cases, expected {}",
+        got_pt.len(),
+        expected_pt.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_pt.iter().zip(got_pt.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP lifecycle decrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP lifecycle decrypt: pt mismatch for tcId {exp_tc}"
         );
     }
 }

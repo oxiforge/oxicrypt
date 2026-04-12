@@ -220,6 +220,13 @@
 //!   a single DRBG-generated key across gen (compute) and ver (verify)
 //!   groups, with both valid and invalid (bit-flipped MAC) ver cases
 //!
+//! R43 adds an RSA OAEP lifecycle slice:
+//!
+//! - [`rsa_oaep`] — self-generated RSA OAEP lifecycle vectors reusing
+//!   the same DRBG-generated RSA-2048 key from the RSA lifecycle
+//!   (R37/R39), with encrypt + CRT decrypt + non-CRT decrypt groups
+//!   proving keyGen→OAEP encrypt→decrypt pipeline consistency
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
