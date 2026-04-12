@@ -1913,3 +1913,68 @@ fn rsa_oaep_round_trip() {
         );
     }
 }
+
+#[test]
+fn rsa_oaep_crt_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/crt-kat-slice.json",
+    );
+
+    // Collect expected answers from the correct groups only.
+    let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
+    let expected_pt = collect_answers_for_direction(&slice, "pt", "decrypt");
+
+    assert!(
+        !expected_ct.is_empty(),
+        "RSA-OAEP CRT: no encrypt tests with field ct"
+    );
+    assert!(
+        !expected_pt.is_empty(),
+        "RSA-OAEP CRT: no decrypt tests with field pt"
+    );
+
+    // Strip answer fields per-group to create the prompt.
+    let mut prompt = slice.clone();
+    strip_oaep_answers(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("RSA-OAEP CRT: dispatch failed: {e}"));
+
+    // Verify encrypt direction (ct).
+    let got_ct = collect_answers(&response, "ct");
+    assert_eq!(
+        got_ct.len(),
+        expected_ct.len(),
+        "RSA-OAEP CRT encrypt: response has {} cases, expected {}",
+        got_ct.len(),
+        expected_ct.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_ct.iter().zip(got_ct.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP CRT encrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP CRT encrypt: ct mismatch for tcId {exp_tc}"
+        );
+    }
+
+    // Verify decrypt direction (pt) — exercises CRT path with Bellcore.
+    let got_pt = collect_answers(&response, "pt");
+    assert_eq!(
+        got_pt.len(),
+        expected_pt.len(),
+        "RSA-OAEP CRT decrypt: response has {} cases, expected {}",
+        got_pt.len(),
+        expected_pt.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_pt.iter().zip(got_pt.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA-OAEP CRT decrypt: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA-OAEP CRT decrypt: pt mismatch for tcId {exp_tc}"
+        );
+    }
+}

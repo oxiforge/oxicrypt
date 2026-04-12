@@ -6,9 +6,13 @@
 //! ciphertext.
 //!
 //! **OAEP decrypt** (`RSA` / `OAEP` / `RFC8017`, `direction = "decrypt"`):
-//! Given the private key `(n, d)`, and a ciphertext, perform
-//! RSAES-OAEP decryption (RFC 8017 §7.1.2) and return the plaintext
-//! and its length.
+//! Given the private key, and a ciphertext, perform RSAES-OAEP
+//! decryption (RFC 8017 §7.1.2) and return the plaintext and its
+//! length. Two key modes are supported:
+//!
+//! - `keyMode` absent or `"standard"`: non-CRT path via `(n, d)`.
+//! - `keyMode = "crt"`: CRT path via `(n, e, p, q, dP, dQ, qInv)`
+//!   with Bellcore verify-after-decrypt per FIPS 140-3 IG D.G.
 //!
 //! Supported configurations:
 //! - `modulo = 2048`, `hashAlg = "SHA2-256"`, empty label
@@ -38,6 +42,7 @@ impl AlgorithmHandler for RsaOaepHandler {
 // ── Constants ──────────────────────────────────────────────────────
 
 const N_BYTES: usize = fips_rsa::RSA_2048_MODULUS_BYTES;
+const HALF_BYTES: usize = fips_rsa::RSA_2048_CRT_HALF_BYTES;
 const SEED_LEN: usize = 32; // SHA-256 hash length = OAEP seed length
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -161,9 +166,11 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             }
         }
         "decrypt" => {
-            // Private key from group: n, d (non-CRT path).
+            let key_mode = group
+                .get("keyMode")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("standard");
             let n: [u8; N_BYTES] = decode_fixed(group, "n")?;
-            let d: [u8; N_BYTES] = decode_fixed(group, "d")?;
             let label = b"";
 
             for tc in tests {
@@ -175,10 +182,27 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let ct: [u8; N_BYTES] = decode_fixed(tc, "ct")?;
                 let mut out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
 
-                let pt_len = fips_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
-                    &n, &d, label, &ct, &mut out,
-                )
-                .ok_or(DispatchError::Crypto("RSA OAEP: decrypt failed"))?;
+                let pt_len = if key_mode == "crt" {
+                    // CRT path: (n, e, p, q, dP, dQ, qInv) with Bellcore.
+                    let e_bytes = decode_hex_field(group, "e")?;
+                    let e = bytes_to_u64(&e_bytes)?;
+                    let p: [u8; HALF_BYTES] = decode_fixed(group, "p")?;
+                    let q: [u8; HALF_BYTES] = decode_fixed(group, "q")?;
+                    let dp: [u8; HALF_BYTES] = decode_fixed(group, "dmp1")?;
+                    let dq: [u8; HALF_BYTES] = decode_fixed(group, "dmq1")?;
+                    let qinv: [u8; HALF_BYTES] = decode_fixed(group, "iqmp")?;
+                    fips_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
+                        &n, e, &p, &q, &dp, &dq, &qinv, label, &ct, &mut out,
+                    )
+                    .ok_or(DispatchError::Crypto("RSA OAEP: CRT decrypt failed"))?
+                } else {
+                    // Non-CRT path: (n, d).
+                    let d: [u8; N_BYTES] = decode_fixed(group, "d")?;
+                    fips_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+                        &n, &d, label, &ct, &mut out,
+                    )
+                    .ok_or(DispatchError::Crypto("RSA OAEP: decrypt failed"))?
+                };
 
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),

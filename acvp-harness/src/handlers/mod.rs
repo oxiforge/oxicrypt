@@ -134,6 +134,13 @@
 //!   revision `2.0`, 100×1000 iteration chained-hash loop per
 //!   ACVP SHA-3 §6.2
 //!
+//! R31 adds RSA OAEP CRT decrypt coverage:
+//!
+//! - [`rsa_oaep`] — `RSA` / `OAEP` revision `RFC8017`, extended
+//!   decrypt arm to support `keyMode = "crt"` dispatching through
+//!   the Bellcore-protected CRT private-exponent primitive per
+//!   IG D.G, with self-generated CRT KAT vectors
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 
