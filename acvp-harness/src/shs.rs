@@ -188,6 +188,7 @@ pub fn process_shs(
         .find(algorithm)
         .ok_or_else(|| DispatchError::UnsupportedAlgorithm {
             algorithm: algorithm.to_string(),
+            mode: None,
             revision: "CAVP-SHS".to_string(),
         })?;
     if doc.digest_length_bytes != handler.digest_length_bytes() {

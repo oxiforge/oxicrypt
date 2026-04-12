@@ -2,8 +2,13 @@
 //!
 //! The dispatcher is intentionally tiny: a [`Registry`] holds a flat
 //! list of [`AlgorithmHandler`] trait objects keyed on
-//! `(algorithm, revision)`, and [`process`] looks up the right handler
-//! for the prompt's envelope and forwards each test group to it.
+//! `(algorithm, mode, revision)`, and [`process`] looks up the right
+//! handler for the prompt's envelope and forwards each test group to
+//! it. The `mode` slot is `Option<&str>` so that single-field families
+//! (SHA-3, SHAKE, HMAC) key on `(algorithm, None, revision)` and
+//! dual-field families (KDA-HKDF, KDA-OneStep, KDA-TwoStep) key on
+//! `(algorithm, Some(mode), revision)` on the same trait object and
+//! the same `find` path.
 //!
 //! # Module gating
 //!
@@ -38,6 +43,8 @@ pub enum DispatchError {
     UnsupportedAlgorithm {
         /// Algorithm name as it appears in the prompt.
         algorithm: String,
+        /// Mode string as it appears in the prompt (if present).
+        mode: Option<String>,
         /// Revision string as it appears in the prompt.
         revision: String,
     },
@@ -57,11 +64,18 @@ impl fmt::Display for DispatchError {
             Self::MissingField(name) => write!(f, "missing field {name:?}"),
             Self::UnsupportedAlgorithm {
                 algorithm,
+                mode,
                 revision,
-            } => write!(
-                f,
-                "no handler registered for algorithm {algorithm:?} revision {revision:?}"
-            ),
+            } => match mode {
+                Some(m) => write!(
+                    f,
+                    "no handler registered for algorithm {algorithm:?} mode {m:?} revision {revision:?}"
+                ),
+                None => write!(
+                    f,
+                    "no handler registered for algorithm {algorithm:?} revision {revision:?}"
+                ),
+            },
             Self::UnsupportedTestType(t) => write!(f, "unsupported testType {t:?}"),
             Self::Unsupported(s) => write!(f, "unsupported: {s}"),
         }
@@ -86,10 +100,17 @@ impl From<HexError> for DispatchError {
 /// store them as `Box<dyn AlgorithmHandler>` while keeping the
 /// dispatch path branchless on the trait-object call.
 pub trait AlgorithmHandler: Send + Sync {
-    /// ACVP algorithm name (e.g. `"SHA3-256"`).
+    /// ACVP algorithm name (e.g. `"SHA3-256"`, `"KDA"`).
     fn algorithm(&self) -> &'static str;
 
-    /// ACVP revision string (e.g. `"2.0"`).
+    /// Optional ACVP `mode` string (e.g. `Some("HKDF")` for
+    /// `KDA-HKDF-Sp800-56Cr2`). Single-field families return the
+    /// default `None`.
+    fn mode(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// ACVP revision string (e.g. `"2.0"`, `"Sp800-56Cr2"`).
     fn revision(&self) -> &'static str;
 
     /// Process a single test group, returning the response group.
@@ -117,12 +138,24 @@ impl Registry {
         self.handlers.push(h);
     }
 
-    /// Look up a handler by algorithm/revision.
+    /// Look up a handler by algorithm/mode/revision. `mode` is
+    /// `None` for single-field families (SHA-3, SHAKE, HMAC) and
+    /// `Some(mode)` for dual-field families (KDA-HKDF, KDA-OneStep,
+    /// KDA-TwoStep). The match is exact on all three components, so
+    /// `(SHA3-256, None, 2.0)` will not collide with a future
+    /// `(SHA3-256, Some("something"), 2.0)`.
     #[must_use]
-    pub fn find(&self, algorithm: &str, revision: &str) -> Option<&dyn AlgorithmHandler> {
+    pub fn find(
+        &self,
+        algorithm: &str,
+        mode: Option<&str>,
+        revision: &str,
+    ) -> Option<&dyn AlgorithmHandler> {
         self.handlers
             .iter()
-            .find(|h| h.algorithm() == algorithm && h.revision() == revision)
+            .find(|h| {
+                h.algorithm() == algorithm && h.mode() == mode && h.revision() == revision
+            })
             .map(AsRef::as_ref)
     }
 
@@ -152,7 +185,10 @@ impl Default for Registry {
 /// AFT — end-to-end. R12-A expanded the SHA-3 hashing family, both
 /// SHAKE XOFs, and every HMAC variant except HMAC-SHA2-256 (which
 /// stays in its R10 module), bringing the total to seventeen
-/// AFT handlers:
+/// AFT handlers; R13 then added the first KDF family handler,
+/// `KDA-HKDF-Sp800-56Cr2`, as the eighteenth. That is also the first
+/// handler to live in a `(algorithm, mode, revision)` registry slot
+/// rather than `(algorithm, None, revision)`:
 ///
 /// - `SHA3-224`, `SHA3-256`, `SHA3-384`, `SHA3-512` (revision `2.0`)
 /// - `SHAKE-128`, `SHAKE-256` (revision `FIPS202`)
@@ -160,6 +196,8 @@ impl Default for Registry {
 /// - `HMAC-SHA2-{224,256,384,512}` and the two truncated
 ///   `HMAC-SHA2-512/{224,256}` variants (revision `1.0`)
 /// - `HMAC-SHA3-{224,256,384,512}` (revision `1.0`)
+/// - `KDA` mode `HKDF` revision `Sp800-56Cr2` — SP 800-56C Rev 2 §5
+///   two-step KDF (hybrid form, ten HMAC instantiations)
 ///
 /// Each new variant is a single `register` line — future chunks add
 /// AES, DRBG, ECDSA, EdDSA, RSA, plus MCT/LDT test types on the same
@@ -189,6 +227,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::hmac::HmacSha3_256Handler));
     r.register(Box::new(handlers::hmac::HmacSha3_384Handler));
     r.register(Box::new(handlers::hmac::HmacSha3_512Handler));
+    // KDA-HKDF (SP 800-56Cr2, mode-keyed)
+    r.register(Box::new(handlers::kda_hkdf::KdaHkdfHandler));
     r
 }
 
@@ -202,11 +242,13 @@ pub fn process(prompt: &JsonValue, registry: &Registry) -> Result<JsonValue, Dis
     fips_module::require_operational().map_err(DispatchError::Module)?;
     let vs = VectorSet::new(prompt)?;
     let algorithm = vs.algorithm()?;
+    let mode = vs.mode()?;
     let revision = vs.revision()?;
     let handler = registry
-        .find(algorithm, revision)
+        .find(algorithm, mode, revision)
         .ok_or_else(|| DispatchError::UnsupportedAlgorithm {
             algorithm: algorithm.to_string(),
+            mode: mode.map(str::to_string),
             revision: revision.to_string(),
         })?;
     let groups = vs.test_groups()?;
@@ -214,20 +256,23 @@ pub fn process(prompt: &JsonValue, registry: &Registry) -> Result<JsonValue, Dis
     for g in groups {
         response_groups.push(handler.handle_group(g)?);
     }
-    Ok(JsonValue::Object(vec![
-        (
-            "algorithm".to_string(),
-            JsonValue::String(algorithm.to_string()),
-        ),
-        (
-            "revision".to_string(),
-            JsonValue::String(revision.to_string()),
-        ),
-        (
-            "testGroups".to_string(),
-            JsonValue::Array(response_groups),
-        ),
-    ]))
+    let mut response: Vec<(String, JsonValue)> = Vec::with_capacity(4);
+    response.push((
+        "algorithm".to_string(),
+        JsonValue::String(algorithm.to_string()),
+    ));
+    if let Some(m) = mode {
+        response.push(("mode".to_string(), JsonValue::String(m.to_string())));
+    }
+    response.push((
+        "revision".to_string(),
+        JsonValue::String(revision.to_string()),
+    ));
+    response.push((
+        "testGroups".to_string(),
+        JsonValue::Array(response_groups),
+    ));
+    Ok(JsonValue::Object(response))
 }
 
 #[cfg(test)]
@@ -240,30 +285,34 @@ mod tests {
     fn registry_lookup() {
         let r = with_default_handlers();
         // R10 handlers
-        assert!(r.find("SHA3-256", "2.0").is_some());
-        assert!(r.find("HMAC-SHA2-256", "1.0").is_some());
+        assert!(r.find("SHA3-256", None, "2.0").is_some());
+        assert!(r.find("HMAC-SHA2-256", None, "1.0").is_some());
         // R12-A SHA-3 family
-        assert!(r.find("SHA3-224", "2.0").is_some());
-        assert!(r.find("SHA3-384", "2.0").is_some());
-        assert!(r.find("SHA3-512", "2.0").is_some());
+        assert!(r.find("SHA3-224", None, "2.0").is_some());
+        assert!(r.find("SHA3-384", None, "2.0").is_some());
+        assert!(r.find("SHA3-512", None, "2.0").is_some());
         // R12-A SHAKE XOFs
-        assert!(r.find("SHAKE-128", "FIPS202").is_some());
-        assert!(r.find("SHAKE-256", "FIPS202").is_some());
+        assert!(r.find("SHAKE-128", None, "FIPS202").is_some());
+        assert!(r.find("SHAKE-256", None, "FIPS202").is_some());
         // R12-A HMAC family
-        assert!(r.find("HMAC-SHA-1", "1.0").is_some());
-        assert!(r.find("HMAC-SHA2-224", "1.0").is_some());
-        assert!(r.find("HMAC-SHA2-384", "1.0").is_some());
-        assert!(r.find("HMAC-SHA2-512", "1.0").is_some());
-        assert!(r.find("HMAC-SHA2-512/224", "1.0").is_some());
-        assert!(r.find("HMAC-SHA2-512/256", "1.0").is_some());
-        assert!(r.find("HMAC-SHA3-224", "1.0").is_some());
-        assert!(r.find("HMAC-SHA3-256", "1.0").is_some());
-        assert!(r.find("HMAC-SHA3-384", "1.0").is_some());
-        assert!(r.find("HMAC-SHA3-512", "1.0").is_some());
+        assert!(r.find("HMAC-SHA-1", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-224", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-384", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-512", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-512/224", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA2-512/256", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-224", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-256", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-384", None, "1.0").is_some());
+        assert!(r.find("HMAC-SHA3-512", None, "1.0").is_some());
+        // R13 KDA-HKDF (mode-keyed)
+        assert!(r.find("KDA", Some("HKDF"), "Sp800-56Cr2").is_some());
         // Negative lookups
-        assert!(r.find("SHA3-256", "9.9").is_none());
-        assert!(r.find("UNKNOWN", "1.0").is_none());
-        assert_eq!(r.len(), 17);
+        assert!(r.find("SHA3-256", None, "9.9").is_none());
+        assert!(r.find("UNKNOWN", None, "1.0").is_none());
+        assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
+        assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
+        assert_eq!(r.len(), 18);
         assert!(!r.is_empty());
     }
 

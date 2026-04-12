@@ -25,11 +25,25 @@
 //!   `SHA-512/224`, `SHA-512/256` (all via the byte-oriented
 //!   entry points in `fips_sha`)
 //!
+//! R13 adds the first KDF family handler and, with it, the first
+//! use of the optional ACVP `mode` field on the dispatch key. The
+//! `KDA-HKDF-Sp800-56Cr2` envelope publishes across two top-level
+//! fields (`algorithm = "KDA"`, `mode = "HKDF"`), so
+//! [`crate::dispatch::Registry`] now keys handlers on
+//! `(algorithm, mode, revision)`; single-field families return the
+//! default `mode = None` and keep their existing shape.
+//!
+//! - [`kda_hkdf`] — `KDA-HKDF` revision `Sp800-56Cr2`, covering
+//!   `SHA2-{224,256,384,512,512/224,512/256}` and
+//!   `SHA3-{224,256,384,512}` HMAC instantiations over the
+//!   SP 800-56C Rev 2 §5.9.2 hybrid shared-secret form
+//!
 //! Later chunks will add AES, DRBG, ECDSA, EdDSA, RSA, plus MCT and
 //! LDT test types, on the same plumbing.
 
 pub mod hmac;
 pub mod hmac_sha2_256;
+pub mod kda_hkdf;
 pub mod sha3;
 pub mod sha3_256;
 pub mod shake;

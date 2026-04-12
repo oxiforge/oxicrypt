@@ -283,6 +283,19 @@ fn hmac_sha3_512_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// KDA-HKDF (revision Sp800-56Cr2, mode HKDF, answer field `dkm`)
+// ----------------------------------------------------------------------
+
+#[test]
+fn kda_hkdf_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KDA-HKDF-Sp800-56Cr2/kat-slice.json",
+        "dkm",
+        "KDA-HKDF",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

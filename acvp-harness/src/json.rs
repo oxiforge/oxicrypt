@@ -123,6 +123,15 @@ impl JsonValue {
         }
     }
 
+    /// Read this value as a `bool` if it is a boolean.
+    #[must_use]
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
     /// Look up a field of an object by key.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&JsonValue> {
