@@ -41,6 +41,7 @@
 //! Later chunks will add AES, DRBG, ECDSA, EdDSA, RSA, plus MCT and
 //! LDT test types, on the same plumbing.
 
+pub mod aes;
 pub mod hmac;
 pub mod hmac_sha2_256;
 pub mod kda_hkdf;

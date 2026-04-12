@@ -198,10 +198,12 @@ impl Default for Registry {
 /// - `HMAC-SHA3-{224,256,384,512}` (revision `1.0`)
 /// - `KDA` mode `HKDF` revision `Sp800-56Cr2` — SP 800-56C Rev 2 §5
 ///   two-step KDF (hybrid form, ten HMAC instantiations)
+/// - `ACVP-AES-ECB`, `ACVP-AES-CBC`, `ACVP-AES-CTR` (revision `1.0`)
+///   — R14-A AFT across 128/192/256-bit keys, encrypt + decrypt
 ///
 /// Each new variant is a single `register` line — future chunks add
-/// AES, DRBG, ECDSA, EdDSA, RSA, plus MCT/LDT test types on the same
-/// plumbing.
+/// remaining AES modes (GCM/CCM/KW/KWP), DRBG, ECDSA, EdDSA, RSA,
+/// plus MCT/LDT test types on the same plumbing.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
     let mut r = Registry::new();
@@ -229,6 +231,10 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::hmac::HmacSha3_512Handler));
     // KDA-HKDF (SP 800-56Cr2, mode-keyed)
     r.register(Box::new(handlers::kda_hkdf::KdaHkdfHandler));
+    // AES block-cipher modes (R14-A: AFT only)
+    r.register(Box::new(handlers::aes::AesEcbHandler));
+    r.register(Box::new(handlers::aes::AesCbcHandler));
+    r.register(Box::new(handlers::aes::AesCtrHandler));
     r
 }
 
@@ -307,12 +313,16 @@ mod tests {
         assert!(r.find("HMAC-SHA3-512", None, "1.0").is_some());
         // R13 KDA-HKDF (mode-keyed)
         assert!(r.find("KDA", Some("HKDF"), "Sp800-56Cr2").is_some());
+        // R14-A AES AFT modes
+        assert!(r.find("ACVP-AES-ECB", None, "1.0").is_some());
+        assert!(r.find("ACVP-AES-CBC", None, "1.0").is_some());
+        assert!(r.find("ACVP-AES-CTR", None, "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 18);
+        assert_eq!(r.len(), 21);
         assert!(!r.is_empty());
     }
 

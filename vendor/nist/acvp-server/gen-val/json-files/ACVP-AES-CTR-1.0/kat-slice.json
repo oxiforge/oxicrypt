@@ -1,0 +1,252 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/ACVP-AES-CTR-1.0/internalProjection.json",
+    "internalProjection_sha256": "22cd3bb1666cc14231e5435a2f0c163e83c70a65ba353284828975a983a46a59"
+  },
+  "algorithm": "ACVP-AES-CTR",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "internalTestType": "RFC3686",
+      "direction": "encrypt",
+      "keyLen": 128,
+      "incremental": true,
+      "overflow": false,
+      "ivGenMode": "internal",
+      "rfcTestMode": true,
+      "tests": [
+        {
+          "tcId": 9,
+          "deferred": true,
+          "pt": "8C970C473CC492372E10CDA74209",
+          "payloadLen": 112,
+          "ct": "0C176CF2F0D9B028B242EA0DC33B",
+          "iv": "E8D13BF16D615B2DD02F9A6A00000001",
+          "key": "FBC5E9784735E968D65C0BC7680B3D29"
+        },
+        {
+          "tcId": 11,
+          "deferred": true,
+          "pt": "B04F8A07B1AD06DCA5A61F04F3328D36",
+          "payloadLen": 128,
+          "ct": "2441468456A58F83B8C8488B42390097",
+          "iv": "F6D3E4982A1800CEC5B545C000000001",
+          "key": "4ABDEBE9E6CEBFEEE4411CCBEA5ECBF7"
+        },
+        {
+          "tcId": 12,
+          "deferred": true,
+          "pt": "169A951EA7EF3F2B94398CD8124BE1E93E95A8A782EF06A2A9A34FE83B91A415",
+          "payloadLen": 256,
+          "ct": "252048F9E734FABA1B31DBD9B4128A37D60DFA20807EFD419701F1CF1ECFE999",
+          "iv": "A810FC6A88754F432EF1416E00000001",
+          "key": "2EBFB68DE4059768BA95B84EBF8F4FBC"
+        }
+      ]
+    },
+    {
+      "tgId": 2,
+      "testType": "AFT",
+      "internalTestType": "RFC3686",
+      "direction": "encrypt",
+      "keyLen": 192,
+      "incremental": true,
+      "overflow": false,
+      "ivGenMode": "internal",
+      "rfcTestMode": true,
+      "tests": [
+        {
+          "tcId": 29,
+          "deferred": true,
+          "pt": "315F8662534F9398",
+          "payloadLen": 64,
+          "ct": "926BBD76F3A0AF63",
+          "iv": "36E3D6F97C2777CACB168E1C00000001",
+          "key": "64642EDC32637E105E7E61B64FB974F621506E6D017A822B"
+        },
+        {
+          "tcId": 36,
+          "deferred": true,
+          "pt": "A094CCC411FB246DFCB1FB5AE182C7D7",
+          "payloadLen": 128,
+          "ct": "B56351C5527B39C6FC96F37CB14ADD9C",
+          "iv": "8C5D6AC87E8D65D851B78A4200000001",
+          "key": "4604720C482079733293283CF775A1DE19ED885F4B236AE1"
+        },
+        {
+          "tcId": 37,
+          "deferred": true,
+          "pt": "8788EC9AC72AC8D12443567D0FEADB48C4261D447380C42F6B3F3B2E26074614",
+          "payloadLen": 256,
+          "ct": "AE90794875855E761612E238B26C7FDD05475286C0A29455D864B8413A97DC98",
+          "iv": "6A33F83C43D178106555E30300000001",
+          "key": "BD2F32368A3D504BC45E5FF574C2736C645B4A8C332DDA3F"
+        }
+      ]
+    },
+    {
+      "tgId": 3,
+      "testType": "AFT",
+      "internalTestType": "RFC3686",
+      "direction": "encrypt",
+      "keyLen": 256,
+      "incremental": true,
+      "overflow": false,
+      "ivGenMode": "internal",
+      "rfcTestMode": true,
+      "tests": [
+        {
+          "tcId": 53,
+          "deferred": true,
+          "pt": "05",
+          "payloadLen": 8,
+          "ct": "17",
+          "iv": "E4F5BAA17070EA2397B2B66900000001",
+          "key": "7A898B8E2C4E0A0DD8CC406030C8C4E55CE534D55DCB4FDD72AF43EFFDBA35C0"
+        },
+        {
+          "tcId": 58,
+          "deferred": true,
+          "pt": "EE27CA2D51C497FA26651051D6",
+          "payloadLen": 104,
+          "ct": "016200AB479FEC397D39694238",
+          "iv": "1F966658B4E0E8021B4F400F00000001",
+          "key": "7038F0A5FDE7B7129323AEDBDBADEE43C6D28314F116313F91BB109857AD2BD0"
+        },
+        {
+          "tcId": 61,
+          "deferred": true,
+          "pt": "A3566437319471EC6C0120A3C8BBE16D",
+          "payloadLen": 128,
+          "ct": "CD0A82D50FC87CB9D8561819ED66A4D4",
+          "iv": "3FD1D067A172C1AC41AA651F00000001",
+          "key": "A5C72FA05E5F74CA5DA9C619C5AFE74FFB3AF18258BD64F7EB7ACC2DDA0E5806"
+        }
+      ]
+    },
+    {
+      "tgId": 4,
+      "testType": "AFT",
+      "internalTestType": "RFC3686",
+      "direction": "decrypt",
+      "keyLen": 128,
+      "incremental": true,
+      "overflow": false,
+      "ivGenMode": "internal",
+      "rfcTestMode": true,
+      "tests": [
+        {
+          "tcId": 83,
+          "deferred": false,
+          "pt": "EFA894ABE60167521A7661D9",
+          "payloadLen": 96,
+          "ct": "BC99B195C3FE9D1D76BBBDE9",
+          "iv": "15FE134C22EA45C9E2F216AD00000001",
+          "key": "A4827EDA6151BFB16460D1BDB8F19754"
+        },
+        {
+          "tcId": 86,
+          "deferred": false,
+          "pt": "9993DBD6137BF5C0BE5AC993B3A98DEF",
+          "payloadLen": 128,
+          "ct": "8F65B6926DFB97004C80774FF65FE04A",
+          "iv": "E9BF3ACDFA062128D31AE66D00000001",
+          "key": "93D0C9AAF478D2ECD00A9E057B0A350D"
+        },
+        {
+          "tcId": 87,
+          "deferred": false,
+          "pt": "3006FA8655905276B57790C16FDE576951A3102862315BB4D8CFA15BE03321BB",
+          "payloadLen": 256,
+          "ct": "8E5388526F10818153BD488676B772EADC69A58FB368832DE761BB96F64FE198",
+          "iv": "08697DAA2B922112767108EA00000001",
+          "key": "FC20D634D934F6E58310CCB1292873E1"
+        }
+      ]
+    },
+    {
+      "tgId": 5,
+      "testType": "AFT",
+      "internalTestType": "RFC3686",
+      "direction": "decrypt",
+      "keyLen": 192,
+      "incremental": true,
+      "overflow": false,
+      "ivGenMode": "internal",
+      "rfcTestMode": true,
+      "tests": [
+        {
+          "tcId": 101,
+          "deferred": false,
+          "pt": "60",
+          "payloadLen": 8,
+          "ct": "FB",
+          "iv": "85CD53251894DC1AF0F8CFE600000001",
+          "key": "1EF61C922708B0B3C8FA5F515FE3FE9C4AC20A815E7652C7"
+        },
+        {
+          "tcId": 110,
+          "deferred": false,
+          "pt": "CE89A71687D64B846F447113410B",
+          "payloadLen": 112,
+          "ct": "BEDF0D1C352C22FEBA897C851852",
+          "iv": "D21ACD296A6FF008DD51571900000001",
+          "key": "AC1F76F6C192536BFD1269B39FF36D973BD1AB8909629B14"
+        },
+        {
+          "tcId": 111,
+          "deferred": false,
+          "pt": "AC655BD5A254276EFC4AC4804C13C6CB",
+          "payloadLen": 128,
+          "ct": "831465E3598F7F68F25FC3E515379887",
+          "iv": "38ECBFAC9F36D7018E7FD2DE00000001",
+          "key": "6172888CBCF27DD96BD1453A03B758CA384B53CE7A4AE497"
+        }
+      ]
+    },
+    {
+      "tgId": 6,
+      "testType": "AFT",
+      "internalTestType": "RFC3686",
+      "direction": "decrypt",
+      "keyLen": 256,
+      "incremental": true,
+      "overflow": false,
+      "ivGenMode": "internal",
+      "rfcTestMode": true,
+      "tests": [
+        {
+          "tcId": 134,
+          "deferred": false,
+          "pt": "B0FE3C3330F7254E6CA7F9714F5D",
+          "payloadLen": 112,
+          "ct": "CE02FD87578ACD4CCCDAE9D1FB21",
+          "iv": "B003190E5A0E677C4BA4B68E00000001",
+          "key": "117F387B02A076C5C6FBC24CC6CB1399D78399C1280AC14B43B0E928CC2E7193"
+        },
+        {
+          "tcId": 136,
+          "deferred": false,
+          "pt": "E342F0143752045F389961FE062E71B8",
+          "payloadLen": 128,
+          "ct": "A71FE0386A2D3582D04D632DCF8AA195",
+          "iv": "79AD4F8BA218E781CC59433500000001",
+          "key": "D9B7DF3B17042C957A335D4F9FA5487DE0553C4D7F578458DFE5161DFC552D22"
+        },
+        {
+          "tcId": 137,
+          "deferred": false,
+          "pt": "FE39CB6AC030D112B177585BABCD7BFA71A6FEDF8587B5ACD75A03325D6F02D0",
+          "payloadLen": 256,
+          "ct": "6CC4273BC3A79B235A97A8BBB87D0D6D4C3CE08D348A305376E05CB00E49523D",
+          "iv": "3CE93F864F30F4066AF3887C00000001",
+          "key": "E16D9AD3614BBD8B78292285AA1D23361C10724730711FC18EF4AB40B1F87492"
+        }
+      ]
+    }
+  ]
+}

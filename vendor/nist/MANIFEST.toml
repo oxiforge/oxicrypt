@@ -99,3 +99,8 @@ HKDF_SHA3_256 = { tgId = 149, tcId = 741, l_bits = 1024, hmacAlg = "SHA3-256" }
 HKDF_SHA3_384 = { tgId = 171, tcId = 851, l_bits = 1024, hmacAlg = "SHA3-384" }
 HKDF_SHA3_512 = { tgId = 197, tcId = 981, l_bits = 1024, hmacAlg = "SHA3-512" }
 
+[acvp_server.aes_aft]
+ACVP_AES_ECB_1_0 = { dir = "ACVP-AES-ECB-1.0", groups = 6, tests = 18, sha256 = "a804bbe1b4efbb775ec5a365245739ffaedad50f43d91b07ede26733e0f3b256" }
+ACVP_AES_CBC_1_0 = { dir = "ACVP-AES-CBC-1.0", groups = 6, tests = 18, sha256 = "b6d11e684b279a384f27f4f711319dc2542bbe55f568bd8f11d5567a1df4a1df" }
+ACVP_AES_CTR_1_0 = { dir = "ACVP-AES-CTR-1.0", groups = 6, tests = 18, sha256 = "22cd3bb1666cc14231e5435a2f0c163e83c70a65ba353284828975a983a46a59" }
+

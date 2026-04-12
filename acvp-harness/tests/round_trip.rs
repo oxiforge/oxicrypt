@@ -296,6 +296,200 @@ fn kda_hkdf_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// AES block-cipher AFT (R14-A): ECB / CBC / CTR
+//
+// Each test in an AFT group carries the input for its `direction`
+// (encrypt → `pt`, decrypt → `ct`) and the expected output in the
+// opposite field. The shared `assert_round_trip` helper only tracks
+// a single answer field, so AES uses its own direction-aware helper.
+// ----------------------------------------------------------------------
+
+/// Collect `(tcId, answer_field, answer_value)` triples from every
+/// test in every group of the slice. The group's `direction` picks
+/// which field (`ct` or `pt`) is the answer — AES response groups
+/// intentionally omit `direction`, so this helper is only called on
+/// the input slice.
+fn collect_aes_expected(v: &JsonValue) -> Vec<(i64, &'static str, String)> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let direction = g.get("direction").and_then(JsonValue::as_str).unwrap_or("");
+        let answer_field: &'static str = match direction {
+            "encrypt" => "ct",
+            "decrypt" => "pt",
+            _ => continue,
+        };
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            let Some(val) = t.get(answer_field).and_then(JsonValue::as_str) else {
+                continue;
+            };
+            out.push((tc_id, answer_field, val.to_string()));
+        }
+    }
+    out
+}
+
+/// Collect every response test keyed by `tcId`, with whichever of
+/// `ct` / `pt` fields is present (only one is ever present per case).
+fn collect_aes_response(v: &JsonValue) -> Vec<(i64, String)> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            let val = t
+                .get("ct")
+                .and_then(JsonValue::as_str)
+                .or_else(|| t.get("pt").and_then(JsonValue::as_str));
+            if let Some(v) = val {
+                out.push((tc_id, v.to_string()));
+            }
+        }
+    }
+    out
+}
+
+fn assert_aes_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_aes_expected(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} produced no expected answers"
+    );
+
+    // Strip only the group-direction answer field from each test.
+    // Stripping both `ct` and `pt` would lose the input field.
+    let mut prompt = slice.clone();
+    strip_aes_answers_in_place(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+    let got = collect_aes_response(&response);
+
+    assert_eq!(
+        got.len(),
+        expected.len(),
+        "{label}: response has {} cases, expected {}",
+        got.len(),
+        expected.len()
+    );
+    for ((exp_tc, exp_field, exp_val), (got_tc, got_val)) in expected.iter().zip(got.iter()) {
+        assert_eq!(exp_tc, got_tc, "{label}: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "{label}: {exp_field} mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+/// Remove the direction-specific answer field from each test inside
+/// every `testGroups` entry, leaving the input field intact. Prompts
+/// fed into the dispatcher must not contain the answer they are being
+/// asked to reproduce.
+fn strip_aes_answers_in_place(v: &mut JsonValue) {
+    let JsonValue::Object(root_kvs) = v else {
+        return;
+    };
+    let groups = root_kvs.iter_mut().find_map(|(k, val)| {
+        if k == "testGroups" {
+            if let JsonValue::Array(a) = val {
+                Some(a)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+    let Some(groups) = groups else {
+        return;
+    };
+    for g in groups.iter_mut() {
+        let JsonValue::Object(g_kvs) = g else {
+            continue;
+        };
+        // Borrow direction first (immutable) by cloning into a String.
+        let direction: String = g_kvs
+            .iter()
+            .find_map(|(k, val)| {
+                if k == "direction" {
+                    val.as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let answer_field = match direction.as_str() {
+            "encrypt" => "ct",
+            "decrypt" => "pt",
+            _ => continue,
+        };
+        // Now find and mutate `tests`.
+        let tests = g_kvs.iter_mut().find_map(|(k, val)| {
+            if k == "tests" {
+                if let JsonValue::Array(a) = val {
+                    Some(a)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        let Some(tests) = tests else {
+            continue;
+        };
+        for t in tests.iter_mut() {
+            if let JsonValue::Object(kvs) = t {
+                kvs.retain(|(k, _)| k != answer_field);
+            }
+        }
+    }
+}
+
+#[test]
+fn aes_ecb_aft_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-ECB-1.0/kat-slice.json",
+        "ACVP-AES-ECB",
+    );
+}
+
+#[test]
+fn aes_cbc_aft_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CBC-1.0/kat-slice.json",
+        "ACVP-AES-CBC",
+    );
+}
+
+#[test]
+fn aes_ctr_aft_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CTR-1.0/kat-slice.json",
+        "ACVP-AES-CTR",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

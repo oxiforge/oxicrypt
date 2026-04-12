@@ -745,6 +745,73 @@ def write_kdf_slice(
     (d / "kat-slice.json").write_text(json.dumps(slim, indent=2) + "\n")
 
 
+def pick_aes_aft_groups(
+    doc: dict,
+    *,
+    tests_per_group: int = 3,
+    require_byte_aligned: bool = False,
+) -> list[dict]:
+    """Pick one AFT group per (direction, keyLen) and trim each to
+    ``tests_per_group`` tests.
+
+    For modes with non-byte-aligned bit payloads (CTR), set
+    ``require_byte_aligned=True`` to filter each group to tests whose
+    ``payloadLen`` is a multiple of 8; this keeps the slice compatible
+    with byte-oriented crypto primitives while still exercising the
+    handler dispatch path.
+    """
+    picked: dict[tuple[str, int], dict] = {}
+    for g in doc["testGroups"]:
+        if g.get("testType") != "AFT":
+            continue
+        key = (g["direction"], g["keyLen"])
+        if key in picked:
+            continue
+        tests = g["tests"]
+        if require_byte_aligned:
+            tests = [t for t in tests if t.get("payloadLen", 0) % 8 == 0]
+        tests = tests[:tests_per_group]
+        if not tests:
+            continue
+        trimmed = {k: v for k, v in g.items() if k != "tests"}
+        trimmed["tests"] = tests
+        picked[key] = trimmed
+    # Return groups in deterministic order: encrypt first, then decrypt,
+    # each ordered by keyLen.
+    order = [
+        ("encrypt", 128),
+        ("encrypt", 192),
+        ("encrypt", 256),
+        ("decrypt", 128),
+        ("decrypt", 192),
+        ("decrypt", 256),
+    ]
+    return [picked[k] for k in order if k in picked]
+
+
+def write_aes_slice(
+    out_dir: Path,
+    algo_dir: str,
+    algorithm: str,
+    groups: list[dict],
+    src_sha256: str,
+) -> None:
+    d = out_dir / "acvp-server" / "gen-val" / "json-files" / algo_dir
+    d.mkdir(parents=True, exist_ok=True)
+    slim = {
+        "_source": {
+            "repo": "usnistgov/ACVP-Server",
+            "commit": ACVP_COMMIT,
+            "path": f"gen-val/json-files/{algo_dir}/internalProjection.json",
+            "internalProjection_sha256": src_sha256,
+        },
+        "algorithm": algorithm,
+        "revision": "1.0",
+        "testGroups": groups,
+    }
+    (d / "kat-slice.json").write_text(json.dumps(slim, indent=2) + "\n")
+
+
 def write_kda_hkdf_slice(
     out_dir: Path,
     algo_dir: str,
@@ -841,6 +908,14 @@ HMAC_ACVP_DIRS = [
     ("HMAC_SHA3_512", "HMAC-SHA3-512-1.0", "HMAC-SHA3-512"),
 ]
 
+AES_ACVP_AFT_MODES = [
+    # (algorithm, acvp_dir, require_byte_aligned)
+    ("ACVP-AES-ECB", "ACVP-AES-ECB-1.0", False),
+    ("ACVP-AES-CBC", "ACVP-AES-CBC-1.0", False),
+    ("ACVP-AES-CTR", "ACVP-AES-CTR-1.0", True),
+]
+
+
 KDA_HKDF_MAC_MODES = [
     # SP 800-56Cr2 KDA-HKDF ACVP-Server coverage does *not* include
     # HMAC-SHA-1 — SHA-1 is out of scope for SP 800-56C Rev 2 per NIST.
@@ -892,8 +967,10 @@ GENERATED_HEADER = """\
 //     and the SHA-2 family (SHS ShortMsg).
 //   * NIST ACVP-Server gen-val/json-files for SHA-3, SHAKE, HMAC,
 //     SP 800-108 Rev. 1 KBKDF (Counter, Feedback, Double-Pipeline
-//     Iteration modes), and SP 800-56C Rev 2 Two-Step
-//     KDA-HKDF, pinned to commit
+//     Iteration modes), SP 800-56C Rev 2 Two-Step KDA-HKDF, and
+//     (slim kat-slice only, not compiled into generated.rs)
+//     ACVP-AES-{ECB,CBC,CTR}-1.0 AFT groups for the acvp-harness
+//     round-trip dispatcher, pinned to commit
 //     """ + ACVP_COMMIT + """.
 """
 
@@ -1370,6 +1447,34 @@ def main() -> int:
             f'l_bits = {p["l_bits"]}, hmacAlg = "{p["hmacAlg"]}" }}'
         )
     write_kda_hkdf_slice(vendor, "KDA-HKDF-Sp800-56Cr2", kda_picks, kda_sha)
+    manifest.append("")
+
+    # --- AES ECB/CBC/CTR AFT (ACVP-AES-*-1.0) ---------------------------
+    # R14-A: vendor slim AFT slices for AES block-cipher modes handled
+    # by the acvp-harness dispatcher. No `generated.rs` entries are
+    # emitted here — the AES power-up KATs already live in
+    # `fips-aes` and read from its own vector module. These slices feed
+    # only the ACVP dispatcher's round-trip tests.
+    manifest.append("[acvp_server.aes_aft]")
+    for algorithm, algo_dir, require_byte_aligned in AES_ACVP_AFT_MODES:
+        src = args.acvp_cache / f"{algo_dir}.json"
+        if not src.exists():
+            print(f"missing ACVP file: {src}", file=sys.stderr)
+            return 1
+        sha = sha256_file(src)
+        doc = json.loads(src.read_text())
+        groups = pick_aes_aft_groups(
+            doc,
+            tests_per_group=3,
+            require_byte_aligned=require_byte_aligned,
+        )
+        write_aes_slice(vendor, algo_dir, algorithm, groups, sha)
+        total_tests = sum(len(g["tests"]) for g in groups)
+        key = algo_dir.replace("-", "_").replace(".", "_")
+        manifest.append(
+            f'{key} = {{ dir = "{algo_dir}", groups = {len(groups)}, '
+            f'tests = {total_tests}, sha256 = "{sha}" }}'
+        )
     manifest.append("")
 
     # --- Write outputs --------------------------------------------------
