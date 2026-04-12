@@ -122,6 +122,12 @@
 //! - [`eddsa`] — `EDDSA` / `keyGen` revision `1.0`, derives the
 //!   Ed25519 public key from a 32-byte seed via `keygen_internal`
 //!
+//! R29 adds ECDSA key generation:
+//!
+//! - [`ecdsa`] — `ECDSA` / `keyGen` revision `FIPS186-5`, derives the
+//!   P-256 public key `(qx, qy)` from a 32-byte scalar `d` via
+//!   `derive_public_key_internal`
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 

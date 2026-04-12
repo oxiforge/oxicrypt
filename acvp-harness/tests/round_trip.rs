@@ -1284,6 +1284,53 @@ fn ecdsa_siggen_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// ECDSA KeyGen (R29: P-256, FIPS186-5, deterministic derive_public_key)
+// ----------------------------------------------------------------------
+
+/// ECDSA KeyGen produces two answer fields (qx, qy).
+/// Verify both independently.
+#[test]
+fn ecdsa_keygen_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-keyGen-FIPS186-5/kat-slice.json",
+    );
+
+    let expected_qx = collect_answers(&slice, "qx");
+    let expected_qy = collect_answers(&slice, "qy");
+    assert!(!expected_qx.is_empty(), "ECDSA-keyGen: no qx fields");
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "qx");
+    strip_field(&mut prompt, "qy");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("ECDSA-keyGen: dispatch failed: {e}"));
+
+    let got_qx = collect_answers(&response, "qx");
+    let got_qy = collect_answers(&response, "qy");
+
+    assert_eq!(got_qx.len(), expected_qx.len(), "ECDSA-keyGen: qx count mismatch");
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_qx.iter().zip(got_qx.iter()) {
+        assert_eq!(exp_tc, got_tc, "ECDSA-keyGen: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "ECDSA-keyGen: qx mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_qy.iter().zip(got_qy.iter()) {
+        assert_eq!(exp_tc, got_tc, "ECDSA-keyGen: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "ECDSA-keyGen: qy mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+// ----------------------------------------------------------------------
 // EdDSA SigVer + KeyVer (R18: ED-25519, pure, 1.0)
 // ----------------------------------------------------------------------
 

@@ -1,7 +1,7 @@
-//! ECDSA ACVP handlers — `sigVer`, `keyVer`, and `sigGen` modes,
-//! revision `FIPS186-5`.
+//! ECDSA ACVP handlers — `sigVer`, `keyVer`, `sigGen`, and `keyGen`
+//! modes, revision `FIPS186-5`.
 //!
-//! Three modes, each dispatched as a separate handler:
+//! Four modes, each dispatched as a separate handler:
 //!
 //! - **SigVer** (`ECDSA` / `sigVer` / `FIPS186-5`): Given a message,
 //!   public key (qx, qy), and signature (r, s), verify the ECDSA
@@ -13,6 +13,9 @@
 //!   private key `d` and per-test nonce `k` plus `message`, sign and
 //!   return `(r, s)`. Deterministic because the ACVP vectors supply
 //!   both `d` and `k`.
+//! - **KeyGen** (`ECDSA` / `keyGen` / `FIPS186-5`): Given a per-test
+//!   private scalar `d`, derive the P-256 public key `(qx, qy)` via
+//!   `derive_public_key_internal`. Deterministic.
 //!
 //! Only P-256 with SHA-256 is supported (the pqclib configuration).
 //! Unsupported curves or hash algorithms produce
@@ -82,6 +85,26 @@ impl AlgorithmHandler for EcdsaSigGenHandler {
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
+    }
+}
+
+// ── KeyGen handler ─────────────────────────────────────────────────
+
+/// ECDSA KeyGen AFT dispatcher.
+pub struct EcdsaKeyGenHandler;
+
+impl AlgorithmHandler for EcdsaKeyGenHandler {
+    fn algorithm(&self) -> &'static str {
+        "ECDSA"
+    }
+    fn mode(&self) -> Option<&'static str> {
+        Some("keyGen")
+    }
+    fn revision(&self) -> &'static str {
+        "FIPS186-5"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_keygen_group(group)
     }
 }
 
@@ -314,6 +337,78 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             (
                 "s".to_string(),
                 JsonValue::String(hex::encode_upper(&sig[32..])),
+            ),
+        ]));
+    }
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("tests".to_string(), JsonValue::Array(results)),
+    ]))
+}
+
+// ── KeyGen group driver ────────────────────────────────────────────
+
+fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
+    let tg_id = group
+        .get("tgId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tgId"))?;
+    let test_type = group
+        .get("testType")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("testType"))?;
+    if test_type != "AFT" {
+        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
+    }
+
+    let curve = group
+        .get("curve")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("curve"))?;
+    if curve != "P-256" {
+        return Err(DispatchError::Unsupported(
+            "ECDSA KeyGen: only P-256 is supported",
+        ));
+    }
+
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for t in tests {
+        let test_case_id = t
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+
+        let d_bytes = hex::decode(
+            t.get("d")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("d"))?,
+        )?;
+        let d: [u8; 32] = d_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 32 bytes"))?;
+
+        let pk = fips_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
+            .ok_or(DispatchError::Crypto(
+                "ECDSA KeyGen: derive_public_key_internal failed",
+            ))?;
+
+        // pk is 65 bytes: 0x04 || X(32) || Y(32)
+        results.push(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(test_case_id)),
+            (
+                "qx".to_string(),
+                JsonValue::String(hex::encode_upper(&pk[1..33])),
+            ),
+            (
+                "qy".to_string(),
+                JsonValue::String(hex::encode_upper(&pk[33..65])),
             ),
         ]));
     }

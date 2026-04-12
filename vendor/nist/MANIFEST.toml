@@ -124,6 +124,7 @@ hmacDRBG_1_0 = { dir = "hmacDRBG-1.0", groups = 6,  tests = 18, modes = ["SHA2-2
 ECDSA_sigVer_FIPS186_5  = { dir = "ECDSA-sigVer-FIPS186-5",  groups = 1, tests = 7,  curve = "P-256", hashAlg = "SHA2-256", sha256 = "17d4b404e4904d615e0b332dd0b30f505c3d9576928eb8529a4da7c691a34839" }
 ECDSA_keyVer_FIPS186_5  = { dir = "ECDSA-keyVer-FIPS186-5",  groups = 1, tests = 3,  curve = "P-256", sha256 = "f43caa0d4743fc2c950b9dcc4fbd5c9780eed1c3f913cebdd6fc407188a6279c" }
 ECDSA_sigGen_FIPS186_5  = { dir = "ECDSA-sigGen-FIPS186-5",  groups = 1, tests = 10, curve = "P-256", hashAlg = "SHA2-256", sha256 = "8ea0fb6a2d6cb504cb46d601a1dac04ad204930b82923432bbfdfafd632fd7fc" }
+ECDSA_keyGen_FIPS186_5  = { dir = "ECDSA-keyGen-FIPS186-5",  groups = 1, tests = 10, curve = "P-256", sha256 = "4753eaee4970a0d8c73a40eaa139823ada4900d71d00a70855611f7e18c9c771" }
 
 [acvp_server.eddsa]
 EDDSA_sigVer_1_0  = { dir = "EDDSA-sigVer-1.0",  groups = 1, tests = 5,  curve = "ED-25519", preHash = false, sha256 = "cd2e096046ff67c2e10258b0ddbb7765cf89d9fa4082f367d663e2bf3e4d808a" }

@@ -275,10 +275,11 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::drbg::CtrDrbgHandler));
     r.register(Box::new(handlers::drbg::HashDrbgHandler));
     r.register(Box::new(handlers::drbg::HmacDrbgHandler));
-    // ECDSA sigVer + keyVer + sigGen (R18/R19: P-256 / SHA2-256, FIPS186-5)
+    // ECDSA sigVer + keyVer + sigGen + keyGen (R18/R19/R29: P-256 / SHA2-256, FIPS186-5)
     r.register(Box::new(handlers::ecdsa::EcdsaSigVerHandler));
     r.register(Box::new(handlers::ecdsa::EcdsaKeyVerHandler));
     r.register(Box::new(handlers::ecdsa::EcdsaSigGenHandler));
+    r.register(Box::new(handlers::ecdsa::EcdsaKeyGenHandler));
     // EdDSA sigVer + keyVer + sigGen + keyGen (R18/R19/R28: ED-25519, pure, 1.0)
     r.register(Box::new(handlers::eddsa::EddsaSigVerHandler));
     r.register(Box::new(handlers::eddsa::EddsaKeyVerHandler));
@@ -403,6 +404,8 @@ mod tests {
         assert!(r.find("EDDSA", Some("sigGen"), "1.0").is_some());
         // R28 EdDSA KeyGen
         assert!(r.find("EDDSA", Some("keyGen"), "1.0").is_some());
+        // R29 ECDSA KeyGen
+        assert!(r.find("ECDSA", Some("keyGen"), "FIPS186-5").is_some());
         // R20 KBKDF (SP 800-108r1)
         assert!(r.find("KDF", None, "1.0").is_some());
         // R21 RSA DecryptionPrimitive (SP 800-56Br2)
@@ -424,7 +427,7 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 45);
+        assert_eq!(r.len(), 46);
         assert!(!r.is_empty());
     }
 
