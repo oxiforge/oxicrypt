@@ -1,0 +1,48 @@
+{
+  "_source": "pqclib self-generated SHAKE VOT vectors (R45)",
+  "algorithm": "SHAKE-128",
+  "revision": "FIPS202",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "VOT",
+      "tests": [
+        {
+          "tcId": 1,
+          "len": 128,
+          "outLen": 288,
+          "msg": "1670BC95279D18A32CBF49A02B5D3A21",
+          "md": "CC60C0A6B9B1CC47B3A926C0F6750942D2B10BEBF257C01F3E67A8AAE61787F8B473F805"
+        },
+        {
+          "tcId": 2,
+          "len": 240,
+          "outLen": 232,
+          "msg": "6195C9DD6783F389EAB0FC693A1E18FC4299A61FA910A3AFC9DBA2B58234",
+          "md": "39E64F0FD246FD27C3324D784F19ABBC8D1585B27E42D62531AC6366AB"
+        },
+        {
+          "tcId": 3,
+          "len": 152,
+          "outLen": 168,
+          "msg": "42CD51685B25E79AD1F616509B67DEA8CED846",
+          "md": "ABE480565379445CF7AE0810863ACA19762C7614AE"
+        },
+        {
+          "tcId": 4,
+          "len": 136,
+          "outLen": 208,
+          "msg": "13EB37E22B22DB8F2661AAAA82A4CA21FB",
+          "md": "A5F3B4B2042C7DB31548971DAEF686B83FC06BDD26B029521631"
+        },
+        {
+          "tcId": 5,
+          "len": 208,
+          "outLen": 272,
+          "msg": "5799830505C9C93D39EA11E72F6AD148A3F155303841F5DD6674",
+          "md": "99A01397A695A79A850D86B4EF19D88B2FDF6DE8615C130020C07D0D5ABE002B2EBB"
+        }
+      ]
+    }
+  ]
+}

@@ -36,6 +36,10 @@ SHA3_512_LDT = { dir = "SHA3-512-2.0", file = "ldt-slice.json", groups = 1, test
 [acvp_server.shake]
 SHAKE128 = { dir = "SHAKE-128-FIPS202", tgId = 1, tcId = 128, out_bytes = 58, sha256 = "1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db" }
 SHAKE256 = { dir = "SHAKE-256-FIPS202", tgId = 1, tcId = 208, out_bytes = 56, sha256 = "a9348d17e009cad62a2baa70160353f5bca936a27116f60dd5811f39b91c6991" }
+SHAKE128_MCT = { dir = "SHAKE-128-FIPS202", file = "mct-slice.json", groups = 1, tests = 1, testType = "MCT", minOutLen = 128, maxOutLen = 4096, resultsKept = 5, sha256 = "f5dadb1187fb186c7c1f43462c0edbe8b9c293d60b57392ff98252e8a421756d" }
+SHAKE256_MCT = { dir = "SHAKE-256-FIPS202", file = "mct-slice.json", groups = 1, tests = 1, testType = "MCT", minOutLen = 256, maxOutLen = 4096, resultsKept = 5, sha256 = "85defe6f6de66839dfe9083fd59fb3e4c8f7f3c81ed3e781684c4350eef40270" }
+SHAKE128_VOT = { dir = "SHAKE-128-FIPS202", file = "vot-slice.json", groups = 1, tests = 5, testType = "VOT", sha256 = "d1aa299dd1af76f2da31593855447f177d4ba85de7ada7525d4e1862fffe7448" }
+SHAKE256_VOT = { dir = "SHAKE-256-FIPS202", file = "vot-slice.json", groups = 1, tests = 5, testType = "VOT", sha256 = "9abbc9099eded112338cbfc061b6be3c7e2a100c8f14fb66a10b3e52e5ccbb6d" }
 
 [acvp_server.hmac]
 HMAC_SHA_1 = { dir = "HMAC-SHA-1-1.0", tgId = 5, tcId = 301, key_bits = 8, msg_bits = 128, mac_bits = 80, sha256 = "23e8cf16f428d18f0789ec380dbecd95caeee9683e2ab2dcb3ccdae7092a1842" }

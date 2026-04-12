@@ -238,6 +238,16 @@
 //!   representatives as the sigPrim slice, proving sigPrim/decPrim
 //!   cross-handler agreement (both compute `input^d mod n`)
 //!
+//! R45 adds SHAKE MCT and VOT test type coverage:
+//!
+//! - [`shake`] — `SHAKE-{128,256}` / `MCT` revision `FIPS202`,
+//!   XOF Monte Carlo Test implementing the ACVP XOF MCT algorithm
+//!   (draft-celi-acvp-xof §6.2): 100×1000 iterations with variable
+//!   output length, self-generated vectors with 5 resultsArray entries
+//! - [`shake`] — `SHAKE-{128,256}` / `VOT` revision `FIPS202`,
+//!   Variable Output Test using the same envelope as AFT with varying
+//!   `outLen` per test case, self-generated vectors with 5 tests each
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;

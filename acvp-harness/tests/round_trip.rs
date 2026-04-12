@@ -2508,6 +2508,140 @@ fn rsa_keygen_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// SHAKE MCT + VOT (R45)
+// ----------------------------------------------------------------------
+
+/// SHAKE MCT resultsArray entry: md (hex) + outLen (number).
+/// The existing `collect_mct_expected` only handles string fields, but
+/// SHAKE MCT also has `outLen` as a JSON number, so we need a custom
+/// collector.
+struct ShakeMctEntry {
+    md: String,
+    out_len: i64,
+}
+
+fn collect_shake_mct(v: &JsonValue) -> Vec<(i64, Vec<ShakeMctEntry>)> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            let Some(ra) = t.get("resultsArray").and_then(JsonValue::as_array) else {
+                continue;
+            };
+            let entries: Vec<ShakeMctEntry> = ra
+                .iter()
+                .filter_map(|entry| {
+                    let md = entry.get("md").and_then(JsonValue::as_str)?;
+                    let out_len = entry.get("outLen").and_then(JsonValue::as_i64)?;
+                    Some(ShakeMctEntry {
+                        md: md.to_ascii_uppercase(),
+                        out_len,
+                    })
+                })
+                .collect();
+            out.push((tc_id, entries));
+        }
+    }
+    out
+}
+
+fn assert_shake_mct_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_shake_mct(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} produced no expected SHAKE MCT answers"
+    );
+
+    // Strip resultsArray from the prompt
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "resultsArray");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    let got = collect_shake_mct(&response);
+
+    assert_eq!(
+        got.len(),
+        expected.len(),
+        "{label}: response has {} MCT tests, expected {}",
+        got.len(),
+        expected.len()
+    );
+
+    for (exp, got_entry) in expected.iter().zip(got.iter()) {
+        assert_eq!(exp.0, got_entry.0, "{label}: tcId mismatch");
+        let exp_entries = &exp.1;
+        let got_entries = &got_entry.1;
+        let compare_len = exp_entries.len();
+        assert!(
+            got_entries.len() >= compare_len,
+            "{label}: tcId {}: response has {} resultsArray entries, expected at least {}",
+            exp.0,
+            got_entries.len(),
+            compare_len
+        );
+        for (idx, (exp_ra, got_ra)) in exp_entries.iter().zip(got_entries.iter()).enumerate() {
+            assert_eq!(
+                exp_ra.md, got_ra.md,
+                "{label}: tcId {} resultsArray[{idx}] md mismatch",
+                exp.0
+            );
+            assert_eq!(
+                exp_ra.out_len, got_ra.out_len,
+                "{label}: tcId {} resultsArray[{idx}] outLen mismatch",
+                exp.0
+            );
+        }
+    }
+}
+
+#[test]
+fn shake_128_mct_round_trip() {
+    assert_shake_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHAKE-128-FIPS202/mct-slice.json",
+        "SHAKE-128-MCT",
+    );
+}
+
+#[test]
+fn shake_256_mct_round_trip() {
+    assert_shake_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHAKE-256-FIPS202/mct-slice.json",
+        "SHAKE-256-MCT",
+    );
+}
+
+#[test]
+fn shake_128_vot_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHAKE-128-FIPS202/vot-slice.json",
+        "md",
+        "SHAKE-128-VOT",
+    );
+}
+
+#[test]
+fn shake_256_vot_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHAKE-256-FIPS202/vot-slice.json",
+        "md",
+        "SHAKE-256-VOT",
+    );
+}
+
+// ----------------------------------------------------------------------
 // RSA primitive lifecycle (R44: sigPrim + decPrim, shared DRBG key)
 // ----------------------------------------------------------------------
 
