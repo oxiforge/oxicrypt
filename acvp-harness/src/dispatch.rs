@@ -208,6 +208,10 @@ impl Default for Registry {
 /// CBC IV feedback). The same handler structs serve both AFT and MCT
 /// test types — the `handle_group` impl routes on `testType`.
 ///
+/// R16 adds `CMAC-AES` revision `1.0` — SP 800-38B CMAC with gen
+/// (compute MAC) and ver (verify MAC / `testPassed`) directions over
+/// all three AES key sizes.
+///
 /// Each new variant is a single `register` line — future chunks add
 /// DRBG, ECDSA, EdDSA, RSA, plus MCT for remaining modes and LDT
 /// on the same plumbing.
@@ -236,6 +240,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::hmac::HmacSha3_256Handler));
     r.register(Box::new(handlers::hmac::HmacSha3_384Handler));
     r.register(Box::new(handlers::hmac::HmacSha3_512Handler));
+    // CMAC-AES (SP 800-38B, revision 1.0)
+    r.register(Box::new(handlers::cmac::CmacAesHandler));
     // KDA-HKDF (SP 800-56Cr2, mode-keyed)
     r.register(Box::new(handlers::kda_hkdf::KdaHkdfHandler));
     // AES block-cipher modes (R14-A: ECB/CBC/CTR AFT)
@@ -334,12 +340,14 @@ mod tests {
         assert!(r.find("ACVP-AES-CCM", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-KW", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-KWP", None, "1.0").is_some());
+        // R16 CMAC-AES
+        assert!(r.find("CMAC-AES", None, "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 25);
+        assert_eq!(r.len(), 26);
         assert!(!r.is_empty());
     }
 

@@ -160,10 +160,13 @@ concatenation, 256-bit two-block XOR) and direction-aware CBC IV
 feedback — six vendored MCT groups (3 key sizes × 2 directions per
 mode) are verified against the first five resultsArray entries from
 each NIST reference vector.
+R16 adds the `CMAC-AES` revision `1.0` handler (SP 800-38B) with `gen`
+(compute) and `ver` (verify / `testPassed`) directions over all three
+key sizes — the twenty-sixth registered handler.
 Round-trip tests in `acvp-harness/tests/round_trip.rs` and
 `acvp-harness/tests/shs_round_trip.rs` prove all four dispatchers
-reproduce the vendored answer fields byte-for-byte across twenty-eight
-ACVP slices (twenty-six AFT + two MCT) and seven CAVP SHS files. The
+reproduce the vendored answer fields byte-for-byte across twenty-nine
+ACVP slices (twenty-seven AFT + two MCT) and seven CAVP SHS files. The
 JSON parser, hex codec, and CAVP SHS `.rsp` parser used by the harness
 are all in-tree — the validation binary has zero third-party
 dependencies, matching the module itself. Remaining algorithm families
@@ -194,7 +197,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: DRBG, ECDSA, EdDSA, RSA handlers; MCT for remaining modes, LDT test type. Twenty-five AFT handlers and the ECB/CBC MCT engine are wired as of R15. R14-A/R14-B completed all seven AES mode AFT handlers; R15 added the AES MCT engine for ECB and CBC (100×1000 iteration loop with key-schedule update).
+- ACVP harness vector dispatch: DRBG, ECDSA, EdDSA, RSA handlers; MCT for remaining modes, LDT test type. Twenty-six AFT handlers (including CMAC-AES) and the ECB/CBC MCT engine are wired as of R16.
 
 ## License
 

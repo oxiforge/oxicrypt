@@ -901,6 +901,205 @@ fn aes_cbc_mct_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// CMAC-AES AFT (R16): gen + ver
+//
+// `gen` groups produce a `mac` answer; `ver` groups produce
+// `testPassed`. The test helper strips the answer field per-direction,
+// dispatches, and compares.
+// ----------------------------------------------------------------------
+
+/// Expected answer from a CMAC test case.
+#[derive(Debug)]
+enum CmacExpected {
+    Gen { tc_id: i64, mac: String },
+    Ver { tc_id: i64, test_passed: bool },
+}
+
+fn collect_cmac_expected(v: &JsonValue) -> Vec<CmacExpected> {
+    let mut out = Vec::new();
+    let Some(groups) = v.get("testGroups").and_then(JsonValue::as_array) else {
+        return out;
+    };
+    for g in groups {
+        let direction = g
+            .get("direction")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("");
+        let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for t in tests {
+            let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) else {
+                continue;
+            };
+            match direction {
+                "gen" => {
+                    let mac = t
+                        .get("mac")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    out.push(CmacExpected::Gen { tc_id, mac });
+                }
+                "ver" => {
+                    let test_passed = t
+                        .get("testPassed")
+                        .and_then(JsonValue::as_bool)
+                        .unwrap_or(true);
+                    out.push(CmacExpected::Ver { tc_id, test_passed });
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Strip CMAC answer fields from the prompt:
+/// - gen: remove `mac`
+/// - ver: remove `testPassed`
+fn strip_cmac_answers_in_place(v: &mut JsonValue) {
+    let JsonValue::Object(root_kvs) = v else {
+        return;
+    };
+    let groups = root_kvs.iter_mut().find_map(|(k, val)| {
+        if k == "testGroups" {
+            if let JsonValue::Array(a) = val {
+                Some(a)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+    let Some(groups) = groups else {
+        return;
+    };
+    for g in groups.iter_mut() {
+        let JsonValue::Object(g_kvs) = g else {
+            continue;
+        };
+        let direction: String = g_kvs
+            .iter()
+            .find_map(|(k, val)| {
+                if k == "direction" {
+                    val.as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let strip_fields: &[&str] = match direction.as_str() {
+            "gen" => &["mac"],
+            "ver" => &["testPassed"],
+            _ => continue,
+        };
+        let tests = g_kvs.iter_mut().find_map(|(k, val)| {
+            if k == "tests" {
+                if let JsonValue::Array(a) = val {
+                    Some(a)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        let Some(tests) = tests else {
+            continue;
+        };
+        for t in tests.iter_mut() {
+            if let JsonValue::Object(kvs) = t {
+                kvs.retain(|(k, _)| !strip_fields.contains(&k.as_str()));
+            }
+        }
+    }
+}
+
+fn assert_cmac_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+    let expected = collect_cmac_expected(&slice);
+    assert!(
+        !expected.is_empty(),
+        "{label}: slice {relative} produced no expected answers"
+    );
+
+    let mut prompt = slice.clone();
+    strip_cmac_answers_in_place(&mut prompt);
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    // Collect response tests keyed by tcId.
+    let mut resp_tests: std::collections::HashMap<i64, &JsonValue> =
+        std::collections::HashMap::new();
+    if let Some(groups) = response.get("testGroups").and_then(JsonValue::as_array) {
+        for g in groups {
+            if let Some(tests) = g.get("tests").and_then(JsonValue::as_array) {
+                for t in tests {
+                    if let Some(tc_id) = t.get("tcId").and_then(JsonValue::as_i64) {
+                        resp_tests.insert(tc_id, t);
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        resp_tests.len(),
+        expected.len(),
+        "{label}: response has {} cases, expected {}",
+        resp_tests.len(),
+        expected.len()
+    );
+
+    for exp in &expected {
+        match exp {
+            CmacExpected::Gen { tc_id, mac } => {
+                let t = resp_tests
+                    .get(tc_id)
+                    .unwrap_or_else(|| panic!("{label}: missing tcId {tc_id}"));
+                let got_mac = t
+                    .get("mac")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_else(|| panic!("{label}: missing mac for tcId {tc_id}"));
+                assert_eq!(
+                    mac.to_ascii_uppercase(),
+                    got_mac,
+                    "{label}: mac mismatch for tcId {tc_id}"
+                );
+            }
+            CmacExpected::Ver { tc_id, test_passed } => {
+                let t = resp_tests
+                    .get(tc_id)
+                    .unwrap_or_else(|| panic!("{label}: missing tcId {tc_id}"));
+                let got_passed = t
+                    .get("testPassed")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or_else(|| {
+                        panic!("{label}: missing testPassed for tcId {tc_id}")
+                    });
+                assert_eq!(
+                    *test_passed, got_passed,
+                    "{label}: testPassed mismatch for tcId {tc_id}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn cmac_aes_aft_round_trip() {
+    assert_cmac_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/CMAC-AES-1.0/kat-slice.json",
+        "CMAC-AES",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

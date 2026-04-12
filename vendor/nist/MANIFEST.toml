@@ -108,6 +108,9 @@ ACVP_AES_CCM_1_0 = { dir = "ACVP-AES-CCM-1.0", groups = 6, tests = 18, sha256 = 
 ACVP_AES_KW_1_0 = { dir = "ACVP-AES-KW-1.0", groups = 6, tests = 18, sha256 = "0dbc9c1ff82d56ef21513fc396ba3d458ab8872d85bdac25052887ca2f25da9d" }
 ACVP_AES_KWP_1_0 = { dir = "ACVP-AES-KWP-1.0", groups = 6, tests = 18, sha256 = "701c7ff377042d6b3cbe269a5fb7a42889c7f8f40ec923258e22c18319829ed4" }
 
+[acvp_server.cmac]
+CMAC_AES_1_0 = { dir = "CMAC-AES-1.0", groups = 6, tests = 18, sha256 = "b48bb17651c070584bb6bfa97cf6846298e904f1a81cc2880016ef79880e6d1d" }
+
 [acvp_server.aes_mct]
 ACVP_AES_ECB_MCT_1_0 = { dir = "ACVP-AES-ECB-1.0", file = "mct-slice.json", groups = 6, tests = 6, ra_limit = 5, sha256 = "a33d4a82b1534c70d686e5ca8dea202781267c6cb5d96e096d0010930af49db1" }
 ACVP_AES_CBC_MCT_1_0 = { dir = "ACVP-AES-CBC-1.0", file = "mct-slice.json", groups = 6, tests = 6, ra_limit = 5, sha256 = "fbcf31f9dc34e33d375a2502c7cea0d1e505bd2323b66873ff970e72160e77e3" }

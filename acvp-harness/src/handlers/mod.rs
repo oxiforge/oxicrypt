@@ -38,10 +38,15 @@
 //!   `SHA3-{224,256,384,512}` HMAC instantiations over the
 //!   SP 800-56C Rev 2 §5.9.2 hybrid shared-secret form
 //!
-//! Later chunks will add AES, DRBG, ECDSA, EdDSA, RSA, plus MCT and
-//! LDT test types, on the same plumbing.
+//! R14-A/R14-B landed all seven AES block-cipher / AEAD / key-wrap
+//! AFT handlers in [`aes`]. R15 added the MCT engine for ECB and CBC.
+//! R16 added [`cmac`] — CMAC-AES gen/ver (SP 800-38B).
+//!
+//! Later chunks will add DRBG, ECDSA, EdDSA, RSA, plus MCT and LDT
+//! test types, on the same plumbing.
 
 pub mod aes;
+pub mod cmac;
 pub mod hmac;
 pub mod hmac_sha2_256;
 pub mod kda_hkdf;
