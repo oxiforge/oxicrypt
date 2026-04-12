@@ -767,6 +767,71 @@ fn aes_kwp_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// AES lifecycle (R41): encrypt-decrypt path equivalence
+//
+// Each lifecycle-slice.json uses a single DRBG-generated AES-256 key
+// and proves encrypt→decrypt recovers the original plaintext.  For
+// authenticated/wrap modes, an additional decrypt group with a
+// bit-flipped tag/ciphertext proves testPassed=false detection.
+// ----------------------------------------------------------------------
+
+#[test]
+fn aes_ecb_lifecycle_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-ECB-1.0/lifecycle-slice.json",
+        "ACVP-AES-ECB-lifecycle",
+    );
+}
+
+#[test]
+fn aes_cbc_lifecycle_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CBC-1.0/lifecycle-slice.json",
+        "ACVP-AES-CBC-lifecycle",
+    );
+}
+
+#[test]
+fn aes_ctr_lifecycle_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CTR-1.0/lifecycle-slice.json",
+        "ACVP-AES-CTR-lifecycle",
+    );
+}
+
+#[test]
+fn aes_gcm_lifecycle_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-GCM-1.0/lifecycle-slice.json",
+        "ACVP-AES-GCM-lifecycle",
+    );
+}
+
+#[test]
+fn aes_ccm_lifecycle_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CCM-1.0/lifecycle-slice.json",
+        "ACVP-AES-CCM-lifecycle",
+    );
+}
+
+#[test]
+fn aes_kw_lifecycle_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-KW-1.0/lifecycle-slice.json",
+        "ACVP-AES-KW-lifecycle",
+    );
+}
+
+#[test]
+fn aes_kwp_lifecycle_round_trip() {
+    assert_aead_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-KWP-1.0/lifecycle-slice.json",
+        "ACVP-AES-KWP-lifecycle",
+    );
+}
+
+// ----------------------------------------------------------------------
 // AES MCT (R15): ECB / CBC Monte Carlo Tests
 //
 // Each MCT group has exactly one test with initial parameters.

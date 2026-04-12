@@ -165,6 +165,15 @@ RSA_lifecycle_keyGen  = { dir = "RSA-keyGen-FIPS186-5", file = "lifecycle-slice.
 RSA_lifecycle_sigGen  = { dir = "RSA-sigGen-FIPS186-5", file = "lifecycle-slice.json", groups = 2, tests = 10, modulo = 2048, sigTypes = ["pkcs1v1.5","pss"], keyModes = ["standard","crt"], hashAlg = "SHA2-256", lifecycle = true, sha256 = "11472b433c4d8517c8ad2177324b28845e2e931691ddb24af6fc8cbf0fb83d37" }
 RSA_lifecycle_sigVer  = { dir = "RSA-sigVer-FIPS186-5", file = "lifecycle-slice.json", groups = 4, tests = 20, modulo = 2048, sigTypes = ["pkcs1v1.5","pss"], hashAlg = "SHA2-256", lifecycle = true, sha256 = "f5863ea49f7cad97b04d440a57dbd4bb571b6411aa25fde35962c24597f05506" }
 
+[acvp_server.aes_lifecycle]
+AES_ECB_lifecycle = { dir = "ACVP-AES-ECB-1.0", file = "lifecycle-slice.json", groups = 2, tests = 10, keyLen = 256, lifecycle = true, sha256 = "e68890f9035913880491b17481bcecde1c8fc0ce1fcd41e7bdaaa2db0ba4009f" }
+AES_CBC_lifecycle = { dir = "ACVP-AES-CBC-1.0", file = "lifecycle-slice.json", groups = 2, tests = 10, keyLen = 256, lifecycle = true, sha256 = "6b35487b03593f2a89e95bad320e037616d4134503f93980d4e58f3a84871d55" }
+AES_CTR_lifecycle = { dir = "ACVP-AES-CTR-1.0", file = "lifecycle-slice.json", groups = 2, tests = 10, keyLen = 256, lifecycle = true, sha256 = "4ee063a1becf1a58bac13ac78d0da71fb4beba066ee7050eddbc8b5128139123" }
+AES_GCM_lifecycle = { dir = "ACVP-AES-GCM-1.0", file = "lifecycle-slice.json", groups = 3, tests = 15, keyLen = 256, lifecycle = true, sha256 = "f294246ff3f6b660e2fbf1a7ebba350b6e6463916be07b1e2975d8212a7567b8" }
+AES_CCM_lifecycle = { dir = "ACVP-AES-CCM-1.0", file = "lifecycle-slice.json", groups = 3, tests = 15, keyLen = 256, lifecycle = true, sha256 = "a4b6b76627ce50ab11bebea29b270f0eea7b52100468926280fe10f156744f4d" }
+AES_KW_lifecycle = { dir = "ACVP-AES-KW-1.0", file = "lifecycle-slice.json", groups = 3, tests = 15, keyLen = 256, lifecycle = true, sha256 = "b71dd5d3c7478d30d2b897e99ae6d2daf22b70c50a9a760c284b96621bd6a0b2" }
+AES_KWP_lifecycle = { dir = "ACVP-AES-KWP-1.0", file = "lifecycle-slice.json", groups = 3, tests = 15, keyLen = 256, lifecycle = true, sha256 = "e7dbf50c0821ec6f53f19a775fc4dcc82a526f01ce25a6ac350733639a5bcae6" }
+
 [acvp_server.tls]
 TLS_v1_2_KDF_RFC7627  = { dir = "TLS-v1.2-KDF-RFC7627", groups = 6, tests = 18, hashAlgs = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "cfa08a17a16a52db158900d7d4de52cae3c10e06a93ecddd34350effa7aff1bf" }
 kdf_components_tls_1_0  = { dir = "kdf-components-tls-1.0", groups = 6, tests = 18, tlsVersion = "v1.2", hashAlgs = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "c2d79cde1d4edd337457150cfd07d24af45a08838d0e035ef53b0d41d339d2ec" }

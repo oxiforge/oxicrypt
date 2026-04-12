@@ -206,6 +206,14 @@
 //!   ECDSA-generated keys also work correctly for ECDH shared
 //!   secret computation
 //!
+//! R41 adds AES encrypt-decrypt lifecycle slices for all seven modes:
+//!
+//! - [`aes`] — self-generated AES-256 lifecycle vector files for
+//!   ECB, CBC, CTR, GCM, CCM, KW, and KWP, each sharing a single
+//!   DRBG-generated key and proving encrypt→decrypt path consistency.
+//!   Authenticated/wrap modes include an additional invalid-tag/ICV
+//!   decrypt group proving `testPassed = false` detection.
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
