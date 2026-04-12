@@ -1,5 +1,6 @@
 //! SHAKE128 / SHAKE256 extendable-output functions per FIPS 202 §6.2,
-//! plus cSHAKE128 / cSHAKE256 per SP 800-185 §3.
+//! cSHAKE128 / cSHAKE256 per SP 800-185 §3, and KMAC128 / KMAC256
+//! keyed message authentication codes per SP 800-185 §4.
 //!
 //! # Approved algorithms
 //!
@@ -9,19 +10,24 @@
 //! | SHAKE256 | FIPS 202 §6.2 | 136 | 512 |
 //! | cSHAKE128 | SP 800-185 §3 | 168 | 256 |
 //! | cSHAKE256 | SP 800-185 §3 | 136 | 512 |
+//! | KMAC128  | SP 800-185 §4 | 168 | 256 |
+//! | KMAC256  | SP 800-185 §4 | 136 | 512 |
 //!
 //! SHAKE uses the domain-separation byte `0x1f` (FIPS 202 §B.2);
 //! cSHAKE uses `0x04` (SP 800-185 §3.1) and prepends a
 //! `bytepad(encode_string(N) || encode_string(S), rate)` block
 //! before the message. When both `N` and `S` are empty, cSHAKE
-//! reduces to SHAKE.
+//! reduces to SHAKE. KMAC builds on cSHAKE with N = `"KMAC"`,
+//! absorbing `bytepad(encode_string(K), rate) || X || right_encode(L)`
+//! as the cSHAKE message.
 //!
 //! # API shape
 //!
-//! Both SHAKE and cSHAKE are XOFs: the output length is chosen by
-//! the caller at squeeze time. The streaming API is
+//! SHAKE and cSHAKE are XOFs: the output length is chosen by the
+//! caller at squeeze time. The streaming API is
 //! `new → update* → finalize → squeeze*`. `squeeze` may be called
-//! repeatedly for arbitrarily long output.
+//! repeatedly for arbitrarily long output. KMAC uses
+//! `new → update* → finalize_into` for fixed-length tags.
 //!
 //! # Power-up self-tests
 //!
@@ -419,6 +425,199 @@ pub fn cshake256<const OUT_LEN: usize>(
 }
 
 // ========================================================================
+// KMAC — SP 800-185 §4
+// ========================================================================
+
+/// SP 800-185 §2.3.1: `right_encode(x)` — encode a non-negative integer
+/// `x` as a big-endian byte string followed by a single byte giving the
+/// number of significant bytes. Returns the number of bytes written to
+/// `out`.
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+fn right_encode(x: usize, out: &mut [u8; 9]) -> usize {
+    if x == 0 {
+        out[0] = 0;
+        out[1] = 1;
+        return 2;
+    }
+    let byte_len = ((usize::BITS - x.leading_zeros()) as usize).div_ceil(8);
+    let be = x.to_be_bytes();
+    let start = core::mem::size_of::<usize>() - byte_len;
+    out[..byte_len].copy_from_slice(&be[start..]);
+    // byte_len is at most 8 for a 64-bit usize, safe truncation.
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        out[byte_len] = byte_len as u8;
+    }
+    byte_len + 1
+}
+
+/// Internal KMAC state, parameterized by sponge rate.
+///
+/// Implements SP 800-185 §4:
+///
+/// ```text
+/// KMAC(K, X, L, S) = cSHAKE(newX, L, "KMAC", S)
+/// newX = bytepad(encode_string(K), rate) || X || right_encode(L)
+/// ```
+///
+/// The caller feeds `X` incrementally via [`update`](KmacCore::update),
+/// then calls [`finalize`](KmacCore::finalize) which appends
+/// `right_encode(L)` and squeezes the tag.
+#[derive(Clone)]
+struct KmacCore<const RATE: usize> {
+    cshake: CShakeCore<RATE>,
+}
+
+impl<const RATE: usize> KmacCore<RATE> {
+    /// Create a new KMAC core with key `K` and customization string `S`.
+    ///
+    /// # Safety invariant
+    ///
+    /// `absorbed` tracks the bytepad offset; all slice accesses are
+    /// bounded by `RATE` which is at most 168.
+    #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+    fn new_internal(key: &[u8], s: &[u8]) -> Self {
+        let mut cshake = CShakeCore::<RATE>::new_internal(b"KMAC", s);
+
+        // Absorb bytepad(encode_string(K), RATE):
+        // = left_encode(RATE) || encode_string(K) || zero-pad to RATE
+        let mut absorbed = 0usize;
+        let mut buf = [0u8; 9];
+
+        // left_encode(RATE)
+        let len = left_encode(RATE, &mut buf);
+        cshake.update(&buf[..len]);
+        absorbed += len;
+
+        // encode_string(K) = left_encode(len(K)*8) || K
+        let len = left_encode(key.len() * 8, &mut buf);
+        cshake.update(&buf[..len]);
+        absorbed += len;
+        if !key.is_empty() {
+            cshake.update(key);
+            absorbed += key.len();
+        }
+
+        // Zero-pad to multiple of RATE.
+        let pad = RATE - (absorbed % RATE);
+        if pad != RATE {
+            let zeros = [0u8; 200];
+            cshake.update(&zeros[..pad]);
+        }
+
+        Self { cshake }
+    }
+
+    /// Feed more message data (`X`).
+    fn update(&mut self, data: &[u8]) {
+        self.cshake.update(data);
+    }
+
+    /// Finalize: append `right_encode(tag_len_bits)`, then finalize the
+    /// underlying cSHAKE and squeeze `tag.len()` bytes.
+    fn finalize_into(&mut self, tag: &mut [u8]) {
+        let mut buf = [0u8; 9];
+        #[allow(clippy::arithmetic_side_effects)]
+        let len = right_encode(tag.len() * 8, &mut buf);
+        self.cshake.update(&buf[..len]);
+        self.cshake.finalize();
+        self.cshake.squeeze(tag);
+    }
+}
+
+/// KMAC128 message authentication code (SP 800-185 §4).
+///
+/// Built on cSHAKE128 with N = `"KMAC"`.
+#[derive(Clone)]
+pub struct Kmac128 {
+    core: KmacCore<SHAKE128_RATE>,
+}
+
+impl Kmac128 {
+    /// Creates a new KMAC128 instance, gated on module state.
+    pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(key, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(key: &[u8], s: &[u8]) -> Self {
+        Self {
+            core: KmacCore::new_internal(key, s),
+        }
+    }
+
+    /// Feeds `data` into the message.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes and writes the tag into `tag`.
+    pub fn finalize_into(&mut self, tag: &mut [u8]) {
+        self.core.finalize_into(tag);
+    }
+}
+
+/// One-shot KMAC128.
+pub fn kmac128<const TAG_LEN: usize>(
+    key: &[u8],
+    data: &[u8],
+    s: &[u8],
+) -> Result<[u8; TAG_LEN], Error> {
+    let mut m = Kmac128::new(key, s)?;
+    m.update(data);
+    let mut tag = [0u8; TAG_LEN];
+    m.finalize_into(&mut tag);
+    Ok(tag)
+}
+
+/// KMAC256 message authentication code (SP 800-185 §4).
+///
+/// Built on cSHAKE256 with N = `"KMAC"`.
+#[derive(Clone)]
+pub struct Kmac256 {
+    core: KmacCore<SHAKE256_RATE>,
+}
+
+impl Kmac256 {
+    /// Creates a new KMAC256 instance, gated on module state.
+    pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(key, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(key: &[u8], s: &[u8]) -> Self {
+        Self {
+            core: KmacCore::new_internal(key, s),
+        }
+    }
+
+    /// Feeds `data` into the message.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes and writes the tag into `tag`.
+    pub fn finalize_into(&mut self, tag: &mut [u8]) {
+        self.core.finalize_into(tag);
+    }
+}
+
+/// One-shot KMAC256.
+pub fn kmac256<const TAG_LEN: usize>(
+    key: &[u8],
+    data: &[u8],
+    s: &[u8],
+) -> Result<[u8; TAG_LEN], Error> {
+    let mut m = Kmac256::new(key, s)?;
+    m.update(data);
+    let mut tag = [0u8; TAG_LEN];
+    m.finalize_into(&mut tag);
+    Ok(tag)
+}
+
+// ========================================================================
 // Power-up self-tests
 // ========================================================================
 
@@ -543,6 +742,71 @@ pub fn self_test_cshake256() -> Result<(), SelfTestFailure> {
     }
 }
 
+// ── KMAC KATs (NIST KMAC_samples.pdf) ─────────────────────────────
+
+/// KMAC128 KAT key: 32 bytes `40 41 42 … 5F` (NIST Sample #1).
+const KAT_KMAC128_KEY: [u8; 32] = [
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+    0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
+];
+/// KMAC128 KAT input: `00 01 02 03` (4 bytes).
+const KAT_KMAC128_INPUT: [u8; 4] = [0x00, 0x01, 0x02, 0x03];
+/// KMAC128 expected tag (32 bytes, S="", L=256). Source: NIST
+/// `KMAC_samples.pdf` Sample #1 (Security Strength 128-bits).
+const KAT_KMAC128_EXPECTED: [u8; 32] = [
+    0xe5, 0x78, 0x0b, 0x0d, 0x3e, 0xa6, 0xf7, 0xd3,
+    0xa4, 0x29, 0xc5, 0x70, 0x6a, 0xa4, 0x3a, 0x00,
+    0xfa, 0xdb, 0xd7, 0xd4, 0x96, 0x28, 0x83, 0x9e,
+    0x31, 0x87, 0x24, 0x3f, 0x45, 0x6e, 0xe1, 0x4e,
+];
+
+/// Power-up known-answer test for KMAC128 (NIST Sample #1).
+pub fn self_test_kmac128() -> Result<(), SelfTestFailure> {
+    let mut m = Kmac128::new_internal(&KAT_KMAC128_KEY, b"");
+    m.update(&KAT_KMAC128_INPUT);
+    let mut tag = [0u8; 32];
+    m.finalize_into(&mut tag);
+    if tag == KAT_KMAC128_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
+/// KMAC256 KAT expected tag (64 bytes, S="", L=512). Source: NIST
+/// `KMAC_samples.pdf` Sample #5 (Security Strength 256-bits,
+/// K=40..5F, X=00..C7 200 bytes, S="").
+const KAT_KMAC256_EXPECTED: [u8; 64] = [
+    0x75, 0x35, 0x8c, 0xf3, 0x9e, 0x41, 0x49, 0x4e,
+    0x94, 0x97, 0x07, 0x92, 0x7c, 0xee, 0x0a, 0xf2,
+    0x0a, 0x3f, 0xf5, 0x53, 0x90, 0x4c, 0x86, 0xb0,
+    0x8f, 0x21, 0xcc, 0x41, 0x4b, 0xcf, 0xd6, 0x91,
+    0x58, 0x9d, 0x27, 0xcf, 0x5e, 0x15, 0x36, 0x9c,
+    0xbb, 0xff, 0x8b, 0x9a, 0x4c, 0x2e, 0xb1, 0x78,
+    0x00, 0x85, 0x5d, 0x02, 0x35, 0xff, 0x63, 0x5d,
+    0xa8, 0x25, 0x33, 0xec, 0x6b, 0x75, 0x9b, 0x69,
+];
+
+/// Power-up known-answer test for KMAC256 (NIST Sample #5).
+pub fn self_test_kmac256() -> Result<(), SelfTestFailure> {
+    // X = 00 01 02 … C7 (200 bytes)
+    let x: [u8; 200] = core::array::from_fn(|i| {
+        #[allow(clippy::cast_possible_truncation)]
+        { i as u8 }
+    });
+    let mut m = Kmac256::new_internal(&KAT_KMAC128_KEY, b"");
+    m.update(&x);
+    let mut tag = [0u8; 64];
+    m.finalize_into(&mut tag);
+    if tag == KAT_KMAC256_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
@@ -561,6 +825,14 @@ pub const KATS: &[KatEntry] = &[
         name: "cSHAKE256 KAT (SP 800-185 §A.2 Sample #3)",
         run: self_test_cshake256,
     },
+    KatEntry {
+        name: "KMAC128 KAT (NIST KMAC_samples #1, SP 800-185 §4)",
+        run: self_test_kmac128,
+    },
+    KatEntry {
+        name: "KMAC256 KAT (NIST KMAC_samples #5, SP 800-185 §4)",
+        run: self_test_kmac256,
+    },
 ];
 
 // ========================================================================
@@ -571,8 +843,9 @@ pub const KATS: &[KatEntry] = &[
 #[allow(clippy::unwrap_used, clippy::panic, clippy::cast_possible_truncation)]
 mod tests {
     use super::{
-        self_test_128, self_test_256, self_test_cshake128, self_test_cshake256, shake128,
-        shake256, CShake128, CShake256, Shake128, Shake256, KAT_SHAKE128_EMPTY_32,
+        self_test_128, self_test_256, self_test_cshake128, self_test_cshake256,
+        self_test_kmac128, self_test_kmac256, shake128, shake256, CShake128, CShake256,
+        Kmac128, Kmac256, Shake128, Shake256, KAT_SHAKE128_EMPTY_32,
         KAT_SHAKE256_EMPTY_64,
     };
     use fips_module::{initialize_with_tests, KatEntry};
@@ -613,6 +886,14 @@ mod tests {
             KatEntry {
                 name: "cshake256-bootstrap",
                 run: self_test_cshake256,
+            },
+            KatEntry {
+                name: "kmac128-bootstrap",
+                run: self_test_kmac128,
+            },
+            KatEntry {
+                name: "kmac256-bootstrap",
+                run: self_test_kmac256,
             },
         ]);
     }
@@ -812,5 +1093,126 @@ mod tests {
         b.squeeze(&mut piecewise[168..]);
 
         assert_eq!(full, piecewise);
+    }
+
+    // ── KMAC tests ──────────────────────────────────────────────
+
+    #[test]
+    fn kmac128_self_test_passes() {
+        self_test_kmac128().unwrap();
+    }
+
+    #[test]
+    fn kmac256_self_test_passes() {
+        self_test_kmac256().unwrap();
+    }
+
+    #[test]
+    fn kmac128_nist_sample2() {
+        // NIST KMAC_samples.pdf Sample #2: K=40..5F, X=00 01 02 03,
+        // S="My Tagged Application", L=256
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x = [0x00u8, 0x01, 0x02, 0x03];
+        let expected: [u8; 32] = hex(
+            "3b1fba963cd8b0b59e8c1a6d71888b714365\
+             1af8ba0a7070c0979e2811324aa5",
+        );
+        let mut m = Kmac128::new_internal(&key, b"My Tagged Application");
+        m.update(&x);
+        let mut tag = [0u8; 32];
+        m.finalize_into(&mut tag);
+        assert_eq!(tag, expected);
+    }
+
+    #[test]
+    fn kmac128_nist_sample3() {
+        // NIST KMAC_samples.pdf Sample #3: K=40..5F, X=00..C7 (200 bytes),
+        // S="My Tagged Application", L=256
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x: [u8; 200] = core::array::from_fn(|i| i as u8);
+        let expected: [u8; 32] = hex(
+            "1f5b4e6cca02209e0dcb5ca635b89a15e271\
+             ecc760071dfd805faa38f9729230",
+        );
+        let mut m = Kmac128::new_internal(&key, b"My Tagged Application");
+        m.update(&x);
+        let mut tag = [0u8; 32];
+        m.finalize_into(&mut tag);
+        assert_eq!(tag, expected);
+    }
+
+    #[test]
+    fn kmac256_nist_sample4() {
+        // NIST KMAC_samples.pdf Sample #4: K=40..5F, X=00 01 02 03,
+        // S="My Tagged Application", L=512
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x = [0x00u8, 0x01, 0x02, 0x03];
+        let expected: [u8; 64] = hex(
+            "20c570c31346f703c9ac36c61c03cb64\
+             c3970d0cfc787e9b79599d273a68d2f7\
+             f69d4cc3de9d104a351689f27cf6f595\
+             1f0103f33f4f24871024d9c27773a8dd",
+        );
+        let mut m = Kmac256::new_internal(&key, b"My Tagged Application");
+        m.update(&x);
+        let mut tag = [0u8; 64];
+        m.finalize_into(&mut tag);
+        assert_eq!(tag, expected);
+    }
+
+    #[test]
+    fn kmac256_nist_sample6() {
+        // NIST KMAC_samples.pdf Sample #6: K=40..5F, X=00..C7,
+        // S="My Tagged Application", L=512
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x: [u8; 200] = core::array::from_fn(|i| i as u8);
+        let expected: [u8; 64] = hex(
+            "b58618f71f92e1d56c1b8c55ddd7cd18\
+             8b97b4ca4d99831eb2699a837da2e4d9\
+             70fbacfde50033aea585f1a2708510c3\
+             2d07880801bd182898fe476876fc8965",
+        );
+        let mut m = Kmac256::new_internal(&key, b"My Tagged Application");
+        m.update(&x);
+        let mut tag = [0u8; 64];
+        m.finalize_into(&mut tag);
+        assert_eq!(tag, expected);
+    }
+
+    #[test]
+    fn kmac128_streaming_matches_oneshot() {
+        // Feeding data in pieces must match feeding it all at once.
+        let key = b"streaming-test-key-128";
+        let msg: [u8; 300] = core::array::from_fn(|i| (i as u8).wrapping_mul(7));
+
+        let mut one = Kmac128::new_internal(key, b"stream");
+        one.update(&msg);
+        let mut tag1 = [0u8; 32];
+        one.finalize_into(&mut tag1);
+
+        let mut two = Kmac128::new_internal(key, b"stream");
+        two.update(&msg[..50]);
+        two.update(&msg[50..200]);
+        two.update(&msg[200..]);
+        let mut tag2 = [0u8; 32];
+        two.finalize_into(&mut tag2);
+
+        assert_eq!(tag1, tag2);
+    }
+
+    #[test]
+    fn kmac128_different_keys_produce_different_tags() {
+        let msg = b"same message";
+        let mut m1 = Kmac128::new_internal(b"key-a", b"");
+        m1.update(msg);
+        let mut tag1 = [0u8; 32];
+        m1.finalize_into(&mut tag1);
+
+        let mut m2 = Kmac128::new_internal(b"key-b", b"");
+        m2.update(msg);
+        let mut tag2 = [0u8; 32];
+        m2.finalize_into(&mut tag2);
+
+        assert_ne!(tag1, tag2);
     }
 }
