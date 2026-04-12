@@ -1,7 +1,7 @@
-//! EdDSA ACVP handlers — `sigVer`, `keyVer`, and `sigGen` modes,
-//! revision `1.0`.
+//! EdDSA ACVP handlers — `sigVer`, `keyVer`, `sigGen`, and `keyGen`
+//! modes, revision `1.0`.
 //!
-//! Three modes, each dispatched as a separate handler:
+//! Four modes, each dispatched as a separate handler:
 //!
 //! - **SigVer** (`EDDSA` / `sigVer` / `1.0`): Given a message, public
 //!   key (`q`), and `signature`, verify the Ed25519 signature and
@@ -14,6 +14,9 @@
 //!   seed `d` and per-test `message`, sign and return `signature`.
 //!   Deterministic because Ed25519 is fully deterministic given the
 //!   seed.
+//! - **KeyGen** (`EDDSA` / `keyGen` / `1.0`): Given a per-test seed
+//!   `d`, derive the Ed25519 public key `q` via `keygen_internal`.
+//!   Deterministic.
 //!
 //! Only the `ED-25519` curve is supported. `ED-448` groups produce
 //! `DispatchError::Unsupported`.
@@ -79,6 +82,26 @@ impl AlgorithmHandler for EddsaSigGenHandler {
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
+    }
+}
+
+// ── KeyGen handler ─────────────────────────────────────────────────
+
+/// EdDSA KeyGen AFT dispatcher.
+pub struct EddsaKeyGenHandler;
+
+impl AlgorithmHandler for EddsaKeyGenHandler {
+    fn algorithm(&self) -> &'static str {
+        "EDDSA"
+    }
+    fn mode(&self) -> Option<&'static str> {
+        Some("keyGen")
+    }
+    fn revision(&self) -> &'static str {
+        "1.0"
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_keygen_group(group)
     }
 }
 
@@ -290,6 +313,70 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             (
                 "signature".to_string(),
                 JsonValue::String(hex::encode_upper(&sig)),
+            ),
+        ]));
+    }
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("tests".to_string(), JsonValue::Array(results)),
+    ]))
+}
+
+// ── KeyGen group driver ────────────────────────────────────────────
+
+fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
+    let tg_id = group
+        .get("tgId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tgId"))?;
+    let test_type = group
+        .get("testType")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("testType"))?;
+    if test_type != "AFT" {
+        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
+    }
+
+    let curve = group
+        .get("curve")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("curve"))?;
+    if curve != "ED-25519" {
+        return Err(DispatchError::Unsupported(
+            "EdDSA KeyGen: only ED-25519 is supported",
+        ));
+    }
+
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for t in tests {
+        let test_case_id = t
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+
+        let d_bytes = hex::decode(
+            t.get("d")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("d"))?,
+        )?;
+        let seed: [u8; 32] = d_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("EdDSA KeyGen: d is not 32 bytes"))?;
+
+        let q = fips_eddsa::ed25519::keygen_internal(&seed);
+
+        results.push(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(test_case_id)),
+            (
+                "q".to_string(),
+                JsonValue::String(hex::encode_upper(&q)),
             ),
         ]));
     }

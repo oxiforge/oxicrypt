@@ -1317,6 +1317,19 @@ fn eddsa_siggen_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// EdDSA KeyGen (R28: ED-25519, 1.0, deterministic keygen_internal)
+// ----------------------------------------------------------------------
+
+#[test]
+fn eddsa_keygen_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/EDDSA-keyGen-1.0/kat-slice.json",
+        "q",
+        "EDDSA-keyGen",
+    );
+}
+
+// ----------------------------------------------------------------------
 // RSA SigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
 // ----------------------------------------------------------------------
 

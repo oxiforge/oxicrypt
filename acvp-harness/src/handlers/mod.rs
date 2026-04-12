@@ -117,6 +117,11 @@
 //!   caller-supplied seed) and decrypt (§7.1.2, non-CRT) over
 //!   RSA-2048 / SHA2-256 with empty label
 //!
+//! R28 adds EdDSA key generation:
+//!
+//! - [`eddsa`] — `EDDSA` / `keyGen` revision `1.0`, derives the
+//!   Ed25519 public key from a 32-byte seed via `keygen_internal`
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
