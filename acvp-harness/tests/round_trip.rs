@@ -1647,3 +1647,16 @@ fn rsa_siggen_round_trip() {
         "RSA-sigGen",
     );
 }
+
+// ----------------------------------------------------------------------
+// KAS-ECC-SSC (R26: P-256 ECDH shared secret, answer field `z`)
+// ----------------------------------------------------------------------
+
+#[test]
+fn kas_ecc_ssc_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KAS-ECC-SSC-Sp800-56Ar3/kat-slice.json",
+        "z",
+        "KAS-ECC-SSC",
+    );
+}

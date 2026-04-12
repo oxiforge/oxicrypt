@@ -294,6 +294,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::rsa_sigprim::RsaSigPrimHandler));
     // RSA sigGen (R25: PKCS#1v1.5 non-CRT + PSS CRT, FIPS186-5)
     r.register(Box::new(handlers::rsa_siggen::RsaSigGenHandler));
+    // KAS-ECC-SSC (R26: P-256 ECDH shared secret, Sp800-56Ar3)
+    r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
     r
 }
 
@@ -408,12 +410,14 @@ mod tests {
         assert!(r.find("RSA", Some("signaturePrimitive"), "2.0").is_some());
         // R25 RSA SigGen
         assert!(r.find("RSA", Some("sigGen"), "FIPS186-5").is_some());
+        // R26 KAS-ECC-SSC
+        assert!(r.find("KAS-ECC-SSC", Some("Component"), "Sp800-56Ar3").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 42);
+        assert_eq!(r.len(), 43);
         assert!(!r.is_empty());
     }
 

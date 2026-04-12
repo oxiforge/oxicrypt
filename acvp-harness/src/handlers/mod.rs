@@ -104,6 +104,12 @@
 //!   (`pss-kat-slice.json`), exercising both valid and invalid
 //!   (bit-flipped) PSS signatures
 //!
+//! R26 adds the ECDH shared-secret computation handler:
+//!
+//! - [`kas_ecc_ssc`] — `KAS-ECC-SSC` / `Component` revision
+//!   `Sp800-56Ar3`, P-256 ECDH shared secret `Z = x(d * Q)` per
+//!   SP 800-56Ar3 §5.7.1.2
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -113,6 +119,7 @@ pub mod drbg;
 pub mod ecdsa;
 pub mod eddsa;
 pub mod hmac;
+pub mod kas_ecc_ssc;
 pub mod hmac_sha2_256;
 pub mod kdf_comp_tls;
 pub mod kbkdf;

@@ -18,6 +18,7 @@ path = "src/main.rs"
 fips-aes = { path = "../crates/fips-aes" }
 fips-cmac = { path = "../crates/fips-cmac" }
 fips-drbg = { path = "../crates/fips-drbg" }
+fips-ecdh = { path = "../crates/fips-ecdh" }
 fips-ecdsa = { path = "../crates/fips-ecdsa" }
 fips-eddsa = { path = "../crates/fips-eddsa" }
 fips-module = { path = "../crates/fips-module" }
