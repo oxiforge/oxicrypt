@@ -906,6 +906,42 @@ fn aes_cbc_mct_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// SHA-3 MCT (R30): Monte Carlo Test for all four SHA-3 variants
+// ----------------------------------------------------------------------
+
+#[test]
+fn sha3_224_mct_round_trip() {
+    assert_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-224-2.0/mct-slice.json",
+        "SHA3-224-MCT",
+    );
+}
+
+#[test]
+fn sha3_256_mct_round_trip() {
+    assert_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-256-2.0/mct-slice.json",
+        "SHA3-256-MCT",
+    );
+}
+
+#[test]
+fn sha3_384_mct_round_trip() {
+    assert_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-384-2.0/mct-slice.json",
+        "SHA3-384-MCT",
+    );
+}
+
+#[test]
+fn sha3_512_mct_round_trip() {
+    assert_mct_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHA3-512-2.0/mct-slice.json",
+        "SHA3-512-MCT",
+    );
+}
+
+// ----------------------------------------------------------------------
 // CMAC-AES AFT (R16): gen + ver
 //
 // `gen` groups produce a `mac` answer; `ver` groups produce

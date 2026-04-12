@@ -1,0 +1,24 @@
+{
+  "_source": "pqclib self-generated SHA-3 MCT vectors",
+  "algorithm": "SHA3-256",
+  "revision": "2.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "MCT",
+      "tests": [
+        {
+          "tcId": 1,
+          "msg": "A7A6A1A0A3A2ADACAFAEA9A8ABAAB5B4B7B6B1B0B3B2BDBCBFBEB9B8BBBA8584",
+          "resultsArray": [
+            {"md": "19FACA7911B8C21AF37CD8D5FC445F62BE3AFEDF252BB01FBE074BB37F04EA98"},
+            {"md": "B953429C8057117D50B78B0102F122EAA09F97356C0213CCE28564E149D2871F"},
+            {"md": "BD0A7483ACDD9D48CED95266004381D25EA73411686A4D90EBCF27503F736E8D"},
+            {"md": "B3FA9E7E143439A705EA4216E7AD1A944D486BEED43DF329643C1992B5D12946"},
+            {"md": "80BF63077ADD020F958678413610BC3DE8A234598B669EC51C32FE364C6A1B0D"}
+          ]
+        }
+      ]
+    }
+  ]
+}

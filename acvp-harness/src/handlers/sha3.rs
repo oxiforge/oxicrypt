@@ -1,7 +1,7 @@
-//! SHA3-224 / SHA3-384 / SHA3-512 Algorithm Functional Test (AFT) handlers.
+//! SHA3-224 / SHA3-384 / SHA3-512 AFT + MCT handlers.
 //!
 //! Targets ACVP `algorithm = "SHA3-{224,384,512}"`, `revision = "2.0"`,
-//! `testType = "AFT"`. SHA3-256 lives in its own
+//! `testType ∈ {"AFT", "MCT"}`. SHA3-256 lives in its own
 //! [`super::sha3_256`] module because it was wired up in R10 — this
 //! module provides the other three fixed-output members of the SHA-3
 //! family so R12-A can close out the SHA-3 hashing side of the
@@ -14,6 +14,13 @@
 //! values error out — the vendored ACVP slices at pinned commit
 //! `3611942ea10c070dd8bc6afec5682d56c307de8a` only use byte-aligned
 //! lengths for AFT, so this is not a functional gap.
+//!
+//! SHA-3 MCT (Monte Carlo Test) implements the ACVP SHA-3 §6.2 inner
+//! loop: `MD[0] = Seed; for j = 0..999: MD[j+1] = SHA3(MD[j]);
+//! Output[i] = MD[1000]; MD[0] = MD[1000]` for 100 outer iterations.
+//! Each MCT group has a single test carrying an initial `msg` (the
+//! seed) and the response carries a `resultsArray` with one `md`
+//! entry per outer iteration.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -76,10 +83,9 @@ impl AlgorithmHandler for Sha3_512Handler {
     }
 }
 
-/// Shared group driver: walks the `tests` array of a SHA-3 AFT group,
-/// decoding `len` + `msg` and calling `compute(msg)` to get the digest
-/// bytes. `label` is a static string used for diagnostic errors only.
-fn handle_hash_group<F>(
+/// Shared group driver: dispatches AFT and MCT groups for a SHA-3
+/// variant. `label` is a static string used for diagnostic errors only.
+pub(crate) fn handle_hash_group<F>(
     group: &JsonValue,
     label: &'static str,
     mut compute: F,
@@ -95,24 +101,28 @@ where
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
-        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
+
+    match test_type {
+        "AFT" => {
+            let tests = group
+                .get("tests")
+                .and_then(JsonValue::as_array)
+                .ok_or(DispatchError::MissingField("tests"))?;
+            let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+            for t in tests {
+                results.push(run_aft_case(t, label, &mut compute)?);
+            }
+            Ok(JsonValue::Object(vec![
+                ("tgId".to_string(), JsonValue::Number(tg_id)),
+                ("tests".to_string(), JsonValue::Array(results)),
+            ]))
+        }
+        "MCT" => handle_mct_group(tg_id, group, &mut compute),
+        _ => Err(DispatchError::UnsupportedTestType(test_type.to_string())),
     }
-    let tests = group
-        .get("tests")
-        .and_then(JsonValue::as_array)
-        .ok_or(DispatchError::MissingField("tests"))?;
-    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
-    for t in tests {
-        results.push(run_case(t, label, &mut compute)?);
-    }
-    Ok(JsonValue::Object(vec![
-        ("tgId".to_string(), JsonValue::Number(tg_id)),
-        ("tests".to_string(), JsonValue::Array(results)),
-    ]))
 }
 
-fn run_case<F>(
+fn run_aft_case<F>(
     t: &JsonValue,
     label: &'static str,
     compute: &mut F,
@@ -152,5 +162,76 @@ where
     Ok(JsonValue::Object(vec![
         ("tcId".to_string(), JsonValue::Number(tc_id)),
         ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
+    ]))
+}
+
+// ---- MCT engine (SHA-3) ------------------------------------------------
+
+/// Number of outer iterations in a SHA-3 MCT test.
+const MCT_OUTER: usize = 100;
+/// Number of inner iterations per outer iteration.
+const MCT_INNER: usize = 1000;
+
+/// Handle a complete SHA-3 MCT group. Each group has exactly one test
+/// carrying an initial `msg` (the seed). The handler runs the SHA-3
+/// MCT algorithm and emits a `resultsArray` with `MCT_OUTER` entries.
+///
+/// SHA-3 MCT algorithm (ACVP SHA-3 §6.2):
+/// ```text
+/// MD[0] = Seed
+/// For i = 0..MCT_OUTER:
+///     For j = 0..MCT_INNER:
+///         MD[j+1] = SHA3(MD[j])
+///     Output[i] = MD[MCT_INNER]
+///     MD[0] = Output[i]
+/// ```
+#[allow(clippy::similar_names)] // tg_id vs tc_id
+fn handle_mct_group<F>(
+    tg_id: i64,
+    group: &JsonValue,
+    compute: &mut F,
+) -> Result<JsonValue, DispatchError>
+where
+    F: FnMut(&[u8]) -> Result<Vec<u8>, DispatchError>,
+{
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+    if tests.len() != 1 {
+        return Err(DispatchError::Crypto("SHA-3 MCT: expected exactly one test"));
+    }
+    let t = &tests[0];
+    let tc_id = t
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+    let msg_hex = t
+        .get("msg")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("msg"))?;
+    let mut md = hex::decode(msg_hex)?;
+
+    let mut results_array: Vec<JsonValue> = Vec::with_capacity(MCT_OUTER);
+    for _i in 0..MCT_OUTER {
+        for _j in 0..MCT_INNER {
+            md = compute(&md)?;
+        }
+        results_array.push(JsonValue::Object(vec![
+            ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
+        ]));
+    }
+
+    let test_result = JsonValue::Object(vec![
+        ("tcId".to_string(), JsonValue::Number(tc_id)),
+        (
+            "resultsArray".to_string(),
+            JsonValue::Array(results_array),
+        ),
+    ]);
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("tests".to_string(), JsonValue::Array(vec![test_result])),
     ]))
 }

@@ -128,8 +128,14 @@
 //!   P-256 public key `(qx, qy)` from a 32-byte scalar `d` via
 //!   `derive_public_key_internal`
 //!
-//! Later chunks will add remaining test types (MCT, LDT) and
-//! additional modes (PSS, larger key sizes).
+//! R30 adds SHA-3 Monte Carlo Test (MCT) support:
+//!
+//! - [`sha3`] and [`sha3_256`] — `SHA3-{224,256,384,512}` / `MCT`
+//!   revision `2.0`, 100×1000 iteration chained-hash loop per
+//!   ACVP SHA-3 §6.2
+//!
+//! Later chunks will add remaining test types (LDT) and
+//! additional modes (larger key sizes).
 
 pub mod aes;
 pub mod cmac;

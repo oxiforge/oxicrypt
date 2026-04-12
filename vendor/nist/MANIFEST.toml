@@ -23,6 +23,12 @@ SHA3_256 = { dir = "SHA3-256-2.0", tgId = 1, tcId = 87, sha256 = "dba4689436c7e4
 SHA3_384 = { dir = "SHA3-384-2.0", tgId = 1, tcId = 197, sha256 = "e9eae46bd676dc82e911dcc3af92ef0093e0118615b62ab431086fce47574396" }
 SHA3_512 = { dir = "SHA3-512-2.0", tgId = 1, tcId = 51, sha256 = "b0521468a178f7fd362d63319aa69b708885d08f0c71cee99ac70729f5bdf64b" }
 
+[acvp_server.sha3_mct]
+SHA3_224_MCT = { dir = "SHA3-224-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "7ec5e0c4b735c73fccc5adc9bb9acdb1adc706bcc474989146876f728df4bee3" }
+SHA3_256_MCT = { dir = "SHA3-256-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "a1b3b8f1052ee1b72c1fa93a75558a47f505d2ff1d0f01d5514e5c342c350b2c" }
+SHA3_384_MCT = { dir = "SHA3-384-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "2e04fbcc38a75927d12a8e9eb944225eba048db53c44b7a5e65d64fb583b32f5" }
+SHA3_512_MCT = { dir = "SHA3-512-2.0", file = "mct-slice.json", groups = 1, tests = 1, results_kept = 5, sha256 = "012c21b85bb60d92bcde72cc61576f5d1e96b66bbbb2403f47d0e5e4c882a227" }
+
 [acvp_server.shake]
 SHAKE128 = { dir = "SHAKE-128-FIPS202", tgId = 1, tcId = 128, out_bytes = 58, sha256 = "1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db" }
 SHAKE256 = { dir = "SHAKE-256-FIPS202", tgId = 1, tcId = 208, out_bytes = 56, sha256 = "a9348d17e009cad62a2baa70160353f5bca936a27116f60dd5811f39b91c6991" }
