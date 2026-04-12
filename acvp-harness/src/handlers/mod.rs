@@ -176,6 +176,14 @@
 //!   across `keyGen`, `sigGen`, and `sigVer` modes, proving
 //!   the full keyGen→sigGen→sigVer pipeline is consistent
 //!
+//! R37 adds RSA lifecycle cross-validation slices:
+//!
+//! - [`rsa_siggen`] and [`rsa`] — two self-generated lifecycle vector
+//!   files sharing one DRBG-generated RSA-2048 key across `sigGen`
+//!   (PKCS#1v1.5/standard + PSS/crt) and `sigVer` (valid + invalid
+//!   for each sig type), proving the sigGen→sigVer pipeline is
+//!   consistent across both padding modes and key representations
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 

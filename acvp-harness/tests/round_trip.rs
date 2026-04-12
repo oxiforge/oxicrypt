@@ -1847,6 +1847,26 @@ fn rsa_siggen_cross_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// RSA lifecycle cross-validation (R37: sigGen→sigVer, shared key)
+// ----------------------------------------------------------------------
+
+#[test]
+fn rsa_lifecycle_siggen_round_trip() {
+    assert_rsa_siggen_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-sigGen-FIPS186-5/lifecycle-slice.json",
+        "RSA-sigGen-lifecycle",
+    );
+}
+
+#[test]
+fn rsa_lifecycle_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-sigVer-FIPS186-5/lifecycle-slice.json",
+        "RSA-sigVer-lifecycle",
+    );
+}
+
+// ----------------------------------------------------------------------
 // KAS-ECC-SSC (R26: P-256 ECDH shared secret, answer field `z`)
 // ----------------------------------------------------------------------
 
