@@ -1,6 +1,7 @@
 //! SHAKE128 / SHAKE256 extendable-output functions per FIPS 202 §6.2,
-//! cSHAKE128 / cSHAKE256 per SP 800-185 §3, and KMAC128 / KMAC256
-//! keyed message authentication codes per SP 800-185 §4.
+//! cSHAKE128 / cSHAKE256 per SP 800-185 §3, KMAC128 / KMAC256
+//! keyed message authentication codes per SP 800-185 §4, and
+//! KMACXOF128 / KMACXOF256 XOF variants per SP 800-185 §4.3.1.
 //!
 //! # Approved algorithms
 //!
@@ -10,8 +11,10 @@
 //! | SHAKE256 | FIPS 202 §6.2 | 136 | 512 |
 //! | cSHAKE128 | SP 800-185 §3 | 168 | 256 |
 //! | cSHAKE256 | SP 800-185 §3 | 136 | 512 |
-//! | KMAC128  | SP 800-185 §4 | 168 | 256 |
-//! | KMAC256  | SP 800-185 §4 | 136 | 512 |
+//! | KMAC128    | SP 800-185 §4   | 168 | 256 |
+//! | KMAC256    | SP 800-185 §4   | 136 | 512 |
+//! | KMACXOF128 | SP 800-185 §4.3.1 | 168 | 256 |
+//! | KMACXOF256 | SP 800-185 §4.3.1 | 136 | 512 |
 //!
 //! SHAKE uses the domain-separation byte `0x1f` (FIPS 202 §B.2);
 //! cSHAKE uses `0x04` (SP 800-185 §3.1) and prepends a
@@ -19,7 +22,9 @@
 //! before the message. When both `N` and `S` are empty, cSHAKE
 //! reduces to SHAKE. KMAC builds on cSHAKE with N = `"KMAC"`,
 //! absorbing `bytepad(encode_string(K), rate) || X || right_encode(L)`
-//! as the cSHAKE message.
+//! as the cSHAKE message. KMACXOF is identical except it appends
+//! `right_encode(0)` instead of `right_encode(L)`, enabling XOF-mode
+//! output of arbitrary length.
 //!
 //! # API shape
 //!
@@ -27,18 +32,21 @@
 //! caller at squeeze time. The streaming API is
 //! `new → update* → finalize → squeeze*`. `squeeze` may be called
 //! repeatedly for arbitrarily long output. KMAC uses
-//! `new → update* → finalize_into` for fixed-length tags.
+//! `new → update* → finalize_into` for fixed-length tags. KMACXOF
+//! uses `new → update* → finalize → squeeze*` like SHAKE/cSHAKE.
 //!
 //! # Power-up self-tests
 //!
 //! [`KATS`] exposes one pinned SHAKE128, one pinned SHAKE256,
-//! one pinned cSHAKE128, and one pinned cSHAKE256 vector. The
-//! cSHAKE vectors are from SP 800-185 §A.
+//! one pinned cSHAKE128, one pinned cSHAKE256, one pinned KMAC128,
+//! one pinned KMAC256, one pinned KMACXOF128, and one pinned
+//! KMACXOF256 vector.
 //!
 //! # Sensitive security parameters
 //!
 //! None. SHAKE and cSHAKE are keyless public primitives; all
-//! inputs and outputs are public.
+//! inputs and outputs are public. KMAC and KMACXOF keys are
+//! sensitive security parameters managed by the caller.
 //!
 //! # FIPS module gating
 //!
@@ -523,6 +531,20 @@ impl<const RATE: usize> KmacCore<RATE> {
         self.cshake.finalize();
         self.cshake.squeeze(tag);
     }
+
+    /// Finalize in XOF mode: append `right_encode(0)`, then finalize
+    /// the underlying cSHAKE. Call [`squeeze`](KmacCore::squeeze)
+    /// afterwards.
+    fn finalize_xof(&mut self) {
+        // right_encode(0) = 0x00 0x01
+        self.cshake.update(&[0x00, 0x01]);
+        self.cshake.finalize();
+    }
+
+    /// Squeeze output bytes (XOF mode only, after `finalize_xof`).
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.cshake.squeeze(out);
+    }
 }
 
 /// KMAC128 message authentication code (SP 800-185 §4).
@@ -615,6 +637,122 @@ pub fn kmac256<const TAG_LEN: usize>(
     let mut tag = [0u8; TAG_LEN];
     m.finalize_into(&mut tag);
     Ok(tag)
+}
+
+// ========================================================================
+// KMACXOF — SP 800-185 §4.3.1
+// ========================================================================
+
+/// KMACXOF128 extendable-output function (SP 800-185 §4.3.1).
+///
+/// Identical to KMAC128 except `right_encode(0)` is appended instead
+/// of `right_encode(L)`, enabling arbitrary-length output via
+/// repeated squeezing.
+#[derive(Clone)]
+pub struct KmacXof128 {
+    core: KmacCore<SHAKE128_RATE>,
+}
+
+impl KmacXof128 {
+    /// Creates a new KMACXOF128 instance, gated on module state.
+    pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(key, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(key: &[u8], s: &[u8]) -> Self {
+        Self {
+            core: KmacCore::new_internal(key, s),
+        }
+    }
+
+    /// Feeds `data` into the message.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes the XOF. Call [`squeeze`](KmacXof128::squeeze)
+    /// afterwards to extract output.
+    pub fn finalize(&mut self) {
+        self.core.finalize_xof();
+    }
+
+    /// Squeezes `out.len()` bytes from the XOF. May be called
+    /// repeatedly for streaming output.
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        self.core.squeeze(out);
+    }
+}
+
+/// One-shot KMACXOF128: squeeze `OUT_LEN` bytes.
+pub fn kmacxof128<const OUT_LEN: usize>(
+    key: &[u8],
+    data: &[u8],
+    s: &[u8],
+) -> Result<[u8; OUT_LEN], Error> {
+    let mut m = KmacXof128::new(key, s)?;
+    m.update(data);
+    m.finalize();
+    let mut out = [0u8; OUT_LEN];
+    m.squeeze(&mut out);
+    Ok(out)
+}
+
+/// KMACXOF256 extendable-output function (SP 800-185 §4.3.1).
+///
+/// Identical to KMAC256 except `right_encode(0)` is appended instead
+/// of `right_encode(L)`, enabling arbitrary-length output via
+/// repeated squeezing.
+#[derive(Clone)]
+pub struct KmacXof256 {
+    core: KmacCore<SHAKE256_RATE>,
+}
+
+impl KmacXof256 {
+    /// Creates a new KMACXOF256 instance, gated on module state.
+    pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        require_operational()?;
+        Ok(Self::new_internal(key, s))
+    }
+
+    /// Internal constructor (no module-state gate).
+    fn new_internal(key: &[u8], s: &[u8]) -> Self {
+        Self {
+            core: KmacCore::new_internal(key, s),
+        }
+    }
+
+    /// Feeds `data` into the message.
+    pub fn update(&mut self, data: &[u8]) {
+        self.core.update(data);
+    }
+
+    /// Finalizes the XOF. Call [`squeeze`](KmacXof256::squeeze)
+    /// afterwards to extract output.
+    pub fn finalize(&mut self) {
+        self.core.finalize_xof();
+    }
+
+    /// Squeezes `out.len()` bytes from the XOF. May be called
+    /// repeatedly for streaming output.
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        self.core.squeeze(out);
+    }
+}
+
+/// One-shot KMACXOF256: squeeze `OUT_LEN` bytes.
+pub fn kmacxof256<const OUT_LEN: usize>(
+    key: &[u8],
+    data: &[u8],
+    s: &[u8],
+) -> Result<[u8; OUT_LEN], Error> {
+    let mut m = KmacXof256::new(key, s)?;
+    m.update(data);
+    m.finalize();
+    let mut out = [0u8; OUT_LEN];
+    m.squeeze(&mut out);
+    Ok(out)
 }
 
 // ========================================================================
@@ -807,6 +945,72 @@ pub fn self_test_kmac256() -> Result<(), SelfTestFailure> {
     }
 }
 
+// ── KMACXOF KATs ─────────────────────────────────────────────────
+
+/// KMACXOF128 expected output (32 bytes, S="", K=40..5F, X=00 01 02 03).
+/// Computed via pycryptodome's `cSHAKE_XOF` with N="KMAC" and
+/// `right_encode(0)` appended per SP 800-185 §4.3.1.
+const KAT_KMACXOF128_EXPECTED: [u8; 32] = [
+    0xcd, 0x83, 0x74, 0x0b, 0xbd, 0x92, 0xcc, 0xc8,
+    0xcf, 0x03, 0x2b, 0x14, 0x81, 0xa0, 0xf4, 0x46,
+    0x0e, 0x7c, 0xa9, 0xdd, 0x12, 0xb0, 0x8a, 0x0c,
+    0x40, 0x31, 0x17, 0x8b, 0xac, 0xd6, 0xec, 0x35,
+];
+
+/// Power-up known-answer test for KMACXOF128.
+///
+/// Exercises `KmacXof128` with K=40..5F (32 bytes), X=00 01 02 03
+/// (4 bytes), S="", squeezed to 32 bytes. Reference computed
+/// independently via pycryptodome cSHAKE_XOF with N="KMAC" and
+/// `right_encode(0)`.
+pub fn self_test_kmacxof128() -> Result<(), SelfTestFailure> {
+    let mut m = KmacXof128::new_internal(&KAT_KMAC128_KEY, b"");
+    m.update(&KAT_KMAC128_INPUT);
+    m.finalize();
+    let mut out = [0u8; 32];
+    m.squeeze(&mut out);
+    if out == KAT_KMACXOF128_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
+/// KMACXOF256 expected output (64 bytes, S="", K=40..5F, X=00..C7).
+/// Computed via pycryptodome's `cSHAKE_XOF` with N="KMAC",
+/// capacity=512, and `right_encode(0)`.
+const KAT_KMACXOF256_EXPECTED: [u8; 64] = [
+    0xff, 0x7b, 0x17, 0x1f, 0x1e, 0x8a, 0x2b, 0x24,
+    0x68, 0x3e, 0xed, 0x37, 0x83, 0x0e, 0xe7, 0x97,
+    0x53, 0x8b, 0xa8, 0xdc, 0x56, 0x3f, 0x6d, 0xa1,
+    0xe6, 0x67, 0x39, 0x1a, 0x75, 0xed, 0xc0, 0x2c,
+    0xa6, 0x33, 0x07, 0x9f, 0x81, 0xce, 0x12, 0xa2,
+    0x5f, 0x45, 0x61, 0x5e, 0xc8, 0x99, 0x72, 0x03,
+    0x1d, 0x18, 0x33, 0x73, 0x31, 0xd2, 0x4c, 0xeb,
+    0x8f, 0x8c, 0xa8, 0xe6, 0xa1, 0x9f, 0xd9, 0x8b,
+];
+
+/// Power-up known-answer test for KMACXOF256.
+///
+/// Exercises `KmacXof256` with K=40..5F (32 bytes), X=00..C7
+/// (200 bytes), S="", squeezed to 64 bytes.
+pub fn self_test_kmacxof256() -> Result<(), SelfTestFailure> {
+    let x: [u8; 200] = core::array::from_fn(|i| {
+        #[allow(clippy::cast_possible_truncation)]
+        { i as u8 }
+    });
+    let mut m = KmacXof256::new_internal(&KAT_KMAC128_KEY, b"");
+    m.update(&x);
+    m.finalize();
+    let mut out = [0u8; 64];
+    m.squeeze(&mut out);
+    if out == KAT_KMACXOF256_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
@@ -833,6 +1037,14 @@ pub const KATS: &[KatEntry] = &[
         name: "KMAC256 KAT (NIST KMAC_samples #5, SP 800-185 §4)",
         run: self_test_kmac256,
     },
+    KatEntry {
+        name: "KMACXOF128 KAT (SP 800-185 §4.3.1, pycryptodome cross-check)",
+        run: self_test_kmacxof128,
+    },
+    KatEntry {
+        name: "KMACXOF256 KAT (SP 800-185 §4.3.1, pycryptodome cross-check)",
+        run: self_test_kmacxof256,
+    },
 ];
 
 // ========================================================================
@@ -844,9 +1056,10 @@ pub const KATS: &[KatEntry] = &[
 mod tests {
     use super::{
         self_test_128, self_test_256, self_test_cshake128, self_test_cshake256,
-        self_test_kmac128, self_test_kmac256, shake128, shake256, CShake128, CShake256,
-        Kmac128, Kmac256, Shake128, Shake256, KAT_SHAKE128_EMPTY_32,
-        KAT_SHAKE256_EMPTY_64,
+        self_test_kmac128, self_test_kmac256, self_test_kmacxof128,
+        self_test_kmacxof256, shake128, shake256, CShake128, CShake256,
+        Kmac128, Kmac256, KmacXof128, KmacXof256, Shake128, Shake256,
+        KAT_SHAKE128_EMPTY_32, KAT_SHAKE256_EMPTY_64,
     };
     use fips_module::{initialize_with_tests, KatEntry};
 
@@ -894,6 +1107,14 @@ mod tests {
             KatEntry {
                 name: "kmac256-bootstrap",
                 run: self_test_kmac256,
+            },
+            KatEntry {
+                name: "kmacxof128-bootstrap",
+                run: self_test_kmacxof128,
+            },
+            KatEntry {
+                name: "kmacxof256-bootstrap",
+                run: self_test_kmacxof256,
             },
         ]);
     }
@@ -1214,5 +1435,115 @@ mod tests {
         m2.finalize_into(&mut tag2);
 
         assert_ne!(tag1, tag2);
+    }
+
+    // ── KMACXOF tests ───────────────────────────────────────────
+
+    #[test]
+    fn kmacxof128_self_test_passes() {
+        self_test_kmacxof128().unwrap();
+    }
+
+    #[test]
+    fn kmacxof256_self_test_passes() {
+        self_test_kmacxof256().unwrap();
+    }
+
+    #[test]
+    fn kmacxof128_differs_from_kmac128() {
+        // KMACXOF and KMAC with the same inputs must produce different output
+        // because right_encode(0) ≠ right_encode(256).
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x = [0x00u8, 0x01, 0x02, 0x03];
+
+        let mut kmac = Kmac128::new_internal(&key, b"");
+        kmac.update(&x);
+        let mut tag = [0u8; 32];
+        kmac.finalize_into(&mut tag);
+
+        let mut xof = KmacXof128::new_internal(&key, b"");
+        xof.update(&x);
+        xof.finalize();
+        let mut out = [0u8; 32];
+        xof.squeeze(&mut out);
+
+        assert_ne!(tag, out, "KMAC and KMACXOF must differ");
+    }
+
+    #[test]
+    fn kmacxof128_with_custom_string() {
+        // KMACXOF128: K=40..5F, X=00 01 02 03, S="My Tagged Application", out=32
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x = [0x00u8, 0x01, 0x02, 0x03];
+        let expected: [u8; 32] = hex(
+            "31a44527b4ed9f5c6101d11de6d26f0620aa5c341def41299657fe9df1a3b16c",
+        );
+        let mut m = KmacXof128::new_internal(&key, b"My Tagged Application");
+        m.update(&x);
+        m.finalize();
+        let mut out = [0u8; 32];
+        m.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn kmacxof256_with_custom_string() {
+        // KMACXOF256: K=40..5F, X=00 01 02 03, S="My Tagged Application", out=64
+        let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
+        let x = [0x00u8, 0x01, 0x02, 0x03];
+        let expected: [u8; 64] = hex(
+            "1755133f1534752aad0748f2c706fb5c784512cab835cd15676b16c0c6647fa9\
+             6faa7af634a0bf8ff6df39374fa00fad9a39e322a7c92065a64eb1fb0801eb2b",
+        );
+        let mut m = KmacXof256::new_internal(&key, b"My Tagged Application");
+        m.update(&x);
+        m.finalize();
+        let mut out = [0u8; 64];
+        m.squeeze(&mut out);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn kmacxof128_incremental_squeeze() {
+        // Squeezing in pieces must match squeezing all at once.
+        let key = b"xof-squeeze-test";
+        let msg = b"test data for incremental squeeze";
+
+        let mut a = KmacXof128::new_internal(key, b"");
+        a.update(msg);
+        a.finalize();
+        let mut full = [0u8; 256];
+        a.squeeze(&mut full);
+
+        let mut b = KmacXof128::new_internal(key, b"");
+        b.update(msg);
+        b.finalize();
+        let mut piecewise = [0u8; 256];
+        b.squeeze(&mut piecewise[..50]);
+        b.squeeze(&mut piecewise[50..168]);
+        b.squeeze(&mut piecewise[168..]);
+
+        assert_eq!(full, piecewise);
+    }
+
+    #[test]
+    fn kmacxof128_streaming_matches_oneshot() {
+        let key = b"streaming-xof-key";
+        let msg: [u8; 300] = core::array::from_fn(|i| (i as u8).wrapping_mul(13));
+
+        let mut one = KmacXof128::new_internal(key, b"s");
+        one.update(&msg);
+        one.finalize();
+        let mut out1 = [0u8; 64];
+        one.squeeze(&mut out1);
+
+        let mut two = KmacXof128::new_internal(key, b"s");
+        two.update(&msg[..100]);
+        two.update(&msg[100..]);
+        two.finalize();
+        let mut out2 = [0u8; 64];
+        two.squeeze(&mut out2);
+
+        assert_eq!(out1, out2);
     }
 }

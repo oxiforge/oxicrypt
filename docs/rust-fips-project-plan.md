@@ -306,7 +306,7 @@ The `acvp-harness` binary implements the ACVP protocol client:
 
 **Goal:** Security policy, side-channel hardening, audit readiness
 
-- [~] `fips-xof`: cSHAKE landed (R49 — SP 800-185 §3, CShake128/CShake256 with bytepad prefix, domain 0x04, empty-N-S fallback to SHAKE); KMAC128/KMAC256 landed (R50 — SP 800-185 §4, KmacCore<RATE> generic absorbs `bytepad(encode_string(K), rate)` then message then `right_encode(L)`, finalized through cSHAKE with N="KMAC"; streaming `Kmac{128,256}` types + one-shot `kmac{128,256}` wrappers; two power-up KATs from NIST KMAC_samples.pdf — Sample #1 KMAC128 and Sample #5 KMAC256; `fips_xof::KATS` now 6 entries); KMACXOF deferred
+- [~] `fips-xof`: cSHAKE landed (R49 — SP 800-185 §3, CShake128/CShake256 with bytepad prefix, domain 0x04, empty-N-S fallback to SHAKE); KMAC128/KMAC256 landed (R50 — SP 800-185 §4, KmacCore<RATE> generic absorbs `bytepad(encode_string(K), rate)` then message then `right_encode(L)`, finalized through cSHAKE with N="KMAC"; streaming `Kmac{128,256}` types + one-shot `kmac{128,256}` wrappers; two power-up KATs from NIST KMAC_samples.pdf — Sample #1 KMAC128 and Sample #5 KMAC256; `fips_xof::KATS` now 6 entries); KMACXOF128/KMACXOF256 landed (R51 — SP 800-185 §4.3.1, XOF variant with `right_encode(0)`, streaming `KmacXof{128,256}` types + one-shot `kmacxof{128,256}` wrappers; two power-up KATs cross-checked against pycryptodome cSHAKE_XOF; `fips_xof::KATS` now 8 entries)
 - [ ] PBKDF2 (P2)
 - [ ] Constant-time audit of all secret-dependent operations
 - [ ] Fuzzing campaign: all algorithm entry points via `cargo-fuzz`
