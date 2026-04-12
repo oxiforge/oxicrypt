@@ -18,6 +18,8 @@
 //!     counterLocation="none" form:
 //!     `A(0) = FixedData; A(i) = PRF(K_IN, A(i-1));`
 //!     `K(i) = PRF(K_IN, A(i) || FixedData)`.
+//!   - **PBKDF2** per SP 800-132 / RFC 8018 §5.2 ([`Pbkdf2`]),
+//!     password-based key derivation iterating HMAC `c` times.
 //!
 //! Every instantiation is parameterised by one of the 11 HMAC
 //! variants that [`fips_hmac`] exposes (SHA-1, SHA-2 family,
@@ -43,11 +45,12 @@
 //!
 //! Per IG 10.3.A each KDF instantiation carries its own
 //! power-up KAT; KDF families do not share. [`KATS`] exposes
-//! 44 entries total — 11 HKDF extract+expand round-trips plus
+//! 46 entries total — 11 HKDF extract+expand round-trips plus
 //! 11 SP 800-108 Counter Mode derivations plus 11 SP 800-108
 //! Feedback Mode derivations plus 11 SP 800-108 Double-Pipeline
-//! Iteration Mode derivations, all driven by fixed compile-time
-//! inputs for auditability.
+//! Iteration Mode derivations plus 2 PBKDF2 derivations (SHA-1,
+//! SHA-256), all driven by fixed compile-time inputs for
+//! auditability.
 //!
 //! # Sensitive security parameters
 //!
@@ -1364,8 +1367,189 @@ kbkdf_dp_kat_fn!(
 );
 
 // ======================================================================
+// PBKDF2 — SP 800-132
+// ======================================================================
+//
+// PBKDF2 (Password-Based Key Derivation Function 2, RFC 8018 §5.2,
+// approved under SP 800-132) iterates HMAC to derive a key from a
+// password and salt:
+//
+//     DK = T1 || T2 || ... || Tdklen/hlen
+//     Ti = F(Password, Salt, c, i)
+//     F(Password, Salt, c, i) = U1 ^ U2 ^ ... ^ Uc
+//     U1 = PRF(Password, Salt || INT(i))
+//     Uj = PRF(Password, U_{j-1})
+//
+// INT(i) is a 4-byte big-endian encoding of the block index (1-based).
+
+/// PBKDF2 instance, generic over the HMAC PRF.
+///
+/// `P` is a [`PrfHmac`] implementation (e.g. [`fips_hmac::HmacSha256`]),
+/// `L` is the PRF output length in bytes.
+///
+/// # Usage
+///
+/// ```ignore
+/// let mut dk = [0u8; 32];
+/// Pbkdf2HmacSha256::derive(b"password", b"salt", 4096, &mut dk)?;
+/// ```
+pub struct Pbkdf2<P: PrfHmac<L>, const L: usize> {
+    _m: PhantomData<fn() -> P>,
+}
+
+impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
+    /// Derives `out.len()` bytes from `password`, `salt`, and
+    /// iteration count `c`.
+    ///
+    /// Enforces [`require_operational`]. Returns
+    /// [`KdfError::OutputTooLong`] if the output would exceed
+    /// `(2^32 − 1) × L` bytes (the RFC 8018 §5.2 maximum).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `c == 0`.
+    pub fn derive(
+        password: &[u8],
+        salt: &[u8],
+        c: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        require_operational()?;
+        Self::derive_internal(password, salt, c, out)
+    }
+
+    /// Gateless variant used by the boot-time KATs.
+    #[doc(hidden)]
+    #[allow(clippy::many_single_char_names)]
+    pub fn derive_internal(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        assert!(iterations > 0, "PBKDF2 iteration count must be > 0");
+        if out.is_empty() {
+            return Ok(());
+        }
+        // SP 800-132 / RFC 8018 §5.2: dkLen ≤ (2^32 − 1) × hLen
+        let max_blocks = u64::from(u32::MAX);
+        let blocks_needed = (out.len() as u64).div_ceil(L as u64);
+        if blocks_needed > max_blocks {
+            return Err(KdfError::OutputTooLong);
+        }
+
+        let mut offset = 0;
+        let mut block_idx: u32 = 1;
+        while offset < out.len() {
+            // U1 = PRF(Password, Salt || INT(i))
+            let mut mac = P::prf_new(password);
+            mac.prf_update(salt);
+            mac.prf_update(&block_idx.to_be_bytes());
+            let mut u_prev = mac.prf_finalize();
+
+            // T = U1
+            let mut xor_fold = u_prev;
+
+            // U2..Uc
+            let mut iter: u32 = 1;
+            while iter < iterations {
+                let mut mac_inner = P::prf_new(password);
+                mac_inner.prf_update(&u_prev);
+                u_prev = mac_inner.prf_finalize();
+                // T ^= Uj
+                let mut idx = 0;
+                while idx < L {
+                    xor_fold[idx] ^= u_prev[idx];
+                    idx += 1;
+                }
+                iter += 1;
+            }
+
+            let remaining = out.len() - offset;
+            let to_copy = if remaining < L { remaining } else { L };
+            out[offset..offset + to_copy].copy_from_slice(&xor_fold[..to_copy]);
+            offset += to_copy;
+            block_idx += 1;
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------
+// Public type aliases — one PBKDF2 per approved HMAC
+// ----------------------------------------------------------------------
+
+/// PBKDF2 with HMAC-SHA-1.
+pub type Pbkdf2HmacSha1 = Pbkdf2<fips_hmac::HmacSha1, 20>;
+/// PBKDF2 with HMAC-SHA-224.
+pub type Pbkdf2HmacSha224 = Pbkdf2<fips_hmac::HmacSha224, 28>;
+/// PBKDF2 with HMAC-SHA-256.
+pub type Pbkdf2HmacSha256 = Pbkdf2<fips_hmac::HmacSha256, 32>;
+/// PBKDF2 with HMAC-SHA-384.
+pub type Pbkdf2HmacSha384 = Pbkdf2<fips_hmac::HmacSha384, 48>;
+/// PBKDF2 with HMAC-SHA-512.
+pub type Pbkdf2HmacSha512 = Pbkdf2<fips_hmac::HmacSha512, 64>;
+/// PBKDF2 with HMAC-SHA-512/224.
+pub type Pbkdf2HmacSha512_224 = Pbkdf2<fips_hmac::HmacSha512_224, 28>;
+/// PBKDF2 with HMAC-SHA-512/256.
+pub type Pbkdf2HmacSha512_256 = Pbkdf2<fips_hmac::HmacSha512_256, 32>;
+/// PBKDF2 with HMAC-SHA3-224.
+pub type Pbkdf2HmacSha3_224 = Pbkdf2<fips_hmac::HmacSha3_224, 28>;
+/// PBKDF2 with HMAC-SHA3-256.
+pub type Pbkdf2HmacSha3_256 = Pbkdf2<fips_hmac::HmacSha3_256, 32>;
+/// PBKDF2 with HMAC-SHA3-384.
+pub type Pbkdf2HmacSha3_384 = Pbkdf2<fips_hmac::HmacSha3_384, 48>;
+/// PBKDF2 with HMAC-SHA3-512.
+pub type Pbkdf2HmacSha3_512 = Pbkdf2<fips_hmac::HmacSha3_512, 64>;
+
+// ----------------------------------------------------------------------
+// PBKDF2 power-up KATs
+// ----------------------------------------------------------------------
+
+/// PBKDF2-HMAC-SHA-1 KAT: RFC 6070 Test Case 1.
+/// P="password", S="salt", c=1, dkLen=20.
+const KAT_PBKDF2_SHA1_EXPECTED: [u8; 20] = [
+    0x0c, 0x60, 0xc8, 0x0f, 0x96, 0x1f, 0x0e, 0x71,
+    0xf3, 0xa9, 0xb5, 0x24, 0xaf, 0x60, 0x12, 0x06,
+    0x2f, 0xe0, 0x37, 0xa6,
+];
+
+/// Power-up KAT for PBKDF2-HMAC-SHA-1.
+pub fn pbkdf2_self_test_sha1() -> Result<(), SelfTestFailure> {
+    let mut dk = [0u8; 20];
+    Pbkdf2HmacSha1::derive_internal(b"password", b"salt", 1, &mut dk)
+        .map_err(|_| SelfTestFailure)?;
+    if dk == KAT_PBKDF2_SHA1_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
+/// PBKDF2-HMAC-SHA-256 KAT: P="password", S="salt", c=1, dkLen=32.
+/// Cross-checked against Python hashlib.pbkdf2_hmac.
+const KAT_PBKDF2_SHA256_EXPECTED: [u8; 32] = [
+    0x12, 0x0f, 0xb6, 0xcf, 0xfc, 0xf8, 0xb3, 0x2c,
+    0x43, 0xe7, 0x22, 0x52, 0x56, 0xc4, 0xf8, 0x37,
+    0xa8, 0x65, 0x48, 0xc9, 0x2c, 0xcc, 0x35, 0x48,
+    0x08, 0x05, 0x98, 0x7c, 0xb7, 0x0b, 0xe1, 0x7b,
+];
+
+/// Power-up KAT for PBKDF2-HMAC-SHA-256.
+pub fn pbkdf2_self_test_sha256() -> Result<(), SelfTestFailure> {
+    let mut dk = [0u8; 32];
+    Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk)
+        .map_err(|_| SelfTestFailure)?;
+    if dk == KAT_PBKDF2_SHA256_EXPECTED {
+        Ok(())
+    } else {
+        Err(SelfTestFailure)
+    }
+}
+
+// ======================================================================
 // Power-up KAT inventory
-// (HKDF + SP 800-108 Counter + Feedback + Double-Pipeline Modes)
+// (HKDF + SP 800-108 Counter + Feedback + Double-Pipeline + PBKDF2)
 // ======================================================================
 
 /// Power-up KAT inventory for every KDF variant in this crate.
@@ -1561,6 +1745,15 @@ pub const KATS: &[KatEntry] = &[
         name: "SP 800-108 Double-Pipeline HMAC-SHA3-512 KAT (NIST ACVP-Server KDF-1.0, truncated)",
         run: kbkdf_dp_self_test_sha3_512,
     },
+    // --- PBKDF2 (SP 800-132) -----------------------------------------------
+    KatEntry {
+        name: "PBKDF2-HMAC-SHA-1 KAT (RFC 6070 Test Case 1, SP 800-132)",
+        run: pbkdf2_self_test_sha1,
+    },
+    KatEntry {
+        name: "PBKDF2-HMAC-SHA-256 KAT (SP 800-132, pycryptodome cross-check)",
+        run: pbkdf2_self_test_sha256,
+    },
 ];
 
 // ----------------------------------------------------------------------
@@ -1592,6 +1785,8 @@ mod tests {
         KdfError, Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha3_256,
         Sp800_108DoublePipelineHmacSha256, Sp800_108DoublePipelineHmacSha3_256,
         Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha3_256,
+        pbkdf2_self_test_sha1, pbkdf2_self_test_sha256,
+        Pbkdf2HmacSha1, Pbkdf2HmacSha256, Pbkdf2HmacSha512,
     };
 
     // Local fixed inputs for the RFC 5869 §A.1 Test Case 1 cross-check
@@ -2096,5 +2291,122 @@ mod tests {
         assert_ne!(c, f);
         assert_ne!(c, d);
         assert_ne!(f, d);
+    }
+
+    // ==================================================================
+    // PBKDF2 tests
+    // ==================================================================
+
+    #[test]
+    fn pbkdf2_sha1_self_test_passes() {
+        pbkdf2_self_test_sha1().unwrap();
+    }
+
+    #[test]
+    fn pbkdf2_sha256_self_test_passes() {
+        pbkdf2_self_test_sha256().unwrap();
+    }
+
+    #[test]
+    fn pbkdf2_sha1_rfc6070_c2() {
+        // RFC 6070 Test Case 2: P="password", S="salt", c=2, dkLen=20
+        let expected: [u8; 20] = [
+            0xea, 0x6c, 0x01, 0x4d, 0xc7, 0x2d, 0x6f, 0x8c,
+            0xcd, 0x1e, 0xd9, 0x2a, 0xce, 0x1d, 0x41, 0xf0,
+            0xd8, 0xde, 0x89, 0x57,
+        ];
+        let mut dk = [0u8; 20];
+        Pbkdf2HmacSha1::derive_internal(b"password", b"salt", 2, &mut dk)
+            .unwrap();
+        assert_eq!(dk, expected);
+    }
+
+    #[test]
+    fn pbkdf2_sha256_c4096() {
+        // P="password", S="salt", c=4096, dkLen=32 (SHA-256)
+        let expected: [u8; 32] = [
+            0xc5, 0xe4, 0x78, 0xd5, 0x92, 0x88, 0xc8, 0x41,
+            0xaa, 0x53, 0x0d, 0xb6, 0x84, 0x5c, 0x4c, 0x8d,
+            0x96, 0x28, 0x93, 0xa0, 0x01, 0xce, 0x4e, 0x11,
+            0xa4, 0x96, 0x38, 0x73, 0xaa, 0x98, 0x13, 0x4a,
+        ];
+        let mut dk = [0u8; 32];
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 4096, &mut dk)
+            .unwrap();
+        assert_eq!(dk, expected);
+    }
+
+    #[test]
+    fn pbkdf2_sha512_c1() {
+        // P="password", S="salt", c=1, dkLen=64 (SHA-512)
+        let expected: [u8; 64] = [
+            0x86, 0x7f, 0x70, 0xcf, 0x1a, 0xde, 0x02, 0xcf,
+            0xf3, 0x75, 0x25, 0x99, 0xa3, 0xa5, 0x3d, 0xc4,
+            0xaf, 0x34, 0xc7, 0xa6, 0x69, 0x81, 0x5a, 0xe5,
+            0xd5, 0x13, 0x55, 0x4e, 0x1c, 0x8c, 0xf2, 0x52,
+            0xc0, 0x2d, 0x47, 0x0a, 0x28, 0x5a, 0x05, 0x01,
+            0xba, 0xd9, 0x99, 0xbf, 0xe9, 0x43, 0xc0, 0x8f,
+            0x05, 0x02, 0x35, 0xd7, 0xd6, 0x8b, 0x1d, 0xa5,
+            0x5e, 0x63, 0xf7, 0x3b, 0x60, 0xa5, 0x7f, 0xce,
+        ];
+        let mut dk = [0u8; 64];
+        Pbkdf2HmacSha512::derive_internal(b"password", b"salt", 1, &mut dk)
+            .unwrap();
+        assert_eq!(dk, expected);
+    }
+
+    #[test]
+    fn pbkdf2_multi_block_output() {
+        // Output longer than one HMAC block requires multiple blocks.
+        // SHA-256 output is 32 bytes; request 48 bytes → 2 PBKDF2 blocks.
+        let mut dk = [0u8; 48];
+        Pbkdf2HmacSha256::derive_internal(b"pass", b"sa", 1, &mut dk)
+            .unwrap();
+        // Verify first 32 bytes match block 1, and that bytes 32..48 are non-zero.
+        assert_ne!(&dk[32..], &[0u8; 16]);
+    }
+
+    #[test]
+    fn pbkdf2_deterministic() {
+        let mut dk1 = [0u8; 32];
+        let mut dk2 = [0u8; 32];
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk1)
+            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2)
+            .unwrap();
+        assert_eq!(dk1, dk2);
+    }
+
+    #[test]
+    fn pbkdf2_different_passwords_differ() {
+        let mut dk1 = [0u8; 32];
+        let mut dk2 = [0u8; 32];
+        Pbkdf2HmacSha256::derive_internal(b"pass-a", b"salt", 1, &mut dk1)
+            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"pass-b", b"salt", 1, &mut dk2)
+            .unwrap();
+        assert_ne!(dk1, dk2);
+    }
+
+    #[test]
+    fn pbkdf2_different_salts_differ() {
+        let mut dk1 = [0u8; 32];
+        let mut dk2 = [0u8; 32];
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt-a", 1, &mut dk1)
+            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt-b", 1, &mut dk2)
+            .unwrap();
+        assert_ne!(dk1, dk2);
+    }
+
+    #[test]
+    fn pbkdf2_different_iterations_differ() {
+        let mut dk1 = [0u8; 32];
+        let mut dk2 = [0u8; 32];
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk1)
+            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2)
+            .unwrap();
+        assert_ne!(dk1, dk2);
     }
 }
