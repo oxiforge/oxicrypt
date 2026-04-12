@@ -169,6 +169,13 @@
 //!   `sigGen`, and `sigVer` modes, proving the full
 //!   keyGen→sigGen→sigVer pipeline is consistent per key
 //!
+//! R36 adds ECDSA lifecycle cross-validation slices:
+//!
+//! - [`ecdsa`] — three self-generated lifecycle vector files
+//!   sharing the same five DRBG-generated P-256 private keys
+//!   across `keyGen`, `sigGen`, and `sigVer` modes, proving
+//!   the full keyGen→sigGen→sigVer pipeline is consistent
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 

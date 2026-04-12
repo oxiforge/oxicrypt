@@ -131,6 +131,9 @@ ECDSA_sigVer_FIPS186_5  = { dir = "ECDSA-sigVer-FIPS186-5",  groups = 1, tests =
 ECDSA_keyVer_FIPS186_5  = { dir = "ECDSA-keyVer-FIPS186-5",  groups = 1, tests = 3,  curve = "P-256", sha256 = "f43caa0d4743fc2c950b9dcc4fbd5c9780eed1c3f913cebdd6fc407188a6279c" }
 ECDSA_sigGen_FIPS186_5  = { dir = "ECDSA-sigGen-FIPS186-5",  groups = 1, tests = 10, curve = "P-256", hashAlg = "SHA2-256", sha256 = "8ea0fb6a2d6cb504cb46d601a1dac04ad204930b82923432bbfdfafd632fd7fc" }
 ECDSA_keyGen_FIPS186_5  = { dir = "ECDSA-keyGen-FIPS186-5",  groups = 1, tests = 10, curve = "P-256", sha256 = "4753eaee4970a0d8c73a40eaa139823ada4900d71d00a70855611f7e18c9c771" }
+ECDSA_lifecycle_keyGen = { dir = "ECDSA-keyGen-FIPS186-5", file = "lifecycle-slice.json", groups = 1, tests = 5, curve = "P-256", lifecycle = true, sha256 = "ad36505238ae0a6bdc677a61b3640ce6fe419f090f76e2728ce622c19cc39d29" }
+ECDSA_lifecycle_sigGen = { dir = "ECDSA-sigGen-FIPS186-5", file = "lifecycle-slice.json", groups = 5, tests = 25, curve = "P-256", hashAlg = "SHA2-256", lifecycle = true, sha256 = "2e6dce3ed39f237d528e988a8068ee334588b19fc981a7d80831ed6151da438e" }
+ECDSA_lifecycle_sigVer = { dir = "ECDSA-sigVer-FIPS186-5", file = "lifecycle-slice.json", groups = 2, tests = 50, curve = "P-256", hashAlg = "SHA2-256", lifecycle = true, sha256 = "8a3ed9c04eb43249f454d40f0afec3b1ef93a948162ccd2c977305fd9440873b" }
 
 [acvp_server.eddsa]
 EDDSA_sigVer_1_0  = { dir = "EDDSA-sigVer-1.0",  groups = 1, tests = 5,  curve = "ED-25519", preHash = false, sha256 = "cd2e096046ff67c2e10258b0ddbb7765cf89d9fa4082f367d663e2bf3e4d808a" }

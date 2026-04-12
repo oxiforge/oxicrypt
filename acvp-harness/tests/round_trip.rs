@@ -1367,6 +1367,65 @@ fn ecdsa_keygen_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// ECDSA Lifecycle (R36: keyGen + sigGen + sigVer, shared keys)
+// ----------------------------------------------------------------------
+
+#[test]
+fn ecdsa_lifecycle_keygen_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-keyGen-FIPS186-5/lifecycle-slice.json",
+    );
+    let expected_qx = collect_answers(&slice, "qx");
+    let expected_qy = collect_answers(&slice, "qy");
+    assert!(!expected_qx.is_empty(), "ECDSA-keyGen-lifecycle: no qx");
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "qx");
+    strip_field(&mut prompt, "qy");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("ECDSA-keyGen-lifecycle: dispatch failed: {e}"));
+
+    let got_qx = collect_answers(&response, "qx");
+    let got_qy = collect_answers(&response, "qy");
+    assert_eq!(got_qx.len(), expected_qx.len());
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_qx.iter().zip(got_qx.iter()) {
+        assert_eq!(exp_tc, got_tc);
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "ECDSA-keyGen-lifecycle: qx mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_qy.iter().zip(got_qy.iter()) {
+        assert_eq!(exp_tc, got_tc);
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "ECDSA-keyGen-lifecycle: qy mismatch for tcId {exp_tc}"
+        );
+    }
+}
+
+#[test]
+fn ecdsa_lifecycle_siggen_round_trip() {
+    assert_ecdsa_siggen_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-sigGen-FIPS186-5/lifecycle-slice.json",
+        "ECDSA-sigGen-lifecycle",
+    );
+}
+
+#[test]
+fn ecdsa_lifecycle_sigver_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-sigVer-FIPS186-5/lifecycle-slice.json",
+        "ECDSA-sigVer-lifecycle",
+    );
+}
+
+// ----------------------------------------------------------------------
 // EdDSA SigVer + KeyVer (R18: ED-25519, pure, 1.0)
 // ----------------------------------------------------------------------
 
