@@ -1412,6 +1412,89 @@ fn rsa_decprim_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// RSA SignaturePrimitive (testPassed + signature)
+// ----------------------------------------------------------------------
+
+/// Like `assert_decprim_round_trip` but checks `signature` instead
+/// of `pt`.
+fn assert_sigprim_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+
+    // Collect expected (tcId, testPassed, Option<signature>).
+    let mut expected: Vec<(i64, bool, Option<String>)> = Vec::new();
+    for g in slice.get("testGroups").unwrap().as_array().unwrap() {
+        for t in g.get("tests").unwrap().as_array().unwrap() {
+            let tc = t.get("tcId").unwrap().as_i64().unwrap();
+            let passed = t.get("testPassed").unwrap().as_bool().unwrap();
+            let sig = t
+                .get("signature")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            expected.push((tc, passed, sig));
+        }
+    }
+    assert!(!expected.is_empty(), "{label}: no test cases found");
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "testPassed");
+    strip_field(&mut prompt, "signature");
+    strip_field(&mut prompt, "deferred");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    let mut got: Vec<(i64, bool, Option<String>)> = Vec::new();
+    for g in response.get("testGroups").unwrap().as_array().unwrap() {
+        for t in g.get("tests").unwrap().as_array().unwrap() {
+            let tc = t.get("tcId").unwrap().as_i64().unwrap();
+            let passed = t.get("testPassed").unwrap().as_bool().unwrap();
+            let sig = t
+                .get("signature")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            got.push((tc, passed, sig));
+        }
+    }
+
+    assert_eq!(got.len(), expected.len(), "{label}: case count mismatch");
+    for (exp, actual) in expected.iter().zip(got.iter()) {
+        assert_eq!(exp.0, actual.0, "{label}: tcId mismatch");
+        assert_eq!(
+            exp.1, actual.1,
+            "{label}: testPassed mismatch for tcId {}",
+            exp.0
+        );
+        match (&exp.2, &actual.2) {
+            (Some(exp_sig), Some(got_sig)) => {
+                assert_eq!(
+                    exp_sig.to_ascii_uppercase(),
+                    *got_sig,
+                    "{label}: signature mismatch for tcId {}",
+                    exp.0
+                );
+            }
+            (None, None) => {}
+            _ => panic!(
+                "{label}: signature presence mismatch for tcId {} (expected {:?}, got {:?})",
+                exp.0,
+                exp.2.is_some(),
+                actual.2.is_some()
+            ),
+        }
+    }
+}
+
+#[test]
+fn rsa_sigprim_round_trip() {
+    assert_sigprim_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-SignaturePrimitive-2.0/kat-slice.json",
+        "RSA-sigPrim",
+    );
+}
+
+// ----------------------------------------------------------------------
 // TLS v1.2 KDF (RFC 7627, answer fields `masterSecret` + `keyBlock`)
 // ----------------------------------------------------------------------
 

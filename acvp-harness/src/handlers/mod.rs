@@ -88,6 +88,13 @@
 //!   standard TLS 1.2 master-secret + key-expansion (v1.2 groups
 //!   only; v1.0/1.1 filtered — MD5 not FIPS-approved)
 //!
+//! R24 adds the RSA SignaturePrimitive handler:
+//!
+//! - [`rsa_sigprim`] — `RSA` / `signaturePrimitive` revision `2.0`,
+//!   raw RSASP1 (RFC 8017 §5.2.1) with range check `0 ≤ msg < n`,
+//!   both non-CRT (`d`) and CRT (Bellcore verify-after-sign) key
+//!   modes
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -103,6 +110,7 @@ pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;
 pub mod rsa_decprim;
+pub mod rsa_sigprim;
 pub mod sha3;
 pub mod sha3_256;
 pub mod shake;

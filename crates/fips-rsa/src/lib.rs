@@ -633,6 +633,78 @@ pub fn rsa_decryption_primitive_2048_crt_internal(
     rsa_crt_2048_private_exp_internal(n_bytes, e, crt, ct)
 }
 
+/// Raw RSA Signature Primitive (RSASP1) for 2048-bit keys via the
+/// **non-CRT** private-exponent path, bypassing the FIPS module
+/// state gate.
+///
+/// Enforces the RFC 8017 §5.2.1 range check: **`0 ≤ msg < n`**.
+/// Returns `None` on bad key material or out-of-range `msg`.
+///
+/// # ACVP / CAVP
+///
+/// This is the primitive tested by the `RSA / signaturePrimitive /
+/// 2.0` ACVP vector set when the per-test CRT components are absent.
+#[doc(hidden)]
+pub fn rsa_signature_primitive_2048_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    msg: &[u8; RSA_2048_MODULUS_BYTES],
+) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
+    let n = U2048::from_be_bytes(n_bytes);
+    let ctx = MontCtx2048::new(n)?;
+
+    let d = U2048::from_be_bytes(d_bytes);
+    if d.ct_lt(&ctx.n) != 1 {
+        return None;
+    }
+
+    let m = U2048::from_be_bytes(msg);
+    // RFC 8017 §5.2.1: 0 ≤ m < n.
+    if m.ct_lt(&ctx.n) != 1 {
+        return None;
+    }
+
+    let s = ctx.pow_secret(&m, &d);
+    Some(s.to_be_bytes())
+}
+
+/// Raw RSA Signature Primitive (RSASP1) for 2048-bit keys via the
+/// **CRT** path with Bellcore verify-after-sign per FIPS 140-3
+/// IG D.G, bypassing the FIPS module state gate.
+///
+/// Enforces the RFC 8017 §5.2.1 range check: **`0 ≤ msg < n`**.
+/// Returns `None` on bad key material, out-of-range `msg`, or a
+/// failed Bellcore check.
+///
+/// # ACVP / CAVP
+///
+/// This is the primitive tested by the `RSA / signaturePrimitive /
+/// 2.0` ACVP vector set.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
+pub fn rsa_signature_primitive_2048_crt_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    p_bytes: &[u8; U1024_BYTES],
+    q_bytes: &[u8; U1024_BYTES],
+    dp_bytes: &[u8; U1024_BYTES],
+    dq_bytes: &[u8; U1024_BYTES],
+    qinv_bytes: &[u8; U1024_BYTES],
+    msg: &[u8; RSA_2048_MODULUS_BYTES],
+) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
+    // RFC 8017 §5.2.1: 0 ≤ msg < n. The CRT internal function
+    // already checks x < n (line 393 of rsa_crt_2048_private_exp_internal),
+    // so we delegate directly.
+    let crt = CrtComponentsRaw {
+        p: p_bytes,
+        q: q_bytes,
+        dp: dp_bytes,
+        dq: dq_bytes,
+        qinv: qinv_bytes,
+    };
+    rsa_crt_2048_private_exp_internal(n_bytes, e, crt, msg)
+}
+
 /// SP 800-56Br2 §7.1.2.1 ciphertext range check:
 /// returns `true` iff `1 < c < (n − 1)`.
 fn sp800_56br2_range_check(c: &U2048, n: &U2048) -> bool {

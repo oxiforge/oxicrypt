@@ -290,6 +290,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::tls12_kdf::Tls12KdfRfc7627Handler));
     // kdf-components / tls (R23: standard TLS 1.2 KDF, non-EMS)
     r.register(Box::new(handlers::kdf_comp_tls::KdfComponentsTlsHandler));
+    // RSA signaturePrimitive (R24: RSASP1 with CRT + Bellcore)
+    r.register(Box::new(handlers::rsa_sigprim::RsaSigPrimHandler));
     r
 }
 
@@ -400,12 +402,14 @@ mod tests {
         assert!(r.find("TLS-v1.2", Some("KDF"), "RFC7627").is_some());
         // R23 kdf-components / tls
         assert!(r.find("kdf-components", Some("tls"), "1.0").is_some());
+        // R24 RSA SignaturePrimitive
+        assert!(r.find("RSA", Some("signaturePrimitive"), "2.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 40);
+        assert_eq!(r.len(), 41);
         assert!(!r.is_empty());
     }
 
