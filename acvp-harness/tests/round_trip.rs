@@ -1477,6 +1477,18 @@ fn tls12_kdf_rfc7627_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// kdf-components / tls (standard TLS 1.2 KDF, non-EMS)
+// ----------------------------------------------------------------------
+
+#[test]
+fn kdf_comp_tls_round_trip() {
+    assert_tls12_kdf_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/kdf-components-tls-1.0/kat-slice.json",
+        "kdf-components-tls",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

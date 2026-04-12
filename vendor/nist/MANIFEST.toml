@@ -136,4 +136,5 @@ RSA_decPrim_Sp800_56Br2  = { dir = "RSA-decryptionPrimitive-Sp800-56Br2", groups
 
 [acvp_server.tls]
 TLS_v1_2_KDF_RFC7627  = { dir = "TLS-v1.2-KDF-RFC7627", groups = 6, tests = 18, hashAlgs = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "cfa08a17a16a52db158900d7d4de52cae3c10e06a93ecddd34350effa7aff1bf" }
+kdf_components_tls_1_0  = { dir = "kdf-components-tls-1.0", groups = 6, tests = 18, tlsVersion = "v1.2", hashAlgs = ["SHA2-256","SHA2-384","SHA2-512"], sha256 = "c2d79cde1d4edd337457150cfd07d24af45a08838d0e035ef53b0d41d339d2ec" }
 

@@ -82,6 +82,12 @@
 //!   RFC 7627 Extended Master Secret derivation via the TLS 1.2 PRF
 //!   (RFC 5246 §5) over SHA2-{256,384,512}
 //!
+//! R23 adds the standard (non-EMS) TLS 1.2 KDF handler:
+//!
+//! - [`kdf_comp_tls`] — `kdf-components` / `tls` revision `1.0`,
+//!   standard TLS 1.2 master-secret + key-expansion (v1.2 groups
+//!   only; v1.0/1.1 filtered — MD5 not FIPS-approved)
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -92,6 +98,7 @@ pub mod ecdsa;
 pub mod eddsa;
 pub mod hmac;
 pub mod hmac_sha2_256;
+pub mod kdf_comp_tls;
 pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;

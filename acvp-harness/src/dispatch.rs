@@ -288,6 +288,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::rsa_decprim::RsaDecPrimHandler));
     // TLS v1.2 KDF (R22: RFC 7627 Extended Master Secret)
     r.register(Box::new(handlers::tls12_kdf::Tls12KdfRfc7627Handler));
+    // kdf-components / tls (R23: standard TLS 1.2 KDF, non-EMS)
+    r.register(Box::new(handlers::kdf_comp_tls::KdfComponentsTlsHandler));
     r
 }
 
@@ -396,12 +398,14 @@ mod tests {
         assert!(r.find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2").is_some());
         // R22 TLS v1.2 KDF (RFC 7627)
         assert!(r.find("TLS-v1.2", Some("KDF"), "RFC7627").is_some());
+        // R23 kdf-components / tls
+        assert!(r.find("kdf-components", Some("tls"), "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 39);
+        assert_eq!(r.len(), 40);
         assert!(!r.is_empty());
     }
 
