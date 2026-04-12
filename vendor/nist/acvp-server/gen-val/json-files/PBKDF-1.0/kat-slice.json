@@ -1,0 +1,288 @@
+{
+  "algorithm": "PBKDF",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "hmacAlg": "SHA-1",
+      "tests": [
+        {
+          "tcId": 1,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 160,
+          "derivedKey": "0C60C80F961F0E71F3A9B524AF6012062FE037A6"
+        },
+        {
+          "tcId": 2,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 2,
+          "keyLen": 160,
+          "derivedKey": "EA6C014DC72D6F8CCD1ED92ACE1D41F0D8DE8957"
+        },
+        {
+          "tcId": 3,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 256,
+          "derivedKey": "0C60C80F961F0E71F3A9B524AF6012062FE037A6E0F0EB94FE8FC46BDC637164"
+        },
+        {
+          "tcId": 4,
+          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "iterationCount": 10,
+          "keyLen": 512,
+          "derivedKey": "D3739DB0A2BC6048A1863E185181A7604411F9FDFE2B6D6347CED380109E40F8673908C0C14E307EFFEFFD60CF371B3712B7BD7F3762F5B9D6084277186A5D79"
+        },
+        {
+          "tcId": 5,
+          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "salt": "73616C7479656E6F756768",
+          "iterationCount": 4,
+          "keyLen": 384,
+          "derivedKey": "9C73C233B3401062B81D92847BED723711FB30DC7499E26FF3117C4492021687729555DC48FBDAFD1B6AA92F385FC0DE"
+        }
+      ]
+    },
+    {
+      "tgId": 2,
+      "testType": "AFT",
+      "hmacAlg": "SHA2-224",
+      "tests": [
+        {
+          "tcId": 1,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 160,
+          "derivedKey": "3C198CBDB9464B7857966BD05B7BC92BC1CC4E6E"
+        },
+        {
+          "tcId": 2,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 2,
+          "keyLen": 160,
+          "derivedKey": "93200FFA96C5776D38FA10ABDF8F5BFC0054B971"
+        },
+        {
+          "tcId": 3,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 256,
+          "derivedKey": "3C198CBDB9464B7857966BD05B7BC92BC1CC4E6E63155D4E490557FD85989497"
+        },
+        {
+          "tcId": 4,
+          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "iterationCount": 10,
+          "keyLen": 512,
+          "derivedKey": "B96A1A52919EF8593746E7BCA780DDBAD55F63D2E7638B0EB2E70DCAFBDB9A5F7B4BA37068201E805E981D4DF274772CB970A3EDE6757E5690EDDE8DCCD8AD6A"
+        },
+        {
+          "tcId": 5,
+          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "salt": "73616C7479656E6F756768",
+          "iterationCount": 4,
+          "keyLen": 384,
+          "derivedKey": "30500294BD2FB69AA897AF807446AFBBB55701A425672DD05FF177D5B477FB9E5C05E88FBB8CE25C64C89CC976452E6A"
+        }
+      ]
+    },
+    {
+      "tgId": 3,
+      "testType": "AFT",
+      "hmacAlg": "SHA2-256",
+      "tests": [
+        {
+          "tcId": 1,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 160,
+          "derivedKey": "120FB6CFFCF8B32C43E7225256C4F837A86548C9"
+        },
+        {
+          "tcId": 2,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 2,
+          "keyLen": 160,
+          "derivedKey": "AE4D0C95AF6B46D32D0ADFF928F06DD02A303F8E"
+        },
+        {
+          "tcId": 3,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 256,
+          "derivedKey": "120FB6CFFCF8B32C43E7225256C4F837A86548C92CCC35480805987CB70BE17B"
+        },
+        {
+          "tcId": 4,
+          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "iterationCount": 10,
+          "keyLen": 512,
+          "derivedKey": "DC5091E9179FCA9031F252B5DBDF995EBE2E75D8F756F7201815DC53EEB1D76F888BE1242219247E3B198A60070711D7843695C5A62ACF13B688D675E726DECA"
+        },
+        {
+          "tcId": 5,
+          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "salt": "73616C7479656E6F756768",
+          "iterationCount": 4,
+          "keyLen": 384,
+          "derivedKey": "C9A0C8E494F6184AAC5108D72DB982E86B66584529AF3BEE6DDF0E6651F7E464E2D3D53ED232B05A52491C473955C525"
+        }
+      ]
+    },
+    {
+      "tgId": 4,
+      "testType": "AFT",
+      "hmacAlg": "SHA2-384",
+      "tests": [
+        {
+          "tcId": 1,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 160,
+          "derivedKey": "C0E14F06E49E32D73F9F52DDF1D0C5C719160923"
+        },
+        {
+          "tcId": 2,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 2,
+          "keyLen": 160,
+          "derivedKey": "54F775C6D790F21930459162FC535DBF04A93918"
+        },
+        {
+          "tcId": 3,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 256,
+          "derivedKey": "C0E14F06E49E32D73F9F52DDF1D0C5C7191609233631DADD76A567DB42B78676"
+        },
+        {
+          "tcId": 4,
+          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "iterationCount": 10,
+          "keyLen": 512,
+          "derivedKey": "4F7AA1E3F01492B3ABCDCAFB50E23F1F69CF9C26429D4823B9AF917C4B40FB4ECD006F273937DA6693A835CF1D9CFFD128B34D6C190E6D577005FA79BBC020E4"
+        },
+        {
+          "tcId": 5,
+          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "salt": "73616C7479656E6F756768",
+          "iterationCount": 4,
+          "keyLen": 384,
+          "derivedKey": "D1ACE530C26DF6E4AD4479E0A9D2DB97B565265DFE4E5C323A1255221509EA8B0B95728EAC4C89EBDB365CCA861352E0"
+        }
+      ]
+    },
+    {
+      "tgId": 5,
+      "testType": "AFT",
+      "hmacAlg": "SHA2-512",
+      "tests": [
+        {
+          "tcId": 1,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 160,
+          "derivedKey": "867F70CF1ADE02CFF3752599A3A53DC4AF34C7A6"
+        },
+        {
+          "tcId": 2,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 2,
+          "keyLen": 160,
+          "derivedKey": "E1D9C16AA681708A45F5C7C4E215CEB66E011A2E"
+        },
+        {
+          "tcId": 3,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 256,
+          "derivedKey": "867F70CF1ADE02CFF3752599A3A53DC4AF34C7A669815AE5D513554E1C8CF252"
+        },
+        {
+          "tcId": 4,
+          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "iterationCount": 10,
+          "keyLen": 512,
+          "derivedKey": "469C28DAD114A22DED118785AB08B77ABEED5858269824EF49B407822689D13CAF4B09F46BAECA118585227BDDA5FD97793CFA2F8FDA027C335D9E9EBC4FBA55"
+        },
+        {
+          "tcId": 5,
+          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "salt": "73616C7479656E6F756768",
+          "iterationCount": 4,
+          "keyLen": 384,
+          "derivedKey": "B7B605E6788EE906819A0A0857C12DE9200ACEDA94F0A87FDC34D55B1D700AA64C8A339D4CB2B63A6A487C7E12E7ACB6"
+        }
+      ]
+    },
+    {
+      "tgId": 6,
+      "testType": "AFT",
+      "hmacAlg": "SHA3-256",
+      "tests": [
+        {
+          "tcId": 1,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 160,
+          "derivedKey": "94613F3EE2EA730E0B06754F3FC816D4F87C9BE9"
+        },
+        {
+          "tcId": 2,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 2,
+          "keyLen": 160,
+          "derivedKey": "4C915BAEDD1773383E77FCFE38114CA7514010AD"
+        },
+        {
+          "tcId": 3,
+          "password": "70617373776F7264",
+          "salt": "73616C74",
+          "iterationCount": 1,
+          "keyLen": 256,
+          "derivedKey": "94613F3EE2EA730E0B06754F3FC816D4F87C9BE9CBD8556B5D59B52330E333A8"
+        },
+        {
+          "tcId": 4,
+          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "iterationCount": 10,
+          "keyLen": 512,
+          "derivedKey": "3D58EE344B716F49E7081720CF73F8A5D5909B58D631A96965C49245AC823878E45C6BFB5ECD26F2B35624E2DA3A5E24475898DFDA3AC0F177551F96B903701D"
+        },
+        {
+          "tcId": 5,
+          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "salt": "73616C7479656E6F756768",
+          "iterationCount": 4,
+          "keyLen": 384,
+          "derivedKey": "6F14E623067C9E3B9CEEF892D112411224593960811BEE2F1835385DFF074FD0C6BF68BA1619473043D4EC7886DDBFB8"
+        }
+      ]
+    }
+  ]
+}

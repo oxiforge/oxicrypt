@@ -2678,3 +2678,92 @@ fn rsa_decprim_lifecycle_round_trip() {
         "RSA-decPrim-lifecycle",
     );
 }
+
+// ----------------------------------------------------------------------
+// SP 800-185 derived functions (R47: self-generated vectors)
+// ----------------------------------------------------------------------
+
+#[test]
+fn cshake_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/cSHAKE-128-1.0/kat-slice.json",
+        "md",
+        "cSHAKE-128",
+    );
+}
+
+#[test]
+fn cshake_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/cSHAKE-256-1.0/kat-slice.json",
+        "md",
+        "cSHAKE-256",
+    );
+}
+
+#[test]
+fn kmac_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMAC-128-1.0/kat-slice.json",
+        "mac",
+        "KMAC-128",
+    );
+}
+
+#[test]
+fn kmac_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KMAC-256-1.0/kat-slice.json",
+        "mac",
+        "KMAC-256",
+    );
+}
+
+#[test]
+fn tuplehash_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/TupleHash-128-1.0/kat-slice.json",
+        "md",
+        "TupleHash-128",
+    );
+}
+
+#[test]
+fn tuplehash_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/TupleHash-256-1.0/kat-slice.json",
+        "md",
+        "TupleHash-256",
+    );
+}
+
+#[test]
+fn parallelhash_128_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ParallelHash-128-1.0/kat-slice.json",
+        "md",
+        "ParallelHash-128",
+    );
+}
+
+#[test]
+fn parallelhash_256_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ParallelHash-256-1.0/kat-slice.json",
+        "md",
+        "ParallelHash-256",
+    );
+}
+
+// ----------------------------------------------------------------------
+// PBKDF2 (R55: self-generated, answer field `derivedKey`)
+// ----------------------------------------------------------------------
+
+#[test]
+fn pbkdf2_aft_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/PBKDF-1.0/kat-slice.json",
+        "derivedKey",
+        "PBKDF2",
+    );
+}

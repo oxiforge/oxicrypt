@@ -1,0 +1,47 @@
+{
+  "algorithm": "TupleHash-128",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 1,
+          "outLen": 256,
+          "tuple": ["000102", "101112131415"],
+          "hexCustomization": "",
+          "md": "C5D8786C1AFB9B82111AB34B65B2C0048FA64E6D48E263264CE1707D3FFC8ED1"
+        },
+        {
+          "tcId": 2,
+          "outLen": 256,
+          "tuple": ["000102", "101112131415"],
+          "hexCustomization": "4D79205475706C6520417070",
+          "md": "75CDB20FF4DB1154E841D758E24160C54BAE86EB8C13E7F5F40EB35588E96DFB"
+        },
+        {
+          "tcId": 3,
+          "outLen": 256,
+          "tuple": ["ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"],
+          "hexCustomization": "",
+          "md": "7876BE686D39A375B72F3926C7DA9CB5FCB959838877B3823FC5DE9DAA0F5C03"
+        },
+        {
+          "tcId": 4,
+          "outLen": 256,
+          "tuple": ["01", "0203", "040506"],
+          "hexCustomization": "547269706C65",
+          "md": "CB9EC4D086DE28404C90BAB2FDD3FA68D30EB0ED12A8996397DB968C9819D7DC"
+        },
+        {
+          "tcId": 5,
+          "outLen": 256,
+          "tuple": ["", "FF"],
+          "hexCustomization": "",
+          "md": "5B60AA6DA5B9D1AA1AA7562B97D75CD997B4A00E92BA15E7FDEFFB8427671BC3"
+        }
+      ]
+    }
+  ]
+}

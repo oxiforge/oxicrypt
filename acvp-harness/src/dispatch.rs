@@ -302,6 +302,17 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::rsa_oaep::RsaOaepHandler));
     // RSA KeyGen (R32: FIPS186-5, RSA-2048, e=65537, DRBG-seeded)
     r.register(Box::new(handlers::rsa_keygen::RsaKeyGenHandler));
+    // SP 800-185 derived functions (R55: self-generated vectors)
+    r.register(Box::new(handlers::cshake::CShake128Handler));
+    r.register(Box::new(handlers::cshake::CShake256Handler));
+    r.register(Box::new(handlers::kmac::Kmac128Handler));
+    r.register(Box::new(handlers::kmac::Kmac256Handler));
+    r.register(Box::new(handlers::tuplehash::TupleHash128Handler));
+    r.register(Box::new(handlers::tuplehash::TupleHash256Handler));
+    r.register(Box::new(handlers::parallelhash::ParallelHash128Handler));
+    r.register(Box::new(handlers::parallelhash::ParallelHash256Handler));
+    // PBKDF2 (SP 800-132 / RFC 8018, R55: self-generated vectors)
+    r.register(Box::new(handlers::pbkdf2::Pbkdf2Handler));
     r
 }
 
@@ -424,12 +435,23 @@ mod tests {
         assert!(r.find("KAS-ECC-SSC", Some("Component"), "Sp800-56Ar3").is_some());
         // R27 RSA OAEP
         assert!(r.find("RSA", Some("OAEP"), "RFC8017").is_some());
+        // R55 SP 800-185 derived functions + PBKDF2
+        assert!(r.find("cSHAKE-128", None, "1.0").is_some());
+        assert!(r.find("cSHAKE-256", None, "1.0").is_some());
+        assert!(r.find("KMAC-128", None, "1.0").is_some());
+        assert!(r.find("KMAC-256", None, "1.0").is_some());
+        assert!(r.find("TupleHash-128", None, "1.0").is_some());
+        assert!(r.find("TupleHash-256", None, "1.0").is_some());
+        assert!(r.find("ParallelHash-128", None, "1.0").is_some());
+        assert!(r.find("ParallelHash-256", None, "1.0").is_some());
+        // R55 PBKDF2
+        assert!(r.find("PBKDF", None, "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 47);
+        assert_eq!(r.len(), 56);
         assert!(!r.is_empty());
     }
 

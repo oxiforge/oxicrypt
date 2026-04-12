@@ -255,10 +255,32 @@
 //!   (up to multi-MB) via the incremental `Shake{128,256}::update`
 //!   API, with per-test `outLen` for variable-length squeeze
 //!
+//! R55 adds SP 800-185 derived-function handlers — cSHAKE, KMAC,
+//! TupleHash, and ParallelHash — plus the PBKDF2 handler:
+//!
+//! - [`cshake`] — `cSHAKE-128`, `cSHAKE-256` revision `1.0`, AFT
+//!   with variable-length output and hex-encoded customization string S
+//! - [`kmac`] — `KMAC-128`, `KMAC-256` revision `1.0`, AFT with
+//!   keyed MAC computation and customization string S
+//! - [`tuplehash`] — `TupleHash-128`, `TupleHash-256` revision `1.0`,
+//!   AFT with tuple-element array and customization string S
+//! - [`parallelhash`] — `ParallelHash-128`, `ParallelHash-256`
+//!   revision `1.0`, AFT with configurable block size B and
+//!   customization string S
+//!
+//! - [`pbkdf2`] — `PBKDF` revision `1.0`, AFT with group-level
+//!   `hmacAlg` selection across SHA-1, SHA2, and SHA3 HMAC
+//!   instantiations, per SP 800-132 / RFC 8018 §5.2
+//!
+//! All SP 800-185 and PBKDF vectors are self-generated because the
+//! NIST ACVP-Server at the pinned commit ships no cSHAKE/KMAC/
+//! TupleHash/ParallelHash/PBKDF vector directories.
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
 pub mod cmac;
+pub mod cshake;
 pub mod drbg;
 pub mod ecdsa;
 pub mod eddsa;
@@ -268,6 +290,9 @@ pub mod hmac_sha2_256;
 pub mod kdf_comp_tls;
 pub mod kbkdf;
 pub mod kda_hkdf;
+pub mod kmac;
+pub mod parallelhash;
+pub mod pbkdf2;
 pub mod rsa;
 pub mod rsa_decprim;
 pub mod rsa_keygen;
@@ -279,3 +304,4 @@ pub mod sha3_256;
 pub mod shake;
 pub mod shs;
 pub mod tls12_kdf;
+pub mod tuplehash;
