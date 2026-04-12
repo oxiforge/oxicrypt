@@ -63,6 +63,12 @@
 //! - [`eddsa`] — `EDDSA` / `sigGen` (ED-25519, pure, naturally
 //!   deterministic)
 //!
+//! R20 adds the SP 800-108r1 KBKDF handler:
+//!
+//! - [`kbkdf`] — `KDF` revision `1.0`, counter / feedback /
+//!   double-pipeline iteration modes across all eleven HMAC
+//!   instantiations
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -73,6 +79,7 @@ pub mod ecdsa;
 pub mod eddsa;
 pub mod hmac;
 pub mod hmac_sha2_256;
+pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;
 pub mod sha3;

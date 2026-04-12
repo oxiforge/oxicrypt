@@ -225,7 +225,11 @@ impl Default for Registry {
 ///
 /// R19 adds two SigGen handlers — `ECDSA` sigGen (P-256/SHA2-256,
 /// deterministic via caller-supplied `k`) and `EDDSA` sigGen
-/// (ED-25519, pure, naturally deterministic) — reaching thirty-six
+/// (ED-25519, pure, naturally deterministic).
+///
+/// R20 adds the SP 800-108r1 KBKDF handler (`KDF` revision `1.0`)
+/// covering counter, feedback, and double-pipeline iteration modes
+/// across all eleven HMAC instantiations — reaching thirty-seven
 /// registered handlers.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
@@ -254,6 +258,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::hmac::HmacSha3_512Handler));
     // CMAC-AES (SP 800-38B, revision 1.0)
     r.register(Box::new(handlers::cmac::CmacAesHandler));
+    // SP 800-108r1 KBKDF (counter / feedback / double pipeline, revision 1.0)
+    r.register(Box::new(handlers::kbkdf::KbkdfHandler));
     // KDA-HKDF (SP 800-56Cr2, mode-keyed)
     r.register(Box::new(handlers::kda_hkdf::KdaHkdfHandler));
     // AES block-cipher modes (R14-A: ECB/CBC/CTR AFT)
@@ -381,12 +387,14 @@ mod tests {
         // R19 ECDSA / EdDSA SigGen
         assert!(r.find("ECDSA", Some("sigGen"), "FIPS186-5").is_some());
         assert!(r.find("EDDSA", Some("sigGen"), "1.0").is_some());
+        // R20 KBKDF (SP 800-108r1)
+        assert!(r.find("KDF", None, "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 36);
+        assert_eq!(r.len(), 37);
         assert!(!r.is_empty());
     }
 

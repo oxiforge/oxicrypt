@@ -1324,6 +1324,20 @@ fn rsa_sigver_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// SP 800-108r1 KBKDF (R20: counter / feedback / double pipeline, answer
+// field `keyOut`)
+// ----------------------------------------------------------------------
+
+#[test]
+fn kbkdf_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KDF-1.0/kat-slice.json",
+        "keyOut",
+        "KDF-KBKDF",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 
