@@ -198,6 +198,14 @@
 //!   slices, proving keyGen→sigGen→sigVer consistency across
 //!   the full RSA pipeline
 //!
+//! R40 adds a KAS-ECC-SSC lifecycle slice:
+//!
+//! - [`kas_ecc_ssc`] — self-generated P-256 ECDH lifecycle vectors
+//!   reusing the same DRBG-generated private keys from the ECDSA
+//!   lifecycle (R36), paired with fresh peer keys, proving that
+//!   ECDSA-generated keys also work correctly for ECDH shared
+//!   secret computation
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;

@@ -1989,6 +1989,15 @@ fn kas_ecc_ssc_round_trip() {
     );
 }
 
+#[test]
+fn kas_ecc_ssc_lifecycle_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KAS-ECC-SSC-Sp800-56Ar3/lifecycle-slice.json",
+        "z",
+        "KAS-ECC-SSC-lifecycle",
+    );
+}
+
 // ----------------------------------------------------------------------
 // RSA OAEP encrypt/decrypt (R27: RSA-2048 / SHA2-256, RFC8017)
 // ----------------------------------------------------------------------
