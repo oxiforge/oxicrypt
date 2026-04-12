@@ -141,6 +141,13 @@
 //!   the Bellcore-protected CRT private-exponent primitive per
 //!   IG D.G, with self-generated CRT KAT vectors
 //!
+//! R32 adds RSA key generation:
+//!
+//! - [`rsa_keygen`] — `RSA` / `keyGen` revision `FIPS186-5`,
+//!   DRBG-seeded RSA-2048 probable-prime key generation per
+//!   FIPS 186-5 §A.1.1/§B.3.1, returning `(n, d, e, p, q, dP,
+//!   dQ, qInv)`, with self-generated vectors
+//!
 //! Later chunks will add remaining test types (LDT) and
 //! additional modes (larger key sizes).
 
@@ -157,6 +164,7 @@ pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;
 pub mod rsa_decprim;
+pub mod rsa_keygen;
 pub mod rsa_oaep;
 pub mod rsa_siggen;
 pub mod rsa_sigprim;

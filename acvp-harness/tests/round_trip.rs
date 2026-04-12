@@ -1978,3 +1978,77 @@ fn rsa_oaep_crt_round_trip() {
         );
     }
 }
+
+#[test]
+fn rsa_keygen_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-keyGen-FIPS186-5/kat-slice.json",
+    );
+
+    // Collect expected answers — n is the primary key component.
+    let expected_n = collect_answers(&slice, "n");
+    let expected_d = collect_answers(&slice, "d");
+    let expected_p = collect_answers(&slice, "p");
+    let expected_q = collect_answers(&slice, "q");
+
+    assert!(
+        !expected_n.is_empty(),
+        "RSA keyGen: no tests with field n"
+    );
+
+    // Strip all answer fields to create the prompt.
+    let mut prompt = slice.clone();
+    for field in &["n", "d", "e", "p", "q", "dmp1", "dmq1", "iqmp"] {
+        strip_field(&mut prompt, field);
+    }
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("RSA keyGen: dispatch failed: {e}"));
+
+    let got_n = collect_answers(&response, "n");
+    let got_d = collect_answers(&response, "d");
+    let got_p = collect_answers(&response, "p");
+    let got_q = collect_answers(&response, "q");
+
+    assert_eq!(
+        got_n.len(),
+        expected_n.len(),
+        "RSA keyGen: response has {} cases, expected {}",
+        got_n.len(),
+        expected_n.len()
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_n.iter().zip(got_n.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen: tcId mismatch");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen: n mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_d.iter().zip(got_d.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen: tcId mismatch for d");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen: d mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_p.iter().zip(got_p.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen: tcId mismatch for p");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen: p mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_q.iter().zip(got_q.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen: tcId mismatch for q");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen: q mismatch for tcId {exp_tc}"
+        );
+    }
+}

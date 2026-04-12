@@ -300,6 +300,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
     // RSA OAEP (R27: encrypt/decrypt, RFC8017, RSA-2048/SHA2-256)
     r.register(Box::new(handlers::rsa_oaep::RsaOaepHandler));
+    // RSA KeyGen (R32: FIPS186-5, RSA-2048, e=65537, DRBG-seeded)
+    r.register(Box::new(handlers::rsa_keygen::RsaKeyGenHandler));
     r
 }
 
