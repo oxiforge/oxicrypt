@@ -1246,6 +1246,22 @@ fn cmac_aes_aft_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// CMAC-AES lifecycle (R42): gen→ver path consistency
+//
+// Lifecycle slice uses a single DRBG-generated AES-256 key, proving
+// that gen produces the correct MAC and ver detects both valid and
+// invalid (bit-flipped) MACs.
+// ----------------------------------------------------------------------
+
+#[test]
+fn cmac_aes_lifecycle_round_trip() {
+    assert_cmac_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/CMAC-AES-1.0/lifecycle-slice.json",
+        "CMAC-AES-lifecycle",
+    );
+}
+
+// ----------------------------------------------------------------------
 // DRBG families (revision 1.0, answer field `returnedBits`)
 // R17 — CTR_DRBG (AES-128/192/256, ±df, ±pr),
 //        Hash_DRBG (SHA2-256/384/512, ±pr),

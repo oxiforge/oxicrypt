@@ -120,6 +120,7 @@ ACVP_AES_KWP_1_0 = { dir = "ACVP-AES-KWP-1.0", groups = 6, tests = 18, sha256 = 
 
 [acvp_server.cmac]
 CMAC_AES_1_0 = { dir = "CMAC-AES-1.0", groups = 6, tests = 18, sha256 = "b48bb17651c070584bb6bfa97cf6846298e904f1a81cc2880016ef79880e6d1d" }
+CMAC_AES_lifecycle = { dir = "CMAC-AES-1.0", file = "lifecycle-slice.json", groups = 3, tests = 15, keyLen = 256, lifecycle = true, sha256 = "081b24c8aa818764ce3fc19b189f515cf74fcdb4bba2268c6edab2c1ceded101" }
 
 [acvp_server.aes_mct]
 ACVP_AES_ECB_MCT_1_0 = { dir = "ACVP-AES-ECB-1.0", file = "mct-slice.json", groups = 6, tests = 6, ra_limit = 5, sha256 = "a33d4a82b1534c70d686e5ca8dea202781267c6cb5d96e096d0010930af49db1" }

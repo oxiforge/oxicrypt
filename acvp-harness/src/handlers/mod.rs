@@ -214,6 +214,12 @@
 //!   Authenticated/wrap modes include an additional invalid-tag/ICV
 //!   decrypt group proving `testPassed = false` detection.
 //!
+//! R42 adds a CMAC-AES gen→ver lifecycle slice:
+//!
+//! - [`cmac`] — self-generated AES-256 CMAC lifecycle vectors sharing
+//!   a single DRBG-generated key across gen (compute) and ver (verify)
+//!   groups, with both valid and invalid (bit-flipped MAC) ver cases
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
