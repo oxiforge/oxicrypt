@@ -285,6 +285,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::eddsa::EddsaSigGenHandler));
     // RSA sigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
     r.register(Box::new(handlers::rsa::RsaSigVerHandler));
+    r.register(Box::new(handlers::rsa_decprim::RsaDecPrimHandler));
     r
 }
 
@@ -389,12 +390,14 @@ mod tests {
         assert!(r.find("EDDSA", Some("sigGen"), "1.0").is_some());
         // R20 KBKDF (SP 800-108r1)
         assert!(r.find("KDF", None, "1.0").is_some());
+        // R21 RSA DecryptionPrimitive (SP 800-56Br2)
+        assert!(r.find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 37);
+        assert_eq!(r.len(), 38);
         assert!(!r.is_empty());
     }
 

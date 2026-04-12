@@ -1338,6 +1338,80 @@ fn kbkdf_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// RSA DecryptionPrimitive (R21: RSADP, SP 800-56Br2, modulo=2048,
+// answer fields `testPassed` + `pt` on pass)
+// ----------------------------------------------------------------------
+
+/// Shared assertion for the DecryptionPrimitive shape: each test case
+/// carries `testPassed` (bool) and `pt` (hex, only when `testPassed`
+/// is `true`).
+fn assert_decprim_round_trip(relative: &str, label: &str) {
+    ensure_initialized().unwrap();
+    let slice = load(relative);
+
+    // Collect expected (tcId → (testPassed, Option<pt>))
+    let mut expected: Vec<(i64, bool, Option<String>)> = Vec::new();
+    for g in slice.get("testGroups").unwrap().as_array().unwrap() {
+        for t in g.get("tests").unwrap().as_array().unwrap() {
+            let tc = t.get("tcId").unwrap().as_i64().unwrap();
+            let passed = t.get("testPassed").unwrap().as_bool().unwrap();
+            let pt = t.get("pt").and_then(JsonValue::as_str).map(str::to_string);
+            expected.push((tc, passed, pt));
+        }
+    }
+    assert!(!expected.is_empty(), "{label}: no test cases found");
+
+    let mut prompt = slice.clone();
+    strip_field(&mut prompt, "testPassed");
+    strip_field(&mut prompt, "pt");
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+
+    let mut got: Vec<(i64, bool, Option<String>)> = Vec::new();
+    for g in response.get("testGroups").unwrap().as_array().unwrap() {
+        for t in g.get("tests").unwrap().as_array().unwrap() {
+            let tc = t.get("tcId").unwrap().as_i64().unwrap();
+            let passed = t.get("testPassed").unwrap().as_bool().unwrap();
+            let pt = t.get("pt").and_then(JsonValue::as_str).map(str::to_string);
+            got.push((tc, passed, pt));
+        }
+    }
+
+    assert_eq!(got.len(), expected.len(), "{label}: case count mismatch");
+    for (e, g) in expected.iter().zip(got.iter()) {
+        assert_eq!(e.0, g.0, "{label}: tcId mismatch");
+        assert_eq!(e.1, g.1, "{label}: testPassed mismatch for tcId {}", e.0);
+        match (&e.2, &g.2) {
+            (Some(exp), Some(got_pt)) => {
+                assert_eq!(
+                    exp.to_ascii_uppercase(),
+                    *got_pt,
+                    "{label}: pt mismatch for tcId {}",
+                    e.0
+                );
+            }
+            (None, None) => {}
+            _ => panic!(
+                "{label}: pt presence mismatch for tcId {} (expected {:?}, got {:?})",
+                e.0,
+                e.2.is_some(),
+                g.2.is_some()
+            ),
+        }
+    }
+}
+
+#[test]
+fn rsa_decprim_round_trip() {
+    assert_decprim_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-decryptionPrimitive-Sp800-56Br2/kat-slice.json",
+        "RSA-decPrim",
+    );
+}
+
+// ----------------------------------------------------------------------
 // Envelope preservation (unchanged since R10)
 // ----------------------------------------------------------------------
 

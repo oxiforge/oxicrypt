@@ -550,6 +550,110 @@ pub fn rsa_oaep_encrypt_2048_sha256_internal(
     Some(c.to_be_bytes())
 }
 
+// ------------------------------------------------------------------
+// Raw RSA Decryption Primitive — RSADP (SP 800-56Br2 §7.1.2)
+// ------------------------------------------------------------------
+
+/// Raw RSA Decryption Primitive (RSADP) for 2048-bit keys via the
+/// **non-CRT** secret-exponent path, bypassing the FIPS module state
+/// gate. Computes `pt = ct^d mod n` — no padding decode.
+///
+/// Enforces the SP 800-56Br2 §7.1.2.1 range check:
+/// **`1 < ct < (n − 1)`**. Returns `None` if `ct ∈ {0, 1}`,
+/// `ct ≥ n − 1`, or the modulus / private exponent fails structural
+/// checks.
+///
+/// # ACVP / CAVP
+///
+/// This is the primitive tested by the `RSA / decryptionPrimitive /
+/// Sp800-56Br2` ACVP vector set (`keyMode = "standard"`).
+#[doc(hidden)]
+pub fn rsa_decryption_primitive_2048_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    ct: &[u8; RSA_2048_MODULUS_BYTES],
+) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
+    let n = U2048::from_be_bytes(n_bytes);
+    let ctx = MontCtx2048::new(n)?;
+
+    let d = U2048::from_be_bytes(d_bytes);
+    if d.ct_lt(&ctx.n) != 1 {
+        return None;
+    }
+
+    let c = U2048::from_be_bytes(ct);
+    // SP 800-56Br2 §7.1.2.1: reject c outside (1, n − 1).
+    if !sp800_56br2_range_check(&c, &ctx.n) {
+        return None;
+    }
+
+    let m = ctx.pow_secret(&c, &d);
+    Some(m.to_be_bytes())
+}
+
+/// Raw RSA Decryption Primitive (RSADP) for 2048-bit keys via the
+/// **CRT** path with Bellcore verify-after-decrypt per FIPS 140-3
+/// IG D.G, bypassing the FIPS module state gate.
+///
+/// Enforces the SP 800-56Br2 §7.1.2.1 range check:
+/// **`1 < ct < (n − 1)`**. Dispatches through
+/// [`rsa_crt_2048_private_exp_internal`] — the same primitive that
+/// sign and OAEP-decrypt use. Returns `None` on bad key material,
+/// out-of-range `ct`, or a failed Bellcore check.
+///
+/// # ACVP / CAVP
+///
+/// This is the primitive tested by the `RSA / decryptionPrimitive /
+/// Sp800-56Br2` ACVP vector set (`keyMode = "crt"`).
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
+pub fn rsa_decryption_primitive_2048_crt_internal(
+    n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
+    e: u64,
+    p_bytes: &[u8; U1024_BYTES],
+    q_bytes: &[u8; U1024_BYTES],
+    dp_bytes: &[u8; U1024_BYTES],
+    dq_bytes: &[u8; U1024_BYTES],
+    qinv_bytes: &[u8; U1024_BYTES],
+    ct: &[u8; RSA_2048_MODULUS_BYTES],
+) -> Option<[u8; RSA_2048_MODULUS_BYTES]> {
+    // SP 800-56Br2 §7.1.2.1 range check before CRT dispatch.
+    let n = U2048::from_be_bytes(n_bytes);
+    let c = U2048::from_be_bytes(ct);
+    if !sp800_56br2_range_check(&c, &n) {
+        return None;
+    }
+    let crt = CrtComponentsRaw {
+        p: p_bytes,
+        q: q_bytes,
+        dp: dp_bytes,
+        dq: dq_bytes,
+        qinv: qinv_bytes,
+    };
+    rsa_crt_2048_private_exp_internal(n_bytes, e, crt, ct)
+}
+
+/// SP 800-56Br2 §7.1.2.1 ciphertext range check:
+/// returns `true` iff `1 < c < (n − 1)`.
+fn sp800_56br2_range_check(c: &U2048, n: &U2048) -> bool {
+    let one = {
+        let mut limbs = [0u64; bigint2048::LIMBS];
+        limbs[0] = 1;
+        U2048 { limbs }
+    };
+    // c must be > 1: reject c ∈ {0, 1}.
+    if c.ct_lt(&one) == 1 || c.ct_eq(&one) == 1 {
+        return false;
+    }
+    // c must be < n − 1: compute n − 1 and check c < n − 1.
+    let (n_minus_1, _) = n.subtracting(&one);
+    // If n ≤ 2 the key is structurally invalid; also reject.
+    if n_minus_1.ct_eq(&U2048::ZERO) == 1 || n_minus_1.ct_eq(&one) == 1 {
+        return false;
+    }
+    c.ct_lt(&n_minus_1) == 1
+}
+
 /// RSAES-OAEP decrypt for RSA-2048 / SHA-256 via the **non-CRT**
 /// private-exponent path, bypassing the FIPS module state gate.
 ///

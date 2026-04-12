@@ -69,6 +69,13 @@
 //!   double-pipeline iteration modes across all eleven HMAC
 //!   instantiations
 //!
+//! R21 adds the RSA DecryptionPrimitive handler:
+//!
+//! - [`rsa_decprim`] — `RSA` / `decryptionPrimitive` revision
+//!   `Sp800-56Br2`, raw RSADP with SP 800-56Br2 §7.1.2.1 range
+//!   check, both `standard` (non-CRT) and `crt` (Bellcore) key
+//!   modes
+//!
 //! Later chunks will add remaining test types (MCT, LDT) and
 //! additional modes (PSS, larger key sizes).
 
@@ -82,6 +89,7 @@ pub mod hmac_sha2_256;
 pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod rsa;
+pub mod rsa_decprim;
 pub mod sha3;
 pub mod sha3_256;
 pub mod shake;
