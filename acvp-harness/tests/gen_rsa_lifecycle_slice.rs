@@ -19,12 +19,14 @@
 )]
 //! One-shot helper that generates the RSA lifecycle vector files:
 //!
+//! - `RSA-keyGen-FIPS186-5/lifecycle-slice.json`  — keyGen (1 group,
+//!   1 test: DRBG seed → key material)
 //! - `RSA-sigGen-FIPS186-5/lifecycle-slice.json`  — sigGen (2 groups:
 //!   PKCS#1v1.5/non-CRT + PSS/CRT)
 //! - `RSA-sigVer-FIPS186-5/lifecycle-slice.json`  — sigVer (4 groups:
 //!   valid+invalid for each sig type)
 //!
-//! Both files share one DRBG-generated RSA-2048 key, proving
+//! All three files share one DRBG-generated RSA-2048 key, proving
 //! keyGen → sigGen → sigVer is consistent.
 //!
 //!   cargo test -p acvp-harness --test gen_rsa_lifecycle_slice -- --ignored --nocapture
@@ -314,12 +316,52 @@ fn generate_rsa_lifecycle_slices() {
         pss_invalid.join(",\n"),
     );
 
+    // ── keyGen slice ─────────────────────────────────────────────
+    // One group, one test: provide the same DRBG seed material so
+    // the keyGen handler re-derives the identical key.
+    let entropy_hex = hex_upper(b"pqclib-rsa-lifecycle-gen-entropy-v1");
+    let nonce_hex = hex_upper(b"pqclib-rsa-lifecycle-gen-nonce-v1");
+
+    let keygen_json = format!(
+        r#"{{
+  "_source": "pqclib self-generated RSA lifecycle vectors (keyGen)",
+  "algorithm": "RSA",
+  "mode": "keyGen",
+  "revision": "FIPS186-5",
+  "testGroups": [
+    {{
+      "tgId": 1,
+      "testType": "AFT",
+      "modulo": 2048,
+      "fixedPubExp": "{e_hex}",
+      "tests": [
+        {{
+          "tcId": 1,
+          "entropy": "{entropy_hex}",
+          "nonce": "{nonce_hex}",
+          "perso": "",
+          "n": "{n_hex}",
+          "d": "{d_hex}",
+          "e": "{e_hex}",
+          "p": "{p_hex}",
+          "q": "{q_hex}",
+          "dmp1": "{dp_hex}",
+          "dmq1": "{dq_hex}",
+          "iqmp": "{qinv_hex}"
+        }}
+      ]
+    }}
+  ]
+}}"#,
+    );
+
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("vendor/nist/acvp-server/gen-val/json-files");
 
     for (dir, name, json) in [
+        ("RSA-keyGen-FIPS186-5", "lifecycle-slice.json", &keygen_json),
         ("RSA-sigGen-FIPS186-5", "lifecycle-slice.json", &siggen_json),
         ("RSA-sigVer-FIPS186-5", "lifecycle-slice.json", &sigver_json),
     ] {

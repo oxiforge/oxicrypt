@@ -191,6 +191,13 @@
 //!   messages (up to multi-MB), using the incremental `Sha3::update`
 //!   API to avoid materializing the full message in memory
 //!
+//! R39 completes the RSA lifecycle trifecta:
+//!
+//! - [`rsa_keygen`] — self-generated `RSA` / `keyGen` lifecycle
+//!   slice sharing the same DRBG seed as the R37 sigGen/sigVer
+//!   slices, proving keyGen→sigGen→sigVer consistency across
+//!   the full RSA pipeline
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;

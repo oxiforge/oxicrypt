@@ -1887,8 +1887,78 @@ fn rsa_siggen_cross_round_trip() {
 }
 
 // ----------------------------------------------------------------------
-// RSA lifecycle cross-validation (R37: sigGen→sigVer, shared key)
+// RSA lifecycle cross-validation (R37/R39: keyGen→sigGen→sigVer)
 // ----------------------------------------------------------------------
+
+#[test]
+fn rsa_lifecycle_keygen_round_trip() {
+    ensure_initialized().unwrap();
+    let slice = load(
+        "../vendor/nist/acvp-server/gen-val/json-files/RSA-keyGen-FIPS186-5/lifecycle-slice.json",
+    );
+
+    let expected_n = collect_answers(&slice, "n");
+    let expected_d = collect_answers(&slice, "d");
+    let expected_p = collect_answers(&slice, "p");
+    let expected_q = collect_answers(&slice, "q");
+
+    assert!(
+        !expected_n.is_empty(),
+        "RSA keyGen lifecycle: no tests with field n"
+    );
+
+    let mut prompt = slice.clone();
+    for field in &["n", "d", "e", "p", "q", "dmp1", "dmq1", "iqmp"] {
+        strip_field(&mut prompt, field);
+    }
+
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)
+        .unwrap_or_else(|e| panic!("RSA keyGen lifecycle: dispatch failed: {e}"));
+
+    let got_n = collect_answers(&response, "n");
+    let got_d = collect_answers(&response, "d");
+    let got_p = collect_answers(&response, "p");
+    let got_q = collect_answers(&response, "q");
+
+    assert_eq!(
+        got_n.len(),
+        expected_n.len(),
+        "RSA keyGen lifecycle: n count mismatch"
+    );
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_n.iter().zip(got_n.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen lifecycle: tcId mismatch for n");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen lifecycle: n mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_d.iter().zip(got_d.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen lifecycle: tcId mismatch for d");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen lifecycle: d mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_p.iter().zip(got_p.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen lifecycle: tcId mismatch for p");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen lifecycle: p mismatch for tcId {exp_tc}"
+        );
+    }
+    for ((exp_tc, exp_val), (got_tc, got_val)) in expected_q.iter().zip(got_q.iter()) {
+        assert_eq!(exp_tc, got_tc, "RSA keyGen lifecycle: tcId mismatch for q");
+        assert_eq!(
+            exp_val.to_ascii_uppercase(),
+            *got_val,
+            "RSA keyGen lifecycle: q mismatch for tcId {exp_tc}"
+        );
+    }
+}
 
 #[test]
 fn rsa_lifecycle_siggen_round_trip() {
