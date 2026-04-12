@@ -1,7 +1,7 @@
-//! SHAKE128 / SHAKE256 handlers: AFT, VOT, and MCT.
+//! SHAKE128 / SHAKE256 handlers: AFT, VOT, MCT, and LDT.
 //!
 //! Targets ACVP `algorithm = "SHAKE-{128,256}"`, `revision = "FIPS202"`,
-//! `testType ∈ {"AFT", "VOT", "MCT"}`. Unlike the fixed-output SHA-3
+//! `testType ∈ {"AFT", "VOT", "MCT", "LDT"}`. Unlike the fixed-output SHA-3
 //! family, each SHAKE AFT/VOT test case carries its own `outLen` (in
 //! bits) — the XOF streaming API in `fips_xof` absorbs the message,
 //! finalizes, and squeezes exactly `outLen / 8` bytes. Byte alignment
@@ -71,7 +71,7 @@ impl AlgorithmHandler for Shake256Handler {
     }
 }
 
-/// Top-level dispatcher: routes to AFT/VOT or MCT based on `testType`.
+/// Top-level dispatcher: routes to AFT/VOT, MCT, or LDT based on `testType`.
 fn handle_shake_dispatch<F>(
     group: &JsonValue,
     security_bits: usize,
@@ -87,6 +87,7 @@ where
     match test_type {
         "AFT" | "VOT" => handle_shake_aft_vot(group, squeeze),
         "MCT" => handle_shake_mct(group, security_bits, squeeze),
+        "LDT" => handle_shake_ldt(group, security_bits),
         _ => Err(DispatchError::UnsupportedTestType(test_type.to_string())),
     }
 }
@@ -300,4 +301,156 @@ where
         ("tgId".to_string(), JsonValue::Number(tg_id)),
         ("tests".to_string(), JsonValue::Array(vec![test_result])),
     ]))
+}
+
+// ---- LDT engine (SHAKE XOF) --------------------------------------------
+
+/// SHAKE LDT (Large Data Test): absorbs a repeating pattern of
+/// `contentLength` bits up to `fullLength` bits via the incremental
+/// XOF API, then squeezes `outLen / 8` bytes.
+#[allow(clippy::cast_possible_truncation)]
+fn handle_shake_ldt(
+    group: &JsonValue,
+    security_bits: usize,
+) -> Result<JsonValue, DispatchError> {
+    let group_id = group
+        .get("tgId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tgId"))?;
+    let tests = group
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .ok_or(DispatchError::MissingField("tests"))?;
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for t in tests {
+        let tc_id = t
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+        let out_len_bits = t
+            .get("outLen")
+            .and_then(JsonValue::as_u64)
+            .ok_or(DispatchError::MissingField("outLen"))?;
+        if !out_len_bits.is_multiple_of(8) {
+            return Err(DispatchError::Unsupported(
+                "SHAKE LDT with non-byte-aligned outLen",
+            ));
+        }
+        let out_bytes = (out_len_bits / 8) as usize;
+
+        let large_msg = t
+            .get("largeMsg")
+            .ok_or(DispatchError::MissingField("largeMsg"))?;
+        let content_hex = large_msg
+            .get("content")
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField("largeMsg.content"))?;
+        let content_length_bits = large_msg
+            .get("contentLength")
+            .and_then(JsonValue::as_u64)
+            .ok_or(DispatchError::MissingField("largeMsg.contentLength"))?;
+        let full_length_bits = large_msg
+            .get("fullLength")
+            .and_then(JsonValue::as_u64)
+            .ok_or(DispatchError::MissingField("largeMsg.fullLength"))?;
+        let technique = large_msg
+            .get("expansionTechnique")
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField(
+                "largeMsg.expansionTechnique",
+            ))?;
+
+        if technique != "repeating" {
+            return Err(DispatchError::Unsupported(
+                "SHAKE LDT: only 'repeating' expansion technique is supported",
+            ));
+        }
+        if !content_length_bits.is_multiple_of(8) || !full_length_bits.is_multiple_of(8) {
+            return Err(DispatchError::Unsupported(
+                "SHAKE LDT: non-byte-aligned lengths are not supported",
+            ));
+        }
+
+        let content = hex::decode(content_hex)?;
+        let content_bytes = (content_length_bits / 8) as usize;
+        if content.len() < content_bytes {
+            return Err(DispatchError::Crypto(
+                "SHAKE LDT: content hex shorter than declared contentLength",
+            ));
+        }
+        let pattern = &content[..content_bytes];
+
+        let full_bytes = full_length_bits / 8;
+        let md = shake_ldt_stream(security_bits, pattern, full_bytes, out_bytes)?;
+
+        results.push(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(tc_id)),
+            (
+                "md".to_string(),
+                JsonValue::String(hex::encode_upper(&md)),
+            ),
+        ]));
+    }
+
+    Ok(JsonValue::Object(vec![
+        ("tgId".to_string(), JsonValue::Number(group_id)),
+        ("tests".to_string(), JsonValue::Array(results)),
+    ]))
+}
+
+/// Streaming LDT absorber for SHAKE XOFs: feeds the repeating `pattern`
+/// into an incremental SHAKE instance until `full_bytes` total bytes have
+/// been absorbed, then finalizes and squeezes `out_bytes` bytes.
+fn shake_ldt_stream(
+    security_bits: usize,
+    pattern: &[u8],
+    full_bytes: u64,
+    out_bytes: usize,
+) -> Result<Vec<u8>, DispatchError> {
+    if pattern.is_empty() {
+        return Err(DispatchError::Crypto("SHAKE LDT: empty content pattern"));
+    }
+    let pat_len = pattern.len() as u64;
+    let mut remaining = full_bytes;
+
+    match security_bits {
+        128 => {
+            let mut xof = Shake128::new()
+                .map_err(|_| DispatchError::Crypto("Shake128::new returned Err"))?;
+            while remaining >= pat_len {
+                xof.update(pattern);
+                remaining -= pat_len;
+            }
+            if remaining > 0 {
+                let tail = usize::try_from(remaining)
+                    .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
+                xof.update(&pattern[..tail]);
+            }
+            xof.finalize();
+            let mut out = vec![0u8; out_bytes];
+            xof.squeeze(&mut out);
+            Ok(out)
+        }
+        256 => {
+            let mut xof = Shake256::new()
+                .map_err(|_| DispatchError::Crypto("Shake256::new returned Err"))?;
+            while remaining >= pat_len {
+                xof.update(pattern);
+                remaining -= pat_len;
+            }
+            if remaining > 0 {
+                let tail = usize::try_from(remaining)
+                    .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
+                xof.update(&pattern[..tail]);
+            }
+            xof.finalize();
+            let mut out = vec![0u8; out_bytes];
+            xof.squeeze(&mut out);
+            Ok(out)
+        }
+        _ => Err(DispatchError::Unsupported(
+            "SHAKE LDT: unsupported security level",
+        )),
+    }
 }

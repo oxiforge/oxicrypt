@@ -2641,6 +2641,24 @@ fn shake_256_vot_round_trip() {
     );
 }
 
+#[test]
+fn shake_128_ldt_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHAKE-128-FIPS202/ldt-slice.json",
+        "md",
+        "SHAKE-128-LDT",
+    );
+}
+
+#[test]
+fn shake_256_ldt_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/SHAKE-256-FIPS202/ldt-slice.json",
+        "md",
+        "SHAKE-256-LDT",
+    );
+}
+
 // ----------------------------------------------------------------------
 // RSA primitive lifecycle (R44: sigPrim + decPrim, shared DRBG key)
 // ----------------------------------------------------------------------

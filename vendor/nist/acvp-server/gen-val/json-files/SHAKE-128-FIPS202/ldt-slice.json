@@ -1,0 +1,46 @@
+{
+  "_source": "pqclib self-generated SHAKE LDT vectors (R46)",
+  "algorithm": "SHAKE-128",
+  "revision": "FIPS202",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "LDT",
+      "tests": [
+        {
+          "tcId": 1,
+          "outLen": 256,
+          "largeMsg": {
+            "content": "61",
+            "contentLength": 8,
+            "fullLength": 8388608,
+            "expansionTechnique": "repeating"
+          },
+          "md": "D808F83419FA542AC020B8FFCF15285320B2350EBD5DD6F02B7F9822A9A2FF52"
+        },
+        {
+          "tcId": 2,
+          "outLen": 512,
+          "largeMsg": {
+            "content": "DE",
+            "contentLength": 8,
+            "fullLength": 4194304,
+            "expansionTechnique": "repeating"
+          },
+          "md": "0817C05A5AE1BDDADCD8843E3732EF4E8492658201BA8F3E694F4D353CCD23DFA352A838A0A5A1D6BBD8E7D0B519E75178B879405F518C7649F8A80E8C111CA1"
+        },
+        {
+          "tcId": 3,
+          "outLen": 1024,
+          "largeMsg": {
+            "content": "FF",
+            "contentLength": 8,
+            "fullLength": 16777216,
+            "expansionTechnique": "repeating"
+          },
+          "md": "9F98FB02AB2A61FCA1FC22A37BE423D6CCDBA9AE40124550E9190BB16D6DCD262DC67FD1F340A8B8B3C454AFEA2238650614878D197C6107DB4CB81B785777811B36E6BD565906A1032FD844FA71426346D4079B5A70AEF909AF169943E12E53A5873EC46416FA83511D29A9818712BC59FE340D81D6CC9E992C9BD584E9DEEB"
+        }
+      ]
+    }
+  ]
+}

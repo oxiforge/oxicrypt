@@ -248,6 +248,13 @@
 //!   Variable Output Test using the same envelope as AFT with varying
 //!   `outLen` per test case, self-generated vectors with 5 tests each
 //!
+//! R46 adds SHAKE Large Data Test (LDT) support:
+//!
+//! - [`shake`] — `SHAKE-{128,256}` / `LDT` revision `FIPS202`,
+//!   streaming XOF absorption of repeating-pattern expanded messages
+//!   (up to multi-MB) via the incremental `Shake{128,256}::update`
+//!   API, with per-test `outLen` for variable-length squeeze
+//!
 //! Later chunks will add additional modes (larger key sizes).
 
 pub mod aes;
