@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated EdDSA lifecycle vectors (sigVer)",
+  "_source": "oxicrypt self-generated EdDSA lifecycle vectors (sigVer)",
   "algorithm": "EDDSA",
   "mode": "sigVer",
   "revision": "1.0",

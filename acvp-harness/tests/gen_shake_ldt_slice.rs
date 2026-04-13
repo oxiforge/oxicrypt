@@ -27,7 +27,7 @@
 //!   cargo test -p acvp-harness --test gen_shake_ldt_slice -- --ignored --nocapture
 
 use acvp_harness::ensure_initialized;
-use fips_xof::{Shake128, Shake256};
+use oxicrypt_xof::{Shake128, Shake256};
 use std::io::Write;
 
 fn hex_upper(b: &[u8]) -> String {
@@ -145,7 +145,7 @@ fn generate_shake_ldt_slices() {
 
         let json = format!(
             r#"{{
-  "_source": "pqclib self-generated SHAKE LDT vectors (R46)",
+  "_source": "oxicrypt self-generated SHAKE LDT vectors (R46)",
   "algorithm": "{}",
   "revision": "FIPS202",
   "testGroups": [

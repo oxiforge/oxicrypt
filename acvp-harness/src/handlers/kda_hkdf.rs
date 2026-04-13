@@ -65,7 +65,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_kdf::{
+use oxicrypt_kdf::{
     HkdfSha224, HkdfSha256, HkdfSha384, HkdfSha3_224, HkdfSha3_256, HkdfSha3_384, HkdfSha3_512,
     HkdfSha512, HkdfSha512_224, HkdfSha512_256,
 };
@@ -333,7 +333,7 @@ fn encode_party_info(party: &JsonValue, out: &mut Vec<u8>) -> Result<(), Dispatc
 /// Which HKDF instantiation a KDA-HKDF group targets.
 ///
 /// SHA-1 is out of scope for SP 800-56C Rev 2 (see the note in
-/// `fips_kdf::hkdf_self_test_sha1`); the ACVP-Server slice does not
+/// `oxicrypt_kdf::hkdf_self_test_sha1`); the ACVP-Server slice does not
 /// ship a SHA-1 group, and the dispatcher refuses one if one ever
 /// appears in a future re-pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

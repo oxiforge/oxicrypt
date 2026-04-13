@@ -1,4 +1,4 @@
-//! ct-validation target: [`fips_rsa::oaep::emsa_oaep_decode`].
+//! ct-validation target: [`oxicrypt_rsa::oaep::emsa_oaep_decode`].
 //!
 //! This validates the Manger-resistance claim of §12.1 of the
 //! security policy: the decoder must take indistinguishable time
@@ -37,7 +37,7 @@
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_rsa::oaep::{emsa_oaep_decode, emsa_oaep_encode, HLEN, K, MAX_MSG_LEN};
+use oxicrypt_rsa::oaep::{emsa_oaep_decode, emsa_oaep_encode, HLEN, K, MAX_MSG_LEN};
 
 /// Number of plaintext bytes carried by each probe encoding. Pinning
 /// this to a single value keeps the success-path copy length constant

@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated ECDSA lifecycle vectors (keyGen)",
+  "_source": "oxicrypt self-generated ECDSA lifecycle vectors (keyGen)",
   "algorithm": "ECDSA",
   "mode": "keyGen",
   "revision": "FIPS186-5",

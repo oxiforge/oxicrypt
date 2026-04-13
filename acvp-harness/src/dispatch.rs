@@ -13,7 +13,7 @@
 //! # Module gating
 //!
 //! Every call to [`process`] starts with
-//! `fips_module::require_operational()`. The harness binary has
+//! `oxicrypt_module::require_operational()`. The harness binary has
 //! already run the power-up KAT set by the time this code is reached,
 //! but a defensive re-check here means that *any* code path leading
 //! into the dispatcher — integration tests, future REST front-ends,
@@ -31,8 +31,8 @@ use core::fmt;
 pub enum DispatchError {
     /// Failed to peel the ACVP envelope.
     Envelope(EnvelopeError),
-    /// The pqclib module is not in the operational state.
-    Module(fips_module::Error),
+    /// The oxicrypt module is not in the operational state.
+    Module(oxicrypt_module::Error),
     /// A primitive returned an error or produced an unexpected shape.
     Crypto(&'static str),
     /// A hex-encoded data field could not be decoded.
@@ -330,7 +330,7 @@ pub fn with_default_handlers() -> Registry {
 /// and `revision` fields and contains a `testGroups` array whose
 /// shape is determined by the per-algorithm handler.
 pub fn process(prompt: &JsonValue, registry: &Registry) -> Result<JsonValue, DispatchError> {
-    fips_module::require_operational().map_err(DispatchError::Module)?;
+    oxicrypt_module::require_operational().map_err(DispatchError::Module)?;
     let vs = VectorSet::new(prompt)?;
     let algorithm = vs.algorithm()?;
     let mode = vs.mode()?;

@@ -54,20 +54,20 @@ const Q_R: [u8; 65] = [
 #[ignore]
 fn generate_kas_ecc_ssc_slice() {
     // Test 1: d_i * Q_r
-    let z1 = fips_ecdh::compute_shared_secret_p256_internal(&D_I, &Q_R)
+    let z1 = oxicrypt_ecdh::compute_shared_secret_p256_internal(&D_I, &Q_R)
         .expect("ECDH 1 failed");
 
     // Test 2: d_r * Q_i (symmetry check)
-    let z2 = fips_ecdh::compute_shared_secret_p256_internal(&D_R, &Q_I)
+    let z2 = oxicrypt_ecdh::compute_shared_secret_p256_internal(&D_R, &Q_I)
         .expect("ECDH 2 failed");
 
     assert_eq!(z1, z2, "ECDH symmetry broken");
 
     // Tests 3-4: use the keys as "ephemeral" parties with themselves to get different shared secrets
     // (d_i * Q_i is a self-DH which still works mathematically)
-    let z3 = fips_ecdh::compute_shared_secret_p256_internal(&D_I, &Q_I)
+    let z3 = oxicrypt_ecdh::compute_shared_secret_p256_internal(&D_I, &Q_I)
         .expect("ECDH self-i failed");
-    let z4 = fips_ecdh::compute_shared_secret_p256_internal(&D_R, &Q_R)
+    let z4 = oxicrypt_ecdh::compute_shared_secret_p256_internal(&D_R, &Q_R)
         .expect("ECDH self-r failed");
 
     // Build the test vectors using the ACVP KAS-ECC-SSC shape.

@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated SHA-3 LDT vectors",
+  "_source": "oxicrypt self-generated SHA-3 LDT vectors",
   "algorithm": "SHA3-512",
   "revision": "2.0",
   "testGroups": [

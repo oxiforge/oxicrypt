@@ -3,7 +3,7 @@
 //! Targets ACVP `algorithm = "SHAKE-{128,256}"`, `revision = "FIPS202"`,
 //! `testType ∈ {"AFT", "VOT", "MCT", "LDT"}`. Unlike the fixed-output SHA-3
 //! family, each SHAKE AFT/VOT test case carries its own `outLen` (in
-//! bits) — the XOF streaming API in `fips_xof` absorbs the message,
+//! bits) — the XOF streaming API in `oxicrypt_xof` absorbs the message,
 //! finalizes, and squeezes exactly `outLen / 8` bytes. Byte alignment
 //! is enforced on both `len` and `outLen`.
 //!
@@ -25,7 +25,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{Shake128, Shake256};
+use oxicrypt_xof::{Shake128, Shake256};
 
 /// SHAKE128 AFT dispatcher.
 pub struct Shake128Handler;

@@ -32,7 +32,7 @@
     clippy::unnecessary_wraps
 )]
 
-use fips_module::{initialize_with_tests, state, Error, KatEntry};
+use oxicrypt_module::{initialize_with_tests, state, Error, KatEntry};
 
 /// The full power-up KAT set for this binary.
 ///
@@ -44,34 +44,34 @@ use fips_module::{initialize_with_tests, state, Error, KatEntry};
 /// Policy review.
 const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
     {
-        fips_sha::KATS.len()
-            + fips_xof::KATS.len()
-            + fips_hmac::KATS.len()
-            + fips_kdf::KATS.len()
-            + fips_aes::KATS.len()
-            + fips_cmac::KATS.len()
-            + fips_drbg::KATS.len()
-            + fips_integrity::KATS.len()
-            + fips_ecdsa::KATS.len()
-            + fips_eddsa::KATS.len()
-            + fips_rsa::KATS.len()
-            + fips_ecdh::KATS.len()
-            + fips_tls_kdf::KATS.len()
+        oxicrypt_sha::KATS.len()
+            + oxicrypt_xof::KATS.len()
+            + oxicrypt_hmac::KATS.len()
+            + oxicrypt_kdf::KATS.len()
+            + oxicrypt_aes::KATS.len()
+            + oxicrypt_cmac::KATS.len()
+            + oxicrypt_drbg::KATS.len()
+            + oxicrypt_integrity::KATS.len()
+            + oxicrypt_ecdsa::KATS.len()
+            + oxicrypt_eddsa::KATS.len()
+            + oxicrypt_rsa::KATS.len()
+            + oxicrypt_ecdh::KATS.len()
+            + oxicrypt_tls_kdf::KATS.len()
     },
 >(&[
-    fips_sha::KATS,
-    fips_xof::KATS,
-    fips_hmac::KATS,
-    fips_kdf::KATS,
-    fips_aes::KATS,
-    fips_cmac::KATS,
-    fips_drbg::KATS,
-    fips_integrity::KATS,
-    fips_ecdsa::KATS,
-    fips_eddsa::KATS,
-    fips_rsa::KATS,
-    fips_ecdh::KATS,
-    fips_tls_kdf::KATS,
+    oxicrypt_sha::KATS,
+    oxicrypt_xof::KATS,
+    oxicrypt_hmac::KATS,
+    oxicrypt_kdf::KATS,
+    oxicrypt_aes::KATS,
+    oxicrypt_cmac::KATS,
+    oxicrypt_drbg::KATS,
+    oxicrypt_integrity::KATS,
+    oxicrypt_ecdsa::KATS,
+    oxicrypt_eddsa::KATS,
+    oxicrypt_rsa::KATS,
+    oxicrypt_ecdh::KATS,
+    oxicrypt_tls_kdf::KATS,
 ]);
 
 /// Concatenate several `KatEntry` slices into a single fixed-size
@@ -101,7 +101,7 @@ const fn concat_kats<const N: usize>(parts: &[&[KatEntry]]) -> [KatEntry; N] {
 /// Placeholder used only to initialize the const array before the
 /// real entries are copied in. Never actually invoked because every
 /// slot is overwritten in `concat_kats`.
-fn noop_kat() -> Result<(), fips_module::SelfTestFailure> {
+fn noop_kat() -> Result<(), oxicrypt_module::SelfTestFailure> {
     Ok(())
 }
 
@@ -116,7 +116,7 @@ fn main() {
     match initialize_with_tests(POWER_UP_KATS) {
         Ok(()) | Err(Error::AlreadyInitialized) => {}
         Err(e) => {
-            eprintln!("pqclib acvp-harness: initialization failed: {e}");
+            eprintln!("oxicrypt acvp-harness: initialization failed: {e}");
             // Deliberately not using `std::process::exit` here so the
             // scaffold stays minimal; we will introduce a proper
             // CLI error type in a later phase.
@@ -138,7 +138,7 @@ fn main() {
 }
 
 fn print_self_test_banner() {
-    println!("pqclib acvp-harness: module state = {}", state());
+    println!("oxicrypt acvp-harness: module state = {}", state());
     println!(
         "Power-up self-tests passed: {} KAT(s).",
         POWER_UP_KATS.len()
@@ -172,7 +172,7 @@ fn run_dispatch_cli(args: &[String]) {
     let prompt_path = &args[2];
     let response_path = &args[3];
     if let Err(msg) = run_dispatch(prompt_path, response_path) {
-        eprintln!("pqclib acvp-harness: dispatch failed: {msg}");
+        eprintln!("oxicrypt acvp-harness: dispatch failed: {msg}");
     }
 }
 
@@ -189,7 +189,7 @@ fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
     std::fs::write(response_path, out)
         .map_err(|e| format!("write {response_path}: {e}"))?;
     println!(
-        "pqclib acvp-harness: wrote ACVP response to {response_path} ({} test group(s))",
+        "oxicrypt acvp-harness: wrote ACVP response to {response_path} ({} test group(s))",
         response
             .get("testGroups")
             .and_then(acvp_harness::json::JsonValue::as_array)
@@ -212,7 +212,7 @@ fn run_dispatch_shs_cli(args: &[String]) {
     let prompt_path = &args[3];
     let response_path = &args[4];
     if let Err(msg) = run_dispatch_shs(algorithm, prompt_path, response_path) {
-        eprintln!("pqclib acvp-harness: dispatch-shs failed: {msg}");
+        eprintln!("oxicrypt acvp-harness: dispatch-shs failed: {msg}");
     }
 }
 
@@ -233,7 +233,7 @@ fn run_dispatch_shs(
     std::fs::write(response_path, out)
         .map_err(|e| format!("write {response_path}: {e}"))?;
     println!(
-        "pqclib acvp-harness: wrote CAVP SHS response to {response_path} ({} test case(s))",
+        "oxicrypt acvp-harness: wrote CAVP SHS response to {response_path} ({} test case(s))",
         response
             .get("testCases")
             .and_then(acvp_harness::json::JsonValue::as_array)

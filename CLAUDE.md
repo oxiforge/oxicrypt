@@ -1,4 +1,4 @@
-# Project instructions — pqclib
+# Project instructions — oxicrypt
 
 These are the standing rules for Claude when working in this repository.
 They are loaded automatically at the start of every session.

@@ -69,7 +69,7 @@ fn parse_args() -> (RunConfig, Vec<String>) {
 
 fn print_help() {
     println!(
-        "ct-validation — dudect-style constant-time harness for pqclib\n\
+        "ct-validation — dudect-style constant-time harness for oxicrypt\n\
          \n\
          USAGE:\n\
          \x20   ct-validation [OPTIONS] [TARGET ...]\n\

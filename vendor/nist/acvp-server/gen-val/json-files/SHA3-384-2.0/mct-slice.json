@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated SHA-3 MCT vectors",
+  "_source": "oxicrypt self-generated SHA-3 MCT vectors",
   "algorithm": "SHA3-384",
   "revision": "2.0",
   "testGroups": [

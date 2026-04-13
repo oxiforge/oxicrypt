@@ -20,7 +20,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{CShake128, CShake256};
+use oxicrypt_xof::{CShake128, CShake256};
 
 /// cSHAKE-128 AFT handler.
 pub struct CShake128Handler;

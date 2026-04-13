@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated KAS-ECC-SSC lifecycle vectors",
+  "_source": "oxicrypt self-generated KAS-ECC-SSC lifecycle vectors",
   "algorithm": "KAS-ECC-SSC",
   "mode": "Component",
   "revision": "Sp800-56Ar3",

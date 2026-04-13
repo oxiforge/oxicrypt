@@ -1,4 +1,4 @@
-# pqclib
+# oxicrypt
 
 Pure-Rust FIPS 140-3 Level 1 cryptographic module.
 
@@ -38,7 +38,7 @@ its published source.
   error-path health tests (generate-before-instantiate, reseed-counter
   ceiling, post-uninstantiate access) for each mechanism.
 - **KDF** — SP 800-108r1 Counter / Feedback / Double-Pipeline Iteration
-  modes (`fips-kdf`); SP 800-56C Rev 2 Two-Step KDA-HKDF; RFC 5869 HKDF
+  modes (`oxicrypt-kdf`); SP 800-56C Rev 2 Two-Step KDA-HKDF; RFC 5869 HKDF
   over all eleven HMACs.
 - **Symmetric** — AES-128/192/256 block cipher (FIPS 197); ECB, CBC, CTR,
   GCM, and CCM modes (SP 800-38A / SP 800-38C / SP 800-38D); Key Wrap (KW)
@@ -90,7 +90,7 @@ its published source.
   slim-slice strategy (per-algorithm `kat-slice.json` plus a
   `MANIFEST.toml` carrying SHA-256 metadata and selected tgId/tcIds).
 - Tooling in `tools/acvp-gen/` regenerates the test-vector constants in
-  `crates/fips-test-vectors/src/generated.rs` from the vendored vectors,
+  `crates/oxicrypt-test-vectors/src/generated.rs` from the vendored vectors,
   cross-validated against Python reference implementations.
 - Every SHA, SHAKE, HMAC, HKDF, AES, and AES-CMAC KAT carries a citation
   to its source document (FIPS 197 Appendix C, SP 800-38A Appendix F,
@@ -101,8 +101,8 @@ its published source.
 ### Running the harness
 
 ```bash
-cargo build -p acvp-harness -p fips-integrity
-./target/debug/fips-integrity-sign --sign target/debug/acvp-harness
+cargo build -p acvp-harness -p oxicrypt-integrity
+./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
 ./target/debug/acvp-harness
 ```
 
@@ -137,7 +137,7 @@ upstream `usnistgov/ACVP-Server` ships no top-level `SHA-*`, `SHA1-*`,
 or `SHA2-*` `internalProjection` directories at the pinned commit; R11′
 retired the earlier deferral that wrongly framed this as an ACVP-Server
 re-pin blocker. R13 then wires the first KDF family handler,
-`KDA-HKDF-Sp800-56Cr2`, which is also the first ACVP family in pqclib
+`KDA-HKDF-Sp800-56Cr2`, which is also the first ACVP family in oxicrypt
 to publish across a `(algorithm, mode, revision)` tuple
 (`algorithm = "KDA"`, `mode = "HKDF"`) rather than the one-field
 `(algorithm, revision)` shape R10/R12-A/R12-B used. The dispatch
@@ -183,7 +183,7 @@ public key and 64-byte (r‖s) signature from per-field hex inputs;
 KeyVer validates via the full SP 800-56Ar3 §5.6.2.3.3 point
 validation. EdDSA SigVer exercises RFC 8032 §5.1.5 verification
 with canonical-S rejection and non-cofactored verify. RSA SigVer
-dispatches via fips-rsa's PKCS#1v1.5 verify with a group-level
+dispatches via oxicrypt-rsa's PKCS#1v1.5 verify with a group-level
 (n, e) key and per-test (message, signature) pairs.
 R19 adds two SigGen handlers — `ECDSA` sigGen (P-256/SHA2-256,
 deterministic via caller-supplied `k` from the ACVP vector) and
@@ -219,7 +219,7 @@ P-256 scalar-mul, P-256 scalar invert, ECDH P-256 CDH, and Ed25519
 base-point scalar mult). Verdicts: `|t|≥5`
 is `LEAK`, `|t|≥3` is `WARN`, else `CLEAN`. The harness found and the
 same R8 change fixed two real leaks — a data-dependent carry-propagation
-early exit in the `fips-ecdsa` Montgomery reducer and an identity
+early exit in the `oxicrypt-ecdsa` Montgomery reducer and an identity
 short-circuit in the P-256 mixed-addition that made the scalar-mul
 ladder's per-iteration cost depend on the number of leading zero bits of
 the secret scalar. Full reporting protocol, verdict table, and the list

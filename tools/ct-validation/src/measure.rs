@@ -118,7 +118,7 @@ impl XorShift64 {
 fn read_tsc() -> u64 {
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        // SAFETY: _rdtsc is available on all x86_64 CPUs pqclib is
+        // SAFETY: _rdtsc is available on all x86_64 CPUs oxicrypt is
         // targeted at. We don't need CPUID serialisation — dudect
         // explicitly tolerates the small jitter it introduces
         // because the t-test averages over millions of samples.

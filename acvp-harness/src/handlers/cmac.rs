@@ -15,7 +15,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_cmac::{cmac_aes128, cmac_aes192, cmac_aes256};
+use oxicrypt_cmac::{cmac_aes128, cmac_aes192, cmac_aes256};
 
 /// CMAC-AES AFT dispatcher.
 pub struct CmacAesHandler;

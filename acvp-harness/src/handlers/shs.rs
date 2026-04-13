@@ -2,7 +2,7 @@
 //!
 //! These handlers ride the second envelope shape landed in R12-B
 //! (see [`crate::shs`]). They are trivial wrappers around the
-//! byte-oriented entry points in [`fips_sha`]; the dispatcher has
+//! byte-oriented entry points in [`oxicrypt_sha`]; the dispatcher has
 //! already sliced `msg` to the declared bit length, so each handler's
 //! only job is to delegate to the right primitive and box the result
 //! into a `Vec<u8>` so the response emitter can hex-encode it.
@@ -10,13 +10,13 @@
 //! The seven handlers registered by
 //! [`crate::shs::with_default_shs_handlers`] are, in order:
 //!
-//! - `SHA-1`        (`fips_sha::sha1::sha1`)
-//! - `SHA-224`      (`fips_sha::sha224::sha224`)
-//! - `SHA-256`      (`fips_sha::sha256::sha256`)
-//! - `SHA-384`      (`fips_sha::sha384::sha384`)
-//! - `SHA-512`      (`fips_sha::sha512::sha512`)
-//! - `SHA-512/224`  (`fips_sha::sha512_t::sha512_224`)
-//! - `SHA-512/256`  (`fips_sha::sha512_t::sha512_256`)
+//! - `SHA-1`        (`oxicrypt_sha::sha1::sha1`)
+//! - `SHA-224`      (`oxicrypt_sha::sha224::sha224`)
+//! - `SHA-256`      (`oxicrypt_sha::sha256::sha256`)
+//! - `SHA-384`      (`oxicrypt_sha::sha384::sha384`)
+//! - `SHA-512`      (`oxicrypt_sha::sha512::sha512`)
+//! - `SHA-512/224`  (`oxicrypt_sha::sha512_t::sha512_224`)
+//! - `SHA-512/256`  (`oxicrypt_sha::sha512_t::sha512_256`)
 //!
 //! SHA-1 is wired because the CAVP SHS zip bundles it alongside the
 //! SHA-2 family, and the lab will expect all seven files to be
@@ -38,9 +38,9 @@ impl ShsHandler for Sha1Handler {
         20
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha1::sha1(msg)
+        oxicrypt_sha::sha1::sha1(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha1::sha1 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha1::sha1 returned Err"))
     }
 }
 
@@ -55,9 +55,9 @@ impl ShsHandler for Sha224Handler {
         28
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha224::sha224(msg)
+        oxicrypt_sha::sha224::sha224(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha224::sha224 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha224::sha224 returned Err"))
     }
 }
 
@@ -72,9 +72,9 @@ impl ShsHandler for Sha256Handler {
         32
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha256::sha256(msg)
+        oxicrypt_sha::sha256::sha256(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha256::sha256 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha256::sha256 returned Err"))
     }
 }
 
@@ -89,9 +89,9 @@ impl ShsHandler for Sha384Handler {
         48
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha384::sha384(msg)
+        oxicrypt_sha::sha384::sha384(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha384::sha384 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha384::sha384 returned Err"))
     }
 }
 
@@ -106,9 +106,9 @@ impl ShsHandler for Sha512Handler {
         64
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha512::sha512(msg)
+        oxicrypt_sha::sha512::sha512(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha512::sha512 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha512::sha512 returned Err"))
     }
 }
 
@@ -123,9 +123,9 @@ impl ShsHandler for Sha512_224Handler {
         28
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha512_t::sha512_224(msg)
+        oxicrypt_sha::sha512_t::sha512_224(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha512_t::sha512_224 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha512_t::sha512_224 returned Err"))
     }
 }
 
@@ -140,8 +140,8 @@ impl ShsHandler for Sha512_256Handler {
         32
     }
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        fips_sha::sha512_t::sha512_256(msg)
+        oxicrypt_sha::sha512_t::sha512_256(msg)
             .map(|d| d.to_vec())
-            .map_err(|_| DispatchError::Crypto("fips_sha::sha512_t::sha512_256 returned Err"))
+            .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha512_t::sha512_256 returned Err"))
     }
 }

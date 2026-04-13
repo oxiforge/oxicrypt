@@ -130,7 +130,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         ));
     }
 
-    // Reject prehash (Ed25519ph) — pqclib implements pure Ed25519 only.
+    // Reject prehash (Ed25519ph) — oxicrypt implements pure Ed25519 only.
     let pre_hash = group
         .get("preHash")
         .and_then(JsonValue::as_bool)
@@ -305,7 +305,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("message"))?,
         )?;
 
-        let sig = fips_eddsa::ed25519::sign(&seed, &message)
+        let sig = oxicrypt_eddsa::ed25519::sign(&seed, &message)
             .map_err(|_| DispatchError::Crypto("EdDSA SigGen: sign failed"))?;
 
         results.push(JsonValue::Object(vec![
@@ -370,7 +370,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("EdDSA KeyGen: d is not 32 bytes"))?;
 
-        let q = fips_eddsa::ed25519::keygen_internal(&seed);
+        let q = oxicrypt_eddsa::ed25519::keygen_internal(&seed);
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -397,7 +397,7 @@ fn ed25519_verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
     }
     let pk: &[u8; 32] = public_key.try_into().unwrap_or(&[0u8; 32]);
     let sig: &[u8; 64] = signature.try_into().unwrap_or(&[0u8; 64]);
-    fips_eddsa::ed25519::verify(pk, message, sig).unwrap_or_default()
+    oxicrypt_eddsa::ed25519::verify(pk, message, sig).unwrap_or_default()
 }
 
 /// Validate an Ed25519 public key by attempting to decompress it.
@@ -406,5 +406,5 @@ fn ed25519_key_validate(public_key: &[u8]) -> bool {
         return false;
     }
     let pk: [u8; 32] = public_key.try_into().unwrap_or([0u8; 32]);
-    fips_eddsa::edwards::EdwardsPoint::decompress(&pk).is_some()
+    oxicrypt_eddsa::edwards::EdwardsPoint::decompress(&pk).is_some()
 }

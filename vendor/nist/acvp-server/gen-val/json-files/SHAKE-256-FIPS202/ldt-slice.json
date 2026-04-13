@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated SHAKE LDT vectors (R46)",
+  "_source": "oxicrypt self-generated SHAKE LDT vectors (R46)",
   "algorithm": "SHAKE-256",
   "revision": "FIPS202",
   "testGroups": [

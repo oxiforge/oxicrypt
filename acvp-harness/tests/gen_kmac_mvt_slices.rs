@@ -35,7 +35,7 @@
 //! - `vendor/nist/acvp-server/gen-val/json-files/KMACXOF-256-1.0/mvt-slice.json`
 
 use acvp_harness::ensure_initialized;
-use fips_xof::{Kmac128, Kmac256, KmacXof128, KmacXof256};
+use oxicrypt_xof::{Kmac128, Kmac256, KmacXof128, KmacXof256};
 use std::io::Write;
 
 fn hex(bytes: &[u8]) -> String {

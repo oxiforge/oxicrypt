@@ -1,8 +1,8 @@
 # DRBG CAVP traceability
 
 This document records the exact vendored source of every power-up
-known-answer test currently wired into `fips-drbg` under the
-`KATS` inventory exported by `crates/fips-drbg/src/kat.rs`.
+known-answer test currently wired into `oxicrypt-drbg` under the
+`KATS` inventory exported by `crates/oxicrypt-drbg/src/kat.rs`.
 
 Each row identifies the vector by:
 
@@ -49,7 +49,7 @@ calls, matching the CAVS test block layout.
 | `CTR_DRBG AES-256 use df KAT (NIST CAVP DRBGVS CTR_DRBG.rsp Count=0)`      | CTR_DRBG / AES-256 | `use df`  | 256               | 128        | 512               | `[AES-256 use df]`   | 0       | 6152       |
 
 The six CTR_DRBG KAT vector constants are embedded directly in
-`crates/fips-drbg/src/kat.rs` as `AES{128,192,256}_{NO,USE}_DF_*`
+`crates/oxicrypt-drbg/src/kat.rs` as `AES{128,192,256}_{NO,USE}_DF_*`
 byte arrays. The CAVS block defines `EntropyInput`, `Nonce`,
 `PersonalizationString`, two `AdditionalInput` strings (one per
 Generate call), and a single `ReturnedBits` field that carries the
@@ -139,7 +139,7 @@ correctness is covered by the CAVP KATs above.
 | `Hash_DRBG (SHA-256) SP 800-90A §11.3 health test`            | Hash_DRBG / SHA-256    | §11.3.2      |
 | `HMAC_DRBG (SHA-256) SP 800-90A §11.3 health test`            | HMAC_DRBG / SHA-256    | §11.3.2      |
 
-These live in `crates/fips-drbg/src/health.rs` and are wired into
+These live in `crates/oxicrypt-drbg/src/health.rs` and are wired into
 the power-up KAT path alongside the CAVP KATs so that FIPS 140-3 IG
 10.3.A's "known-answer tests run at power-up" requirement covers
 both the value-level KATs and the §11.3 error-path tests in a

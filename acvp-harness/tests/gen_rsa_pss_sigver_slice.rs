@@ -72,14 +72,14 @@ fn generate_rsa_pss_sigver_slice() {
 
     for (i, msg_hex) in MESSAGES.iter().enumerate() {
         let msg = hex_decode(msg_hex);
-        let sig = fips_rsa::rsa_pss_sign_2048_sha256_internal(
+        let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(
             &n_arr, &d_arr, &msg, &salt_arr,
         )
         .expect("PSS sign failed");
 
         // Valid test
         assert!(
-            fips_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig),
+            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig),
             "PSS verify failed for valid test {i}"
         );
         tests.push(format!(
@@ -94,7 +94,7 @@ fn generate_rsa_pss_sigver_slice() {
         let mut bad_sig = sig;
         bad_sig[100] ^= 0x01;
         assert!(
-            !fips_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &bad_sig),
+            !oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &bad_sig),
             "PSS verify should fail for tampered sig {i}"
         );
         tests.push(format!(

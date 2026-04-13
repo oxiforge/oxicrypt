@@ -9,12 +9,12 @@ publish = false
 description = "dudect-style constant-time validation harness for pqclib"
 
 [dependencies]
-fips-rsa = { path = "../../crates/fips-rsa" }
-fips-ecdsa = { path = "../../crates/fips-ecdsa" }
-fips-ecdh = { path = "../../crates/fips-ecdh" }
-fips-eddsa = { path = "../../crates/fips-eddsa" }
-fips-drbg = { path = "../../crates/fips-drbg" }
-fips-module = { path = "../../crates/fips-module" }
+oxicrypt-rsa = { path = "../../crates/oxicrypt-rsa" }
+oxicrypt-ecdsa = { path = "../../crates/oxicrypt-ecdsa" }
+oxicrypt-ecdh = { path = "../../crates/oxicrypt-ecdh" }
+oxicrypt-eddsa = { path = "../../crates/oxicrypt-eddsa" }
+oxicrypt-drbg = { path = "../../crates/oxicrypt-drbg" }
+oxicrypt-module = { path = "../../crates/oxicrypt-module" }
 
 [lib]
 name = "ct_validation"

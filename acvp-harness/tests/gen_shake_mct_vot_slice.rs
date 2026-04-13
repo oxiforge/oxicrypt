@@ -31,7 +31,7 @@
 //!   varying output lengths. We generate 5 test cases per variant.
 
 use acvp_harness::ensure_initialized;
-use fips_xof::{Shake128, Shake256};
+use oxicrypt_xof::{Shake128, Shake256};
 use std::io::Write;
 
 /// Number of outer MCT iterations (full spec).
@@ -143,7 +143,7 @@ fn generate_mct_slice(
 
     format!(
         r#"{{
-  "_source": "pqclib self-generated SHAKE MCT vectors (R45)",
+  "_source": "oxicrypt self-generated SHAKE MCT vectors (R45)",
   "algorithm": "{}",
   "revision": "FIPS202",
   "testGroups": [
@@ -180,9 +180,9 @@ fn generate_vot_slice(
     min_out_len: usize,
 ) -> String {
     // Deterministic seeds for VOT messages using DRBG
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
-    let entropy = format!("pqclib-{}-vot-entropy-v1", algorithm);
-    let nonce = format!("pqclib-{}-vot-nonce-v1", algorithm);
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
+    let entropy = format!("oxicrypt-{}-vot-entropy-v1", algorithm);
+    let nonce = format!("oxicrypt-{}-vot-nonce-v1", algorithm);
     drbg.instantiate(entropy.as_bytes(), nonce.as_bytes(), &[])
         .expect("drbg instantiate");
 
@@ -230,7 +230,7 @@ fn generate_vot_slice(
 
     format!(
         r#"{{
-  "_source": "pqclib self-generated SHAKE VOT vectors (R45)",
+  "_source": "oxicrypt self-generated SHAKE VOT vectors (R45)",
   "algorithm": "{}",
   "revision": "FIPS202",
   "testGroups": [

@@ -6,151 +6,151 @@ version = 4
 name = "acvp-harness"
 version = "0.0.0"
 dependencies = [
- "fips-aes",
- "fips-cmac",
- "fips-drbg",
- "fips-ecdh",
- "fips-ecdsa",
- "fips-eddsa",
- "fips-hmac",
- "fips-integrity",
- "fips-kdf",
- "fips-module",
- "fips-rsa",
- "fips-sha",
- "fips-tls-kdf",
- "fips-xof",
+ "oxicrypt-aes",
+ "oxicrypt-cmac",
+ "oxicrypt-drbg",
+ "oxicrypt-ecdh",
+ "oxicrypt-ecdsa",
+ "oxicrypt-eddsa",
+ "oxicrypt-hmac",
+ "oxicrypt-integrity",
+ "oxicrypt-kdf",
+ "oxicrypt-module",
+ "oxicrypt-rsa",
+ "oxicrypt-sha",
+ "oxicrypt-tls-kdf",
+ "oxicrypt-xof",
 ]
 
 [[package]]
 name = "ct-validation"
 version = "0.0.0"
 dependencies = [
- "fips-drbg",
- "fips-ecdh",
- "fips-ecdsa",
- "fips-eddsa",
- "fips-module",
- "fips-rsa",
+ "oxicrypt-drbg",
+ "oxicrypt-ecdh",
+ "oxicrypt-ecdsa",
+ "oxicrypt-eddsa",
+ "oxicrypt-module",
+ "oxicrypt-rsa",
 ]
 
 [[package]]
-name = "fips-aes"
+name = "oxicrypt-aes"
 version = "0.0.0"
 dependencies = [
- "fips-module",
+ "oxicrypt-module",
 ]
 
 [[package]]
-name = "fips-cmac"
+name = "oxicrypt-cmac"
 version = "0.0.0"
 dependencies = [
- "fips-aes",
- "fips-module",
+ "oxicrypt-aes",
+ "oxicrypt-module",
 ]
 
 [[package]]
-name = "fips-drbg"
+name = "oxicrypt-drbg"
 version = "0.0.0"
 dependencies = [
- "fips-aes",
- "fips-hmac",
- "fips-module",
- "fips-sha",
+ "oxicrypt-aes",
+ "oxicrypt-hmac",
+ "oxicrypt-module",
+ "oxicrypt-sha",
 ]
 
 [[package]]
-name = "fips-ecdh"
+name = "oxicrypt-ecdh"
 version = "0.0.0"
 dependencies = [
- "fips-ecdsa",
- "fips-module",
+ "oxicrypt-ecdsa",
+ "oxicrypt-module",
 ]
 
 [[package]]
-name = "fips-ecdsa"
+name = "oxicrypt-ecdsa"
 version = "0.0.0"
 dependencies = [
- "fips-drbg",
- "fips-module",
- "fips-sha",
+ "oxicrypt-drbg",
+ "oxicrypt-module",
+ "oxicrypt-sha",
 ]
 
 [[package]]
-name = "fips-eddsa"
+name = "oxicrypt-eddsa"
 version = "0.0.0"
 dependencies = [
- "fips-drbg",
- "fips-module",
- "fips-sha",
+ "oxicrypt-drbg",
+ "oxicrypt-module",
+ "oxicrypt-sha",
 ]
 
 [[package]]
-name = "fips-hmac"
+name = "oxicrypt-hmac"
 version = "0.0.0"
 dependencies = [
- "fips-module",
- "fips-sha",
- "fips-test-vectors",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-test-vectors",
 ]
 
 [[package]]
-name = "fips-integrity"
+name = "oxicrypt-integrity"
 version = "0.0.0"
 dependencies = [
- "fips-hmac",
- "fips-module",
+ "oxicrypt-hmac",
+ "oxicrypt-module",
 ]
 
 [[package]]
-name = "fips-kdf"
+name = "oxicrypt-kdf"
 version = "0.0.0"
 dependencies = [
- "fips-hmac",
- "fips-module",
- "fips-sha",
- "fips-test-vectors",
+ "oxicrypt-hmac",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-test-vectors",
 ]
 
 [[package]]
-name = "fips-module"
+name = "oxicrypt-module"
 version = "0.0.0"
 
 [[package]]
-name = "fips-rsa"
+name = "oxicrypt-rsa"
 version = "0.0.0"
 dependencies = [
- "fips-drbg",
- "fips-module",
- "fips-sha",
+ "oxicrypt-drbg",
+ "oxicrypt-module",
+ "oxicrypt-sha",
 ]
 
 [[package]]
-name = "fips-sha"
+name = "oxicrypt-sha"
 version = "0.0.0"
 dependencies = [
- "fips-module",
- "fips-test-vectors",
+ "oxicrypt-module",
+ "oxicrypt-test-vectors",
 ]
 
 [[package]]
-name = "fips-test-vectors"
+name = "oxicrypt-test-vectors"
 version = "0.0.0"
 
 [[package]]
-name = "fips-tls-kdf"
+name = "oxicrypt-tls-kdf"
 version = "0.0.0"
 dependencies = [
- "fips-hmac",
- "fips-kdf",
- "fips-module",
+ "oxicrypt-hmac",
+ "oxicrypt-kdf",
+ "oxicrypt-module",
 ]
 
 [[package]]
-name = "fips-xof"
+name = "oxicrypt-xof"
 version = "0.0.0"
 dependencies = [
- "fips-module",
- "fips-sha",
- "fips-test-vectors",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-test-vectors",
 ]

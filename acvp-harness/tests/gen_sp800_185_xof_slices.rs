@@ -32,7 +32,7 @@
 //! - `vendor/nist/acvp-server/gen-val/json-files/ParallelHashXOF-256-1.0/`
 
 use acvp_harness::ensure_initialized;
-use fips_xof::{
+use oxicrypt_xof::{
     KmacXof128, KmacXof256, ParallelHashXof128, ParallelHashXof256, TupleHashXof128,
     TupleHashXof256,
 };

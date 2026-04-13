@@ -30,7 +30,7 @@ Commits (newest first):
   Real CAVP KATs against `drbgvectors_pr_true` remain pending
   vendoring of those vectors.
 - `f43e172` — **fips-drbg: add SP 800-90A §11.3 health tests +
-  3 power-up KATs** — new `crates/fips-drbg/src/health.rs` drives
+  3 power-up KATs** — new `crates/oxicrypt-drbg/src/health.rs` drives
   the four error paths §11.3.2 requires (generate-before-
   instantiate, normal path, reseed-ceiling, post-uninstantiate) for
   CTR_DRBG / Hash_DRBG / HMAC_DRBG. Added `#[doc(hidden)]
@@ -72,14 +72,14 @@ further.
    health-check line item. SP 800-90B §4.4 entropy-source health
    tests (Repetition Count Test, Adaptive Proportion Test) remain
    required for modules that bundle a noise source, but §4.4 of
-   the plan is explicit that pqclib does **not** bundle an
+   the plan is explicit that oxicrypt does **not** bundle an
    entropy source inside the cryptographic boundary — entropy is
    the caller's responsibility. So I marked the CRNGT item
    deferred with a justification note in §4.2 of the plan and
    updated the Phase 2 checklist. If your read of IG D.G
    disagrees, or if you want a belt-and-braces CRNGT wrapper in
    the code regardless, say the word and I'll implement it as a
-   small `crngt` module in `fips-drbg`.
+   small `crngt` module in `oxicrypt-drbg`.
 
 2. **Prediction-resistance KATs not wired — pending vector
    vendoring.** The §9.3 PR API landed and is covered by
@@ -123,7 +123,7 @@ All P0 symmetric + DRBG work is done. The remaining Phase 2 and
 Phase 3 items are chunkier and not overnight-bounded. I'd like your
 pick before starting one.
 
-- **Ed25519 (fips-eddsa).** Self-contained in one crate. Needs
+- **Ed25519 (oxicrypt-eddsa).** Self-contained in one crate. Needs
   curve25519 field arithmetic (prime `2^255 - 19`, ~400 lines of
   constant-time code with careful 51-bit-limb reduction), Edwards
   point arithmetic with the standard cofactor-8 addition law, and
@@ -132,14 +132,14 @@ pick before starting one.
   realistically land a SigGen+SigVer KAT set in ~2-3 days of
   focused work. Risk: constant-time correctness on the field
   layer needs review.
-- **ECDSA P-256 (fips-ecdsa).** Biggest bang for compliance buck
+- **ECDSA P-256 (oxicrypt-ecdsa).** Biggest bang for compliance buck
   (most CAVP-validated ECDSA submissions use P-256). Needs
   constant-time `GF(p256)` field arithmetic, short Weierstrass
   point arithmetic (Jacobian coordinates + scalar mul via
   wNAF or Montgomery ladder), RFC 6979 deterministic-k or §4.1.5
   random-k. ~5x the code of the DRBG chapter. P-384/P-521 follow
   the same skeleton once P-256 is done.
-- **RSA PKCS#1 v1.5 / PSS (fips-rsa).** Needs a fixed-width
+- **RSA PKCS#1 v1.5 / PSS (oxicrypt-rsa).** Needs a fixed-width
   big-integer implementation (2048/3072/4096-bit modular
   exponentiation, Barrett or Montgomery reduction, constant-time
   Miller-Rabin for key generation). This is the longest path —
@@ -163,7 +163,7 @@ I created tonight by landing the PR API without its KATs.
 ## Workspace state
 
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean
-- `cargo test -p fips-drbg --lib` — 19 tests, all green
+- `cargo test -p oxicrypt-drbg --lib` — 19 tests, all green
   (6 CTR CAVP, 3 Hash CAVP, 3 HMAC CAVP, 3 PR consistency,
   4 unit tests on internal helpers)
 - `./target/debug/acvp-harness` — 113 KATs green + module

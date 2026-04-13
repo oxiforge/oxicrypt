@@ -31,7 +31,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{Kmac128, Kmac256, KmacXof128, KmacXof256};
+use oxicrypt_xof::{Kmac128, Kmac256, KmacXof128, KmacXof256};
 
 /// KMAC-128 AFT handler.
 pub struct Kmac128Handler;

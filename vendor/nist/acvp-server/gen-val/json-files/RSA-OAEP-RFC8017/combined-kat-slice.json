@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated RSA OAEP combined vectors (path equivalence)",
+  "_source": "oxicrypt self-generated RSA OAEP combined vectors (path equivalence)",
   "algorithm": "RSA",
   "mode": "OAEP",
   "revision": "RFC8017",

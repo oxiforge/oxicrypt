@@ -1,4 +1,4 @@
-//! ct-validation target: [`fips_ecdsa::p256_scalar::Scalar::invert`].
+//! ct-validation target: [`oxicrypt_ecdsa::p256_scalar::Scalar::invert`].
 //!
 //! The Fermat-ladder modular inverse is the second secret-dependent
 //! operation on the ECDSA sign hot path — it's used to compute
@@ -11,7 +11,7 @@
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_ecdsa::p256_scalar::Scalar;
+use oxicrypt_ecdsa::p256_scalar::Scalar;
 
 const FIXED_SCALAR: [u8; 32] = [0x7e; 32];
 

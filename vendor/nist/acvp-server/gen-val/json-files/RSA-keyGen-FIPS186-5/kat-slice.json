@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated RSA keyGen FIPS186-5 vectors",
+  "_source": "oxicrypt self-generated RSA keyGen FIPS186-5 vectors",
   "algorithm": "RSA",
   "mode": "keyGen",
   "revision": "FIPS186-5",

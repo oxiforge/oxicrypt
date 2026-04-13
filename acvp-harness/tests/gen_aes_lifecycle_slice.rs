@@ -64,7 +64,7 @@ const NUM_TESTS: usize = 5;
 fn generate_aes_lifecycle_slices() {
     ensure_initialized().expect("FIPS init");
 
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-aes-lifecycle-gen-entropy-v1",
         b"pqclib-aes-lifecycle-gen-nonce-v1",
@@ -76,7 +76,7 @@ fn generate_aes_lifecycle_slices() {
     let mut key_bytes = [0u8; 32];
     drbg.generate(None, &mut key_bytes).expect("drbg gen key");
     let key_hex = hex_upper(&key_bytes);
-    let cipher = fips_aes::Aes256Key::new(&key_bytes);
+    let cipher = oxicrypt_aes::Aes256Key::new(&key_bytes);
 
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../vendor/nist/acvp-server/gen-val/json-files");
@@ -93,7 +93,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 32];
-            fips_aes::ecb_encrypt(&cipher, &pt, &mut ct).expect("ecb encrypt");
+            oxicrypt_aes::ecb_encrypt(&cipher, &pt, &mut ct).expect("ecb encrypt");
 
             enc_tests.push(format!(
                 r#"        {{
@@ -174,7 +174,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 32];
-            fips_aes::cbc_encrypt(&cipher, &iv, &pt, &mut ct).expect("cbc encrypt");
+            oxicrypt_aes::cbc_encrypt(&cipher, &iv, &pt, &mut ct).expect("cbc encrypt");
 
             enc_tests.push(format!(
                 r#"        {{
@@ -259,7 +259,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 48];
-            fips_aes::ctr_xor(&cipher, &icb, &pt, &mut ct);
+            oxicrypt_aes::ctr_xor(&cipher, &icb, &pt, &mut ct);
 
             enc_tests.push(format!(
                 r#"        {{
@@ -348,7 +348,7 @@ fn generate_aes_lifecycle_slices() {
 
             let mut ct = [0u8; 32];
             let mut tag = [0u8; 16];
-            fips_aes::gcm_encrypt(&cipher, &iv, &aad, &pt, &mut ct, &mut tag)
+            oxicrypt_aes::gcm_encrypt(&cipher, &iv, &aad, &pt, &mut ct, &mut tag)
                 .expect("gcm encrypt");
 
             let ct_hex = hex_upper(&ct);
@@ -484,7 +484,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct_with_tag = vec![0u8; pt.len() + tlen];
-            fips_aes::ccm_encrypt(&cipher, &nonce, &aad, &pt, tlen, &mut ct_with_tag)
+            oxicrypt_aes::ccm_encrypt(&cipher, &nonce, &aad, &pt, tlen, &mut ct_with_tag)
                 .expect("ccm encrypt");
 
             let ct_hex = hex_upper(&ct_with_tag);
@@ -615,7 +615,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 40]; // pt + 8-byte ICV
-            fips_aes::kw_wrap(&cipher, &pt, &mut ct).expect("kw wrap");
+            oxicrypt_aes::kw_wrap(&cipher, &pt, &mut ct).expect("kw wrap");
 
             let ct_hex = hex_upper(&ct);
             let pt_hex = hex_upper(&pt);
@@ -724,7 +724,7 @@ fn generate_aes_lifecycle_slices() {
             let padded = ((pt.len() + 7) / 8) * 8;
             let ct_len = padded + 8;
             let mut ct = vec![0u8; ct_len];
-            fips_aes::kwp_wrap(&cipher, &pt, &mut ct).expect("kwp wrap");
+            oxicrypt_aes::kwp_wrap(&cipher, &pt, &mut ct).expect("kwp wrap");
 
             let ct_hex = hex_upper(&ct);
             let pt_hex = hex_upper(&pt);

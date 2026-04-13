@@ -76,14 +76,14 @@ fn generate_rsa_oaep_slice() {
         let seed = hex_decode(seed_hex);
         let seed_arr: [u8; 32] = seed.as_slice().try_into().unwrap();
 
-        let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+        let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_arr, e_val, label, &msg, &seed_arr,
         )
         .expect("OAEP encrypt failed");
 
         // Verify decrypt round-trips
         let mut out = [0u8; 190]; // MAX_MSG_LEN
-        let mlen = fips_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+        let mlen = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
             &n_arr, &d_arr, label, &ct, &mut out,
         )
         .expect("OAEP decrypt failed");
@@ -105,7 +105,7 @@ fn generate_rsa_oaep_slice() {
         let seed = hex_decode(seed_hex);
         let seed_arr: [u8; 32] = seed.as_slice().try_into().unwrap();
 
-        let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+        let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_arr, e_val, label, &msg, &seed_arr,
         )
         .unwrap();

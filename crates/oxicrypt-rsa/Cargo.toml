@@ -1,0 +1,16 @@
+[package]
+name = "oxicrypt-rsa"
+description = "RSA key generation and signature/encryption schemes per FIPS 186-5 / SP 800-56Br2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }
+oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }

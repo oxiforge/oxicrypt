@@ -20,9 +20,9 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_drbg::ctr::{CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256};
-use fips_drbg::hash::{HashDrbgSha256, HashDrbgSha384, HashDrbgSha512};
-use fips_drbg::hmac::{HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512};
+use oxicrypt_drbg::ctr::{CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256};
+use oxicrypt_drbg::hash::{HashDrbgSha256, HashDrbgSha384, HashDrbgSha512};
+use oxicrypt_drbg::hmac::{HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512};
 
 // ── Handler structs ─────────────────────────────────────────────────
 

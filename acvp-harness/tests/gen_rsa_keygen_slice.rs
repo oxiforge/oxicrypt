@@ -86,11 +86,11 @@ fn generate_rsa_keygen_slice() {
         let nonce = hex_decode(nonce_hex);
         let perso = hex_decode(perso_hex);
 
-        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(&entropy, &nonce, &perso)
             .unwrap_or_else(|e| panic!("DRBG instantiate failed for test {i}: {e:?}"));
 
-        let km = fips_rsa::keygen::generate_2048(&mut drbg, 65537)
+        let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
             .unwrap_or_else(|e| panic!("RSA keygen failed for test {i}: {e:?}"));
 
         let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -106,12 +106,12 @@ fn generate_rsa_keygen_slice() {
         let label = b"";
         let test_msg = b"keygen-sanity";
         let test_seed = [0x42u8; 32];
-        let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+        let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_bytes, e, label, test_msg, &test_seed,
         )
         .unwrap_or_else(|| panic!("OAEP encrypt sanity failed for test {i}"));
-        let mut out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
-        let pt_len = fips_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
+        let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
+        let pt_len = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
             &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
             label, &ct, &mut out,
         )
@@ -153,7 +153,7 @@ fn generate_rsa_keygen_slice() {
 
     let json = format!(
         r#"{{
-  "_source": "pqclib self-generated RSA keyGen FIPS186-5 vectors",
+  "_source": "oxicrypt self-generated RSA keyGen FIPS186-5 vectors",
   "algorithm": "RSA",
   "mode": "keyGen",
   "revision": "FIPS186-5",

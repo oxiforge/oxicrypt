@@ -60,7 +60,7 @@ fn generate_rsa_oaep_crt_slice() {
     ensure_initialized().expect("FIPS init");
 
     // Generate a fresh RSA-2048 key pair with CRT components.
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-oaep-crt-gen-entropy-v1",
         b"pqclib-oaep-crt-gen-nonce-v1",
@@ -68,7 +68,7 @@ fn generate_rsa_oaep_crt_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = fips_rsa::keygen::generate_2048(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
         .expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -84,16 +84,16 @@ fn generate_rsa_oaep_crt_slice() {
     let label = b"";
     let test_msg = b"verify";
     let test_seed = [0x42u8; 32];
-    let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+    let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
         &n_bytes, e, label, test_msg, &test_seed,
     )
     .expect("encrypt sanity check");
-    let mut test_out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
-    let _tl = fips_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+    let mut test_out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
+    let _tl = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
         &n_bytes, &d_bytes, label, &ct, &mut test_out,
     )
     .expect("non-CRT decrypt sanity check");
-    let _tl2 = fips_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
+    let _tl2 = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
         &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
         label, &ct, &mut test_out,
     )
@@ -115,14 +115,14 @@ fn generate_rsa_oaep_crt_slice() {
         let seed = hex_decode(seed_hex);
         let seed_arr: [u8; 32] = seed.as_slice().try_into().unwrap();
 
-        let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+        let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_bytes, e, label, &msg, &seed_arr,
         )
         .expect("OAEP encrypt failed");
 
         // Verify CRT decrypt round-trips
-        let mut out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
-        let mlen = fips_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
+        let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
+        let mlen = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
             &n_bytes, e,
             &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
             label, &ct, &mut out,
@@ -146,7 +146,7 @@ fn generate_rsa_oaep_crt_slice() {
         let seed = hex_decode(seed_hex);
         let seed_arr: [u8; 32] = seed.as_slice().try_into().unwrap();
 
-        let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+        let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_bytes, e, label, &msg, &seed_arr,
         )
         .unwrap();
@@ -163,7 +163,7 @@ fn generate_rsa_oaep_crt_slice() {
 
     let json = format!(
         r#"{{
-  "_source": "pqclib self-generated RSA OAEP CRT vectors",
+  "_source": "oxicrypt self-generated RSA OAEP CRT vectors",
   "algorithm": "RSA",
   "mode": "OAEP",
   "revision": "RFC8017",

@@ -22,12 +22,12 @@
 //! Fixed class = one fixed (clamped) 32-byte scalar, reused every call.
 //! Random class = fresh 32-byte scalar clamped per call.
 //!
-//! [`EdwardsPoint::mul`]: fips_eddsa::edwards::EdwardsPoint::mul
+//! [`EdwardsPoint::mul`]: oxicrypt_eddsa::edwards::EdwardsPoint::mul
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_eddsa::edwards::EdwardsPoint;
-use fips_eddsa::scalar::Scalar;
+use oxicrypt_eddsa::edwards::EdwardsPoint;
+use oxicrypt_eddsa::scalar::Scalar;
 
 /// Fixed secret scalar. The 32 bytes are arbitrary; only the
 /// clamping mask matters for the measurement's validity.

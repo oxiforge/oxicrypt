@@ -28,7 +28,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_xof::{ParallelHash128, ParallelHash256, ParallelHashXof128, ParallelHashXof256};
+use oxicrypt_xof::{ParallelHash128, ParallelHash256, ParallelHashXof128, ParallelHashXof256};
 
 /// ParallelHash-128 AFT handler.
 pub struct ParallelHash128Handler;

@@ -6,10 +6,10 @@
 //! `"feedback"` / `"double pipeline iteration"`) and `macMode`
 //! (`"HMAC-SHA-1"`, `"HMAC-SHA2-256"`, etc.), which together
 //! select the concrete `Sp800_108*Hmac*` type alias from
-//! `fips_kdf`.
+//! `oxicrypt_kdf`.
 //!
 //! Counter-mode groups use `counterLocation = "before fixed data"`
-//! and `counterLength = 32` — the only layout the pqclib
+//! and `counterLength = 32` — the only layout the oxicrypt
 //! `Sp800_108Counter` implementation supports. Feedback groups
 //! carry `zeroLengthIv`; when `false`, each test supplies an `iv`
 //! field. Double-pipeline groups carry no IV and no counter.
@@ -22,7 +22,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_kdf::{
+use oxicrypt_kdf::{
     Sp800_108CounterHmacSha1, Sp800_108CounterHmacSha224, Sp800_108CounterHmacSha256,
     Sp800_108CounterHmacSha384, Sp800_108CounterHmacSha3_224, Sp800_108CounterHmacSha3_256,
     Sp800_108CounterHmacSha3_384, Sp800_108CounterHmacSha3_512, Sp800_108CounterHmacSha512,
@@ -62,11 +62,11 @@ impl AlgorithmHandler for KbkdfHandler {
 
 /// Derive function pointer type for counter / double-pipeline modes
 /// (key, fixed_data, out) → Result.
-type DeriveFn = fn(&[u8], &[u8], &mut [u8]) -> Result<(), fips_kdf::KdfError>;
+type DeriveFn = fn(&[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
 
 /// Derive function pointer type for feedback mode
 /// (key, iv, fixed_data, out) → Result.
-type DeriveFbFn = fn(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), fips_kdf::KdfError>;
+type DeriveFbFn = fn(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
 
 /// Decode a hex-encoded string field from a JSON object.
 fn decode_hex_field(obj: &JsonValue, name: &'static str) -> Result<Vec<u8>, DispatchError> {
@@ -200,7 +200,7 @@ fn handle_kbkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 fn run_kdf_test(
     tc: &JsonValue,
     key_out_len: usize,
-    derive: impl Fn(&[u8], &[u8], &mut [u8]) -> Result<(), fips_kdf::KdfError>,
+    derive: impl Fn(&[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>,
 ) -> Result<JsonValue, DispatchError> {
     let test_case_id = tc
         .get("tcId")

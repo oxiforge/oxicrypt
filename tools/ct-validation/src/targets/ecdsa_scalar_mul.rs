@@ -1,4 +1,4 @@
-//! ct-validation target: [`fips_ecdsa::p256_point::Point::mul`].
+//! ct-validation target: [`oxicrypt_ecdsa::p256_point::Point::mul`].
 //!
 //! The P-256 scalar-multiplication ladder is used both in ECDSA
 //! sign (via `k · G`) and in ECDH CDH (via `d · Q`). The claim in
@@ -13,8 +13,8 @@
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_ecdsa::p256_point::Point;
-use fips_ecdsa::p256_scalar::Scalar;
+use oxicrypt_ecdsa::p256_point::Point;
+use oxicrypt_ecdsa::p256_scalar::Scalar;
 
 /// Fixed scalar. Any non-zero canonical scalar works.
 const FIXED_SCALAR: [u8; 32] = [

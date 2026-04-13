@@ -47,7 +47,7 @@ fn generate_rsa_prim_lifecycle_slices() {
     ensure_initialized().expect("FIPS init");
 
     // ── Reproduce the RSA key from the lifecycle DRBG seed ───────
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-rsa-lifecycle-gen-entropy-v1",
         b"pqclib-rsa-lifecycle-gen-nonce-v1",
@@ -55,7 +55,7 @@ fn generate_rsa_prim_lifecycle_slices() {
     )
     .expect("drbg instantiate");
 
-    let km = fips_rsa::keygen::generate_2048(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
         .expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -77,7 +77,7 @@ fn generate_rsa_prim_lifecycle_slices() {
     let qinv_hex = hex_upper(&qinv_bytes);
 
     // ── Generate random message representatives (< n) ───────────
-    let mut msg_drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut msg_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     msg_drbg
         .instantiate(
             b"pqclib-rsa-prim-lifecycle-msg-entropy-v1",
@@ -104,12 +104,12 @@ fn generate_rsa_prim_lifecycle_slices() {
     let mut results_crt: Vec<[u8; 256]> = Vec::with_capacity(NUM_TESTS);
 
     for msg in &messages {
-        let sig_std = fips_rsa::rsa_signature_primitive_2048_internal(
+        let sig_std = oxicrypt_rsa::rsa_signature_primitive_2048_internal(
             &n_bytes, &d_bytes, msg,
         )
         .expect("sigPrim standard");
 
-        let sig_crt = fips_rsa::rsa_signature_primitive_2048_crt_internal(
+        let sig_crt = oxicrypt_rsa::rsa_signature_primitive_2048_crt_internal(
             &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes,
             &qinv_bytes, msg,
         )
@@ -118,13 +118,13 @@ fn generate_rsa_prim_lifecycle_slices() {
         assert_eq!(sig_std, sig_crt, "standard / CRT mismatch");
 
         // Cross-check: decPrim must agree.
-        let pt_std = fips_rsa::rsa_decryption_primitive_2048_internal(
+        let pt_std = oxicrypt_rsa::rsa_decryption_primitive_2048_internal(
             &n_bytes, &d_bytes, msg,
         )
         .expect("decPrim standard");
         assert_eq!(sig_std, pt_std, "sigPrim / decPrim standard mismatch");
 
-        let pt_crt = fips_rsa::rsa_decryption_primitive_2048_crt_internal(
+        let pt_crt = oxicrypt_rsa::rsa_decryption_primitive_2048_crt_internal(
             &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes,
             &qinv_bytes, msg,
         )

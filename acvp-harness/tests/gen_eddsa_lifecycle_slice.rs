@@ -68,16 +68,16 @@ fn generate_eddsa_lifecycle_slices() {
     let mut signatures: Vec<Vec<[u8; 64]>> = Vec::new();
 
     for seed in &SEEDS {
-        let q = fips_eddsa::ed25519::keygen_internal(seed);
+        let q = oxicrypt_eddsa::ed25519::keygen_internal(seed);
         public_keys.push(q);
 
         let mut sigs_for_seed = Vec::new();
         for msg in &MESSAGES {
-            let sig = fips_eddsa::ed25519::sign(seed, msg)
+            let sig = oxicrypt_eddsa::ed25519::sign(seed, msg)
                 .expect("Ed25519 sign failed");
             // Verify round-trips.
             assert!(
-                fips_eddsa::ed25519::verify(&q, msg, &sig)
+                oxicrypt_eddsa::ed25519::verify(&q, msg, &sig)
                     .unwrap_or(false),
                 "Ed25519 verify failed during generation"
             );
@@ -104,7 +104,7 @@ fn generate_eddsa_lifecycle_slices() {
 
     let keygen_json = format!(
         r#"{{
-  "_source": "pqclib self-generated EdDSA lifecycle vectors (keyGen)",
+  "_source": "oxicrypt self-generated EdDSA lifecycle vectors (keyGen)",
   "algorithm": "EDDSA",
   "mode": "keyGen",
   "revision": "1.0",
@@ -160,7 +160,7 @@ fn generate_eddsa_lifecycle_slices() {
 
     let siggen_json = format!(
         r#"{{
-  "_source": "pqclib self-generated EdDSA lifecycle vectors (sigGen)",
+  "_source": "oxicrypt self-generated EdDSA lifecycle vectors (sigGen)",
   "algorithm": "EDDSA",
   "mode": "sigGen",
   "revision": "1.0",
@@ -209,7 +209,7 @@ fn generate_eddsa_lifecycle_slices() {
 
     let sigver_json = format!(
         r#"{{
-  "_source": "pqclib self-generated EdDSA lifecycle vectors (sigVer)",
+  "_source": "oxicrypt self-generated EdDSA lifecycle vectors (sigVer)",
   "algorithm": "EDDSA",
   "mode": "sigVer",
   "revision": "1.0",

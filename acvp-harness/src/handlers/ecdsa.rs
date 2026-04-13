@@ -17,7 +17,7 @@
 //!   private scalar `d`, derive the P-256 public key `(qx, qy)` via
 //!   `derive_public_key_internal`. Deterministic.
 //!
-//! Only P-256 with SHA-256 is supported (the pqclib configuration).
+//! Only P-256 with SHA-256 is supported (the oxicrypt configuration).
 //! Unsupported curves or hash algorithms produce
 //! `DispatchError::Unsupported`.
 
@@ -123,7 +123,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Validate curve/hash — pqclib only supports P-256 + SHA2-256.
+    // Validate curve/hash — oxicrypt only supports P-256 + SHA2-256.
     let curve = group
         .get("curve")
         .and_then(JsonValue::as_str)
@@ -324,7 +324,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("ECDSA SigGen: k is not 32 bytes"))?;
 
-        let sig = fips_ecdsa::p256_ecdsa::sign_with_k(&d, &message, &k)
+        let sig = oxicrypt_ecdsa::p256_ecdsa::sign_with_k(&d, &message, &k)
             .map_err(|_| DispatchError::Crypto("ECDSA SigGen: sign_with_k failed"))?;
 
         // Split 64-byte signature into r (first 32) and s (last 32).
@@ -394,7 +394,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 32 bytes"))?;
 
-        let pk = fips_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
+        let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
             .ok_or(DispatchError::Crypto(
                 "ECDSA KeyGen: derive_public_key_internal failed",
             ))?;
@@ -423,7 +423,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
 /// Build the 65-byte uncompressed SEC1 public key (0x04 || qx || qy)
 /// and the 64-byte signature (r || s), then call
-/// `fips_ecdsa::p256_ecdsa::verify`.
+/// `oxicrypt_ecdsa::p256_ecdsa::verify`.
 fn ecdsa_p256_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bool {
     // qx and qy must each be exactly 32 bytes for P-256.
     if qx.len() != 32 || qy.len() != 32 || r.len() != 32 || s.len() != 32 {
@@ -438,7 +438,7 @@ fn ecdsa_p256_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bo
     sig[..32].copy_from_slice(r);
     sig[32..].copy_from_slice(s);
 
-    fips_ecdsa::p256_ecdsa::verify(&pk, msg, &sig).unwrap_or_default()
+    oxicrypt_ecdsa::p256_ecdsa::verify(&pk, msg, &sig).unwrap_or_default()
 }
 
 /// Build the 65-byte uncompressed SEC1 public key and validate it via
@@ -461,5 +461,5 @@ fn ecdsa_p256_key_validate(qx: &[u8], qy: &[u8]) -> bool {
     let qy_offset = 65 - qy.len();
     pk[qy_offset..65].copy_from_slice(qy);
 
-    fips_ecdsa::p256_point::Point::from_sec1_uncompressed_validated(&pk).is_some()
+    oxicrypt_ecdsa::p256_point::Point::from_sec1_uncompressed_validated(&pk).is_some()
 }

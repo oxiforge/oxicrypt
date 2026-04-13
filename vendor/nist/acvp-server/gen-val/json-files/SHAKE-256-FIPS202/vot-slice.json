@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated SHAKE VOT vectors (R45)",
+  "_source": "oxicrypt self-generated SHAKE VOT vectors (R45)",
   "algorithm": "SHAKE-256",
   "revision": "FIPS202",
   "testGroups": [

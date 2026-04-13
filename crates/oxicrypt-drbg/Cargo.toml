@@ -1,0 +1,17 @@
+[package]
+name = "oxicrypt-drbg"
+description = "CTR_DRBG, HMAC_DRBG, Hash_DRBG per SP 800-90Ar1"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-aes = { path = "../oxicrypt-aes" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-hmac = { path = "../oxicrypt-hmac" }

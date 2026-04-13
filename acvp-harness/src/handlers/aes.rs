@@ -27,7 +27,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_aes::{
+use oxicrypt_aes::{
     cbc_decrypt, cbc_encrypt, ccm_decrypt, ccm_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt,
     gcm_decrypt, gcm_encrypt, kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap, Aes128Key, Aes192Key,
     Aes256Key, BlockCipher, ModeError, BLOCK_SIZE,
@@ -350,7 +350,7 @@ fn run_aes_test(
     ]))
 }
 
-/// Type-dispatching one-shot call into `fips_aes`. Returns the
+/// Type-dispatching one-shot call into `oxicrypt_aes`. Returns the
 /// resulting ciphertext or plaintext bytes.
 fn dispatch_one_shot(
     mode: AesMode,
@@ -426,7 +426,7 @@ fn run_ecb<B: BlockCipher>(
         Direction::Encrypt => ecb_encrypt(cipher, input, out),
         Direction::Decrypt => ecb_decrypt(cipher, input, out),
     };
-    r.map_err(|_| DispatchError::Crypto("fips_aes::ecb_* returned Err"))
+    r.map_err(|_| DispatchError::Crypto("oxicrypt_aes::ecb_* returned Err"))
 }
 
 fn run_cbc<B: BlockCipher>(
@@ -441,7 +441,7 @@ fn run_cbc<B: BlockCipher>(
         Direction::Encrypt => cbc_encrypt(cipher, &iv, input, out),
         Direction::Decrypt => cbc_decrypt(cipher, &iv, input, out),
     };
-    r.map_err(|_| DispatchError::Crypto("fips_aes::cbc_* returned Err"))
+    r.map_err(|_| DispatchError::Crypto("oxicrypt_aes::cbc_* returned Err"))
 }
 
 fn run_ctr<B: BlockCipher>(
@@ -566,7 +566,7 @@ fn dispatch_gcm_encrypt(
         }
         _ => return Err(DispatchError::Crypto("AES-GCM: unsupported keyLen")),
     };
-    result.map_err(|_| DispatchError::Crypto("fips_aes::gcm_encrypt returned Err"))?;
+    result.map_err(|_| DispatchError::Crypto("oxicrypt_aes::gcm_encrypt returned Err"))?;
     ct.extend_from_slice(&tag_buf[..tag_len]);
     Ok(ct)
 }
@@ -610,7 +610,7 @@ fn dispatch_gcm_decrypt(
     match result {
         Ok(()) => Ok(pt),
         Err(ModeError::TagMismatch) => Err(DispatchError::Crypto("tag mismatch")),
-        Err(_) => Err(DispatchError::Crypto("fips_aes::gcm_decrypt returned Err")),
+        Err(_) => Err(DispatchError::Crypto("oxicrypt_aes::gcm_decrypt returned Err")),
     }
 }
 
@@ -716,7 +716,7 @@ fn dispatch_ccm_encrypt(
         }
         _ => return Err(DispatchError::Crypto("AES-CCM: unsupported keyLen")),
     };
-    result.map_err(|_| DispatchError::Crypto("fips_aes::ccm_encrypt returned Err"))?;
+    result.map_err(|_| DispatchError::Crypto("oxicrypt_aes::ccm_encrypt returned Err"))?;
     Ok(out)
 }
 
@@ -763,7 +763,7 @@ fn dispatch_ccm_decrypt(
         Ok(()) => Ok(out),
         Err(ModeError::TagMismatch) => Err(DispatchError::Crypto("tag mismatch")),
         Err(_) => Err(DispatchError::Crypto(
-            "fips_aes::ccm_decrypt returned Err",
+            "oxicrypt_aes::ccm_decrypt returned Err",
         )),
     }
 }
@@ -862,7 +862,7 @@ fn dispatch_kw_wrap(
         }
         _ => return Err(DispatchError::Crypto("AES-KW: unsupported keyLen")),
     };
-    result.map_err(|_| DispatchError::Crypto("fips_aes::kw_wrap returned Err"))?;
+    result.map_err(|_| DispatchError::Crypto("oxicrypt_aes::kw_wrap returned Err"))?;
     Ok(ct)
 }
 
@@ -914,7 +914,7 @@ fn dispatch_kw_unwrap(
         Ok(()) => Ok(pt),
         Err(ModeError::TagMismatch) => Err(DispatchError::Crypto("tag mismatch")),
         Err(_) => Err(DispatchError::Crypto(
-            "fips_aes::kw_unwrap returned Err",
+            "oxicrypt_aes::kw_unwrap returned Err",
         )),
     }
 }

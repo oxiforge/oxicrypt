@@ -52,7 +52,7 @@ const SEEDS: [&[u8; 32]; 10] = [
 fn generate_eddsa_keygen_slice() {
     let mut tests_json = Vec::new();
     for (i, seed) in SEEDS.iter().enumerate() {
-        let q = fips_eddsa::ed25519::keygen_internal(seed);
+        let q = oxicrypt_eddsa::ed25519::keygen_internal(seed);
         tests_json.push(format!(
             r#"        {{"tcId": {}, "d": "{}", "q": "{}"}}"#,
             i + 1,

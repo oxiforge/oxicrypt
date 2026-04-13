@@ -1,4 +1,4 @@
-//! ct-validation target: [`fips_rsa::mont1024::MontCtx1024::pow_secret`].
+//! ct-validation target: [`oxicrypt_rsa::mont1024::MontCtx1024::pow_secret`].
 //!
 //! Mirror of the 2048 target one directory over, but at the CRT
 //! half-ladder width. This is called twice per RSA-2048 sign (once
@@ -6,8 +6,8 @@
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_rsa::bigint1024::U1024;
-use fips_rsa::mont1024::MontCtx1024;
+use oxicrypt_rsa::bigint1024::U1024;
+use oxicrypt_rsa::mont1024::MontCtx1024;
 
 const N_BYTES: [u8; 128] = {
     let mut n = [0u8; 128];

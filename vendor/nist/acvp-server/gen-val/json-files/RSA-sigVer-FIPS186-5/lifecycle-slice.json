@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated RSA lifecycle vectors (sigVer)",
+  "_source": "oxicrypt self-generated RSA lifecycle vectors (sigVer)",
   "algorithm": "RSA",
   "mode": "sigVer",
   "revision": "FIPS186-5",

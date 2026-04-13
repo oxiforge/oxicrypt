@@ -155,9 +155,9 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 // ── Crypto helpers ──────────────────────────────────────────────────
 
 fn rsa_pkcs1_verify(n: &[u8; 256], e: u64, msg: &[u8], sig: &[u8; 256]) -> bool {
-    fips_rsa::rsa_pkcs1_v15_verify_2048_sha256(n, e, msg, sig).is_ok()
+    oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256(n, e, msg, sig).is_ok()
 }
 
 fn rsa_pss_verify(n: &[u8; 256], e: u64, msg: &[u8], sig: &[u8; 256]) -> bool {
-    fips_rsa::rsa_pss_verify_2048_sha256(n, e, msg, sig).is_ok()
+    oxicrypt_rsa::rsa_pss_verify_2048_sha256(n, e, msg, sig).is_ok()
 }

@@ -1,4 +1,4 @@
-//! ct-validation target: [`fips_rsa::mont2048::MontCtx2048::pow_secret`].
+//! ct-validation target: [`oxicrypt_rsa::mont2048::MontCtx2048::pow_secret`].
 //!
 //! This is the non-CRT private-key exponentiation path used by
 //! RSA-2048 sign (when CRT is unavailable) and by the OAEP decrypt
@@ -15,8 +15,8 @@
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_rsa::bigint2048::U2048;
-use fips_rsa::mont2048::MontCtx2048;
+use oxicrypt_rsa::bigint2048::U2048;
+use oxicrypt_rsa::mont2048::MontCtx2048;
 
 /// 2048-bit odd modulus with the top bit set. This isn't the RSA
 /// KAT modulus (which is module-private to `fips-rsa`) — we just

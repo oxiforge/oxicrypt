@@ -1,0 +1,16 @@
+[package]
+name = "oxicrypt-ecdsa"
+description = "ECDSA (P-256, P-384, P-521) per FIPS 186-5"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }

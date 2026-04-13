@@ -1,6 +1,6 @@
-//! # `ct-validation` — dudect-style constant-time validation harness for pqclib
+//! # `ct-validation` — dudect-style constant-time validation harness for oxicrypt
 //!
-//! This crate is **not** part of the pqclib FIPS 140-3 cryptographic
+//! This crate is **not** part of the oxicrypt FIPS 140-3 cryptographic
 //! module boundary. It is a developer tool that lives under `tools/`
 //! and exists solely to produce empirical evidence backing the
 //! "Side-channel posture (disclosed)" statements in
@@ -10,7 +10,7 @@
 //!
 //! FIPS 140-3 Level 1 does not require side-channel resistance, and
 //! IG D.G (March 2026 revision) does not mandate any specific
-//! constant-time validation methodology. pqclib's security policy
+//! constant-time validation methodology. oxicrypt's security policy
 //! nevertheless **voluntarily** claims constant-time secret-dependent
 //! operations on the RSA and P-256 private-key paths. Claims that
 //! aren't tested drift over time; this harness turns the claims into
@@ -87,13 +87,13 @@
 //!
 //! | Target                         | Primitive                                           | Verdict at 300k samples |
 //! |--------------------------------|-----------------------------------------------------|-------------------------|
-//! | `rsa_mont2048_pow_secret`      | `fips_rsa::mont2048::Mont2048::pow_secret`          | CLEAN                   |
-//! | `rsa_mont1024_pow_secret`      | `fips_rsa::mont1024::Mont1024::pow_secret` (CRT)    | CLEAN                   |
-//! | `rsa_oaep_decode`              | `fips_rsa::oaep::emsa_oaep_decode` (Manger-framing) | CLEAN                   |
-//! | `ecdsa_p256_scalar_mul`        | `fips_ecdsa::p256_point::Point::mul`                | CLEAN                   |
-//! | `ecdsa_p256_scalar_invert`     | `fips_ecdsa::p256_scalar::Scalar::invert` (Fermat)  | CLEAN (see §12.1 noise) |
-//! | `ecdh_p256_cdh`                | `fips_ecdh::p256::cdh`                              | CLEAN                   |
-//! | `eddsa_ed25519_scalar_mul`     | `fips_eddsa::edwards::EdwardsPoint::mul` (clamped)  | CLEAN (R9, \|t\|=1.418) |
+//! | `rsa_mont2048_pow_secret`      | `oxicrypt_rsa::mont2048::Mont2048::pow_secret`          | CLEAN                   |
+//! | `rsa_mont1024_pow_secret`      | `oxicrypt_rsa::mont1024::Mont1024::pow_secret` (CRT)    | CLEAN                   |
+//! | `rsa_oaep_decode`              | `oxicrypt_rsa::oaep::emsa_oaep_decode` (Manger-framing) | CLEAN                   |
+//! | `ecdsa_p256_scalar_mul`        | `oxicrypt_ecdsa::p256_point::Point::mul`                | CLEAN                   |
+//! | `ecdsa_p256_scalar_invert`     | `oxicrypt_ecdsa::p256_scalar::Scalar::invert` (Fermat)  | CLEAN (see §12.1 noise) |
+//! | `ecdh_p256_cdh`                | `oxicrypt_ecdh::p256::cdh`                              | CLEAN                   |
+//! | `eddsa_ed25519_scalar_mul`     | `oxicrypt_eddsa::edwards::EdwardsPoint::mul` (clamped)  | CLEAN (R9, \|t\|=1.418) |
 //!
 //! ## Leaks found and fixed during R8 bring-up
 //!
@@ -103,8 +103,8 @@
 //! are called out in §12.1 of the security policy.
 //!
 //! 1. **Montgomery reducer carry-propagation early exit** — the
-//!    tail-carry loops in `fips_ecdsa::p256_field::Fp::mul` and
-//!    `fips_ecdsa::p256_scalar::Scalar::mul` had an
+//!    tail-carry loops in `oxicrypt_ecdsa::p256_field::Fp::mul` and
+//!    `oxicrypt_ecdsa::p256_scalar::Scalar::mul` had an
 //!    `if carry == 0 { break; }` inside the fixed upper-bound loop
 //!    over the high limbs. That made the iteration count depend on
 //!    whether the intermediate carry happened to be zero, which is a
@@ -140,7 +140,7 @@
     // with array indexing and floating-point division, and the
     // "no arithmetic that silently wraps on secret data" rule doesn't
     // apply because there are no secrets inside this crate — the
-    // secrets live inside the pqclib crates that we call.
+    // secrets live inside the oxicrypt crates that we call.
     clippy::indexing_slicing,
     clippy::integer_division,
     clippy::arithmetic_side_effects,

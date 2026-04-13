@@ -51,7 +51,7 @@ fn generate_ecdsa_lifecycle_slices() {
 
     // Generate five deterministic P-256 private keys and nonces
     // using a DRBG so they are valid scalars in [1, n-1].
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-ecdsa-lifecycle-gen-entropy-v1",
         b"pqclib-ecdsa-lifecycle-gen-nonce-v1",
@@ -67,7 +67,7 @@ fn generate_ecdsa_lifecycle_slices() {
         let mut d = [0u8; 32];
         drbg.generate(None, &mut d).expect("drbg generate");
         // Ensure d is a valid P-256 scalar by deriving the public key.
-        let pk = fips_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
+        let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
             .expect("derive_public_key_internal failed — d may be zero or >= n");
         private_keys.push(d);
         public_keys.push(pk);
@@ -86,12 +86,12 @@ fn generate_ecdsa_lifecycle_slices() {
             let mut k = [0u8; 32];
             drbg.generate(None, &mut k).expect("drbg generate k");
 
-            let sig = fips_ecdsa::p256_ecdsa::sign_with_k(d, msg, &k)
+            let sig = oxicrypt_ecdsa::p256_ecdsa::sign_with_k(d, msg, &k)
                 .unwrap_or_else(|_| panic!("sign_with_k failed key={ki} msg={mi}"));
 
             // Verify round-trips.
             assert!(
-                fips_ecdsa::p256_ecdsa::verify(pk, msg, &sig)
+                oxicrypt_ecdsa::p256_ecdsa::verify(pk, msg, &sig)
                     .unwrap_or(false),
                 "verify failed during generation key={ki} msg={mi}"
             );
@@ -121,7 +121,7 @@ fn generate_ecdsa_lifecycle_slices() {
 
     let keygen_json = format!(
         r#"{{
-  "_source": "pqclib self-generated ECDSA lifecycle vectors (keyGen)",
+  "_source": "oxicrypt self-generated ECDSA lifecycle vectors (keyGen)",
   "algorithm": "ECDSA",
   "mode": "keyGen",
   "revision": "FIPS186-5",
@@ -180,7 +180,7 @@ fn generate_ecdsa_lifecycle_slices() {
 
     let siggen_json = format!(
         r#"{{
-  "_source": "pqclib self-generated ECDSA lifecycle vectors (sigGen)",
+  "_source": "oxicrypt self-generated ECDSA lifecycle vectors (sigGen)",
   "algorithm": "ECDSA",
   "mode": "sigGen",
   "revision": "FIPS186-5",
@@ -239,7 +239,7 @@ fn generate_ecdsa_lifecycle_slices() {
 
     let sigver_json = format!(
         r#"{{
-  "_source": "pqclib self-generated ECDSA lifecycle vectors (sigVer)",
+  "_source": "oxicrypt self-generated ECDSA lifecycle vectors (sigVer)",
   "algorithm": "ECDSA",
   "mode": "sigVer",
   "revision": "FIPS186-5",

@@ -84,7 +84,7 @@ const SCALARS: [[u8; 32]; 10] = [
 fn generate_ecdsa_keygen_slice() {
     let mut tests_json = Vec::new();
     for (i, d) in SCALARS.iter().enumerate() {
-        let pk = fips_ecdsa::p256_ecdsa::derive_public_key_internal(d)
+        let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(d)
             .unwrap_or_else(|| panic!("derive_public_key_internal failed for test {i}"));
         // pk is 65 bytes: 0x04 || X(32) || Y(32)
         assert_eq!(pk[0], 0x04, "not uncompressed SEC1");

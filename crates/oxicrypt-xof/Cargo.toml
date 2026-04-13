@@ -1,0 +1,16 @@
+[package]
+name = "oxicrypt-xof"
+description = "SHAKE128/256, cSHAKE, KMAC per FIPS 202 / SP 800-185"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-test-vectors = { path = "../oxicrypt-test-vectors" }

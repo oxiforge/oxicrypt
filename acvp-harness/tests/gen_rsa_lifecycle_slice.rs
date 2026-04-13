@@ -61,7 +61,7 @@ fn generate_rsa_lifecycle_slices() {
     ensure_initialized().expect("FIPS init");
 
     // Generate a fresh RSA-2048 key pair.
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-rsa-lifecycle-gen-entropy-v1",
         b"pqclib-rsa-lifecycle-gen-nonce-v1",
@@ -69,7 +69,7 @@ fn generate_rsa_lifecycle_slices() {
     )
     .expect("drbg instantiate");
 
-    let km = fips_rsa::keygen::generate_2048(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
         .expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -96,20 +96,20 @@ fn generate_rsa_lifecycle_slices() {
 
     for (i, msg) in MESSAGES.iter().enumerate() {
         // PKCS#1v1.5 non-CRT sign
-        let pkcs1_sig = fips_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(
+        let pkcs1_sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(
             &n_bytes, &d_bytes, msg,
         )
         .unwrap_or_else(|| panic!("PKCS#1v1.5 sign failed msg {i}"));
 
         // Verify PKCS#1v1.5 signature
         assert!(
-            fips_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, msg, &pkcs1_sig),
+            oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, msg, &pkcs1_sig),
             "PKCS#1v1.5 verify failed msg {i}"
         );
         pkcs1_sigs.push(pkcs1_sig.to_vec());
 
         // PSS CRT sign
-        let pss_sig = fips_rsa::rsa_pss_sign_2048_sha256_crt_internal(
+        let pss_sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_crt_internal(
             &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
             msg, &PSS_SALTS[i],
         )
@@ -117,7 +117,7 @@ fn generate_rsa_lifecycle_slices() {
 
         // Verify PSS signature
         assert!(
-            fips_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, msg, &pss_sig),
+            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, msg, &pss_sig),
             "PSS verify failed msg {i}"
         );
         pss_sigs.push(pss_sig.to_vec());
@@ -157,7 +157,7 @@ fn generate_rsa_lifecycle_slices() {
 
     let siggen_json = format!(
         r#"{{
-  "_source": "pqclib self-generated RSA lifecycle vectors (sigGen)",
+  "_source": "oxicrypt self-generated RSA lifecycle vectors (sigGen)",
   "algorithm": "RSA",
   "mode": "sigGen",
   "revision": "FIPS186-5",
@@ -253,7 +253,7 @@ fn generate_rsa_lifecycle_slices() {
 
     let sigver_json = format!(
         r#"{{
-  "_source": "pqclib self-generated RSA lifecycle vectors (sigVer)",
+  "_source": "oxicrypt self-generated RSA lifecycle vectors (sigVer)",
   "algorithm": "RSA",
   "mode": "sigVer",
   "revision": "FIPS186-5",
@@ -324,7 +324,7 @@ fn generate_rsa_lifecycle_slices() {
 
     let keygen_json = format!(
         r#"{{
-  "_source": "pqclib self-generated RSA lifecycle vectors (keyGen)",
+  "_source": "oxicrypt self-generated RSA lifecycle vectors (keyGen)",
   "algorithm": "RSA",
   "mode": "keyGen",
   "revision": "FIPS186-5",

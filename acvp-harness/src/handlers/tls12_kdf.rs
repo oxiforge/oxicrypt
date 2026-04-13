@@ -98,7 +98,7 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
 
         let master_secret = match hash_alg {
             "SHA2-256" => {
-                fips_tls_kdf::tls12_extended_master_secret_internal::<fips_hmac::HmacSha256, 32>(
+                oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<oxicrypt_hmac::HmacSha256, 32>(
                     &pms,
                     &session_hash,
                     &server_random,
@@ -107,7 +107,7 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
                 )
             }
             "SHA2-384" => {
-                fips_tls_kdf::tls12_extended_master_secret_internal::<fips_hmac::HmacSha384, 48>(
+                oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<oxicrypt_hmac::HmacSha384, 48>(
                     &pms,
                     &session_hash,
                     &server_random,
@@ -116,7 +116,7 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
                 )
             }
             "SHA2-512" => {
-                fips_tls_kdf::tls12_extended_master_secret_internal::<fips_hmac::HmacSha512, 64>(
+                oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<oxicrypt_hmac::HmacSha512, 64>(
                     &pms,
                     &session_hash,
                     &server_random,

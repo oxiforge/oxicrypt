@@ -46,7 +46,7 @@
 //!
 //! # Module gating
 //!
-//! [`process_shs`] re-runs `fips_module::require_operational()` on
+//! [`process_shs`] re-runs `oxicrypt_module::require_operational()` on
 //! every call, exactly like [`crate::dispatch::process`], so no code
 //! path can reach a crypto primitive through the harness without the
 //! power-up KAT set having been cleared first.
@@ -89,7 +89,7 @@ pub trait ShsHandler: Send + Sync {
     ///
     /// `msg` is already sliced to the declared bit-length by
     /// [`process_shs`], so the handler can pass it straight to the
-    /// underlying `fips_sha` primitive.
+    /// underlying `oxicrypt_sha` primitive.
     fn compute(&self, msg: &[u8]) -> Result<Vec<u8>, DispatchError>;
 }
 
@@ -165,7 +165,7 @@ pub fn with_default_shs_handlers() -> ShsRegistry {
 ///
 /// # Validation
 ///
-/// - Re-runs `fips_module::require_operational()` before touching
+/// - Re-runs `oxicrypt_module::require_operational()` before touching
 ///   anything, matching [`crate::dispatch::process`].
 /// - Errors with [`DispatchError::UnsupportedAlgorithm`] if no
 ///   handler matches `algorithm`.
@@ -183,7 +183,7 @@ pub fn process_shs(
     doc: &RspDocument,
     registry: &ShsRegistry,
 ) -> Result<JsonValue, DispatchError> {
-    fips_module::require_operational().map_err(DispatchError::Module)?;
+    oxicrypt_module::require_operational().map_err(DispatchError::Module)?;
     let handler = registry
         .find(algorithm)
         .ok_or_else(|| DispatchError::UnsupportedAlgorithm {

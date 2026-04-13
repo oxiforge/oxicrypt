@@ -1,21 +1,21 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/fips-module",
-    "crates/fips-test-vectors",
-    "crates/fips-aes",
-    "crates/fips-sha",
-    "crates/fips-hmac",
-    "crates/fips-drbg",
-    "crates/fips-rsa",
-    "crates/fips-ecdsa",
-    "crates/fips-ecdh",
-    "crates/fips-eddsa",
-    "crates/fips-kdf",
-    "crates/fips-xof",
-    "crates/fips-cmac",
-    "crates/fips-tls-kdf",
-    "crates/fips-integrity",
+    "crates/oxicrypt-module",
+    "crates/oxicrypt-test-vectors",
+    "crates/oxicrypt-aes",
+    "crates/oxicrypt-sha",
+    "crates/oxicrypt-hmac",
+    "crates/oxicrypt-drbg",
+    "crates/oxicrypt-rsa",
+    "crates/oxicrypt-ecdsa",
+    "crates/oxicrypt-ecdh",
+    "crates/oxicrypt-eddsa",
+    "crates/oxicrypt-kdf",
+    "crates/oxicrypt-xof",
+    "crates/oxicrypt-cmac",
+    "crates/oxicrypt-tls-kdf",
+    "crates/oxicrypt-integrity",
     "acvp-harness",
     "tools/ct-validation",
 ]
@@ -30,7 +30,7 @@ rust-version = "1.94"
 # appropriately licensed. All member crates still set `publish = false`
 # so we never actually hit crates.io's SPDX requirement either.
 license-file = "LICENSE"
-repository = "https://github.com/caraka/pqclib"
+repository = "https://github.com/caraka/oxicrypt"
 publish = false
 
 # Phase 1 policy: zero third-party dependencies. All crypto is pure Rust,

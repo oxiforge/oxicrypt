@@ -103,7 +103,7 @@ fn handle_kas_ecc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
         peer_pk[1..33].copy_from_slice(&pub_x);
         peer_pk[33..65].copy_from_slice(&pub_y);
 
-        let z = fips_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk)
+        let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk)
             .ok_or(DispatchError::Crypto("KAS-ECC-SSC: ECDH computation failed"))?;
 
         results.push(JsonValue::Object(vec![

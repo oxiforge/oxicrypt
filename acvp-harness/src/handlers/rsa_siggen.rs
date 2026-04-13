@@ -41,8 +41,8 @@ impl AlgorithmHandler for RsaSigGenHandler {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const N_BYTES: usize = fips_rsa::RSA_2048_MODULUS_BYTES;
-const HALF_BYTES: usize = fips_rsa::RSA_2048_CRT_HALF_BYTES;
+const N_BYTES: usize = oxicrypt_rsa::RSA_2048_MODULUS_BYTES;
+const HALF_BYTES: usize = oxicrypt_rsa::RSA_2048_CRT_HALF_BYTES;
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -164,7 +164,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
                 let message = decode_hex_field(tc, "message")?;
 
-                let sig = fips_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+                let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
                 .ok_or(DispatchError::Crypto(
@@ -193,7 +193,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
                 let message = decode_hex_field(tc, "message")?;
 
-                let sig = fips_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(
+                let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(
                     &n, &d, &message,
                 )
                 .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 sign failed"))?;
@@ -227,7 +227,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
 
-                let sig = fips_rsa::rsa_pss_sign_2048_sha256_crt_internal(
+                let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
                 .ok_or(DispatchError::Crypto("RSA SigGen: PSS CRT sign failed"))?;
@@ -255,7 +255,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
 
-                let sig = fips_rsa::rsa_pss_sign_2048_sha256_internal(
+                let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(
                     &n, &d, &message, &salt,
                 )
                 .ok_or(DispatchError::Crypto("RSA SigGen: PSS sign failed"))?;

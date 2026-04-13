@@ -19,7 +19,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_kdf::{
+use oxicrypt_kdf::{
     Pbkdf2HmacSha1, Pbkdf2HmacSha224, Pbkdf2HmacSha256, Pbkdf2HmacSha384, Pbkdf2HmacSha3_224,
     Pbkdf2HmacSha3_256, Pbkdf2HmacSha3_384, Pbkdf2HmacSha3_512, Pbkdf2HmacSha512,
     Pbkdf2HmacSha512_224, Pbkdf2HmacSha512_256,

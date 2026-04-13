@@ -1,4 +1,4 @@
-//! pqclib ACVP harness library.
+//! oxicrypt ACVP harness library.
 //!
 //! This crate is the library half of the `acvp-harness` package: the
 //! `src/main.rs` binary is a thin CLI wrapper, while everything of
@@ -37,7 +37,7 @@
 //! # Module gating
 //!
 //! Every call to [`dispatch::process`] starts with
-//! `fips_module::require_operational()`. A prompt submitted against a
+//! `oxicrypt_module::require_operational()`. A prompt submitted against a
 //! module that hasn't passed its power-up self-tests is rejected with
 //! [`dispatch::DispatchError::Module`] before any crypto primitive is
 //! touched, so a failed KAT can never yield an ACVP response.
@@ -71,16 +71,16 @@ pub mod json;
 pub mod rsp;
 pub mod shs;
 
-/// Convenience wrapper: run `fips_module::initialize()` and treat
+/// Convenience wrapper: run `oxicrypt_module::initialize()` and treat
 /// `AlreadyInitialized` as success.
 ///
-/// Integration tests share a single `fips_module` state machine
+/// Integration tests share a single `oxicrypt_module` state machine
 /// across test cases within the same test binary, so the first call
 /// initializes and subsequent calls are no-ops. This helper keeps the
 /// boilerplate in tests down to a single line.
-pub fn ensure_initialized() -> Result<(), fips_module::Error> {
-    match fips_module::initialize() {
-        Ok(()) | Err(fips_module::Error::AlreadyInitialized) => Ok(()),
+pub fn ensure_initialized() -> Result<(), oxicrypt_module::Error> {
+    match oxicrypt_module::initialize() {
+        Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
         Err(e) => Err(e),
     }
 }

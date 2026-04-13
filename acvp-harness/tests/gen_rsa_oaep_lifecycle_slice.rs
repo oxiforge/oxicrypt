@@ -49,7 +49,7 @@ fn generate_rsa_oaep_lifecycle_slice() {
     ensure_initialized().expect("FIPS init");
 
     // ── Reproduce the RSA key from the lifecycle DRBG seed ───────
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-rsa-lifecycle-gen-entropy-v1",
         b"pqclib-rsa-lifecycle-gen-nonce-v1",
@@ -57,7 +57,7 @@ fn generate_rsa_oaep_lifecycle_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = fips_rsa::keygen::generate_2048(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
         .expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -79,7 +79,7 @@ fn generate_rsa_oaep_lifecycle_slice() {
     let qinv_hex = hex_upper(&qinv_bytes);
 
     // ── Generate OAEP seeds deterministically ────────────────────
-    let mut seed_drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut seed_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     seed_drbg
         .instantiate(
             b"pqclib-rsa-oaep-lifecycle-seed-entropy-v1",
@@ -99,7 +99,7 @@ fn generate_rsa_oaep_lifecycle_slice() {
             .generate(None, &mut oaep_seed)
             .expect("drbg gen seed");
 
-        let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+        let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_bytes,
             e,
             b"", // empty label
@@ -113,8 +113,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
         let ct_hex = hex_upper(&ct);
 
         // Verify CRT decrypt works
-        let mut crt_out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
-        let crt_len = fips_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
+        let mut crt_out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
+        let crt_len = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
             &n_bytes,
             e,
             &p_bytes,
@@ -133,8 +133,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
         );
 
         // Verify non-CRT decrypt works
-        let mut nocrt_out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
-        let nocrt_len = fips_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+        let mut nocrt_out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
+        let nocrt_len = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
             &n_bytes,
             &d_bytes,
             b"",

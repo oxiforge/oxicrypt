@@ -15,17 +15,17 @@ name = "acvp-harness"
 path = "src/main.rs"
 
 [dependencies]
-fips-aes = { path = "../crates/fips-aes" }
-fips-cmac = { path = "../crates/fips-cmac" }
-fips-drbg = { path = "../crates/fips-drbg" }
-fips-ecdh = { path = "../crates/fips-ecdh" }
-fips-ecdsa = { path = "../crates/fips-ecdsa" }
-fips-eddsa = { path = "../crates/fips-eddsa" }
-fips-module = { path = "../crates/fips-module" }
-fips-rsa = { path = "../crates/fips-rsa" }
-fips-sha = { path = "../crates/fips-sha" }
-fips-xof = { path = "../crates/fips-xof" }
-fips-hmac = { path = "../crates/fips-hmac" }
-fips-kdf = { path = "../crates/fips-kdf" }
-fips-tls-kdf = { path = "../crates/fips-tls-kdf" }
-fips-integrity = { path = "../crates/fips-integrity" }
+oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
+oxicrypt-cmac = { path = "../crates/oxicrypt-cmac" }
+oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
+oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
+oxicrypt-ecdsa = { path = "../crates/oxicrypt-ecdsa" }
+oxicrypt-eddsa = { path = "../crates/oxicrypt-eddsa" }
+oxicrypt-module = { path = "../crates/oxicrypt-module" }
+oxicrypt-rsa = { path = "../crates/oxicrypt-rsa" }
+oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
+oxicrypt-xof = { path = "../crates/oxicrypt-xof" }
+oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
+oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
+oxicrypt-tls-kdf = { path = "../crates/oxicrypt-tls-kdf" }
+oxicrypt-integrity = { path = "../crates/oxicrypt-integrity" }

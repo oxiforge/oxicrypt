@@ -65,7 +65,7 @@ fn generate_rsa_siggen_cross_slice() {
     ensure_initialized().expect("FIPS init");
 
     // Generate a fresh RSA-2048 key pair with CRT components.
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-siggen-cross-entropy-v1",
         b"pqclib-siggen-cross-nonce-v1",
@@ -73,7 +73,7 @@ fn generate_rsa_siggen_cross_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = fips_rsa::keygen::generate_2048(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
         .expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -98,14 +98,14 @@ fn generate_rsa_siggen_cross_slice() {
     let mut pkcs_crt_tests = Vec::new();
     for (i, msg_hex) in MESSAGES.iter().enumerate() {
         let msg = hex_decode(msg_hex);
-        let sig = fips_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+        let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
             &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
             &msg,
         )
         .unwrap_or_else(|| panic!("PKCS#1v1.5 CRT sign failed for test {i}"));
 
         // Verify the signature.
-        let ok = fips_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(
+        let ok = oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(
             &n_bytes, e, &msg, &sig,
         );
         assert!(ok, "PKCS#1v1.5 CRT verify failed for test {i}");
@@ -125,13 +125,13 @@ fn generate_rsa_siggen_cross_slice() {
         let salt = hex_decode(salt_hex);
         let salt_arr: [u8; 32] = salt.as_slice().try_into().unwrap();
 
-        let sig = fips_rsa::rsa_pss_sign_2048_sha256_internal(
+        let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(
             &n_bytes, &d_bytes, &msg, &salt_arr,
         )
         .unwrap_or_else(|| panic!("PSS non-CRT sign failed for test {i}"));
 
         // Verify the signature.
-        let ok = fips_rsa::rsa_pss_verify_2048_sha256_internal(
+        let ok = oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(
             &n_bytes, e, &msg, &sig,
         );
         assert!(ok, "PSS non-CRT verify failed for test {i}");
@@ -148,7 +148,7 @@ fn generate_rsa_siggen_cross_slice() {
 
     let json = format!(
         r#"{{
-  "_source": "pqclib self-generated RSA sigGen cross-product vectors",
+  "_source": "oxicrypt self-generated RSA sigGen cross-product vectors",
   "algorithm": "RSA",
   "mode": "sigGen",
   "revision": "FIPS186-5",

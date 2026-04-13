@@ -21,7 +21,7 @@
 //!
 //! # Why in-crate instead of serde_json?
 //!
-//! pqclib has a workspace-wide zero-third-party-dependencies policy.
+//! oxicrypt has a workspace-wide zero-third-party-dependencies policy.
 //! The entire cryptographic module — and the validation harness that
 //! feeds it to a CAVP lab — is written in-tree so the supply-chain
 //! story on the CMVP submission is "no external code, period". This

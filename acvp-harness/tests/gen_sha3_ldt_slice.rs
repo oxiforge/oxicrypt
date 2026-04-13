@@ -51,7 +51,7 @@ fn ldt_digest<const RATE: usize, const OUT: usize>(
     pattern: &[u8],
     full_bytes: u64,
 ) -> [u8; OUT] {
-    let mut hasher = fips_sha::sha3::Sha3::<RATE, OUT>::new_internal();
+    let mut hasher = oxicrypt_sha::sha3::Sha3::<RATE, OUT>::new_internal();
     let pat_len = pattern.len() as u64;
     let mut remaining = full_bytes;
     while remaining >= pat_len {
@@ -71,28 +71,28 @@ struct Variant {
 }
 
 fn digest_224(byte: u8, full_bytes: u64) -> Vec<u8> {
-    ldt_digest::<{ fips_sha::sha3::SHA3_224_RATE }, { fips_sha::sha3::SHA3_224_DIGEST_SIZE }>(
+    ldt_digest::<{ oxicrypt_sha::sha3::SHA3_224_RATE }, { oxicrypt_sha::sha3::SHA3_224_DIGEST_SIZE }>(
         &[byte], full_bytes,
     )
     .to_vec()
 }
 
 fn digest_256(byte: u8, full_bytes: u64) -> Vec<u8> {
-    ldt_digest::<{ fips_sha::sha3::SHA3_256_RATE }, { fips_sha::sha3::SHA3_256_DIGEST_SIZE }>(
+    ldt_digest::<{ oxicrypt_sha::sha3::SHA3_256_RATE }, { oxicrypt_sha::sha3::SHA3_256_DIGEST_SIZE }>(
         &[byte], full_bytes,
     )
     .to_vec()
 }
 
 fn digest_384(byte: u8, full_bytes: u64) -> Vec<u8> {
-    ldt_digest::<{ fips_sha::sha3::SHA3_384_RATE }, { fips_sha::sha3::SHA3_384_DIGEST_SIZE }>(
+    ldt_digest::<{ oxicrypt_sha::sha3::SHA3_384_RATE }, { oxicrypt_sha::sha3::SHA3_384_DIGEST_SIZE }>(
         &[byte], full_bytes,
     )
     .to_vec()
 }
 
 fn digest_512(byte: u8, full_bytes: u64) -> Vec<u8> {
-    ldt_digest::<{ fips_sha::sha3::SHA3_512_RATE }, { fips_sha::sha3::SHA3_512_DIGEST_SIZE }>(
+    ldt_digest::<{ oxicrypt_sha::sha3::SHA3_512_RATE }, { oxicrypt_sha::sha3::SHA3_512_DIGEST_SIZE }>(
         &[byte], full_bytes,
     )
     .to_vec()
@@ -162,7 +162,7 @@ fn generate_sha3_ldt_slices() {
 
         let json = format!(
             r#"{{
-  "_source": "pqclib self-generated SHA-3 LDT vectors",
+  "_source": "oxicrypt self-generated SHA-3 LDT vectors",
   "algorithm": "{}",
   "revision": "2.0",
   "testGroups": [

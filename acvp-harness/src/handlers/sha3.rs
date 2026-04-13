@@ -9,8 +9,8 @@
 //!
 //! All three variants share the exact envelope shape exercised by
 //! [`super::sha3_256`]: each AFT test case carries a bit-length `len`
-//! and a hex-encoded `msg`, and produces a hex-encoded `md`. pqclib's
-//! `fips_sha::sha3` API is byte-oriented, so non-byte-aligned `len`
+//! and a hex-encoded `msg`, and produces a hex-encoded `md`. oxicrypt's
+//! `oxicrypt_sha::sha3` API is byte-oriented, so non-byte-aligned `len`
 //! values error out — the vendored ACVP slices at pinned commit
 //! `3611942ea10c070dd8bc6afec5682d56c307de8a` only use byte-aligned
 //! lengths for AFT, so this is not a functional gap.
@@ -52,12 +52,12 @@ impl AlgorithmHandler for Sha3_224Handler {
             group,
             "SHA3-224",
             |msg| {
-                fips_sha::sha3::sha3_224(msg)
+                oxicrypt_sha::sha3::sha3_224(msg)
                     .map(|d| d.to_vec())
-                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_224 returned Err"))
+                    .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_224 returned Err"))
             },
             |content, full_bytes| {
-                ldt_stream::<{ fips_sha::sha3::SHA3_224_RATE }, { fips_sha::sha3::SHA3_224_DIGEST_SIZE }>(
+                ldt_stream::<{ oxicrypt_sha::sha3::SHA3_224_RATE }, { oxicrypt_sha::sha3::SHA3_224_DIGEST_SIZE }>(
                     content, full_bytes,
                 )
             },
@@ -77,12 +77,12 @@ impl AlgorithmHandler for Sha3_384Handler {
             group,
             "SHA3-384",
             |msg| {
-                fips_sha::sha3::sha3_384(msg)
+                oxicrypt_sha::sha3::sha3_384(msg)
                     .map(|d| d.to_vec())
-                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_384 returned Err"))
+                    .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_384 returned Err"))
             },
             |content, full_bytes| {
-                ldt_stream::<{ fips_sha::sha3::SHA3_384_RATE }, { fips_sha::sha3::SHA3_384_DIGEST_SIZE }>(
+                ldt_stream::<{ oxicrypt_sha::sha3::SHA3_384_RATE }, { oxicrypt_sha::sha3::SHA3_384_DIGEST_SIZE }>(
                     content, full_bytes,
                 )
             },
@@ -102,12 +102,12 @@ impl AlgorithmHandler for Sha3_512Handler {
             group,
             "SHA3-512",
             |msg| {
-                fips_sha::sha3::sha3_512(msg)
+                oxicrypt_sha::sha3::sha3_512(msg)
                     .map(|d| d.to_vec())
-                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_512 returned Err"))
+                    .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_512 returned Err"))
             },
             |content, full_bytes| {
-                ldt_stream::<{ fips_sha::sha3::SHA3_512_RATE }, { fips_sha::sha3::SHA3_512_DIGEST_SIZE }>(
+                ldt_stream::<{ oxicrypt_sha::sha3::SHA3_512_RATE }, { oxicrypt_sha::sha3::SHA3_512_DIGEST_SIZE }>(
                     content, full_bytes,
                 )
             },
@@ -367,7 +367,7 @@ pub(crate) fn ldt_stream<const RATE: usize, const OUT: usize>(
     if pattern.is_empty() {
         return Err(DispatchError::Crypto("LDT: empty content pattern"));
     }
-    let mut hasher = fips_sha::sha3::Sha3::<RATE, OUT>::new_internal();
+    let mut hasher = oxicrypt_sha::sha3::Sha3::<RATE, OUT>::new_internal();
     let pat_len = pattern.len() as u64;
     let mut remaining = full_bytes;
 

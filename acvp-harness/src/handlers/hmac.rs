@@ -1,5 +1,5 @@
 //! HMAC Algorithm Functional Test (AFT) handlers for every HMAC
-//! variant pqclib exposes *except* HMAC-SHA2-256, which already has
+//! variant oxicrypt exposes *except* HMAC-SHA2-256, which already has
 //! its own module at [`super::hmac_sha2_256`] from R10.
 //!
 //! Covered here:
@@ -30,7 +30,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_hmac::{
+use oxicrypt_hmac::{
     HmacSha1, HmacSha224, HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512, HmacSha384,
     HmacSha512, HmacSha512_224, HmacSha512_256,
 };

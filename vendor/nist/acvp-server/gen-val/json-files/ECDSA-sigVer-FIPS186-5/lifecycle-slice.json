@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated ECDSA lifecycle vectors (sigVer)",
+  "_source": "oxicrypt self-generated ECDSA lifecycle vectors (sigVer)",
   "algorithm": "ECDSA",
   "mode": "sigVer",
   "revision": "FIPS186-5",

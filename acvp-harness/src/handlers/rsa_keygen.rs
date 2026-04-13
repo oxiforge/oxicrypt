@@ -109,11 +109,11 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         )?;
 
         // Instantiate DRBG from seed material and generate key.
-        let mut drbg = fips_drbg::HmacDrbgSha256::default();
+        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(&entropy, &nonce, &perso)
             .map_err(|_| DispatchError::Crypto("RSA keyGen: DRBG instantiate failed"))?;
 
-        let km = fips_rsa::keygen::generate_2048(&mut drbg, e)
+        let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, e)
             .map_err(|_| DispatchError::Crypto("RSA keyGen: key generation failed"))?;
 
         let n_bytes: [u8; 256] = km.n.to_be_bytes();

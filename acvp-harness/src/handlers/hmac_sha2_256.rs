@@ -26,7 +26,7 @@
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
-use fips_hmac::HmacSha256;
+use oxicrypt_hmac::HmacSha256;
 
 /// HMAC-SHA2-256 AFT dispatcher.
 pub struct HmacSha2_256Handler;

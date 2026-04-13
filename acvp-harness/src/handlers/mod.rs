@@ -23,7 +23,7 @@
 //!
 //! - [`shs`] — `SHA-1`, `SHA-224`, `SHA-256`, `SHA-384`, `SHA-512`,
 //!   `SHA-512/224`, `SHA-512/256` (all via the byte-oriented
-//!   entry points in `fips_sha`)
+//!   entry points in `oxicrypt_sha`)
 //!
 //! R13 adds the first KDF family handler and, with it, the first
 //! use of the optional ACVP `mode` field on the dispatch key. The

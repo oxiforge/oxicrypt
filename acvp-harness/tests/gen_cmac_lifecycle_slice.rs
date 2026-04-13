@@ -39,7 +39,7 @@ const NUM_TESTS: usize = 5;
 fn generate_cmac_lifecycle_slice() {
     ensure_initialized().expect("FIPS init");
 
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-cmac-lifecycle-gen-entropy-v1",
         b"pqclib-cmac-lifecycle-gen-nonce-v1",
@@ -61,7 +61,7 @@ fn generate_cmac_lifecycle_slice() {
         let mut msg = [0u8; 64];
         drbg.generate(None, &mut msg).expect("drbg gen msg");
 
-        let tag = fips_cmac::cmac_aes256(&key_bytes, &msg);
+        let tag = oxicrypt_cmac::cmac_aes256(&key_bytes, &msg);
         let msg_hex = hex_upper(&msg);
         let mac_hex = hex_upper(&tag);
 

@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated EdDSA lifecycle vectors (keyGen)",
+  "_source": "oxicrypt self-generated EdDSA lifecycle vectors (keyGen)",
   "algorithm": "EDDSA",
   "mode": "keyGen",
   "revision": "1.0",

@@ -35,8 +35,8 @@ impl AlgorithmHandler for RsaSigPrimHandler {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const N_BYTES: usize = fips_rsa::RSA_2048_MODULUS_BYTES;
-const HALF_BYTES: usize = fips_rsa::RSA_2048_CRT_HALF_BYTES;
+const N_BYTES: usize = oxicrypt_rsa::RSA_2048_MODULUS_BYTES;
+const HALF_BYTES: usize = oxicrypt_rsa::RSA_2048_CRT_HALF_BYTES;
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -135,12 +135,12 @@ fn handle_sigprim_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             let qinv: [u8; HALF_BYTES] = decode_fixed(tc, "iqmp")?;
             let e_bytes = decode_hex_field(tc, "e")?;
             let e = bytes_to_u64(&e_bytes)?;
-            fips_rsa::rsa_signature_primitive_2048_crt_internal(
+            oxicrypt_rsa::rsa_signature_primitive_2048_crt_internal(
                 &n, e, &p, &q, &dp, &dq, &qinv, &msg,
             )
         } else {
             let d: [u8; N_BYTES] = decode_fixed(tc, "d")?;
-            fips_rsa::rsa_signature_primitive_2048_internal(&n, &d, &msg)
+            oxicrypt_rsa::rsa_signature_primitive_2048_internal(&n, &d, &msg)
         };
 
         match result {

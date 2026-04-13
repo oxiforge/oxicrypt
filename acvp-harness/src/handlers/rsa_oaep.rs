@@ -41,8 +41,8 @@ impl AlgorithmHandler for RsaOaepHandler {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const N_BYTES: usize = fips_rsa::RSA_2048_MODULUS_BYTES;
-const HALF_BYTES: usize = fips_rsa::RSA_2048_CRT_HALF_BYTES;
+const N_BYTES: usize = oxicrypt_rsa::RSA_2048_MODULUS_BYTES;
+const HALF_BYTES: usize = oxicrypt_rsa::RSA_2048_CRT_HALF_BYTES;
 const SEED_LEN: usize = 32; // SHA-256 hash length = OAEP seed length
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let msg = decode_hex_field(tc, "msg")?;
                 let seed: [u8; SEED_LEN] = decode_fixed(tc, "seed")?;
 
-                let ct = fips_rsa::rsa_oaep_encrypt_2048_sha256_internal(
+                let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
                     &n, e, label, &msg, &seed,
                 )
                 .ok_or(DispatchError::Crypto("RSA OAEP: encrypt failed"))?;
@@ -180,7 +180,7 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     .ok_or(DispatchError::MissingField("tcId"))?;
 
                 let ct: [u8; N_BYTES] = decode_fixed(tc, "ct")?;
-                let mut out = [0u8; fips_rsa::oaep::MAX_MSG_LEN];
+                let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
 
                 let pt_len = if key_mode == "crt" {
                     // CRT path: (n, e, p, q, dP, dQ, qInv) with Bellcore.
@@ -191,14 +191,14 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     let dp: [u8; HALF_BYTES] = decode_fixed(group, "dmp1")?;
                     let dq: [u8; HALF_BYTES] = decode_fixed(group, "dmq1")?;
                     let qinv: [u8; HALF_BYTES] = decode_fixed(group, "iqmp")?;
-                    fips_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
+                    oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
                         &n, e, &p, &q, &dp, &dq, &qinv, label, &ct, &mut out,
                     )
                     .ok_or(DispatchError::Crypto("RSA OAEP: CRT decrypt failed"))?
                 } else {
                     // Non-CRT path: (n, d).
                     let d: [u8; N_BYTES] = decode_fixed(group, "d")?;
-                    fips_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
+                    oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
                         &n, &d, label, &ct, &mut out,
                     )
                     .ok_or(DispatchError::Crypto("RSA OAEP: decrypt failed"))?

@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated RSA OAEP CRT vectors",
+  "_source": "oxicrypt self-generated RSA OAEP CRT vectors",
   "algorithm": "RSA",
   "mode": "OAEP",
   "revision": "RFC8017",

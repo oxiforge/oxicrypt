@@ -10,8 +10,8 @@
 //! ```
 //!
 //! where `len` is the message length **in bits** and `msg` is the
-//! hex-encoded message padded out to the nearest byte. pqclib's
-//! `fips_sha::sha3` API is byte-oriented, so this handler only
+//! hex-encoded message padded out to the nearest byte. oxicrypt's
+//! `oxicrypt_sha::sha3` API is byte-oriented, so this handler only
 //! supports byte-aligned `len` values and errors out otherwise — the
 //! ACVP vector set vendored at commit
 //! `3611942ea10c070dd8bc6afec5682d56c307de8a` uses byte-aligned
@@ -40,12 +40,12 @@ impl AlgorithmHandler for Sha3_256Handler {
             group,
             "SHA3-256",
             |msg| {
-                fips_sha::sha3::sha3_256(msg)
+                oxicrypt_sha::sha3::sha3_256(msg)
                     .map(|d| d.to_vec())
-                    .map_err(|_| DispatchError::Crypto("fips_sha::sha3::sha3_256 returned Err"))
+                    .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_256 returned Err"))
             },
             |content, full_bytes| {
-                super::sha3::ldt_stream::<{ fips_sha::sha3::SHA3_256_RATE }, { fips_sha::sha3::SHA3_256_DIGEST_SIZE }>(
+                super::sha3::ldt_stream::<{ oxicrypt_sha::sha3::SHA3_256_RATE }, { oxicrypt_sha::sha3::SHA3_256_DIGEST_SIZE }>(
                     content, full_bytes,
                 )
             },

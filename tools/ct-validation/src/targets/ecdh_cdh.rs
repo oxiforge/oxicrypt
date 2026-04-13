@@ -1,4 +1,4 @@
-//! ct-validation target: [`fips_ecdh::compute_shared_secret_p256_internal`].
+//! ct-validation target: [`oxicrypt_ecdh::compute_shared_secret_p256_internal`].
 //!
 //! ECDH-CDH shares its scalar-multiplication core with ECDSA sign;
 //! this target exists mainly as a smoke check to make sure the
@@ -12,7 +12,7 @@
 
 use crate::measure::{run_target, RunConfig};
 use crate::stats::VerdictReport;
-use fips_ecdh::{compute_shared_secret_p256_internal, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN};
+use oxicrypt_ecdh::{compute_shared_secret_p256_internal, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN};
 
 /// RFC 5903 §8.1 responder public key `Q_r`.
 const PEER_PK: [u8; PUBLIC_KEY_LEN] = [

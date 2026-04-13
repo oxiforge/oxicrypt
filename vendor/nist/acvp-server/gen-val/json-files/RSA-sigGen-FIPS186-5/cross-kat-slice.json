@@ -1,5 +1,5 @@
 {
-  "_source": "pqclib self-generated RSA sigGen cross-product vectors",
+  "_source": "oxicrypt self-generated RSA sigGen cross-product vectors",
   "algorithm": "RSA",
   "mode": "sigGen",
   "revision": "FIPS186-5",

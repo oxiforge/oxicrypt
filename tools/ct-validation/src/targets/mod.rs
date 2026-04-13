@@ -1,4 +1,4 @@
-//! Wire-up of pqclib primitives into the paired-measurement harness.
+//! Wire-up of oxicrypt primitives into the paired-measurement harness.
 //!
 //! Every target module exposes a single `run(cfg)` function that
 //! builds a [`crate::measure::TargetFn`] closure over a pre-allocated

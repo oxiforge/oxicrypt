@@ -39,7 +39,7 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
     ensure_initialized().expect("FIPS init");
 
     // Reproduce the same five ECDSA lifecycle private keys.
-    let mut drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
         b"pqclib-ecdsa-lifecycle-gen-entropy-v1",
         b"pqclib-ecdsa-lifecycle-gen-nonce-v1",
@@ -62,7 +62,7 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
     // the same seed. Alternatively, we use a fresh DRBG for peer keys.
     //
     // For clarity, use a separate DRBG for peer key generation.
-    let mut peer_drbg = fips_drbg::HmacDrbgSha256::default();
+    let mut peer_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     peer_drbg
         .instantiate(
             b"pqclib-kas-ecc-ssc-lifecycle-peer-entropy-v1",
@@ -82,17 +82,17 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
             .expect("peer drbg generate");
 
         // Derive peer public key.
-        let peer_pk = fips_ecdsa::p256_ecdsa::derive_public_key_internal(&peer_d)
+        let peer_pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&peer_d)
             .expect("derive peer public key failed");
 
         // Compute shared secret: Z = x(d * Q_peer).
-        let z = fips_ecdh::compute_shared_secret_p256_internal(d, &peer_pk)
+        let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(d, &peer_pk)
             .expect("ECDH shared secret computation failed");
 
         // Also verify the reverse direction: Z' = x(peer_d * Q).
-        let my_pk = fips_ecdsa::p256_ecdsa::derive_public_key_internal(d)
+        let my_pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(d)
             .expect("derive own public key failed");
-        let z_reverse = fips_ecdh::compute_shared_secret_p256_internal(&peer_d, &my_pk)
+        let z_reverse = oxicrypt_ecdh::compute_shared_secret_p256_internal(&peer_d, &my_pk)
             .expect("ECDH reverse shared secret failed");
         assert_eq!(
             z, z_reverse,
@@ -121,7 +121,7 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
 
     let json = format!(
         r#"{{
-  "_source": "pqclib self-generated KAS-ECC-SSC lifecycle vectors",
+  "_source": "oxicrypt self-generated KAS-ECC-SSC lifecycle vectors",
   "algorithm": "KAS-ECC-SSC",
   "mode": "Component",
   "revision": "Sp800-56Ar3",
