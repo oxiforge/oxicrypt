@@ -1,0 +1,78 @@
+{
+  "algorithm": "HMAC-SHA3-384",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 1,
+      "testType": "MVT",
+      "tests": [
+        {
+          "tcId": 1,
+          "keyLen": 256,
+          "msgLen": 128,
+          "macLen": 384,
+          "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "msg": "00112233445566778899AABBCCDDEEFF",
+          "mac": "943A7DE76012D5B3A2AF60F3AED33D352DB253EA9893FD4CE4B0D0A3B6F3DC29C5629CBABFFE0DC8A51F9E596D388EA0",
+          "testPassed": true
+        },
+        {
+          "tcId": 2,
+          "keyLen": 128,
+          "msgLen": 256,
+          "macLen": 128,
+          "key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "msg": "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+          "mac": "C1C1BA93149C28EDA457DC2AEB89CF8F",
+          "testPassed": true
+        },
+        {
+          "tcId": 3,
+          "keyLen": 512,
+          "msgLen": 64,
+          "macLen": 80,
+          "key": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+          "msg": "DEADBEEF01020304",
+          "mac": "8E68B1BDF56A1331382B",
+          "testPassed": true
+        }
+      ]
+    },
+    {
+      "tgId": 2,
+      "testType": "MVT",
+      "tests": [
+        {
+          "tcId": 4,
+          "keyLen": 256,
+          "msgLen": 128,
+          "macLen": 384,
+          "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "msg": "00112233445566778899AABBCCDDEEFF",
+          "mac": "843A7DE76012D5B3A2AF60F3AED33D352DB253EA9893FD4CE4B0D0A3B6F3DC29C5629CBABFFE0DC8A51F9E596D388EA0",
+          "testPassed": false
+        },
+        {
+          "tcId": 5,
+          "keyLen": 128,
+          "msgLen": 256,
+          "macLen": 128,
+          "key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "msg": "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+          "mac": "D1C1BA93149C28EDA457DC2AEB89CF8F",
+          "testPassed": false
+        },
+        {
+          "tcId": 6,
+          "keyLen": 512,
+          "msgLen": 64,
+          "macLen": 80,
+          "key": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+          "msg": "DEADBEEF01020304",
+          "mac": "9E68B1BDF56A1331382B",
+          "testPassed": false
+        }
+      ]
+    }
+  ]
+}

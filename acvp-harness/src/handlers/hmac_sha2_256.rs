@@ -1,9 +1,15 @@
-//! HMAC-SHA2-256 Algorithm Functional Test (AFT) handler.
+//! HMAC-SHA2-256 AFT and MVT handler.
 //!
-//! Targets ACVP `algorithm = "HMAC-SHA2-256"`, `revision = "1.0"`,
-//! `testType = "AFT"`. ACVP HMAC test groups carry a `macLen` in bits
-//! that tells us how many leading bytes of the HMAC output to emit;
-//! the full 32-byte HMAC-SHA-256 tag is computed and then truncated.
+//! Targets ACVP `algorithm = "HMAC-SHA2-256"`, `revision = "1.0"`.
+//!
+//! **AFT** (`testType = "AFT"`): ACVP HMAC test groups carry a `macLen`
+//! in bits that tells us how many leading bytes of the HMAC output to
+//! emit; the full 32-byte HMAC-SHA-256 tag is computed and then truncated.
+//!
+//! **MVT** (`testType = "MVT"`): each test case carries the same fields
+//! as AFT plus a hex-encoded `mac` expected value. The handler computes
+//! the HMAC, compares against the expected value, and returns a
+//! `testPassed` boolean.
 //!
 //! A single ACVP HMAC AFT test case looks like:
 //!
@@ -28,11 +34,18 @@ use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_hmac::HmacSha256;
 
-/// HMAC-SHA2-256 AFT dispatcher.
+/// HMAC-SHA2-256 AFT / MVT dispatcher.
 pub struct HmacSha2_256Handler;
 
 /// HMAC-SHA-256 output length in bytes.
 const HMAC_SHA256_OUT: usize = 32;
+
+/// Test type — AFT (compute and return) or MVT (verify).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestType {
+    Aft,
+    Mvt,
+}
 
 impl AlgorithmHandler for HmacSha2_256Handler {
     fn algorithm(&self) -> &'static str {
@@ -48,20 +61,22 @@ impl AlgorithmHandler for HmacSha2_256Handler {
             .get("tgId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tgId"))?;
-        let test_type = group
+        let test_type_str = group
             .get("testType")
             .and_then(JsonValue::as_str)
             .ok_or(DispatchError::MissingField("testType"))?;
-        if test_type != "AFT" {
-            return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
-        }
+        let test_type = match test_type_str {
+            "AFT" => TestType::Aft,
+            "MVT" => TestType::Mvt,
+            other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
+        };
         let tests = group
             .get("tests")
             .and_then(JsonValue::as_array)
             .ok_or(DispatchError::MissingField("tests"))?;
         let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
         for t in tests {
-            results.push(run_case(t)?);
+            results.push(run_case(t, test_type)?);
         }
         Ok(JsonValue::Object(vec![
             ("tgId".to_string(), JsonValue::Number(tg_id)),
@@ -70,7 +85,7 @@ impl AlgorithmHandler for HmacSha2_256Handler {
     }
 }
 
-fn run_case(t: &JsonValue) -> Result<JsonValue, DispatchError> {
+fn run_case(t: &JsonValue, test_type: TestType) -> Result<JsonValue, DispatchError> {
     let tc_id = t
         .get("tcId")
         .and_then(JsonValue::as_i64)
@@ -81,13 +96,13 @@ fn run_case(t: &JsonValue) -> Result<JsonValue, DispatchError> {
         .ok_or(DispatchError::MissingField("macLen"))?;
     if mac_len_bits % 8 != 0 {
         return Err(DispatchError::Unsupported(
-            "HMAC-SHA2-256 AFT with non-byte-aligned `macLen`",
+            "HMAC-SHA2-256 with non-byte-aligned `macLen`",
         ));
     }
     let mac_len_bytes: usize = (mac_len_bits / 8) as usize;
     if mac_len_bytes == 0 || mac_len_bytes > HMAC_SHA256_OUT {
         return Err(DispatchError::Crypto(
-            "HMAC-SHA2-256 AFT: `macLen` outside [1, 32] bytes",
+            "HMAC-SHA2-256: `macLen` outside [1, 32] bytes",
         ));
     }
     let key_hex = t
@@ -106,12 +121,26 @@ fn run_case(t: &JsonValue) -> Result<JsonValue, DispatchError> {
     let full = h.finalize();
     let truncated = full
         .get(..mac_len_bytes)
-        .ok_or(DispatchError::Crypto("HMAC-SHA2-256 AFT: truncate failed"))?;
-    Ok(JsonValue::Object(vec![
-        ("tcId".to_string(), JsonValue::Number(tc_id)),
-        (
-            "mac".to_string(),
-            JsonValue::String(hex::encode_upper(truncated)),
-        ),
-    ]))
+        .ok_or(DispatchError::Crypto("HMAC-SHA2-256: truncate failed"))?;
+    match test_type {
+        TestType::Aft => Ok(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(tc_id)),
+            (
+                "mac".to_string(),
+                JsonValue::String(hex::encode_upper(truncated)),
+            ),
+        ])),
+        TestType::Mvt => {
+            let expected_hex = t
+                .get("mac")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("mac"))?;
+            let expected_mac = hex::decode(expected_hex)?;
+            let passed = truncated == expected_mac.as_slice();
+            Ok(JsonValue::Object(vec![
+                ("tcId".to_string(), JsonValue::Number(tc_id)),
+                ("testPassed".to_string(), JsonValue::Bool(passed)),
+            ]))
+        }
+    }
 }

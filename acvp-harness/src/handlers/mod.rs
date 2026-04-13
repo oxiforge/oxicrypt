@@ -291,9 +291,29 @@
 //!   per-test input parsing is extracted into `parse_kmac_test`. MVT
 //!   vectors include both valid and bit-flipped (invalid) MAC groups.
 //!
+//! R58 adds HMAC MVT (MAC Verification Test) support across all 11
+//! HMAC variants and accepts the AES-CTR `"CTR"` test type:
+//!
+//! - [`hmac`] — all 10 HMAC handlers (`HMAC-SHA-1`, `HMAC-SHA2-224`,
+//!   `HMAC-SHA2-384`, `HMAC-SHA2-512`, `HMAC-SHA2-512/224`,
+//!   `HMAC-SHA2-512/256`, `HMAC-SHA3-224`, `HMAC-SHA3-256`,
+//!   `HMAC-SHA3-384`, `HMAC-SHA3-512`) now support both AFT and MVT.
+//!   The shared `handle_hmac_group` driver accepts `"MVT"` test type;
+//!   per-test parsing is in `parse_hmac_test`. MVT vectors include
+//!   valid and bit-flipped (invalid) MAC groups.
+//! - [`hmac_sha2_256`] — standalone `HMAC-SHA2-256` handler also gains
+//!   MVT support via the same AFT/MVT `TestType` enum pattern.
+//! - [`aes`] — AES-CTR mode now accepts the `"CTR"` test type in
+//!   addition to `"AFT"`. The ACVP `CTR` test type is processed
+//!   identically to AFT from the IUT's perspective — the ACVP server
+//!   performs counter-overflow / counter-uniqueness verification
+//!   server-side.
+//!
 //! All SP 800-185 and PBKDF vectors are self-generated because the
 //! NIST ACVP-Server at the pinned commit ships no cSHAKE/KMAC/
-//! TupleHash/ParallelHash/PBKDF vector directories.
+//! TupleHash/ParallelHash/PBKDF vector directories. HMAC MVT vectors
+//! are also self-generated (computed with Python `hmac` module, then
+//! first nibble flipped for invalid-MAC groups).
 //!
 //! Later chunks will add additional modes (larger key sizes).
 

@@ -23,6 +23,9 @@
 //!   returns `{tcId, testPassed: false}` for those.
 //! - MCT (`testType = "MCT"`) is implemented for ECB and CBC modes
 //!   with the full 100×1000 iteration loop and key-schedule update.
+//! - CTR (`testType = "CTR"`) is accepted for AES-CTR and processed
+//!   identically to AFT — the ACVP server verifies counter properties
+//!   (uniqueness, monotonic progression) server-side.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -188,7 +191,10 @@ fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, Dispa
             }
         }
     }
-    if test_type != "AFT" {
+    // CTR test type (counter-overflow / counter-uniqueness) is processed
+    // identically to AFT from the IUT's perspective — the ACVP server
+    // performs counter verification server-side. Accept it for AES-CTR.
+    if test_type != "AFT" && !(test_type == "CTR" && mode == AesMode::Ctr) {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
     // AEAD modes carry group-level tag/nonce length metadata.

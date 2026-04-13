@@ -2857,3 +2857,101 @@ fn kmacxof_256_mvt_round_trip() {
         "KMACXOF-256 MVT",
     );
 }
+
+// ── R58: HMAC MVT (MAC Verification Test) + AES-CTR "CTR" test type ─
+
+#[test]
+fn hmac_sha1_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA-1-1.0/mvt-slice.json",
+        "HMAC-SHA-1 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha2_224_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-224-1.0/mvt-slice.json",
+        "HMAC-SHA2-224 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha2_256_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-256-1.0/mvt-slice.json",
+        "HMAC-SHA2-256 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha2_384_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-384-1.0/mvt-slice.json",
+        "HMAC-SHA2-384 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha2_512_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-512-1.0/mvt-slice.json",
+        "HMAC-SHA2-512 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha2_512_224_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-512-224-1.0/mvt-slice.json",
+        "HMAC-SHA2-512/224 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha2_512_256_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-512-256-1.0/mvt-slice.json",
+        "HMAC-SHA2-512/256 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha3_224_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-224-1.0/mvt-slice.json",
+        "HMAC-SHA3-224 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha3_256_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-256-1.0/mvt-slice.json",
+        "HMAC-SHA3-256 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha3_384_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-384-1.0/mvt-slice.json",
+        "HMAC-SHA3-384 MVT",
+    );
+}
+
+#[test]
+fn hmac_sha3_512_mvt_round_trip() {
+    assert_bool_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-512-1.0/mvt-slice.json",
+        "HMAC-SHA3-512 MVT",
+    );
+}
+
+#[test]
+fn aes_ctr_ctr_round_trip() {
+    assert_aes_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/ACVP-AES-CTR-1.0/ctr-slice.json",
+        "ACVP-AES-CTR CTR",
+    );
+}

@@ -1,6 +1,6 @@
-//! HMAC Algorithm Functional Test (AFT) handlers for every HMAC
-//! variant oxicrypt exposes *except* HMAC-SHA2-256, which already has
-//! its own module at [`super::hmac_sha2_256`] from R10.
+//! HMAC AFT and MVT handlers for every HMAC variant oxicrypt exposes
+//! *except* HMAC-SHA2-256, which already has its own module at
+//! [`super::hmac_sha2_256`] from R10.
 //!
 //! Covered here:
 //!
@@ -15,12 +15,14 @@
 //! - `HMAC-SHA3-384`   (revision `1.0`, output 48 bytes)
 //! - `HMAC-SHA3-512`   (revision `1.0`, output 64 bytes)
 //!
-//! All ten share the same ACVP envelope shape: each AFT test case
-//! carries `tcId`, `macLen` (in bits, byte-aligned for every vector
-//! in the vendored slices at pinned commit
-//! `3611942ea10c070dd8bc6afec5682d56c307de8a`), hex-encoded `key` and
-//! `msg`, and produces a hex-encoded `mac` truncated to `macLen / 8`
-//! leading bytes of the full HMAC output.
+//! **AFT** (Algorithm Functional Test): each test case carries `tcId`,
+//! `macLen` (in bits, byte-aligned), hex-encoded `key` and `msg`, and
+//! produces a hex-encoded `mac` truncated to `macLen / 8` leading bytes.
+//!
+//! **MVT** (MAC Verification Test): each test case carries the same
+//! fields as AFT plus a hex-encoded `mac` expected value. The handler
+//! computes the HMAC, compares against the expected value, and returns
+//! a `testPassed` boolean.
 //!
 //! Note that the SHA-512 truncated variants publish their algorithm
 //! string with a slash (`HMAC-SHA2-512/224`, `HMAC-SHA2-512/256`),
@@ -244,14 +246,73 @@ impl AlgorithmHandler for HmacSha3_512Handler {
 }
 
 // ----------------------------------------------------------------------
+// Test-type enum and shared types
+// ----------------------------------------------------------------------
+
+/// HMAC test type — AFT (compute and return MAC) or MVT (verify MAC).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HmacTestType {
+    Aft,
+    Mvt,
+}
+
+/// Parsed per-test inputs shared by both AFT and MVT paths.
+struct HmacTestInputs {
+    key: Vec<u8>,
+    msg: Vec<u8>,
+    mac_bytes: usize,
+}
+
+/// Parse the common per-test fields (key, msg, macLen).
+fn parse_hmac_test(
+    t: &JsonValue,
+    full_out_bytes: usize,
+) -> Result<(i64, HmacTestInputs), DispatchError> {
+    let tc_id = t
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+    let mac_len_bits = t
+        .get("macLen")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("macLen"))?;
+    if !mac_len_bits.is_multiple_of(8) {
+        return Err(DispatchError::Unsupported(
+            "HMAC with non-byte-aligned `macLen`",
+        ));
+    }
+    let mac_bytes: usize = (mac_len_bits / 8) as usize;
+    if mac_bytes == 0 || mac_bytes > full_out_bytes {
+        return Err(DispatchError::Crypto(
+            "HMAC: `macLen` outside legal range",
+        ));
+    }
+    let key_hex = t
+        .get("key")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("key"))?;
+    let msg_hex = t
+        .get("msg")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("msg"))?;
+    let key = hex::decode(key_hex)?;
+    let msg = hex::decode(msg_hex)?;
+    Ok((tc_id, HmacTestInputs { key, msg, mac_bytes }))
+}
+
+// ----------------------------------------------------------------------
 // Shared group driver
 // ----------------------------------------------------------------------
 
-/// Walks the `tests` array of an HMAC AFT group. `full_out_bytes` is
-/// the untruncated HMAC output length for this algorithm in bytes;
-/// `compute(key, msg)` must return exactly that many bytes. The driver
-/// then truncates to `macLen / 8` leading bytes and emits the ACVP
-/// response shape.
+/// Walks the `tests` array of an HMAC AFT or MVT group.
+/// `full_out_bytes` is the untruncated HMAC output length for this
+/// algorithm in bytes; `compute(key, msg)` must return exactly that
+/// many bytes.
+///
+/// - **AFT**: truncates to `macLen / 8` leading bytes and returns
+///   the hex-encoded `mac`.
+/// - **MVT**: computes the MAC, compares against the supplied `mac`
+///   field, and returns `testPassed`.
 fn handle_hmac_group<F>(
     group: &JsonValue,
     full_out_bytes: usize,
@@ -264,64 +325,53 @@ where
         .get("tgId")
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tgId"))?;
-    let test_type = group
+    let test_type_str = group
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
-        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
-    }
+    let test_type = match test_type_str {
+        "AFT" => HmacTestType::Aft,
+        "MVT" => HmacTestType::Mvt,
+        other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
+    };
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
     for t in tests {
-        let tc_id = t
-            .get("tcId")
-            .and_then(JsonValue::as_i64)
-            .ok_or(DispatchError::MissingField("tcId"))?;
-        let mac_len_bits = t
-            .get("macLen")
-            .and_then(JsonValue::as_u64)
-            .ok_or(DispatchError::MissingField("macLen"))?;
-        if !mac_len_bits.is_multiple_of(8) {
-            return Err(DispatchError::Unsupported(
-                "HMAC AFT with non-byte-aligned `macLen`",
-            ));
-        }
-        let mac_len_bytes: usize = (mac_len_bits / 8) as usize;
-        if mac_len_bytes == 0 || mac_len_bytes > full_out_bytes {
-            return Err(DispatchError::Crypto(
-                "HMAC AFT: `macLen` outside legal range",
-            ));
-        }
-        let key_hex = t
-            .get("key")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("key"))?;
-        let msg_hex = t
-            .get("msg")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("msg"))?;
-        let key = hex::decode(key_hex)?;
-        let msg = hex::decode(msg_hex)?;
-        let full = compute(&key, &msg)?;
+        let (tc_id, inputs) = parse_hmac_test(t, full_out_bytes)?;
+        let full = compute(&inputs.key, &inputs.msg)?;
         if full.len() != full_out_bytes {
             return Err(DispatchError::Crypto(
-                "HMAC AFT: primitive returned wrong-length output",
+                "HMAC: primitive returned wrong-length output",
             ));
         }
         let truncated = full
-            .get(..mac_len_bytes)
-            .ok_or(DispatchError::Crypto("HMAC AFT: truncate failed"))?;
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(tc_id)),
-            (
-                "mac".to_string(),
-                JsonValue::String(hex::encode_upper(truncated)),
-            ),
-        ]));
+            .get(..inputs.mac_bytes)
+            .ok_or(DispatchError::Crypto("HMAC: truncate failed"))?;
+        let result = match test_type {
+            HmacTestType::Aft => JsonValue::Object(vec![
+                ("tcId".to_string(), JsonValue::Number(tc_id)),
+                (
+                    "mac".to_string(),
+                    JsonValue::String(hex::encode_upper(truncated)),
+                ),
+            ]),
+            HmacTestType::Mvt => {
+                let expected_hex = t
+                    .get("mac")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("mac"))?;
+                let expected_mac = hex::decode(expected_hex)?;
+                let passed = truncated == expected_mac.as_slice();
+                JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(tc_id)),
+                    ("testPassed".to_string(), JsonValue::Bool(passed)),
+                ])
+            }
+        };
+        results.push(result);
     }
     Ok(JsonValue::Object(vec![
         ("tgId".to_string(), JsonValue::Number(group_id)),
