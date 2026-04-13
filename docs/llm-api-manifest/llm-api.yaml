@@ -1,0 +1,1209 @@
+lama: "0.1"
+
+# ─────────────────────────────────────────────────────────────────────
+# oxicrypt — Library API Manifest for LLM Agents
+#
+# This file describes the oxicrypt public API in a structured format
+# designed for consumption by AI coding agents. Every constraint that
+# a human developer would infer from context is stated explicitly.
+#
+# Schema specification: SPEC.md in this directory.
+# ─────────────────────────────────────────────────────────────────────
+
+library:
+  name: oxicrypt
+  version: "0.0.0"
+  description: >-
+    Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
+    NIST-approved classical algorithms with a formal module boundary,
+    power-up self-tests, and zero third-party dependencies.
+  repository: https://github.com/caraka/oxicrypt
+  homepage: https://oxicrypt.com
+  license: PolyForm-Noncommercial-1.0.0
+  languages:
+    - rust
+  minimum_toolchain: "rust 1.94"
+
+  constraints:
+    - description: >-
+        The module must be initialized via initialize_with_tests()
+        before any cryptographic function is called. Every public
+        function gates on require_operational().
+      enforcement: runtime
+      severity: error
+
+    - description: >-
+        Zero third-party dependencies. All cryptographic code is
+        written in-tree in pure Rust. No crate outside the workspace
+        may be added without Security Policy justification.
+      enforcement: convention
+      severity: error
+
+    - description: >-
+        All algorithm crates are no_std. The module crate and integrity
+        crate require std for file I/O and self-test orchestration.
+      enforcement: compile-time
+      severity: error
+
+  security:
+    certification: "FIPS 140-3 Level 1 (targeting, pre-validation)"
+    threat_model: >-
+      Software-only module. Protects confidentiality and integrity of
+      data processed through approved services. Does not claim
+      side-channel resistance at Level 1 but discloses and validates
+      timing behavior via dudect methodology.
+    side_channel_posture: validated
+    zeroization: manual
+
+# ─────────────────────────────────────────────────────────────────────
+# State machines
+# ─────────────────────────────────────────────────────────────────────
+
+state_machines:
+  - name: ModuleLifecycle
+    description: >-
+      FIPS 140-3 module state machine. The module starts in PowerOff,
+      transitions through SelfTest during initialization, and reaches
+      Operational if all KATs pass. Error is a terminal state.
+    initial_state: PowerOff
+    terminal_states: [Error]
+    states:
+      - name: PowerOff
+        description: Module not yet initialized. No services available.
+      - name: SelfTest
+        description: Running power-up known-answer tests. No services available.
+      - name: Operational
+        description: All KATs passed. Approved services are available.
+      - name: Error
+        description: >-
+          A self-test failed or enter_error_state() was called.
+          Terminal — the process must be restarted.
+    transitions:
+      - from: PowerOff
+        to: SelfTest
+        trigger: initialize_with_tests
+        condition: Called exactly once per process lifetime.
+      - from: SelfTest
+        to: Operational
+        trigger: initialize_with_tests
+        condition: All KatEntry tests pass.
+      - from: SelfTest
+        to: Error
+        trigger: initialize_with_tests
+        condition: Any KatEntry test fails.
+      - from: Operational
+        to: Error
+        trigger: enter_error_state
+        condition: Called by any code path detecting a runtime failure.
+
+# ─────────────────────────────────────────────────────────────────────
+# Modules (Rust crates)
+# ─────────────────────────────────────────────────────────────────────
+
+modules:
+  - name: oxicrypt-module
+    description: >-
+      Module state machine, approved-mode indicator, self-test runner.
+      Provides initialize_with_tests(), require_operational(), and the
+      Error type used by all algorithm crates.
+    no_std: false
+    depends_on: []
+
+  - name: oxicrypt-sha
+    description: >-
+      SHA-1, SHA-2 (224/256/384/512/512-224/512-256), SHA-3
+      (224/256/384/512) hash functions. Both one-shot and streaming APIs.
+    no_std: true
+    depends_on: [oxicrypt-module]
+
+  - name: oxicrypt-xof
+    description: >-
+      SHAKE128, SHAKE256, cSHAKE-128/256, KMAC-128/256, TupleHash,
+      ParallelHash and their XOF variants (SP 800-185).
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha]
+
+  - name: oxicrypt-hmac
+    description: >-
+      HMAC over all 11 approved hashes. Generic Hmac<H, B, L> struct
+      with type aliases for each variant.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha]
+
+  - name: oxicrypt-cmac
+    description: AES-CMAC (SP 800-38B) over AES-128/192/256.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-aes]
+
+  - name: oxicrypt-aes
+    description: >-
+      AES block cipher (FIPS 197) and modes: ECB, CBC, CTR, GCM, CCM,
+      KW, KWP. Generic over BlockCipher trait for key-size polymorphism.
+    no_std: true
+    depends_on: [oxicrypt-module]
+
+  - name: oxicrypt-drbg
+    description: >-
+      CTR_DRBG (AES-128/192/256), Hash_DRBG (SHA-256/384/512),
+      HMAC_DRBG (SHA-256/384/512). SP 800-90A Rev. 1.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-aes, oxicrypt-sha, oxicrypt-hmac]
+
+  - name: oxicrypt-kdf
+    description: >-
+      SP 800-108r1 KBKDF (counter/feedback/double-pipeline), HKDF
+      (SP 800-56Cr2), PBKDF2 (SP 800-132).
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-hmac]
+
+  - name: oxicrypt-rsa
+    description: >-
+      RSA-2048 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt,
+      keygen. CRT path with Bellcore verify-after-sign.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
+
+  - name: oxicrypt-ecdsa
+    description: >-
+      ECDSA P-256 sign/verify/keygen with DRBG-backed rejection
+      sampling and pairwise consistency tests.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
+
+  - name: oxicrypt-ecdh
+    description: ECDH P-256 CDH shared secret (SP 800-56Ar3).
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-ecdsa]
+
+  - name: oxicrypt-eddsa
+    description: >-
+      Ed25519 deterministic sign/verify/keygen (RFC 8032, FIPS 186-5).
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
+
+  - name: oxicrypt-integrity
+    description: >-
+      HMAC-SHA-256 software integrity check over the module binary.
+      Embeds and verifies a 64-byte reserved tag slot.
+    no_std: false
+    depends_on: [oxicrypt-module, oxicrypt-hmac]
+
+# ─────────────────────────────────────────────────────────────────────
+# Types
+# ─────────────────────────────────────────────────────────────────────
+
+types:
+  - name: State
+    module: oxicrypt-module
+    kind: enum
+    description: Module lifecycle state.
+    variants:
+      - name: PowerOff
+        description: Not initialized.
+      - name: SelfTest
+        description: Running KATs.
+      - name: Operational
+        description: Ready for approved services.
+      - name: Error
+        description: Terminal failure.
+
+  - name: Error
+    module: oxicrypt-module
+    kind: enum
+    description: Error type returned by all approved-service functions.
+    variants:
+      - name: NotOperational
+        description: Module is not in Operational state.
+      - name: SelfTestFailed
+        description: A power-up KAT failed.
+      - name: ConditionalTestFailed
+        description: A conditional self-test (e.g., PCT) failed.
+      - name: AlreadyInitialized
+        description: initialize_with_tests() called more than once.
+      - name: InvalidInput
+        description: Caller supplied invalid parameters.
+
+  - name: KatEntry
+    module: oxicrypt-module
+    kind: struct
+    description: A single known-answer test entry for power-up self-tests.
+    fields:
+      - name: name
+        type: "&'static str"
+        description: Human-readable test name.
+      - name: run
+        type: "fn() -> Result<(), SelfTestFailure>"
+        description: Function that executes the KAT and returns Ok or Err.
+
+  - name: Sha256
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-256 hasher. Absorbs data via update(), produces digest via finalize().
+    size_bytes: null  # Internal state, not fixed public size
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: HmacSha256
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha256, 64, 32>. HMAC-SHA-256."
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: Aes128Key
+    module: oxicrypt-aes
+    kind: struct
+    description: AES-128 expanded key schedule.
+    size_bytes: null  # Expanded schedule, not just the 16-byte key
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: false  # Table-based S-box; disclosed in security policy
+
+  - name: Aes192Key
+    module: oxicrypt-aes
+    kind: struct
+    description: AES-192 expanded key schedule.
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: Aes256Key
+    module: oxicrypt-aes
+    kind: struct
+    description: AES-256 expanded key schedule.
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: ModeError
+    module: oxicrypt-aes
+    kind: enum
+    description: Error type for AES mode operations.
+    variants:
+      - name: NotBlockAligned
+        description: Input length is not a multiple of 16 bytes.
+      - name: InvalidIvLength
+        description: IV/nonce is wrong size for the mode.
+      - name: TagMismatch
+        description: GCM/CCM authentication tag verification failed.
+      - name: LengthMismatch
+        description: Output buffer is wrong size.
+      - name: InvalidNonceLength
+        description: CCM nonce outside valid range.
+      - name: InvalidTagLength
+        description: CCM tag length outside valid range.
+      - name: InvalidPayloadLength
+        description: Payload exceeds mode's maximum.
+      - name: InvalidAadLength
+        description: AAD exceeds mode's maximum.
+
+  - name: CtrDrbgAes256
+    module: oxicrypt-drbg
+    kind: struct
+    description: CTR_DRBG instantiated with AES-256. Must be instantiated before generating.
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: DrbgError
+    module: oxicrypt-drbg
+    kind: enum
+    description: Error type for DRBG operations.
+    variants:
+      - name: Uninstantiated
+        description: generate or reseed called before instantiate.
+      - name: ReseedRequired
+        description: Reseed counter exceeded SP 800-90A limit.
+      - name: InputTooLong
+        description: Entropy or additional input exceeds maximum.
+      - name: InvalidSeedLength
+        description: Seed material wrong length for no-df instantiate.
+      - name: RequestTooLong
+        description: Requested output exceeds single-call maximum.
+
+  - name: RsaPrivateKey2048
+    module: oxicrypt-rsa
+    kind: struct
+    description: >-
+      RSA-2048 private key. Holds (n, e, d) and optionally CRT
+      components. Runs a pairwise consistency test on construction.
+    size_bytes: null
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: EcdsaP256PrivateKey
+    module: oxicrypt-ecdsa
+    kind: struct
+    description: >-
+      ECDSA P-256 private key handle. Stores (d, Q) pair. Runs a
+      sign-and-verify PCT on construction.
+    fields:
+      - name: d
+        type: "[u8; 32]"
+        description: Private scalar.
+        constraints: "1 <= d < n (P-256 group order)"
+      - name: q
+        type: "[u8; 65]"
+        description: "Uncompressed SEC1 public key: 0x04 || X || Y."
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: Ed25519PrivateKey
+    module: oxicrypt-eddsa
+    kind: struct
+    description: >-
+      Ed25519 private key handle. Stores (seed, A) pair. Runs a
+      sign-and-verify PCT on construction.
+    security:
+      contains_secret: true
+      zeroize_on_drop: false
+      constant_time: true
+
+# ─────────────────────────────────────────────────────────────────────
+# Functions
+# ─────────────────────────────────────────────────────────────────────
+
+functions:
+
+  # ── Module lifecycle ──────────────────────────────────────────────
+
+  - name: initialize_with_tests
+    module: oxicrypt-module
+    description: >-
+      Initialize the module by running all provided power-up KATs.
+      Transitions PowerOff → SelfTest → Operational (or Error).
+    signature: "pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error>"
+    parameters:
+      - name: tests
+        type: "&[KatEntry]"
+        direction: in
+        description: >-
+          Array of KAT entries to run. Collect from each algorithm
+          crate's KATS constant (e.g., oxicrypt_sha::KATS).
+        constraints:
+          nullability: required
+          valid_range: non-empty
+    returns:
+      type: "Result<(), Error>"
+      description: Ok(()) if all KATs pass, Err if any fail.
+      error_variants:
+        - name: AlreadyInitialized
+          condition: Called more than once in the process lifetime.
+        - name: SelfTestFailed
+          condition: Any KatEntry::run() returned Err.
+    preconditions:
+      - description: Module must be in PowerOff state.
+        check: "oxicrypt_module::state() == State::PowerOff"
+    postconditions:
+      - description: Module is in Operational state (on success).
+      - description: Module is in Error state (on failure, terminal).
+    thread_safety: not-thread-safe
+    side_effects:
+      - description: Sets global module state. Exactly once per process.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: PowerOff
+    pitfalls:
+      - description: Must be called exactly once before any crypto operation.
+        wrong: |
+          let digest = oxicrypt_sha::sha256(b"data")?;
+          // Error: NotOperational
+        right: |
+          oxicrypt_module::initialize_with_tests(&all_kats)?;
+          let digest = oxicrypt_sha::sha256(b"data")?;
+
+  - name: require_operational
+    module: oxicrypt-module
+    description: >-
+      Guard function. Returns Ok(()) if module is Operational, Err otherwise.
+      Called internally by every approved-service function.
+    signature: "pub fn require_operational() -> Result<(), Error>"
+    parameters: []
+    returns:
+      type: "Result<(), Error>"
+      description: Ok if Operational, Err otherwise.
+      error_variants:
+        - name: NotOperational
+          condition: Module state is not Operational.
+    preconditions: []
+    postconditions: []
+    thread_safety: thread-safe
+    side_effects: []
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  # ── Hashing ───────────────────────────────────────────────────────
+
+  - name: sha256
+    module: oxicrypt-sha
+    description: One-shot SHA-256 hash.
+    signature: "pub fn sha256(data: &[u8]) -> Result<[u8; 32], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash. Any length.
+        constraints:
+          nullability: required
+          valid_range: "0..=2^64 - 1 bytes"
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: 32-byte SHA-256 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Returns the SHA-256 digest of the input.
+    sequencing:
+      must_call_before: [initialize_with_tests]
+    thread_safety: thread-safe
+    side_effects: []
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let digest = oxicrypt_sha::sha256(b"hello world")?;
+        assert_eq!(digest.len(), 32);
+
+  - name: "Sha256::new"
+    module: oxicrypt-sha
+    description: Create a streaming SHA-256 hasher.
+    signature: "pub fn Sha256::new() -> Result<Self, Error>"
+    parameters: []
+    returns:
+      type: "Result<Sha256, Error>"
+      description: A new SHA-256 hasher ready to absorb data.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Hasher is ready for update() calls.
+    sequencing:
+      must_call_after: [update, finalize]
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "Sha256::update"
+    module: oxicrypt-sha
+    description: Feed data into the streaming hasher.
+    signature: "pub fn update(&mut self, data: &[u8])"
+    parameters:
+      - name: self
+        type: "&mut Sha256"
+        direction: in-out
+        description: The hasher to update.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to absorb. May be called multiple times.
+    returns:
+      type: "()"
+      description: No return value.
+    preconditions:
+      - description: Hasher was created via Sha256::new().
+    postconditions:
+      - description: Internal state updated with the provided data.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "Sha256::finalize"
+    module: oxicrypt-sha
+    description: Consume the hasher and return the digest.
+    signature: "pub fn finalize(self) -> [u8; 32]"
+    parameters:
+      - name: self
+        type: Sha256
+        direction: in
+        description: The hasher to finalize. Consumed (cannot be reused).
+    returns:
+      type: "[u8; 32]"
+      description: 32-byte SHA-256 digest.
+    preconditions:
+      - description: Hasher was created and optionally updated.
+    postconditions:
+      - description: The hasher is consumed and cannot be used again.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: Finalize consumes the hasher. You cannot call update() after.
+        wrong: |
+          let mut h = Sha256::new()?;
+          h.update(b"data");
+          let d1 = h.finalize();
+          h.update(b"more");  // compile error: h moved
+        right: |
+          let mut h = Sha256::new()?;
+          h.update(b"data");
+          h.update(b"more");
+          let digest = h.finalize();
+
+  # ── HMAC ──────────────────────────────────────────────────────────
+
+  - name: "HmacSha256::new"
+    module: oxicrypt-hmac
+    description: Create an HMAC-SHA-256 instance with the given key.
+    signature: "pub fn HmacSha256::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: >-
+          HMAC key. Any length is accepted; keys shorter than the hash
+          block size (64 bytes) are zero-padded, longer keys are hashed
+          first (per FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: "1+ bytes recommended; empty is technically valid"
+    returns:
+      type: "Result<HmacSha256, Error>"
+      description: HMAC instance ready for update() calls.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: HMAC instance initialized with the key.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut mac = oxicrypt_hmac::HmacSha256::new(b"secret-key")?;
+        mac.update(b"message");
+        let tag = mac.finalize();  // [u8; 32]
+
+  # ── AES-GCM ──────────────────────────────────────────────────────
+
+  - name: gcm_encrypt
+    module: oxicrypt-aes
+    description: AES-GCM authenticated encryption.
+    signature: >-
+      pub fn gcm_encrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 12],
+      aad: &[u8], plaintext: &[u8], ciphertext: &mut [u8],
+      tag: &mut [u8; 16]) -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule (Aes128Key, Aes192Key, or Aes256Key)."
+      - name: iv
+        type: "&[u8; 12]"
+        direction: in
+        description: >-
+          96-bit initialization vector. MUST be unique for every
+          encryption under the same key. Reusing an IV with the
+          same key completely breaks GCM's security.
+        constraints:
+          size: 12
+          encoding: raw
+      - name: aad
+        type: "&[u8]"
+        direction: in
+        description: Additional authenticated data. Authenticated but not encrypted.
+        constraints:
+          valid_range: "0..=2^64 - 1 bytes"
+      - name: plaintext
+        type: "&[u8]"
+        direction: in
+        description: Data to encrypt.
+        constraints:
+          valid_range: "0..=2^36 - 32 bytes"
+      - name: ciphertext
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for encrypted data.
+        constraints:
+          size: "plaintext.len()"
+      - name: tag
+        type: "&mut [u8; 16]"
+        direction: out
+        description: Output buffer for 128-bit authentication tag.
+        constraints:
+          size: 16
+    returns:
+      type: "Result<(), ModeError>"
+      description: Ok on success.
+      error_variants:
+        - name: LengthMismatch
+          condition: ciphertext.len() != plaintext.len()
+        - name: InvalidPayloadLength
+          condition: Plaintext exceeds GCM maximum.
+    preconditions:
+      - description: Module must be Operational.
+      - description: IV must be unique for this key.
+    postconditions:
+      - description: ciphertext contains the encrypted data.
+      - description: tag contains the 128-bit GCM authentication tag.
+    thread_safety: thread-safe
+    security:
+      constant_time: false  # AES table-based; disclosed
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          GCM IV reuse is catastrophic. Never use the same IV twice
+          with the same key. Use a counter or DRBG to generate IVs.
+        wrong: |
+          let iv = [0u8; 12];  // Static IV — fatal for multi-message use
+          gcm_encrypt(&key, &iv, &[], &msg1, &mut ct1, &mut tag1)?;
+          gcm_encrypt(&key, &iv, &[], &msg2, &mut ct2, &mut tag2)?;
+        right: |
+          let mut iv_counter: u128 = 0;
+          let iv = &iv_counter.to_be_bytes()[4..];  // 96-bit counter
+          gcm_encrypt(&key, iv.try_into().unwrap(), &[], &msg, &mut ct, &mut tag)?;
+          iv_counter += 1;
+
+  # ── DRBG ──────────────────────────────────────────────────────────
+
+  - name: "CtrDrbgAes256::instantiate_df"
+    module: oxicrypt-drbg
+    description: >-
+      Instantiate CTR_DRBG with AES-256 using the derivation function.
+    signature: >-
+      pub fn instantiate_df(&mut self, entropy: &[u8], nonce: &[u8],
+      personalization: &[u8]) -> Result<(), DrbgError>
+    parameters:
+      - name: entropy
+        type: "&[u8]"
+        direction: in
+        description: Entropy input from a noise source.
+        constraints:
+          valid_range: "1..=192 bytes (MAX_DF_INPUT shared across all inputs)"
+      - name: nonce
+        type: "&[u8]"
+        direction: in
+        description: >-
+          Nonce. Per SP 800-90A, must provide at least security_strength/2
+          bits of entropy or be a value that is not repeated.
+        constraints:
+          valid_range: "0..=192 bytes"
+      - name: personalization
+        type: "&[u8]"
+        direction: in
+        description: Optional personalization string. May be empty.
+        constraints:
+          valid_range: "0..=192 bytes"
+          nullability: required
+    returns:
+      type: "Result<(), DrbgError>"
+      description: Ok if instantiation succeeds.
+      error_variants:
+        - name: InputTooLong
+          condition: "entropy.len() + nonce.len() + personalization.len() > 192"
+    preconditions:
+      - description: DRBG must be in uninstantiated state (new or after uninstantiate).
+    postconditions:
+      - description: DRBG is instantiated and ready for generate calls.
+    sequencing:
+      must_call_after: [generate_df, reseed_df]
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut drbg = oxicrypt_drbg::CtrDrbgAes256::new();
+        drbg.instantiate_df(&entropy, &nonce, b"my-app")?;
+        let mut out = [0u8; 32];
+        drbg.generate_df(&mut out, &[])?;
+
+  - name: "CtrDrbgAes256::generate_df"
+    module: oxicrypt-drbg
+    description: Generate random bytes from an instantiated CTR_DRBG.
+    signature: >-
+      pub fn generate_df(&mut self, out: &mut [u8],
+      additional_input: &[u8]) -> Result<(), DrbgError>
+    parameters:
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Buffer to fill with random bytes.
+        constraints:
+          valid_range: "1..=65536 bytes per call"
+      - name: additional_input
+        type: "&[u8]"
+        direction: in
+        description: Optional additional input. May be empty.
+        constraints:
+          valid_range: "0..=192 bytes"
+    returns:
+      type: "Result<(), DrbgError>"
+      error_variants:
+        - name: Uninstantiated
+          condition: DRBG was not instantiated.
+        - name: ReseedRequired
+          condition: Reseed counter exceeded 2^48.
+        - name: RequestTooLong
+          condition: "out.len() > 65536"
+        - name: InputTooLong
+          condition: "additional_input.len() > 192"
+    preconditions:
+      - description: DRBG must be instantiated.
+        check: Must have called instantiate_df or instantiate_no_df.
+    postconditions:
+      - description: out is filled with pseudorandom bytes.
+      - description: Internal reseed counter incremented.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── RSA ───────────────────────────────────────────────────────────
+
+  - name: "RsaPrivateKey2048::sign_pkcs1_v15_sha256"
+    module: oxicrypt-rsa
+    description: Sign a message with RSA-2048 PKCS#1 v1.5 and SHA-256.
+    signature: >-
+      pub fn sign_pkcs1_v15_sha256(&self, msg: &[u8])
+      -> Result<[u8; 256], Error>
+    parameters:
+      - name: self
+        type: "&RsaPrivateKey2048"
+        direction: in
+        description: RSA private key (constructed via from_components or generate).
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to sign (hashed internally with SHA-256).
+        constraints:
+          valid_range: any length
+    returns:
+      type: "Result<[u8; 256], Error>"
+      description: 256-byte RSA signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+      - description: Key must have been constructed (PCT passed).
+    postconditions:
+      - description: >-
+          Returns a valid RSASSA-PKCS1-v1_5 signature. Internally
+          performs Bellcore verify-after-sign (IG D.G).
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: rsa_pkcs1_v15_verify_2048_sha256
+    module: oxicrypt-rsa
+    description: Verify an RSA-2048 PKCS#1 v1.5 SHA-256 signature.
+    signature: >-
+      pub fn rsa_pkcs1_v15_verify_2048_sha256(n: &[u8; 256], e: u64,
+      msg: &[u8], sig: &[u8; 256]) -> bool
+    parameters:
+      - name: n
+        type: "&[u8; 256]"
+        direction: in
+        description: RSA modulus (256 bytes, big-endian).
+        constraints:
+          size: 256
+          encoding: big-endian
+      - name: e
+        type: u64
+        direction: in
+        description: Public exponent (typically 65537).
+        constraints:
+          valid_range: "odd, >= 65537"
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Original message that was signed.
+      - name: sig
+        type: "&[u8; 256]"
+        direction: in
+        description: Signature to verify.
+        constraints:
+          size: 256
+          encoding: big-endian
+    returns:
+      type: bool
+      description: true if signature is valid, false otherwise.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false  # Verification is public-data only
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── ECDSA ─────────────────────────────────────────────────────────
+
+  - name: "EcdsaP256PrivateKey::generate"
+    module: oxicrypt-ecdsa
+    description: >-
+      Generate an ECDSA P-256 key pair with DRBG-backed rejection
+      sampling (FIPS 186-5 §A.2.2) and a pairwise consistency test.
+    signature: >-
+      pub fn generate(drbg: &mut HmacDrbgSha256)
+      -> Result<Self, Error>
+    parameters:
+      - name: drbg
+        type: "&mut HmacDrbgSha256"
+        direction: in-out
+        description: >-
+          Instantiated HMAC-DRBG for key generation randomness.
+          Must already be instantiated with sufficient entropy.
+    returns:
+      type: "Result<EcdsaP256PrivateKey, Error>"
+      description: New key handle with (d, Q) pair.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: ConditionalTestFailed
+          condition: Pairwise consistency test (sign-then-verify) failed.
+    preconditions:
+      - description: Module must be Operational.
+      - description: DRBG must be instantiated.
+    postconditions:
+      - description: >-
+          Key handle contains a valid (d, Q) pair where Q = d * G.
+          The PCT has verified that signing and verifying with this
+          key produces consistent results.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "EcdsaP256PrivateKey::sign_sha256"
+    module: oxicrypt-ecdsa
+    description: Sign a message with ECDSA P-256 and SHA-256.
+    signature: >-
+      pub fn sign_sha256(&self, drbg: &mut HmacDrbgSha256, msg: &[u8])
+      -> Result<[u8; 64], Error>
+    parameters:
+      - name: self
+        type: "&EcdsaP256PrivateKey"
+        direction: in
+        description: Private key handle.
+      - name: drbg
+        type: "&mut HmacDrbgSha256"
+        direction: in-out
+        description: Instantiated DRBG for per-signature k sampling.
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to sign (hashed internally with SHA-256).
+    returns:
+      type: "Result<[u8; 64], Error>"
+      description: "64-byte signature: r (32 bytes) || s (32 bytes), big-endian."
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+      - description: DRBG must be instantiated.
+    postconditions:
+      - description: >-
+          Returns a valid ECDSA-P256-SHA256 signature. The per-signature
+          nonce k is sampled via FIPS 186-5 §A.2.2 rejection loop.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let key = EcdsaP256PrivateKey::generate(&mut drbg)?;
+        let sig = key.sign_sha256(&mut drbg, b"hello")?;
+        assert_eq!(sig.len(), 64);
+
+  - name: verify
+    module: oxicrypt-ecdsa
+    description: Verify an ECDSA P-256 SHA-256 signature.
+    signature: >-
+      pub fn verify(pk: &[u8; 65], msg: &[u8], sig: &[u8; 64])
+      -> Result<bool, Error>
+    parameters:
+      - name: pk
+        type: "&[u8; 65]"
+        direction: in
+        description: >-
+          Uncompressed SEC1 public key: 0x04 || X (32 bytes) || Y (32 bytes).
+          Full SP 800-56Ar3 §5.6.2.3.3 point validation is performed.
+        constraints:
+          size: 65
+          encoding: "SEC1 uncompressed (first byte must be 0x04)"
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Original message.
+      - name: sig
+        type: "&[u8; 64]"
+        direction: in
+        description: "Signature: r (32 bytes) || s (32 bytes), big-endian."
+        constraints:
+          size: 64
+          encoding: big-endian
+    returns:
+      type: "Result<bool, Error>"
+      description: Ok(true) if valid, Ok(false) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: InvalidInput
+          condition: Public key fails point validation.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false  # Verification operates on public data only
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── Ed25519 ───────────────────────────────────────────────────────
+
+  - name: "Ed25519PrivateKey::sign"
+    module: oxicrypt-eddsa
+    description: >-
+      Sign a message with Ed25519 (RFC 8032). Deterministic — no
+      per-signature DRBG draw.
+    signature: "pub fn sign(&self, msg: &[u8]) -> Result<[u8; 64], Error>"
+    parameters:
+      - name: self
+        type: "&Ed25519PrivateKey"
+        direction: in
+        description: Ed25519 private key handle.
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to sign.
+    returns:
+      type: "Result<[u8; 64], Error>"
+      description: 64-byte Ed25519 signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    postconditions:
+      - description: Returns a valid RFC 8032 Ed25519 signature.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── ECDH ──────────────────────────────────────────────────────────
+
+  - name: compute_shared_secret_p256
+    module: oxicrypt-ecdh
+    description: >-
+      Compute ECDH P-256 shared secret (SP 800-56Ar3 CDH).
+      Returns x-coordinate of d * Q.
+    signature: >-
+      pub fn compute_shared_secret_p256(d: &[u8; 32], peer_pk: &[u8; 65])
+      -> Result<[u8; 32], Error>
+    parameters:
+      - name: d
+        type: "&[u8; 32]"
+        direction: in
+        description: Our private scalar (big-endian).
+        constraints:
+          size: 32
+          encoding: big-endian
+      - name: peer_pk
+        type: "&[u8; 65]"
+        direction: in
+        description: >-
+          Peer's uncompressed SEC1 public key (0x04 || X || Y).
+          Point validation performed internally.
+        constraints:
+          size: 65
+          encoding: "SEC1 uncompressed (first byte must be 0x04)"
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: >-
+        32-byte shared secret (x-coordinate). Feed this to a KDF
+        (e.g., HKDF) — do NOT use it directly as a key.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: InvalidInput
+          condition: Peer public key fails point validation.
+    preconditions:
+      - description: Module must be Operational.
+      - description: Peer public key must be a valid P-256 point.
+    postconditions:
+      - description: >-
+          Returns the x-coordinate of d * peer_pk. The caller MUST
+          pass this through a KDF before using it as keying material.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          The raw ECDH shared secret must not be used directly as a
+          symmetric key. Always derive through a KDF (HKDF, SP 800-56Cr2).
+        wrong: |
+          let key_bytes = compute_shared_secret_p256(&d, &pk)?;
+          let aes_key = Aes256Key::new(&key_bytes);  // WRONG
+        right: |
+          let z = compute_shared_secret_p256(&d, &pk)?;
+          let mut okm = [0u8; 32];
+          hkdf_sha256(&salt, &z, &info, &mut okm)?;
+          let aes_key = Aes256Key::new(&okm);
+
+# ─────────────────────────────────────────────────────────────────────
+# Error types (consolidated)
+# ─────────────────────────────────────────────────────────────────────
+
+error_types:
+  - name: Error
+    module: oxicrypt-module
+    variants:
+      - name: NotOperational
+        description: Module is not in Operational state.
+        recoverable: false
+        user_action: Call initialize_with_tests() first.
+      - name: SelfTestFailed
+        description: A power-up KAT returned incorrect output.
+        recoverable: false
+        user_action: >-
+          Module is in terminal Error state. The binary may be
+          corrupted or the algorithm implementation has a bug.
+          Restart the process.
+      - name: ConditionalTestFailed
+        description: A pairwise consistency test failed during key construction.
+        recoverable: true
+        user_action: Retry key generation with fresh entropy.
+      - name: AlreadyInitialized
+        description: initialize_with_tests called more than once.
+        recoverable: false
+        user_action: Only call initialize_with_tests once per process.
+      - name: InvalidInput
+        description: Caller provided invalid parameters.
+        recoverable: true
+        user_action: Check parameter constraints and retry.
+
+  - name: ModeError
+    module: oxicrypt-aes
+    variants:
+      - name: NotBlockAligned
+        description: Input not a multiple of 16 bytes (ECB/CBC).
+        recoverable: true
+        user_action: Pad input to block boundary.
+      - name: TagMismatch
+        description: GCM/CCM decryption authentication failed.
+        recoverable: false
+        user_action: >-
+          The ciphertext or AAD was tampered with, or the wrong key/IV
+          was used. Do NOT use the plaintext output.
+      - name: LengthMismatch
+        description: Output buffer wrong size.
+        recoverable: true
+        user_action: Resize output buffer to match input length.
+
+  - name: DrbgError
+    module: oxicrypt-drbg
+    variants:
+      - name: Uninstantiated
+        description: Called generate/reseed before instantiate.
+        recoverable: true
+        user_action: Call instantiate_df or instantiate_no_df first.
+      - name: ReseedRequired
+        description: Reseed counter exceeded 2^48 (SP 800-90A limit).
+        recoverable: true
+        user_action: Call reseed_df with fresh entropy.
+      - name: RequestTooLong
+        description: Requested more than 65536 bytes in one call.
+        recoverable: true
+        user_action: Split into multiple generate calls.
+
+# ─────────────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────────────
+
+constants:
+  - name: RSA_2048_MODULUS_BYTES
+    module: oxicrypt-rsa
+    type: usize
+    value: "256"
+    description: Size of RSA-2048 modulus and signature in bytes.
+
+  - name: BLOCK_SIZE
+    module: oxicrypt-aes
+    type: usize
+    value: "16"
+    description: AES block size in bytes (128 bits).
+
+  - name: PRIVATE_KEY_LEN
+    module: oxicrypt-ecdsa
+    type: usize
+    value: "32"
+    description: ECDSA P-256 private scalar size in bytes.
+
+  - name: PUBLIC_KEY_LEN
+    module: oxicrypt-ecdsa
+    type: usize
+    value: "65"
+    description: "ECDSA P-256 uncompressed SEC1 public key: 0x04 || X || Y."
+
+  - name: SIGNATURE_LEN
+    module: oxicrypt-ecdsa
+    type: usize
+    value: "64"
+    description: "ECDSA P-256 signature: r (32 bytes) || s (32 bytes)."
