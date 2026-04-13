@@ -79,6 +79,16 @@ pub mod edwards;
 pub mod field;
 pub mod scalar;
 
+// ── Crate-root re-exports ────────────────────────────────────────
+//
+// Re-export the Ed25519 public API at the crate root so agents
+// can write `use oxicrypt_eddsa::{Ed25519PrivateKey, verify}`
+// without navigating into the `ed25519` submodule.
+
+pub use ed25519::{
+    keygen, sign, verify, Ed25519PrivateKey, PUBLIC_KEY_LEN, SEED_LEN, SIGNATURE_LEN,
+};
+
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[KatEntry {
     name: "Ed25519 KAT (keygen+sign+verify round-trip, RFC 8032)",

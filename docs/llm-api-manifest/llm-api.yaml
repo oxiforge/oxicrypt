@@ -7,7 +7,7 @@ lama: "0.1"
 # designed for consumption by AI coding agents. Every constraint that
 # a human developer would infer from context is stated explicitly.
 #
-# Schema specification: SPEC.md in this directory.
+# Schema specification: https://github.com/lamaspec/lama/blob/main/SPEC.md
 # ─────────────────────────────────────────────────────────────────────
 
 library:

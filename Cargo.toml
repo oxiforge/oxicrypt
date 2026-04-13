@@ -19,6 +19,9 @@ members = [
     "acvp-harness",
     "tools/ct-validation",
 ]
+exclude = [
+    "playground",
+]
 
 [workspace.package]
 version = "0.0.0"
@@ -74,6 +77,12 @@ print_stderr = "deny"
 # Side-channel hygiene: forbid arithmetic that silently wraps on secret data.
 # We will use explicit `wrapping_*` / `checked_*` when wrapping is intended.
 arithmetic_side_effects = "warn"
+
+# LAMA manifest pointer for agents that discover oxicrypt via crates.io.
+# See https://github.com/lamaspec/lama/blob/main/SPEC.md §"Package registry discovery".
+[workspace.metadata.lama]
+manifest = "docs/llm-api-manifest/llm-api.yaml"
+spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"
 
 [profile.release]
 # Reproducibility matters for the software integrity KAT. Keep optimization

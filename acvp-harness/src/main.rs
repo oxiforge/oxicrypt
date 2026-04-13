@@ -106,6 +106,22 @@ fn noop_kat() -> Result<(), oxicrypt_module::SelfTestFailure> {
 }
 
 fn main() {
+    // ── LAMA manifest ───────────────────────────────────────────────
+    // If the caller passes `--lama`, print the compile-time-embedded
+    // YAML manifest and exit immediately — before module
+    // initialization, before argument parsing, before anything else.
+    // This is the AI-agent equivalent of `--help` for humans.
+    // See https://github.com/lamaspec/lama/blob/main/SPEC.md §"Discovery".
+    if std::env::args().any(|a| a == "--lama") {
+        // The YAML is embedded at compile time via include_str!.
+        // The git commit is stamped by build.rs via cargo:rustc-env.
+        print!(
+            "{}",
+            include_str!("../../docs/llm-api-manifest/llm-api.yaml")
+        );
+        std::process::exit(0);
+    }
+
     // Self-signing has deliberately been removed: the Linux kernel
     // refuses `O_TRUNC` writes to a file that currently backs a
     // process image (`ETXTBSY`), so a running executable cannot

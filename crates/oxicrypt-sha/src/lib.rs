@@ -65,6 +65,32 @@ pub mod sha384;
 pub mod sha512;
 pub mod sha512_t;
 
+// ── Crate-root re-exports ────────────────────────────────────────
+//
+// Agents (and humans) expect `use oxicrypt_sha::sha256` to resolve
+// to the one-shot hash function, not a submodule.  Re-exporting the
+// most commonly used items at the crate root eliminates the most
+// frequent first-attempt import failure.
+
+// SHA-2 one-shot functions
+pub use sha1::sha1;
+pub use sha224::sha224;
+pub use sha256::sha256;
+pub use sha384::sha384;
+pub use sha512::sha512;
+pub use sha512_t::{sha512_224, sha512_256};
+
+// SHA-3 one-shot functions
+pub use sha3::{sha3_224, sha3_256, sha3_384, sha3_512};
+
+// Streaming hasher types
+pub use sha1::Sha1;
+pub use sha224::Sha224;
+pub use sha256::Sha256;
+pub use sha384::Sha384;
+pub use sha512::Sha512;
+pub use sha512_t::{Sha512_224, Sha512_256};
+
 /// Power-up KATs for every algorithm this crate implements.
 ///
 /// Callers that are assembling the full module test inventory should

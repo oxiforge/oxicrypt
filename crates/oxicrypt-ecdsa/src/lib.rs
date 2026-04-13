@@ -111,6 +111,17 @@ pub mod p256_keygen;
 pub mod p256_point;
 pub mod p256_scalar;
 
+// ── Crate-root re-exports ────────────────────────────────────────
+//
+// The P-256 ECDSA public API lives in `p256_ecdsa`; re-export the
+// items an agent or developer reaches for first so that
+// `use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify}` works.
+
+pub use p256_ecdsa::{
+    derive_public_key, sign_with_k, verify, EcdsaP256PrivateKey, PRIVATE_KEY_LEN,
+    PUBLIC_KEY_LEN, SIGNATURE_LEN,
+};
+
 /// Power-up KATs exported by this crate.
 pub const KATS: &[KatEntry] = &[KatEntry {
     name: "ECDSA-P256 KAT (sign+verify round-trip, FIPS 186-5)",

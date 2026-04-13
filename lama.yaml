@@ -1,0 +1,215 @@
+# ─────────────────────────────────────────────────────────────────────
+# oxicrypt — LAMA discovery file
+#
+# This is the repository-root entry point for AI coding agents.
+# It provides a quick-evaluation summary of what oxicrypt does and
+# where to find the full API manifest.
+#
+# Specification: https://github.com/lamaspec/lama
+# ─────────────────────────────────────────────────────────────────────
+
+lama: "0.1"
+
+library:
+  name: oxicrypt
+  version: "0.1.0-beta.1"
+  description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module."
+  repository: "https://github.com/caraka/oxicrypt"
+  homepage: "https://oxicrypt.com"
+  license: "PolyForm-Noncommercial-1.0.0"
+  languages:
+    - rust
+    - c           # planned — see docs/c-api-design.md
+  minimum_toolchain: "rust 1.94"
+  no_std: true    # core algorithm crates are no_std + alloc
+
+capabilities:
+  - category: "Hashing"
+    algorithms:
+      - "SHA-1"
+      - "SHA-224"
+      - "SHA-256"
+      - "SHA-384"
+      - "SHA-512"
+      - "SHA-512/224"
+      - "SHA-512/256"
+      - "SHA3-224"
+      - "SHA3-256"
+      - "SHA3-384"
+      - "SHA3-512"
+      - "SHAKE128"
+      - "SHAKE256"
+    standards:
+      - "FIPS 180-4"
+      - "FIPS 202"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_sha::sha256;
+        use oxicrypt_module::initialize_with_tests;
+
+        initialize_with_tests(oxicrypt_sha::KATS).unwrap();
+        let digest = sha256(b"hello world").unwrap();
+        assert_eq!(digest.len(), 32);
+
+  - category: "Extendable-output functions (XOF)"
+    algorithms:
+      - "cSHAKE128"
+      - "cSHAKE256"
+      - "KMAC128"
+      - "KMAC256"
+      - "TupleHash128"
+      - "TupleHash256"
+      - "ParallelHash128"
+      - "ParallelHash256"
+    standards:
+      - "SP 800-185"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_xof::{shake256, kmac256};
+        use oxicrypt_module::initialize_with_tests;
+
+        initialize_with_tests(oxicrypt_xof::KATS).unwrap();
+        let hash: [u8; 32] = shake256(b"input data").unwrap();
+        let tag: [u8; 32] = kmac256(b"my-key", b"input", b"").unwrap();
+
+  - category: "Message authentication"
+    algorithms:
+      - "HMAC (all 11 approved hashes)"
+      - "AES-CMAC (128/192/256)"
+    standards:
+      - "FIPS 198-1"
+      - "SP 800-38B"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_hmac::HmacSha256;
+        use oxicrypt_module::initialize_with_tests;
+
+        initialize_with_tests(oxicrypt_hmac::KATS).unwrap();
+        let mut mac = HmacSha256::new(b"secret-key-at-least-32-bytes-long!!");
+        mac.update(b"message to authenticate");
+        let tag = mac.finalize();
+
+  - category: "Symmetric encryption"
+    algorithms:
+      - "AES-128/192/256-ECB"
+      - "AES-128/192/256-CBC"
+      - "AES-128/192/256-CTR"
+      - "AES-128/192/256-GCM"
+      - "AES-128/192/256-CCM"
+      - "AES-128/192/256-KW"
+      - "AES-192-KWP"
+    standards:
+      - "FIPS 197"
+      - "SP 800-38A"
+      - "SP 800-38C"
+      - "SP 800-38D"
+      - "SP 800-38F"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_aes::{Aes256Key, gcm_encrypt, gcm_decrypt};
+        use oxicrypt_module::initialize_with_tests;
+
+        initialize_with_tests(oxicrypt_aes::KATS).unwrap();
+        let key = Aes256Key([0u8; 32]);  // use a real key
+        let iv = [0u8; 12];             // use a unique nonce
+        let mut ct = [0u8; 16];
+        let mut tag = [0u8; 16];
+        gcm_encrypt(&key, &iv, b"", b"hello, world!   ", &mut ct, &mut tag).unwrap();
+
+  - category: "Random number generation"
+    algorithms:
+      - "CTR_DRBG (AES-128/192/256)"
+      - "Hash_DRBG (SHA-256/384/512)"
+      - "HMAC_DRBG (SHA-256/384/512)"
+    standards:
+      - "SP 800-90A Rev. 1"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_drbg::HmacDrbgSha256;
+        use oxicrypt_module::initialize_with_tests;
+
+        initialize_with_tests(oxicrypt_drbg::KATS).unwrap();
+        let entropy = [0xABu8; 32];     // use real entropy source
+        let nonce = [0xCDu8; 16];
+        let mut rng = HmacDrbgSha256::new(&entropy, &nonce, b"").unwrap();
+        let mut output = [0u8; 32];
+        rng.generate(b"", &mut output).unwrap();
+
+  - category: "Key derivation"
+    algorithms:
+      - "SP 800-108r1 KBKDF (counter/feedback/double-pipeline)"
+      - "KDA-HKDF (SP 800-56Cr2)"
+      - "TLS 1.2 KDF"
+      - "PBKDF2"
+    standards:
+      - "SP 800-108"
+      - "SP 800-56Cr2"
+      - "SP 800-132"
+      - "SP 800-135r1"
+
+  - category: "Digital signatures"
+    algorithms:
+      - "ECDSA P-256"
+      - "Ed25519"
+      - "RSA-2048 PKCS#1 v1.5"
+      - "RSA-2048 PSS"
+    standards:
+      - "FIPS 186-5"
+      - "RFC 8032"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_eddsa::{Ed25519PrivateKey, verify};
+        use oxicrypt_module::initialize_with_tests;
+
+        initialize_with_tests(oxicrypt_eddsa::KATS).unwrap();
+        let kp = Ed25519PrivateKey::generate().unwrap();
+        let sig = kp.sign(b"message to sign").unwrap();
+        let ok = verify(&kp.public_key(), b"message to sign", &sig);
+        assert!(ok.is_ok());
+
+  - category: "Key agreement"
+    algorithms:
+      - "ECDH P-256"
+    standards:
+      - "SP 800-56Ar3"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_ecdsa::EcdsaP256PrivateKey;
+        use oxicrypt_ecdh::compute_shared_secret_p256;
+        use oxicrypt_module::initialize_with_tests;
+
+        // Both parties generate key pairs; exchange public keys
+        let alice = EcdsaP256PrivateKey::generate().unwrap();
+        let bob = EcdsaP256PrivateKey::generate().unwrap();
+        let shared = compute_shared_secret_p256(
+            alice.private_key_bytes(), bob.public_key_bytes()
+        ).unwrap();
+
+  - category: "Asymmetric encryption"
+    algorithms:
+      - "RSA-2048 OAEP"
+    standards:
+      - "SP 800-56Br2"
+
+  - category: "Module integrity"
+    algorithms:
+      - "HMAC-SHA-256 software integrity check"
+    standards:
+      - "FIPS 140-3 IG 10.3.A"
+
+security:
+  certification: "FIPS 140-3 Level 1 (targeting)"
+  side_channel_posture: "disclosed"
+  zeroization: "manual"
+  self_tests: "139 power-up KATs from NIST-sourced vectors"
+
+# Full manifest with every function signature, parameter constraint,
+# error type, precondition, state machine, and pitfall.
+manifest: "docs/llm-api-manifest/llm-api.yaml"
