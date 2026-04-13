@@ -6,7 +6,7 @@ rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 publish = false
-description = "dudect-style constant-time validation harness for pqclib"
+description = "dudect-style constant-time validation harness for oxicrypt"
 
 [dependencies]
 oxicrypt-rsa = { path = "../../crates/oxicrypt-rsa" }

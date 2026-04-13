@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "NIST-derived KAT constants for pqclib power-up self-tests (generated)"
+description = "NIST-derived KAT constants for oxicrypt power-up self-tests (generated)"
 
 [lints]
 workspace = true

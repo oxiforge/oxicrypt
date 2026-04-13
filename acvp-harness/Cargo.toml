@@ -1,6 +1,6 @@
 [package]
 name = "acvp-harness"
-description = "ACVP protocol client for automated CAVP test vector validation of the pqclib module"
+description = "ACVP protocol client for automated CAVP test vector validation of the oxicrypt module"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
