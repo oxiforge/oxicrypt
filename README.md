@@ -10,9 +10,8 @@ through an accredited CST laboratory.
 Target: **FIPS 140-3 Level 1**, following the latest FIPS 140-3 Implementation
 Guidance (currently IG D.G as of March 2026).
 
-See [`docs/rust-fips-project-plan.md`](docs/rust-fips-project-plan.md) for the
-full project plan, architecture, algorithm inventory, phase breakdown, and
-compliance mapping.
+See the security policy and CAVP traceability documents in `docs/` for
+compliance mapping and KAT provenance.
 
 ## Status
 
@@ -72,7 +71,7 @@ its published source.
 
 ### Documentation
 
-- **Rustdoc** — every `fips-*` crate's `lib.rs` header follows a common
+- **Rustdoc** — every crate's `lib.rs` header follows a common
   template: approved-services table, power-up self-tests, conditional
   self-tests, sensitive security parameters, side-channel posture, and
   FIPS-module gating. Build the full doc tree with
