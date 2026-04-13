@@ -227,7 +227,7 @@ of known-noise fluctuations are in §12.1 of the security policy.
 ### In flight
 
 - Ed448, ECDSA P-384 / P-521
-- ACVP harness vector dispatch: PSS SigVer, MCT for remaining modes, LDT test type. Thirty-seven handlers (including KBKDF, ECDSA/EdDSA SigGen and verification, RSA SigVer) and the ECB/CBC MCT engine are wired as of R20.
+- ACVP harness vector dispatch: sixty-two registered handlers and one hundred twenty ACVP round-trip tests (plus seven CAVP SHS tests) are wired through R58. Covers all ACVP test types the demo server is expected to send: AFT, MCT (SHA-3, AES-ECB/CBC), MVT (HMAC, KMAC), CTR (AES-CTR), VOT/LDT (SHAKE), GDT (RSA SigVer/SigGen).
 
 ## License
 
