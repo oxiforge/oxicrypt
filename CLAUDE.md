@@ -27,7 +27,7 @@ back to the user, and re-run it after any post-review fix-ups.
 
 At each commit boundary, refresh documentation while the context is
 fresh. For any commit that touches a crate — directly or by
-reference — do all four of:
+reference — do all five of:
 
 1. **Rustdoc.** Update the `lib.rs` header and any affected item
    docs of every crate changed or referenced so the "Approved
@@ -46,13 +46,19 @@ reference — do all four of:
 3. **README.** Update `README.md` if the commit changes the
    user-facing status of the crate — algorithm coverage, build
    instructions, workspace layout, or the project phase.
-4. **Project plan.** Update
+4. **LAMA manifests.** Update `lama.yaml` (root, quick-triage
+   summary) and `docs/llm-api-manifest/llm-api.yaml` (full
+   manifest) if the commit adds, removes, renames, or changes
+   the signature of any public function, type, or entry point.
+   The manifests are how AI agents discover the library, so
+   they must stay in sync with the actual API surface.
+5. **Project plan.** Update
    `~/carakastan/Projects/PQClib/rust-fips-project-plan.md`
    current-status section and chunk checklists to reflect what
    the commit actually landed. This file lives outside the repo
    in the PQClib project folder — do not commit it.
 
-These four doc updates ship **in the same commit** as the code
+These five doc updates ship **in the same commit** as the code
 change — not as a follow-up — so reviewers always see the code
 and its documentation evolve together.
 
