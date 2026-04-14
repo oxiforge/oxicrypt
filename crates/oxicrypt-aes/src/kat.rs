@@ -98,7 +98,7 @@ const FIPS197_CT256: [u8; 16] = [
 ];
 
 fn self_test_ecb_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new(&FIPS197_KEY128);
+    let k = Aes128Key::new_internal(&FIPS197_KEY128);
     let mut blk = FIPS197_PT;
     k.encrypt_block(&mut blk);
     if blk != FIPS197_CT128 {
@@ -112,7 +112,7 @@ fn self_test_ecb_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ecb_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&FIPS197_KEY192);
+    let k = Aes192Key::new_internal(&FIPS197_KEY192);
     let mut blk = FIPS197_PT;
     k.encrypt_block(&mut blk);
     if blk != FIPS197_CT192 {
@@ -126,7 +126,7 @@ fn self_test_ecb_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ecb_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&FIPS197_KEY256);
+    let k = Aes256Key::new_internal(&FIPS197_KEY256);
     let mut blk = FIPS197_PT;
     k.encrypt_block(&mut blk);
     if blk != FIPS197_CT256 {
@@ -184,7 +184,7 @@ const CBC256_CT: [u8; 64] = [
 ];
 
 fn self_test_cbc_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new(&CBC128_KEY);
+    let k = Aes128Key::new_internal(&CBC128_KEY);
     let mut ct = [0u8; 64];
     cbc_encrypt(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CBC128_CT {
@@ -199,7 +199,7 @@ fn self_test_cbc_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_cbc_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&CBC192_KEY);
+    let k = Aes192Key::new_internal(&CBC192_KEY);
     let mut ct = [0u8; 64];
     cbc_encrypt(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CBC192_CT {
@@ -214,7 +214,7 @@ fn self_test_cbc_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_cbc_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&CBC256_KEY);
+    let k = Aes256Key::new_internal(&CBC256_KEY);
     let mut ct = [0u8; 64];
     cbc_encrypt(&k, &SP38A_CBC_IV, &SP38A_PT, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != CBC256_CT {
@@ -261,7 +261,7 @@ const CTR256_CT: [u8; 64] = [
 ];
 
 fn self_test_ctr_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new(&CBC128_KEY);
+    let k = Aes128Key::new_internal(&CBC128_KEY);
     let mut ct = [0u8; 64];
     ctr_xor(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct);
     if ct != CTR128_CT {
@@ -276,7 +276,7 @@ fn self_test_ctr_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ctr_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&CBC192_KEY);
+    let k = Aes192Key::new_internal(&CBC192_KEY);
     let mut ct = [0u8; 64];
     ctr_xor(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct);
     if ct != CTR192_CT {
@@ -291,7 +291,7 @@ fn self_test_ctr_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ctr_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&CBC256_KEY);
+    let k = Aes256Key::new_internal(&CBC256_KEY);
     let mut ct = [0u8; 64];
     ctr_xor(&k, &SP38A_CTR_ICB, &SP38A_PT, &mut ct);
     if ct != CTR256_CT {
@@ -366,7 +366,7 @@ const GCM256_TAG: [u8; 16] = [
 ];
 
 fn self_test_gcm_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new(&GCM128_KEY);
+    let k = Aes128Key::new_internal(&GCM128_KEY);
     let mut ct = [0u8; 64];
     let mut tag = [0u8; 16];
     gcm_encrypt(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
@@ -382,7 +382,7 @@ fn self_test_gcm_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_gcm_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&GCM192_KEY);
+    let k = Aes192Key::new_internal(&GCM192_KEY);
     let mut ct = [0u8; 64];
     let mut tag = [0u8; 16];
     gcm_encrypt(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
@@ -398,7 +398,7 @@ fn self_test_gcm_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_gcm_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&GCM256_KEY);
+    let k = Aes256Key::new_internal(&GCM256_KEY);
     let mut ct = [0u8; 64];
     let mut tag = [0u8; 16];
     gcm_encrypt(&k, &GCM_IV, &[], &GCM_PT, &mut ct, &mut tag).map_err(|_| SelfTestFailure)?;
@@ -484,7 +484,7 @@ const RFC3394_46_CT: [u8; 40] = [
 ];
 
 fn self_test_kw_aes128_pt128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new(&RFC3394_41_KEK);
+    let k = Aes128Key::new_internal(&RFC3394_41_KEK);
     let mut ct = [0u8; 24];
     kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_41_CT {
@@ -499,7 +499,7 @@ fn self_test_kw_aes128_pt128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes192_pt128() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&RFC3394_42_KEK);
+    let k = Aes192Key::new_internal(&RFC3394_42_KEK);
     let mut ct = [0u8; 24];
     kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_42_CT {
@@ -514,7 +514,7 @@ fn self_test_kw_aes192_pt128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes256_pt128() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&RFC3394_43_KEK);
+    let k = Aes256Key::new_internal(&RFC3394_43_KEK);
     let mut ct = [0u8; 24];
     kw_wrap(&k, &RFC3394_PT_128, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_43_CT {
@@ -529,7 +529,7 @@ fn self_test_kw_aes256_pt128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes192_pt192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&RFC3394_42_KEK);
+    let k = Aes192Key::new_internal(&RFC3394_42_KEK);
     let mut ct = [0u8; 32];
     kw_wrap(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_44_CT {
@@ -544,7 +544,7 @@ fn self_test_kw_aes192_pt192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes256_pt192() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&RFC3394_43_KEK);
+    let k = Aes256Key::new_internal(&RFC3394_43_KEK);
     let mut ct = [0u8; 32];
     kw_wrap(&k, &RFC3394_PT_192, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_45_CT {
@@ -559,7 +559,7 @@ fn self_test_kw_aes256_pt192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kw_aes256_pt256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&RFC3394_43_KEK);
+    let k = Aes256Key::new_internal(&RFC3394_43_KEK);
     let mut ct = [0u8; 40];
     kw_wrap(&k, &RFC3394_PT_256, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC3394_46_CT {
@@ -601,7 +601,7 @@ const RFC5649_CT_20: [u8; 32] = [
 ];
 
 fn self_test_kwp_aes192_7() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&RFC5649_KEK);
+    let k = Aes192Key::new_internal(&RFC5649_KEK);
     let mut ct = [0u8; 16];
     kwp_wrap(&k, &RFC5649_PT_7, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC5649_CT_7 {
@@ -616,7 +616,7 @@ fn self_test_kwp_aes192_7() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_kwp_aes192_20() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&RFC5649_KEK);
+    let k = Aes192Key::new_internal(&RFC5649_KEK);
     let mut ct = [0u8; 32];
     kwp_wrap(&k, &RFC5649_PT_20, &mut ct).map_err(|_| SelfTestFailure)?;
     if ct != RFC5649_CT_20 {
@@ -694,7 +694,7 @@ const CCM_VPT256_CT: [u8; 32] = [
 ];
 
 fn self_test_ccm_aes128() -> Result<(), SelfTestFailure> {
-    let k = Aes128Key::new(&CCM_VPT128_KEY);
+    let k = Aes128Key::new_internal(&CCM_VPT128_KEY);
     let mut ct = [0u8; 32];
     ccm_encrypt(&k, &CCM_VPT128_NONCE, &CCM_VPT128_AAD, &CCM_VPT128_PT, 16, &mut ct)
         .map_err(|_| SelfTestFailure)?;
@@ -711,7 +711,7 @@ fn self_test_ccm_aes128() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ccm_aes192() -> Result<(), SelfTestFailure> {
-    let k = Aes192Key::new(&CCM_VPT192_KEY);
+    let k = Aes192Key::new_internal(&CCM_VPT192_KEY);
     let mut ct = [0u8; 32];
     ccm_encrypt(&k, &CCM_VPT192_NONCE, &CCM_VPT192_AAD, &CCM_VPT192_PT, 16, &mut ct)
         .map_err(|_| SelfTestFailure)?;
@@ -728,7 +728,7 @@ fn self_test_ccm_aes192() -> Result<(), SelfTestFailure> {
 }
 
 fn self_test_ccm_aes256() -> Result<(), SelfTestFailure> {
-    let k = Aes256Key::new(&CCM_VPT256_KEY);
+    let k = Aes256Key::new_internal(&CCM_VPT256_KEY);
     let mut ct = [0u8; 32];
     ccm_encrypt(&k, &CCM_VPT256_NONCE, &CCM_VPT256_AAD, &CCM_VPT256_PT, 16, &mut ct)
         .map_err(|_| SelfTestFailure)?;

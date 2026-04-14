@@ -114,8 +114,8 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         initialize_with_tests(oxicrypt_aes::KATS).unwrap();
-        let key = Aes256Key::new(&[0u8; 32]);  // use a real key
-        let iv = [0u8; 12];                    // use a unique nonce
+        let key = Aes256Key::new(&[0u8; 32])?;  // use a real key
+        let iv = [0u8; 12];                     // use a unique nonce
         let mut ct = [0u8; 16];
         let mut tag = [0u8; 16];
         gcm_encrypt(&key, &iv, b"", b"hello, world!   ", &mut ct, &mut tag).unwrap();

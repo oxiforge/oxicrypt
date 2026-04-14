@@ -82,7 +82,7 @@ fn main() {
     let aad = b"additional authenticated data";
     let plaintext = b"Secrets worth protecting";
 
-    let cipher = oxicrypt_aes::Aes256Key::new(&aes_key);
+    let cipher = oxicrypt_aes::Aes256Key::new(&aes_key).expect("valid key");
     let mut ciphertext = vec![0u8; plaintext.len()];
     let mut tag_out = [0u8; 16];
     oxicrypt_aes::gcm_encrypt(&cipher, &iv, aad, plaintext, &mut ciphertext, &mut tag_out)

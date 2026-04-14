@@ -13,7 +13,7 @@ fn main() {
 
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(&entropy, &nonce, b"example-personalization")
-        .expect("drbg instantiate");
+        .expect("drbg instantiate - module gating failed");
 
     let mut output = [0u8; 32];
     drbg.generate(None, &mut output).expect("drbg generate");

@@ -25,7 +25,7 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_operational, require_allowed, Service, Error, SelfTestFailure};
 use oxicrypt_sha::sha512::Sha512;
 
 use crate::edwards::EdwardsPoint;
@@ -163,6 +163,7 @@ pub fn verify_internal(
 /// is not in the `Operational` state.
 pub fn keygen(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
     require_operational()?;
+    require_allowed(Service::Ed25519Keygen)?;
     Ok(keygen_internal(seed))
 }
 
@@ -173,6 +174,7 @@ pub fn keygen(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
 /// is not in the `Operational` state.
 pub fn sign(seed: &[u8; SEED_LEN], message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
     require_operational()?;
+    require_allowed(Service::Ed25519Sign)?;
     Ok(sign_internal(seed, message))
 }
 
@@ -187,6 +189,7 @@ pub fn verify(
     signature: &[u8; SIGNATURE_LEN],
 ) -> Result<bool, Error> {
     require_operational()?;
+    require_allowed(Service::Ed25519Verify)?;
     Ok(verify_internal(public_key, message, signature))
 }
 
@@ -248,6 +251,7 @@ impl Ed25519PrivateKey {
     /// primitive).
     pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Ed25519Keygen)?;
         Self::generate_internal(drbg).ok_or(Error::InvalidInput)
     }
 
@@ -262,6 +266,7 @@ impl Ed25519PrivateKey {
     /// if the PCT sign-verify round-trip fails.
     pub fn from_seed(seed: &[u8; SEED_LEN]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Ed25519Keygen)?;
         Self::from_seed_internal(seed).ok_or(Error::InvalidInput)
     }
 
@@ -274,6 +279,7 @@ impl Ed25519PrivateKey {
     /// completed its power-up self-tests.
     pub fn sign(&self, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
         require_operational()?;
+        require_allowed(Service::Ed25519Sign)?;
         Ok(sign_internal(&self.seed, message))
     }
 

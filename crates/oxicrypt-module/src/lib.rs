@@ -596,6 +596,18 @@ pub enum Service {
     Aes256Kw = 95,
     Aes256Kwp = 96,
 
+    // Key-construction gates — checked when building an AES key
+    // object before the caller selects a mode.  All per-mode
+    // variants of the same key size share identical profile
+    // permissions, so a single gate at key construction is
+    // sufficient.
+    /// AES-128 key construction (gates all AES-128 mode services).
+    Aes128 = 97,
+    /// AES-192 key construction (gates all AES-192 mode services).
+    Aes192 = 98,
+    /// AES-256 key construction (gates all AES-256 mode services).
+    Aes256 = 99,
+
     // ----- oxicrypt-drbg: SP 800-90A -----
     CtrDrbgAes128 = 100,
     CtrDrbgAes192 = 101,
@@ -760,6 +772,9 @@ impl fmt::Display for Service {
             Self::Aes256Ccm => "AES-256-CCM",
             Self::Aes256Kw => "AES-256-KW",
             Self::Aes256Kwp => "AES-256-KWP",
+            Self::Aes128 => "AES-128",
+            Self::Aes192 => "AES-192",
+            Self::Aes256 => "AES-256",
             Self::CtrDrbgAes128 => "CTR_DRBG-AES-128",
             Self::CtrDrbgAes192 => "CTR_DRBG-AES-192",
             Self::CtrDrbgAes256 => "CTR_DRBG-AES-256",
@@ -880,6 +895,7 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::Aes256Ccm
             | Service::Aes256Kw
             | Service::Aes256Kwp
+            | Service::Aes256
             // SHA-384, SHA-512
             | Service::Sha384
             | Service::Sha512
@@ -948,6 +964,7 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
             | Service::Aes256Ccm
             | Service::Aes256Kw
             | Service::Aes256Kwp
+            | Service::Aes256
             // SHA-256, SHA-384, SHA-512 (SHA-256 needed for certs)
             | Service::Sha256
             | Service::Sha384

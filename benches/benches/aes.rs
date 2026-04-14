@@ -12,7 +12,7 @@ fn bench_aes256_gcm_encrypt(c: &mut Criterion) {
     oxicrypt_bench::init_module();
 
     let raw_key = [0x42u8; 32];
-    let key = Aes256Key::new(&raw_key);
+    let key = Aes256Key::new(&raw_key).expect("valid key");
     let iv = [0u8; 12];
     let aad = b"";
 
@@ -43,7 +43,7 @@ fn bench_aes256_ecb_block(c: &mut Criterion) {
     oxicrypt_bench::init_module();
 
     let raw_key = [0x42u8; 32];
-    let key = Aes256Key::new(&raw_key);
+    let key = Aes256Key::new(&raw_key).expect("valid key");
     let plaintext = [0xABu8; 16];
     let mut ciphertext = [0u8; 16];
 

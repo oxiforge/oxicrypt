@@ -61,7 +61,8 @@ fn generate_cmac_lifecycle_slice() {
         let mut msg = [0u8; 64];
         drbg.generate(None, &mut msg).expect("drbg gen msg");
 
-        let tag = oxicrypt_cmac::cmac_aes256(&key_bytes, &msg);
+        let tag = oxicrypt_cmac::cmac_aes256(&key_bytes, &msg)
+            .expect("CMAC-AES256 failed");
         let msg_hex = hex_upper(&msg);
         let mac_hex = hex_upper(&tag);
 

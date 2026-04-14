@@ -31,7 +31,7 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_operational, require_allowed, Service, Error, SelfTestFailure};
 use oxicrypt_sha::sha256::Sha256;
 
 use crate::p256_keygen::{generate_p256_internal, sample_scalar_internal};
@@ -185,6 +185,7 @@ pub fn derive_public_key(
     d_bytes: &[u8; PRIVATE_KEY_LEN],
 ) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
     require_operational()?;
+    require_allowed(Service::EcdsaP256Keygen)?;
     derive_public_key_internal(d_bytes).ok_or(Error::InvalidInput)
 }
 
@@ -202,6 +203,7 @@ pub fn sign_with_k(
     k_bytes: &[u8; 32],
 ) -> Result<[u8; SIGNATURE_LEN], Error> {
     require_operational()?;
+    require_allowed(Service::EcdsaP256Sign)?;
     sign_with_k_internal(d_bytes, msg, k_bytes).ok_or(Error::InvalidInput)
 }
 
@@ -218,6 +220,7 @@ pub fn verify(
     sig: &[u8; SIGNATURE_LEN],
 ) -> Result<bool, Error> {
     require_operational()?;
+    require_allowed(Service::EcdsaP256Verify)?;
     Ok(verify_internal(pk_bytes, msg, sig))
 }
 
@@ -319,6 +322,7 @@ impl EcdsaP256PrivateKey {
         d_bytes: &[u8; PRIVATE_KEY_LEN],
     ) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::EcdsaP256Keygen)?;
         Self::from_bytes_internal(drbg, d_bytes).ok_or(Error::InvalidInput)
     }
 
@@ -334,6 +338,7 @@ impl EcdsaP256PrivateKey {
     /// indicate a faulted sign or verify primitive).
     pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::EcdsaP256Keygen)?;
         Self::generate_internal(drbg).ok_or(Error::InvalidInput)
     }
 
@@ -355,6 +360,7 @@ impl EcdsaP256PrivateKey {
         msg: &[u8],
     ) -> Result<[u8; SIGNATURE_LEN], Error> {
         require_operational()?;
+        require_allowed(Service::EcdsaP256Sign)?;
         self.sign_sha256_internal(drbg, msg)
             .ok_or(Error::InvalidInput)
     }

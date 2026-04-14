@@ -31,6 +31,8 @@
     clippy::many_single_char_names
 )]
 
+use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+
 /// AES block size in bytes. Rijndael allows other sizes; AES fixes
 /// `Nb = 4` (128-bit block).
 pub const BLOCK_SIZE: usize = 16;
@@ -325,8 +327,24 @@ fn round_key(rk: &[u8], round: usize) -> &[u8; 16] {
 }
 
 impl Aes128Key {
-    /// Construct from a 16-byte key.
-    pub fn new(key: &[u8; 16]) -> Self {
+    /// Construct from a 16-byte key, enforcing the module boundary
+    /// and algorithm-profile restriction.
+    ///
+    /// Returns [`Error::NotOperational`] if the module has not
+    /// completed its power-up self-tests, or
+    /// [`Error::AlgorithmRestricted`] if the active profile does not
+    /// permit AES-128.
+    pub fn new(key: &[u8; 16]) -> Result<Self, Error> {
+        require_operational()?;
+        require_allowed(Service::Aes128)?;
+        Ok(Self::new_internal(key))
+    }
+    /// Constructor that bypasses the module state machine.
+    ///
+    /// Used by power-up KATs and downstream crates (CMAC, CTR_DRBG)
+    /// that run during `SelfTest`.
+    #[doc(hidden)]
+    pub fn new_internal(key: &[u8; 16]) -> Self {
         let mut rk = [0u8; 16 * 11];
         expand_key(key, 4, 10, &mut rk);
         Self { rk }
@@ -348,8 +366,16 @@ impl Drop for Aes128Key {
 }
 
 impl Aes192Key {
-    /// Construct from a 24-byte key.
-    pub fn new(key: &[u8; 24]) -> Self {
+    /// Construct from a 24-byte key, enforcing the module boundary
+    /// and algorithm-profile restriction.
+    pub fn new(key: &[u8; 24]) -> Result<Self, Error> {
+        require_operational()?;
+        require_allowed(Service::Aes192)?;
+        Ok(Self::new_internal(key))
+    }
+    /// Constructor that bypasses the module state machine.
+    #[doc(hidden)]
+    pub fn new_internal(key: &[u8; 24]) -> Self {
         let mut rk = [0u8; 16 * 13];
         expand_key(key, 6, 12, &mut rk);
         Self { rk }
@@ -371,8 +397,16 @@ impl Drop for Aes192Key {
 }
 
 impl Aes256Key {
-    /// Construct from a 32-byte key.
-    pub fn new(key: &[u8; 32]) -> Self {
+    /// Construct from a 32-byte key, enforcing the module boundary
+    /// and algorithm-profile restriction.
+    pub fn new(key: &[u8; 32]) -> Result<Self, Error> {
+        require_operational()?;
+        require_allowed(Service::Aes256)?;
+        Ok(Self::new_internal(key))
+    }
+    /// Constructor that bypasses the module state machine.
+    #[doc(hidden)]
+    pub fn new_internal(key: &[u8; 32]) -> Self {
         let mut rk = [0u8; 16 * 15];
         expand_key(key, 8, 14, &mut rk);
         Self { rk }
@@ -413,7 +447,7 @@ mod tests {
             0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
             0xc5, 0x5a,
         ];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let mut buf = pt;
         k.encrypt_block(&mut buf);
         assert_eq!(buf, ct_expected);
@@ -436,7 +470,7 @@ mod tests {
             0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d,
             0x71, 0x91,
         ];
-        let k = Aes192Key::new(&key);
+        let k = Aes192Key::new_internal(&key);
         let mut buf = pt;
         k.encrypt_block(&mut buf);
         assert_eq!(buf, ct_expected);
@@ -460,7 +494,7 @@ mod tests {
             0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
             0x60, 0x89,
         ];
-        let k = Aes256Key::new(&key);
+        let k = Aes256Key::new_internal(&key);
         let mut buf = pt;
         k.encrypt_block(&mut buf);
         assert_eq!(buf, ct_expected);

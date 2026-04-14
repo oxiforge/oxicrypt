@@ -93,8 +93,8 @@ All 11 types share: `new(key: &[u8]) -> Result<Self, Error>`,
 
 ### Key types
 
-`Aes128Key::new(&[u8; 16])`, `Aes192Key::new(&[u8; 24])`,
-`Aes256Key::new(&[u8; 32])`.
+`Aes128Key::new(&[u8; 16]) -> Result<Self, Error>`, `Aes192Key::new(&[u8; 24]) -> Result<Self, Error>`,
+`Aes256Key::new(&[u8; 32]) -> Result<Self, Error>`.
 
 ### Mode operations
 

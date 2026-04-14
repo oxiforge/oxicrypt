@@ -11,7 +11,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha256::{compress256, BLOCK_SIZE as SHA256_BLOCK};
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
 
 /// Output length of SHA-224 in bytes (28 = 224/8).
 pub const DIGEST_SIZE: usize = 28;
@@ -47,6 +47,7 @@ impl Sha224 {
     /// Creates a new SHA-224 hasher, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha224)?;
         Ok(Self::new_internal())
     }
 

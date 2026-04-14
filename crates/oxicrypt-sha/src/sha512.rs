@@ -22,7 +22,7 @@
     clippy::needless_range_loop
 )]
 
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
 
 /// Output length of SHA-512 in bytes.
 pub const DIGEST_SIZE: usize = 64;
@@ -270,6 +270,7 @@ impl Sha512 {
     /// Creates a new SHA-512 hasher, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha512)?;
         Ok(Self::new_internal())
     }
 

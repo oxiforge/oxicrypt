@@ -304,7 +304,7 @@ mod tests {
             0x1F, 0xA6, 0x8B, 0x0A, 0x81, 0x12, 0xB4, 0x47, 0xAE, 0xF3, 0x4B, 0xD8, 0xFB, 0x5A,
             0x7B, 0x82, 0x9D, 0x3E, 0x86, 0x23, 0x71, 0xD2, 0xCF, 0xE5,
         ];
-        let k = Aes128Key::new(&kek);
+        let k = Aes128Key::new_internal(&kek);
         let mut ct = [0u8; 24];
         kw_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -331,7 +331,7 @@ mod tests {
             0xF8, 0x26, 0x3F, 0x57, 0x86, 0xE2, 0xD8, 0x0E, 0xD3, 0x26, 0xCB, 0xC7, 0xF0, 0xE7,
             0x1A, 0x99, 0xF4, 0x3B, 0xFB, 0x98, 0x8B, 0x9B, 0x7A, 0x02, 0xDD, 0x21,
         ];
-        let k = Aes256Key::new(&kek);
+        let k = Aes256Key::new_internal(&kek);
         let mut ct = [0u8; 40];
         kw_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -352,7 +352,7 @@ mod tests {
             0xaf, 0xbe, 0xb0, 0xf0, 0x7d, 0xfb, 0xf5, 0x41, 0x92, 0x00, 0xf2, 0xcc, 0xb5, 0x0b,
             0xb2, 0x4f,
         ];
-        let k = Aes192Key::new(&kek);
+        let k = Aes192Key::new_internal(&kek);
         let mut ct = [0u8; 16];
         kwp_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -378,7 +378,7 @@ mod tests {
             0x48, 0xee, 0x5a, 0xe6, 0xae, 0x53, 0x60, 0xd1, 0xae, 0x6a, 0x5f, 0x54, 0xf3, 0x73,
             0xfa, 0x54, 0x3b, 0x6a,
         ];
-        let k = Aes192Key::new(&kek);
+        let k = Aes192Key::new_internal(&kek);
         let mut ct = [0u8; 32];
         kwp_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -392,7 +392,7 @@ mod tests {
     fn kw_rejects_tampered_icv() {
         let kek = [0u8; 16];
         let pt = [0xaau8; 16];
-        let k = Aes128Key::new(&kek);
+        let k = Aes128Key::new_internal(&kek);
         let mut ct = [0u8; 24];
         kw_wrap(&k, &pt, &mut ct).unwrap();
         ct[0] ^= 1;

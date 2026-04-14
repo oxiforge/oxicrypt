@@ -16,7 +16,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::keccak::Sponge;
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
 
 /// Domain-separation byte for SHA-3 fixed-length variants.
 const SHA3_DOMAIN: u8 = 0x06;
@@ -83,6 +83,7 @@ impl Sha3_224 {
     /// Creates a new SHA3-224 hasher, enforcing the module boundary.
     pub fn new_224() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha3_224)?;
         Ok(Self::new_internal())
     }
 }
@@ -137,6 +138,7 @@ impl Sha3_256 {
     /// Creates a new SHA3-256 hasher, enforcing the module boundary.
     pub fn new_256() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha3_256)?;
         Ok(Self::new_internal())
     }
 }
@@ -190,6 +192,7 @@ impl Sha3_384 {
     /// Creates a new SHA3-384 hasher, enforcing the module boundary.
     pub fn new_384() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha3_384)?;
         Ok(Self::new_internal())
     }
 }
@@ -245,6 +248,7 @@ impl Sha3_512 {
     /// Creates a new SHA3-512 hasher, enforcing the module boundary.
     pub fn new_512() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha3_512)?;
         Ok(Self::new_internal())
     }
 }

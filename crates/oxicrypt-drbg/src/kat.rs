@@ -165,7 +165,7 @@ const AES256_DF_EXPECTED: [u8; 64] = [
 
 fn run_aes128_no_df() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes128::new();
-    drbg.instantiate_no_df(&AES128_NODF_ENTROPY)
+    drbg.instantiate_no_df_internal(&AES128_NODF_ENTROPY)
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_no_df(None, &mut out)
@@ -180,7 +180,7 @@ fn run_aes128_no_df() -> Result<(), SelfTestFailure> {
 
 fn run_aes192_no_df() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes192::new();
-    drbg.instantiate_no_df(&AES192_NODF_ENTROPY)
+    drbg.instantiate_no_df_internal(&AES192_NODF_ENTROPY)
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_no_df(None, &mut out)
@@ -195,7 +195,7 @@ fn run_aes192_no_df() -> Result<(), SelfTestFailure> {
 
 fn run_aes256_no_df() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes256::new();
-    drbg.instantiate_no_df(&AES256_NODF_ENTROPY)
+    drbg.instantiate_no_df_internal(&AES256_NODF_ENTROPY)
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_no_df(None, &mut out)
@@ -210,7 +210,7 @@ fn run_aes256_no_df() -> Result<(), SelfTestFailure> {
 
 fn run_aes128_df() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes128::new();
-    drbg.instantiate_df(&AES128_DF_ENTROPY, &AES128_DF_NONCE, &[])
+    drbg.instantiate_df_internal(&AES128_DF_ENTROPY, &AES128_DF_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_df(None, &mut out)
@@ -225,7 +225,7 @@ fn run_aes128_df() -> Result<(), SelfTestFailure> {
 
 fn run_aes192_df() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes192::new();
-    drbg.instantiate_df(&AES192_DF_ENTROPY, &AES192_DF_NONCE, &[])
+    drbg.instantiate_df_internal(&AES192_DF_ENTROPY, &AES192_DF_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_df(None, &mut out)
@@ -324,7 +324,7 @@ const SHA512_EXPECTED: [u8; 256] = [
 
 fn run_aes256_df() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes256::new();
-    drbg.instantiate_df(&AES256_DF_ENTROPY, &AES256_DF_NONCE, &[])
+    drbg.instantiate_df_internal(&AES256_DF_ENTROPY, &AES256_DF_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_df(None, &mut out)
@@ -407,7 +407,7 @@ const HMAC_SHA512_EXPECTED: [u8; 256] = [
 
 fn run_hash_sha256() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha256::new();
-    drbg.instantiate(&SHA256_ENTROPY, &SHA256_NONCE, &[])
+    drbg.instantiate_internal(&SHA256_ENTROPY, &SHA256_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
@@ -420,7 +420,7 @@ fn run_hash_sha256() -> Result<(), SelfTestFailure> {
 
 fn run_hash_sha384() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha384::new();
-    drbg.instantiate(&SHA384_ENTROPY, &SHA384_NONCE, &[])
+    drbg.instantiate_internal(&SHA384_ENTROPY, &SHA384_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
@@ -433,7 +433,7 @@ fn run_hash_sha384() -> Result<(), SelfTestFailure> {
 
 fn run_hash_sha512() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha512::new();
-    drbg.instantiate(&SHA512_ENTROPY, &SHA512_NONCE, &[])
+    drbg.instantiate_internal(&SHA512_ENTROPY, &SHA512_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
@@ -446,7 +446,7 @@ fn run_hash_sha512() -> Result<(), SelfTestFailure> {
 
 fn run_hmac_sha256() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha256::new();
-    drbg.instantiate(&HMAC_SHA256_ENTROPY, &HMAC_SHA256_NONCE, &[])
+    drbg.instantiate_internal(&HMAC_SHA256_ENTROPY, &HMAC_SHA256_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
@@ -459,7 +459,7 @@ fn run_hmac_sha256() -> Result<(), SelfTestFailure> {
 
 fn run_hmac_sha384() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha384::new();
-    drbg.instantiate(&HMAC_SHA384_ENTROPY, &HMAC_SHA384_NONCE, &[])
+    drbg.instantiate_internal(&HMAC_SHA384_ENTROPY, &HMAC_SHA384_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
@@ -472,7 +472,7 @@ fn run_hmac_sha384() -> Result<(), SelfTestFailure> {
 
 fn run_hmac_sha512() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha512::new();
-    drbg.instantiate(&HMAC_SHA512_ENTROPY, &HMAC_SHA512_NONCE, &[])
+    drbg.instantiate_internal(&HMAC_SHA512_ENTROPY, &HMAC_SHA512_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
@@ -747,7 +747,7 @@ const HMAC_SHA512_PR_EXPECTED: [u8; 256] = [
 
 fn run_aes128_df_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes128::new();
-    drbg.instantiate_df(&AES128_DF_PR_ENTROPY, &AES128_DF_PR_NONCE, &[])
+    drbg.instantiate_df_internal(&AES128_DF_PR_ENTROPY, &AES128_DF_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_df_pr(&AES128_DF_PR_ENTROPY_1, &[], &mut out)
@@ -762,7 +762,7 @@ fn run_aes128_df_pr() -> Result<(), SelfTestFailure> {
 
 fn run_aes192_df_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes192::new();
-    drbg.instantiate_df(&AES192_DF_PR_ENTROPY, &AES192_DF_PR_NONCE, &[])
+    drbg.instantiate_df_internal(&AES192_DF_PR_ENTROPY, &AES192_DF_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_df_pr(&AES192_DF_PR_ENTROPY_1, &[], &mut out)
@@ -777,7 +777,7 @@ fn run_aes192_df_pr() -> Result<(), SelfTestFailure> {
 
 fn run_aes256_df_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = CtrDrbgAes256::new();
-    drbg.instantiate_df(&AES256_DF_PR_ENTROPY, &AES256_DF_PR_NONCE, &[])
+    drbg.instantiate_df_internal(&AES256_DF_PR_ENTROPY, &AES256_DF_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 64];
     drbg.generate_df_pr(&AES256_DF_PR_ENTROPY_1, &[], &mut out)
@@ -792,7 +792,7 @@ fn run_aes256_df_pr() -> Result<(), SelfTestFailure> {
 
 fn run_hash_sha256_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha256::new();
-    drbg.instantiate(&HASH_SHA256_PR_ENTROPY, &HASH_SHA256_PR_NONCE, &[])
+    drbg.instantiate_internal(&HASH_SHA256_PR_ENTROPY, &HASH_SHA256_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
     drbg.generate_pr(&HASH_SHA256_PR_ENTROPY_1, &[], &mut out)
@@ -807,7 +807,7 @@ fn run_hash_sha256_pr() -> Result<(), SelfTestFailure> {
 
 fn run_hash_sha384_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha384::new();
-    drbg.instantiate(&HASH_SHA384_PR_ENTROPY, &HASH_SHA384_PR_NONCE, &[])
+    drbg.instantiate_internal(&HASH_SHA384_PR_ENTROPY, &HASH_SHA384_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
     drbg.generate_pr(&HASH_SHA384_PR_ENTROPY_1, &[], &mut out)
@@ -822,7 +822,7 @@ fn run_hash_sha384_pr() -> Result<(), SelfTestFailure> {
 
 fn run_hash_sha512_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha512::new();
-    drbg.instantiate(&HASH_SHA512_PR_ENTROPY, &HASH_SHA512_PR_NONCE, &[])
+    drbg.instantiate_internal(&HASH_SHA512_PR_ENTROPY, &HASH_SHA512_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
     drbg.generate_pr(&HASH_SHA512_PR_ENTROPY_1, &[], &mut out)
@@ -837,7 +837,7 @@ fn run_hash_sha512_pr() -> Result<(), SelfTestFailure> {
 
 fn run_hmac_sha256_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha256::new();
-    drbg.instantiate(&HMAC_SHA256_PR_ENTROPY, &HMAC_SHA256_PR_NONCE, &[])
+    drbg.instantiate_internal(&HMAC_SHA256_PR_ENTROPY, &HMAC_SHA256_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 128];
     drbg.generate_pr(&HMAC_SHA256_PR_ENTROPY_1, &[], &mut out)
@@ -852,7 +852,7 @@ fn run_hmac_sha256_pr() -> Result<(), SelfTestFailure> {
 
 fn run_hmac_sha384_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha384::new();
-    drbg.instantiate(&HMAC_SHA384_PR_ENTROPY, &HMAC_SHA384_PR_NONCE, &[])
+    drbg.instantiate_internal(&HMAC_SHA384_PR_ENTROPY, &HMAC_SHA384_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 192];
     drbg.generate_pr(&HMAC_SHA384_PR_ENTROPY_1, &[], &mut out)
@@ -867,7 +867,7 @@ fn run_hmac_sha384_pr() -> Result<(), SelfTestFailure> {
 
 fn run_hmac_sha512_pr() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha512::new();
-    drbg.instantiate(&HMAC_SHA512_PR_ENTROPY, &HMAC_SHA512_PR_NONCE, &[])
+    drbg.instantiate_internal(&HMAC_SHA512_PR_ENTROPY, &HMAC_SHA512_PR_NONCE, &[])
         .map_err(|_| SelfTestFailure)?;
     let mut out = [0u8; 256];
     drbg.generate_pr(&HMAC_SHA512_PR_ENTROPY_1, &[], &mut out)

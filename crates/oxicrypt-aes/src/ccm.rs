@@ -399,7 +399,7 @@ mod tests {
             0x58, 0x12, 0xee, 0xf0, 0x8e, 0x3f, 0xb1, 0x5f, 0x42, 0x27, 0xe0, 0xd9, 0x89, 0xa4,
             0xd5, 0x87, 0xa8, 0xcf,
         ];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let mut out = [0u8; 32];
         ccm_encrypt(&k, &nonce, &aad, &pt, 16, &mut out).unwrap();
         assert_eq!(out, expected_ct);
@@ -432,7 +432,7 @@ mod tests {
             0x26, 0xaf, 0x40, 0xbc, 0xe5, 0x8f, 0xd4, 0xcd, 0x65, 0x48, 0xdf, 0x90, 0xa0, 0x33,
             0x7c, 0x84, 0x20, 0x04,
         ];
-        let k = Aes192Key::new(&key);
+        let k = Aes192Key::new_internal(&key);
         let mut out = [0u8; 32];
         ccm_encrypt(&k, &nonce, &aad, &pt, 16, &mut out).unwrap();
         assert_eq!(out, expected_ct);
@@ -466,7 +466,7 @@ mod tests {
             0xd2, 0x2a, 0x6f, 0x9d, 0x28, 0xfc, 0xb6, 0x42, 0x34, 0xe1, 0xcd, 0x79, 0x3c, 0x41,
             0x44, 0xf1, 0xda, 0x50,
         ];
-        let k = Aes256Key::new(&key);
+        let k = Aes256Key::new_internal(&key);
         let mut out = [0u8; 32];
         ccm_encrypt(&k, &nonce, &aad, &pt, 16, &mut out).unwrap();
         assert_eq!(out, expected_ct);
@@ -498,7 +498,7 @@ mod tests {
             0xd5, 0x87, 0xa8, 0xcf,
         ];
         ct[0] ^= 0x01;
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let mut dec = [0u8; 16];
         let err = ccm_decrypt(&k, &nonce, &aad, &ct, 16, &mut dec).unwrap_err();
         assert_eq!(err, ModeError::TagMismatch);

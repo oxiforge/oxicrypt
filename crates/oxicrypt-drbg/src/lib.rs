@@ -46,9 +46,14 @@
 //!
 //! # FIPS module gating
 //!
-//! Every public DRBG entry point calls
-//! [`oxicrypt_module::require_operational`]; KAT runners use a hidden
-//! `*_internal` surface to execute during `SelfTest`.
+//! Every public DRBG entry point calls [`oxicrypt_module::require_operational`]
+//! and [`oxicrypt_module::require_allowed`] to enforce algorithm-profile
+//! restrictions. Instantiate and reseed methods now return `Result` and
+//! gate on the active profile via [`oxicrypt_module::Service::CtrDrbgAes128`],
+//! `Service::CtrDrbgAes192`, `Service::CtrDrbgAes256`, `Service::HashDrbgSha256`,
+//! `Service::HashDrbgSha384`, `Service::HashDrbgSha512`, `Service::HmacDrbgSha256`,
+//! `Service::HmacDrbgSha384`, and `Service::HmacDrbgSha512` respectively.
+//! KAT runners use the hidden `*_internal` surface to execute during `SelfTest`.
 #![no_std]
 #![forbid(unsafe_code)]
 

@@ -14,7 +14,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha512::{Sha512State, BLOCK_SIZE as SHA512_BLOCK};
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
 
 // ========================================================================
 // SHA-512/224
@@ -48,6 +48,7 @@ impl Sha512_224 {
     /// Creates a new SHA-512/224 hasher, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha512_224)?;
         Ok(Self::new_internal())
     }
 
@@ -151,6 +152,7 @@ impl Sha512_256 {
     /// Creates a new SHA-512/256 hasher, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha512_256)?;
         Ok(Self::new_internal())
     }
 

@@ -83,7 +83,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, KatEntry, Service, SelfTestFailure};
 use oxicrypt_sha::keccak::Sponge;
 
 /// SHAKE domain-separation byte (FIPS 202 §B.2).
@@ -141,6 +141,7 @@ impl Shake128 {
     /// Creates a new SHAKE128 XOF, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Shake128)?;
         Ok(Self::new_internal())
     }
 
@@ -194,6 +195,7 @@ impl Shake256 {
     /// Creates a new SHAKE256 XOF, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Shake256)?;
         Ok(Self::new_internal())
     }
 
@@ -361,6 +363,7 @@ impl CShake128 {
     /// customization string `S`, enforcing the module boundary.
     pub fn new(n: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::CShake128)?;
         Ok(Self::new_internal(n, s))
     }
 
@@ -416,6 +419,7 @@ impl CShake256 {
     /// customization string `S`, enforcing the module boundary.
     pub fn new(n: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::CShake256)?;
         Ok(Self::new_internal(n, s))
     }
 
@@ -583,6 +587,7 @@ impl Kmac128 {
     /// Creates a new KMAC128 instance, gated on module state.
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Kmac128)?;
         Ok(Self::new_internal(key, s))
     }
 
@@ -629,6 +634,7 @@ impl Kmac256 {
     /// Creates a new KMAC256 instance, gated on module state.
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Kmac256)?;
         Ok(Self::new_internal(key, s))
     }
 
@@ -681,6 +687,7 @@ impl KmacXof128 {
     /// Creates a new KMACXOF128 instance, gated on module state.
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::KmacXof128)?;
         Ok(Self::new_internal(key, s))
     }
 
@@ -737,6 +744,7 @@ impl KmacXof256 {
     /// Creates a new KMACXOF256 instance, gated on module state.
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::KmacXof256)?;
         Ok(Self::new_internal(key, s))
     }
 
@@ -858,6 +866,7 @@ impl TupleHash128 {
     /// Creates a new instance, gated on module state.
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::TupleHash128)?;
         Ok(Self::new_internal(s))
     }
 
@@ -891,6 +900,7 @@ impl TupleHash256 {
     /// Creates a new instance, gated on module state.
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::TupleHash256)?;
         Ok(Self::new_internal(s))
     }
 
@@ -925,6 +935,7 @@ impl TupleHashXof128 {
     /// Creates a new instance, gated on module state.
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::TupleHashXof128)?;
         Ok(Self::new_internal(s))
     }
 
@@ -964,6 +975,7 @@ impl TupleHashXof256 {
     /// Creates a new instance, gated on module state.
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::TupleHashXof256)?;
         Ok(Self::new_internal(s))
     }
 
@@ -1148,6 +1160,7 @@ impl ParallelHash128 {
     /// customization string `s`, gated on module state.
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::ParallelHash128)?;
         Ok(Self::new_internal(block_size, s))
     }
 
@@ -1182,6 +1195,7 @@ impl ParallelHash256 {
     /// customization string `s`, gated on module state.
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::ParallelHash256)?;
         Ok(Self::new_internal(block_size, s))
     }
 
@@ -1217,6 +1231,7 @@ impl ParallelHashXof128 {
     /// Creates a new instance, gated on module state.
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::ParallelHashXof128)?;
         Ok(Self::new_internal(block_size, s))
     }
 
@@ -1255,6 +1270,7 @@ impl ParallelHashXof256 {
     /// Creates a new instance, gated on module state.
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::ParallelHashXof256)?;
         Ok(Self::new_internal(block_size, s))
     }
 

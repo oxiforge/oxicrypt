@@ -91,7 +91,7 @@ All eleven HMAC instantiations are available: `HmacSha1`, `HmacSha224`,
 ```rust
 use oxicrypt_aes::{Aes256Key, gcm_encrypt, gcm_decrypt};
 
-let key = Aes256Key::new(&key_bytes);
+let key = Aes256Key::new(&key_bytes)?;
 let iv = [0u8; 12];  // 96-bit IV (use a unique IV for each message)
 let aad = b"additional authenticated data";
 let plaintext = b"secret message";
@@ -111,7 +111,7 @@ gcm_decrypt(&key, &iv, aad, &ciphertext, &mut recovered, &tag)?;
 ```rust
 use oxicrypt_aes::{Aes256Key, ctr_xor};
 
-let key = Aes256Key::new(&key_bytes);
+let key = Aes256Key::new(&key_bytes)?;
 let icb = [0u8; 16];  // Initial counter block
 let mut output = vec![0u8; plaintext.len()];
 ctr_xor(&key, &icb, &plaintext, &mut output);
@@ -123,7 +123,7 @@ ctr_xor(&key, &icb, &plaintext, &mut output);
 ```rust
 use oxicrypt_aes::{Aes256Key, cbc_encrypt, cbc_decrypt};
 
-let key = Aes256Key::new(&key_bytes);
+let key = Aes256Key::new(&key_bytes)?;
 let iv = [0u8; 16];
 let mut ct = vec![0u8; plaintext.len()];  // Must be block-aligned
 cbc_encrypt(&key, &iv, &plaintext, &mut ct)?;
@@ -134,7 +134,7 @@ cbc_encrypt(&key, &iv, &plaintext, &mut ct)?;
 ```rust
 use oxicrypt_aes::{Aes256Key, kw_wrap, kw_unwrap};
 
-let kek = Aes256Key::new(&kek_bytes);
+let kek = Aes256Key::new(&kek_bytes)?;
 let mut wrapped = vec![0u8; key_to_wrap.len() + 8];  // +8 for integrity check value
 kw_wrap(&kek, &key_to_wrap, &mut wrapped)?;
 ```

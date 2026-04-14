@@ -44,9 +44,13 @@
 //!
 //! # FIPS module gating
 //!
-//! All public entry points call
-//! [`oxicrypt_module::require_operational`]; KAT runners use the
-//! hidden `*_internal` surface to execute during `SelfTest`.
+//! All public entry points call [`oxicrypt_module::require_operational`]
+//! and [`oxicrypt_module::require_allowed`] to enforce algorithm-profile
+//! restrictions. Key constructors ([`Aes128Key::new`], [`Aes192Key::new`],
+//! [`Aes256Key::new`]) now return `Result` and gate on the active profile
+//! via [`oxicrypt_module::Service::Aes128`], `Service::Aes192`, and
+//! `Service::Aes256` respectively. KAT runners use the hidden `*_internal`
+//! surface to execute during `SelfTest`.
 //!
 //! # Side-channel posture
 //!

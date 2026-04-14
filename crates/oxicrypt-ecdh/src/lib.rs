@@ -78,7 +78,7 @@
 
 use oxicrypt_ecdsa::p256_point::Point;
 use oxicrypt_ecdsa::p256_scalar::Scalar;
-use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
+use oxicrypt_module::{require_operational, require_allowed, Service, Error, KatEntry, SelfTestFailure};
 
 /// Length of a P-256 private-key scalar in bytes.
 pub const PRIVATE_KEY_LEN: usize = 32;
@@ -148,6 +148,7 @@ pub fn compute_shared_secret_p256(
     peer_pk: &[u8; PUBLIC_KEY_LEN],
 ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
     require_operational()?;
+    require_allowed(Service::EcdhP256)?;
     compute_shared_secret_p256_internal(d_bytes, peer_pk).ok_or(Error::InvalidInput)
 }
 

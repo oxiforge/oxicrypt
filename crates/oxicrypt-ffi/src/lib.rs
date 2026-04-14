@@ -269,7 +269,9 @@ pub unsafe extern "C" fn oxicrypt_aes256_gcm_encrypt(
     };
     let tag: &mut [u8; 16] = unsafe { &mut *(tag_out.cast::<[u8; 16]>()) };
 
-    let key = oxicrypt_aes::Aes256Key::new(key_bytes);
+    let Ok(key) = oxicrypt_aes::Aes256Key::new(key_bytes) else {
+        return ERR_INVALID_INPUT;
+    };
     match oxicrypt_aes::gcm_encrypt(&key, iv, aad, pt, ct, tag) {
         Ok(()) => OK,
         Err(_) => ERR_INVALID_INPUT,
@@ -314,7 +316,9 @@ pub unsafe extern "C" fn oxicrypt_aes256_gcm_decrypt(
         Err(e) => return e,
     };
 
-    let key = oxicrypt_aes::Aes256Key::new(key_bytes);
+    let Ok(key) = oxicrypt_aes::Aes256Key::new(key_bytes) else {
+        return ERR_INVALID_INPUT;
+    };
     match oxicrypt_aes::gcm_decrypt(&key, iv, aad, ct, tag, pt) {
         Ok(()) => OK,
         Err(_) => ERR_CRYPTO_FAILED,

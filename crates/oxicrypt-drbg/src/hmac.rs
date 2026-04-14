@@ -29,6 +29,7 @@
 use core::marker::PhantomData;
 
 use oxicrypt_hmac::{HmacSha256, HmacSha384, HmacSha512};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
 use crate::ctr::DrbgError;
 
@@ -52,6 +53,8 @@ const HMAC_DRBG_MAX_BITS_PER_REQ: usize = 1 << 16;
 pub trait HmacAlg {
     /// HMAC output length in bytes.
     const OUTLEN: usize;
+    /// The FIPS module service gate associated with this HMAC algorithm.
+    const DRBG_SERVICE: Service;
     /// Compute `HMAC(key, parts concatenated)` into `out[..OUTLEN]`.
     ///
     /// `out.len()` must be `>= OUTLEN`.
@@ -67,6 +70,7 @@ pub struct HmacSha512Alg;
 
 impl HmacAlg for HmacSha256Alg {
     const OUTLEN: usize = 32;
+    const DRBG_SERVICE: Service = Service::HmacDrbgSha256;
     fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
         let mut h = HmacSha256::new_internal(key);
         for p in parts {
@@ -79,6 +83,7 @@ impl HmacAlg for HmacSha256Alg {
 
 impl HmacAlg for HmacSha384Alg {
     const OUTLEN: usize = 48;
+    const DRBG_SERVICE: Service = Service::HmacDrbgSha384;
     fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
         let mut h = HmacSha384::new_internal(key);
         for p in parts {
@@ -91,6 +96,7 @@ impl HmacAlg for HmacSha384Alg {
 
 impl HmacAlg for HmacSha512Alg {
     const OUTLEN: usize = 64;
+    const DRBG_SERVICE: Service = Service::HmacDrbgSha512;
     fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
         let mut h = HmacSha512::new_internal(key);
         for p in parts {
@@ -198,14 +204,26 @@ impl<H: HmacAlg> HmacDrbg<H> {
         entropy: &[u8],
         nonce: &[u8],
         personalization: &[u8],
-    ) -> Result<(), DrbgError> {
+    ) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(H::DRBG_SERVICE)?;
+        self.instantiate_internal(entropy, nonce, personalization)
+    }
+
+    /// Internal instantiate function used by KAT runners.
+    pub(crate) fn instantiate_internal(
+        &mut self,
+        entropy: &[u8],
+        nonce: &[u8],
+        personalization: &[u8],
+    ) -> Result<(), Error> {
         let total = entropy
             .len()
             .checked_add(nonce.len())
             .and_then(|n| n.checked_add(personalization.len()))
-            .ok_or(DrbgError::InputTooLong)?;
+            .ok_or(Error::InvalidInput)?;
         if total > HMAC_DRBG_MAX_PROVIDED {
-            return Err(DrbgError::InputTooLong);
+            return Err(Error::InvalidInput);
         }
         let outlen = H::OUTLEN;
         // Key = 0x00^outlen, V = 0x01^outlen.
@@ -385,7 +403,7 @@ mod tests {
             "e528e9abf2dece54d47c7e75e5fe302149f817ea9fb4bee6f4199697d04d5b89d54fbb978a15b5c443c9ec21036d2460b6f73ebad0dc2aba6e624abf07745bc107694bb7547bb0995f70de25d6b29e2d3011bb19d27676c07162c8b5ccde0668961df86803482cb37ed6d5c0bb8d50cf1f50d476aa0458bdaba806f48be9dcb8",
         );
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 128];
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
@@ -402,7 +420,7 @@ mod tests {
             "228293e59b1e4545a4ff9f232616fc5108a1128debd0f7c20ace837ca105cbf24c0dac1f9847dafd0d0500721ffad3c684a992d110a549a264d14a8911c50be8cd6a7e8fac783ad95b24f64fd8cc4c8b649eac2b15b363e30df79541a6b8a1caac238949b46643694c85e1d5fcbcd9aaae6260acee660b8a79bea48e079ceb6a5eaf4993a82c3f1b758d7c53e3094eeac63dc255be6dcdcc2b51e5ca45d2b20684a5a8fa5806b96f8461ebf51bc515a7dd8c5475c0e70f2fd0faf7869a99ab6c",
         );
         let mut drbg = HmacDrbgSha384::new();
-        drbg.instantiate(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 192];
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
@@ -420,12 +438,12 @@ mod tests {
         let reseed_ai: [u8; 8] = [0x44u8; 8];
 
         let mut a = HmacDrbgSha256::new();
-        a.instantiate(&entropy, &nonce, &[]).unwrap();
+        a.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out_a = [0u8; 64];
         a.generate_pr(&reseed_e, &reseed_ai, &mut out_a).unwrap();
 
         let mut b = HmacDrbgSha256::new();
-        b.instantiate(&entropy, &nonce, &[]).unwrap();
+        b.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         b.reseed(&reseed_e, &reseed_ai).unwrap();
         let mut out_b = [0u8; 64];
         b.generate(None, &mut out_b).unwrap();
@@ -443,7 +461,7 @@ mod tests {
             "e76491b0260aacfded01ad39fbf1a66a88284caa5123368a2ad9330ee48335e3c9c9ba90e6cbc9429962d60c1a6661edcfaa31d972b8264b9d4562cf18494128a092c17a8da6f3113e8a7edfcd4427082bd390675e9662408144971717303d8dc352c9e8b95e7f35fa2ac9f549b292bc7c4bc7f01ee0a577859ef6e82d79ef23892d167c140d22aac32b64ccdfeee2730528a38763b24227f91ac3ffe47fb11538e435307e77481802b0f613f370ffb0dbeab774fe1efbb1a80d01154a9459e73ad361108bbc86b0914f095136cbe634555ce0bb263618dc5c367291ce0825518987154fe9ecb052b3f0a256fcc30cc14572531c9628973639beda456f2bddf6",
         );
         let mut drbg = HmacDrbgSha512::new();
-        drbg.instantiate(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 256];
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();

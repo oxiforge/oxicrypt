@@ -22,7 +22,7 @@
 #![forbid(unsafe_code)]
 
 use oxicrypt_kdf::PrfHmac;
-use oxicrypt_module::{KatEntry, SelfTestFailure};
+use oxicrypt_module::{Error, KatEntry, Service, SelfTestFailure, require_allowed, require_operational};
 
 // ── Core PRF ──────────────────────────────────────────────────────
 
@@ -80,6 +80,42 @@ pub fn tls12_prf_internal<P: PrfHmac<L>, const L: usize>(
     }
 }
 
+/// TLS 1.2 PRF expansion with module-state gating (RFC 5246 §5).
+///
+/// Gated wrapper around [`tls12_prf_internal`] that enforces the module
+/// state machine via [`require_operational`] and algorithm-profile
+/// gating via [`require_allowed`].
+///
+/// Fills `out` with `PRF(secret, label, seed)` — the `P_hash`
+/// iterated-HMAC expansion. `label` and `seed` are concatenated
+/// internally (no caller allocation needed).
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module is not in the
+/// `Operational` state, or [`Error`] if the service is blocked by the
+/// current algorithm profile.
+///
+/// # Safety invariant
+///
+/// The `while offset < out.len()` loop guard guarantees all slice
+/// accesses stay in bounds. `offset` advances by at most `L` per
+/// iteration. Arithmetic is bounded by `out.len()` which fits in
+/// `usize` — no wrapping.
+// Allow: loop invariant guarantees in-bounds; arithmetic bounded by len.
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+pub fn tls12_prf<P: PrfHmac<L>, const L: usize>(
+    secret: &[u8],
+    label: &[u8],
+    seed: &[u8],
+    out: &mut [u8],
+) -> Result<(), Error> {
+    require_operational()?;
+    require_allowed(Service::Tls12Kdf)?;
+    tls12_prf_internal::<P, L>(secret, label, seed, out);
+    Ok(())
+}
+
 // ── RFC 7627 Extended Master Secret ───────────────────────────────
 
 /// Master-secret length per RFC 5246 §8.1 — always 48 bytes.
@@ -130,6 +166,47 @@ pub fn tls12_extended_master_secret_internal<P: PrfHmac<L>, const L: usize>(
     );
 
     master_secret
+}
+
+/// Derive master secret and key block with module-state gating
+/// (TLS 1.2 RFC 7627 EMS).
+///
+/// Gated wrapper around [`tls12_extended_master_secret_internal`] that
+/// enforces the module state machine via [`require_operational`] and
+/// algorithm-profile gating via [`require_allowed`].
+///
+/// 1. `master_secret = PRF(pre_master_secret, "extended master secret", session_hash)[0..48]`
+/// 2. `key_block = PRF(master_secret, "key expansion", server_random ‖ client_random)[0..key_block_len]`
+///
+/// Returns the 48-byte master secret and fills `key_block_out`.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module is not in the
+/// `Operational` state, or [`Error`] if the service is blocked by the
+/// current algorithm profile.
+///
+/// # Panics
+///
+/// Panics if `server_random.len() + client_random.len() > 64`.
+// Allow: seed assembly is bounded (TLS randoms are 32 bytes each).
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+pub fn tls12_extended_master_secret<P: PrfHmac<L>, const L: usize>(
+    pre_master_secret: &[u8],
+    session_hash: &[u8],
+    server_random: &[u8],
+    client_random: &[u8],
+    key_block_out: &mut [u8],
+) -> Result<[u8; MASTER_SECRET_LEN], Error> {
+    require_operational()?;
+    require_allowed(Service::Tls12Kdf)?;
+    Ok(tls12_extended_master_secret_internal::<P, L>(
+        pre_master_secret,
+        session_hash,
+        server_random,
+        client_random,
+        key_block_out,
+    ))
 }
 
 // ── Standard (non-EMS) Master Secret ──────────────────────────────
@@ -184,6 +261,47 @@ pub fn tls12_master_secret_internal<P: PrfHmac<L>, const L: usize>(
     );
 
     master_secret
+}
+
+/// Derive master secret and key block with module-state gating
+/// (standard TLS 1.2, no EMS extension).
+///
+/// Gated wrapper around [`tls12_master_secret_internal`] that enforces
+/// the module state machine via [`require_operational`] and
+/// algorithm-profile gating via [`require_allowed`].
+///
+/// 1. `master_secret = PRF(pre_master_secret, "master secret", client_hello_random ‖ server_hello_random)[0..48]`
+/// 2. `key_block = PRF(master_secret, "key expansion", server_random ‖ client_random)[0..key_block_len]`
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module is not in the
+/// `Operational` state, or [`Error`] if the service is blocked by the
+/// current algorithm profile.
+///
+/// # Panics
+///
+/// Panics if any concatenated seed pair exceeds 64 bytes.
+// Allow: seed assembly is bounded (TLS randoms are 32 bytes each).
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+pub fn tls12_master_secret<P: PrfHmac<L>, const L: usize>(
+    pre_master_secret: &[u8],
+    client_hello_random: &[u8],
+    server_hello_random: &[u8],
+    server_random: &[u8],
+    client_random: &[u8],
+    key_block_out: &mut [u8],
+) -> Result<[u8; MASTER_SECRET_LEN], Error> {
+    require_operational()?;
+    require_allowed(Service::Tls12Kdf)?;
+    Ok(tls12_master_secret_internal::<P, L>(
+        pre_master_secret,
+        client_hello_random,
+        server_hello_random,
+        server_random,
+        client_random,
+        key_block_out,
+    ))
 }
 
 // ── Power-up KAT ─────────────────────────────────────────────────

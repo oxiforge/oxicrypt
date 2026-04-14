@@ -127,7 +127,7 @@ pub mod rsa_3072_4096_stub;
 
 use bigint1024::{U1024, BYTES as U1024_BYTES, LIMBS as LIMBS1024};
 use bigint2048::{U2048, BYTES as U2048_BYTES, LIMBS as LIMBS2048};
-use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
+use oxicrypt_module::{require_operational, require_allowed, Service, Error, KatEntry, SelfTestFailure};
 use oxicrypt_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
 use mont1024::MontCtx1024;
 use mont2048::MontCtx2048;
@@ -867,6 +867,7 @@ pub fn rsa_pkcs1_v15_verify_2048_sha256(
     sig_bytes: &[u8; RSA_2048_SIGNATURE_BYTES],
 ) -> Result<(), Error> {
     require_operational()?;
+    require_allowed(Service::RsaPkcs1v15Verify2048)?;
     if rsa_pkcs1_v15_verify_2048_sha256_internal(n_bytes, e, msg, sig_bytes) {
         Ok(())
     } else {
@@ -890,6 +891,7 @@ pub fn rsa_pss_verify_2048_sha256(
     sig_bytes: &[u8; RSA_2048_SIGNATURE_BYTES],
 ) -> Result<(), Error> {
     require_operational()?;
+    require_allowed(Service::RsaPssVerify2048)?;
     if rsa_pss_verify_2048_sha256_internal(n_bytes, e, msg, sig_bytes) {
         Ok(())
     } else {
@@ -920,6 +922,7 @@ pub fn rsa_oaep_encrypt_2048_sha256(
     msg: &[u8],
 ) -> Result<[u8; RSA_2048_MODULUS_BYTES], Error> {
     require_operational()?;
+    require_allowed(Service::RsaOaep2048)?;
     let mut seed = [0u8; oaep::HLEN];
     drbg.generate(None, &mut seed)
         .map_err(|_| Error::InvalidInput)?;
@@ -1038,6 +1041,7 @@ impl RsaPrivateKey2048 {
         d_bytes: &[u8; RSA_2048_MODULUS_BYTES],
     ) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::RsaKeygen2048)?;
         if !pairwise_consistency_test_2048_internal(n_bytes, e, d_bytes) {
             return Err(Error::InvalidInput);
         }
@@ -1074,6 +1078,7 @@ impl RsaPrivateKey2048 {
         qinv_bytes: &[u8; U1024_BYTES],
     ) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::RsaKeygen2048)?;
         // PCT on the CRT path: sign a fixed probe, verify with the
         // public key. The Bellcore check inside the CRT primitive
         // provides an additional structural guard at construction
@@ -1132,6 +1137,7 @@ impl RsaPrivateKey2048 {
         msg: &[u8],
     ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
         require_operational()?;
+        require_allowed(Service::RsaPkcs1v15Sign2048)?;
         if let Some(crt) = self.crt.as_ref() {
             // CRT + Bellcore path.
             rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
@@ -1176,6 +1182,7 @@ impl RsaPrivateKey2048 {
         salt: &[u8; pss::SLEN],
     ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
         require_operational()?;
+        require_allowed(Service::RsaPssSign2048)?;
         if let Some(crt) = self.crt.as_ref() {
             rsa_pss_sign_2048_sha256_crt_internal(
                 &self.n_bytes,
@@ -1218,6 +1225,7 @@ impl RsaPrivateKey2048 {
         msg: &[u8],
     ) -> Result<[u8; RSA_2048_SIGNATURE_BYTES], Error> {
         require_operational()?;
+        require_allowed(Service::RsaPssSign2048)?;
         let mut salt = [0u8; pss::SLEN];
         drbg.generate(None, &mut salt).map_err(|_| Error::InvalidInput)?;
         rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, &salt)
@@ -1266,6 +1274,7 @@ impl RsaPrivateKey2048 {
         out: &mut [u8; oaep::MAX_MSG_LEN],
     ) -> Result<usize, Error> {
         require_operational()?;
+        require_allowed(Service::RsaOaep2048)?;
         if let Some(crt) = self.crt.as_ref() {
             rsa_oaep_decrypt_2048_sha256_crt_internal(
                 &self.n_bytes,
@@ -1319,6 +1328,7 @@ impl RsaPrivateKey2048 {
         e: u64,
     ) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::RsaKeygen2048)?;
         let km = keygen::generate_2048(drbg, e).map_err(|_| Error::InvalidInput)?;
         let n_bytes = km.n.to_be_bytes();
         let d_bytes = km.d.to_be_bytes();

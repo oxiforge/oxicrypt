@@ -23,7 +23,7 @@
 
 use oxicrypt_module::{KatEntry, SelfTestFailure};
 
-use crate::cmac::{cmac_aes128, cmac_aes192, cmac_aes256};
+use crate::cmac::{cmac_aes128_internal, cmac_aes192_internal, cmac_aes256_internal};
 
 // ----------------------------------------------------------------------
 // Shared SP 800-38B Appendix D message (same four 16-byte blocks as
@@ -57,7 +57,7 @@ const D1_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes128_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes128(&D1_KEY, &D_MSG[..16]);
+    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..16]);
     if got == D1_EX2_TAG {
         Ok(())
     } else {
@@ -66,7 +66,7 @@ fn kat_aes128_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes128_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes128(&D1_KEY, &D_MSG[..40]);
+    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..40]);
     if got == D1_EX3_TAG {
         Ok(())
     } else {
@@ -94,7 +94,7 @@ const D2_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes192_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes192(&D2_KEY, &D_MSG[..16]);
+    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..16]);
     if got == D2_EX2_TAG {
         Ok(())
     } else {
@@ -103,7 +103,7 @@ fn kat_aes192_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes192_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes192(&D2_KEY, &D_MSG[..40]);
+    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..40]);
     if got == D2_EX3_TAG {
         Ok(())
     } else {
@@ -131,7 +131,7 @@ const D3_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes256_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes256(&D3_KEY, &D_MSG[..16]);
+    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..16]);
     if got == D3_EX2_TAG {
         Ok(())
     } else {
@@ -140,7 +140,7 @@ fn kat_aes256_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes256_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes256(&D3_KEY, &D_MSG[..40]);
+    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..40]);
     if got == D3_EX3_TAG {
         Ok(())
     } else {

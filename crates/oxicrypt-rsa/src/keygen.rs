@@ -641,6 +641,14 @@ mod tests {
     use super::*;
 
     fn make_drbg(seed: &[u8]) -> HmacDrbgSha256 {
+        // Bring the module to Operational so the gated
+        // `instantiate()` (and any gated key construction it
+        // triggers) succeeds.
+        use oxicrypt_module::{initialize_with_tests, KatEntry};
+        let _ = initialize_with_tests(&[KatEntry {
+            name: "rsa-keygen-test-noop",
+            run: || Ok(()),
+        }]);
         let mut d = HmacDrbgSha256::default();
         d.instantiate(seed, b"pqclib-rsa-keygen-test", b"").unwrap();
         d

@@ -43,10 +43,10 @@
 //!
 //! # FIPS module gating
 //!
-//! Public CMAC entry points call
-//! [`oxicrypt_module::require_operational`]; the `*_internal` path is
-//! used by the KAT runners so self-test can execute during
-//! `SelfTest`.
+//! Public CMAC entry points call [`oxicrypt_module::require_operational`]
+//! and [`oxicrypt_module::require_allowed`]; the `*_internal` variants are
+//! used by the KAT runners so self-test can execute during the `SelfTest`
+//! state before the module transitions to `Operational`.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -54,5 +54,8 @@
 pub mod cmac;
 pub mod kat;
 
-pub use cmac::{cmac_aes128, cmac_aes192, cmac_aes256, cmac_tag, BLOCK_SIZE};
+pub use cmac::{
+    cmac_aes128, cmac_aes128_internal, cmac_aes192, cmac_aes192_internal, cmac_aes256,
+    cmac_aes256_internal, cmac_tag, BLOCK_SIZE,
+};
 pub use kat::KATS;

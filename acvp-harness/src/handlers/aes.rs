@@ -371,21 +371,21 @@ fn dispatch_one_shot(
             let key_arr: [u8; 16] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES AFT: 128-bit key decoded to wrong length")
             })?;
-            let cipher = Aes128Key::new(&key_arr);
+            let cipher = Aes128Key::new_internal(&key_arr);
             run_mode(&cipher, mode, direction, t, input)
         }
         192 => {
             let key_arr: [u8; 24] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES AFT: 192-bit key decoded to wrong length")
             })?;
-            let cipher = Aes192Key::new(&key_arr);
+            let cipher = Aes192Key::new_internal(&key_arr);
             run_mode(&cipher, mode, direction, t, input)
         }
         256 => {
             let key_arr: [u8; 32] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES AFT: 256-bit key decoded to wrong length")
             })?;
-            let cipher = Aes256Key::new(&key_arr);
+            let cipher = Aes256Key::new_internal(&key_arr);
             run_mode(&cipher, mode, direction, t, input)
         }
         _ => Err(DispatchError::Crypto(
@@ -553,21 +553,21 @@ fn dispatch_gcm_encrypt(
             let k: [u8; 16] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES-GCM: 128-bit key wrong length")
             })?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
         }
         192 => {
             let k: [u8; 24] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES-GCM: 192-bit key wrong length")
             })?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
         }
         256 => {
             let k: [u8; 32] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES-GCM: 256-bit key wrong length")
             })?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
         }
         _ => return Err(DispatchError::Crypto("AES-GCM: unsupported keyLen")),
@@ -594,21 +594,21 @@ fn dispatch_gcm_decrypt(
             let k: [u8; 16] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES-GCM: 128-bit key wrong length")
             })?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         192 => {
             let k: [u8; 24] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES-GCM: 192-bit key wrong length")
             })?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         256 => {
             let k: [u8; 32] = key_bytes.try_into().map_err(|_| {
                 DispatchError::Crypto("AES-GCM: 256-bit key wrong length")
             })?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         _ => return Err(DispatchError::Crypto("AES-GCM: unsupported keyLen")),
@@ -703,21 +703,21 @@ fn dispatch_ccm_encrypt(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             ccm_encrypt(&c, nonce, aad, pt, tlen, &mut out)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             ccm_encrypt(&c, nonce, aad, pt, tlen, &mut out)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             ccm_encrypt(&c, nonce, aad, pt, tlen, &mut out)
         }
         _ => return Err(DispatchError::Crypto("AES-CCM: unsupported keyLen")),
@@ -746,21 +746,21 @@ fn dispatch_ccm_decrypt(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             ccm_decrypt(&c, nonce, aad, ct_with_tag, tlen, &mut out)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             ccm_decrypt(&c, nonce, aad, ct_with_tag, tlen, &mut out)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-CCM: key length"))?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             ccm_decrypt(&c, nonce, aad, ct_with_tag, tlen, &mut out)
         }
         _ => return Err(DispatchError::Crypto("AES-CCM: unsupported keyLen")),
@@ -837,7 +837,7 @@ fn dispatch_kw_wrap(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             if with_padding {
                 kwp_wrap(&c, pt, &mut ct)
             } else {
@@ -848,7 +848,7 @@ fn dispatch_kw_wrap(
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             if with_padding {
                 kwp_wrap(&c, pt, &mut ct)
             } else {
@@ -859,7 +859,7 @@ fn dispatch_kw_wrap(
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             if with_padding {
                 kwp_wrap(&c, pt, &mut ct)
             } else {
@@ -885,7 +885,7 @@ fn dispatch_kw_unwrap(
             let k: [u8; 16] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             if with_padding {
                 kwp_unwrap(&c, ct, &mut pt).map(|actual_len| pt.truncate(actual_len))
             } else {
@@ -896,7 +896,7 @@ fn dispatch_kw_unwrap(
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             if with_padding {
                 kwp_unwrap(&c, ct, &mut pt).map(|actual_len| pt.truncate(actual_len))
             } else {
@@ -907,7 +907,7 @@ fn dispatch_kw_unwrap(
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             if with_padding {
                 kwp_unwrap(&c, ct, &mut pt).map(|actual_len| pt.truncate(actual_len))
             } else {
@@ -1177,7 +1177,7 @@ fn ecb_one_block(
             let k: [u8; 16] = key.try_into().map_err(|_| {
                 DispatchError::Crypto("MCT ECB: key length")
             })?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
                 Direction::Decrypt => ecb_decrypt(&c, input, output),
@@ -1187,7 +1187,7 @@ fn ecb_one_block(
             let k: [u8; 24] = key.try_into().map_err(|_| {
                 DispatchError::Crypto("MCT ECB: key length")
             })?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
                 Direction::Decrypt => ecb_decrypt(&c, input, output),
@@ -1197,7 +1197,7 @@ fn ecb_one_block(
             let k: [u8; 32] = key.try_into().map_err(|_| {
                 DispatchError::Crypto("MCT ECB: key length")
             })?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
                 Direction::Decrypt => ecb_decrypt(&c, input, output),
@@ -1225,7 +1225,7 @@ fn cbc_one_block(
             let k: [u8; 16] = key.try_into().map_err(|_| {
                 DispatchError::Crypto("MCT CBC: key length")
             })?;
-            let c = Aes128Key::new(&k);
+            let c = Aes128Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
                 Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
@@ -1235,7 +1235,7 @@ fn cbc_one_block(
             let k: [u8; 24] = key.try_into().map_err(|_| {
                 DispatchError::Crypto("MCT CBC: key length")
             })?;
-            let c = Aes192Key::new(&k);
+            let c = Aes192Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
                 Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),
@@ -1245,7 +1245,7 @@ fn cbc_one_block(
             let k: [u8; 32] = key.try_into().map_err(|_| {
                 DispatchError::Crypto("MCT CBC: key length")
             })?;
-            let c = Aes256Key::new(&k);
+            let c = Aes256Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
                 Direction::Decrypt => cbc_decrypt(&c, &iv16, input, output),

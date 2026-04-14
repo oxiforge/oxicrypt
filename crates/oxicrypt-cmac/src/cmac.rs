@@ -33,6 +33,7 @@
 )]
 
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key, BlockCipher};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
 /// AES block size in bytes. Always 16 for AES.
 pub const BLOCK_SIZE: usize = 16;
@@ -127,28 +128,76 @@ pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> [u8; BLOCK_SIZE] {
     c
 }
 
+/// Compute an AES-128 CMAC tag (internal, no FIPS gating).
+///
+/// For KAT and internal use only. Public callers must use [`cmac_aes128`].
+#[inline]
+pub fn cmac_aes128_internal(key: &[u8; 16], msg: &[u8]) -> [u8; BLOCK_SIZE] {
+    let k = Aes128Key::new_internal(key);
+    cmac_tag(&k, msg)
+}
+
 /// Compute an AES-128 CMAC tag.
-pub fn cmac_aes128(key: &[u8; 16], msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let k = Aes128Key::new(key);
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module has not completed
+/// power-up self-tests. Returns [`Error::AlgorithmRestricted`] if
+/// AES-128-CMAC is not permitted under the active algorithm profile.
+pub fn cmac_aes128(key: &[u8; 16], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    require_operational()?;
+    require_allowed(Service::CmacAes128)?;
+    Ok(cmac_aes128_internal(key, msg))
+}
+
+/// Compute an AES-192 CMAC tag (internal, no FIPS gating).
+///
+/// For KAT and internal use only. Public callers must use [`cmac_aes192`].
+#[inline]
+pub fn cmac_aes192_internal(key: &[u8; 24], msg: &[u8]) -> [u8; BLOCK_SIZE] {
+    let k = Aes192Key::new_internal(key);
     cmac_tag(&k, msg)
 }
 
 /// Compute an AES-192 CMAC tag.
-pub fn cmac_aes192(key: &[u8; 24], msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let k = Aes192Key::new(key);
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module has not completed
+/// power-up self-tests. Returns [`Error::AlgorithmRestricted`] if
+/// AES-192-CMAC is not permitted under the active algorithm profile.
+pub fn cmac_aes192(key: &[u8; 24], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    require_operational()?;
+    require_allowed(Service::CmacAes192)?;
+    Ok(cmac_aes192_internal(key, msg))
+}
+
+/// Compute an AES-256 CMAC tag (internal, no FIPS gating).
+///
+/// For KAT and internal use only. Public callers must use [`cmac_aes256`].
+#[inline]
+pub fn cmac_aes256_internal(key: &[u8; 32], msg: &[u8]) -> [u8; BLOCK_SIZE] {
+    let k = Aes256Key::new_internal(key);
     cmac_tag(&k, msg)
 }
 
 /// Compute an AES-256 CMAC tag.
-pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let k = Aes256Key::new(key);
-    cmac_tag(&k, msg)
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module has not completed
+/// power-up self-tests. Returns [`Error::AlgorithmRestricted`] if
+/// AES-256-CMAC is not permitted under the active algorithm profile.
+pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    require_operational()?;
+    require_allowed(Service::CmacAes256)?;
+    Ok(cmac_aes256_internal(key, msg))
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{cmac_aes128, cmac_aes192, cmac_aes256};
+    use super::{cmac_aes128_internal, cmac_aes192_internal, cmac_aes256_internal};
 
     // SP 800-38B Appendix D.1 Example 1 — Mlen = 0, AES-128
     #[test]
@@ -161,7 +210,7 @@ mod tests {
             0xbb, 0x1d, 0x69, 0x29, 0xe9, 0x59, 0x37, 0x28, 0x7f, 0xa3, 0x7d, 0x12, 0x9b, 0x75,
             0x67, 0x46,
         ];
-        assert_eq!(cmac_aes128(&key, &[]), expected);
+        assert_eq!(cmac_aes128_internal(&key, &[]), expected);
     }
 
     // SP 800-38B Appendix D.1 Example 2 — Mlen = 128, AES-128
@@ -179,7 +228,7 @@ mod tests {
             0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44, 0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a,
             0x28, 0x7c,
         ];
-        assert_eq!(cmac_aes128(&key, &msg), expected);
+        assert_eq!(cmac_aes128_internal(&key, &msg), expected);
     }
 
     // SP 800-38B Appendix D.2 Example 4 — Mlen = 512, AES-192
@@ -200,7 +249,7 @@ mod tests {
             0xa1, 0xd5, 0xdf, 0x0e, 0xed, 0x79, 0x0f, 0x79, 0x4d, 0x77, 0x58, 0x96, 0x59, 0xf3,
             0x9a, 0x11,
         ];
-        assert_eq!(cmac_aes192(&key, &msg), expected);
+        assert_eq!(cmac_aes192_internal(&key, &msg), expected);
     }
 
     // SP 800-38B Appendix D.3 Example 3 — Mlen = 320, AES-256
@@ -221,6 +270,6 @@ mod tests {
             0xaa, 0xf3, 0xd8, 0xf1, 0xde, 0x56, 0x40, 0xc2, 0x32, 0xf5, 0xb1, 0x69, 0xb9, 0xc9,
             0x11, 0xe6,
         ];
-        assert_eq!(cmac_aes256(&key, &msg), expected);
+        assert_eq!(cmac_aes256_internal(&key, &msg), expected);
     }
 }

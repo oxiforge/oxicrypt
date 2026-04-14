@@ -66,12 +66,17 @@
 //! - **Output keying material (OKM)** — CSP returned to the
 //!   caller. Its classification depends on downstream use.
 //!
-//! # FIPS module gating
+//! # FIPS module gating and algorithm profiles
 //!
-//! Every public KDF entry point calls
-//! [`oxicrypt_module::require_operational`]; the KAT runners reach
-//! into the `*_internal` HMAC surface so they can execute while
-//! the module is still in `SelfTest`.
+//! Every public KDF entry point calls both
+//! [`oxicrypt_module::require_operational`] for state-machine gating
+//! and [`oxicrypt_module::require_allowed`] for algorithm-profile
+//! gating. Each KDF variant (e.g., HKDF-SHA-256) maps to a
+//! [`Service`] constant through the
+//! [`PrfHmac`] adapter trait, enforcing the active profile's
+//! restrictions (e.g., CNSA 2.0 restricts some variants). The KAT
+//! runners reach into the `*_internal` surface so they can execute
+//! while the module is still in `SelfTest`.
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(
@@ -85,8 +90,7 @@
 
 use core::marker::PhantomData;
 
-use oxicrypt_hmac::{BlockHash, Hmac};
-use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
+use oxicrypt_module::{require_operational, require_allowed, Error, KatEntry, Service, SelfTestFailure};
 
 // ----------------------------------------------------------------------
 // PrfHmac adapter trait
@@ -105,6 +109,8 @@ use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
 /// semver commitment.
 #[doc(hidden)]
 pub trait PrfHmac<const L: usize>: Sized {
+    /// The KDF service gating this HMAC variant for profile checks.
+    const KDF_SERVICE: Service;
     /// Construct an HMAC keyed with `key`, bypassing the module
     /// state machine (used by both the public API's already-gated
     /// callers and by boot-time KATs).
@@ -115,20 +121,38 @@ pub trait PrfHmac<const L: usize>: Sized {
     fn prf_finalize(&mut self) -> [u8; L];
 }
 
-impl<H, const B: usize, const L: usize> PrfHmac<L> for Hmac<H, B, L>
-where
-    H: BlockHash<B, L>,
-{
-    fn prf_new(key: &[u8]) -> Self {
-        Hmac::new_internal(key)
-    }
-    fn prf_update(&mut self, data: &[u8]) {
-        Hmac::update(self, data);
-    }
-    fn prf_finalize(&mut self) -> [u8; L] {
-        Hmac::finalize(self)
-    }
+// Macro to implement PrfHmac for each HMAC type with its corresponding
+// KDF service constant.
+macro_rules! impl_prf_hmac {
+    ($hmac_type:ty, $kdf_service:expr, $L:expr) => {
+        impl PrfHmac<$L> for $hmac_type {
+            const KDF_SERVICE: Service = $kdf_service;
+
+            fn prf_new(key: &[u8]) -> Self {
+                <$hmac_type>::new_internal(key)
+            }
+            fn prf_update(&mut self, data: &[u8]) {
+                <$hmac_type>::update(self, data);
+            }
+            fn prf_finalize(&mut self) -> [u8; $L] {
+                <$hmac_type>::finalize(self)
+            }
+        }
+    };
 }
+
+// Implement PrfHmac for each HMAC type
+impl_prf_hmac!(oxicrypt_hmac::HmacSha1, Service::HkdfSha1, 20);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha224, Service::HkdfSha256, 28);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha256, Service::HkdfSha256, 32);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha384, Service::HkdfSha384, 48);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha512, Service::HkdfSha512, 64);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha512_224, Service::HkdfSha256, 28);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha512_256, Service::HkdfSha256, 32);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha3_224, Service::HkdfSha256, 28);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha3_256, Service::HkdfSha256, 32);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha3_384, Service::HkdfSha384, 48);
+impl_prf_hmac!(oxicrypt_hmac::HmacSha3_512, Service::HkdfSha512, 64);
 
 // ----------------------------------------------------------------------
 // Error type
@@ -184,10 +208,12 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
     /// Runs HKDF-Extract: `PRK = HMAC(salt, IKM)`.
     ///
     /// A `None` salt is interpreted as `L` zero bytes, per RFC 5869
-    /// §2.2. Enforces [`require_operational`]. For boot-time KATs,
+    /// §2.2. Enforces [`require_operational`] and algorithm-profile
+    /// gating via [`require_allowed`]. For boot-time KATs,
     /// use [`Hkdf::extract_internal`].
     pub fn extract(salt: Option<&[u8]>, ikm: &[u8]) -> Result<Self, KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         Ok(Self::extract_internal(salt, ikm))
     }
 
@@ -215,9 +241,11 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
     /// equal `L`; otherwise `Err(KdfError::OutputTooLong)` is
     /// returned (the length predicate is reused rather than adding
     /// a new error variant — RFC 5869 §2.3 requires `prk.len() == L`
-    /// anyway).
+    /// anyway). Enforces [`require_operational`] and algorithm-profile
+    /// gating via [`require_allowed`].
     pub fn from_prk(prk: &[u8]) -> Result<Self, KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         if prk.len() != L {
             return Err(KdfError::OutputTooLong);
         }
@@ -236,10 +264,12 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
 
     /// Runs HKDF-Expand, filling `okm` with derived key material.
     ///
-    /// Enforces [`require_operational`]. Returns
-    /// [`KdfError::OutputTooLong`] if `okm.len() > 255 * L`.
+    /// Enforces [`require_operational`] and algorithm-profile gating
+    /// via [`require_allowed`]. Returns [`KdfError::OutputTooLong`]
+    /// if `okm.len() > 255 * L`.
     pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         self.expand_internal(info, okm)
     }
 
@@ -528,11 +558,12 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
     /// Derives `out.len()` bytes of key material from `key`, `label`,
     /// and `context`, writing them into `out`.
     ///
-    /// Enforces [`require_operational`]. Returns
-    /// [`KdfError::OutputTooLong`] if the derivation would require
-    /// more than `2^32 - 1` PRF iterations (the hard upper bound set
-    /// by the 32-bit counter encoding) or if `out.len() * 8` does
-    /// not fit in a 32-bit bit-length field.
+    /// Enforces [`require_operational`] and algorithm-profile gating
+    /// via [`require_allowed`]. Returns [`KdfError::OutputTooLong`]
+    /// if the derivation would require more than `2^32 - 1` PRF
+    /// iterations (the hard upper bound set by the 32-bit counter
+    /// encoding) or if `out.len() * 8` does not fit in a 32-bit
+    /// bit-length field.
     pub fn derive(
         key: &[u8],
         label: &[u8],
@@ -540,6 +571,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
         out: &mut [u8],
     ) -> Result<(), KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         Self::derive_internal(key, label, context, out)
     }
 
@@ -828,10 +860,11 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
     /// Derives `out.len()` bytes of key material from `key`, `iv`,
     /// `label`, and `context`, writing them into `out`.
     ///
-    /// Enforces [`require_operational`]. Returns
-    /// [`KdfError::OutputTooLong`] if the derivation would require
-    /// `out.len() * 8` bits beyond what a 32-bit `[L]_32` field can
-    /// encode, matching the counter-mode bound.
+    /// Enforces [`require_operational`] and algorithm-profile gating
+    /// via [`require_allowed`]. Returns [`KdfError::OutputTooLong`]
+    /// if the derivation would require `out.len() * 8` bits beyond
+    /// what a 32-bit `[L]_32` field can encode, matching the
+    /// counter-mode bound.
     pub fn derive(
         key: &[u8],
         iv: &[u8],
@@ -840,6 +873,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         out: &mut [u8],
     ) -> Result<(), KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         Self::derive_internal(key, iv, label, context, out)
     }
 
@@ -1130,10 +1164,11 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
     /// Derives `out.len()` bytes of key material from `key`, `label`,
     /// and `context`, writing them into `out`.
     ///
-    /// Enforces [`require_operational`]. Returns
-    /// [`KdfError::OutputTooLong`] if the derivation would require
-    /// `out.len() * 8` bits beyond what a 32-bit `[L]_32` field can
-    /// encode, matching the counter-mode bound.
+    /// Enforces [`require_operational`] and algorithm-profile gating
+    /// via [`require_allowed`]. Returns [`KdfError::OutputTooLong`]
+    /// if the derivation would require `out.len() * 8` bits beyond
+    /// what a 32-bit `[L]_32` field can encode, matching the
+    /// counter-mode bound.
     pub fn derive(
         key: &[u8],
         label: &[u8],
@@ -1141,6 +1176,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
         out: &mut [u8],
     ) -> Result<(), KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         Self::derive_internal(key, label, context, out)
     }
 
@@ -1420,9 +1456,10 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
     /// Derives `out.len()` bytes from `password`, `salt`, and
     /// iteration count `c`.
     ///
-    /// Enforces [`require_operational`]. Returns
-    /// [`KdfError::OutputTooLong`] if the output would exceed
-    /// `(2^32 − 1) × L` bytes (the RFC 8018 §5.2 maximum).
+    /// Enforces [`require_operational`] and algorithm-profile gating
+    /// via [`require_allowed`]. Returns [`KdfError::OutputTooLong`]
+    /// if the output would exceed `(2^32 − 1) × L` bytes (the RFC 8018
+    /// §5.2 maximum).
     ///
     /// # Panics
     ///
@@ -1434,6 +1471,7 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
         out: &mut [u8],
     ) -> Result<(), KdfError> {
         require_operational()?;
+        require_allowed(P::KDF_SERVICE)?;
         Self::derive_internal(password, salt, c, out)
     }
 

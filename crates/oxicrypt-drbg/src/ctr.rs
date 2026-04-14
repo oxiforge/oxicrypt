@@ -38,6 +38,7 @@ use core::marker::PhantomData;
 
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
 use oxicrypt_aes::modes::BlockCipher;
+use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
 /// AES block size in bytes (`outlen` in SP 800-90A terminology).
 const OUTLEN: usize = 16;
@@ -112,6 +113,8 @@ pub trait CipherFactory {
     const KEY_LEN: usize;
     /// Seed length in bytes (`keylen + outlen`).
     const SEED_LEN: usize;
+    /// The FIPS module service gate associated with this cipher factory.
+    const DRBG_SERVICE: Service;
     /// Concrete `BlockCipher` implementation produced from a key.
     type Cipher: BlockCipher;
     /// Instantiate a block cipher from exactly `KEY_LEN` bytes of
@@ -135,36 +138,39 @@ pub struct Aes256Factory;
 impl CipherFactory for Aes128Factory {
     const KEY_LEN: usize = 16;
     const SEED_LEN: usize = 32;
+    const DRBG_SERVICE: Service = Service::CtrDrbgAes128;
     type Cipher = Aes128Key;
     fn from_key(key: &[u8]) -> Self::Cipher {
         debug_assert!(key.len() == Self::KEY_LEN);
         let mut k = [0u8; 16];
         k.copy_from_slice(&key[..16]);
-        Aes128Key::new(&k)
+        Aes128Key::new_internal(&k)
     }
 }
 
 impl CipherFactory for Aes192Factory {
     const KEY_LEN: usize = 24;
     const SEED_LEN: usize = 40;
+    const DRBG_SERVICE: Service = Service::CtrDrbgAes192;
     type Cipher = Aes192Key;
     fn from_key(key: &[u8]) -> Self::Cipher {
         debug_assert!(key.len() == Self::KEY_LEN);
         let mut k = [0u8; 24];
         k.copy_from_slice(&key[..24]);
-        Aes192Key::new(&k)
+        Aes192Key::new_internal(&k)
     }
 }
 
 impl CipherFactory for Aes256Factory {
     const KEY_LEN: usize = 32;
     const SEED_LEN: usize = 48;
+    const DRBG_SERVICE: Service = Service::CtrDrbgAes256;
     type Cipher = Aes256Key;
     fn from_key(key: &[u8]) -> Self::Cipher {
         debug_assert!(key.len() == Self::KEY_LEN);
         let mut k = [0u8; 32];
         k.copy_from_slice(&key[..32]);
-        Aes256Key::new(&k)
+        Aes256Key::new_internal(&k)
     }
 }
 
@@ -211,9 +217,16 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// and have length exactly `SEED_LEN` bytes. Callers using this
     /// variant are responsible for ensuring the entropy source
     /// provides full-entropy input of the required length.
-    pub fn instantiate_no_df(&mut self, seed_material: &[u8]) -> Result<(), DrbgError> {
+    pub fn instantiate_no_df(&mut self, seed_material: &[u8]) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(F::DRBG_SERVICE)?;
+        self.instantiate_no_df_internal(seed_material)
+    }
+
+    /// Internal instantiate function used by KAT runners.
+    pub(crate) fn instantiate_no_df_internal(&mut self, seed_material: &[u8]) -> Result<(), Error> {
         if seed_material.len() != F::SEED_LEN {
-            return Err(DrbgError::InvalidSeedLength);
+            return Err(Error::InvalidInput);
         }
         // Key = 0, V = 0
         for b in &mut self.key[..F::KEY_LEN] {
@@ -239,15 +252,27 @@ impl<F: CipherFactory> CtrDrbg<F> {
         entropy: &[u8],
         nonce: &[u8],
         personalization: &[u8],
-    ) -> Result<(), DrbgError> {
+    ) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(F::DRBG_SERVICE)?;
+        self.instantiate_df_internal(entropy, nonce, personalization)
+    }
+
+    /// Internal instantiate function used by KAT runners.
+    pub(crate) fn instantiate_df_internal(
+        &mut self,
+        entropy: &[u8],
+        nonce: &[u8],
+        personalization: &[u8],
+    ) -> Result<(), Error> {
         // Build seed_material = entropy || nonce || personalization
         let total = entropy
             .len()
             .checked_add(nonce.len())
             .and_then(|n| n.checked_add(personalization.len()))
-            .ok_or(DrbgError::InputTooLong)?;
+            .ok_or(Error::InvalidInput)?;
         if total > MAX_DF_INPUT {
-            return Err(DrbgError::InputTooLong);
+            return Err(Error::InvalidInput);
         }
         let mut seed_material = [0u8; MAX_DF_INPUT];
         seed_material[..entropy.len()].copy_from_slice(entropy);
@@ -256,7 +281,8 @@ impl<F: CipherFactory> CtrDrbg<F> {
         seed_material[offset..offset + personalization.len()].copy_from_slice(personalization);
 
         let mut derived = [0u8; MAX_SEED_LEN];
-        self.block_cipher_df(&seed_material[..total], &mut derived[..F::SEED_LEN])?;
+        self.block_cipher_df(&seed_material[..total], &mut derived[..F::SEED_LEN])
+            .map_err(|_| Error::InvalidInput)?;
 
         for b in &mut self.key[..F::KEY_LEN] {
             *b = 0;
@@ -652,7 +678,7 @@ mod tests {
             "6545c0529d372443b392ceb3ae3a99a30f963eaf313280f1d1a1e87f9db373d361e75d18018266499cccd64d9bbb8de0185f213383080faddec46bae1f784e5a",
         );
         let mut drbg = CtrDrbgAes128::new();
-        drbg.instantiate_no_df(&entropy).unwrap();
+        drbg.instantiate_no_df_internal(&entropy).unwrap();
         let mut out = [0u8; 64];
         drbg.generate_no_df(None, &mut out).unwrap();
         drbg.generate_no_df(None, &mut out).unwrap();
@@ -669,7 +695,7 @@ mod tests {
             "6bb0aa5b4b97ee83765736ad0e9068dfef0ccfc93b71c1d3425302ef7ba4635ffc09981d262177e208a7ec90a557b6d76112d56c40893892c3034835036d7a69",
         );
         let mut drbg = CtrDrbgAes192::new();
-        drbg.instantiate_no_df(&entropy).unwrap();
+        drbg.instantiate_no_df_internal(&entropy).unwrap();
         let mut out = [0u8; 64];
         drbg.generate_no_df(None, &mut out).unwrap();
         drbg.generate_no_df(None, &mut out).unwrap();
@@ -686,7 +712,7 @@ mod tests {
             "d1c07cd95af8a7f11012c84ce48bb8cb87189e99d40fccb1771c619bdf82ab2280b1dc2f2581f39164f7ac0c510494b3a43c41b7db17514c87b107ae793e01c5",
         );
         let mut drbg = CtrDrbgAes256::new();
-        drbg.instantiate_no_df(&entropy).unwrap();
+        drbg.instantiate_no_df_internal(&entropy).unwrap();
         let mut out = [0u8; 64];
         drbg.generate_no_df(None, &mut out).unwrap();
         drbg.generate_no_df(None, &mut out).unwrap();
@@ -702,7 +728,7 @@ mod tests {
             "a5514ed7095f64f3d0d3a5760394ab42062f373a25072a6ea6bcfd8489e94af6cf18659fea22ed1ca0a9e33f718b115ee536b12809c31b72b08ddd8be1910fa3",
         );
         let mut drbg = CtrDrbgAes128::new();
-        drbg.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_df_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 64];
         drbg.generate_df(None, &mut out).unwrap();
         drbg.generate_df(None, &mut out).unwrap();
@@ -719,7 +745,7 @@ mod tests {
             "8c2e72abfd9bb8284db79e17a43a3146cd7694e35249fc3383914a7117f41368e6d4f148ff49bf29076b5015c59f457945662e3d3503843f4aa5a3df9a9df10d",
         );
         let mut drbg = CtrDrbgAes192::new();
-        drbg.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_df_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 64];
         drbg.generate_df(None, &mut out).unwrap();
         drbg.generate_df(None, &mut out).unwrap();
@@ -737,7 +763,7 @@ mod tests {
             "5862eb38bd558dd978a696e6df164782ddd887e7e9a6c9f3f1fbafb78941b535a64912dfd224c6dc7454e5250b3d97165e16260c2faf1cc7735cb75fb4f07e1d",
         );
         let mut drbg = CtrDrbgAes256::new();
-        drbg.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_df_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 64];
         drbg.generate_df(None, &mut out).unwrap();
         drbg.generate_df(None, &mut out).unwrap();
@@ -755,12 +781,12 @@ mod tests {
         let reseed_ai: [u8; 8] = [0x44u8; 8];
 
         let mut a = CtrDrbgAes128::new();
-        a.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        a.instantiate_df_internal(&entropy, &nonce, &[]).unwrap();
         let mut out_a = [0u8; 48];
         a.generate_df_pr(&reseed_e, &reseed_ai, &mut out_a).unwrap();
 
         let mut b = CtrDrbgAes128::new();
-        b.instantiate_df(&entropy, &nonce, &[]).unwrap();
+        b.instantiate_df_internal(&entropy, &nonce, &[]).unwrap();
         b.reseed_df(&reseed_e, &reseed_ai).unwrap();
         let mut out_b = [0u8; 48];
         b.generate_df(None, &mut out_b).unwrap();
@@ -775,12 +801,12 @@ mod tests {
         let seed_reseed: [u8; 32] = [0xbbu8; 32];
 
         let mut a = CtrDrbgAes128::new();
-        a.instantiate_no_df(&seed_init).unwrap();
+        a.instantiate_no_df_internal(&seed_init).unwrap();
         let mut out_a = [0u8; 48];
         a.generate_no_df_pr(&seed_reseed, &mut out_a).unwrap();
 
         let mut b = CtrDrbgAes128::new();
-        b.instantiate_no_df(&seed_init).unwrap();
+        b.instantiate_no_df_internal(&seed_init).unwrap();
         b.reseed_no_df(&seed_reseed).unwrap();
         let mut out_b = [0u8; 48];
         b.generate_no_df(None, &mut out_b).unwrap();

@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn ecb_roundtrip_aes128_single_block() {
         let key = [0u8; 16];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let pt = [0x00; 16];
         let mut ct = [0u8; 16];
         let mut back = [0u8; 16];
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn cbc_roundtrip_aes128() {
         let key = [0x11u8; 16];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let iv = [0x22u8; 16];
         let pt = [0xaau8; 32];
         let mut ct = [0u8; 32];
@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn ctr_roundtrip_aes128() {
         let key = [0x33u8; 16];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let icb = [0x44u8; 16];
         let pt = [0x55u8; 37];
         let mut ct = [0u8; 37];
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn gcm_roundtrip_aes128() {
         let key = [0x66u8; 16];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let iv = [0x77u8; 12];
         let aad = [0x88u8; 13];
         let pt = [0x99u8; 37];
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn gcm_detects_tag_tamper() {
         let key = [0u8; 16];
-        let k = Aes128Key::new(&key);
+        let k = Aes128Key::new_internal(&key);
         let iv = [0u8; 12];
         let pt = [0u8; 16];
         let mut ct = [0u8; 16];

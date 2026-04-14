@@ -152,19 +152,19 @@ fn compute_cmac(
             let k: [u8; 16] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("CMAC: key length mismatch for AES-128"))?;
-            Ok(cmac_aes128(&k, msg))
+            cmac_aes128(&k, msg).map_err(|_e| DispatchError::Crypto("CMAC-128 error"))
         }
         192 => {
             let k: [u8; 24] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("CMAC: key length mismatch for AES-192"))?;
-            Ok(cmac_aes192(&k, msg))
+            cmac_aes192(&k, msg).map_err(|_e| DispatchError::Crypto("CMAC-192 error"))
         }
         256 => {
             let k: [u8; 32] = key
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("CMAC: key length mismatch for AES-256"))?;
-            Ok(cmac_aes256(&k, msg))
+            cmac_aes256(&k, msg).map_err(|_e| DispatchError::Crypto("CMAC-256 error"))
         }
         _ => Err(DispatchError::Crypto("CMAC: unsupported keyLen")),
     }

@@ -1196,12 +1196,12 @@ functions:
           symmetric key. Always derive through a KDF (HKDF, SP 800-56Cr2).
         wrong: |
           let key_bytes = compute_shared_secret_p256(&d, &pk)?;
-          let aes_key = Aes256Key::new(&key_bytes);  // WRONG
+          let aes_key = Aes256Key::new(&key_bytes)?;  // WRONG — no KDF
         right: |
           let z = compute_shared_secret_p256(&d, &pk)?;
           let mut okm = [0u8; 32];
           hkdf_sha256(&salt, &z, &info, &mut okm)?;
-          let aes_key = Aes256Key::new(&okm);
+          let aes_key = Aes256Key::new(&okm)?;
 
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
 

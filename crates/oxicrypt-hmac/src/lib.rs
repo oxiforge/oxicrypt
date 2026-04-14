@@ -91,7 +91,7 @@
     non_camel_case_types
 )]
 
-use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, KatEntry, Service, SelfTestFailure};
 
 // ----------------------------------------------------------------------
 // BlockHash trait
@@ -111,6 +111,10 @@ use oxicrypt_module::{require_operational, Error, KatEntry, SelfTestFailure};
 /// name `BlockHash` directly.
 #[doc(hidden)]
 pub trait BlockHash<const B: usize, const L: usize>: Sized {
+    /// The [`Service`] variant for this HMAC instantiation.
+    ///
+    /// Used by [`Hmac::new`] to enforce algorithm-profile restrictions.
+    const HMAC_SERVICE: Service;
     /// Fresh hasher that bypasses the module state machine.
     fn block_new() -> Self;
     /// Absorb more input.
@@ -149,6 +153,7 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
     /// [`Hmac::new_internal`].
     pub fn new(key: &[u8]) -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(H::HMAC_SERVICE)?;
         Ok(Self::new_internal(key))
     }
 
@@ -216,8 +221,9 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Drop for Hmac<H, B, L> 
 // ----------------------------------------------------------------------
 
 macro_rules! impl_block_hash {
-    ($t:ty, $b:expr, $l:expr) => {
+    ($t:ty, $b:expr, $l:expr, $service:expr) => {
         impl BlockHash<$b, $l> for $t {
+            const HMAC_SERVICE: Service = $service;
             fn block_new() -> Self {
                 <$t>::new_internal()
             }
@@ -236,17 +242,17 @@ macro_rules! impl_block_hash {
     };
 }
 
-impl_block_hash!(oxicrypt_sha::sha1::Sha1, 64, 20);
-impl_block_hash!(oxicrypt_sha::sha224::Sha224, 64, 28);
-impl_block_hash!(oxicrypt_sha::sha256::Sha256, 64, 32);
-impl_block_hash!(oxicrypt_sha::sha384::Sha384, 128, 48);
-impl_block_hash!(oxicrypt_sha::sha512::Sha512, 128, 64);
-impl_block_hash!(oxicrypt_sha::sha512_t::Sha512_224, 128, 28);
-impl_block_hash!(oxicrypt_sha::sha512_t::Sha512_256, 128, 32);
-impl_block_hash!(oxicrypt_sha::sha3::Sha3<144, 28>, 144, 28);
-impl_block_hash!(oxicrypt_sha::sha3::Sha3<136, 32>, 136, 32);
-impl_block_hash!(oxicrypt_sha::sha3::Sha3<104, 48>, 104, 48);
-impl_block_hash!(oxicrypt_sha::sha3::Sha3<72, 64>, 72, 64);
+impl_block_hash!(oxicrypt_sha::sha1::Sha1, 64, 20, Service::HmacSha1);
+impl_block_hash!(oxicrypt_sha::sha224::Sha224, 64, 28, Service::HmacSha224);
+impl_block_hash!(oxicrypt_sha::sha256::Sha256, 64, 32, Service::HmacSha256);
+impl_block_hash!(oxicrypt_sha::sha384::Sha384, 128, 48, Service::HmacSha384);
+impl_block_hash!(oxicrypt_sha::sha512::Sha512, 128, 64, Service::HmacSha512);
+impl_block_hash!(oxicrypt_sha::sha512_t::Sha512_224, 128, 28, Service::HmacSha512_224);
+impl_block_hash!(oxicrypt_sha::sha512_t::Sha512_256, 128, 32, Service::HmacSha512_256);
+impl_block_hash!(oxicrypt_sha::sha3::Sha3<144, 28>, 144, 28, Service::HmacSha3_224);
+impl_block_hash!(oxicrypt_sha::sha3::Sha3<136, 32>, 136, 32, Service::HmacSha3_256);
+impl_block_hash!(oxicrypt_sha::sha3::Sha3<104, 48>, 104, 48, Service::HmacSha3_384);
+impl_block_hash!(oxicrypt_sha::sha3::Sha3<72, 64>, 72, 64, Service::HmacSha3_512);
 
 // ----------------------------------------------------------------------
 // Public type aliases

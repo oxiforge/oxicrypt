@@ -6,7 +6,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha512::{Sha512State, BLOCK_SIZE as SHA512_BLOCK};
-use oxicrypt_module::{require_operational, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
 
 /// Output length of SHA-384 in bytes.
 pub const DIGEST_SIZE: usize = 48;
@@ -36,6 +36,7 @@ impl Sha384 {
     /// Creates a new SHA-384 hasher, enforcing the module boundary.
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
+        require_allowed(Service::Sha384)?;
         Ok(Self::new_internal())
     }
 

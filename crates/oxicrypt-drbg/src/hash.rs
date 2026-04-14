@@ -40,6 +40,7 @@ use core::marker::PhantomData;
 use oxicrypt_sha::sha256::Sha256;
 use oxicrypt_sha::sha384::Sha384;
 use oxicrypt_sha::sha512::Sha512;
+use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
 use crate::ctr::DrbgError;
 
@@ -65,6 +66,8 @@ pub trait HashAlg {
     /// Seed length in bytes (SP 800-90A Table 2: 440 bits for SHA-1
     /// through SHA-256, 888 bits for SHA-384 / SHA-512).
     const SEEDLEN: usize;
+    /// The FIPS module service gate associated with this hash algorithm.
+    const DRBG_SERVICE: Service;
     /// Hash the concatenation of `parts` and write exactly `OUTLEN`
     /// bytes into `out`.
     ///
@@ -82,6 +85,7 @@ pub struct Sha512Alg;
 impl HashAlg for Sha256Alg {
     const OUTLEN: usize = 32;
     const SEEDLEN: usize = 55; // 440 bits
+    const DRBG_SERVICE: Service = Service::HashDrbgSha256;
     fn digest_parts(parts: &[&[u8]], out: &mut [u8]) {
         let mut ctx = Sha256::new_internal();
         for p in parts {
@@ -95,6 +99,7 @@ impl HashAlg for Sha256Alg {
 impl HashAlg for Sha384Alg {
     const OUTLEN: usize = 48;
     const SEEDLEN: usize = 111; // 888 bits
+    const DRBG_SERVICE: Service = Service::HashDrbgSha384;
     fn digest_parts(parts: &[&[u8]], out: &mut [u8]) {
         let mut ctx = Sha384::new_internal();
         for p in parts {
@@ -108,6 +113,7 @@ impl HashAlg for Sha384Alg {
 impl HashAlg for Sha512Alg {
     const OUTLEN: usize = 64;
     const SEEDLEN: usize = 111; // 888 bits
+    const DRBG_SERVICE: Service = Service::HashDrbgSha512;
     fn digest_parts(parts: &[&[u8]], out: &mut [u8]) {
         let mut ctx = Sha512::new_internal();
         for p in parts {
@@ -155,14 +161,26 @@ impl<H: HashAlg> HashDrbg<H> {
         entropy: &[u8],
         nonce: &[u8],
         personalization: &[u8],
-    ) -> Result<(), DrbgError> {
+    ) -> Result<(), Error> {
+        require_operational()?;
+        require_allowed(H::DRBG_SERVICE)?;
+        self.instantiate_internal(entropy, nonce, personalization)
+    }
+
+    /// Internal instantiate function used by KAT runners.
+    pub(crate) fn instantiate_internal(
+        &mut self,
+        entropy: &[u8],
+        nonce: &[u8],
+        personalization: &[u8],
+    ) -> Result<(), Error> {
         let total = entropy
             .len()
             .checked_add(nonce.len())
             .and_then(|n| n.checked_add(personalization.len()))
-            .ok_or(DrbgError::InputTooLong)?;
+            .ok_or(Error::InvalidInput)?;
         if total > HASH_DRBG_MAX_DF_INPUT {
-            return Err(DrbgError::InputTooLong);
+            return Err(Error::InvalidInput);
         }
         let mut seed_material = [0u8; HASH_DRBG_MAX_DF_INPUT];
         seed_material[..entropy.len()].copy_from_slice(entropy);
@@ -443,7 +461,7 @@ mod tests {
             "d3e160c35b99f340b2628264d1751060e0045da383ff57a57d73a673d2b8d80daaf6a6c35a91bb4579d73fd0c8fed111b0391306828adfed528f018121b3febdc343e797b87dbb63db1333ded9d1ece177cfa6b71fe8ab1da46624ed6415e51ccde2c7ca86e283990eeaeb91120415528b2295910281b02dd431f4c9f70427df",
         );
         let mut drbg = HashDrbgSha256::new();
-        drbg.instantiate(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 128];
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
@@ -460,7 +478,7 @@ mod tests {
             "663ffb625e62c4eb67d7177a6abb808a9f68c2d5840f19992c11ea3a635d05b537fae1f1746c1314e1a75e141c2e094187d17b9daae1442e41d3a0d1fea94d8ef9d840111379a52e6c7ffafa7ee83b244ced129613d5b8bb089e7ea25de1c29897735cf95695043a648a2ef6fd4aa74ce8328a5550da8ddb51f98adcdc108e455603f6f18f5a50016f3e8ebcb244a16bc6b6e554a7546153c12f522c75ca5f1017e01da36650e6203f30ed5c3da3b6078736465eecb400eeaaa2c876e37564d8",
         );
         let mut drbg = HashDrbgSha384::new();
-        drbg.instantiate(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 192];
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
@@ -477,7 +495,7 @@ mod tests {
             "95b7f17e9802d3577392c6a9c08083b67dd1292265b5f42d237f1c55bb9b10bfcfd82c77a378b8266a0099143b3c2d64611eeeb69acdc055957c139e8b190c7a06955f2c797c2778de940396a501f40e91396acf8d7e45ebdbb53bbf8c975230d2f0ff9106c76119ae498e7fbc03d90f8e4c51627aed5c8d4263d5d2b978873a0de596ee6dc7f7c29e37eee8b34c90dd1cf6a9ddb22b4cbd086b14b35de93da2d5cb1806698cbd7bbb67bfe3d31fd2d1dbd2a1e058a3eb99d7e51f1a938eed5e1c1de23a6b4345d3191409f92f39b3670d8dbfb635d8e6a36932d81033d1448d63b403ddf88e121b6e819ac381226c1321e4b08644f6727c368c5a9f7a4b3ee2",
         );
         let mut drbg = HashDrbgSha512::new();
-        drbg.instantiate(&entropy, &nonce, &[]).unwrap();
+        drbg.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out = [0u8; 256];
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
@@ -493,12 +511,12 @@ mod tests {
         let reseed_ai: [u8; 12] = [0x44u8; 12];
 
         let mut a = HashDrbgSha256::new();
-        a.instantiate(&entropy, &nonce, &[]).unwrap();
+        a.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         let mut out_a = [0u8; 80];
         a.generate_pr(&reseed_e, &reseed_ai, &mut out_a).unwrap();
 
         let mut b = HashDrbgSha256::new();
-        b.instantiate(&entropy, &nonce, &[]).unwrap();
+        b.instantiate_internal(&entropy, &nonce, &[]).unwrap();
         b.reseed(&reseed_e, &reseed_ai).unwrap();
         let mut out_b = [0u8; 80];
         b.generate(None, &mut out_b).unwrap();
