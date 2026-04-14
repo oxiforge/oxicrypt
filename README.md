@@ -44,8 +44,8 @@ cargo test --workspace
 | KDF | SP 800-108r1 (counter/feedback/double-pipeline), SP 800-56C Rev 2 KDA-HKDF, TLS 1.2 KDF, PBKDF2 | SP 800-108, SP 800-56Cr2, SP 800-132 |
 | SP 800-185 | cSHAKE, KMAC, TupleHash, ParallelHash (+ XOF variants) | SP 800-185 |
 | RSA | RSA-2048 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt, keygen; RSA-3072/4096 stubs | FIPS 186-5, SP 800-56Br2 |
-| ECDSA | P-256 sign/verify/keygen with DRBG-backed rejection sampling; P-384 stubs | FIPS 186-5 |
-| ECDH | P-256 CDH shared secret computation; P-384 stub | SP 800-56Ar3 |
+| ECDSA | P-256 and P-384 sign/verify/keygen with DRBG-backed rejection sampling | FIPS 186-5 |
+| ECDH | P-256 and P-384 CDH shared secret computation | SP 800-56Ar3 |
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
 | ML-KEM | ML-KEM-1024 encaps/decaps/keygen (stub) | FIPS 203 |
 | ML-DSA | ML-DSA-87 sign/verify/keygen (stub) | FIPS 204 |
@@ -77,8 +77,8 @@ crates/
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
   oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246)
   oxicrypt-rsa           RSA-2048 sign/verify/encrypt/decrypt/keygen + 3072/4096 stubs
-  oxicrypt-ecdsa         ECDSA P-256 + P-384 stubs
-  oxicrypt-ecdh          ECDH P-256 + P-384 stub (SP 800-56Ar3)
+  oxicrypt-ecdsa         ECDSA P-256 + P-384 (FIPS 186-5)
+  oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
   oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — stub
   oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — stub

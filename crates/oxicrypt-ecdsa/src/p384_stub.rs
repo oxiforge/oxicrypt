@@ -1,47 +1,63 @@
-//! P-384 ECDSA stubs — FIPS 186-5, CNSA 1.0.
+//! P-384 ECDSA thin wrappers — FIPS 186-5, CNSA 1.0.
 //!
-//! Placeholder entry points for P-384 ECDSA. The P-384 field,
-//! scalar, and point layers have not yet been implemented; all
-//! entry points return [`oxicrypt_module::Error::NotImplemented`].
-//!
-//! The algorithm-profile gates are wired: under CNSA 1.0,
-//! `require_allowed` will pass for P-384 services.
+//! These entry points delegate to the full P-384 ECDSA
+//! implementation in [`crate::p384_ecdsa`]. They exist so that
+//! callers that were written against the original stub API can
+//! migrate at their own pace; new code should use
+//! [`crate::p384_ecdsa`] directly.
 
-use oxicrypt_module::{Error, Service};
+use oxicrypt_drbg::HmacDrbgSha256;
+use oxicrypt_module::Error;
 
-/// Sign a message with an ECDSA P-384 private key.
+use crate::p384_ecdsa;
+
+/// Sign a message with an ECDSA P-384 private key, returning the
+/// 96-byte `r || s` signature.
+///
+/// This is a thin wrapper around [`p384_ecdsa::sign_with_k`]; see
+/// that function for details.
 ///
 /// # Errors
 ///
-/// Returns [`Error::NotImplemented`] — this is a stub.
-pub fn sign(_private_key: &[u8], _message: &[u8]) -> Result<(), Error> {
-    oxicrypt_module::require_operational()?;
-    oxicrypt_module::require_allowed(Service::EcdsaP384Sign)?;
-    Err(Error::NotImplemented)
+/// Returns [`Error::InvalidInput`] when `private_key` or `k` are
+/// not valid non-zero scalars mod `n`, or when the resulting `r`
+/// or `s` is zero (rejection required by FIPS 186-5).
+pub fn sign(
+    private_key: &[u8; p384_ecdsa::PRIVATE_KEY_LEN],
+    msg: &[u8],
+    k: &[u8; p384_ecdsa::PRIVATE_KEY_LEN],
+) -> Result<[u8; p384_ecdsa::SIGNATURE_LEN], Error> {
+    p384_ecdsa::sign_with_k(private_key, msg, k)
 }
 
 /// Verify an ECDSA P-384 signature.
 ///
+/// Thin wrapper around [`p384_ecdsa::verify`].
+///
 /// # Errors
 ///
-/// Returns [`Error::NotImplemented`] — this is a stub.
+/// Returns [`Error::InvalidInput`] when the public key fails
+/// SP 800-56Ar3 §5.6.2.3.3 validation or the signature does not
+/// verify.
 pub fn verify(
-    _public_key: &[u8],
-    _message: &[u8],
-    _signature: &[u8],
-) -> Result<(), Error> {
-    oxicrypt_module::require_operational()?;
-    oxicrypt_module::require_allowed(Service::EcdsaP384Verify)?;
-    Err(Error::NotImplemented)
+    public_key: &[u8; p384_ecdsa::PUBLIC_KEY_LEN],
+    msg: &[u8],
+    signature: &[u8; p384_ecdsa::SIGNATURE_LEN],
+) -> Result<bool, Error> {
+    p384_ecdsa::verify(public_key, msg, signature)
 }
 
-/// Generate an ECDSA P-384 key pair.
+/// Generate an ECDSA P-384 key pair using a DRBG-backed rejection
+/// sampler.
+///
+/// Thin wrapper around [`p384_ecdsa::EcdsaP384PrivateKey::generate`].
 ///
 /// # Errors
 ///
-/// Returns [`Error::NotImplemented`] — this is a stub.
-pub fn keygen() -> Result<(), Error> {
-    oxicrypt_module::require_operational()?;
-    oxicrypt_module::require_allowed(Service::EcdsaP384Keygen)?;
-    Err(Error::NotImplemented)
+/// Returns an error when the DRBG fails or the pairwise
+/// consistency test (IG 10.3.A) rejects the new key pair.
+pub fn keygen(
+    drbg: &mut HmacDrbgSha256,
+) -> Result<p384_ecdsa::EcdsaP384PrivateKey, Error> {
+    p384_ecdsa::EcdsaP384PrivateKey::generate(drbg)
 }

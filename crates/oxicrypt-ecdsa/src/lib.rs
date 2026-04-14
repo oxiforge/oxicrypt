@@ -9,43 +9,43 @@
 //! | P-256 ECDSA sign (DRBG-sampled `k`) | FIPS 186-5 §6.4.1, §A.2.2 | [`p256_ecdsa::EcdsaP256PrivateKey::sign_sha256`] |
 //! | P-256 ECDSA keygen (DRBG-sampled `d`) | FIPS 186-5 §A.2.2 | [`p256_ecdsa::EcdsaP256PrivateKey::generate`] |
 //! | P-256 ECDSA verify | FIPS 186-5 §6.4.2 | [`p256_ecdsa::verify`] |
-//! | P-384 ECDSA sign (stub) | FIPS 186-5 | [`p384_stub::sign`] |
-//! | P-384 ECDSA verify (stub) | FIPS 186-5 | [`p384_stub::verify`] |
-//! | P-384 ECDSA keygen (stub) | FIPS 186-5 | [`p384_stub::keygen`] |
+//! | P-384 public-key derivation | FIPS 186-5 §6.2.1 | [`p384_ecdsa::derive_public_key`] |
+//! | P-384 ECDSA sign (caller-supplied `k`) | FIPS 186-5 §6.4.1 | [`p384_ecdsa::sign_with_k`] |
+//! | P-384 ECDSA sign (DRBG-sampled `k`) | FIPS 186-5 §6.4.1, §A.2.2 | [`p384_ecdsa::EcdsaP384PrivateKey::sign_sha384`] |
+//! | P-384 ECDSA keygen (DRBG-sampled `d`) | FIPS 186-5 §A.2.2 | [`p384_ecdsa::EcdsaP384PrivateKey::generate`] |
+//! | P-384 ECDSA verify | FIPS 186-5 §6.4.2 | [`p384_ecdsa::verify`] |
 //!
-//! P-384 currently has stub entry points that return
-//! [`oxicrypt_module::Error::NotImplemented`]. The full P-384
-//! implementation (field, point, scalar layers) is planned for a
-//! future phase. P-521 is deferred further.
+//! P-521 is deferred to a future phase.
 //!
 //! # Layering
 //!
-//! Each curve is built bottom-up:
+//! Each curve is built bottom-up. P-256 uses four 64-bit limbs;
+//! P-384 uses six:
 //!
-//!   * [`p256_field`] — arithmetic in `GF(p)` with
-//!     `p = 2^256 - 2^224 + 2^192 + 2^96 - 1`. Montgomery form,
-//!     four 64-bit limbs, constant-time, `no_std`.
-//!   * [`p256_scalar`] — arithmetic mod the group order `n`,
-//!     used for signature scalars and nonce reduction.
-//!   * [`p256_point`] — Jacobian point representation, constant-
-//!     time scalar multiplication, SEC1 encoding/decoding with
-//!     full public-key validation (on-curve, not identity,
-//!     order-n).
-//!   * [`p256_ecdsa`] — FIPS 186-5 sign and verify on top of
-//!     the above layers.
+//!   * [`p256_field`] / [`p384_field`] — arithmetic in `GF(p)`.
+//!     Montgomery form, constant-time, `no_std`.
+//!   * [`p256_scalar`] / [`p384_scalar`] — arithmetic mod the
+//!     group order `n`, used for signature scalars and nonce
+//!     reduction.
+//!   * [`p256_point`] / [`p384_point`] — Jacobian point
+//!     representation, constant-time scalar multiplication,
+//!     SEC1 encoding/decoding with full public-key validation
+//!     (on-curve, not identity, order-n).
+//!   * [`p256_ecdsa`] / [`p384_ecdsa`] — FIPS 186-5 sign and
+//!     verify on top of the above layers.
 //!
 //! # Sign API shape
 //!
-//! Two entry points:
+//! Each curve exposes two sign entry points:
 //!
-//!   * [`p256_ecdsa::sign_with_k`] — raw primitive taking the per-
-//!     signature nonce `k` as an explicit argument. This is the
-//!     shape used by FIPS 186-5 / CAVP KATs that pin `k`, and by
-//!     internal test code; it must never be called with a reused `k`.
-//!   * [`p256_ecdsa::EcdsaP256PrivateKey::sign_sha256`] — DRBG-backed
-//!     wrapper that samples a fresh `k` from an approved HMAC_DRBG
-//!     on every call via the FIPS 186-5 §A.2.2 rejection sampler in
-//!     [`p256_keygen`]. This is the path production code should use.
+//!   * `sign_with_k` — raw primitive taking the per-signature nonce
+//!     `k` as an explicit argument. This is the shape used by
+//!     FIPS 186-5 / CAVP KATs that pin `k`, and by internal test
+//!     code; it must never be called with a reused `k`.
+//!   * `EcdsaP{256,384}PrivateKey::sign_sha{256,384}` — DRBG-backed
+//!     wrappers that sample a fresh `k` from an approved HMAC_DRBG
+//!     on every call via the FIPS 186-5 §A.2.2 rejection sampler.
+//!     This is the path production code should use.
 //!
 //! RFC 6979 deterministic signing is deliberately **not** offered
 //! here: FIPS 186-5 §6.4 mandates an approved RBG for `k`, and
@@ -54,9 +54,10 @@
 //!
 //! # Power-up self-tests
 //!
-//! [`p256_ecdsa::self_test`] runs a sign-and-verify KAT from
-//! FIPS 186-5 / NIST CAVP. The workspace test inventory wires it
-//! into `oxicrypt_module::initialize_with_tests` alongside the other
+//! [`p256_ecdsa::self_test`] and [`p384_ecdsa::self_test`] each run
+//! a sign-and-verify KAT from FIPS 186-5 / NIST CAVP. The
+//! workspace test inventory wires them into
+//! `oxicrypt_module::initialize_with_tests` alongside the other
 //! crates' KATs.
 //!
 //! # Conditional self-tests
@@ -64,27 +65,27 @@
 //! - **Public-key validation** (FIPS 186-5 §A.2.2 / §A.4.2):
 //!   all imported public keys are checked for SEC1 format, on-
 //!   curve, not-identity, and order-n membership inside
-//!   [`p256_point`] before verify proceeds. Failures surface as
-//!   a single generic error variant.
+//!   [`p256_point`] / [`p384_point`] before verify proceeds.
+//!   Failures surface as a single generic error variant.
 //! - **Pairwise consistency test** (IG 10.3.A): every
-//!   [`p256_ecdsa::EcdsaP256PrivateKey`] constructor (keygen or
-//!   import) runs a sign-and-verify PCT against a fixed probe
-//!   message using a freshly DRBG-sampled `k`; the derived public
-//!   key must accept the probe signature or construction returns an
+//!   `EcdsaP{256,384}PrivateKey` constructor (keygen or import)
+//!   runs a sign-and-verify PCT against a fixed probe message
+//!   using a freshly DRBG-sampled `k`; the derived public key
+//!   must accept the probe signature or construction returns an
 //!   error. This exercises the sampler, the sign primitive, and
-//!   `verify_internal` on the same code paths that production calls
-//!   will use.
+//!   `verify_internal` on the same code paths that production
+//!   calls will use.
 //!
 //! # Sensitive security parameters
 //!
-//! - **Private key `d`** (`[u8; 32]`) — CSP. Consumed by
-//!   `derive_public_key` / `sign_with_k`; not retained beyond
-//!   the call.
+//! - **Private key `d`** (`[u8; 32]` for P-256, `[u8; 48]` for
+//!   P-384) — CSP. Consumed by `derive_public_key` / `sign_with_k`;
+//!   not retained beyond the call.
 //! - **Per-signature nonce `k`** — CSP. In the DRBG-backed sign
 //!   wrapper, `k` is sampled fresh on every call by the FIPS 186-5
-//!   §A.2.2 rejection sampler; in [`p256_ecdsa::sign_with_k`] the
-//!   caller supplies `k` and is responsible for unpredictability
-//!   and single-use discipline. Reuse under the same key reveals `d`.
+//!   §A.2.2 rejection sampler; in `sign_with_k` the caller supplies
+//!   `k` and is responsible for unpredictability and single-use
+//!   discipline. Reuse under the same key reveals `d`.
 //! - **Public key `Q`** — public. Subject to full validation
 //!   on import.
 //! - **Signature `(r, s)`** — public output.
@@ -114,6 +115,11 @@ pub mod p256_field;
 pub mod p256_keygen;
 pub mod p256_point;
 pub mod p256_scalar;
+pub mod p384_field;
+pub mod p384_point;
+pub mod p384_ecdsa;
+pub mod p384_keygen;
+pub mod p384_scalar;
 pub mod p384_stub;
 
 // ── Crate-root re-exports ────────────────────────────────────────
@@ -128,7 +134,13 @@ pub use p256_ecdsa::{
 };
 
 /// Power-up KATs exported by this crate.
-pub const KATS: &[KatEntry] = &[KatEntry {
-    name: "ECDSA-P256 KAT (sign+verify round-trip, FIPS 186-5)",
-    run: p256_ecdsa::self_test,
-}];
+pub const KATS: &[KatEntry] = &[
+    KatEntry {
+        name: "ECDSA-P256 KAT (sign+verify round-trip, FIPS 186-5)",
+        run: p256_ecdsa::self_test,
+    },
+    KatEntry {
+        name: "ECDSA-P384 KAT (sign+verify round-trip, FIPS 186-5)",
+        run: p384_ecdsa::self_test,
+    },
+];

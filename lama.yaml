@@ -154,7 +154,7 @@ capabilities:
   - category: "Digital signatures"
     algorithms:
       - "ECDSA P-256"
-      - "ECDSA P-384 (stub)"
+      - "ECDSA P-384"
       - "Ed25519"
       - "RSA-2048 PKCS#1 v1.5"
       - "RSA-2048 PSS"
@@ -187,7 +187,7 @@ capabilities:
   - category: "Key agreement"
     algorithms:
       - "ECDH P-256"
-      - "ECDH P-384 (stub)"
+      - "ECDH P-384"
       - "ML-KEM-1024 (stub)"
       - "DH-3072 (stub)"
     standards:
