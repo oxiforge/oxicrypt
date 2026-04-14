@@ -3,6 +3,14 @@
 These are the standing rules for Claude when working in this repository.
 They are loaded automatically at the start of every session.
 
+## Key paths
+
+- **Repo:** `/home/rick/repos/oxicrypt`
+- **LAMA spec repo:** `/home/rick/repos/lama-spec`
+- **Project folder:** `~/carakastan/Projects/PQClib/` — project plan,
+  HN talking points, launch roadmap, and other planning docs that
+  live outside the repo
+
 ## Compliance target
 
 Follow **FIPS 140-3 Implementation Guidance** as of the current IG release
@@ -38,9 +46,11 @@ reference — do all four of:
 3. **README.** Update `README.md` if the commit changes the
    user-facing status of the crate — algorithm coverage, build
    instructions, workspace layout, or the project phase.
-4. **Project plan.** Update `docs/rust-fips-project-plan.md`
+4. **Project plan.** Update
+   `~/carakastan/Projects/PQClib/rust-fips-project-plan.md`
    current-status section and chunk checklists to reflect what
-   the commit actually landed.
+   the commit actually landed. This file lives outside the repo
+   in the PQClib project folder — do not commit it.
 
 These four doc updates ship **in the same commit** as the code
 change — not as a follow-up — so reviewers always see the code
