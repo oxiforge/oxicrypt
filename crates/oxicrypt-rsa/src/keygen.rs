@@ -92,13 +92,13 @@ impl From<DrbgError> for KeygenError {
 /// F.4 of FIPS 186-5 gives an expected count around `ln(2^1024)/2 ≈
 /// 355` and this figure is deterministic in expectation but not in
 /// the worst case. 20 000 gives several orders of magnitude of slack.
-const MAX_CANDIDATE_ATTEMPTS: u32 = 20_000;
+pub(crate) const MAX_CANDIDATE_ATTEMPTS: u32 = 20_000;
 
 /// Small odd primes < 2048, used by the trial-division sieve. This
 /// list rejects ~85 % of uniformly random odd candidates cheaply.
 /// Generated once by a separate tool; re-deriving from a Python
 /// sieve gives the same values.
-const SMALL_PRIMES: &[u16] = &[
+pub(crate) const SMALL_PRIMES: &[u16] = &[
     3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
     101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193,
     197, 199, 211, 223, 227, 229, 233, 239, 241, 251, 257, 263, 269, 271, 277, 281, 283, 293, 307,

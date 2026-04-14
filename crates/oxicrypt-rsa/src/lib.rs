@@ -2,13 +2,13 @@
 //! per FIPS 186-5 / RFC 8017.
 //!
 //! RSA-2048 is fully implemented end-to-end (sign, verify, keygen,
-//! OAEP encrypt/decrypt). RSA-3072 and RSA-4096 have their
-//! fixed-width big-integer types and Montgomery arithmetic in place
-//! ([`bigint1536`], [`bigint3072`], [`bigint4096`],
-//! [`mont1536`], [`mont3072`], [`mont4096`]); keygen, encoding, and
-//! wiring are deferred to Chunk 5B.2–5B.3. Until then, the
-//! higher-level entry points in [`rsa_3072_4096_stub`] still return
-//! `NotImplemented`.
+//! OAEP encrypt/decrypt). RSA-3072 and RSA-4096 have big-integer
+//! types, Montgomery arithmetic, and key generation in place
+//! ([`bigint1536`]/[`bigint3072`]/[`bigint4096`],
+//! [`mont1536`]/[`mont3072`]/[`mont4096`],
+//! [`keygen3072`]/[`keygen4096`]); encoding and wiring are deferred
+//! to Chunk 5B.3. Until then, the higher-level entry points in
+//! [`rsa_3072_4096_stub`] still return `NotImplemented`.
 //!
 //! # Approved services
 //!
@@ -32,9 +32,11 @@
 //! Only `|n| = 2048` bits is currently accepted at the service
 //! layer. Verification of legacy 1024- or 1280-bit RSA signatures
 //! is outside the approved boundary and this crate deliberately has
-//! no code path for it. The wider-operand big-integer and Montgomery
-//! arithmetic for RSA-3072 and RSA-4096 is in place; keygen and
-//! encoding primitives at those widths land in subsequent chunks.
+//! no code path for it. RSA-3072 and RSA-4096 have complete
+//! big-integer arithmetic, Montgomery contexts, and key generation
+//! ([`keygen3072::generate_3072`], [`keygen4096::generate_4096`]);
+//! encoding (PKCS#1 v1.5, PSS, OAEP) at those widths lands in
+//! Chunk 5B.3.
 //!
 //! # Power-up self-tests
 //!
@@ -126,6 +128,9 @@ pub mod bigint3072;
 pub mod bigint4096;
 mod bigint_impl;
 pub mod keygen;
+pub mod keygen3072;
+pub mod keygen4096;
+mod keygen_impl;
 pub mod mont1024;
 pub mod mont1536;
 pub mod mont2048;

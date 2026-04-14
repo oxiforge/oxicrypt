@@ -170,6 +170,13 @@ impl U2048 {
         ((self.limbs[limb] >> (4 * pos)) & 0xf) as u8
     }
 
+    /// The multiplicative identity (one).
+    pub const ONE: U2048 = {
+        let mut limbs = [0u64; LIMBS];
+        limbs[0] = 1;
+        U2048 { limbs }
+    };
+
     /// Returns `1` iff `self == 1`, else `0`.
     pub fn is_one(&self) -> u8 {
         let mut acc: u64 = self.limbs[0] ^ 1;

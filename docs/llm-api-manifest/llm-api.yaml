@@ -161,9 +161,10 @@ modules:
     description: >-
       RSA-2048 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt,
       keygen. CRT path with Bellcore verify-after-sign.
-      RSA-3072/4096 fixed-width bigint (U1536/U3072/U4096) and Montgomery
-      contexts (MontCtx1536/MontCtx3072/MontCtx4096) in place via
-      macro-generated constant-time arithmetic; keygen and encoding WIP.
+      RSA-3072/4096 fixed-width bigint (U1536/U3072/U4096), Montgomery
+      contexts (MontCtx1536/MontCtx3072/MontCtx4096), and keygen
+      (generate_3072/generate_4096) in place via macro-generated
+      constant-time arithmetic; encoding (PKCS#1 v1.5, PSS, OAEP) WIP.
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
 
