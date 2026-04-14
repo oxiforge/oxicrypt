@@ -77,6 +77,7 @@ crates/
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
 
 acvp-harness/           ACVP protocol handler with 62 registered algorithm handlers
+benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors
 ```
@@ -223,6 +224,23 @@ cargo run -p oxicrypt-ecdsa --example ecdsa_sign
 cargo run -p oxicrypt-eddsa --example ed25519_sign
 cargo run -p oxicrypt-ecdh  --example ecdh_p256
 ```
+
+## Benchmarks
+
+Criterion benchmarks cover the hot paths: SHA-256/512 (one-shot and streaming),
+SHA3-256, HMAC-SHA-256, AES-256-GCM and ECB, HMAC_DRBG-SHA-256, ECDSA P-256
+(sign/verify/keygen), Ed25519 (sign/verify), and ECDH P-256.
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run a specific benchmark group
+cargo bench --bench hash
+cargo bench --bench ecdsa
+```
+
+HTML reports are generated in `target/criterion/`.
 
 ## LAMA — AI agent discovery
 

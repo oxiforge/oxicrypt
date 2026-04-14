@@ -1,0 +1,52 @@
+[package]
+name = "oxicrypt-bench"
+description = "Criterion benchmarks for oxicrypt hot paths"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-module = { path = "../crates/oxicrypt-module" }
+oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
+oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
+oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
+oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
+oxicrypt-ecdsa = { path = "../crates/oxicrypt-ecdsa" }
+oxicrypt-eddsa = { path = "../crates/oxicrypt-eddsa" }
+oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
+oxicrypt-rsa = { path = "../crates/oxicrypt-rsa" }
+oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "hash"
+harness = false
+
+[[bench]]
+name = "hmac"
+harness = false
+
+[[bench]]
+name = "aes"
+harness = false
+
+[[bench]]
+name = "drbg"
+harness = false
+
+[[bench]]
+name = "ecdsa"
+harness = false
+
+[[bench]]
+name = "eddsa"
+harness = false
+
+[[bench]]
+name = "ecdh"
+harness = false
