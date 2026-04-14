@@ -17,6 +17,7 @@ members = [
     "crates/oxicrypt-tls-kdf",
     "crates/oxicrypt-integrity",
     "crates/oxicrypt-zeroize",
+    "crates/oxicrypt-ffi",
     "acvp-harness",
     "oxi",
     "benches",

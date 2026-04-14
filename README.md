@@ -76,6 +76,7 @@ crates/
   oxicrypt-eddsa         Ed25519 (RFC 8032)
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
 
+crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) for language bindings
 acvp-harness/           ACVP protocol handler with 62 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation

@@ -1,0 +1,24 @@
+[package]
+name = "oxicrypt-ffi"
+description = "C ABI wrappers for oxicrypt approved services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-hmac = { path = "../oxicrypt-hmac" }
+oxicrypt-aes = { path = "../oxicrypt-aes" }
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }
+oxicrypt-ecdsa = { path = "../oxicrypt-ecdsa" }
+oxicrypt-eddsa = { path = "../oxicrypt-eddsa" }
+oxicrypt-ecdh = { path = "../oxicrypt-ecdh" }

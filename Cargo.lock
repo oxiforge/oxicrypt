@@ -375,6 +375,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-ffi"
+version = "0.0.0"
+dependencies = [
+ "oxicrypt-aes",
+ "oxicrypt-drbg",
+ "oxicrypt-ecdh",
+ "oxicrypt-ecdsa",
+ "oxicrypt-eddsa",
+ "oxicrypt-hmac",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+]
+
+[[package]]
 name = "oxicrypt-hmac"
 version = "0.0.0"
 dependencies = [
