@@ -22,6 +22,7 @@ library:
   license: PolyForm-Noncommercial-1.0.0
   languages:
     - rust
+    - c           # oxicrypt-ffi provides extern "C" wrappers (cdylib + staticlib)
   minimum_toolchain: "rust 1.94"
 
   constraints:
@@ -53,7 +54,7 @@ library:
       side-channel resistance at Level 1 but discloses and validates
       timing behavior via dudect methodology.
     side_channel_posture: validated
-    zeroization: manual
+    zeroization: "volatile-on-drop (all 13 CSP-holding types via oxicrypt-zeroize)"
 
 # ─────────────────────────────────────────────────────────────────────
 # State machines
@@ -188,6 +189,31 @@ modules:
     no_std: false
     depends_on: [oxicrypt-module, oxicrypt-hmac]
 
+  - name: oxicrypt-zeroize
+    description: >-
+      Volatile-write zeroization for CSP buffers. The only crate in the
+      workspace that uses unsafe code. Provides zeroize() for byte slices
+      and zeroize_u64() for u64 limb arrays, both using
+      core::ptr::write_volatile to prevent dead-store elimination.
+    no_std: true
+    depends_on: []
+
+  - name: oxicrypt-ffi
+    description: >-
+      C ABI wrappers (extern "C") for language bindings. Builds as cdylib
+      and staticlib. Outside the cryptographic boundary — performs only
+      pointer-to-slice translation and status-code mapping.
+    no_std: false
+    depends_on:
+      - oxicrypt-module
+      - oxicrypt-sha
+      - oxicrypt-hmac
+      - oxicrypt-aes
+      - oxicrypt-drbg
+      - oxicrypt-ecdsa
+      - oxicrypt-eddsa
+      - oxicrypt-ecdh
+
 # ─────────────────────────────────────────────────────────────────────
 # Types
 # ─────────────────────────────────────────────────────────────────────
@@ -252,7 +278,7 @@ types:
     description: "Type alias for Hmac<Sha256, 64, 32>. HMAC-SHA-256."
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: true
 
   - name: Aes128Key
@@ -262,7 +288,7 @@ types:
     size_bytes: null  # Expanded schedule, not just the 16-byte key
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: false  # Table-based S-box; disclosed in security policy
 
   - name: Aes192Key
@@ -271,7 +297,7 @@ types:
     description: AES-192 expanded key schedule.
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: false
 
   - name: Aes256Key
@@ -280,7 +306,7 @@ types:
     description: AES-256 expanded key schedule.
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: false
 
   - name: ModeError
@@ -311,7 +337,7 @@ types:
     description: CTR_DRBG instantiated with AES-256. Must be instantiated before generating.
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: true
 
   - name: DrbgError
@@ -339,7 +365,7 @@ types:
     size_bytes: null
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: true
 
   - name: EcdsaP256PrivateKey
@@ -358,7 +384,7 @@ types:
         description: "Uncompressed SEC1 public key: 0x04 || X || Y."
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: true
 
   - name: Ed25519PrivateKey
@@ -369,7 +395,7 @@ types:
       sign-and-verify PCT on construction.
     security:
       contains_secret: true
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: true
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1106,6 +1132,140 @@ functions:
           let mut okm = [0u8; 32];
           hkdf_sha256(&salt, &z, &info, &mut okm)?;
           let aes_key = Aes256Key::new(&okm);
+
+  # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
+
+  - name: oxicrypt_init
+    module: oxicrypt-ffi
+    description: >-
+      Initialise the FIPS module from C. Runs all power-up KATs.
+      Safe to call more than once (returns 0 on AlreadyInitialized).
+    signature: "int32_t oxicrypt_init(void)"
+    parameters: []
+    returns:
+      type: int32_t
+      description: "0 = success, -1 = not operational, -2 = invalid input."
+    preconditions: []
+    postconditions:
+      - description: Module is in Operational state (on success).
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxicrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Compute SHA-256 over data_len bytes. out must be >= 32 bytes.
+    signature: "int32_t oxicrypt_sha256(const uint8_t *data, size_t data_len, uint8_t *out)"
+    parameters:
+      - name: data
+        type: "const uint8_t *"
+        direction: in
+        description: Data to hash.
+      - name: data_len
+        type: size_t
+        direction: in
+        description: Length of data in bytes.
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 32 bytes.
+    returns:
+      type: int32_t
+      description: "0 = success, -1 = not operational, -2 = null pointer."
+
+  - name: oxicrypt_sha512
+    module: oxicrypt-ffi
+    description: >-
+      Compute SHA-512 over data_len bytes. out must be >= 64 bytes.
+    signature: "int32_t oxicrypt_sha512(const uint8_t *data, size_t data_len, uint8_t *out)"
+    parameters:
+      - name: data
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 64 bytes.
+    returns:
+      type: int32_t
+      description: "0 = success, -1 = not operational, -2 = null pointer."
+
+  - name: oxicrypt_hmac_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA-256. out must be >= 32 bytes.
+    signature: >-
+      int32_t oxicrypt_hmac_sha256(const uint8_t *key, size_t key_len,
+      const uint8_t *data, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 32 bytes.
+    returns:
+      type: int32_t
+      description: "0 = success, -1 = not operational, -2 = invalid input."
+
+  - name: oxicrypt_aes256_gcm_encrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-GCM encrypt. key=32B, iv=12B, ct_out>=pt_len, tag_out=16B.
+    signature: >-
+      int32_t oxicrypt_aes256_gcm_encrypt(const uint8_t *key,
+      const uint8_t *iv, const uint8_t *aad, size_t aad_len,
+      const uint8_t *pt, size_t pt_len, uint8_t *ct_out,
+      uint8_t *tag_out)
+    parameters:
+      - { name: key, type: "const uint8_t *", direction: in, description: "32-byte AES key" }
+      - { name: iv, type: "const uint8_t *", direction: in, description: "12-byte nonce" }
+      - { name: aad, type: "const uint8_t *", direction: in }
+      - { name: aad_len, type: size_t, direction: in }
+      - { name: pt, type: "const uint8_t *", direction: in }
+      - { name: pt_len, type: size_t, direction: in }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: ">= pt_len bytes" }
+      - { name: tag_out, type: "uint8_t *", direction: out, description: "16-byte tag" }
+    returns:
+      type: int32_t
+      description: "0 = success, -2 = invalid input."
+
+  - name: oxicrypt_aes256_gcm_decrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-GCM decrypt. Returns -3 on tag mismatch.
+    signature: >-
+      int32_t oxicrypt_aes256_gcm_decrypt(const uint8_t *key,
+      const uint8_t *iv, const uint8_t *aad, size_t aad_len,
+      const uint8_t *ct, size_t ct_len, const uint8_t *tag,
+      uint8_t *pt_out)
+    parameters:
+      - { name: key, type: "const uint8_t *", direction: in, description: "32-byte AES key" }
+      - { name: iv, type: "const uint8_t *", direction: in, description: "12-byte nonce" }
+      - { name: aad, type: "const uint8_t *", direction: in }
+      - { name: aad_len, type: size_t, direction: in }
+      - { name: ct, type: "const uint8_t *", direction: in }
+      - { name: ct_len, type: size_t, direction: in }
+      - { name: tag, type: "const uint8_t *", direction: in, description: "16-byte tag" }
+      - { name: pt_out, type: "uint8_t *", direction: out, description: ">= ct_len bytes" }
+    returns:
+      type: int32_t
+      description: "0 = success, -2 = invalid input, -3 = tag mismatch."
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)

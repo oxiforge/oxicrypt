@@ -19,7 +19,7 @@ library:
   license: "PolyForm-Noncommercial-1.0.0"
   languages:
     - rust
-    - c           # planned — see docs/c-api-design.md
+    - c           # oxicrypt-ffi provides extern "C" wrappers (cdylib + staticlib)
   minimum_toolchain: "rust 1.94"
   no_std: true    # core algorithm crates are no_std + alloc
 
@@ -88,7 +88,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         initialize_with_tests(oxicrypt_hmac::KATS).unwrap();
-        let mut mac = HmacSha256::new(b"secret-key-at-least-32-bytes-long!!");
+        let mut mac = HmacSha256::new(b"secret-key").unwrap();
         mac.update(b"message to authenticate");
         let tag = mac.finalize();
 
@@ -110,12 +110,12 @@ capabilities:
     quickstart:
       language: "rust"
       code: |
-        use oxicrypt_aes::{Aes256Key, gcm_encrypt, gcm_decrypt};
+        use oxicrypt_aes::{Aes256Key, gcm_encrypt};
         use oxicrypt_module::initialize_with_tests;
 
         initialize_with_tests(oxicrypt_aes::KATS).unwrap();
-        let key = Aes256Key([0u8; 32]);  // use a real key
-        let iv = [0u8; 12];             // use a unique nonce
+        let key = Aes256Key::new(&[0u8; 32]);  // use a real key
+        let iv = [0u8; 12];                    // use a unique nonce
         let mut ct = [0u8; 16];
         let mut tag = [0u8; 16];
         gcm_encrypt(&key, &iv, b"", b"hello, world!   ", &mut ct, &mut tag).unwrap();
@@ -134,11 +134,10 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         initialize_with_tests(oxicrypt_drbg::KATS).unwrap();
-        let entropy = [0xABu8; 32];     // use real entropy source
-        let nonce = [0xCDu8; 16];
-        let mut rng = HmacDrbgSha256::new(&entropy, &nonce, b"").unwrap();
+        let mut rng = HmacDrbgSha256::new();
+        rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
         let mut output = [0u8; 32];
-        rng.generate(b"", &mut output).unwrap();
+        rng.generate(None, &mut output).unwrap();
 
   - category: "Key derivation"
     algorithms:
@@ -165,13 +164,16 @@ capabilities:
       language: "rust"
       code: |
         use oxicrypt_eddsa::{Ed25519PrivateKey, verify};
+        use oxicrypt_drbg::HmacDrbgSha256;
         use oxicrypt_module::initialize_with_tests;
 
+        // init module (all KATs), then generate a key pair
         initialize_with_tests(oxicrypt_eddsa::KATS).unwrap();
-        let kp = Ed25519PrivateKey::generate().unwrap();
-        let sig = kp.sign(b"message to sign").unwrap();
-        let ok = verify(&kp.public_key(), b"message to sign", &sig);
-        assert!(ok.is_ok());
+        let mut drbg = HmacDrbgSha256::new();
+        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
+        let sk = Ed25519PrivateKey::generate(&mut drbg).unwrap();
+        let sig = sk.sign(b"message to sign").unwrap();
+        assert!(verify(&sk.public_key(), b"message to sign", &sig).is_ok());
 
   - category: "Key agreement"
     algorithms:
@@ -183,13 +185,14 @@ capabilities:
       code: |
         use oxicrypt_ecdsa::EcdsaP256PrivateKey;
         use oxicrypt_ecdh::compute_shared_secret_p256;
-        use oxicrypt_module::initialize_with_tests;
+        use oxicrypt_drbg::HmacDrbgSha256;
 
-        // Both parties generate key pairs; exchange public keys
-        let alice = EcdsaP256PrivateKey::generate().unwrap();
-        let bob = EcdsaP256PrivateKey::generate().unwrap();
+        let mut drbg = HmacDrbgSha256::new();
+        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
+        let alice = EcdsaP256PrivateKey::generate(&mut drbg).unwrap();
+        let bob = EcdsaP256PrivateKey::generate(&mut drbg).unwrap();
         let shared = compute_shared_secret_p256(
-            alice.private_key_bytes(), bob.public_key_bytes()
+            alice.private_scalar(), &bob.public_key()
         ).unwrap();
 
   - category: "Asymmetric encryption"
@@ -204,10 +207,22 @@ capabilities:
     standards:
       - "FIPS 140-3 IG 10.3.A"
 
+  - category: "C ABI"
+    note: >
+      oxicrypt-ffi exposes extern "C" wrappers as cdylib and staticlib.
+      See include/oxicrypt.h for the C header.
+    entry_points:
+      - "oxicrypt_init"
+      - "oxicrypt_sha256"
+      - "oxicrypt_sha512"
+      - "oxicrypt_hmac_sha256"
+      - "oxicrypt_aes256_gcm_encrypt"
+      - "oxicrypt_aes256_gcm_decrypt"
+
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"
   side_channel_posture: "disclosed"
-  zeroization: "manual"
+  zeroization: "volatile-on-drop (all 13 CSP-holding types via oxicrypt-zeroize)"
   self_tests: "139 power-up KATs from NIST-sourced vectors"
 
 # Full manifest with every function signature, parameter constraint,
