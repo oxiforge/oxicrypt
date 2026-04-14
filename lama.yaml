@@ -225,9 +225,14 @@ capabilities:
   - category: "C ABI"
     note: >
       oxicrypt-ffi exposes extern "C" wrappers as cdylib and staticlib.
-      See include/oxicrypt.h for the C header.
+      See include/oxicrypt.h for the C header. Supports algorithm-profile
+      selection via oxicrypt_init_with_profile(). Status code -4
+      (OXICRYPT_ERR_RESTRICTED) is returned when an algorithm is blocked
+      by the active profile.
     entry_points:
       - "oxicrypt_init"
+      - "oxicrypt_init_with_profile"
+      - "oxicrypt_active_profile"
       - "oxicrypt_sha256"
       - "oxicrypt_sha512"
       - "oxicrypt_hmac_sha256"

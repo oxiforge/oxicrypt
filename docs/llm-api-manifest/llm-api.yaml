@@ -1208,16 +1208,58 @@ functions:
   - name: oxicrypt_init
     module: oxicrypt-ffi
     description: >-
-      Initialise the FIPS module from C. Runs all power-up KATs.
+      Initialise the FIPS module with the Unrestricted profile from C.
+      Equivalent to oxicrypt_init_with_profile(0). Runs all power-up KATs.
       Safe to call more than once (returns 0 on AlreadyInitialized).
     signature: "int32_t oxicrypt_init(void)"
     parameters: []
     returns:
       type: int32_t
-      description: "0 = success, -1 = not operational, -2 = invalid input."
+      description: "0 = success, -1 = self-test failed."
     preconditions: []
     postconditions:
       - description: Module is in Operational state (on success).
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxicrypt_init_with_profile
+    module: oxicrypt-ffi
+    description: >-
+      Initialise the FIPS module with the given algorithm profile,
+      running all power-up KATs. Profile 0 = Unrestricted,
+      1 = CNSA 2.0, 2 = CNSA 1.0. Unknown values default to CNSA 2.0
+      (defence-in-depth). Safe to call more than once.
+    signature: "int32_t oxicrypt_init_with_profile(int32_t profile)"
+    parameters:
+      - name: profile
+        type: int32_t
+        direction: in
+        description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
+    returns:
+      type: int32_t
+      description: "0 = success, -1 = self-test failed."
+    preconditions: []
+    postconditions:
+      - description: Module is in Operational state with the selected profile.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxicrypt_active_profile
+    module: oxicrypt-ffi
+    description: >-
+      Query the currently active algorithm profile.
+      Returns 0 (Unrestricted), 1 (CNSA 2.0), or 2 (CNSA 1.0).
+    signature: "int32_t oxicrypt_active_profile(void)"
+    parameters: []
+    returns:
+      type: int32_t
+      description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
+    preconditions:
+      - description: Module must be initialized.
     security:
       constant_time: false
       handles_secrets: false
@@ -1243,7 +1285,7 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int32_t
-      description: "0 = success, -1 = not operational, -2 = null pointer."
+      description: "0 = success, -1 = not operational, -2 = null pointer, -4 = restricted."
 
   - name: oxicrypt_sha512
     module: oxicrypt-ffi
@@ -1263,7 +1305,7 @@ functions:
         description: Output buffer, must be >= 64 bytes.
     returns:
       type: int32_t
-      description: "0 = success, -1 = not operational, -2 = null pointer."
+      description: "0 = success, -1 = not operational, -2 = null pointer, -4 = restricted."
 
   - name: oxicrypt_hmac_sha256
     module: oxicrypt-ffi
@@ -1291,7 +1333,7 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int32_t
-      description: "0 = success, -1 = not operational, -2 = invalid input."
+      description: "0 = success, -1 = not operational, -2 = invalid input, -4 = restricted."
 
   - name: oxicrypt_aes256_gcm_encrypt
     module: oxicrypt-ffi
@@ -1313,7 +1355,7 @@ functions:
       - { name: tag_out, type: "uint8_t *", direction: out, description: "16-byte tag" }
     returns:
       type: int32_t
-      description: "0 = success, -2 = invalid input."
+      description: "0 = success, -1 = not operational, -2 = invalid input, -4 = restricted."
 
   - name: oxicrypt_aes256_gcm_decrypt
     module: oxicrypt-ffi
@@ -1335,7 +1377,7 @@ functions:
       - { name: pt_out, type: "uint8_t *", direction: out, description: ">= ct_len bytes" }
     returns:
       type: int32_t
-      description: "0 = success, -2 = invalid input, -3 = tag mismatch."
+      description: "0 = success, -1 = not operational, -2 = invalid input, -3 = tag mismatch, -4 = restricted."
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)

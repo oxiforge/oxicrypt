@@ -17,6 +17,7 @@
 //! | `-1` | Module not operational (power-up self-tests not run) |
 //! | `-2` | Invalid input (null pointer, wrong length, etc.) |
 //! | `-3` | Cryptographic operation failed |
+//! | `-4` | Algorithm restricted by the active profile |
 //!
 //! Output buffers are caller-allocated. The caller must ensure
 //! they are at least as large as the documented minimum size.
@@ -30,9 +31,24 @@
 //! # Initialisation
 //!
 //! The module must be initialised by calling [`oxicrypt_init`]
-//! before any cryptographic function. This runs all power-up
-//! KATs. Calling a cryptographic function before init returns
-//! status code `-1`.
+//! (defaults to `Unrestricted` profile) or
+//! [`oxicrypt_init_with_profile`] before any cryptographic function.
+//! This runs all power-up KATs. Calling a cryptographic function
+//! before init returns status code `-1`.
+//!
+//! # Algorithm profiles
+//!
+//! [`oxicrypt_init_with_profile`] accepts a profile selector:
+//!
+//! | Value | Profile |
+//! |-------|---------|
+//! | `0`   | Unrestricted (default — all approved algorithms) |
+//! | `1`   | CNSA 2.0 (AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS) |
+//! | `2`   | CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072) |
+//!
+//! Once a profile is active, calling a restricted algorithm returns
+//! status code `-4` (`OXICRYPT_ERR_RESTRICTED`).
+//! [`oxicrypt_active_profile`] queries the current profile.
 
 // This crate is the FFI boundary — unsafe is required by definition.
 #![allow(unsafe_code, clippy::missing_safety_doc)]
@@ -48,6 +64,8 @@ const ERR_INVALID_INPUT: i32 = -2;
 /// Cryptographic operation failed.
 #[allow(dead_code)]
 const ERR_CRYPTO_FAILED: i32 = -3;
+/// Algorithm restricted by the active profile.
+const ERR_RESTRICTED: i32 = -4;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -56,6 +74,7 @@ fn status(r: Result<(), oxicrypt_module::Error>) -> i32 {
     match r {
         Ok(()) => OK,
         Err(oxicrypt_module::Error::NotOperational { .. }) => ERR_NOT_OPERATIONAL,
+        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => ERR_RESTRICTED,
         _ => ERR_INVALID_INPUT,
     }
 }
@@ -94,16 +113,9 @@ unsafe fn slice_from_raw_mut(ptr: *mut u8, len: usize) -> Result<&'static mut [u
 
 // ── Module lifecycle ─────────────────────────────────────────────
 
-/// Initialise the FIPS module, running all power-up KATs.
-///
-/// Must be called exactly once before any other `oxicrypt_*`
-/// function. Returns `0` on success or a negative error code.
-///
-/// # Safety
-///
-/// No pointers; always safe to call.
-#[no_mangle]
-pub extern "C" fn oxicrypt_init() -> i32 {
+/// Collect every KAT entry from every algorithm crate into a single
+/// flat `Vec`.
+fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
     let all_kats: &[&[oxicrypt_module::KatEntry]] = &[
         oxicrypt_sha::KATS,
         oxicrypt_hmac::KATS,
@@ -119,9 +131,74 @@ pub extern "C" fn oxicrypt_init() -> i32 {
             merged.push(*kat);
         }
     }
-    match oxicrypt_module::initialize_with_tests(&merged) {
+    merged
+}
+
+/// Initialise the FIPS module with the `Unrestricted` profile,
+/// running all power-up KATs.
+///
+/// Equivalent to `oxicrypt_init_with_profile(0)`.
+///
+/// Must be called exactly once before any other `oxicrypt_*`
+/// function. Returns `0` on success or a negative error code.
+///
+/// # Safety
+///
+/// No pointers; always safe to call.
+#[no_mangle]
+pub extern "C" fn oxicrypt_init() -> i32 {
+    oxicrypt_init_with_profile(0)
+}
+
+/// Initialise the FIPS module with the given algorithm profile,
+/// running all power-up KATs.
+///
+/// `profile` selects the algorithm-restriction level:
+///
+/// - `0` — Unrestricted (all approved algorithms available)
+/// - `1` — CNSA 2.0 (AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87,
+///   LMS, XMSS)
+/// - `2` — CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072)
+///
+/// Any other value is treated as `1` (CNSA 2.0) as a defence-in-depth
+/// default — the most restrictive standard profile.
+///
+/// Returns `0` on success, or a negative error code.
+///
+/// # Safety
+///
+/// No pointers; always safe to call.
+#[no_mangle]
+pub extern "C" fn oxicrypt_init_with_profile(profile: i32) -> i32 {
+    let p = match profile {
+        0 => oxicrypt_module::AlgorithmProfile::Unrestricted,
+        2 => oxicrypt_module::AlgorithmProfile::Cnsa1,
+        // 1 or any unknown value → CNSA 2.0 (defence-in-depth)
+        _ => oxicrypt_module::AlgorithmProfile::Cnsa2,
+    };
+    let kats = collect_kats();
+    match oxicrypt_module::initialize_with_profile(&kats, p) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => OK,
         Err(e) => status(Err(e)),
+    }
+}
+
+/// Query the active algorithm profile.
+///
+/// Returns:
+/// - `0` — Unrestricted
+/// - `1` — CNSA 2.0
+/// - `2` — CNSA 1.0
+///
+/// # Safety
+///
+/// No pointers; always safe to call.
+#[no_mangle]
+pub extern "C" fn oxicrypt_active_profile() -> i32 {
+    match oxicrypt_module::active_profile() {
+        oxicrypt_module::AlgorithmProfile::Unrestricted => 0,
+        oxicrypt_module::AlgorithmProfile::Cnsa2 => 1,
+        oxicrypt_module::AlgorithmProfile::Cnsa1 => 2,
     }
 }
 
@@ -154,6 +231,7 @@ pub unsafe extern "C" fn oxicrypt_sha256(
             OK
         }
         Err(oxicrypt_module::Error::NotOperational { .. }) => ERR_NOT_OPERATIONAL,
+        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => ERR_RESTRICTED,
         Err(_) => ERR_INVALID_INPUT,
     }
 }
@@ -187,6 +265,7 @@ pub unsafe extern "C" fn oxicrypt_sha512(
             OK
         }
         Err(oxicrypt_module::Error::NotOperational { .. }) => ERR_NOT_OPERATIONAL,
+        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => ERR_RESTRICTED,
         Err(_) => ERR_INVALID_INPUT,
     }
 }
@@ -222,6 +301,7 @@ pub unsafe extern "C" fn oxicrypt_hmac_sha256(
     let mut mac = match oxicrypt_hmac::HmacSha256::new(key) {
         Ok(m) => m,
         Err(oxicrypt_module::Error::NotOperational { .. }) => return ERR_NOT_OPERATIONAL,
+        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => return ERR_RESTRICTED,
         Err(_) => return ERR_INVALID_INPUT,
     };
     mac.update(data);
@@ -269,8 +349,11 @@ pub unsafe extern "C" fn oxicrypt_aes256_gcm_encrypt(
     };
     let tag: &mut [u8; 16] = unsafe { &mut *(tag_out.cast::<[u8; 16]>()) };
 
-    let Ok(key) = oxicrypt_aes::Aes256Key::new(key_bytes) else {
-        return ERR_INVALID_INPUT;
+    let key = match oxicrypt_aes::Aes256Key::new(key_bytes) {
+        Ok(k) => k,
+        Err(oxicrypt_module::Error::NotOperational { .. }) => return ERR_NOT_OPERATIONAL,
+        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => return ERR_RESTRICTED,
+        Err(_) => return ERR_INVALID_INPUT,
     };
     match oxicrypt_aes::gcm_encrypt(&key, iv, aad, pt, ct, tag) {
         Ok(()) => OK,
@@ -316,8 +399,11 @@ pub unsafe extern "C" fn oxicrypt_aes256_gcm_decrypt(
         Err(e) => return e,
     };
 
-    let Ok(key) = oxicrypt_aes::Aes256Key::new(key_bytes) else {
-        return ERR_INVALID_INPUT;
+    let key = match oxicrypt_aes::Aes256Key::new(key_bytes) {
+        Ok(k) => k,
+        Err(oxicrypt_module::Error::NotOperational { .. }) => return ERR_NOT_OPERATIONAL,
+        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => return ERR_RESTRICTED,
+        Err(_) => return ERR_INVALID_INPUT,
     };
     match oxicrypt_aes::gcm_decrypt(&key, iv, aad, ct, tag, pt) {
         Ok(()) => OK,

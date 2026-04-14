@@ -88,7 +88,7 @@ crates/
   oxicrypt-dh            Finite-field DH >= 3072 (RFC 3526) — stub
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
 
-crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) for language bindings
+crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) with profile selection
 acvp-harness/           ACVP protocol handler with 62 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
@@ -198,9 +198,13 @@ ACVP-Server slim slices).
 
 **Phase 2 (current)** — Algorithm implementation and ACVP validation.
 62 handlers, 127 tests, all green. CNSA 2.0 / CNSA 1.0 algorithm-profile
-gating is in place with stub crates for all post-quantum algorithms
-(ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS) and CNSA 1.0 classical extensions
-(P-384, RSA-3072/4096, DH-3072). Preparing for ACVP demo server dry run.
+gating is enforced across all 15 algorithm crates and the C ABI
+(`oxicrypt-ffi`). The FFI layer exposes profile selection via
+`oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with
+status code `-4` for restricted algorithms. Stub crates reserve surfaces
+for all post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS)
+and CNSA 1.0 classical extensions (P-384, RSA-3072/4096, DH-3072).
+Preparing for ACVP demo server dry run.
 
 **Phase 3** — CST lab engagement, CAVP algorithm certificates, CMVP module
 submission.
