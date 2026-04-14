@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 oxicrypt-ecdsa = { path = "../oxicrypt-ecdsa" }
 oxicrypt-module = { path = "../oxicrypt-module" }
+
+[dev-dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }

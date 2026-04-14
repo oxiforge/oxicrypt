@@ -74,6 +74,37 @@ pub enum DrbgError {
     RequestTooLong,
 }
 
+impl core::fmt::Display for DrbgError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Uninstantiated => write!(
+                f,
+                "DRBG has not been instantiated; call new() or instantiate() first"
+            ),
+            Self::ReseedRequired => write!(
+                f,
+                "DRBG reseed counter has reached the 2^48 limit (SP 800-90A Table 3); \
+                 call reseed() with fresh entropy before generating more output"
+            ),
+            Self::InputTooLong => write!(
+                f,
+                "input exceeds the maximum derivation-function buffer ({MAX_DF_INPUT} bytes); \
+                 reduce the combined length of entropy + nonce + personalization"
+            ),
+            Self::InvalidSeedLength => write!(
+                f,
+                "seed material length does not match the required seedlen for this \
+                 DRBG instantiation; check CipherFactory::SEED_LEN for the expected size"
+            ),
+            Self::RequestTooLong => write!(
+                f,
+                "requested output exceeds 2^19 bits (65536 bytes) per call \
+                 (SP 800-90A Table 3); split into multiple generate() calls"
+            ),
+        }
+    }
+}
+
 /// Factory / constants bundle describing a concrete CTR_DRBG
 /// parameterisation (which AES variant, which seedlen).
 pub trait CipherFactory {

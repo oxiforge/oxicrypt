@@ -97,6 +97,54 @@ pub enum ModeError {
     InvalidAadLength,
 }
 
+impl core::fmt::Display for ModeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotBlockAligned => write!(
+                f,
+                "input length is not a multiple of 16 bytes (AES block size); \
+                 pad or use a streaming mode (CTR/GCM/CCM)"
+            ),
+            Self::InvalidIvLength => write!(
+                f,
+                "GCM IV must be exactly 12 bytes (96 bits); \
+                 pass a 12-byte nonce"
+            ),
+            Self::TagMismatch => write!(
+                f,
+                "authentication tag did not verify; \
+                 the ciphertext or AAD was modified, or the key/nonce is wrong"
+            ),
+            Self::LengthMismatch => write!(
+                f,
+                "output buffer length does not match ciphertext length; \
+                 allocate an output buffer of the same size as the ciphertext"
+            ),
+            Self::InvalidNonceLength => write!(
+                f,
+                "CCM nonce must be 7..=13 bytes (SP 800-38C §A.2.1); \
+                 pass a nonce in that range"
+            ),
+            Self::InvalidTagLength => write!(
+                f,
+                "CCM tag length must be one of {{4, 6, 8, 10, 12, 14, 16}} bytes; \
+                 choose a valid tag size"
+            ),
+            Self::InvalidPayloadLength => write!(
+                f,
+                "CCM plaintext too long for the chosen nonce length; \
+                 use a shorter nonce (fewer bytes = larger max payload) \
+                 or split the data"
+            ),
+            Self::InvalidAadLength => write!(
+                f,
+                "CCM associated data exceeds the SP 800-38C §A.2.2 maximum; \
+                 reduce the AAD length"
+            ),
+        }
+    }
+}
+
 // ----------------------------------------------------------------------
 // ECB — SP 800-38A §6.1
 // ----------------------------------------------------------------------

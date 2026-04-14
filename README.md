@@ -20,7 +20,7 @@ cargo build --workspace
 cargo build -p oxicrypt-integrity
 ./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
 
-# Run all 122 power-up KATs + software integrity check
+# Run all 139 power-up KATs + software integrity check
 ./target/debug/acvp-harness
 
 # Run the full test suite (120 ACVP round-trip + 7 CAVP SHS + unit tests)
@@ -49,8 +49,8 @@ cargo test --workspace
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
 
-Every algorithm runs a known-answer test at module power-up. The 122 KATs include
-119 CAVP-sourced vectors (with 9 SP 800-90A §9.3 prediction-resistance DRBG KATs),
+Every algorithm runs a known-answer test at module power-up. The 139 KATs include
+CAVP-sourced vectors (with 9 SP 800-90A §9.3 prediction-resistance DRBG KATs),
 plus 3 SP 800-90A §11.3 DRBG health tests, each traceable to its published source.
 
 ## Architecture
@@ -190,6 +190,56 @@ submission.
 
 **Phase 4** — Performance hardening (AES-NI, bitsliced fallback), additional
 curves (Ed448, P-384, P-521), language bindings (C ABI, Python, Go, Node).
+
+## `oxi` CLI
+
+A lightweight command-line tool that exposes the module's approved
+services to the terminal:
+
+```bash
+# Hash stdin with SHA-256
+echo -n "abc" | cargo run -p oxi -- hash sha256
+
+# HMAC-SHA-256 with a hex key
+echo -n "msg" | cargo run -p oxi -- hmac sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
+
+# Generate 32 random bytes from HMAC_DRBG-SHA-256
+cargo run -p oxi -- rand 32
+
+# Dump the LAMA manifest
+cargo run -p oxi -- --lama
+```
+
+## Runnable examples
+
+Each algorithm crate ships a self-contained example:
+
+```bash
+cargo run -p oxicrypt-sha   --example sha256_hash
+cargo run -p oxicrypt-hmac  --example hmac_sha256
+cargo run -p oxicrypt-aes   --example aes_gcm
+cargo run -p oxicrypt-drbg  --example hmac_drbg
+cargo run -p oxicrypt-ecdsa --example ecdsa_sign
+cargo run -p oxicrypt-eddsa --example ed25519_sign
+cargo run -p oxicrypt-ecdh  --example ecdh_p256
+```
+
+## LAMA — AI agent discovery
+
+oxicrypt ships a [LAMA](https://github.com/lamaspec/lama) manifest so
+AI coding agents can discover and correctly use the library without
+hallucinating function names or missing constraints. Four discovery
+vectors are supported:
+
+- **`lama.yaml`** at the repository root — capabilities summary for fast triage
+- **`--lama` flag** on the ACVP harness binary — full manifest for the exact build
+- **`[workspace.metadata.lama]`** in `Cargo.toml` — pointer for crates.io discovery
+- **Full manifest** at `docs/llm-api-manifest/llm-api.yaml` — every function, type,
+  constraint, and pitfall
+
+Commonly-used items are re-exported at each crate's root for natural import
+paths: `use oxicrypt_sha::sha256`, `use oxicrypt_ecdsa::verify`,
+`use oxicrypt_eddsa::Ed25519PrivateKey`.
 
 ## License
 

@@ -148,6 +148,19 @@ pub enum KdfError {
     OutputTooLong,
 }
 
+impl core::fmt::Display for KdfError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Module(e) => write!(f, "module error: {e}"),
+            Self::OutputTooLong => write!(
+                f,
+                "requested output exceeds 255 * HashLen bytes (RFC 5869 §2.3); \
+                 reduce the output length or use a hash with a larger digest"
+            ),
+        }
+    }
+}
+
 impl From<Error> for KdfError {
     fn from(value: Error) -> Self {
         Self::Module(value)

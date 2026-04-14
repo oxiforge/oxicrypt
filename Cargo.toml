@@ -17,6 +17,7 @@ members = [
     "crates/oxicrypt-tls-kdf",
     "crates/oxicrypt-integrity",
     "acvp-harness",
+    "oxi",
     "tools/ct-validation",
 ]
 exclude = [

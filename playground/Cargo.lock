@@ -3,60 +3,9 @@
 version = 4
 
 [[package]]
-name = "acvp-harness"
-version = "0.0.0"
-dependencies = [
- "oxicrypt-aes",
- "oxicrypt-cmac",
- "oxicrypt-drbg",
- "oxicrypt-ecdh",
- "oxicrypt-ecdsa",
- "oxicrypt-eddsa",
- "oxicrypt-hmac",
- "oxicrypt-integrity",
- "oxicrypt-kdf",
- "oxicrypt-module",
- "oxicrypt-rsa",
- "oxicrypt-sha",
- "oxicrypt-tls-kdf",
- "oxicrypt-xof",
-]
-
-[[package]]
-name = "ct-validation"
-version = "0.0.0"
-dependencies = [
- "oxicrypt-drbg",
- "oxicrypt-ecdh",
- "oxicrypt-ecdsa",
- "oxicrypt-eddsa",
- "oxicrypt-module",
- "oxicrypt-rsa",
-]
-
-[[package]]
-name = "oxi"
-version = "0.0.0"
-dependencies = [
- "oxicrypt-aes",
- "oxicrypt-drbg",
- "oxicrypt-hmac",
- "oxicrypt-module",
- "oxicrypt-sha",
-]
-
-[[package]]
 name = "oxicrypt-aes"
 version = "0.0.0"
 dependencies = [
- "oxicrypt-module",
-]
-
-[[package]]
-name = "oxicrypt-cmac"
-version = "0.0.0"
-dependencies = [
- "oxicrypt-aes",
  "oxicrypt-module",
 ]
 
@@ -74,7 +23,6 @@ dependencies = [
 name = "oxicrypt-ecdh"
 version = "0.0.0"
 dependencies = [
- "oxicrypt-drbg",
  "oxicrypt-ecdsa",
  "oxicrypt-module",
 ]
@@ -115,16 +63,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxicrypt-kdf"
-version = "0.0.0"
-dependencies = [
- "oxicrypt-hmac",
- "oxicrypt-module",
- "oxicrypt-sha",
- "oxicrypt-test-vectors",
-]
-
-[[package]]
 name = "oxicrypt-module"
 version = "0.0.0"
 
@@ -150,19 +88,17 @@ name = "oxicrypt-test-vectors"
 version = "0.0.0"
 
 [[package]]
-name = "oxicrypt-tls-kdf"
+name = "playground"
 version = "0.0.0"
 dependencies = [
+ "oxicrypt-aes",
+ "oxicrypt-drbg",
+ "oxicrypt-ecdh",
+ "oxicrypt-ecdsa",
+ "oxicrypt-eddsa",
  "oxicrypt-hmac",
- "oxicrypt-kdf",
+ "oxicrypt-integrity",
  "oxicrypt-module",
-]
-
-[[package]]
-name = "oxicrypt-xof"
-version = "0.0.0"
-dependencies = [
- "oxicrypt-module",
+ "oxicrypt-rsa",
  "oxicrypt-sha",
- "oxicrypt-test-vectors",
 ]

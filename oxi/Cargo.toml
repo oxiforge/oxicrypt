@@ -1,0 +1,24 @@
+[package]
+name = "oxi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Command-line interface for oxicrypt — hash, HMAC, encrypt, and generate random bytes."
+
+[[bin]]
+name = "oxi"
+path = "src/main.rs"
+
+[dependencies]
+oxicrypt-module = { path = "../crates/oxicrypt-module" }
+oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
+oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
+oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
+oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
+
+[lints]
+workspace = true

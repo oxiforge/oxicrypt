@@ -64,6 +64,24 @@ pub enum KeygenError {
     TooManyAttempts,
 }
 
+impl core::fmt::Display for KeygenError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Drbg(e) => write!(f, "DRBG error during keygen: {e}"),
+            Self::InvalidExponent => write!(
+                f,
+                "public exponent must be odd and in range 65537 <= e < 2^256 \
+                 (FIPS 186-5 §A.1.1); use e = 65537 (0x10001)"
+            ),
+            Self::TooManyAttempts => write!(
+                f,
+                "exceeded 20000 prime-candidate draws without finding a valid pair; \
+                 this should never happen in practice — check your DRBG entropy source"
+            ),
+        }
+    }
+}
+
 impl From<DrbgError> for KeygenError {
     fn from(e: DrbgError) -> KeygenError {
         KeygenError::Drbg(e)
