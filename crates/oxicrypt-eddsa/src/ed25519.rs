@@ -332,6 +332,12 @@ impl Ed25519PrivateKey {
     }
 }
 
+impl Drop for Ed25519PrivateKey {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.seed);
+    }
+}
+
 // ------------------------------------------------------------------
 // Power-up self-test
 // ------------------------------------------------------------------

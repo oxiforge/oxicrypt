@@ -339,6 +339,13 @@ impl<H: HmacAlg> Default for HmacDrbg<H> {
     }
 }
 
+impl<H: HmacAlg> Drop for HmacDrbg<H> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.key);
+        oxicrypt_zeroize::zeroize(&mut self.v);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

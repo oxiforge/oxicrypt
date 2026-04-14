@@ -341,6 +341,12 @@ impl Aes128Key {
     }
 }
 
+impl Drop for Aes128Key {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.rk);
+    }
+}
+
 impl Aes192Key {
     /// Construct from a 24-byte key.
     pub fn new(key: &[u8; 24]) -> Self {
@@ -358,6 +364,12 @@ impl Aes192Key {
     }
 }
 
+impl Drop for Aes192Key {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.rk);
+    }
+}
+
 impl Aes256Key {
     /// Construct from a 32-byte key.
     pub fn new(key: &[u8; 32]) -> Self {
@@ -372,6 +384,12 @@ impl Aes256Key {
     /// Decrypt a single 16-byte block in place.
     pub fn decrypt_block(&self, block: &mut [u8; 16]) {
         decrypt_block_generic(block, &self.rk, 14);
+    }
+}
+
+impl Drop for Aes256Key {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.rk);
     }
 }
 

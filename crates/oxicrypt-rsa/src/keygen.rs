@@ -307,7 +307,7 @@ pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
 /// into [`crate::RsaPrivateKey2048::from_components`] (or the CRT
 /// variant) along with `e`, which runs the IG 10.3.A pairwise
 /// consistency test before the key is considered usable.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct KeyMaterial {
     /// RSA-2048 modulus `n = p · q`.
     pub n: U2048,
@@ -323,6 +323,17 @@ pub struct KeyMaterial {
     pub dq: U1024,
     /// CRT coefficient `qInv = q^(−1) mod p`.
     pub qinv: U1024,
+}
+
+impl Drop for KeyMaterial {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u64(&mut self.d.limbs);
+        oxicrypt_zeroize::zeroize_u64(&mut self.p.limbs);
+        oxicrypt_zeroize::zeroize_u64(&mut self.q.limbs);
+        oxicrypt_zeroize::zeroize_u64(&mut self.dp.limbs);
+        oxicrypt_zeroize::zeroize_u64(&mut self.dq.limbs);
+        oxicrypt_zeroize::zeroize_u64(&mut self.qinv.limbs);
+    }
 }
 
 /// Generate fresh RSA-2048 key material using `drbg` for all

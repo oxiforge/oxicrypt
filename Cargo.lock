@@ -50,6 +50,7 @@ name = "oxicrypt-aes"
 version = "0.0.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -68,6 +69,7 @@ dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -86,6 +88,7 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -95,6 +98,7 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -104,6 +108,7 @@ dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-test-vectors",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -122,6 +127,7 @@ dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-test-vectors",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -135,6 +141,7 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -166,3 +173,7 @@ dependencies = [
  "oxicrypt-sha",
  "oxicrypt-test-vectors",
 ]
+
+[[package]]
+name = "oxicrypt-zeroize"
+version = "0.0.0"

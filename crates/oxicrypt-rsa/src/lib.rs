@@ -956,7 +956,7 @@ pub fn pairwise_consistency_test_2048_internal(
 /// through the Garner-recombine path with Bellcore verify-after-sign;
 /// when absent, signing falls back to the direct `m^d mod n` ladder
 /// on the 2048-bit context.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[allow(clippy::struct_field_names)]
 struct CrtComponents {
     p_bytes: [u8; U1024_BYTES],
@@ -964,6 +964,16 @@ struct CrtComponents {
     dp_bytes: [u8; U1024_BYTES],
     dq_bytes: [u8; U1024_BYTES],
     qinv_bytes: [u8; U1024_BYTES],
+}
+
+impl Drop for CrtComponents {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.p_bytes);
+        oxicrypt_zeroize::zeroize(&mut self.q_bytes);
+        oxicrypt_zeroize::zeroize(&mut self.dp_bytes);
+        oxicrypt_zeroize::zeroize(&mut self.dq_bytes);
+        oxicrypt_zeroize::zeroize(&mut self.qinv_bytes);
+    }
 }
 
 /// A validated RSA-2048 private key suitable for signing.
@@ -990,6 +1000,14 @@ pub struct RsaPrivateKey2048 {
     d_bytes: [u8; RSA_2048_MODULUS_BYTES],
     e: u64,
     crt: Option<CrtComponents>,
+}
+
+impl Drop for RsaPrivateKey2048 {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.d_bytes);
+        // CrtComponents has its own Drop; dropping Option<CrtComponents>
+        // invokes it when Some.
+    }
 }
 
 impl RsaPrivateKey2048 {

@@ -437,6 +437,12 @@ impl EcdsaP256PrivateKey {
     }
 }
 
+impl Drop for EcdsaP256PrivateKey {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.d);
+    }
+}
+
 /// Bound on the number of fresh-`k` retries inside a single sign
 /// (or PCT) call. With P-256 the probability that any one draw
 /// yields `r == 0` or `s == 0` is on the order of `2^(−256)`, so a

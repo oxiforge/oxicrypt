@@ -577,6 +577,13 @@ impl<F: CipherFactory> Default for CtrDrbg<F> {
     }
 }
 
+impl<F: CipherFactory> Drop for CtrDrbg<F> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.key);
+        oxicrypt_zeroize::zeroize(&mut self.v);
+    }
+}
+
 /// BCC — SP 800-90A §10.3.3. `data` length must be a multiple of 16.
 fn bcc<B: BlockCipher>(cipher: &B, data: &[u8]) -> [u8; OUTLEN] {
     debug_assert!(data.len() % OUTLEN == 0);

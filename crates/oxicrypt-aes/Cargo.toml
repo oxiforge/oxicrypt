@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }

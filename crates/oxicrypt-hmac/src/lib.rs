@@ -115,8 +115,12 @@ pub trait BlockHash<const B: usize, const L: usize>: Sized {
     fn block_new() -> Self;
     /// Absorb more input.
     fn block_update(&mut self, data: &[u8]);
-    /// Consume self, return the `L`-byte digest.
-    fn block_finalize(self) -> [u8; L];
+    /// Finalize and return the `L`-byte digest.
+    ///
+    /// Resets internal state to a fresh hasher so subsequent calls
+    /// produce the digest of an empty input. This allows the owning
+    /// struct to implement `Drop` for CSP zeroization.
+    fn block_finalize(&mut self) -> [u8; L];
 }
 
 // ----------------------------------------------------------------------
@@ -189,7 +193,7 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
     }
 
     /// Finalizes and returns the L-byte MAC.
-    pub fn finalize(self) -> [u8; L] {
+    pub fn finalize(&mut self) -> [u8; L] {
         // inner_digest = H( K0 XOR ipad || text )
         let inner_digest = self.inner.block_finalize();
 
@@ -198,6 +202,12 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
         outer.block_update(&self.outer_key);
         outer.block_update(&inner_digest);
         outer.block_finalize()
+    }
+}
+
+impl<H: BlockHash<B, L>, const B: usize, const L: usize> Drop for Hmac<H, B, L> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.outer_key);
     }
 }
 
@@ -214,8 +224,13 @@ macro_rules! impl_block_hash {
             fn block_update(&mut self, data: &[u8]) {
                 <$t>::update(self, data);
             }
-            fn block_finalize(self) -> [u8; $l] {
-                <$t>::finalize(self)
+            fn block_finalize(&mut self) -> [u8; $l] {
+                // Swap out the live hasher for a blank one, then
+                // finalize the taken copy. This lets the trait take
+                // `&mut self` (needed for Drop on Hmac) while the
+                // underlying SHA `finalize` still takes `self`.
+                let taken = core::mem::replace(self, <$t>::new_internal());
+                <$t>::finalize(taken)
             }
         }
     };

@@ -31,8 +31,8 @@
 //! - **AES key** (`Aes128Key` / `Aes192Key` / `Aes256Key`) — CSP.
 //!   The key struct stores the expanded round-key schedule; the
 //!   caller's original key bytes are not retained beyond the
-//!   `new(...)` call. Zeroization of the round-key schedule at
-//!   drop is planned alongside the crate-wide hardening pass.
+//!   `new(...)` call. The round-key schedule is zeroized via
+//!   [`oxicrypt_zeroize`] when the key is dropped.
 //! - **Initialization vectors / counters** — public per
 //!   SP 800-38A-D. Never SSPs, but misuse (IV reuse under the
 //!   same key for GCM or CCM) catastrophically breaks

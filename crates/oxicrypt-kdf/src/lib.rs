@@ -112,7 +112,7 @@ pub trait PrfHmac<const L: usize>: Sized {
     /// Absorb more input.
     fn prf_update(&mut self, data: &[u8]);
     /// Finalise and return the `L`-byte MAC.
-    fn prf_finalize(self) -> [u8; L];
+    fn prf_finalize(&mut self) -> [u8; L];
 }
 
 impl<H, const B: usize, const L: usize> PrfHmac<L> for Hmac<H, B, L>
@@ -125,7 +125,7 @@ where
     fn prf_update(&mut self, data: &[u8]) {
         Hmac::update(self, data);
     }
-    fn prf_finalize(self) -> [u8; L] {
+    fn prf_finalize(&mut self) -> [u8; L] {
         Hmac::finalize(self)
     }
 }
@@ -284,6 +284,12 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
             i += 1;
         }
         Ok(())
+    }
+}
+
+impl<P: PrfHmac<L>, const L: usize> Drop for Hkdf<P, L> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.prk);
     }
 }
 

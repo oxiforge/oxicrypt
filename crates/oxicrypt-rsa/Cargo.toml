@@ -14,3 +14,4 @@ workspace = true
 oxicrypt-drbg = { path = "../oxicrypt-drbg" }
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }

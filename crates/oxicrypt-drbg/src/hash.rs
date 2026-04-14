@@ -327,6 +327,13 @@ impl<H: HashAlg> Default for HashDrbg<H> {
     }
 }
 
+impl<H: HashAlg> Drop for HashDrbg<H> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.v);
+        oxicrypt_zeroize::zeroize(&mut self.c);
+    }
+}
+
 /// `Hash_df(input_string, no_of_bits_to_return)` — SP 800-90A §10.3.1.
 ///
 /// Writes exactly `out.len()` derived bytes. `out.len()` must be at

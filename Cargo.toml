@@ -16,6 +16,7 @@ members = [
     "crates/oxicrypt-cmac",
     "crates/oxicrypt-tls-kdf",
     "crates/oxicrypt-integrity",
+    "crates/oxicrypt-zeroize",
     "acvp-harness",
     "oxi",
     "tools/ct-validation",
