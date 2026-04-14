@@ -1,0 +1,14 @@
+[package]
+name = "oxicrypt-ml-dsa"
+description = "ML-DSA (FIPS 204) — stub crate, implementation planned"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-module = { path = "../oxicrypt-module" }

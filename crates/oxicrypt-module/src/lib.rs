@@ -44,6 +44,13 @@
 //! - [`KatEntry`] and the [`SelfTest`] trait — the registry
 //!   shape that algorithm crates use to expose their power-up
 //!   KATs.
+//! - [`AlgorithmProfile`] — runtime selection of an algorithm
+//!   restriction policy (Unrestricted, CNSA 2.0, CNSA 1.0).
+//!   Set once at initialization via
+//!   [`initialize_with_profile`].
+//! - [`Service`] — per-algorithm-and-parameter enumeration of
+//!   every approved service in the module. Used with
+//!   [`require_allowed`] to enforce profile restrictions.
 //!
 //! The test registry is **not** assembled by linker-section
 //! tricks: callers pass an explicit `&[KatEntry]` slice. That
@@ -51,12 +58,40 @@
 //! every call site, which makes it straightforward to audit the
 //! module's power-up inventory against the Security Policy.
 //!
+//! # Algorithm profiles
+//!
+//! A single validated binary serves general FIPS 140-3 consumers
+//! and CNSA-restricted deployments via a runtime
+//! [`AlgorithmProfile`] selection. The operator passes the
+//! desired profile to [`initialize_with_profile`]; subsequent
+//! calls to [`require_allowed`] enforce it. Services not
+//! permitted by the active profile return
+//! [`Error::AlgorithmRestricted`].
+//!
+//! Three profiles are defined:
+//!
+//! - **Unrestricted** — all FIPS-approved algorithms are
+//!   available. This is the default, matching the behavior of
+//!   [`initialize_with_tests`].
+//! - **CNSA 2.0** (CNSSP 15) — only quantum-resistant
+//!   algorithms: AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87,
+//!   LMS, XMSS, plus SHA3-384/512 and 256-bit SP 800-185
+//!   variants.
+//! - **CNSA 1.0** — classical algorithms for the transition
+//!   period: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072,
+//!   DH >= 3072.
+//!
+//! Profiles nest: CNSA 2.0 is the most restrictive, CNSA 1.0
+//! is intermediate, Unrestricted allows everything. KATs still
+//! run all algorithms regardless of profile — the profile
+//! only restricts post-initialization service access.
+//!
 //! # Sensitive security parameters (SSPs)
 //!
 //! This crate holds **no SSPs** of its own. It only gates
 //! access to other crates that do. Secret material lives in the
-//! algorithm crates that own it (e.g. `fips-rsa`'s
-//! `RsaPrivateKey2048`, `fips-drbg`'s DRBG states). The error
+//! algorithm crates that own it (e.g. `oxicrypt-rsa`'s
+//! `RsaPrivateKey2048`, `oxicrypt-drbg`'s DRBG states). The error
 //! latch here does not perform SSP zeroization on its own — each
 //! owning crate is responsible for ensuring its SSPs are
 //! dropped when the process restarts following a transition into
@@ -69,7 +104,7 @@
 //! | §7.10 power-up self-tests | [`initialize_with_tests`] runs every registered [`KatEntry`] sequentially; the first failure latches [`State::Error`]. |
 //! | §7.10 conditional self-tests | Algorithm crates call [`enter_error_state`] on detecting a pairwise-consistency or DRBG-health failure. |
 //! | IG 9.5.A approved-mode indicator | [`is_operational`] / [`state`] — queryable at runtime. |
-//! | IG 10.3.A software integrity | Delegated to `fips-integrity` (separate crate), wired in as the first KAT by the top-level caller. |
+//! | IG 10.3.A software integrity | Delegated to `oxicrypt-integrity` (separate crate), wired in as the first KAT by the top-level caller. |
 //!
 //! # Thread safety
 //!
@@ -204,6 +239,22 @@ pub enum Error {
     /// supplied out-of-range bytes. Algorithm primitives should return
     /// this rather than silently substituting a default.
     InvalidInput,
+    /// A service was invoked that is not permitted under the active
+    /// [`AlgorithmProfile`]. The module is still operational — the
+    /// algorithm exists but is restricted by policy. Switch to a
+    /// less restrictive profile (which requires a process restart)
+    /// or use an alternative algorithm that is permitted.
+    AlgorithmRestricted {
+        /// The specific service that was blocked.
+        service: Service,
+    },
+    /// A service was invoked for an algorithm that exists in the
+    /// [`Service`] enum but whose implementation has not yet been
+    /// completed. Stub crates return this. The algorithm is
+    /// recognized by the profile system and its gate will pass if
+    /// the profile permits it, but the actual cryptographic
+    /// operation is not yet available.
+    NotImplemented,
 }
 
 impl fmt::Display for Error {
@@ -220,6 +271,14 @@ impl fmt::Display for Error {
             }
             Self::AlreadyInitialized => f.write_str("FIPS module already initialized"),
             Self::InvalidInput => f.write_str("invalid input to FIPS service"),
+            Self::AlgorithmRestricted { service } => {
+                write!(
+                    f,
+                    "algorithm {service} is not permitted under the {} profile",
+                    active_profile()
+                )
+            }
+            Self::NotImplemented => f.write_str("algorithm not yet implemented"),
         }
     }
 }
@@ -365,6 +424,610 @@ pub fn enter_error_state(_reason: &'static str) {
     STATE.store(State::Error as u8, Ordering::Release);
 }
 
+// =========================================================================
+// Algorithm profile gating (CNSA 2.0 / CNSA 1.0)
+// =========================================================================
+
+/// Algorithm restriction profile selected at module initialization.
+///
+/// A single validated binary can serve general FIPS 140-3 consumers
+/// (`Unrestricted`) and CNSA-restricted deployments (`Cnsa2`,
+/// `Cnsa1`) by choosing the appropriate profile at init time.
+///
+/// The profile is immutable once set: it is stored alongside the
+/// module `State` before the first KAT runs and cannot be changed
+/// without restarting the process (which resets the state machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AlgorithmProfile {
+    /// All FIPS-approved algorithms are available. This is the
+    /// default and preserves backward compatibility with callers
+    /// that use [`initialize_with_tests`].
+    Unrestricted = 0,
+    /// CNSA 2.0 (CNSSP 15): quantum-resistant algorithms only.
+    /// AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS.
+    /// SHA3-384/512 and 256-bit SP 800-185 variants are also
+    /// allowed. All other algorithms return
+    /// [`Error::AlgorithmRestricted`].
+    Cnsa2 = 1,
+    /// CNSA 1.0: classical algorithms for the transition period.
+    /// AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072, DH >= 3072.
+    Cnsa1 = 2,
+}
+
+impl AlgorithmProfile {
+    const fn from_u8(raw: u8) -> Self {
+        match raw {
+            0 => Self::Unrestricted,
+            2 => Self::Cnsa1,
+            // Unknown discriminant (including 1 = Cnsa2) defaults to
+            // the most restrictive profile as defence-in-depth.
+            _ => Self::Cnsa2,
+        }
+    }
+}
+
+impl fmt::Display for AlgorithmProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Unrestricted => "Unrestricted",
+            Self::Cnsa2 => "CNSA 2.0",
+            Self::Cnsa1 => "CNSA 1.0",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Global algorithm profile. Written once by [`initialize_with_profile`];
+/// read by [`require_allowed`] and [`active_profile`].
+static PROFILE: AtomicU8 = AtomicU8::new(AlgorithmProfile::Unrestricted as u8);
+
+/// Returns the active algorithm profile.
+pub fn active_profile() -> AlgorithmProfile {
+    AlgorithmProfile::from_u8(PROFILE.load(Ordering::Acquire))
+}
+
+/// Initializes the module with a specific algorithm profile and runs
+/// every supplied power-up KAT.
+///
+/// This is the profile-aware entry point. It stores the selected
+/// profile before running KATs, then transitions to `Operational` on
+/// success. KATs always run all algorithms regardless of the profile —
+/// the profile only restricts post-initialization service access via
+/// [`require_allowed`].
+///
+/// See [`initialize_with_tests`] for the backward-compatible wrapper
+/// that uses [`AlgorithmProfile::Unrestricted`].
+pub fn initialize_with_profile(
+    tests: &[KatEntry],
+    profile: AlgorithmProfile,
+) -> Result<(), Error> {
+    // Store the profile before running KATs. This is safe even if
+    // initialization fails: a failed init latches State::Error, so
+    // no service call can reach require_allowed() anyway.
+    PROFILE.store(profile as u8, Ordering::Release);
+    initialize_with_tests(tests)
+}
+
+/// Enumeration of every approved service in the module, at the
+/// algorithm-and-parameter level.
+///
+/// Each variant represents a specific algorithm instantiation (e.g.
+/// `Aes128Ecb` not just `Aes`). This granularity is necessary
+/// because CNSA restrictions operate at the key-size and hash-size
+/// level.
+///
+/// Algorithm crates pass the appropriate `Service` variant to
+/// [`require_allowed`] at their public entry points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+#[allow(missing_docs)]
+pub enum Service {
+    // ----- oxicrypt-sha: FIPS 180-4 / FIPS 202 -----
+    Sha1 = 0,
+    Sha224 = 1,
+    Sha256 = 2,
+    Sha384 = 3,
+    Sha512 = 4,
+    Sha512_224 = 5,
+    Sha512_256 = 6,
+
+    Sha3_224 = 10,
+    Sha3_256 = 11,
+    Sha3_384 = 12,
+    Sha3_512 = 13,
+
+    // ----- oxicrypt-xof: FIPS 202 / SP 800-185 -----
+    Shake128 = 20,
+    Shake256 = 21,
+    CShake128 = 22,
+    CShake256 = 23,
+    Kmac128 = 24,
+    Kmac256 = 25,
+    KmacXof128 = 26,
+    KmacXof256 = 27,
+    TupleHash128 = 28,
+    TupleHash256 = 29,
+    TupleHashXof128 = 30,
+    TupleHashXof256 = 31,
+    ParallelHash128 = 32,
+    ParallelHash256 = 33,
+    ParallelHashXof128 = 34,
+    ParallelHashXof256 = 35,
+
+    // ----- oxicrypt-hmac: FIPS 198-1 -----
+    HmacSha1 = 40,
+    HmacSha224 = 41,
+    HmacSha256 = 42,
+    HmacSha384 = 43,
+    HmacSha512 = 44,
+    HmacSha512_224 = 45,
+    HmacSha512_256 = 46,
+    HmacSha3_224 = 47,
+    HmacSha3_256 = 48,
+    HmacSha3_384 = 49,
+    HmacSha3_512 = 50,
+
+    // ----- oxicrypt-cmac: SP 800-38B -----
+    CmacAes128 = 60,
+    CmacAes192 = 61,
+    CmacAes256 = 62,
+
+    // ----- oxicrypt-aes: FIPS 197 / SP 800-38A/D/C/F/Fp -----
+    Aes128Ecb = 70,
+    Aes128Cbc = 71,
+    Aes128Ctr = 72,
+    Aes128Gcm = 73,
+    Aes128Ccm = 74,
+    Aes128Kw = 75,
+    Aes128Kwp = 76,
+    Aes192Ecb = 80,
+    Aes192Cbc = 81,
+    Aes192Ctr = 82,
+    Aes192Gcm = 83,
+    Aes192Ccm = 84,
+    Aes192Kw = 85,
+    Aes192Kwp = 86,
+    Aes256Ecb = 90,
+    Aes256Cbc = 91,
+    Aes256Ctr = 92,
+    Aes256Gcm = 93,
+    Aes256Ccm = 94,
+    Aes256Kw = 95,
+    Aes256Kwp = 96,
+
+    // ----- oxicrypt-drbg: SP 800-90A -----
+    CtrDrbgAes128 = 100,
+    CtrDrbgAes192 = 101,
+    CtrDrbgAes256 = 102,
+    HashDrbgSha256 = 103,
+    HashDrbgSha384 = 104,
+    HashDrbgSha512 = 105,
+    HmacDrbgSha256 = 106,
+    HmacDrbgSha384 = 107,
+    HmacDrbgSha512 = 108,
+
+    // ----- oxicrypt-kdf: SP 800-56C / SP 800-108 / SP 800-132 -----
+    HkdfSha1 = 120,
+    HkdfSha256 = 121,
+    HkdfSha384 = 122,
+    HkdfSha512 = 123,
+    KbkdfHmacSha256 = 130,
+    KbkdfHmacSha384 = 131,
+    KbkdfHmacSha512 = 132,
+    KbkdfCmacAes128 = 133,
+    KbkdfCmacAes192 = 134,
+    KbkdfCmacAes256 = 135,
+    Pbkdf2HmacSha1 = 140,
+    Pbkdf2HmacSha224 = 141,
+    Pbkdf2HmacSha256 = 142,
+    Pbkdf2HmacSha384 = 143,
+    Pbkdf2HmacSha512 = 144,
+
+    // ----- oxicrypt-rsa: FIPS 186-5 / SP 800-56Br2 -----
+    RsaKeygen2048 = 150,
+    RsaPkcs1v15Sign2048 = 151,
+    RsaPssSign2048 = 152,
+    RsaOaep2048 = 153,
+    RsaPkcs1v15Verify2048 = 154,
+    RsaPssVerify2048 = 155,
+    RsaKeygen3072 = 160,
+    RsaPkcs1v15Sign3072 = 161,
+    RsaPssSign3072 = 162,
+    RsaOaep3072 = 163,
+    RsaPkcs1v15Verify3072 = 164,
+    RsaPssVerify3072 = 165,
+    RsaKeygen4096 = 170,
+    RsaPkcs1v15Sign4096 = 171,
+    RsaPssSign4096 = 172,
+    RsaOaep4096 = 173,
+    RsaPkcs1v15Verify4096 = 174,
+    RsaPssVerify4096 = 175,
+
+    // ----- oxicrypt-ecdsa: FIPS 186-5 -----
+    EcdsaP256Sign = 200,
+    EcdsaP256Verify = 201,
+    EcdsaP256Keygen = 202,
+    EcdsaP384Sign = 210,
+    EcdsaP384Verify = 211,
+    EcdsaP384Keygen = 212,
+
+    // ----- oxicrypt-ecdh: SP 800-56Ar3 -----
+    EcdhP256 = 220,
+    EcdhP384 = 221,
+
+    // ----- oxicrypt-eddsa: FIPS 186-5 / RFC 8032 -----
+    Ed25519Sign = 230,
+    Ed25519Verify = 231,
+    Ed25519Keygen = 232,
+
+    // ----- oxicrypt-tls-kdf: SP 800-135r1 -----
+    Tls12Kdf = 240,
+
+    // ----- oxicrypt-ml-kem: FIPS 203 (stub) -----
+    MlKem1024Encaps = 300,
+    MlKem1024Decaps = 301,
+    MlKem1024Keygen = 302,
+
+    // ----- oxicrypt-ml-dsa: FIPS 204 (stub) -----
+    MlDsa87Sign = 310,
+    MlDsa87Verify = 311,
+    MlDsa87Keygen = 312,
+
+    // ----- oxicrypt-slh-dsa: FIPS 205 (stub) -----
+    SlhDsaSign = 320,
+    SlhDsaVerify = 321,
+    SlhDsaKeygen = 322,
+
+    // ----- oxicrypt-lms: SP 800-208 (stub) -----
+    LmsSign = 330,
+    LmsVerify = 331,
+
+    // ----- oxicrypt-xmss: SP 800-208 (stub) -----
+    XmssSign = 340,
+    XmssVerify = 341,
+
+    // ----- oxicrypt-dh: RFC 3526 (stub) -----
+    Dh3072 = 350,
+}
+
+impl fmt::Display for Service {
+    // The match arm count is proportional to the number of approved
+    // services in the module; there is no natural factoring that
+    // would reduce it.
+    #[allow(clippy::too_many_lines)]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Sha1 => "SHA-1",
+            Self::Sha224 => "SHA-224",
+            Self::Sha256 => "SHA-256",
+            Self::Sha384 => "SHA-384",
+            Self::Sha512 => "SHA-512",
+            Self::Sha512_224 => "SHA-512/224",
+            Self::Sha512_256 => "SHA-512/256",
+            Self::Sha3_224 => "SHA3-224",
+            Self::Sha3_256 => "SHA3-256",
+            Self::Sha3_384 => "SHA3-384",
+            Self::Sha3_512 => "SHA3-512",
+            Self::Shake128 => "SHAKE128",
+            Self::Shake256 => "SHAKE256",
+            Self::CShake128 => "cSHAKE128",
+            Self::CShake256 => "cSHAKE256",
+            Self::Kmac128 => "KMAC128",
+            Self::Kmac256 => "KMAC256",
+            Self::KmacXof128 => "KMACXOF128",
+            Self::KmacXof256 => "KMACXOF256",
+            Self::TupleHash128 => "TupleHash128",
+            Self::TupleHash256 => "TupleHash256",
+            Self::TupleHashXof128 => "TupleHashXOF128",
+            Self::TupleHashXof256 => "TupleHashXOF256",
+            Self::ParallelHash128 => "ParallelHash128",
+            Self::ParallelHash256 => "ParallelHash256",
+            Self::ParallelHashXof128 => "ParallelHashXOF128",
+            Self::ParallelHashXof256 => "ParallelHashXOF256",
+            Self::HmacSha1 => "HMAC-SHA-1",
+            Self::HmacSha224 => "HMAC-SHA-224",
+            Self::HmacSha256 => "HMAC-SHA-256",
+            Self::HmacSha384 => "HMAC-SHA-384",
+            Self::HmacSha512 => "HMAC-SHA-512",
+            Self::HmacSha512_224 => "HMAC-SHA-512/224",
+            Self::HmacSha512_256 => "HMAC-SHA-512/256",
+            Self::HmacSha3_224 => "HMAC-SHA3-224",
+            Self::HmacSha3_256 => "HMAC-SHA3-256",
+            Self::HmacSha3_384 => "HMAC-SHA3-384",
+            Self::HmacSha3_512 => "HMAC-SHA3-512",
+            Self::CmacAes128 => "CMAC-AES-128",
+            Self::CmacAes192 => "CMAC-AES-192",
+            Self::CmacAes256 => "CMAC-AES-256",
+            Self::Aes128Ecb => "AES-128-ECB",
+            Self::Aes128Cbc => "AES-128-CBC",
+            Self::Aes128Ctr => "AES-128-CTR",
+            Self::Aes128Gcm => "AES-128-GCM",
+            Self::Aes128Ccm => "AES-128-CCM",
+            Self::Aes128Kw => "AES-128-KW",
+            Self::Aes128Kwp => "AES-128-KWP",
+            Self::Aes192Ecb => "AES-192-ECB",
+            Self::Aes192Cbc => "AES-192-CBC",
+            Self::Aes192Ctr => "AES-192-CTR",
+            Self::Aes192Gcm => "AES-192-GCM",
+            Self::Aes192Ccm => "AES-192-CCM",
+            Self::Aes192Kw => "AES-192-KW",
+            Self::Aes192Kwp => "AES-192-KWP",
+            Self::Aes256Ecb => "AES-256-ECB",
+            Self::Aes256Cbc => "AES-256-CBC",
+            Self::Aes256Ctr => "AES-256-CTR",
+            Self::Aes256Gcm => "AES-256-GCM",
+            Self::Aes256Ccm => "AES-256-CCM",
+            Self::Aes256Kw => "AES-256-KW",
+            Self::Aes256Kwp => "AES-256-KWP",
+            Self::CtrDrbgAes128 => "CTR_DRBG-AES-128",
+            Self::CtrDrbgAes192 => "CTR_DRBG-AES-192",
+            Self::CtrDrbgAes256 => "CTR_DRBG-AES-256",
+            Self::HashDrbgSha256 => "Hash_DRBG-SHA-256",
+            Self::HashDrbgSha384 => "Hash_DRBG-SHA-384",
+            Self::HashDrbgSha512 => "Hash_DRBG-SHA-512",
+            Self::HmacDrbgSha256 => "HMAC_DRBG-SHA-256",
+            Self::HmacDrbgSha384 => "HMAC_DRBG-SHA-384",
+            Self::HmacDrbgSha512 => "HMAC_DRBG-SHA-512",
+            Self::HkdfSha1 => "HKDF-SHA-1",
+            Self::HkdfSha256 => "HKDF-SHA-256",
+            Self::HkdfSha384 => "HKDF-SHA-384",
+            Self::HkdfSha512 => "HKDF-SHA-512",
+            Self::KbkdfHmacSha256 => "KBKDF-HMAC-SHA-256",
+            Self::KbkdfHmacSha384 => "KBKDF-HMAC-SHA-384",
+            Self::KbkdfHmacSha512 => "KBKDF-HMAC-SHA-512",
+            Self::KbkdfCmacAes128 => "KBKDF-CMAC-AES-128",
+            Self::KbkdfCmacAes192 => "KBKDF-CMAC-AES-192",
+            Self::KbkdfCmacAes256 => "KBKDF-CMAC-AES-256",
+            Self::Pbkdf2HmacSha1 => "PBKDF2-HMAC-SHA-1",
+            Self::Pbkdf2HmacSha224 => "PBKDF2-HMAC-SHA-224",
+            Self::Pbkdf2HmacSha256 => "PBKDF2-HMAC-SHA-256",
+            Self::Pbkdf2HmacSha384 => "PBKDF2-HMAC-SHA-384",
+            Self::Pbkdf2HmacSha512 => "PBKDF2-HMAC-SHA-512",
+            Self::RsaKeygen2048 => "RSA-2048 keygen",
+            Self::RsaPkcs1v15Sign2048 => "RSA-PKCS1v1.5-Sign-2048",
+            Self::RsaPssSign2048 => "RSA-PSS-Sign-2048",
+            Self::RsaOaep2048 => "RSA-OAEP-2048",
+            Self::RsaPkcs1v15Verify2048 => "RSA-PKCS1v1.5-Verify-2048",
+            Self::RsaPssVerify2048 => "RSA-PSS-Verify-2048",
+            Self::RsaKeygen3072 => "RSA-3072 keygen",
+            Self::RsaPkcs1v15Sign3072 => "RSA-PKCS1v1.5-Sign-3072",
+            Self::RsaPssSign3072 => "RSA-PSS-Sign-3072",
+            Self::RsaOaep3072 => "RSA-OAEP-3072",
+            Self::RsaPkcs1v15Verify3072 => "RSA-PKCS1v1.5-Verify-3072",
+            Self::RsaPssVerify3072 => "RSA-PSS-Verify-3072",
+            Self::RsaKeygen4096 => "RSA-4096 keygen",
+            Self::RsaPkcs1v15Sign4096 => "RSA-PKCS1v1.5-Sign-4096",
+            Self::RsaPssSign4096 => "RSA-PSS-Sign-4096",
+            Self::RsaOaep4096 => "RSA-OAEP-4096",
+            Self::RsaPkcs1v15Verify4096 => "RSA-PKCS1v1.5-Verify-4096",
+            Self::RsaPssVerify4096 => "RSA-PSS-Verify-4096",
+            Self::EcdsaP256Sign => "ECDSA-P256 sign",
+            Self::EcdsaP256Verify => "ECDSA-P256 verify",
+            Self::EcdsaP256Keygen => "ECDSA-P256 keygen",
+            Self::EcdsaP384Sign => "ECDSA-P384 sign",
+            Self::EcdsaP384Verify => "ECDSA-P384 verify",
+            Self::EcdsaP384Keygen => "ECDSA-P384 keygen",
+            Self::EcdhP256 => "ECDH-P256",
+            Self::EcdhP384 => "ECDH-P384",
+            Self::Ed25519Sign => "Ed25519 sign",
+            Self::Ed25519Verify => "Ed25519 verify",
+            Self::Ed25519Keygen => "Ed25519 keygen",
+            Self::Tls12Kdf => "TLS 1.2 KDF",
+            Self::MlKem1024Encaps => "ML-KEM-1024 encaps",
+            Self::MlKem1024Decaps => "ML-KEM-1024 decaps",
+            Self::MlKem1024Keygen => "ML-KEM-1024 keygen",
+            Self::MlDsa87Sign => "ML-DSA-87 sign",
+            Self::MlDsa87Verify => "ML-DSA-87 verify",
+            Self::MlDsa87Keygen => "ML-DSA-87 keygen",
+            Self::SlhDsaSign => "SLH-DSA sign",
+            Self::SlhDsaVerify => "SLH-DSA verify",
+            Self::SlhDsaKeygen => "SLH-DSA keygen",
+            Self::LmsSign => "LMS sign",
+            Self::LmsVerify => "LMS verify",
+            Self::XmssSign => "XMSS sign",
+            Self::XmssVerify => "XMSS verify",
+            Self::Dh3072 => "DH-3072",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Guard used at the entry point of every approved service, after
+/// [`require_operational`], to enforce the active algorithm profile.
+///
+/// Returns `Ok(())` if the service is permitted under the profile
+/// selected at initialization, or
+/// `Err(Error::AlgorithmRestricted { .. })` otherwise.
+///
+/// This gate does **not** check [`State`] — callers must call
+/// [`require_operational`] first. The two-gate pattern is:
+///
+/// ```ignore
+/// require_operational()?;
+/// require_allowed(Service::Sha256)?;
+/// // ... perform the operation
+/// ```
+pub fn require_allowed(service: Service) -> Result<(), Error> {
+    let profile = active_profile();
+    if is_allowed(profile, service) {
+        Ok(())
+    } else {
+        Err(Error::AlgorithmRestricted { service })
+    }
+}
+
+/// Single source of truth for which services are allowed in each
+/// profile.
+const fn is_allowed(profile: AlgorithmProfile, service: Service) -> bool {
+    match profile {
+        AlgorithmProfile::Unrestricted => true,
+        AlgorithmProfile::Cnsa2 => is_cnsa2_allowed(service),
+        AlgorithmProfile::Cnsa1 => is_cnsa1_allowed(service),
+    }
+}
+
+/// CNSA 2.0 allowed set. Only quantum-resistant algorithms plus
+/// AES-256, SHA-384/512, SHA3-384/512, and 256-bit SP 800-185.
+const fn is_cnsa2_allowed(service: Service) -> bool {
+    matches!(
+        service,
+        // AES-256 all modes
+        Service::Aes256Ecb
+            | Service::Aes256Cbc
+            | Service::Aes256Ctr
+            | Service::Aes256Gcm
+            | Service::Aes256Ccm
+            | Service::Aes256Kw
+            | Service::Aes256Kwp
+            // SHA-384, SHA-512
+            | Service::Sha384
+            | Service::Sha512
+            // SHA3-384, SHA3-512 (for internal / hardware — see plan note)
+            | Service::Sha3_384
+            | Service::Sha3_512
+            // SHAKE-256
+            | Service::Shake256
+            // 256-bit SP 800-185 variants
+            | Service::CShake256
+            | Service::Kmac256
+            | Service::KmacXof256
+            | Service::TupleHash256
+            | Service::TupleHashXof256
+            | Service::ParallelHash256
+            | Service::ParallelHashXof256
+            // HMAC with allowed hashes
+            | Service::HmacSha384
+            | Service::HmacSha512
+            | Service::HmacSha3_384
+            | Service::HmacSha3_512
+            // CMAC-AES-256
+            | Service::CmacAes256
+            // DRBGs backed by AES-256 or SHA-384/512
+            | Service::CtrDrbgAes256
+            | Service::HashDrbgSha384
+            | Service::HashDrbgSha512
+            | Service::HmacDrbgSha384
+            | Service::HmacDrbgSha512
+            // KDFs with allowed backing
+            | Service::HkdfSha384
+            | Service::HkdfSha512
+            | Service::KbkdfHmacSha384
+            | Service::KbkdfHmacSha512
+            | Service::KbkdfCmacAes256
+            | Service::Pbkdf2HmacSha384
+            | Service::Pbkdf2HmacSha512
+            // Post-quantum (CNSA 2.0 core)
+            | Service::MlKem1024Encaps
+            | Service::MlKem1024Decaps
+            | Service::MlKem1024Keygen
+            | Service::MlDsa87Sign
+            | Service::MlDsa87Verify
+            | Service::MlDsa87Keygen
+            | Service::LmsSign
+            | Service::LmsVerify
+            | Service::XmssSign
+            | Service::XmssVerify
+    )
+}
+
+/// CNSA 1.0 allowed set. Classical algorithms for the transition
+/// period: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072,
+/// DH >= 3072. Also includes SHA-256 (widely needed for
+/// interoperability and certificate verification) and the
+/// post-quantum algorithms allowed in CNSA 2.0 (CNSA 1.0 is
+/// the transition profile; PQ algorithms are allowed if present).
+const fn is_cnsa1_allowed(service: Service) -> bool {
+    matches!(
+        service,
+        // AES-256 all modes
+        Service::Aes256Ecb
+            | Service::Aes256Cbc
+            | Service::Aes256Ctr
+            | Service::Aes256Gcm
+            | Service::Aes256Ccm
+            | Service::Aes256Kw
+            | Service::Aes256Kwp
+            // SHA-256, SHA-384, SHA-512 (SHA-256 needed for certs)
+            | Service::Sha256
+            | Service::Sha384
+            | Service::Sha512
+            // SHA3-256, SHA3-384, SHA3-512
+            | Service::Sha3_256
+            | Service::Sha3_384
+            | Service::Sha3_512
+            // SHAKE-256
+            | Service::Shake256
+            // 256-bit SP 800-185 variants
+            | Service::CShake256
+            | Service::Kmac256
+            | Service::KmacXof256
+            | Service::TupleHash256
+            | Service::TupleHashXof256
+            | Service::ParallelHash256
+            | Service::ParallelHashXof256
+            // HMAC with allowed hashes
+            | Service::HmacSha256
+            | Service::HmacSha384
+            | Service::HmacSha512
+            | Service::HmacSha3_256
+            | Service::HmacSha3_384
+            | Service::HmacSha3_512
+            // CMAC-AES-256
+            | Service::CmacAes256
+            // DRBGs backed by AES-256 or allowed hashes
+            | Service::CtrDrbgAes256
+            | Service::HashDrbgSha256
+            | Service::HashDrbgSha384
+            | Service::HashDrbgSha512
+            | Service::HmacDrbgSha256
+            | Service::HmacDrbgSha384
+            | Service::HmacDrbgSha512
+            // KDFs with allowed backing
+            | Service::HkdfSha256
+            | Service::HkdfSha384
+            | Service::HkdfSha512
+            | Service::KbkdfHmacSha256
+            | Service::KbkdfHmacSha384
+            | Service::KbkdfHmacSha512
+            | Service::KbkdfCmacAes256
+            | Service::Pbkdf2HmacSha256
+            | Service::Pbkdf2HmacSha384
+            | Service::Pbkdf2HmacSha512
+            // ECDSA/ECDH P-384
+            | Service::EcdsaP384Sign
+            | Service::EcdsaP384Verify
+            | Service::EcdsaP384Keygen
+            | Service::EcdhP384
+            // RSA >= 3072
+            | Service::RsaKeygen3072
+            | Service::RsaPkcs1v15Sign3072
+            | Service::RsaPssSign3072
+            | Service::RsaOaep3072
+            | Service::RsaPkcs1v15Verify3072
+            | Service::RsaPssVerify3072
+            | Service::RsaKeygen4096
+            | Service::RsaPkcs1v15Sign4096
+            | Service::RsaPssSign4096
+            | Service::RsaOaep4096
+            | Service::RsaPkcs1v15Verify4096
+            | Service::RsaPssVerify4096
+            // DH >= 3072
+            | Service::Dh3072
+            // PQ algorithms (allowed during transition for hybrid use)
+            | Service::MlKem1024Encaps
+            | Service::MlKem1024Decaps
+            | Service::MlKem1024Keygen
+            | Service::MlDsa87Sign
+            | Service::MlDsa87Verify
+            | Service::MlDsa87Keygen
+            | Service::LmsSign
+            | Service::LmsVerify
+            | Service::XmssSign
+            | Service::XmssVerify
+    )
+}
+
 // -------------------------------------------------------------------------
 // Test-only utilities
 // -------------------------------------------------------------------------
@@ -377,6 +1040,7 @@ pub fn enter_error_state(_reason: &'static str) {
 #[cfg(test)]
 fn reset_for_test() {
     STATE.store(State::PowerOff as u8, Ordering::Release);
+    PROFILE.store(AlgorithmProfile::Unrestricted as u8, Ordering::Release);
 }
 
 #[cfg(test)]
@@ -386,8 +1050,10 @@ extern crate alloc;
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
-        enter_error_state, initialize, initialize_with_tests, is_operational, require_operational,
-        reset_for_test, state, Error, KatEntry, SelfTest, SelfTestFailure, State,
+        active_profile, enter_error_state, initialize, initialize_with_profile,
+        initialize_with_tests, is_allowed, is_operational, require_allowed, require_operational,
+        reset_for_test, state, AlgorithmProfile, Error, KatEntry, SelfTest, SelfTestFailure,
+        Service, State,
     };
     use alloc::string::ToString;
 
@@ -531,5 +1197,248 @@ mod tests {
     fn dummy_self_test_trait_is_usable() {
         assert_eq!(DummyTest::NAME, "dummy-trait-vector");
         DummyTest::run().unwrap();
+    }
+
+    // =====================================================================
+    // Algorithm profile gating tests
+    // =====================================================================
+
+    #[test]
+    fn default_profile_is_unrestricted() {
+        reset_for_test();
+        assert_eq!(active_profile(), AlgorithmProfile::Unrestricted);
+    }
+
+    #[test]
+    fn initialize_with_profile_sets_cnsa2() {
+        reset_for_test();
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
+        assert!(is_operational());
+    }
+
+    #[test]
+    fn initialize_with_profile_sets_cnsa1() {
+        reset_for_test();
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa1).unwrap();
+        assert_eq!(active_profile(), AlgorithmProfile::Cnsa1);
+        assert!(is_operational());
+    }
+
+    #[test]
+    fn unrestricted_allows_all_services() {
+        // Spot-check: every category should pass in Unrestricted.
+        let spot = [
+            Service::Sha1,
+            Service::Sha256,
+            Service::Aes128Ecb,
+            Service::Aes256Gcm,
+            Service::CtrDrbgAes128,
+            Service::EcdsaP256Sign,
+            Service::Ed25519Sign,
+            Service::RsaPssSign2048,
+            Service::MlKem1024Encaps,
+            Service::LmsSign,
+            Service::Dh3072,
+            Service::SlhDsaSign,
+            Service::Tls12Kdf,
+        ];
+        for svc in spot {
+            assert!(
+                is_allowed(AlgorithmProfile::Unrestricted, svc),
+                "{svc} should be allowed in Unrestricted"
+            );
+        }
+    }
+
+    #[test]
+    fn cnsa2_allows_aes256_and_pq() {
+        let allowed = [
+            Service::Aes256Gcm,
+            Service::Aes256Cbc,
+            Service::Sha384,
+            Service::Sha512,
+            Service::Sha3_384,
+            Service::Sha3_512,
+            Service::HmacSha384,
+            Service::HmacSha512,
+            Service::CtrDrbgAes256,
+            Service::HashDrbgSha384,
+            Service::HmacDrbgSha512,
+            Service::Kmac256,
+            Service::KmacXof256,
+            Service::MlKem1024Encaps,
+            Service::MlKem1024Decaps,
+            Service::MlKem1024Keygen,
+            Service::MlDsa87Sign,
+            Service::MlDsa87Verify,
+            Service::MlDsa87Keygen,
+            Service::LmsSign,
+            Service::LmsVerify,
+            Service::XmssSign,
+            Service::XmssVerify,
+        ];
+        for svc in allowed {
+            assert!(
+                is_allowed(AlgorithmProfile::Cnsa2, svc),
+                "{svc} should be allowed in CNSA 2.0"
+            );
+        }
+    }
+
+    #[test]
+    fn cnsa2_blocks_classical_and_small_keys() {
+        let blocked = [
+            Service::Sha1,
+            Service::Sha224,
+            Service::Sha256,
+            Service::Sha512_224,
+            Service::Sha512_256,
+            Service::Sha3_224,
+            Service::Sha3_256,
+            Service::Shake128,
+            Service::Kmac128,
+            Service::Aes128Ecb,
+            Service::Aes128Gcm,
+            Service::Aes192Cbc,
+            Service::CtrDrbgAes128,
+            Service::CtrDrbgAes192,
+            Service::HashDrbgSha256,
+            Service::HmacDrbgSha256,
+            Service::HmacSha1,
+            Service::HmacSha256,
+            Service::CmacAes128,
+            Service::CmacAes192,
+            Service::EcdsaP256Sign,
+            Service::EcdsaP256Verify,
+            Service::EcdhP256,
+            Service::Ed25519Sign,
+            Service::Ed25519Verify,
+            Service::RsaPssSign2048,
+            Service::RsaOaep2048,
+            Service::Tls12Kdf,
+            Service::SlhDsaSign, // not in CNSA 2.0
+        ];
+        for svc in blocked {
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa2, svc),
+                "{svc} should be BLOCKED in CNSA 2.0"
+            );
+        }
+    }
+
+    #[test]
+    fn cnsa1_allows_p384_rsa3072_and_pq() {
+        let allowed = [
+            Service::Aes256Gcm,
+            Service::Sha384,
+            Service::Sha256,
+            Service::EcdsaP384Sign,
+            Service::EcdsaP384Verify,
+            Service::EcdsaP384Keygen,
+            Service::EcdhP384,
+            Service::RsaPssSign3072,
+            Service::RsaOaep3072,
+            Service::RsaPssSign4096,
+            Service::Dh3072,
+            Service::MlKem1024Encaps,
+            Service::LmsSign,
+        ];
+        for svc in allowed {
+            assert!(
+                is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} should be allowed in CNSA 1.0"
+            );
+        }
+    }
+
+    #[test]
+    fn cnsa1_blocks_small_keys_and_ed25519() {
+        let blocked = [
+            Service::Sha1,
+            Service::Sha224,
+            Service::Aes128Ecb,
+            Service::Aes192Gcm,
+            Service::CtrDrbgAes128,
+            Service::EcdsaP256Sign,
+            Service::EcdhP256,
+            Service::Ed25519Sign,
+            Service::Ed25519Verify,
+            Service::RsaPssSign2048,
+            Service::RsaOaep2048,
+            Service::Tls12Kdf,
+        ];
+        for svc in blocked {
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} should be BLOCKED in CNSA 1.0"
+            );
+        }
+    }
+
+    #[test]
+    fn require_allowed_returns_restricted_error_under_cnsa2() {
+        reset_for_test();
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        match require_allowed(Service::Aes128Ecb) {
+            Err(Error::AlgorithmRestricted {
+                service: Service::Aes128Ecb,
+            }) => {}
+            other => panic!("expected AlgorithmRestricted(Aes128Ecb), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn require_allowed_passes_permitted_services() {
+        reset_for_test();
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        require_allowed(Service::Aes256Gcm).unwrap();
+        require_allowed(Service::Sha384).unwrap();
+        require_allowed(Service::MlKem1024Encaps).unwrap();
+    }
+
+    #[test]
+    fn require_allowed_passes_everything_in_unrestricted() {
+        reset_for_test();
+        initialize().unwrap();
+        // Spot-check a few from each end of the spectrum.
+        require_allowed(Service::Sha1).unwrap();
+        require_allowed(Service::Aes128Ecb).unwrap();
+        require_allowed(Service::Ed25519Sign).unwrap();
+        require_allowed(Service::MlKem1024Encaps).unwrap();
+    }
+
+    #[test]
+    fn algorithm_profile_display() {
+        assert_eq!(AlgorithmProfile::Unrestricted.to_string(), "Unrestricted");
+        assert_eq!(AlgorithmProfile::Cnsa2.to_string(), "CNSA 2.0");
+        assert_eq!(AlgorithmProfile::Cnsa1.to_string(), "CNSA 1.0");
+    }
+
+    #[test]
+    fn algorithm_restricted_error_display() {
+        reset_for_test();
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        let err = Error::AlgorithmRestricted {
+            service: Service::Aes128Ecb,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("AES-128-ECB"), "got: {msg}");
+        assert!(msg.contains("CNSA 2.0"), "got: {msg}");
+    }
+
+    #[test]
+    fn not_implemented_error_display() {
+        let err = Error::NotImplemented;
+        assert_eq!(err.to_string(), "algorithm not yet implemented");
+    }
+
+    #[test]
+    fn service_display_is_stable() {
+        // Pin a few representative Display strings.
+        assert_eq!(Service::Sha256.to_string(), "SHA-256");
+        assert_eq!(Service::Aes256Gcm.to_string(), "AES-256-GCM");
+        assert_eq!(Service::MlKem1024Encaps.to_string(), "ML-KEM-1024 encaps");
+        assert_eq!(Service::Ed25519Sign.to_string(), "Ed25519 sign");
     }
 }

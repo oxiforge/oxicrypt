@@ -43,10 +43,16 @@ cargo test --workspace
 | DRBG | CTR_DRBG (AES-128/192/256), Hash_DRBG (SHA-256/384/512), HMAC_DRBG (SHA-256/384/512) | SP 800-90A Rev. 1 |
 | KDF | SP 800-108r1 (counter/feedback/double-pipeline), SP 800-56C Rev 2 KDA-HKDF, TLS 1.2 KDF, PBKDF2 | SP 800-108, SP 800-56Cr2, SP 800-132 |
 | SP 800-185 | cSHAKE, KMAC, TupleHash, ParallelHash (+ XOF variants) | SP 800-185 |
-| RSA | RSA-2048 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt, keygen | FIPS 186-5, SP 800-56Br2 |
-| ECDSA | P-256 sign/verify/keygen with DRBG-backed rejection sampling | FIPS 186-5 |
-| ECDH | P-256 CDH shared secret computation | SP 800-56Ar3 |
+| RSA | RSA-2048 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt, keygen; RSA-3072/4096 stubs | FIPS 186-5, SP 800-56Br2 |
+| ECDSA | P-256 sign/verify/keygen with DRBG-backed rejection sampling; P-384 stubs | FIPS 186-5 |
+| ECDH | P-256 CDH shared secret computation; P-384 stub | SP 800-56Ar3 |
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
+| ML-KEM | ML-KEM-1024 encaps/decaps/keygen (stub) | FIPS 203 |
+| ML-DSA | ML-DSA-87 sign/verify/keygen (stub) | FIPS 204 |
+| SLH-DSA | SLH-DSA sign/verify/keygen (stub) | FIPS 205 |
+| LMS | LMS sign/verify (stub) | SP 800-208 |
+| XMSS | XMSS sign/verify (stub) | SP 800-208 |
+| DH | DH-3072 key agreement (stub) | RFC 3526 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
 
 Every algorithm runs a known-answer test at module power-up. The 139 KATs include
@@ -55,12 +61,12 @@ plus 3 SP 800-90A §11.3 DRBG health tests, each traceable to its published sour
 
 ## Architecture
 
-oxicrypt is organized as a Cargo workspace with 15 algorithm crates, a module
+oxicrypt is organized as a Cargo workspace with 21 algorithm crates, a module
 crate, and supporting tools:
 
 ```
 crates/
-  oxicrypt-module        State machine, approved-mode indicator, self-test runner
+  oxicrypt-module        State machine, algorithm-profile gating, self-test runner
   oxicrypt-integrity     Power-up software integrity check (IG 10.3.A)
   oxicrypt-sha           SHA-1, SHA-2, SHA-3 hash families
   oxicrypt-xof           SHAKE128, SHAKE256, cSHAKE, KMAC, TupleHash, ParallelHash
@@ -70,10 +76,16 @@ crates/
   oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
   oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246)
-  oxicrypt-rsa           RSA-2048 sign/verify/encrypt/decrypt/keygen
-  oxicrypt-ecdsa         ECDSA P-256
-  oxicrypt-ecdh          ECDH P-256 (SP 800-56Ar3)
+  oxicrypt-rsa           RSA-2048 sign/verify/encrypt/decrypt/keygen + 3072/4096 stubs
+  oxicrypt-ecdsa         ECDSA P-256 + P-384 stubs
+  oxicrypt-ecdh          ECDH P-256 + P-384 stub (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
+  oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — stub
+  oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — stub
+  oxicrypt-slh-dsa       SLH-DSA (FIPS 205) — stub
+  oxicrypt-lms           LMS hash-based signatures (SP 800-208) — stub
+  oxicrypt-xmss          XMSS hash-based signatures (SP 800-208) — stub
+  oxicrypt-dh            Finite-field DH >= 3072 (RFC 3526) — stub
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
 
 crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) for language bindings
@@ -185,13 +197,20 @@ ACVP-Server slim slices).
 ## Roadmap
 
 **Phase 2 (current)** — Algorithm implementation and ACVP validation.
-62 handlers, 127 tests, all green. Preparing for ACVP demo server dry run.
+62 handlers, 127 tests, all green. CNSA 2.0 / CNSA 1.0 algorithm-profile
+gating is in place with stub crates for all post-quantum algorithms
+(ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS) and CNSA 1.0 classical extensions
+(P-384, RSA-3072/4096, DH-3072). Preparing for ACVP demo server dry run.
 
 **Phase 3** — CST lab engagement, CAVP algorithm certificates, CMVP module
 submission.
 
 **Phase 4** — Performance hardening (AES-NI, bitsliced fallback), additional
-curves (Ed448, P-384, P-521), language bindings (C ABI, Python, Go, Node).
+curves (Ed448, P-521), language bindings (C ABI, Python, Go, Node).
+
+**Phase 5** — Post-quantum algorithm implementations (ML-KEM-1024, ML-DSA-87,
+LMS, XMSS) and classical extensions (P-384 field/point/scalar, RSA-3072/4096
+bigint/montgomery, DH-3072).
 
 ## `oxi` CLI
 

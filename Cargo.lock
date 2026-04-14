@@ -335,6 +335,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-dh"
+version = "0.0.0"
+dependencies = [
+ "oxicrypt-module",
+]
+
+[[package]]
 name = "oxicrypt-drbg"
 version = "0.0.0"
 dependencies = [
@@ -418,6 +425,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-lms"
+version = "0.0.0"
+dependencies = [
+ "oxicrypt-module",
+]
+
+[[package]]
+name = "oxicrypt-ml-dsa"
+version = "0.0.0"
+dependencies = [
+ "oxicrypt-module",
+]
+
+[[package]]
+name = "oxicrypt-ml-kem"
+version = "0.0.0"
+dependencies = [
+ "oxicrypt-module",
+]
+
+[[package]]
 name = "oxicrypt-module"
 version = "0.0.0"
 
@@ -440,6 +468,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-slh-dsa"
+version = "0.0.0"
+dependencies = [
+ "oxicrypt-module",
+]
+
+[[package]]
 name = "oxicrypt-test-vectors"
 version = "0.0.0"
 
@@ -449,6 +484,13 @@ version = "0.0.0"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-kdf",
+ "oxicrypt-module",
+]
+
+[[package]]
+name = "oxicrypt-xmss"
+version = "0.0.0"
+dependencies = [
  "oxicrypt-module",
 ]
 

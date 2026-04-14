@@ -5,8 +5,10 @@
 //! | Service | Standard | Entry point |
 //! |---------|----------|-------------|
 //! | P-256 ECC CDH shared secret | SP 800-56Ar3 §5.7.1.2 | [`compute_shared_secret_p256`] |
+//! | P-384 ECC CDH shared secret (stub) | SP 800-56Ar3 | [`compute_shared_secret_p384`] |
 //!
-//! Currently supports only curve P-256 via the SP 800-56Ar3
+//! Currently supports only curve P-256 with a full implementation.
+//! P-384 is present as a stub (returns `NotImplemented`) via the SP 800-56Ar3
 //! §5.7.1.2 "elliptic curve Diffie-Hellman" primitive (ECC CDH):
 //!
 //! ```text
@@ -147,6 +149,30 @@ pub fn compute_shared_secret_p256(
 ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
     require_operational()?;
     compute_shared_secret_p256_internal(d_bytes, peer_pk).ok_or(Error::InvalidInput)
+}
+
+// ------------------------------------------------------------------
+// P-384 stub (CNSA 1.0)
+// ------------------------------------------------------------------
+
+/// Compute the P-384 ECDH shared secret.
+///
+/// # Status
+///
+/// **Stub.** The P-384 curve arithmetic has not been implemented
+/// yet. This entry point is gated on the algorithm profile and
+/// will return [`Error::NotImplemented`].
+///
+/// # Errors
+///
+/// Returns [`Error::NotImplemented`] — this is a stub.
+pub fn compute_shared_secret_p384(
+    _d_bytes: &[u8],
+    _peer_pk: &[u8],
+) -> Result<(), Error> {
+    require_operational()?;
+    oxicrypt_module::require_allowed(oxicrypt_module::Service::EcdhP384)?;
+    Err(Error::NotImplemented)
 }
 
 // ------------------------------------------------------------------

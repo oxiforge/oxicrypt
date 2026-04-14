@@ -9,10 +9,14 @@
 //! | P-256 ECDSA sign (DRBG-sampled `k`) | FIPS 186-5 §6.4.1, §A.2.2 | [`p256_ecdsa::EcdsaP256PrivateKey::sign_sha256`] |
 //! | P-256 ECDSA keygen (DRBG-sampled `d`) | FIPS 186-5 §A.2.2 | [`p256_ecdsa::EcdsaP256PrivateKey::generate`] |
 //! | P-256 ECDSA verify | FIPS 186-5 §6.4.2 | [`p256_ecdsa::verify`] |
+//! | P-384 ECDSA sign (stub) | FIPS 186-5 | [`p384_stub::sign`] |
+//! | P-384 ECDSA verify (stub) | FIPS 186-5 | [`p384_stub::verify`] |
+//! | P-384 ECDSA keygen (stub) | FIPS 186-5 | [`p384_stub::keygen`] |
 //!
-//! P-384 and P-521 are deferred; they will reuse the same
-//! field / point / scalar layer pattern as P-256 once the
-//! current curve passes ACVP.
+//! P-384 currently has stub entry points that return
+//! [`oxicrypt_module::Error::NotImplemented`]. The full P-384
+//! implementation (field, point, scalar layers) is planned for a
+//! future phase. P-521 is deferred further.
 //!
 //! # Layering
 //!
@@ -110,6 +114,7 @@ pub mod p256_field;
 pub mod p256_keygen;
 pub mod p256_point;
 pub mod p256_scalar;
+pub mod p384_stub;
 
 // ── Crate-root re-exports ────────────────────────────────────────
 //

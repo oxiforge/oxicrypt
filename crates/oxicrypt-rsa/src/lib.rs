@@ -1,5 +1,9 @@
-//! RSA-2048 signature generation, verification, and key generation
+//! RSA signature generation, verification, and key generation
 //! per FIPS 186-5 / RFC 8017.
+//!
+//! RSA-2048 is fully implemented. RSA-3072 and RSA-4096 are present
+//! as stubs in [`rsa_3072_4096_stub`] (return `NotImplemented`),
+//! with algorithm-profile gates wired for CNSA 1.0.
 //!
 //! # Approved services
 //!
@@ -119,6 +123,7 @@ pub mod mont2048;
 pub mod oaep;
 pub mod pkcs1_v15;
 pub mod pss;
+pub mod rsa_3072_4096_stub;
 
 use bigint1024::{U1024, BYTES as U1024_BYTES, LIMBS as LIMBS1024};
 use bigint2048::{U2048, BYTES as U2048_BYTES, LIMBS as LIMBS2048};

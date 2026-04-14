@@ -248,6 +248,32 @@ types:
         description: initialize_with_tests() called more than once.
       - name: InvalidInput
         description: Caller supplied invalid parameters.
+      - name: AlgorithmRestricted
+        description: Service is not permitted under the active algorithm profile.
+      - name: NotImplemented
+        description: Algorithm exists in Service enum but implementation is not yet available (stub).
+
+  - name: AlgorithmProfile
+    module: oxicrypt-module
+    kind: enum
+    description: >
+      Runtime algorithm restriction profile. Set once at initialization
+      via initialize_with_profile(). Unrestricted is the default.
+    variants:
+      - name: Unrestricted
+        description: All FIPS-approved algorithms available.
+      - name: Cnsa2
+        description: "CNSA 2.0: quantum-resistant algorithms only."
+      - name: Cnsa1
+        description: "CNSA 1.0: classical transition period algorithms."
+
+  - name: Service
+    module: oxicrypt-module
+    kind: enum
+    description: >
+      Per-algorithm-and-parameter enumeration of every approved service.
+      Approximately 90 variants. Used with require_allowed() to enforce
+      profile restrictions. See the crate source for the full list.
 
   - name: KatEntry
     module: oxicrypt-module
@@ -452,6 +478,50 @@ functions:
         right: |
           oxicrypt_module::initialize_with_tests(&all_kats)?;
           let digest = oxicrypt_sha::sha256(b"data")?;
+
+  - name: initialize_with_profile
+    module: oxicrypt-module
+    description: >-
+      Initialize the module with a specific algorithm restriction profile
+      and run all provided power-up KATs. KATs run all algorithms regardless
+      of profile; the profile only restricts post-init service access.
+    signature: "pub fn initialize_with_profile(tests: &[KatEntry], profile: AlgorithmProfile) -> Result<(), Error>"
+    parameters:
+      - name: tests
+        type: "&[KatEntry]"
+        direction: in
+        description: KAT entries to run.
+      - name: profile
+        type: AlgorithmProfile
+        direction: in
+        description: "Algorithm restriction policy: Unrestricted, Cnsa2, or Cnsa1."
+    returns:
+      type: "Result<(), Error>"
+      description: Ok(()) if all KATs pass.
+    thread_safety: not-thread-safe
+    side_effects:
+      - description: Sets global module state and algorithm profile. Once per process.
+
+  - name: require_allowed
+    module: oxicrypt-module
+    description: >-
+      Guard function for algorithm-profile enforcement. Returns Ok(()) if
+      the service is permitted under the active profile, Err(AlgorithmRestricted)
+      otherwise. Called after require_operational() at every public entry point.
+    signature: "pub fn require_allowed(service: Service) -> Result<(), Error>"
+    parameters:
+      - name: service
+        type: Service
+        direction: in
+        description: The specific service variant to check.
+    returns:
+      type: "Result<(), Error>"
+      description: Ok if allowed, Err(AlgorithmRestricted) if blocked.
+
+  - name: active_profile
+    module: oxicrypt-module
+    description: Returns the active algorithm restriction profile.
+    signature: "pub fn active_profile() -> AlgorithmProfile"
 
   - name: require_operational
     module: oxicrypt-module

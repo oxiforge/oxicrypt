@@ -154,11 +154,20 @@ capabilities:
   - category: "Digital signatures"
     algorithms:
       - "ECDSA P-256"
+      - "ECDSA P-384 (stub)"
       - "Ed25519"
       - "RSA-2048 PKCS#1 v1.5"
       - "RSA-2048 PSS"
+      - "RSA-3072/4096 PKCS#1 v1.5 / PSS (stub)"
+      - "ML-DSA-87 (stub)"
+      - "SLH-DSA (stub)"
+      - "LMS (stub)"
+      - "XMSS (stub)"
     standards:
       - "FIPS 186-5"
+      - "FIPS 204"
+      - "FIPS 205"
+      - "SP 800-208"
       - "RFC 8032"
     quickstart:
       language: "rust"
@@ -178,8 +187,13 @@ capabilities:
   - category: "Key agreement"
     algorithms:
       - "ECDH P-256"
+      - "ECDH P-384 (stub)"
+      - "ML-KEM-1024 (stub)"
+      - "DH-3072 (stub)"
     standards:
       - "SP 800-56Ar3"
+      - "FIPS 203"
+      - "RFC 3526"
     quickstart:
       language: "rust"
       code: |
@@ -198,6 +212,7 @@ capabilities:
   - category: "Asymmetric encryption"
     algorithms:
       - "RSA-2048 OAEP"
+      - "RSA-3072/4096 OAEP (stub)"
     standards:
       - "SP 800-56Br2"
 
@@ -224,6 +239,13 @@ security:
   side_channel_posture: "disclosed"
   zeroization: "volatile-on-drop (all 13 CSP-holding types via oxicrypt-zeroize)"
   self_tests: "139 power-up KATs from NIST-sourced vectors"
+  algorithm_profiles:
+    - name: "Unrestricted"
+      description: "All FIPS-approved algorithms available (default)"
+    - name: "CNSA 2.0"
+      description: "Quantum-resistant: AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS"
+    - name: "CNSA 1.0"
+      description: "Classical transition: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072, DH >= 3072"
 
 # Full manifest with every function signature, parameter constraint,
 # error type, precondition, state machine, and pitfall.
