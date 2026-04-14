@@ -318,6 +318,41 @@ impl MontCtx2048 {
 
         self.from_mont(&acc)
     }
+
+    /// Compute `base^exp mod n` for a 2048-bit public exponent. Used
+    /// by Miller-Rabin to raise a public witness to `(n−1)/2^s` during
+    /// RSA-4096 keygen (where each prime factor is 2048 bits).
+    /// Left-to-right square-and-multiply over the exponent bits.
+    /// **Not** constant time in `exp`.
+    #[allow(clippy::integer_division, clippy::integer_division_remainder_used)]
+    pub fn pow_public_u2048(&self, base: &U2048, exp: &U2048) -> U2048 {
+        let mut top: Option<usize> = None;
+        for i in (0..LIMBS).rev() {
+            let limb = exp.limbs[i];
+            if limb != 0 {
+                top = Some(i * 64 + (63 - limb.leading_zeros() as usize));
+                break;
+            }
+        }
+        let Some(top_bit) = top else {
+            let mut one = [0u64; LIMBS];
+            one[0] = 1;
+            return U2048 { limbs: one };
+        };
+
+        let base_mont = self.to_mont(base);
+        let mut acc = base_mont;
+        if top_bit > 0 {
+            for i in (0..top_bit).rev() {
+                acc = self.mont_mul(&acc, &acc);
+                let limb = exp.limbs[i / 64];
+                if (limb >> (i % 64)) & 1 == 1 {
+                    acc = self.mont_mul(&acc, &base_mont);
+                }
+            }
+        }
+        self.from_mont(&acc)
+    }
 }
 
 #[cfg(test)]

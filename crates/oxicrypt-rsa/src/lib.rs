@@ -1,9 +1,14 @@
 //! RSA signature generation, verification, and key generation
 //! per FIPS 186-5 / RFC 8017.
 //!
-//! RSA-2048 is fully implemented. RSA-3072 and RSA-4096 are present
-//! as stubs in [`rsa_3072_4096_stub`] (return `NotImplemented`),
-//! with algorithm-profile gates wired for CNSA 1.0.
+//! RSA-2048 is fully implemented end-to-end (sign, verify, keygen,
+//! OAEP encrypt/decrypt). RSA-3072 and RSA-4096 have their
+//! fixed-width big-integer types and Montgomery arithmetic in place
+//! ([`bigint1536`], [`bigint3072`], [`bigint4096`],
+//! [`mont1536`], [`mont3072`], [`mont4096`]); keygen, encoding, and
+//! wiring are deferred to Chunk 5B.2–5B.3. Until then, the
+//! higher-level entry points in [`rsa_3072_4096_stub`] still return
+//! `NotImplemented`.
 //!
 //! # Approved services
 //!
@@ -24,13 +29,12 @@
 //!
 //! # FIPS 186-5 §5.1 modulus size
 //!
-//! Only `|n| = 2048` bits is accepted. Verification of legacy
-//! 1024- or 1280-bit RSA signatures is outside the approved
-//! boundary and this crate deliberately has no code path for it.
-//! Extension to RSA-3072 / RSA-4096 is scheduled for a later
-//! chunk and requires new fixed-width big-int types; the code is
-//! structured so `mont2048` / `mont1024` can be forked by
-//! width without disturbing the higher-level scheme code.
+//! Only `|n| = 2048` bits is currently accepted at the service
+//! layer. Verification of legacy 1024- or 1280-bit RSA signatures
+//! is outside the approved boundary and this crate deliberately has
+//! no code path for it. The wider-operand big-integer and Montgomery
+//! arithmetic for RSA-3072 and RSA-4096 is in place; keygen and
+//! encoding primitives at those widths land in subsequent chunks.
 //!
 //! # Power-up self-tests
 //!
@@ -116,10 +120,18 @@
 #![forbid(unsafe_code)]
 
 pub mod bigint1024;
+pub mod bigint1536;
 pub mod bigint2048;
+pub mod bigint3072;
+pub mod bigint4096;
+mod bigint_impl;
 pub mod keygen;
 pub mod mont1024;
+pub mod mont1536;
 pub mod mont2048;
+pub mod mont3072;
+pub mod mont4096;
+mod mont_impl;
 pub mod oaep;
 pub mod pkcs1_v15;
 pub mod pss;

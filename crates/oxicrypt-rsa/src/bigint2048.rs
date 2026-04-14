@@ -170,6 +170,107 @@ impl U2048 {
         ((self.limbs[limb] >> (4 * pos)) & 0xf) as u8
     }
 
+    /// Returns `1` iff `self == 1`, else `0`.
+    pub fn is_one(&self) -> u8 {
+        let mut acc: u64 = self.limbs[0] ^ 1;
+        for i in 1..LIMBS {
+            acc |= self.limbs[i];
+        }
+        let nz = (acc | acc.wrapping_neg()) >> 63;
+        (1 ^ (nz as u8)) & 1
+    }
+
+    /// Parity bit: `1` if odd, `0` if even.
+    pub fn is_odd(&self) -> u8 {
+        (self.limbs[0] & 1) as u8
+    }
+
+    /// Divide by two (shift right by one bit). Used by binary
+    /// extended GCD on public inputs only.
+    pub fn shr1(&self) -> U2048 {
+        let mut limbs = [0u64; LIMBS];
+        let mut carry: u64 = 0;
+        for i in (0..LIMBS).rev() {
+            let v = self.limbs[i];
+            limbs[i] = (v >> 1) | (carry << 63);
+            carry = v & 1;
+        }
+        U2048 { limbs }
+    }
+
+    /// Modular reduction by a small `u64`. Used for trial-division
+    /// sieve during prime generation (RSA-4096 keygen path).
+    pub fn rem_u64(&self, m: u64) -> u64 {
+        debug_assert!(m > 0);
+        let mut rem: u128 = 0;
+        for i in (0..LIMBS).rev() {
+            rem = ((rem << 64) | self.limbs[i] as u128) % (m as u128);
+        }
+        rem as u64
+    }
+
+    /// Widening multiply: `self × other → U4096`. Used once per
+    /// RSA-4096 keygen run to form `n = p · q` where each factor
+    /// is 2048 bits.
+    pub fn widening_mul(&self, other: &U2048) -> crate::bigint4096::U4096 {
+        use crate::bigint4096::{U4096, LIMBS as LIMBS4096};
+        let mut out = [0u64; LIMBS4096];
+        for i in 0..LIMBS {
+            let mut carry: u64 = 0;
+            for j in 0..LIMBS {
+                let prod = (self.limbs[i] as u128) * (other.limbs[j] as u128)
+                    + (out[i + j] as u128)
+                    + (carry as u128);
+                out[i + j] = prod as u64;
+                carry = (prod >> 64) as u64;
+            }
+            out[i + LIMBS] = carry;
+        }
+        U4096 { limbs: out }
+    }
+
+    /// Widening add of a small `u64`, returning `(sum, carry_out)`.
+    pub fn adding_u64(&self, addend: u64) -> (U2048, u64) {
+        let mut limbs = self.limbs;
+        let (s, c0) = limbs[0].overflowing_add(addend);
+        limbs[0] = s;
+        let mut carry: u64 = u64::from(c0);
+        for i in 1..LIMBS {
+            if carry == 0 {
+                break;
+            }
+            let (s, c) = limbs[i].overflowing_add(carry);
+            limbs[i] = s;
+            carry = u64::from(c);
+        }
+        (U2048 { limbs }, carry)
+    }
+
+    /// Subtract a small `u64`, returning `(diff, borrow_out)`.
+    pub fn subtracting_u64(&self, sub: u64) -> (U2048, u64) {
+        let mut limbs = self.limbs;
+        let (d, b0) = limbs[0].overflowing_sub(sub);
+        limbs[0] = d;
+        let mut borrow: u64 = u64::from(b0);
+        for i in 1..LIMBS {
+            if borrow == 0 {
+                break;
+            }
+            let (d, b) = limbs[i].overflowing_sub(borrow);
+            limbs[i] = d;
+            borrow = u64::from(b);
+        }
+        (U2048 { limbs }, borrow)
+    }
+
+    /// Zero-extend to a [`crate::bigint4096::U4096`].
+    pub fn zero_extend_to_4096(&self) -> crate::bigint4096::U4096 {
+        use crate::bigint4096::{U4096, LIMBS as LIMBS4096};
+        let mut limbs = [0u64; LIMBS4096];
+        limbs[..LIMBS].copy_from_slice(&self.limbs);
+        U4096 { limbs }
+    }
+
     /// Conditional subtract: if `self >= other`, return `self - other`;
     /// else return `self`. Constant time in the operand values, not
     /// in the branch. Used for the final "reduce one `n`" step that
