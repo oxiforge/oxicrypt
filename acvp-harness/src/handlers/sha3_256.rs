@@ -18,7 +18,7 @@
 //! lengths exclusively for AFT, so this is not a functional gap.
 //!
 //! MCT support (R30) delegates to the shared MCT engine in
-//! [`super::sha3::handle_hash_group`].
+//! `super::sha3::handle_hash_group`.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::json::JsonValue;

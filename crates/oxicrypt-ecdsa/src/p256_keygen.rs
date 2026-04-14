@@ -2,10 +2,10 @@
 //! FIPS 186-5 §A.2.
 //!
 //! This module provides the private "Testing Candidates" rejection
-//! sampler ([`sample_scalar_internal`]) that both keygen and the
+//! sampler (`sample_scalar_internal`) that both keygen and the
 //! DRBG-backed sign wrapper use to produce a uniform scalar in
 //! `[1, n − 1]`, plus the keygen entry point
-//! ([`generate_p256_internal`]) that builds a `(d, Q)` pair ready to
+//! (`generate_p256_internal`) that builds a `(d, Q)` pair ready to
 //! be handed to [`crate::p256_ecdsa::EcdsaP256PrivateKey`].
 //!
 //! # Rejection sampler (FIPS 186-5 §A.2.2)

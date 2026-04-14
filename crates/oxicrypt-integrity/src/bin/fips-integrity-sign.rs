@@ -18,9 +18,9 @@
 //! - `1` — usage error
 //! - `2` — signing or verification failure
 //!
-//! This tool shares [`oxicrypt_integrity::compute_exe_hmac`],
-//! [`oxicrypt_integrity::sign_exe`], and
-//! [`oxicrypt_integrity::verify_exe_against_sidecar`] with the runtime
+//! This tool shares `oxicrypt_integrity::compute_exe_hmac`,
+//! `oxicrypt_integrity::sign_exe`, and
+//! `oxicrypt_integrity::verify_exe_against_sidecar` with the runtime
 //! power-up KAT so the signing tool and the power-up check cannot
 //! disagree about the algorithm.
 

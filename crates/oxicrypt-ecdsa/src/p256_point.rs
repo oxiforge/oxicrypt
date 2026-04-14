@@ -334,7 +334,7 @@ impl Point {
     /// replaces `current` with `candidate` based on the scalar bit.
     /// Both the add and the select are performed unconditionally so
     /// the timing is independent of the scalar. The mixed-add uses
-    /// the dedicated [`Self::add_mixed_ct`] helper that does **not**
+    /// the dedicated `add_mixed_ct` helper that does **not**
     /// short-circuit on the identity accumulator; that short-circuit
     /// used to make the per-iteration cycle count depend on the
     /// number of leading zero bits of the scalar, which dudect (see

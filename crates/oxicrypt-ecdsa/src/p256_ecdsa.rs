@@ -291,8 +291,8 @@ const PCT_PROBE_MSG: &[u8] = b"pqclib-ecdsa-p256-pct";
 /// any later call to `sign_sha256` is guaranteed to be consistent
 /// with `public_key()`.
 ///
-/// All three constructors route through [`run_pct`], which calls
-/// [`sample_scalar_internal`] for a fresh `k`, calls
+/// All three constructors route through `run_pct`, which calls
+/// `sample_scalar_internal` for a fresh `k`, calls
 /// [`sign_with_k_internal`], and then calls [`verify_internal`] on
 /// the freshly derived public key; failure anywhere in that chain
 /// results in `Error::InvalidInput` and no handle is produced.

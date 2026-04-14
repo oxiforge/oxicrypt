@@ -9,7 +9,7 @@
 //!
 //! The compression function, message schedule, K constants, padding
 //! (128-bit length field), and block size (128 bytes) are identical.
-//! [`compress512`] is exposed at the crate level so the three SHA-384
+//! `compress512` is exposed at the crate level so the three SHA-384
 //! / SHA-512-t wrappers can share it.
 //!
 //! See `sha256.rs` for a full commentary on the `indexing_slicing`,

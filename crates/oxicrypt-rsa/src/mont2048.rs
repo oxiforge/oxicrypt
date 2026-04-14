@@ -10,7 +10,7 @@
 //!   * `r2_mod_n = 2^4096 mod n`, used to move plain integers into
 //!     Montgomery form via a single `mont_mul(x, r2_mod_n)` call.
 //!
-//! All outputs of [`mont_mul`] are reduced to the interval `[0, n)`
+//! All outputs of `mont_mul` are reduced to the interval `[0, n)`
 //! by a final [`U2048::ct_sub_if_ge`], matching the standard CIOS
 //! contract.
 //!

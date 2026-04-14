@@ -114,7 +114,7 @@ pub trait CipherFactory {
     const SEED_LEN: usize;
     /// Concrete `BlockCipher` implementation produced from a key.
     type Cipher: BlockCipher;
-    /// Instantiate a block cipher from exactly [`KEY_LEN`] bytes of
+    /// Instantiate a block cipher from exactly `KEY_LEN` bytes of
     /// key material.
     ///
     /// # Panics

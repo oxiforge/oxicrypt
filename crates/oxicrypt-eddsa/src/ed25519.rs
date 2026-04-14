@@ -213,7 +213,7 @@ const PCT_PROBE_MSG: &[u8] = b"pqclib-ed25519-pct";
 ///
 /// All three constructors ([`generate`], [`from_seed`], and the
 /// equivalent `*_internal` helpers used by the power-up KAT) route
-/// through [`Ed25519PrivateKey::run_pct`], which calls
+/// through `Ed25519PrivateKey::run_pct`, which calls
 /// [`sign_internal`] on a fixed probe message and then calls
 /// [`verify_internal`] on the freshly derived public key. Failure
 /// anywhere in that chain results in [`Error::InvalidInput`] and no
