@@ -26,3 +26,7 @@ Cargo.lock.bak
 
 # Claude auto-memory (session-local, not project data)
 .auto-memory/
+
+# Project manifest — lives in the project folder, not the repo.
+# Contains internal paths and organizational metadata.
+llm-project-manifest.yaml
