@@ -54,7 +54,7 @@ library:
       side-channel resistance at Level 1 but discloses and validates
       timing behavior via dudect methodology.
     side_channel_posture: validated
-    zeroization: "volatile-on-drop (all 13 CSP-holding types via oxicrypt-zeroize)"
+    zeroization: "volatile-on-drop (all 15 CSP-holding types via oxicrypt-zeroize)"
 
 # ─────────────────────────────────────────────────────────────────────
 # State machines
@@ -201,6 +201,27 @@ modules:
       Fiat-Shamir-with-aborts signing and FIPS 204 compliance.
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-sha]
+
+  - name: oxicrypt-lms
+    description: >-
+      LMS hash-based stateful signatures (SP 800-208 / RFC 8554).
+      Parameter set LMS_SHA256_M32_H10 with LMOTS_SHA256_N32_W4.
+      Stateful key management: each key can sign at most 1024 messages.
+      Caller is responsible for persisting private-key state between
+      sign calls to prevent one-time key reuse.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-zeroize]
+
+  - name: oxicrypt-xmss
+    description: >-
+      XMSS hash-based stateful signatures (SP 800-208 / RFC 8391).
+      Parameter set XMSS-SHA2_10_256. Randomized hashing with WOTS+
+      one-time signatures and L-tree compression. Stateful key
+      management: each key can sign at most 1024 messages. Caller is
+      responsible for persisting private-key state between sign calls
+      to prevent one-time key reuse.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-zeroize]
 
   - name: oxicrypt-eddsa
     description: >-
@@ -445,6 +466,59 @@ types:
     description: >-
       Ed25519 private key handle. Stores (seed, A) pair. Runs a
       sign-and-verify PCT on construction.
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: LmsPrivateKey
+    module: oxicrypt-lms
+    kind: struct
+    description: >-
+      LMS stateful private key (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4).
+      Holds the tree seed, identifier I, and current leaf index.
+      STATEFUL: the leaf index advances after each signature. The caller
+      MUST persist the key state after every sign call. Reusing a leaf
+      index destroys the security of the entire tree.
+    fields:
+      - name: seed
+        type: "[u8; 32]"
+        description: "Tree seed (secret). All OTS private keys derive from this."
+      - name: identifier
+        type: "[u8; 16]"
+        description: "Tree identifier I (public, binds hash computations to this tree)."
+      - name: leaf_index
+        type: u32
+        description: "Next unused leaf index (0..1023). Incremented after each sign."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: XmssPrivateKey
+    module: oxicrypt-xmss
+    kind: struct
+    description: >-
+      XMSS stateful private key (XMSS-SHA2_10_256). Holds SK_SEED,
+      SK_PRF, PUB_SEED, cached root, and current leaf index. STATEFUL:
+      leaf index advances after each signature. Caller MUST persist
+      after every sign call.
+    fields:
+      - name: sk_seed
+        type: "[u8; 32]"
+        description: "Secret seed for WOTS+ key derivation."
+      - name: sk_prf
+        type: "[u8; 32]"
+        description: "PRF secret for message randomisation."
+      - name: pub_seed
+        type: "[u8; 32]"
+        description: "Public seed for randomized hashing (RAND_HASH)."
+      - name: root
+        type: "[u8; 32]"
+        description: "Cached Merkle tree root (part of the public key)."
+      - name: leaf_index
+        type: u32
+        description: "Next unused leaf index (0..1023). Incremented after each sign."
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -1593,6 +1667,253 @@ functions:
       fips_gate: Operational
     profiles: [Unrestricted, Cnsa2]
 
+  # ── LMS (SP 800-208 / RFC 8554) ────────────────────────────────────
+
+  - name: keygen
+    module: oxicrypt-lms
+    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<(LmsPrivateKey, [u8; 56]), Error>"
+    description: >-
+      Generate an LMS key pair (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4).
+      xi is a 32-byte secret seed from an approved DRBG. The tree root
+      is computed from the seed (takes ~0.5 s for 1024 leaves).
+    parameters:
+      - name: xi
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte secret seed for the Merkle tree."
+    returns:
+      type: "Result<(LmsPrivateKey, [u8; 56]), Error>"
+      description: "(private_key, public_key). Public key is 56 bytes: LMS type (4) || LMOTS type (4) || I (16) || T[1] (32)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: LMS blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
+    postconditions:
+      - description: >-
+          Returns a fresh LMS key pair. The private key's leaf_index starts at 0.
+          The key can sign at most 1024 messages (MAX_SIGNATURES).
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: sign
+    module: oxicrypt-lms
+    signature: "pub fn sign(key: &mut LmsPrivateKey, message: &[u8]) -> Result<[u8; 2508], Error>"
+    description: >-
+      Sign a message with LMS. STATEFUL: advances the leaf index by 1.
+      The caller MUST persist the private key after this call. Returns
+      Err(InvalidInput) if the key is exhausted (all 1024 leaves used).
+    parameters:
+      - name: key
+        type: "&mut LmsPrivateKey"
+        direction: in-out
+        description: "Mutable private key handle. leaf_index is incremented."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Message to sign (arbitrary length)."
+    returns:
+      type: "Result<[u8; 2508], Error>"
+      description: "2508-byte LMS signature: q (4) || LMOTS sig (2404) || LMS type (4) || auth path (10 × 32 = 320) minus padding overlaps."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: LMS blocked by active profile.
+      - name: InvalidInput
+        condition: Key exhausted (leaf_index >= 1024).
+    preconditions:
+      - description: Module must be Operational.
+      - description: key.leaf_index < 1024 (key not exhausted).
+    postconditions:
+      - description: key.leaf_index has been incremented by 1. Caller MUST persist key state.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+    pitfalls:
+      - description: >-
+          LMS is STATEFUL. Each private key can only sign 1024 messages.
+          The caller must persist the key state after every sign call.
+          Reusing a leaf index voids the security of the entire tree.
+        wrong: |
+          let (mut sk, pk) = oxicrypt_lms::keygen(&seed)?;
+          let sig = oxicrypt_lms::sign(&mut sk, b"msg")?;
+          // BUG: sk not persisted — if process crashes, leaf index is lost
+        right: |
+          let (mut sk, pk) = oxicrypt_lms::keygen(&seed)?;
+          let sig = oxicrypt_lms::sign(&mut sk, b"msg")?;
+          persist_to_disk(&sk.to_bytes());  // MUST persist after every sign
+
+  - name: verify
+    module: oxicrypt-lms
+    signature: "pub fn verify(public_key: &[u8; 56], message: &[u8], signature: &[u8; 2508]) -> Result<(), Error>"
+    description: >-
+      Verify an LMS signature. Returns Ok(()) if valid,
+      Err(InvalidInput) if verification fails.
+    parameters:
+      - name: public_key
+        type: "&[u8; 56]"
+        direction: in
+        description: "56-byte LMS public key."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Original message."
+      - name: signature
+        type: "&[u8; 2508]"
+        direction: in
+        description: "2508-byte LMS signature."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok(()) if valid, Err(InvalidInput) if invalid."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: LMS blocked by active profile.
+      - name: InvalidInput
+        condition: Signature verification failed or malformed inputs.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  # ── XMSS (SP 800-208 / RFC 8391) ─────────────────────────────────
+
+  - name: keygen
+    module: oxicrypt-xmss
+    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<(XmssPrivateKey, [u8; 68]), Error>"
+    description: >-
+      Generate an XMSS key pair (XMSS-SHA2_10_256). xi is a 32-byte
+      secret seed from an approved DRBG. The tree root is computed from
+      the seed (takes ~15 s for 1024 leaves with WOTS+ and L-tree).
+    parameters:
+      - name: xi
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte secret seed (derives SK_SEED, SK_PRF, PUB_SEED)."
+    returns:
+      type: "Result<(XmssPrivateKey, [u8; 68]), Error>"
+      description: "(private_key, public_key). Public key is 68 bytes: OID (4) || root (32) || PUB_SEED (32)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: XMSS blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
+    postconditions:
+      - description: >-
+          Returns a fresh XMSS key pair. Private key starts at leaf_index 0.
+          Key can sign at most 1024 messages.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: sign
+    module: oxicrypt-xmss
+    signature: "pub fn sign(key: &mut XmssPrivateKey, message: &[u8]) -> Result<[u8; 2500], Error>"
+    description: >-
+      Sign a message with XMSS. STATEFUL: advances leaf index by 1.
+      Caller MUST persist key state after this call. Message is
+      randomized with r = PRF(SK_PRF, idx) per RFC 8391.
+    parameters:
+      - name: key
+        type: "&mut XmssPrivateKey"
+        direction: in-out
+        description: "Mutable private key handle. leaf_index is incremented."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Message to sign (arbitrary length)."
+    returns:
+      type: "Result<[u8; 2500], Error>"
+      description: "2500-byte XMSS signature: idx (4) || r (32) || WOTS+ sig (67 × 32 = 2144) || auth path (10 × 32 = 320)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: XMSS blocked by active profile.
+      - name: InvalidInput
+        condition: Key exhausted (leaf_index >= 1024).
+    preconditions:
+      - description: Module must be Operational.
+      - description: key.leaf_index < 1024 (key not exhausted).
+    postconditions:
+      - description: key.leaf_index incremented by 1. Caller MUST persist key state.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+    pitfalls:
+      - description: >-
+          XMSS is STATEFUL. The same pitfalls as LMS apply — the caller
+          must persist private key state after every sign call.
+
+  - name: verify
+    module: oxicrypt-xmss
+    signature: "pub fn verify(public_key: &[u8; 68], message: &[u8], signature: &[u8; 2500]) -> Result<(), Error>"
+    description: >-
+      Verify an XMSS signature. Returns Ok(()) if valid,
+      Err(InvalidInput) if verification fails.
+    parameters:
+      - name: public_key
+        type: "&[u8; 68]"
+        direction: in
+        description: "68-byte XMSS public key."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Original message."
+      - name: signature
+        type: "&[u8; 2500]"
+        direction: in
+        description: "2500-byte XMSS signature."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok(()) if valid, Err(InvalidInput) if invalid."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: XMSS blocked by active profile.
+      - name: InvalidInput
+        condition: Signature verification failed or malformed inputs.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
 
   - name: oxicrypt_init
@@ -1911,3 +2232,39 @@ constants:
     type: usize
     value: "4627"
     description: ML-DSA-87 signature size in bytes.
+
+  - name: SIGNATURE_LEN
+    module: oxicrypt-lms
+    type: usize
+    value: "2508"
+    description: "LMS signature size in bytes (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4)."
+
+  - name: PUBLIC_KEY_LEN
+    module: oxicrypt-lms
+    type: usize
+    value: "56"
+    description: "LMS public key size: LMS type (4) + LMOTS type (4) + I (16) + root (32)."
+
+  - name: MAX_SIGNATURES
+    module: oxicrypt-lms
+    type: u32
+    value: "1024"
+    description: "Maximum signatures per LMS key (2^H where H=10)."
+
+  - name: SIGNATURE_LEN
+    module: oxicrypt-xmss
+    type: usize
+    value: "2500"
+    description: "XMSS signature size in bytes (XMSS-SHA2_10_256)."
+
+  - name: PUBLIC_KEY_LEN
+    module: oxicrypt-xmss
+    type: usize
+    value: "68"
+    description: "XMSS public key size: OID (4) + root (32) + PUB_SEED (32)."
+
+  - name: MAX_SIGNATURES
+    module: oxicrypt-xmss
+    type: u32
+    value: "1024"
+    description: "Maximum signatures per XMSS key (2^H where H=10)."

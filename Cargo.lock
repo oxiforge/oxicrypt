@@ -432,6 +432,8 @@ name = "oxicrypt-lms"
 version = "0.0.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -499,6 +501,8 @@ name = "oxicrypt-xmss"
 version = "0.0.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]

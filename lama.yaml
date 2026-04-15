@@ -161,8 +161,8 @@ capabilities:
       - "RSA-3072/4096 PKCS#1 v1.5 / PSS sign/verify, keygen with CRT + Bellcore"
       - "ML-DSA-87 keygen/sign/verify"
       - "SLH-DSA (stub)"
-      - "LMS (stub)"
-      - "XMSS (stub)"
+      - "LMS LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 sign/verify/keygen (stateful)"
+      - "XMSS XMSS-SHA2_10_256 sign/verify/keygen (stateful)"
     standards:
       - "FIPS 186-5"
       - "FIPS 204"
@@ -251,8 +251,8 @@ capabilities:
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"
   side_channel_posture: "disclosed"
-  zeroization: "volatile-on-drop (all 13 CSP-holding types via oxicrypt-zeroize)"
-  self_tests: "140 power-up KATs from NIST-sourced vectors"
+  zeroization: "volatile-on-drop (all 15 CSP-holding types via oxicrypt-zeroize)"
+  self_tests: "142 power-up KATs from NIST-sourced vectors"
   algorithm_profiles:
     - name: "Unrestricted"
       description: "All FIPS-approved algorithms available (default)"
