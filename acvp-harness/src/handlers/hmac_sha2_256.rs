@@ -119,8 +119,8 @@ fn run_case(t: &JsonValue, test_type: TestType) -> Result<JsonValue, DispatchErr
         .ok_or(DispatchError::MissingField("msg"))?;
     let key = hex::decode(key_hex)?;
     let msg = hex::decode(msg_hex)?;
-    let mut h = HmacSha256::new(&key)
-        .map_err(|_| DispatchError::Crypto("HmacSha256::new returned Err"))?;
+    let mut h =
+        HmacSha256::new(&key).map_err(|_| DispatchError::Crypto("HmacSha256::new returned Err"))?;
     h.update(&msg);
     let full = h.finalize();
     let truncated = full

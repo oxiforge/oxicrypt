@@ -3,8 +3,8 @@
 //! Run: `cargo run -p oxicrypt-hmac --example hmac_sha256`
 #![allow(clippy::expect_used, clippy::print_stdout)]
 
-use oxicrypt_sha::Sha256;
 use oxicrypt_sha::sha256::{BLOCK_SIZE, DIGEST_SIZE};
+use oxicrypt_sha::Sha256;
 
 fn main() {
     oxicrypt_module::initialize().expect("module init");
@@ -12,8 +12,8 @@ fn main() {
     let key = b"my-secret-hmac-key-for-demo!!!!"; // 31 bytes — any length works
     let message = b"Authenticate this message";
 
-    let mut mac = oxicrypt_hmac::Hmac::<Sha256, BLOCK_SIZE, DIGEST_SIZE>::new(key)
-        .expect("hmac new");
+    let mut mac =
+        oxicrypt_hmac::Hmac::<Sha256, BLOCK_SIZE, DIGEST_SIZE>::new(key).expect("hmac new");
     mac.update(message);
     let tag = mac.finalize();
 

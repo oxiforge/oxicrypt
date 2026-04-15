@@ -36,8 +36,7 @@ use acvp_harness::{dispatch, ensure_initialized, json, json::JsonValue};
 /// crate root.
 fn load(relative: &str) -> JsonValue {
     let path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     json::parse(&text).unwrap_or_else(|e| panic!("parse {path}: {e}"))
 }
 
@@ -911,10 +910,7 @@ fn assert_mct_round_trip(relative: &str, label: &str) {
     );
 
     for (exp, got_entry) in expected.iter().zip(got.iter()) {
-        assert_eq!(
-            exp.0, got_entry.0,
-            "{label}: tcId mismatch"
-        );
+        assert_eq!(exp.0, got_entry.0, "{label}: tcId mismatch");
         let exp_entries = &exp.1;
         let got_entries = &got_entry.1;
         // Only compare the first N entries (the vendored slice is trimmed).
@@ -926,24 +922,17 @@ fn assert_mct_round_trip(relative: &str, label: &str) {
             got_entries.len(),
             compare_len
         );
-        for (idx, (exp_ra, got_ra)) in exp_entries
-            .iter()
-            .zip(got_entries.iter())
-            .enumerate()
-        {
+        for (idx, (exp_ra, got_ra)) in exp_entries.iter().zip(got_entries.iter()).enumerate() {
             for (exp_k, exp_v) in exp_ra {
-                let got_v = got_ra
-                    .iter()
-                    .find(|(k, _)| k == exp_k)
-                    .map_or_else(
-                        || {
-                            panic!(
-                                "{label}: tcId {} resultsArray[{idx}]: missing field {exp_k:?}",
-                                exp.0
-                            )
-                        },
-                        |(_, v)| v.as_str(),
-                    );
+                let got_v = got_ra.iter().find(|(k, _)| k == exp_k).map_or_else(
+                    || {
+                        panic!(
+                            "{label}: tcId {} resultsArray[{idx}]: missing field {exp_k:?}",
+                            exp.0
+                        )
+                    },
+                    |(_, v)| v.as_str(),
+                );
                 assert_eq!(
                     exp_v, got_v,
                     "{label}: tcId {} resultsArray[{idx}] field {exp_k:?} mismatch",
@@ -1067,10 +1056,7 @@ fn collect_cmac_expected(v: &JsonValue) -> Vec<CmacExpected> {
         return out;
     };
     for g in groups {
-        let direction = g
-            .get("direction")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("");
+        let direction = g.get("direction").and_then(JsonValue::as_str).unwrap_or("");
         let Some(tests) = g.get("tests").and_then(JsonValue::as_array) else {
             continue;
         };
@@ -1225,9 +1211,7 @@ fn assert_cmac_round_trip(relative: &str, label: &str) {
                 let got_passed = t
                     .get("testPassed")
                     .and_then(JsonValue::as_bool)
-                    .unwrap_or_else(|| {
-                        panic!("{label}: missing testPassed for tcId {tc_id}")
-                    });
+                    .unwrap_or_else(|| panic!("{label}: missing testPassed for tcId {tc_id}"));
                 assert_eq!(
                     *test_passed, got_passed,
                     "{label}: testPassed mismatch for tcId {tc_id}"
@@ -1449,9 +1433,8 @@ fn ecdsa_siggen_round_trip() {
 #[test]
 fn ecdsa_keygen_round_trip() {
     ensure_initialized().unwrap();
-    let slice = load(
-        "../vendor/nist/acvp-server/gen-val/json-files/ECDSA-keyGen-FIPS186-5/kat-slice.json",
-    );
+    let slice =
+        load("../vendor/nist/acvp-server/gen-val/json-files/ECDSA-keyGen-FIPS186-5/kat-slice.json");
 
     let expected_qx = collect_answers(&slice, "qx");
     let expected_qy = collect_answers(&slice, "qy");
@@ -1468,7 +1451,11 @@ fn ecdsa_keygen_round_trip() {
     let got_qx = collect_answers(&response, "qx");
     let got_qy = collect_answers(&response, "qy");
 
-    assert_eq!(got_qx.len(), expected_qx.len(), "ECDSA-keyGen: qx count mismatch");
+    assert_eq!(
+        got_qx.len(),
+        expected_qx.len(),
+        "ECDSA-keyGen: qx count mismatch"
+    );
     for ((exp_tc, exp_val), (got_tc, got_val)) in expected_qx.iter().zip(got_qx.iter()) {
         assert_eq!(exp_tc, got_tc, "ECDSA-keyGen: tcId mismatch");
         assert_eq!(
@@ -1824,10 +1811,7 @@ fn assert_tls12_kdf_round_trip(relative: &str, label: &str) {
     let slice = load(relative);
     let expected_ms = collect_answers(&slice, "masterSecret");
     let expected_kb = collect_answers(&slice, "keyBlock");
-    assert!(
-        !expected_ms.is_empty(),
-        "{label}: no masterSecret answers"
-    );
+    assert!(!expected_ms.is_empty(), "{label}: no masterSecret answers");
     assert_eq!(
         expected_ms.len(),
         expected_kb.len(),
@@ -2140,10 +2124,7 @@ fn collect_answers_for_direction(
         return out;
     };
     for g in groups {
-        let dir = g
-            .get("direction")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("");
+        let dir = g.get("direction").and_then(JsonValue::as_str).unwrap_or("");
         if dir != direction {
             continue;
         }
@@ -2166,9 +2147,8 @@ fn collect_answers_for_direction(
 #[test]
 fn rsa_oaep_round_trip() {
     ensure_initialized().unwrap();
-    let slice = load(
-        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/kat-slice.json",
-    );
+    let slice =
+        load("../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/kat-slice.json");
 
     // Collect expected answers from the correct groups only.
     let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
@@ -2234,9 +2214,8 @@ fn rsa_oaep_round_trip() {
 #[test]
 fn rsa_oaep_crt_round_trip() {
     ensure_initialized().unwrap();
-    let slice = load(
-        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/crt-kat-slice.json",
-    );
+    let slice =
+        load("../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/crt-kat-slice.json");
 
     // Collect expected answers from the correct groups only.
     let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
@@ -2374,9 +2353,8 @@ fn rsa_oaep_combined_round_trip() {
 #[test]
 fn rsa_oaep_lifecycle_round_trip() {
     ensure_initialized().unwrap();
-    let slice = load(
-        "../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/lifecycle-slice.json",
-    );
+    let slice =
+        load("../vendor/nist/acvp-server/gen-val/json-files/RSA-OAEP-RFC8017/lifecycle-slice.json");
 
     let expected_ct = collect_answers_for_direction(&slice, "ct", "encrypt");
     let expected_pt = collect_answers_for_direction(&slice, "pt", "decrypt");
@@ -2436,9 +2414,8 @@ fn rsa_oaep_lifecycle_round_trip() {
 #[test]
 fn rsa_keygen_round_trip() {
     ensure_initialized().unwrap();
-    let slice = load(
-        "../vendor/nist/acvp-server/gen-val/json-files/RSA-keyGen-FIPS186-5/kat-slice.json",
-    );
+    let slice =
+        load("../vendor/nist/acvp-server/gen-val/json-files/RSA-keyGen-FIPS186-5/kat-slice.json");
 
     // Collect expected answers — n is the primary key component.
     let expected_n = collect_answers(&slice, "n");
@@ -2446,10 +2423,7 @@ fn rsa_keygen_round_trip() {
     let expected_p = collect_answers(&slice, "p");
     let expected_q = collect_answers(&slice, "q");
 
-    assert!(
-        !expected_n.is_empty(),
-        "RSA keyGen: no tests with field n"
-    );
+    assert!(!expected_n.is_empty(), "RSA keyGen: no tests with field n");
 
     // Strip all answer fields to create the prompt.
     let mut prompt = slice.clone();

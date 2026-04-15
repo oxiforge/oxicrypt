@@ -39,7 +39,7 @@ fn hex_decode(s: &str) -> Vec<u8> {
 }
 
 const MESSAGES: [&str; 5] = [
-    "48656C6C6F",                                // "Hello"
+    "48656C6C6F", // "Hello"
     "ABCDEF0123456789",
     "00112233445566778899AABBCCDDEEFF",
     "FF",
@@ -68,8 +68,7 @@ fn generate_rsa_oaep_crt_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
-        .expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -90,12 +89,24 @@ fn generate_rsa_oaep_crt_slice() {
     .expect("encrypt sanity check");
     let mut test_out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
     let _tl = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
-        &n_bytes, &d_bytes, label, &ct, &mut test_out,
+        &n_bytes,
+        &d_bytes,
+        label,
+        &ct,
+        &mut test_out,
     )
     .expect("non-CRT decrypt sanity check");
     let _tl2 = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
-        &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
-        label, &ct, &mut test_out,
+        &n_bytes,
+        e,
+        &p_bytes,
+        &q_bytes,
+        &dp_bytes,
+        &dq_bytes,
+        &qinv_bytes,
+        label,
+        &ct,
+        &mut test_out,
     )
     .expect("CRT decrypt sanity check");
 
@@ -123,12 +134,23 @@ fn generate_rsa_oaep_crt_slice() {
         // Verify CRT decrypt round-trips
         let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
         let mlen = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
-            &n_bytes, e,
-            &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
-            label, &ct, &mut out,
+            &n_bytes,
+            e,
+            &p_bytes,
+            &q_bytes,
+            &dp_bytes,
+            &dq_bytes,
+            &qinv_bytes,
+            label,
+            &ct,
+            &mut out,
         )
         .unwrap_or_else(|| panic!("CRT decrypt failed for test {i}"));
-        assert_eq!(&out[..mlen], msg.as_slice(), "CRT decrypt mismatch test {i}");
+        assert_eq!(
+            &out[..mlen],
+            msg.as_slice(),
+            "CRT decrypt mismatch test {i}"
+        );
 
         encrypt_tests.push(format!(
             r#"        {{"tcId": {}, "msg": "{}", "seed": "{}", "ct": "{}"}}"#,

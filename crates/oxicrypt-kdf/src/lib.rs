@@ -90,7 +90,9 @@
 
 use core::marker::PhantomData;
 
-use oxicrypt_module::{require_operational, require_allowed, Error, KatEntry, Service, SelfTestFailure};
+use oxicrypt_module::{
+    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+};
 
 // ----------------------------------------------------------------------
 // PrfHmac adapter trait
@@ -1304,13 +1306,17 @@ pub type Sp800_108DoublePipelineHmacSha512_224 =
 pub type Sp800_108DoublePipelineHmacSha512_256 =
     Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha512_256, 32>;
 /// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-224.
-pub type Sp800_108DoublePipelineHmacSha3_224 = Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_224, 28>;
+pub type Sp800_108DoublePipelineHmacSha3_224 =
+    Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_224, 28>;
 /// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-256.
-pub type Sp800_108DoublePipelineHmacSha3_256 = Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_256, 32>;
+pub type Sp800_108DoublePipelineHmacSha3_256 =
+    Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_256, 32>;
 /// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-384.
-pub type Sp800_108DoublePipelineHmacSha3_384 = Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_384, 48>;
+pub type Sp800_108DoublePipelineHmacSha3_384 =
+    Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_384, 48>;
 /// SP 800-108 Double-Pipeline Iteration Mode over HMAC-SHA3-512.
-pub type Sp800_108DoublePipelineHmacSha3_512 = Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_512, 64>;
+pub type Sp800_108DoublePipelineHmacSha3_512 =
+    Sp800_108DoublePipeline<oxicrypt_hmac::HmacSha3_512, 64>;
 
 // ----------------------------------------------------------------------
 // SP 800-108 Double-Pipeline Iteration Mode power-up KATs
@@ -1464,12 +1470,7 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
     /// # Panics
     ///
     /// Panics if `c == 0`.
-    pub fn derive(
-        password: &[u8],
-        salt: &[u8],
-        c: u32,
-        out: &mut [u8],
-    ) -> Result<(), KdfError> {
+    pub fn derive(password: &[u8], salt: &[u8], c: u32, out: &mut [u8]) -> Result<(), KdfError> {
         require_operational()?;
         require_allowed(P::KDF_SERVICE)?;
         Self::derive_internal(password, salt, c, out)
@@ -1566,8 +1567,7 @@ pub type Pbkdf2HmacSha3_512 = Pbkdf2<oxicrypt_hmac::HmacSha3_512, 64>;
 /// PBKDF2-HMAC-SHA-1 KAT: RFC 6070 Test Case 1.
 /// P="password", S="salt", c=1, dkLen=20.
 const KAT_PBKDF2_SHA1_EXPECTED: [u8; 20] = [
-    0x0c, 0x60, 0xc8, 0x0f, 0x96, 0x1f, 0x0e, 0x71,
-    0xf3, 0xa9, 0xb5, 0x24, 0xaf, 0x60, 0x12, 0x06,
+    0x0c, 0x60, 0xc8, 0x0f, 0x96, 0x1f, 0x0e, 0x71, 0xf3, 0xa9, 0xb5, 0x24, 0xaf, 0x60, 0x12, 0x06,
     0x2f, 0xe0, 0x37, 0xa6,
 ];
 
@@ -1586,10 +1586,8 @@ pub fn pbkdf2_self_test_sha1() -> Result<(), SelfTestFailure> {
 /// PBKDF2-HMAC-SHA-256 KAT: P="password", S="salt", c=1, dkLen=32.
 /// Cross-checked against Python hashlib.pbkdf2_hmac.
 const KAT_PBKDF2_SHA256_EXPECTED: [u8; 32] = [
-    0x12, 0x0f, 0xb6, 0xcf, 0xfc, 0xf8, 0xb3, 0x2c,
-    0x43, 0xe7, 0x22, 0x52, 0x56, 0xc4, 0xf8, 0x37,
-    0xa8, 0x65, 0x48, 0xc9, 0x2c, 0xcc, 0x35, 0x48,
-    0x08, 0x05, 0x98, 0x7c, 0xb7, 0x0b, 0xe1, 0x7b,
+    0x12, 0x0f, 0xb6, 0xcf, 0xfc, 0xf8, 0xb3, 0x2c, 0x43, 0xe7, 0x22, 0x52, 0x56, 0xc4, 0xf8, 0x37,
+    0xa8, 0x65, 0x48, 0xc9, 0x2c, 0xcc, 0x35, 0x48, 0x08, 0x05, 0x98, 0x7c, 0xb7, 0x0b, 0xe1, 0x7b,
 ];
 
 /// Power-up KAT for PBKDF2-HMAC-SHA-256.
@@ -1838,12 +1836,11 @@ mod tests {
         kbkdf_feedback_self_test_sha3_224, kbkdf_feedback_self_test_sha3_256,
         kbkdf_feedback_self_test_sha3_384, kbkdf_feedback_self_test_sha3_512,
         kbkdf_feedback_self_test_sha512, kbkdf_feedback_self_test_sha512_224,
-        kbkdf_feedback_self_test_sha512_256, HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512,
-        KdfError, Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha3_256,
+        kbkdf_feedback_self_test_sha512_256, pbkdf2_self_test_sha1, pbkdf2_self_test_sha256,
+        HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512, KdfError, Pbkdf2HmacSha1, Pbkdf2HmacSha256,
+        Pbkdf2HmacSha512, Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha3_256,
         Sp800_108DoublePipelineHmacSha256, Sp800_108DoublePipelineHmacSha3_256,
         Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha3_256,
-        pbkdf2_self_test_sha1, pbkdf2_self_test_sha256,
-        Pbkdf2HmacSha1, Pbkdf2HmacSha256, Pbkdf2HmacSha512,
     };
 
     // Local fixed inputs for the RFC 5869 §A.1 Test Case 1 cross-check
@@ -2368,13 +2365,11 @@ mod tests {
     fn pbkdf2_sha1_rfc6070_c2() {
         // RFC 6070 Test Case 2: P="password", S="salt", c=2, dkLen=20
         let expected: [u8; 20] = [
-            0xea, 0x6c, 0x01, 0x4d, 0xc7, 0x2d, 0x6f, 0x8c,
-            0xcd, 0x1e, 0xd9, 0x2a, 0xce, 0x1d, 0x41, 0xf0,
-            0xd8, 0xde, 0x89, 0x57,
+            0xea, 0x6c, 0x01, 0x4d, 0xc7, 0x2d, 0x6f, 0x8c, 0xcd, 0x1e, 0xd9, 0x2a, 0xce, 0x1d,
+            0x41, 0xf0, 0xd8, 0xde, 0x89, 0x57,
         ];
         let mut dk = [0u8; 20];
-        Pbkdf2HmacSha1::derive_internal(b"password", b"salt", 2, &mut dk)
-            .unwrap();
+        Pbkdf2HmacSha1::derive_internal(b"password", b"salt", 2, &mut dk).unwrap();
         assert_eq!(dk, expected);
     }
 
@@ -2382,14 +2377,12 @@ mod tests {
     fn pbkdf2_sha256_c4096() {
         // P="password", S="salt", c=4096, dkLen=32 (SHA-256)
         let expected: [u8; 32] = [
-            0xc5, 0xe4, 0x78, 0xd5, 0x92, 0x88, 0xc8, 0x41,
-            0xaa, 0x53, 0x0d, 0xb6, 0x84, 0x5c, 0x4c, 0x8d,
-            0x96, 0x28, 0x93, 0xa0, 0x01, 0xce, 0x4e, 0x11,
-            0xa4, 0x96, 0x38, 0x73, 0xaa, 0x98, 0x13, 0x4a,
+            0xc5, 0xe4, 0x78, 0xd5, 0x92, 0x88, 0xc8, 0x41, 0xaa, 0x53, 0x0d, 0xb6, 0x84, 0x5c,
+            0x4c, 0x8d, 0x96, 0x28, 0x93, 0xa0, 0x01, 0xce, 0x4e, 0x11, 0xa4, 0x96, 0x38, 0x73,
+            0xaa, 0x98, 0x13, 0x4a,
         ];
         let mut dk = [0u8; 32];
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 4096, &mut dk)
-            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 4096, &mut dk).unwrap();
         assert_eq!(dk, expected);
     }
 
@@ -2397,18 +2390,14 @@ mod tests {
     fn pbkdf2_sha512_c1() {
         // P="password", S="salt", c=1, dkLen=64 (SHA-512)
         let expected: [u8; 64] = [
-            0x86, 0x7f, 0x70, 0xcf, 0x1a, 0xde, 0x02, 0xcf,
-            0xf3, 0x75, 0x25, 0x99, 0xa3, 0xa5, 0x3d, 0xc4,
-            0xaf, 0x34, 0xc7, 0xa6, 0x69, 0x81, 0x5a, 0xe5,
-            0xd5, 0x13, 0x55, 0x4e, 0x1c, 0x8c, 0xf2, 0x52,
-            0xc0, 0x2d, 0x47, 0x0a, 0x28, 0x5a, 0x05, 0x01,
-            0xba, 0xd9, 0x99, 0xbf, 0xe9, 0x43, 0xc0, 0x8f,
-            0x05, 0x02, 0x35, 0xd7, 0xd6, 0x8b, 0x1d, 0xa5,
+            0x86, 0x7f, 0x70, 0xcf, 0x1a, 0xde, 0x02, 0xcf, 0xf3, 0x75, 0x25, 0x99, 0xa3, 0xa5,
+            0x3d, 0xc4, 0xaf, 0x34, 0xc7, 0xa6, 0x69, 0x81, 0x5a, 0xe5, 0xd5, 0x13, 0x55, 0x4e,
+            0x1c, 0x8c, 0xf2, 0x52, 0xc0, 0x2d, 0x47, 0x0a, 0x28, 0x5a, 0x05, 0x01, 0xba, 0xd9,
+            0x99, 0xbf, 0xe9, 0x43, 0xc0, 0x8f, 0x05, 0x02, 0x35, 0xd7, 0xd6, 0x8b, 0x1d, 0xa5,
             0x5e, 0x63, 0xf7, 0x3b, 0x60, 0xa5, 0x7f, 0xce,
         ];
         let mut dk = [0u8; 64];
-        Pbkdf2HmacSha512::derive_internal(b"password", b"salt", 1, &mut dk)
-            .unwrap();
+        Pbkdf2HmacSha512::derive_internal(b"password", b"salt", 1, &mut dk).unwrap();
         assert_eq!(dk, expected);
     }
 
@@ -2417,8 +2406,7 @@ mod tests {
         // Output longer than one HMAC block requires multiple blocks.
         // SHA-256 output is 32 bytes; request 48 bytes → 2 PBKDF2 blocks.
         let mut dk = [0u8; 48];
-        Pbkdf2HmacSha256::derive_internal(b"pass", b"sa", 1, &mut dk)
-            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"pass", b"sa", 1, &mut dk).unwrap();
         // Verify first 32 bytes match block 1, and that bytes 32..48 are non-zero.
         assert_ne!(&dk[32..], &[0u8; 16]);
     }
@@ -2427,10 +2415,8 @@ mod tests {
     fn pbkdf2_deterministic() {
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk1)
-            .unwrap();
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2)
-            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk1).unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2).unwrap();
         assert_eq!(dk1, dk2);
     }
 
@@ -2438,10 +2424,8 @@ mod tests {
     fn pbkdf2_different_passwords_differ() {
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
-        Pbkdf2HmacSha256::derive_internal(b"pass-a", b"salt", 1, &mut dk1)
-            .unwrap();
-        Pbkdf2HmacSha256::derive_internal(b"pass-b", b"salt", 1, &mut dk2)
-            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"pass-a", b"salt", 1, &mut dk1).unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"pass-b", b"salt", 1, &mut dk2).unwrap();
         assert_ne!(dk1, dk2);
     }
 
@@ -2449,10 +2433,8 @@ mod tests {
     fn pbkdf2_different_salts_differ() {
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt-a", 1, &mut dk1)
-            .unwrap();
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt-b", 1, &mut dk2)
-            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt-a", 1, &mut dk1).unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt-b", 1, &mut dk2).unwrap();
         assert_ne!(dk1, dk2);
     }
 
@@ -2460,10 +2442,8 @@ mod tests {
     fn pbkdf2_different_iterations_differ() {
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk1)
-            .unwrap();
-        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2)
-            .unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk1).unwrap();
+        Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2).unwrap();
         assert_ne!(dk1, dk2);
     }
 }

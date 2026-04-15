@@ -218,17 +218,15 @@ pub fn process_shs(
             .get(..expected_bytes)
             .ok_or(DispatchError::Crypto("CAVP SHS: slicing failed"))?;
         let md = handler.compute(used)?;
-        let len_json = i64::try_from(case.len_bits).map_err(|_| {
-            DispatchError::Crypto("CAVP SHS: `Len` does not fit in i64")
-        })?;
+        let len_json = i64::try_from(case.len_bits)
+            .map_err(|_| DispatchError::Crypto("CAVP SHS: `Len` does not fit in i64"))?;
         results.push(JsonValue::Object(vec![
             ("len".to_string(), JsonValue::Number(len_json)),
             ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
         ]));
     }
-    let l_json = i64::try_from(doc.digest_length_bytes).map_err(|_| {
-        DispatchError::Crypto("CAVP SHS: `[L = N]` does not fit in i64")
-    })?;
+    let l_json = i64::try_from(doc.digest_length_bytes)
+        .map_err(|_| DispatchError::Crypto("CAVP SHS: `[L = N]` does not fit in i64"))?;
     Ok(JsonValue::Object(vec![
         (
             "algorithm".to_string(),
@@ -279,7 +277,10 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
         let doc = rsp::parse(SHA256_TWO_RECORDS).unwrap();
         let r = with_default_shs_handlers();
         let resp = process_shs("SHA-256", &doc, &r).unwrap();
-        assert_eq!(resp.get("algorithm").and_then(JsonValue::as_str), Some("SHA-256"));
+        assert_eq!(
+            resp.get("algorithm").and_then(JsonValue::as_str),
+            Some("SHA-256")
+        );
         assert_eq!(resp.get("l").and_then(JsonValue::as_i64), Some(32));
         let cases = resp.get("testCases").and_then(JsonValue::as_array).unwrap();
         assert_eq!(cases.len(), 2);

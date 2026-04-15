@@ -125,8 +125,7 @@ fn build_login_jwt(totp_secret: &[u8]) -> Result<String, String> {
 
 /// Base64url encoding (RFC 4648 §5) without padding.
 fn base64url_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity((input.len() * 4).div_ceil(3));
     let mut i = 0;
     while i < input.len() {
@@ -230,8 +229,7 @@ fn http_request_once(
         .arg(method);
 
     if !bearer.is_empty() {
-        cmd.arg("-H")
-            .arg(format!("Authorization: Bearer {bearer}"));
+        cmd.arg("-H").arg(format!("Authorization: Bearer {bearer}"));
     }
     cmd.arg("-H").arg("Content-Type: application/json");
 
@@ -370,9 +368,7 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     // ── Step 1: Login ──────────────────────────────────────────────
     eprintln!("[transport] logging in to {}...", config.server_url);
     let jwt = build_login_jwt(&totp_secret)?;
-    let login_body = format!(
-        "[{{\"acvVersion\":\"1.0\"}},{{\"accessToken\":\"{jwt}\"}}]"
-    );
+    let login_body = format!("[{{\"acvVersion\":\"1.0\"}},{{\"accessToken\":\"{jwt}\"}}]");
     let login_url = format!("{}/acvp/v1/login", config.server_url);
     let login_resp = http_post(&login_url, &login_body, config, "")?;
     if login_resp.status < 200 || login_resp.status >= 300 {
@@ -385,8 +381,8 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     }
     // Extract the access token from the login response.
     // Response shape: [{"acvVersion":"1.0"},{"accessToken":"..."}]
-    let login_json = json::parse(&login_resp.body)
-        .map_err(|e| format!("parse login response: {e}"))?;
+    let login_json =
+        json::parse(&login_resp.body).map_err(|e| format!("parse login response: {e}"))?;
     let access_token = extract_access_token(&login_json)?;
     eprintln!("[transport] login successful, got access token");
     log.log("login_ok", "access token obtained");
@@ -404,8 +400,8 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
             reg_resp.status, reg_resp.body
         ));
     }
-    let reg_json = json::parse(&reg_resp.body)
-        .map_err(|e| format!("parse registration response: {e}"))?;
+    let reg_json =
+        json::parse(&reg_resp.body).map_err(|e| format!("parse registration response: {e}"))?;
     let vector_set_urls = extract_vector_set_urls(&reg_json)?;
     eprintln!(
         "[transport] registered: {} vector set(s)",
@@ -418,13 +414,7 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     log.log_json("registration_response", &reg_json);
 
     // ── Steps 3–5: Fetch → Process → Submit per vector set ─────────
-    let results = process_vector_sets(
-        &vector_set_urls,
-        config,
-        &access_token,
-        &registry,
-        &mut log,
-    );
+    let results = process_vector_sets(&vector_set_urls, config, &access_token, &registry, &mut log);
 
     // ── Summary ────────────────────────────────────────────────────
     write_session_summary(&results, &mut log, &config.log_path)
@@ -553,7 +543,10 @@ fn write_session_summary(
     log_path: &str,
 ) -> Result<(), String> {
     eprintln!("\n[transport] ══════════════════════════════════════");
-    eprintln!("[transport] Session complete: {} vector set(s)", results.len());
+    eprintln!(
+        "[transport] Session complete: {} vector set(s)",
+        results.len()
+    );
     for (url, disp) in results {
         eprintln!("  {url} → {disp}");
     }
@@ -567,19 +560,13 @@ fn write_session_summary(
                     .map(|(url, disp)| {
                         JsonValue::Object(vec![
                             ("url".to_string(), JsonValue::String(url.clone())),
-                            (
-                                "disposition".to_string(),
-                                JsonValue::String(disp.clone()),
-                            ),
+                            ("disposition".to_string(), JsonValue::String(disp.clone())),
                         ])
                     })
                     .collect(),
             ),
         ),
-        (
-            "total".to_string(),
-            JsonValue::Number(results.len() as i64),
-        ),
+        ("total".to_string(), JsonValue::Number(results.len() as i64)),
     ]);
     log.log_json("session_summary", &summary);
     log.write_to_file(log_path)?;
@@ -617,8 +604,7 @@ fn extract_vector_set_urls(resp: &JsonValue) -> Result<Vec<String>, String> {
     let mut urls = Vec::new();
     // Try array-of-objects shape
     let obj = if let Some(arr) = resp.as_array() {
-        arr.iter()
-            .find(|item| item.get("vectorSetUrls").is_some())
+        arr.iter().find(|item| item.get("vectorSetUrls").is_some())
     } else {
         Some(resp)
     };
@@ -647,10 +633,7 @@ fn build_registration_body(caps: &[JsonValue]) -> String {
             "acvVersion".to_string(),
             JsonValue::String("1.0".to_string()),
         )]),
-        JsonValue::Object(vec![(
-            "algorithms".to_string(),
-            algo_array,
-        )]),
+        JsonValue::Object(vec![("algorithms".to_string(), algo_array)]),
     ]);
     json::to_pretty_string(&body)
 }
@@ -712,8 +695,7 @@ fn poll_verdict(
             log.log("poll_error", &format!("HTTP {}", resp.status));
             continue;
         }
-        let parsed = json::parse(&resp.body)
-            .map_err(|e| format!("parse poll response: {e}"))?;
+        let parsed = json::parse(&resp.body).map_err(|e| format!("parse poll response: {e}"))?;
         let body = unwrap_acvp_array(&parsed);
 
         if let Some(status) = body.get("status").and_then(JsonValue::as_str) {

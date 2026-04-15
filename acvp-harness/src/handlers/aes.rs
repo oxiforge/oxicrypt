@@ -201,9 +201,7 @@ fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, Dispa
         // MCT is supported for ECB and CBC only.
         match mode {
             AesMode::Ecb | AesMode::Cbc => {
-                return handle_aes_mct_group(
-                    group, mode, direction, tg_id, key_len_bits,
-                );
+                return handle_aes_mct_group(group, mode, direction, tg_id, key_len_bits);
             }
             _ => {
                 return Err(DispatchError::UnsupportedTestType(
@@ -359,13 +357,13 @@ fn run_aes_test(
         Direction::Encrypt => ("pt", "ct"),
         Direction::Decrypt => ("ct", "pt"),
     };
-    let input_hex = t
-        .get(input_field)
-        .and_then(JsonValue::as_str)
-        .ok_or(DispatchError::MissingField(match direction {
-            Direction::Encrypt => "pt",
-            Direction::Decrypt => "ct",
-        }))?;
+    let input_hex =
+        t.get(input_field)
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField(match direction {
+                Direction::Encrypt => "pt",
+                Direction::Decrypt => "ct",
+            }))?;
     let input = hex::decode(input_hex)?;
     let output = dispatch_one_shot(mode, direction, key_len_bits, &key_bytes, t, &input)?;
     Ok(JsonValue::Object(vec![
@@ -513,8 +511,7 @@ fn run_gcm_test(
     match direction {
         Direction::Encrypt => {
             let pt = decode_hex_field(t, "pt")?;
-            let ct_tag =
-                dispatch_gcm_encrypt(key_len_bits, key_bytes, &iv, &aad, &pt, tag_len)?;
+            let ct_tag = dispatch_gcm_encrypt(key_len_bits, key_bytes, &iv, &aad, &pt, tag_len)?;
             let (ct_part, tag_part) = ct_tag.split_at(ct_tag.len() - tag_len);
             Ok(JsonValue::Object(vec![
                 ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -539,14 +536,8 @@ fn run_gcm_test(
             match dispatch_gcm_decrypt(key_len_bits, key_bytes, &iv, &aad, &ct, &tag) {
                 Ok(pt) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
-                    (
-                        "testPassed".to_string(),
-                        JsonValue::Bool(true),
-                    ),
-                    (
-                        "pt".to_string(),
-                        JsonValue::String(hex::encode_upper(&pt)),
-                    ),
+                    ("testPassed".to_string(), JsonValue::Bool(true)),
+                    ("pt".to_string(), JsonValue::String(hex::encode_upper(&pt))),
                 ])),
                 Err(DispatchError::Crypto("tag mismatch")) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -571,23 +562,23 @@ fn dispatch_gcm_encrypt(
     let mut tag_buf = [0u8; 16];
     let result = match key_len_bits {
         128 => {
-            let k: [u8; 16] = key_bytes.try_into().map_err(|_| {
-                DispatchError::Crypto("AES-GCM: 128-bit key wrong length")
-            })?;
+            let k: [u8; 16] = key_bytes
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("AES-GCM: 128-bit key wrong length"))?;
             let c = Aes128Key::new_internal(&k);
             gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
         }
         192 => {
-            let k: [u8; 24] = key_bytes.try_into().map_err(|_| {
-                DispatchError::Crypto("AES-GCM: 192-bit key wrong length")
-            })?;
+            let k: [u8; 24] = key_bytes
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("AES-GCM: 192-bit key wrong length"))?;
             let c = Aes192Key::new_internal(&k);
             gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
         }
         256 => {
-            let k: [u8; 32] = key_bytes.try_into().map_err(|_| {
-                DispatchError::Crypto("AES-GCM: 256-bit key wrong length")
-            })?;
+            let k: [u8; 32] = key_bytes
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("AES-GCM: 256-bit key wrong length"))?;
             let c = Aes256Key::new_internal(&k);
             gcm_encrypt(&c, iv, aad, pt, &mut ct, &mut tag_buf)
         }
@@ -612,23 +603,23 @@ fn dispatch_gcm_decrypt(
     let mut pt = vec![0u8; ct.len()];
     let result = match key_len_bits {
         128 => {
-            let k: [u8; 16] = key_bytes.try_into().map_err(|_| {
-                DispatchError::Crypto("AES-GCM: 128-bit key wrong length")
-            })?;
+            let k: [u8; 16] = key_bytes
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("AES-GCM: 128-bit key wrong length"))?;
             let c = Aes128Key::new_internal(&k);
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         192 => {
-            let k: [u8; 24] = key_bytes.try_into().map_err(|_| {
-                DispatchError::Crypto("AES-GCM: 192-bit key wrong length")
-            })?;
+            let k: [u8; 24] = key_bytes
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("AES-GCM: 192-bit key wrong length"))?;
             let c = Aes192Key::new_internal(&k);
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
         256 => {
-            let k: [u8; 32] = key_bytes.try_into().map_err(|_| {
-                DispatchError::Crypto("AES-GCM: 256-bit key wrong length")
-            })?;
+            let k: [u8; 32] = key_bytes
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("AES-GCM: 256-bit key wrong length"))?;
             let c = Aes256Key::new_internal(&k);
             gcm_decrypt(&c, iv, aad, ct, &tag16, &mut pt)
         }
@@ -637,7 +628,9 @@ fn dispatch_gcm_decrypt(
     match result {
         Ok(()) => Ok(pt),
         Err(ModeError::TagMismatch) => Err(DispatchError::Crypto("tag mismatch")),
-        Err(_) => Err(DispatchError::Crypto("oxicrypt_aes::gcm_decrypt returned Err")),
+        Err(_) => Err(DispatchError::Crypto(
+            "oxicrypt_aes::gcm_decrypt returned Err",
+        )),
     }
 }
 
@@ -681,24 +674,12 @@ fn run_ccm_test(
         Direction::Decrypt => {
             // CCM ct field contains ciphertext || tag.
             let ct_with_tag = decode_hex_field(t, "ct")?;
-            match dispatch_ccm_decrypt(
-                key_len_bits,
-                key_bytes,
-                &nonce,
-                &aad,
-                &ct_with_tag,
-                tag_len,
-            ) {
+            match dispatch_ccm_decrypt(key_len_bits, key_bytes, &nonce, &aad, &ct_with_tag, tag_len)
+            {
                 Ok(pt) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
-                    (
-                        "testPassed".to_string(),
-                        JsonValue::Bool(true),
-                    ),
-                    (
-                        "pt".to_string(),
-                        JsonValue::String(hex::encode_upper(&pt)),
-                    ),
+                    ("testPassed".to_string(), JsonValue::Bool(true)),
+                    ("pt".to_string(), JsonValue::String(hex::encode_upper(&pt))),
                 ])),
                 Err(DispatchError::Crypto("tag mismatch")) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -756,9 +737,7 @@ fn dispatch_ccm_decrypt(
     tlen: usize,
 ) -> Result<Vec<u8>, DispatchError> {
     if ct_with_tag.len() < tlen {
-        return Err(DispatchError::Crypto(
-            "AES-CCM: ct shorter than tagLen",
-        ));
+        return Err(DispatchError::Crypto("AES-CCM: ct shorter than tagLen"));
     }
     let pt_len = ct_with_tag.len() - tlen;
     let mut out = vec![0u8; pt_len];
@@ -811,10 +790,7 @@ fn run_kw_test(
             let ct = dispatch_kw_wrap(key_len_bits, key_bytes, &pt, with_padding)?;
             Ok(JsonValue::Object(vec![
                 ("tcId".to_string(), JsonValue::Number(tc_id)),
-                (
-                    "ct".to_string(),
-                    JsonValue::String(hex::encode_upper(&ct)),
-                ),
+                ("ct".to_string(), JsonValue::String(hex::encode_upper(&ct))),
             ]))
         }
         Direction::Decrypt => {
@@ -822,14 +798,8 @@ fn run_kw_test(
             match dispatch_kw_unwrap(key_len_bits, key_bytes, &ct, with_padding) {
                 Ok(pt) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
-                    (
-                        "testPassed".to_string(),
-                        JsonValue::Bool(true),
-                    ),
-                    (
-                        "pt".to_string(),
-                        JsonValue::String(hex::encode_upper(&pt)),
-                    ),
+                    ("testPassed".to_string(), JsonValue::Bool(true)),
+                    ("pt".to_string(), JsonValue::String(hex::encode_upper(&pt))),
                 ])),
                 Err(DispatchError::Crypto("tag mismatch")) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -1195,9 +1165,9 @@ fn ecb_one_block(
 ) -> Result<(), DispatchError> {
     let r = match key_len_bits {
         128 => {
-            let k: [u8; 16] = key.try_into().map_err(|_| {
-                DispatchError::Crypto("MCT ECB: key length")
-            })?;
+            let k: [u8; 16] = key
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("MCT ECB: key length"))?;
             let c = Aes128Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
@@ -1205,9 +1175,9 @@ fn ecb_one_block(
             }
         }
         192 => {
-            let k: [u8; 24] = key.try_into().map_err(|_| {
-                DispatchError::Crypto("MCT ECB: key length")
-            })?;
+            let k: [u8; 24] = key
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("MCT ECB: key length"))?;
             let c = Aes192Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
@@ -1215,9 +1185,9 @@ fn ecb_one_block(
             }
         }
         256 => {
-            let k: [u8; 32] = key.try_into().map_err(|_| {
-                DispatchError::Crypto("MCT ECB: key length")
-            })?;
+            let k: [u8; 32] = key
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("MCT ECB: key length"))?;
             let c = Aes256Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => ecb_encrypt(&c, input, output),
@@ -1238,14 +1208,14 @@ fn cbc_one_block(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), DispatchError> {
-    let iv16: [u8; 16] = iv.try_into().map_err(|_| {
-        DispatchError::Crypto("MCT CBC: IV not 16 bytes")
-    })?;
+    let iv16: [u8; 16] = iv
+        .try_into()
+        .map_err(|_| DispatchError::Crypto("MCT CBC: IV not 16 bytes"))?;
     let r = match key_len_bits {
         128 => {
-            let k: [u8; 16] = key.try_into().map_err(|_| {
-                DispatchError::Crypto("MCT CBC: key length")
-            })?;
+            let k: [u8; 16] = key
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("MCT CBC: key length"))?;
             let c = Aes128Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
@@ -1253,9 +1223,9 @@ fn cbc_one_block(
             }
         }
         192 => {
-            let k: [u8; 24] = key.try_into().map_err(|_| {
-                DispatchError::Crypto("MCT CBC: key length")
-            })?;
+            let k: [u8; 24] = key
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("MCT CBC: key length"))?;
             let c = Aes192Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
@@ -1263,9 +1233,9 @@ fn cbc_one_block(
             }
         }
         256 => {
-            let k: [u8; 32] = key.try_into().map_err(|_| {
-                DispatchError::Crypto("MCT CBC: key length")
-            })?;
+            let k: [u8; 32] = key
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("MCT CBC: key length"))?;
             let c = Aes256Key::new_internal(&k);
             match direction {
                 Direction::Encrypt => cbc_encrypt(&c, &iv16, input, output),
@@ -1282,12 +1252,7 @@ fn cbc_one_block(
 /// - 128-bit: Key[i+1] = Key[i] XOR Output[999]
 /// - 192-bit: Key[i+1] = Key[i] XOR (last 8 bytes of Output[998] || Output[999])
 /// - 256-bit: Key[i+1] = Key[i] XOR (Output[998] || Output[999])
-fn mct_key_update(
-    key: &mut [u8],
-    key_len: usize,
-    prev_output: &[u8],
-    last_output: &[u8],
-) {
+fn mct_key_update(key: &mut [u8], key_len: usize, prev_output: &[u8], last_output: &[u8]) {
     match key_len {
         16 => {
             // 128-bit: XOR with last output block

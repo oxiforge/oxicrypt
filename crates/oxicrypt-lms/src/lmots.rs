@@ -13,7 +13,7 @@
     clippy::arithmetic_side_effects,
     clippy::integer_division,
     clippy::cast_possible_truncation,
-    clippy::needless_range_loop,
+    clippy::needless_range_loop
 )]
 
 use oxicrypt_sha::sha256::Sha256;
@@ -90,12 +90,7 @@ fn coef_q_cksm(q_hash: &[u8; N], i: usize) -> u8 {
 ///
 /// x_q\[i\] = H(I || u32str(q) || u16str(i) || 0xff || SEED)
 /// RFC 8554 Appendix A.
-fn derive_x(
-    seed: &[u8; N],
-    i_val: &[u8; 16],
-    q: u32,
-    chain_idx: u16,
-) -> [u8; N] {
+fn derive_x(seed: &[u8; N], i_val: &[u8; 16], q: u32, chain_idx: u16) -> [u8; N] {
     let mut h = Sha256::new_internal();
     h.update(i_val);
     h.update(&q.to_be_bytes());
@@ -108,13 +103,7 @@ fn derive_x(
 /// One step of the hash chain.
 ///
 /// H(I || u32str(q) || u16str(chain_idx) || u8str(j) || tmp)
-fn chain_step(
-    i_val: &[u8; 16],
-    q: u32,
-    chain_idx: u16,
-    j: u8,
-    tmp: &[u8; N],
-) -> [u8; N] {
+fn chain_step(i_val: &[u8; 16], q: u32, chain_idx: u16, j: u8, tmp: &[u8; N]) -> [u8; N] {
     let mut h = Sha256::new_internal();
     h.update(i_val);
     h.update(&q.to_be_bytes());
@@ -149,11 +138,7 @@ fn chain(
 /// where y\[i\] = chain(x\[i\], 0, 2^w-1).
 ///
 /// RFC 8554 §4.3 Algorithm 1.
-pub(crate) fn compute_public_key(
-    seed: &[u8; N],
-    i_val: &[u8; 16],
-    q: u32,
-) -> [u8; N] {
+pub(crate) fn compute_public_key(seed: &[u8; N], i_val: &[u8; 16], q: u32) -> [u8; N] {
     let mut kc = Sha256::new_internal();
     kc.update(i_val);
     kc.update(&q.to_be_bytes());
@@ -173,12 +158,7 @@ pub(crate) fn compute_public_key(
 ///
 /// C = H(I || u32str(q) || u16str(0xFFFD) || SEED || message)
 /// RFC 8554 §4.5 note on deterministic generation.
-fn compute_c(
-    seed: &[u8; N],
-    i_val: &[u8; 16],
-    q: u32,
-    message: &[u8],
-) -> [u8; N] {
+fn compute_c(seed: &[u8; N], i_val: &[u8; 16], q: u32, message: &[u8]) -> [u8; N] {
     let mut h = Sha256::new_internal();
     h.update(i_val);
     h.update(&q.to_be_bytes());
@@ -191,12 +171,7 @@ fn compute_c(
 /// Compute message hash Q.
 ///
 /// Q = H(I || u32str(q) || u16str(D_MESG) || C || message)
-fn compute_q(
-    i_val: &[u8; 16],
-    q: u32,
-    c: &[u8; N],
-    message: &[u8],
-) -> [u8; N] {
+fn compute_q(i_val: &[u8; 16], q: u32, c: &[u8; N], message: &[u8]) -> [u8; N] {
     let mut h = Sha256::new_internal();
     h.update(i_val);
     h.update(&q.to_be_bytes());
@@ -254,9 +229,7 @@ pub(crate) fn ots_verify_candidate(
     }
 
     // Parse and validate type code.
-    let sig_type = u32::from_be_bytes([
-        ots_sig[0], ots_sig[1], ots_sig[2], ots_sig[3],
-    ]);
+    let sig_type = u32::from_be_bytes([ots_sig[0], ots_sig[1], ots_sig[2], ots_sig[3]]);
     if sig_type != LMOTS_TYPE {
         return None;
     }

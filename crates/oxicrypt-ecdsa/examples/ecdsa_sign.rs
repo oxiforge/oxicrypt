@@ -12,20 +12,24 @@ fn main() {
         .expect("drbg instantiate");
 
     // Generate a keypair:
-    let private_key = oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg)
-        .expect("ecdsa keygen");
+    let private_key =
+        oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg).expect("ecdsa keygen");
     let public_key = private_key.public_key();
     println!("Public key: {}...", hex(&public_key[..32]));
 
     // Sign:
     let message = b"Sign this message with ECDSA P-256";
-    let signature = private_key.sign_sha256(&mut drbg, message)
+    let signature = private_key
+        .sign_sha256(&mut drbg, message)
         .expect("ecdsa sign");
     println!("Signature:  {}...", hex(&signature[..32]));
 
     // Verify:
     let result = oxicrypt_ecdsa::verify(&public_key, message, &signature);
-    println!("Verify:     {}", if result.is_ok() { "valid" } else { "INVALID" });
+    println!(
+        "Verify:     {}",
+        if result.is_ok() { "valid" } else { "INVALID" }
+    );
 }
 
 fn hex(bytes: &[u8]) -> String {

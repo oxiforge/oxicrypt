@@ -33,8 +33,8 @@
     clippy::manual_let_else
 )]
 
-use crate::bigint2048::{U2048, BYTES as BYTES2048, LIMBS as LIMBS2048};
-use crate::bigint4096::{U4096, LIMBS as LIMBS4096};
+use crate::bigint2048::{BYTES as BYTES2048, LIMBS as LIMBS2048, U2048};
+use crate::bigint4096::{LIMBS as LIMBS4096, U4096};
 use crate::mont2048::MontCtx2048;
 use oxicrypt_drbg::HmacDrbgSha256;
 
@@ -121,11 +121,7 @@ mod tests {
         let mut drbg = make_drbg(b"pqclib-rsa4096-keygen-smoke-entropy-0001");
         let km = generate_4096(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 4096 bits).
-        assert_ne!(
-            km.n.limbs[LIMBS4096 - 1] >> 63,
-            0,
-            "n is not 4096-bit"
-        );
+        assert_ne!(km.n.limbs[LIMBS4096 - 1] >> 63, 0, "n is not 4096-bit");
         // d must be less than n.
         assert_eq!(km.d.ct_lt(&km.n), 1, "d ≥ n");
         // p and q must be 2048-bit (top bit set).

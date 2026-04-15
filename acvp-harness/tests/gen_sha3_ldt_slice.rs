@@ -47,10 +47,7 @@ const LDT_TESTS: [(u8, usize, u64); 3] = [
 
 /// Compute SHA-3 digest over `full_bytes` of repeating `pattern` using
 /// the incremental API.
-fn ldt_digest<const RATE: usize, const OUT: usize>(
-    pattern: &[u8],
-    full_bytes: u64,
-) -> [u8; OUT] {
+fn ldt_digest<const RATE: usize, const OUT: usize>(pattern: &[u8], full_bytes: u64) -> [u8; OUT] {
     let mut hasher = oxicrypt_sha::sha3::Sha3::<RATE, OUT>::new_internal();
     let pat_len = pattern.len() as u64;
     let mut remaining = full_bytes;

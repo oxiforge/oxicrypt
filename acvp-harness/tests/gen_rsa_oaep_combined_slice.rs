@@ -46,7 +46,7 @@ fn hex_decode(s: &str) -> Vec<u8> {
 }
 
 const MESSAGES: [&str; 5] = [
-    "48656C6C6F",                                // "Hello"
+    "48656C6C6F", // "Hello"
     "ABCDEF0123456789",
     "00112233445566778899AABBCCDDEEFF",
     "FF",
@@ -75,8 +75,7 @@ fn generate_rsa_oaep_combined_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
-        .expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -112,16 +111,27 @@ fn generate_rsa_oaep_combined_slice() {
         // CRT decrypt
         let mut out_crt = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
         let len_crt = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
-            &n_bytes, e,
-            &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
-            label, &ct, &mut out_crt,
+            &n_bytes,
+            e,
+            &p_bytes,
+            &q_bytes,
+            &dp_bytes,
+            &dq_bytes,
+            &qinv_bytes,
+            label,
+            &ct,
+            &mut out_crt,
         )
         .unwrap_or_else(|| panic!("CRT decrypt failed test {i}"));
 
         // Non-CRT decrypt
         let mut out_std = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
         let len_std = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
-            &n_bytes, &d_bytes, label, &ct, &mut out_std,
+            &n_bytes,
+            &d_bytes,
+            label,
+            &ct,
+            &mut out_std,
         )
         .unwrap_or_else(|| panic!("non-CRT decrypt failed test {i}"));
 

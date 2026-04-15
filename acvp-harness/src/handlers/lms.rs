@@ -188,8 +188,9 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("message"))?,
         )?;
 
-        let sig = oxicrypt_lms::sign_internal(&mut sk, &message)
-            .ok_or(DispatchError::Crypto("LMS SigGen: signing failed (key exhausted?)"))?;
+        let sig = oxicrypt_lms::sign_internal(&mut sk, &message).ok_or(DispatchError::Crypto(
+            "LMS SigGen: signing failed (key exhausted?)",
+        ))?;
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -259,13 +260,12 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("signature"))?,
         )?;
 
-        let passed = if let Ok(sig) =
-            <[u8; oxicrypt_lms::SIGNATURE_LEN]>::try_from(sig_bytes.as_slice())
-        {
-            oxicrypt_lms::verify_internal(&pk, &message, &sig)
-        } else {
-            false
-        };
+        let passed =
+            if let Ok(sig) = <[u8; oxicrypt_lms::SIGNATURE_LEN]>::try_from(sig_bytes.as_slice()) {
+                oxicrypt_lms::verify_internal(&pk, &message, &sig)
+            } else {
+                false
+            };
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),

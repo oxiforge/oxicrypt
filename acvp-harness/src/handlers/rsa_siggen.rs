@@ -177,13 +177,17 @@ fn handle_siggen_2048(
             let qinv: [u8; H] = decode_fixed(group, "iqmp")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
-                .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 CRT sign failed"))?;
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: PKCS#1v1.5 CRT sign failed",
+                ))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -192,7 +196,9 @@ fn handle_siggen_2048(
             let d: [u8; N] = decode_fixed(group, "d")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(&n, &d, &message)
@@ -211,7 +217,9 @@ fn handle_siggen_2048(
             let qinv: [u8; H] = decode_fixed(group, "iqmp")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
@@ -227,7 +235,9 @@ fn handle_siggen_2048(
             let d: [u8; N] = decode_fixed(group, "d")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
@@ -269,13 +279,17 @@ fn handle_siggen_3072(
             let qinv: [u8; H] = decode_fixed(group, "iqmp")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let sig = oxicrypt_rsa::rsa3072::pkcs1_v15_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
-                .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 CRT 3072 sign failed"))?;
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: PKCS#1v1.5 CRT 3072 sign failed",
+                ))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -284,11 +298,14 @@ fn handle_siggen_3072(
             let d: [u8; N] = decode_fixed(group, "d")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
-                let sig = oxicrypt_rsa::rsa3072::pkcs1_v15_sign_internal(&n, &d, &message)
-                    .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 3072 sign failed"))?;
+                let sig = oxicrypt_rsa::rsa3072::pkcs1_v15_sign_internal(&n, &d, &message).ok_or(
+                    DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 3072 sign failed"),
+                )?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -303,14 +320,18 @@ fn handle_siggen_3072(
             let qinv: [u8; H] = decode_fixed(group, "iqmp")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
                 let sig = oxicrypt_rsa::rsa3072::pss_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
-                .ok_or(DispatchError::Crypto("RSA SigGen: PSS CRT 3072 sign failed"))?;
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: PSS CRT 3072 sign failed",
+                ))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -319,7 +340,9 @@ fn handle_siggen_3072(
             let d: [u8; N] = decode_fixed(group, "d")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
@@ -361,13 +384,17 @@ fn handle_siggen_4096(
             let qinv: [u8; H] = decode_fixed(group, "iqmp")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let sig = oxicrypt_rsa::rsa4096::pkcs1_v15_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
-                .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 CRT 4096 sign failed"))?;
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: PKCS#1v1.5 CRT 4096 sign failed",
+                ))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -376,11 +403,14 @@ fn handle_siggen_4096(
             let d: [u8; N] = decode_fixed(group, "d")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
-                let sig = oxicrypt_rsa::rsa4096::pkcs1_v15_sign_internal(&n, &d, &message)
-                    .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 4096 sign failed"))?;
+                let sig = oxicrypt_rsa::rsa4096::pkcs1_v15_sign_internal(&n, &d, &message).ok_or(
+                    DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 4096 sign failed"),
+                )?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -395,14 +425,18 @@ fn handle_siggen_4096(
             let qinv: [u8; H] = decode_fixed(group, "iqmp")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
                 let sig = oxicrypt_rsa::rsa4096::pss_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
-                .ok_or(DispatchError::Crypto("RSA SigGen: PSS CRT 4096 sign failed"))?;
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: PSS CRT 4096 sign failed",
+                ))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -411,7 +445,9 @@ fn handle_siggen_4096(
             let d: [u8; N] = decode_fixed(group, "d")?;
 
             for tc in tests {
-                let tc_id = tc.get("tcId").and_then(JsonValue::as_i64)
+                let tc_id = tc
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;

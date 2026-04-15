@@ -220,7 +220,7 @@ impl U2048 {
     /// RSA-4096 keygen run to form `n = p · q` where each factor
     /// is 2048 bits.
     pub fn widening_mul(&self, other: &U2048) -> crate::bigint4096::U4096 {
-        use crate::bigint4096::{U4096, LIMBS as LIMBS4096};
+        use crate::bigint4096::{LIMBS as LIMBS4096, U4096};
         let mut out = [0u64; LIMBS4096];
         for i in 0..LIMBS {
             let mut carry: u64 = 0;
@@ -272,7 +272,7 @@ impl U2048 {
 
     /// Zero-extend to a [`crate::bigint4096::U4096`].
     pub fn zero_extend_to_4096(&self) -> crate::bigint4096::U4096 {
-        use crate::bigint4096::{U4096, LIMBS as LIMBS4096};
+        use crate::bigint4096::{LIMBS as LIMBS4096, U4096};
         let mut limbs = [0u64; LIMBS4096];
         limbs[..LIMBS].copy_from_slice(&self.limbs);
         U4096 { limbs }
@@ -365,7 +365,9 @@ mod tests {
 
     #[test]
     fn adding_1_plus_max_wraps_with_carry() {
-        let ones = U2048 { limbs: [0xffff_ffff_ffff_ffff; LIMBS] };
+        let ones = U2048 {
+            limbs: [0xffff_ffff_ffff_ffff; LIMBS],
+        };
         let one = {
             let mut bytes = [0u8; BYTES];
             bytes[BYTES - 1] = 1;
@@ -384,14 +386,23 @@ mod tests {
             U2048::from_be_bytes(&bytes)
         };
         let (diff, borrow) = U2048::ZERO.subtracting(&one);
-        assert_eq!(diff, U2048 { limbs: [0xffff_ffff_ffff_ffff; LIMBS] });
+        assert_eq!(
+            diff,
+            U2048 {
+                limbs: [0xffff_ffff_ffff_ffff; LIMBS]
+            }
+        );
         assert_eq!(borrow, 1);
     }
 
     #[test]
     fn conditional_select_picks_a_or_b() {
-        let a = U2048 { limbs: [0xaa; LIMBS] };
-        let b = U2048 { limbs: [0x55; LIMBS] };
+        let a = U2048 {
+            limbs: [0xaa; LIMBS],
+        };
+        let b = U2048 {
+            limbs: [0x55; LIMBS],
+        };
         let pick_a = U2048::conditional_select(u64::MAX, &a, &b);
         let pick_b = U2048::conditional_select(0, &a, &b);
         assert_eq!(pick_a, a);

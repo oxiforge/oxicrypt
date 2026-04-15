@@ -49,9 +49,7 @@ fn handle_kas_ffc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
     let domain = group
         .get("domainParameterGenerationMode")
         .and_then(JsonValue::as_str)
-        .ok_or(DispatchError::MissingField(
-            "domainParameterGenerationMode",
-        ))?;
+        .ok_or(DispatchError::MissingField("domainParameterGenerationMode"))?;
     if domain != "DH-3072" {
         return Err(DispatchError::Unsupported(
             "KAS-FFC-SSC: only DH-3072 is supported",
@@ -98,10 +96,7 @@ fn handle_kas_ffc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            (
-                "z".to_string(),
-                JsonValue::String(hex::encode_upper(&z)),
-            ),
+            ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
         ]));
     }
 

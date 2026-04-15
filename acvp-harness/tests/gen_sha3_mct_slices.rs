@@ -53,16 +53,24 @@ struct Sha3Variant {
 }
 
 fn sha3_224(data: &[u8]) -> Vec<u8> {
-    oxicrypt_sha::sha3::sha3_224(data).expect("sha3_224").to_vec()
+    oxicrypt_sha::sha3::sha3_224(data)
+        .expect("sha3_224")
+        .to_vec()
 }
 fn sha3_256(data: &[u8]) -> Vec<u8> {
-    oxicrypt_sha::sha3::sha3_256(data).expect("sha3_256").to_vec()
+    oxicrypt_sha::sha3::sha3_256(data)
+        .expect("sha3_256")
+        .to_vec()
 }
 fn sha3_384(data: &[u8]) -> Vec<u8> {
-    oxicrypt_sha::sha3::sha3_384(data).expect("sha3_384").to_vec()
+    oxicrypt_sha::sha3::sha3_384(data)
+        .expect("sha3_384")
+        .to_vec()
 }
 fn sha3_512(data: &[u8]) -> Vec<u8> {
-    oxicrypt_sha::sha3::sha3_512(data).expect("sha3_512").to_vec()
+    oxicrypt_sha::sha3::sha3_512(data)
+        .expect("sha3_512")
+        .to_vec()
 }
 
 fn make_seed(digest_len: usize, variant_byte: u8) -> Vec<u8> {

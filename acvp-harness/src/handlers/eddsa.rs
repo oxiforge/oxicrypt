@@ -386,10 +386,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            (
-                "q".to_string(),
-                JsonValue::String(hex::encode_upper(&q)),
-            ),
+            ("q".to_string(), JsonValue::String(hex::encode_upper(&q))),
         ]));
     }
 

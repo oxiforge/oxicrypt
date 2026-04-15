@@ -31,7 +31,7 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{require_operational, require_allowed, Service, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
 use oxicrypt_sha::sha256::Sha256;
 
 use crate::p256_keygen::{generate_p256_internal, sample_scalar_internal};
@@ -181,9 +181,7 @@ pub fn verify_internal(
 /// Returns [`Error::NotOperational`] if the FIPS module has
 /// not completed its power-up self-tests, or
 /// [`Error::InvalidInput`] if `d` is not a valid non-zero scalar.
-pub fn derive_public_key(
-    d_bytes: &[u8; PRIVATE_KEY_LEN],
-) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
+pub fn derive_public_key(d_bytes: &[u8; PRIVATE_KEY_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
     require_operational()?;
     require_allowed(Service::EcdsaP256Keygen)?;
     derive_public_key_internal(d_bytes).ok_or(Error::InvalidInput)
@@ -568,7 +566,11 @@ mod tests {
 
     #[test]
     fn verify_rejects_wrong_message() {
-        assert!(!verify_internal(&KAT_PUBLIC_KEY, b"not sample", &KAT_SIGNATURE));
+        assert!(!verify_internal(
+            &KAT_PUBLIC_KEY,
+            b"not sample",
+            &KAT_SIGNATURE
+        ));
     }
 
     #[test]
@@ -672,8 +674,7 @@ mod tests {
         // Re-derive the public key from the private scalar and
         // check the handle agrees — this is what the PCT also
         // verified internally.
-        let pk_rederived =
-            derive_public_key_internal(sk.private_scalar()).expect("rederive ok");
+        let pk_rederived = derive_public_key_internal(sk.private_scalar()).expect("rederive ok");
         assert_eq!(sk.public_key(), pk_rederived);
         // Sanity: the scalar is non-zero and decodable.
         let d = Scalar::from_bytes(sk.private_scalar()).expect("scalar in range");
@@ -723,12 +724,13 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = pct_drbg(b"r7-from-bytes");
-        let sk = EcdsaP256PrivateKey::from_bytes(&mut drbg, &KAT_D)
-            .expect("from_bytes + PCT");
+        let sk = EcdsaP256PrivateKey::from_bytes(&mut drbg, &KAT_D).expect("from_bytes + PCT");
         assert_eq!(sk.public_key(), KAT_PUBLIC_KEY);
 
         // Sign something new via the DRBG-backed wrapper and verify.
-        let sig = sk.sign_sha256(&mut drbg, b"probe-message").expect("sign ok");
+        let sig = sk
+            .sign_sha256(&mut drbg, b"probe-message")
+            .expect("sign ok");
         assert!(verify(&sk.public_key(), b"probe-message", &sig).expect("verify ok"));
     }
 
@@ -780,13 +782,11 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = pct_drbg(b"r7-pct-tampered");
-        let honest =
-            EcdsaP256PrivateKey::generate(&mut drbg).expect("honest generate ok");
+        let honest = EcdsaP256PrivateKey::generate(&mut drbg).expect("honest generate ok");
 
         // Build a second, independent key pair whose public part
         // we will graft onto the first scalar.
-        let decoy =
-            EcdsaP256PrivateKey::generate(&mut drbg).expect("decoy generate ok");
+        let decoy = EcdsaP256PrivateKey::generate(&mut drbg).expect("decoy generate ok");
 
         // Forged handle: `honest`'s private scalar, `decoy`'s
         // public key. Construction goes through the raw struct so

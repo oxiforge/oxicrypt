@@ -40,7 +40,7 @@
     dead_code
 )]
 
-use crate::bigint2048::{U2048, LIMBS};
+use crate::bigint2048::{LIMBS, U2048};
 
 /// Derived Montgomery constants for a specific 2048-bit modulus.
 #[derive(Copy, Clone, Debug)]
@@ -108,7 +108,9 @@ impl MontCtx2048 {
         // `borrow` is 1 because 0 < n; that borrow is absorbed by
         // the implicit 33rd limb of R. The 32-limb result is R − n.
         debug_assert_eq!(borrow, 1);
-        let one_mont = U2048 { limbs: r_mod_n_limbs };
+        let one_mont = U2048 {
+            limbs: r_mod_n_limbs,
+        };
 
         // R^2 mod n: start from R mod n and double (with conditional
         // subtract) 2048 times. This is the classic "shift by one
@@ -153,9 +155,8 @@ impl MontCtx2048 {
             // t += a · b[i]
             let mut carry: u64 = 0;
             for j in 0..LIMBS {
-                let prod = (a.limbs[j] as u128) * (b.limbs[i] as u128)
-                    + (t[j] as u128)
-                    + (carry as u128);
+                let prod =
+                    (a.limbs[j] as u128) * (b.limbs[i] as u128) + (t[j] as u128) + (carry as u128);
                 t[j] = prod as u64;
                 carry = (prod >> 64) as u64;
             }
@@ -179,9 +180,8 @@ impl MontCtx2048 {
                 (prod >> 64) as u64
             };
             for j in 1..LIMBS {
-                let prod = (m as u128) * (self.n.limbs[j] as u128)
-                    + (t[j] as u128)
-                    + (carry2 as u128);
+                let prod =
+                    (m as u128) * (self.n.limbs[j] as u128) + (t[j] as u128) + (carry2 as u128);
                 t[j - 1] = prod as u64;
                 carry2 = (prod >> 64) as u64;
             }

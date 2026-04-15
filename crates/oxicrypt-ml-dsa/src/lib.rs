@@ -96,9 +96,7 @@ pub use params::{PK_LEN, SIG_LEN, SK_LEN};
 /// (SP 800-90A).
 ///
 /// Returns `(pk, sk)`: the public key and secret key.
-pub fn keygen(
-    xi: &[u8; 32],
-) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+pub fn keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::MlDsa87Keygen)?;
     Ok(keygen_internal(xi))
@@ -107,10 +105,7 @@ pub fn keygen(
 /// Sign a message with an ML-DSA-87 secret key (deterministic mode).
 ///
 /// Returns the 4627-byte signature.
-pub fn sign(
-    sk: &[u8; SK_LEN],
-    message: &[u8],
-) -> Result<[u8; SIG_LEN], Error> {
+pub fn sign(sk: &[u8; SK_LEN], message: &[u8]) -> Result<[u8; SIG_LEN], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::MlDsa87Sign)?;
     sign_internal(sk, message).ok_or(Error::InvalidInput)
@@ -119,11 +114,7 @@ pub fn sign(
 /// Verify a signature with an ML-DSA-87 public key.
 ///
 /// Returns `Ok(())` if the signature is valid, `Err` otherwise.
-pub fn verify(
-    pk: &[u8; PK_LEN],
-    message: &[u8],
-    sig: &[u8; SIG_LEN],
-) -> Result<(), Error> {
+pub fn verify(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> Result<(), Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::MlDsa87Verify)?;
     if verify_internal(pk, message, sig) {
@@ -137,28 +128,19 @@ pub fn verify(
 
 /// Internal keygen — no module gate.
 #[doc(hidden)]
-pub fn keygen_internal(
-    xi: &[u8; 32],
-) -> ([u8; PK_LEN], [u8; SK_LEN]) {
+pub fn keygen_internal(xi: &[u8; 32]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
     dsa::ml_dsa_keygen(xi)
 }
 
 /// Internal sign — no module gate.
 #[doc(hidden)]
-pub fn sign_internal(
-    sk: &[u8; SK_LEN],
-    message: &[u8],
-) -> Option<[u8; SIG_LEN]> {
+pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_LEN]> {
     dsa::ml_dsa_sign(sk, message)
 }
 
 /// Internal verify — no module gate.
 #[doc(hidden)]
-pub fn verify_internal(
-    pk: &[u8; PK_LEN],
-    message: &[u8],
-    sig: &[u8; SIG_LEN],
-) -> bool {
+pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
     dsa::ml_dsa_verify(pk, message, sig)
 }
 
@@ -176,10 +158,8 @@ pub const KATS: &[KatEntry] = &[KatEntry {
 
 /// Deterministic KAT seed for keygen.
 const KAT_XI: [u8; 32] = [
-    0x7f, 0x9c, 0x2b, 0xa4, 0xe8, 0x8f, 0x82, 0x7d,
-    0x61, 0x60, 0x45, 0x50, 0x76, 0x05, 0x85, 0x3e,
-    0xd7, 0x3b, 0x80, 0x93, 0xf6, 0xef, 0xbc, 0x88,
-    0xeb, 0x1a, 0x6e, 0xaf, 0xfa, 0x28, 0x4f, 0x01,
+    0x7f, 0x9c, 0x2b, 0xa4, 0xe8, 0x8f, 0x82, 0x7d, 0x61, 0x60, 0x45, 0x50, 0x76, 0x05, 0x85, 0x3e,
+    0xd7, 0x3b, 0x80, 0x93, 0xf6, 0xef, 0xbc, 0x88, 0xeb, 0x1a, 0x6e, 0xaf, 0xfa, 0x28, 0x4f, 0x01,
 ];
 
 /// Test message for KAT.
@@ -276,7 +256,10 @@ mod tests {
         let msg = b"deterministic test";
         let sig1 = sign_internal(&sk, msg).unwrap();
         let sig2 = sign_internal(&sk, msg).unwrap();
-        assert_eq!(sig1, sig2, "deterministic signing should produce identical signatures");
+        assert_eq!(
+            sig1, sig2,
+            "deterministic signing should produce identical signatures"
+        );
     }
 
     #[test]
@@ -360,8 +343,11 @@ mod internal_tests {
         ntt::inv_ntt(&mut result);
 
         for i in 0..N {
-            assert_eq!(reduce32(result[i]), original[i],
-                "roundtrip failed at index {i}");
+            assert_eq!(
+                reduce32(result[i]),
+                original[i],
+                "roundtrip failed at index {i}"
+            );
         }
     }
 }

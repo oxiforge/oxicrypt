@@ -92,10 +92,8 @@ fn generate_rsa_siggen_slice() {
     let mut pkcs_tests = Vec::new();
     for (i, msg_hex) in MESSAGES.iter().enumerate() {
         let msg = hex_decode(msg_hex);
-        let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(
-            &n_arr, &d_arr, &msg,
-        )
-        .expect("PKCS#1v1.5 sign failed");
+        let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(&n_arr, &d_arr, &msg)
+            .expect("PKCS#1v1.5 sign failed");
         // Verify
         assert!(
             oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig),
@@ -114,8 +112,7 @@ fn generate_rsa_siggen_slice() {
     for (i, msg_hex) in MESSAGES.iter().enumerate() {
         let msg = hex_decode(msg_hex);
         let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_crt_internal(
-            &n_arr, e_val, &p_arr, &q_arr, &dp_arr, &dq_arr, &qinv_arr,
-            &msg, &salt_arr,
+            &n_arr, e_val, &p_arr, &q_arr, &dp_arr, &dq_arr, &qinv_arr, &msg, &salt_arr,
         )
         .expect("PSS CRT sign failed");
         // Verify

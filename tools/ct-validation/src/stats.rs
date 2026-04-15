@@ -155,7 +155,10 @@ mod tests {
     fn welch_t_zero_for_identical_inputs() {
         let xs: Vec<f64> = (0..1000).map(|i| i as f64).collect();
         let t = welch_t(&xs, &xs);
-        assert!(t.abs() < 1e-12, "t should be 0 for identical inputs, got {t}");
+        assert!(
+            t.abs() < 1e-12,
+            "t should be 0 for identical inputs, got {t}"
+        );
     }
 
     /// Classic textbook fixture: two small hand-computed samples.
@@ -184,12 +187,8 @@ mod tests {
                 .wrapping_add(1_442_695_040_888_963_407);
             (rng >> 33) as u32
         };
-        let fixed: Vec<f64> = (0..200)
-            .map(|_| 100.0 + f64::from(next() % 10))
-            .collect();
-        let random: Vec<f64> = (0..200)
-            .map(|_| 200.0 + f64::from(next() % 10))
-            .collect();
+        let fixed: Vec<f64> = (0..200).map(|_| 100.0 + f64::from(next() % 10)).collect();
+        let random: Vec<f64> = (0..200).map(|_| 200.0 + f64::from(next() % 10)).collect();
         let report = cropped_report("fixture_leak", fixed, random);
         assert_eq!(report.verdict, Verdict::Leak);
         assert!(report.worst_abs_t > 50.0);

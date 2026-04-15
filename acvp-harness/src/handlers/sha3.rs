@@ -60,9 +60,10 @@ impl AlgorithmHandler for Sha3_224Handler {
                     .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_224 returned Err"))
             },
             |content, full_bytes| {
-                ldt_stream::<{ oxicrypt_sha::sha3::SHA3_224_RATE }, { oxicrypt_sha::sha3::SHA3_224_DIGEST_SIZE }>(
-                    content, full_bytes,
-                )
+                ldt_stream::<
+                    { oxicrypt_sha::sha3::SHA3_224_RATE },
+                    { oxicrypt_sha::sha3::SHA3_224_DIGEST_SIZE },
+                >(content, full_bytes)
             },
         )
     }
@@ -88,9 +89,10 @@ impl AlgorithmHandler for Sha3_384Handler {
                     .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_384 returned Err"))
             },
             |content, full_bytes| {
-                ldt_stream::<{ oxicrypt_sha::sha3::SHA3_384_RATE }, { oxicrypt_sha::sha3::SHA3_384_DIGEST_SIZE }>(
-                    content, full_bytes,
-                )
+                ldt_stream::<
+                    { oxicrypt_sha::sha3::SHA3_384_RATE },
+                    { oxicrypt_sha::sha3::SHA3_384_DIGEST_SIZE },
+                >(content, full_bytes)
             },
         )
     }
@@ -116,9 +118,10 @@ impl AlgorithmHandler for Sha3_512Handler {
                     .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_512 returned Err"))
             },
             |content, full_bytes| {
-                ldt_stream::<{ oxicrypt_sha::sha3::SHA3_512_RATE }, { oxicrypt_sha::sha3::SHA3_512_DIGEST_SIZE }>(
-                    content, full_bytes,
-                )
+                ldt_stream::<
+                    { oxicrypt_sha::sha3::SHA3_512_RATE },
+                    { oxicrypt_sha::sha3::SHA3_512_DIGEST_SIZE },
+                >(content, full_bytes)
             },
         )
     }
@@ -261,7 +264,9 @@ where
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
     if tests.len() != 1 {
-        return Err(DispatchError::Crypto("SHA-3 MCT: expected exactly one test"));
+        return Err(DispatchError::Crypto(
+            "SHA-3 MCT: expected exactly one test",
+        ));
     }
     let t = &tests[0];
     let tc_id = t
@@ -279,17 +284,15 @@ where
         for _j in 0..MCT_INNER {
             md = compute(&md)?;
         }
-        results_array.push(JsonValue::Object(vec![
-            ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
-        ]));
+        results_array.push(JsonValue::Object(vec![(
+            "md".to_string(),
+            JsonValue::String(hex::encode_upper(&md)),
+        )]));
     }
 
     let test_result = JsonValue::Object(vec![
         ("tcId".to_string(), JsonValue::Number(tc_id)),
-        (
-            "resultsArray".to_string(),
-            JsonValue::Array(results_array),
-        ),
+        ("resultsArray".to_string(), JsonValue::Array(results_array)),
     ]);
 
     Ok(JsonValue::Object(vec![
@@ -303,10 +306,7 @@ where
 /// Handle a single LDT test case. Parses the `largeMsg` object to
 /// extract `content`, `contentLength`, `fullLength`, and
 /// `expansionTechnique`, then delegates to `ldt_compute`.
-fn run_ldt_case<L>(
-    t: &JsonValue,
-    ldt_compute: &mut L,
-) -> Result<JsonValue, DispatchError>
+fn run_ldt_case<L>(t: &JsonValue, ldt_compute: &mut L) -> Result<JsonValue, DispatchError>
 where
     L: FnMut(&[u8], u64) -> Result<Vec<u8>, DispatchError>,
 {

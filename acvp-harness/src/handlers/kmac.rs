@@ -198,7 +198,11 @@ fn parse_kmac_test(t: &JsonValue) -> Result<KmacTestInputs, DispatchError> {
             "KMAC: hex `msg` shorter than declared `msgLen`",
         ));
     }
-    let msg = if msg_bytes == 0 { Vec::new() } else { msg_full[..msg_bytes].to_vec() };
+    let msg = if msg_bytes == 0 {
+        Vec::new()
+    } else {
+        msg_full[..msg_bytes].to_vec()
+    };
 
     let s_hex = t
         .get("hexCustomization")
@@ -210,14 +214,16 @@ fn parse_kmac_test(t: &JsonValue) -> Result<KmacTestInputs, DispatchError> {
         hex::decode(s_hex)?
     };
 
-    Ok(KmacTestInputs { key, msg, s, mac_bytes })
+    Ok(KmacTestInputs {
+        key,
+        msg,
+        s,
+        mac_bytes,
+    })
 }
 
 /// Shared group driver for KMAC AFT and MVT.
-fn handle_kmac_group<F>(
-    group: &JsonValue,
-    mut compute: F,
-) -> Result<JsonValue, DispatchError>
+fn handle_kmac_group<F>(group: &JsonValue, mut compute: F) -> Result<JsonValue, DispatchError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
 {

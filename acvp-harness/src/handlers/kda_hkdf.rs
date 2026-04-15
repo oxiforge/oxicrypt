@@ -268,14 +268,14 @@ fn encode_fixed_info(
             continue;
         }
         if token == "uPartyInfo" {
-            let party = test.get("fixedInfoPartyU").ok_or(DispatchError::MissingField(
-                "fixedInfoPartyU",
-            ))?;
+            let party = test
+                .get("fixedInfoPartyU")
+                .ok_or(DispatchError::MissingField("fixedInfoPartyU"))?;
             encode_party_info(party, &mut out)?;
         } else if token == "vPartyInfo" {
-            let party = test.get("fixedInfoPartyV").ok_or(DispatchError::MissingField(
-                "fixedInfoPartyV",
-            ))?;
+            let party = test
+                .get("fixedInfoPartyV")
+                .ok_or(DispatchError::MissingField("fixedInfoPartyV"))?;
             encode_party_info(party, &mut out)?;
         } else if token == "l" {
             // §5.8: `l` is the derived-key length in bits encoded as a

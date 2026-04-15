@@ -119,7 +119,12 @@ impl Adrs {
 
     /// Get the key-pair address.
     pub(crate) fn keypair_address(&self) -> u32 {
-        u32::from_be_bytes([self.bytes[20], self.bytes[21], self.bytes[22], self.bytes[23]])
+        u32::from_be_bytes([
+            self.bytes[20],
+            self.bytes[21],
+            self.bytes[22],
+            self.bytes[23],
+        ])
     }
 
     // --- Chain address (bytes 24..28) ---
@@ -148,7 +153,12 @@ impl Adrs {
 
     /// Get the tree height.
     pub(crate) fn tree_height(&self) -> u32 {
-        u32::from_be_bytes([self.bytes[24], self.bytes[25], self.bytes[26], self.bytes[27]])
+        u32::from_be_bytes([
+            self.bytes[24],
+            self.bytes[25],
+            self.bytes[26],
+            self.bytes[27],
+        ])
     }
 
     // --- Tree index (bytes 28..32) ---
@@ -161,7 +171,12 @@ impl Adrs {
 
     /// Get the tree index.
     pub(crate) fn tree_index(&self) -> u32 {
-        u32::from_be_bytes([self.bytes[28], self.bytes[29], self.bytes[30], self.bytes[31]])
+        u32::from_be_bytes([
+            self.bytes[28],
+            self.bytes[29],
+            self.bytes[30],
+            self.bytes[31],
+        ])
     }
 
     /// Borrow the raw 32-byte representation.

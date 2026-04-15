@@ -30,7 +30,7 @@
     clippy::needless_range_loop
 )]
 
-use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
 
 /// Output length of SHA-256 in bytes.
 pub const DIGEST_SIZE: usize = 32;

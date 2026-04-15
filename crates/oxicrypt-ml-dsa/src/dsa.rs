@@ -17,9 +17,7 @@
 )]
 
 use crate::encode;
-use crate::params::{
-    BETA, CTILDE_LEN, D, GAMMA1, GAMMA2, K, L, OMEGA, PK_LEN, SIG_LEN, SK_LEN,
-};
+use crate::params::{BETA, CTILDE_LEN, D, GAMMA1, GAMMA2, K, L, OMEGA, PK_LEN, SIG_LEN, SK_LEN};
 use crate::poly::{matrix_pointwise_mul, poly_pointwise, PolyVecK, PolyVecL};
 use crate::rounding;
 use crate::sample;
@@ -32,9 +30,7 @@ use oxicrypt_xof::Shake256;
 /// Generate an ML-DSA-87 key pair from 32 bytes of randomness.
 ///
 /// Returns `(pk, sk)` as byte arrays.
-pub(crate) fn ml_dsa_keygen(
-    xi: &[u8; 32],
-) -> ([u8; PK_LEN], [u8; SK_LEN]) {
+pub(crate) fn ml_dsa_keygen(xi: &[u8; 32]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
     // 1. (ρ, ρ', K) ← H(ξ ‖ k ‖ l)
     //    where H = SHAKE-256, k = K, l = L
     let mut h = Shake256::new_internal();
@@ -99,10 +95,7 @@ pub(crate) fn ml_dsa_keygen(
 ///
 /// Returns `Some(signature)` on success, `None` if signing fails
 /// after too many iterations (should not happen in practice).
-pub(crate) fn ml_dsa_sign(
-    sk: &[u8; SK_LEN],
-    message: &[u8],
-) -> Option<[u8; SIG_LEN]> {
+pub(crate) fn ml_dsa_sign(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_LEN]> {
     // Unpack secret key
     let mut rho = [0u8; 32];
     let mut key = [0u8; 32];
@@ -279,11 +272,7 @@ pub(crate) fn ml_dsa_sign(
 /// Verify an ML-DSA-87 signature.
 ///
 /// Returns `true` if the signature is valid.
-pub(crate) fn ml_dsa_verify(
-    pk: &[u8; PK_LEN],
-    message: &[u8],
-    sig: &[u8; SIG_LEN],
-) -> bool {
+pub(crate) fn ml_dsa_verify(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
     // 1. Unpack public key
     let mut rho = [0u8; 32];
     let mut t1 = PolyVecK::zero();

@@ -32,12 +32,10 @@ use oxicrypt_kdf::{
     Sp800_108DoublePipelineHmacSha3_224, Sp800_108DoublePipelineHmacSha3_256,
     Sp800_108DoublePipelineHmacSha3_384, Sp800_108DoublePipelineHmacSha3_512,
     Sp800_108DoublePipelineHmacSha512, Sp800_108DoublePipelineHmacSha512_224,
-    Sp800_108DoublePipelineHmacSha512_256, Sp800_108FeedbackHmacSha1,
-    Sp800_108FeedbackHmacSha224, Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha384,
-    Sp800_108FeedbackHmacSha3_224, Sp800_108FeedbackHmacSha3_256,
-    Sp800_108FeedbackHmacSha3_384, Sp800_108FeedbackHmacSha3_512,
-    Sp800_108FeedbackHmacSha512, Sp800_108FeedbackHmacSha512_224,
-    Sp800_108FeedbackHmacSha512_256,
+    Sp800_108DoublePipelineHmacSha512_256, Sp800_108FeedbackHmacSha1, Sp800_108FeedbackHmacSha224,
+    Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha384, Sp800_108FeedbackHmacSha3_224,
+    Sp800_108FeedbackHmacSha3_256, Sp800_108FeedbackHmacSha3_384, Sp800_108FeedbackHmacSha3_512,
+    Sp800_108FeedbackHmacSha512, Sp800_108FeedbackHmacSha512_224, Sp800_108FeedbackHmacSha512_256,
 };
 
 // ── Handler struct ──────────────────────────────────────────────────
@@ -276,18 +274,10 @@ fn double_pipeline_derive_fn(mac_mode: &str) -> Result<DeriveFn, DispatchError> 
         "HMAC-SHA2-512/256" => {
             Ok(Sp800_108DoublePipelineHmacSha512_256::derive_with_fixed_data_internal)
         }
-        "HMAC-SHA3-224" => {
-            Ok(Sp800_108DoublePipelineHmacSha3_224::derive_with_fixed_data_internal)
-        }
-        "HMAC-SHA3-256" => {
-            Ok(Sp800_108DoublePipelineHmacSha3_256::derive_with_fixed_data_internal)
-        }
-        "HMAC-SHA3-384" => {
-            Ok(Sp800_108DoublePipelineHmacSha3_384::derive_with_fixed_data_internal)
-        }
-        "HMAC-SHA3-512" => {
-            Ok(Sp800_108DoublePipelineHmacSha3_512::derive_with_fixed_data_internal)
-        }
+        "HMAC-SHA3-224" => Ok(Sp800_108DoublePipelineHmacSha3_224::derive_with_fixed_data_internal),
+        "HMAC-SHA3-256" => Ok(Sp800_108DoublePipelineHmacSha3_256::derive_with_fixed_data_internal),
+        "HMAC-SHA3-384" => Ok(Sp800_108DoublePipelineHmacSha3_384::derive_with_fixed_data_internal),
+        "HMAC-SHA3-512" => Ok(Sp800_108DoublePipelineHmacSha3_512::derive_with_fixed_data_internal),
         _ => Err(DispatchError::Unsupported(
             "KDF double pipeline: unsupported macMode",
         )),

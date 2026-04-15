@@ -45,8 +45,8 @@ impl AlgorithmHandler for Shake128Handler {
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_shake_dispatch(group, 128, |msg, out| {
-            let mut x = Shake128::new()
-                .map_err(|_| DispatchError::Crypto("Shake128::new returned Err"))?;
+            let mut x =
+                Shake128::new().map_err(|_| DispatchError::Crypto("Shake128::new returned Err"))?;
             x.update(msg);
             x.finalize();
             x.squeeze(out);
@@ -67,8 +67,8 @@ impl AlgorithmHandler for Shake256Handler {
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_shake_dispatch(group, 256, |msg, out| {
-            let mut x = Shake256::new()
-                .map_err(|_| DispatchError::Crypto("Shake256::new returned Err"))?;
+            let mut x =
+                Shake256::new().map_err(|_| DispatchError::Crypto("Shake256::new returned Err"))?;
             x.update(msg);
             x.finalize();
             x.squeeze(out);
@@ -100,10 +100,7 @@ where
 
 /// Shared group driver for SHAKE AFT / VOT. Both test types share the
 /// same per-test fields (`msg`, `len`, `outLen`) and answer field (`md`).
-fn handle_shake_aft_vot<F>(
-    group: &JsonValue,
-    mut squeeze: F,
-) -> Result<JsonValue, DispatchError>
+fn handle_shake_aft_vot<F>(group: &JsonValue, mut squeeze: F) -> Result<JsonValue, DispatchError>
 where
     F: FnMut(&[u8], &mut [u8]) -> Result<(), DispatchError>,
 {
@@ -284,23 +281,14 @@ where
             md = out_buf;
         }
         results_array.push(JsonValue::Object(vec![
-            (
-                "md".to_string(),
-                JsonValue::String(hex::encode_upper(&md)),
-            ),
-            (
-                "outLen".to_string(),
-                JsonValue::Number(output_len as i64),
-            ),
+            ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
+            ("outLen".to_string(), JsonValue::Number(output_len as i64)),
         ]));
     }
 
     let test_result = JsonValue::Object(vec![
         ("tcId".to_string(), JsonValue::Number(tc_id)),
-        (
-            "resultsArray".to_string(),
-            JsonValue::Array(results_array),
-        ),
+        ("resultsArray".to_string(), JsonValue::Array(results_array)),
     ]);
 
     Ok(JsonValue::Object(vec![
@@ -315,10 +303,7 @@ where
 /// `contentLength` bits up to `fullLength` bits via the incremental
 /// XOF API, then squeezes `outLen / 8` bytes.
 #[allow(clippy::cast_possible_truncation)]
-fn handle_shake_ldt(
-    group: &JsonValue,
-    security_bits: usize,
-) -> Result<JsonValue, DispatchError> {
+fn handle_shake_ldt(group: &JsonValue, security_bits: usize) -> Result<JsonValue, DispatchError> {
     let group_id = group
         .get("tgId")
         .and_then(JsonValue::as_i64)
@@ -363,9 +348,7 @@ fn handle_shake_ldt(
         let technique = large_msg
             .get("expansionTechnique")
             .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField(
-                "largeMsg.expansionTechnique",
-            ))?;
+            .ok_or(DispatchError::MissingField("largeMsg.expansionTechnique"))?;
 
         if technique != "repeating" {
             return Err(DispatchError::Unsupported(
@@ -392,10 +375,7 @@ fn handle_shake_ldt(
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
-            (
-                "md".to_string(),
-                JsonValue::String(hex::encode_upper(&md)),
-            ),
+            ("md".to_string(), JsonValue::String(hex::encode_upper(&md))),
         ]));
     }
 
@@ -422,8 +402,8 @@ fn shake_ldt_stream(
 
     match security_bits {
         128 => {
-            let mut xof = Shake128::new()
-                .map_err(|_| DispatchError::Crypto("Shake128::new returned Err"))?;
+            let mut xof =
+                Shake128::new().map_err(|_| DispatchError::Crypto("Shake128::new returned Err"))?;
             while remaining >= pat_len {
                 xof.update(pattern);
                 remaining -= pat_len;
@@ -439,8 +419,8 @@ fn shake_ldt_stream(
             Ok(out)
         }
         256 => {
-            let mut xof = Shake256::new()
-                .map_err(|_| DispatchError::Crypto("Shake256::new returned Err"))?;
+            let mut xof =
+                Shake256::new().map_err(|_| DispatchError::Crypto("Shake256::new returned Err"))?;
             while remaining >= pat_len {
                 xof.update(pattern);
                 remaining -= pat_len;

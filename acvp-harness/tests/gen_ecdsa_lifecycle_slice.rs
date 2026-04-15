@@ -91,8 +91,7 @@ fn generate_ecdsa_lifecycle_slices() {
 
             // Verify round-trips.
             assert!(
-                oxicrypt_ecdsa::p256_ecdsa::verify(pk, msg, &sig)
-                    .unwrap_or(false),
+                oxicrypt_ecdsa::p256_ecdsa::verify(pk, msg, &sig).unwrap_or(false),
                 "verify failed during generation key={ki} msg={mi}"
             );
 
@@ -275,9 +274,21 @@ fn generate_ecdsa_lifecycle_slices() {
         .join("vendor/nist/acvp-server/gen-val/json-files");
 
     for (dir, name, json) in [
-        ("ECDSA-keyGen-FIPS186-5", "lifecycle-slice.json", &keygen_json),
-        ("ECDSA-sigGen-FIPS186-5", "lifecycle-slice.json", &siggen_json),
-        ("ECDSA-sigVer-FIPS186-5", "lifecycle-slice.json", &sigver_json),
+        (
+            "ECDSA-keyGen-FIPS186-5",
+            "lifecycle-slice.json",
+            &keygen_json,
+        ),
+        (
+            "ECDSA-sigGen-FIPS186-5",
+            "lifecycle-slice.json",
+            &siggen_json,
+        ),
+        (
+            "ECDSA-sigVer-FIPS186-5",
+            "lifecycle-slice.json",
+            &sigver_json,
+        ),
     ] {
         let path = base.join(dir).join(name);
         let mut f = std::fs::File::create(&path).unwrap();

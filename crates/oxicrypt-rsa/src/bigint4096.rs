@@ -80,7 +80,9 @@ mod tests {
 
     #[test]
     fn adding_wraps_with_carry() {
-        let ones = U4096 { limbs: [0xffff_ffff_ffff_ffff; LIMBS] };
+        let ones = U4096 {
+            limbs: [0xffff_ffff_ffff_ffff; LIMBS],
+        };
         let mut one_bytes = [0u8; BYTES];
         one_bytes[BYTES - 1] = 1;
         let one = U4096::from_be_bytes(&one_bytes);
@@ -95,14 +97,23 @@ mod tests {
         one_bytes[BYTES - 1] = 1;
         let one = U4096::from_be_bytes(&one_bytes);
         let (diff, borrow) = U4096::ZERO.subtracting(&one);
-        assert_eq!(diff, U4096 { limbs: [0xffff_ffff_ffff_ffff; LIMBS] });
+        assert_eq!(
+            diff,
+            U4096 {
+                limbs: [0xffff_ffff_ffff_ffff; LIMBS]
+            }
+        );
         assert_eq!(borrow, 1);
     }
 
     #[test]
     fn conditional_select_picks_a_or_b() {
-        let a = U4096 { limbs: [0xaa; LIMBS] };
-        let b = U4096 { limbs: [0x55; LIMBS] };
+        let a = U4096 {
+            limbs: [0xaa; LIMBS],
+        };
+        let b = U4096 {
+            limbs: [0x55; LIMBS],
+        };
         assert_eq!(U4096::conditional_select(u64::MAX, &a, &b), a);
         assert_eq!(U4096::conditional_select(0, &a, &b), b);
     }

@@ -91,7 +91,9 @@
     non_camel_case_types
 )]
 
-use oxicrypt_module::{require_allowed, require_operational, Error, KatEntry, Service, SelfTestFailure};
+use oxicrypt_module::{
+    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+};
 
 // ----------------------------------------------------------------------
 // BlockHash trait
@@ -247,8 +249,18 @@ impl_block_hash!(oxicrypt_sha::sha224::Sha224, 64, 28, Service::HmacSha224);
 impl_block_hash!(oxicrypt_sha::sha256::Sha256, 64, 32, Service::HmacSha256);
 impl_block_hash!(oxicrypt_sha::sha384::Sha384, 128, 48, Service::HmacSha384);
 impl_block_hash!(oxicrypt_sha::sha512::Sha512, 128, 64, Service::HmacSha512);
-impl_block_hash!(oxicrypt_sha::sha512_t::Sha512_224, 128, 28, Service::HmacSha512_224);
-impl_block_hash!(oxicrypt_sha::sha512_t::Sha512_256, 128, 32, Service::HmacSha512_256);
+impl_block_hash!(
+    oxicrypt_sha::sha512_t::Sha512_224,
+    128,
+    28,
+    Service::HmacSha512_224
+);
+impl_block_hash!(
+    oxicrypt_sha::sha512_t::Sha512_256,
+    128,
+    32,
+    Service::HmacSha512_256
+);
 impl_block_hash!(oxicrypt_sha::sha3::Sha3<144, 28>, 144, 28, Service::HmacSha3_224);
 impl_block_hash!(oxicrypt_sha::sha3::Sha3<136, 32>, 136, 32, Service::HmacSha3_256);
 impl_block_hash!(oxicrypt_sha::sha3::Sha3<104, 48>, 104, 48, Service::HmacSha3_384);

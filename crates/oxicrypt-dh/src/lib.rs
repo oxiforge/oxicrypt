@@ -94,7 +94,9 @@
 )]
 
 use oxicrypt_drbg::hmac::HmacDrbgSha256;
-use oxicrypt_module::{require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service};
+use oxicrypt_module::{
+    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+};
 use oxicrypt_rsa::bigint3072::U3072;
 use oxicrypt_rsa::mont3072::MontCtx3072;
 
@@ -533,15 +535,13 @@ const KAT_Z: [u8; 384] = [
 /// validation.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     // Positive 1: Z = y_B^{x_A} mod p.
-    let z1 = compute_shared_secret_3072_internal(&KAT_X_A, &KAT_Y_B)
-        .ok_or(SelfTestFailure)?;
+    let z1 = compute_shared_secret_3072_internal(&KAT_X_A, &KAT_Y_B).ok_or(SelfTestFailure)?;
     if z1 != KAT_Z {
         return Err(SelfTestFailure);
     }
 
     // Positive 2: Z = y_A^{x_B} mod p (symmetry of DH).
-    let z2 = compute_shared_secret_3072_internal(&KAT_X_B, &KAT_Y_A)
-        .ok_or(SelfTestFailure)?;
+    let z2 = compute_shared_secret_3072_internal(&KAT_X_B, &KAT_Y_A).ok_or(SelfTestFailure)?;
     if z2 != KAT_Z {
         return Err(SelfTestFailure);
     }
@@ -655,8 +655,7 @@ mod tests {
             name: "dh-3072",
             run: self_test,
         }]);
-        let z = compute_shared_secret_3072(&KAT_X_A, &KAT_Y_B)
-            .expect("module operational");
+        let z = compute_shared_secret_3072(&KAT_X_A, &KAT_Y_B).expect("module operational");
         assert_eq!(z, KAT_Z);
     }
 

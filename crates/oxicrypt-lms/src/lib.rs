@@ -59,8 +59,7 @@ use oxicrypt_module::{Error, KatEntry, SelfTestFailure, Service};
 /// LMS signature length in bytes.
 ///
 /// Layout: q(4) + ots_sig(2180) + lms_type(4) + auth_path(10×32).
-pub const SIGNATURE_LEN: usize =
-    4 + lmots::OTS_SIG_LEN + 4 + tree::H * N;
+pub const SIGNATURE_LEN: usize = 4 + lmots::OTS_SIG_LEN + 4 + tree::H * N;
 
 /// LMS public key length in bytes.
 ///
@@ -133,12 +132,8 @@ impl LmsPrivateKey {
         seed.copy_from_slice(&bytes[..N]);
         let mut identifier = [0u8; 16];
         identifier.copy_from_slice(&bytes[N..N + 16]);
-        let leaf_index = u32::from_be_bytes([
-            bytes[N + 16],
-            bytes[N + 17],
-            bytes[N + 18],
-            bytes[N + 19],
-        ]);
+        let leaf_index =
+            u32::from_be_bytes([bytes[N + 16], bytes[N + 17], bytes[N + 18], bytes[N + 19]]);
         Some(Self {
             seed,
             identifier,
@@ -212,10 +207,7 @@ pub fn keygen_internal(xi: &[u8; 32]) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
 /// Returns [`Error::InvalidInput`] if the key is exhausted.
 /// Returns [`Error::NotOperational`] or [`Error::AlgorithmRestricted`]
 /// if the module is not ready.
-pub fn sign(
-    key: &mut LmsPrivateKey,
-    message: &[u8],
-) -> Result<[u8; SIGNATURE_LEN], Error> {
+pub fn sign(key: &mut LmsPrivateKey, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::LmsSign)?;
     sign_internal(key, message).ok_or(Error::InvalidInput)
@@ -225,10 +217,7 @@ pub fn sign(
 ///
 /// Returns `None` if the key is exhausted.
 #[doc(hidden)]
-pub fn sign_internal(
-    key: &mut LmsPrivateKey,
-    message: &[u8],
-) -> Option<[u8; SIGNATURE_LEN]> {
+pub fn sign_internal(key: &mut LmsPrivateKey, message: &[u8]) -> Option<[u8; SIGNATURE_LEN]> {
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
     if key.is_exhausted() {
@@ -305,15 +294,13 @@ pub fn verify_internal(
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
     // Parse public key.
-    let pk_lms_type = u32::from_be_bytes([
-        public_key[0], public_key[1], public_key[2], public_key[3],
-    ]);
+    let pk_lms_type =
+        u32::from_be_bytes([public_key[0], public_key[1], public_key[2], public_key[3]]);
     if pk_lms_type != tree::LMS_TYPE {
         return false;
     }
-    let pk_ots_type = u32::from_be_bytes([
-        public_key[4], public_key[5], public_key[6], public_key[7],
-    ]);
+    let pk_ots_type =
+        u32::from_be_bytes([public_key[4], public_key[5], public_key[6], public_key[7]]);
     if pk_ots_type != lmots::LMOTS_TYPE {
         return false;
     }
@@ -323,9 +310,7 @@ pub fn verify_internal(
     expected_root.copy_from_slice(&public_key[24..24 + N]);
 
     // Parse signature.
-    let q = u32::from_be_bytes([
-        signature[0], signature[1], signature[2], signature[3],
-    ]);
+    let q = u32::from_be_bytes([signature[0], signature[1], signature[2], signature[3]]);
     if q >= tree::NUM_LEAVES {
         return false;
     }

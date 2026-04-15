@@ -138,12 +138,7 @@ pub(crate) fn prf_msg(sk_prf: &[u8; N], opt_rand: &[u8; N], msg: &[u8]) -> [u8; 
 ///
 /// The total output length is `ceil((K*A + K + H - H/D + H/D + 7) / 8)`
 /// but we compute the three values directly from an MGF1 stream.
-pub(crate) fn h_msg(
-    r: &[u8; N],
-    pk_seed: &[u8; N],
-    pk_root: &[u8; N],
-    msg: &[u8],
-) -> HMsgOutput {
+pub(crate) fn h_msg(r: &[u8; N], pk_seed: &[u8; N], pk_root: &[u8; N], msg: &[u8]) -> HMsgOutput {
     use crate::params::{A, H, H_PRIME, K};
 
     // Total bits needed: K*A (FORS message) + (H - H/D) (tree index)

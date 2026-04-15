@@ -37,7 +37,7 @@ fn hex_upper(b: &[u8]) -> String {
 }
 
 const MESSAGES: [&str; 5] = [
-    "48656C6C6F",                                // "Hello"
+    "48656C6C6F", // "Hello"
     "ABCDEF0123456789",
     "00112233445566778899AABBCCDDEEFF",
     "FF",
@@ -73,8 +73,7 @@ fn generate_rsa_siggen_cross_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
-        .expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -99,15 +98,19 @@ fn generate_rsa_siggen_cross_slice() {
     for (i, msg_hex) in MESSAGES.iter().enumerate() {
         let msg = hex_decode(msg_hex);
         let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
-            &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
+            &n_bytes,
+            e,
+            &p_bytes,
+            &q_bytes,
+            &dp_bytes,
+            &dq_bytes,
+            &qinv_bytes,
             &msg,
         )
         .unwrap_or_else(|| panic!("PKCS#1v1.5 CRT sign failed for test {i}"));
 
         // Verify the signature.
-        let ok = oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(
-            &n_bytes, e, &msg, &sig,
-        );
+        let ok = oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, &msg, &sig);
         assert!(ok, "PKCS#1v1.5 CRT verify failed for test {i}");
 
         pkcs_crt_tests.push(format!(
@@ -125,15 +128,12 @@ fn generate_rsa_siggen_cross_slice() {
         let salt = hex_decode(salt_hex);
         let salt_arr: [u8; 32] = salt.as_slice().try_into().unwrap();
 
-        let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(
-            &n_bytes, &d_bytes, &msg, &salt_arr,
-        )
-        .unwrap_or_else(|| panic!("PSS non-CRT sign failed for test {i}"));
+        let sig =
+            oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(&n_bytes, &d_bytes, &msg, &salt_arr)
+                .unwrap_or_else(|| panic!("PSS non-CRT sign failed for test {i}"));
 
         // Verify the signature.
-        let ok = oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(
-            &n_bytes, e, &msg, &sig,
-        );
+        let ok = oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, &msg, &sig);
         assert!(ok, "PSS non-CRT verify failed for test {i}");
 
         let tc_id = MESSAGES.len() + i + 1;

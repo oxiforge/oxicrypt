@@ -41,8 +41,7 @@ pub fn pkcs1_v15_sign_3072(
 ) -> Result<[u8; 384], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::RsaPkcs1v15Sign3072)?;
-    crate::rsa3072::pkcs1_v15_sign_internal(n_bytes, d_bytes, msg)
-        .ok_or(Error::InvalidInput)
+    crate::rsa3072::pkcs1_v15_sign_internal(n_bytes, d_bytes, msg).ok_or(Error::InvalidInput)
 }
 
 /// RSA-PKCS1v1.5 verify with a 3072-bit key.
@@ -74,8 +73,7 @@ pub fn pss_sign_3072(
 ) -> Result<[u8; 384], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::RsaPssSign3072)?;
-    crate::rsa3072::pss_sign_internal(n_bytes, d_bytes, msg, salt)
-        .ok_or(Error::InvalidInput)
+    crate::rsa3072::pss_sign_internal(n_bytes, d_bytes, msg, salt).ok_or(Error::InvalidInput)
 }
 
 /// RSA-PSS verify with a 3072-bit key.
@@ -136,8 +134,7 @@ pub fn pkcs1_v15_sign_4096(
 ) -> Result<[u8; 512], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::RsaPkcs1v15Sign4096)?;
-    crate::rsa4096::pkcs1_v15_sign_internal(n_bytes, d_bytes, msg)
-        .ok_or(Error::InvalidInput)
+    crate::rsa4096::pkcs1_v15_sign_internal(n_bytes, d_bytes, msg).ok_or(Error::InvalidInput)
 }
 
 /// RSA-PKCS1v1.5 verify with a 4096-bit key.
@@ -169,8 +166,7 @@ pub fn pss_sign_4096(
 ) -> Result<[u8; 512], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::RsaPssSign4096)?;
-    crate::rsa4096::pss_sign_internal(n_bytes, d_bytes, msg, salt)
-        .ok_or(Error::InvalidInput)
+    crate::rsa4096::pss_sign_internal(n_bytes, d_bytes, msg, salt).ok_or(Error::InvalidInput)
 }
 
 /// RSA-PSS verify with a 4096-bit key.

@@ -100,33 +100,36 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
         let mut key_block = vec![0u8; key_block_bytes];
 
         let master_secret = match hash_alg {
-            "SHA2-256" => {
-                oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<oxicrypt_hmac::HmacSha256, 32>(
-                    &pms,
-                    &session_hash,
-                    &server_random,
-                    &client_random,
-                    &mut key_block,
-                )
-            }
-            "SHA2-384" => {
-                oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<oxicrypt_hmac::HmacSha384, 48>(
-                    &pms,
-                    &session_hash,
-                    &server_random,
-                    &client_random,
-                    &mut key_block,
-                )
-            }
-            "SHA2-512" => {
-                oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<oxicrypt_hmac::HmacSha512, 64>(
-                    &pms,
-                    &session_hash,
-                    &server_random,
-                    &client_random,
-                    &mut key_block,
-                )
-            }
+            "SHA2-256" => oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<
+                oxicrypt_hmac::HmacSha256,
+                32,
+            >(
+                &pms,
+                &session_hash,
+                &server_random,
+                &client_random,
+                &mut key_block,
+            ),
+            "SHA2-384" => oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<
+                oxicrypt_hmac::HmacSha384,
+                48,
+            >(
+                &pms,
+                &session_hash,
+                &server_random,
+                &client_random,
+                &mut key_block,
+            ),
+            "SHA2-512" => oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<
+                oxicrypt_hmac::HmacSha512,
+                64,
+            >(
+                &pms,
+                &session_hash,
+                &server_random,
+                &client_random,
+                &mut key_block,
+            ),
             _ => {
                 return Err(DispatchError::Unsupported(
                     "TLS v1.2 KDF: unsupported hashAlg",

@@ -176,13 +176,7 @@ pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> [u8; SIG_LEN] {
     let fors_pk = fors::fors_pk_from_sig(pk_seed, &h_out.md, &fors_sig, &fors_adrs);
 
     // Hyper-tree signature.
-    let ht_sig = hypertree::ht_sign(
-        pk_seed,
-        sk_seed,
-        &fors_pk,
-        h_out.tree_idx,
-        h_out.leaf_idx,
-    );
+    let ht_sig = hypertree::ht_sign(pk_seed, sk_seed, &fors_pk, h_out.tree_idx, h_out.leaf_idx);
     sig[N + fors::FORS_SIG_LEN..].copy_from_slice(&ht_sig);
 
     sig

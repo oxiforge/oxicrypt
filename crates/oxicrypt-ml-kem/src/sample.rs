@@ -92,11 +92,7 @@ pub(crate) fn sample_noise(sigma: &[u8; SEED_LEN], nonce: u8, eta: usize) -> Pol
 /// counter `nonce`, incrementing after each polynomial.
 ///
 /// Returns the vector and the next nonce value.
-pub(crate) fn sample_noise_vec(
-    sigma: &[u8; SEED_LEN],
-    mut nonce: u8,
-    eta: usize,
-) -> (PolyVec, u8) {
+pub(crate) fn sample_noise_vec(sigma: &[u8; SEED_LEN], mut nonce: u8, eta: usize) -> (PolyVec, u8) {
     let mut vec = PolyVec::zero();
     for i in 0..K {
         vec.polys[i] = sample_noise(sigma, nonce, eta);
@@ -104,4 +100,3 @@ pub(crate) fn sample_noise_vec(
     }
     (vec, nonce)
 }
-

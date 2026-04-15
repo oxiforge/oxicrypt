@@ -154,17 +154,13 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let msg = decode_hex_field(tc, "msg")?;
                 let seed: [u8; SEED_LEN] = decode_fixed(tc, "seed")?;
 
-                let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
-                    &n, e, label, &msg, &seed,
-                )
-                .ok_or(DispatchError::Crypto("RSA OAEP: encrypt failed"))?;
+                let ct =
+                    oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(&n, e, label, &msg, &seed)
+                        .ok_or(DispatchError::Crypto("RSA OAEP: encrypt failed"))?;
 
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
-                    (
-                        "ct".to_string(),
-                        JsonValue::String(hex::encode_upper(&ct)),
-                    ),
+                    ("ct".to_string(), JsonValue::String(hex::encode_upper(&ct))),
                 ]));
             }
         }

@@ -98,13 +98,10 @@ impl<'a> VectorSet<'a> {
     pub fn mode(&self) -> Result<Option<&'a str>, EnvelopeError> {
         match self.root.get("mode") {
             None => Ok(None),
-            Some(v) => v
-                .as_str()
-                .map(Some)
-                .ok_or(EnvelopeError::WrongType {
-                    field: "mode",
-                    expected: "string",
-                }),
+            Some(v) => v.as_str().map(Some).ok_or(EnvelopeError::WrongType {
+                field: "mode",
+                expected: "string",
+            }),
         }
     }
 
@@ -171,7 +168,10 @@ mod tests {
         let vs = VectorSet::new(&v).unwrap();
         assert!(matches!(
             vs.test_groups(),
-            Err(EnvelopeError::WrongType { field: "testGroups", .. })
+            Err(EnvelopeError::WrongType {
+                field: "testGroups",
+                ..
+            })
         ));
     }
 }

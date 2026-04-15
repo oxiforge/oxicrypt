@@ -18,7 +18,7 @@
     clippy::single_match_else,
     clippy::unwrap_used,
     clippy::panic,
-    clippy::expect_used,
+    clippy::expect_used
 )]
 
 use ct_validation::measure::RunConfig;
@@ -62,7 +62,10 @@ fn parse_args() -> (RunConfig, Vec<String>) {
         }
     }
     if targets.is_empty() {
-        targets = all_target_names().iter().map(|s| (*s).to_string()).collect();
+        targets = all_target_names()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
     }
     (cfg, targets)
 }

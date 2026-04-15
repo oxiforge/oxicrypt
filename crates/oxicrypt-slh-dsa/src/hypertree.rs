@@ -53,8 +53,7 @@ pub(crate) fn ht_sign(
         adrs.set_layer_address(layer);
         adrs.set_tree_address(current_tree);
 
-        let sig_layer =
-            xmss::xmss_sign(pk_seed, sk_seed, idx, &root, &adrs);
+        let sig_layer = xmss::xmss_sign(pk_seed, sk_seed, idx, &root, &adrs);
         let offset = layer as usize * xmss::XMSS_SIG_LEN;
         sig[offset..offset + xmss::XMSS_SIG_LEN].copy_from_slice(&sig_layer);
 

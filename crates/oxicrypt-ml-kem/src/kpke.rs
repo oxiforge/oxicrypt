@@ -14,8 +14,8 @@
 
 use crate::encode::{byte_decode, byte_encode, compress_poly, decompress_poly};
 use crate::params::{
-    CT_LEN, DU, DV, EK_LEN, ETA1, ETA2, K, POLY_COMPRESSED_DU, POLY_COMPRESSED_DV,
-    POLY_ENCODED_12, SEED_LEN,
+    CT_LEN, DU, DV, EK_LEN, ETA1, ETA2, K, POLY_COMPRESSED_DU, POLY_COMPRESSED_DV, POLY_ENCODED_12,
+    SEED_LEN,
 };
 use crate::poly::{Poly, PolyVec};
 use crate::sample::{expand_a, sample_noise, sample_noise_vec};

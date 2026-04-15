@@ -23,13 +23,7 @@ pub(crate) const WOTS_SIG_LEN: usize = LEN * N; // 2144
 /// Iterate the tweakable hash `F` from position `start` to `start + steps - 1`.
 ///
 /// `chain(pk_seed, adrs, x, start, steps)` — FIPS 205 Algorithm 4.
-fn chain(
-    pk_seed: &[u8; N],
-    adrs: &mut Adrs,
-    x: &[u8; N],
-    start: u32,
-    steps: u32,
-) -> [u8; N] {
+fn chain(pk_seed: &[u8; N], adrs: &mut Adrs, x: &[u8; N], start: u32, steps: u32) -> [u8; N] {
     debug_assert!(start + steps <= W as u32);
     let mut tmp = *x;
     for j in start..start + steps {
@@ -90,11 +84,7 @@ fn base_w_with_checksum(m: &[u8; N]) -> [u8; LEN] {
 ///
 /// The address `adrs` must have `layer`, `tree`, and `keypair`
 /// already set.  Returns the compressed public key (`N` bytes).
-pub(crate) fn wots_pkgen(
-    pk_seed: &[u8; N],
-    sk_seed: &[u8; N],
-    adrs: &Adrs,
-) -> [u8; N] {
+pub(crate) fn wots_pkgen(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
     // Buffer for the concatenation of LEN chain endpoints.
     let mut tmp = [0u8; LEN * N];
 
@@ -165,12 +155,7 @@ pub(crate) fn wots_sign(
 /// Reconstruct the WOTS+ public key from a signature and message.
 ///
 /// `wots_pk_from_sig(pk_seed, adrs, sig, m)` — FIPS 205 Algorithm 7.
-pub(crate) fn wots_pk_from_sig(
-    pk_seed: &[u8; N],
-    adrs: &Adrs,
-    sig: &[u8],
-    m: &[u8; N],
-) -> [u8; N] {
+pub(crate) fn wots_pk_from_sig(pk_seed: &[u8; N], adrs: &Adrs, sig: &[u8], m: &[u8; N]) -> [u8; N] {
     let msg = base_w_with_checksum(m);
     let mut tmp = [0u8; LEN * N];
 

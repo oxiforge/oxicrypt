@@ -18,8 +18,7 @@ fn bench_hmac_sha256(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &data, |b, d| {
             b.iter(|| {
-                let mut mac =
-                    HmacSha256::new(black_box(&key)).expect("operational");
+                let mut mac = HmacSha256::new(black_box(&key)).expect("operational");
                 mac.update(black_box(d));
                 mac.finalize()
             });

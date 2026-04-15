@@ -6,7 +6,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha512::{Sha512State, BLOCK_SIZE as SHA512_BLOCK};
-use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
 
 /// Output length of SHA-384 in bytes.
 pub const DIGEST_SIZE: usize = 48;

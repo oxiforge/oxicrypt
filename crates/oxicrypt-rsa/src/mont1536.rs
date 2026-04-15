@@ -31,7 +31,7 @@
     dead_code
 )]
 
-use crate::bigint1536::{U1536, LIMBS};
+use crate::bigint1536::{LIMBS, U1536};
 use crate::mont_impl::define_mont_type;
 
 define_mont_type! {

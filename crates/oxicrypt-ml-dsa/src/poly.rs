@@ -216,10 +216,7 @@ impl PolyVecL {
 ///
 /// t̂ = Â · ŝ  where Â is `mat[i][j]` (row-major).
 #[allow(dead_code)]
-pub(crate) fn matrix_mul(
-    mat: &[[Poly; L]; K],
-    s: &PolyVecL,
-) -> PolyVecK {
+pub(crate) fn matrix_mul(mat: &[[Poly; L]; K], s: &PolyVecL) -> PolyVecK {
     let mut t = PolyVecK::zero();
     for i in 0..K {
         for j in 0..L {
@@ -236,11 +233,7 @@ pub(crate) fn matrix_mul(
 
 /// Pointwise multiply a k×l matrix by a length-l vector, accumulating
 /// into a length-k vector (in NTT domain).
-pub(crate) fn matrix_pointwise_mul(
-    t: &mut PolyVecK,
-    mat: &[[Poly; L]; K],
-    s: &PolyVecL,
-) {
+pub(crate) fn matrix_pointwise_mul(t: &mut PolyVecK, mat: &[[Poly; L]; K], s: &PolyVecL) {
     for i in 0..K {
         for c in &mut t.polys[i].coeffs {
             *c = 0;

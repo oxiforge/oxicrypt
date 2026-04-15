@@ -100,7 +100,8 @@ mod tests {
     fn pkcs1_v15_sign_verify_roundtrip() {
         init_module();
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xA1u8; 48], &[0xB2u8; 24], b"rsa3072-test").unwrap();
+        drbg.instantiate(&[0xA1u8; 48], &[0xB2u8; 24], b"rsa3072-test")
+            .unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let msg = b"rsa-3072 pkcs1v15 roundtrip";
         let sig = key.sign_pkcs1_v15_sha256(msg).unwrap();
@@ -111,7 +112,8 @@ mod tests {
     fn pkcs1_v15_verify_rejects_tampered_sig() {
         init_module();
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xC3u8; 48], &[0xD4u8; 24], b"rsa3072-tamper").unwrap();
+        drbg.instantiate(&[0xC3u8; 48], &[0xD4u8; 24], b"rsa3072-tamper")
+            .unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let msg = b"tamper test 3072";
         let mut sig = key.sign_pkcs1_v15_sha256(msg).unwrap();
@@ -123,7 +125,8 @@ mod tests {
     fn pss_sign_verify_roundtrip() {
         init_module();
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xE5u8; 48], &[0xF6u8; 24], b"rsa3072-pss").unwrap();
+        drbg.instantiate(&[0xE5u8; 48], &[0xF6u8; 24], b"rsa3072-pss")
+            .unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let msg = b"rsa-3072 pss roundtrip";
         let salt = [0x77u8; 32];
@@ -135,22 +138,37 @@ mod tests {
     fn pss_verify_rejects_wrong_msg() {
         init_module();
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0x11u8; 48], &[0x22u8; 24], b"rsa3072-pss-bad").unwrap();
+        drbg.instantiate(&[0x11u8; 48], &[0x22u8; 24], b"rsa3072-pss-bad")
+            .unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let salt = [0x33u8; 32];
         let sig = key.sign_pss_sha256_with_salt(b"original", &salt).unwrap();
-        assert!(pss_verify(key.modulus_bytes(), key.public_exponent(), b"different", &sig).is_err());
+        assert!(pss_verify(
+            key.modulus_bytes(),
+            key.public_exponent(),
+            b"different",
+            &sig
+        )
+        .is_err());
     }
 
     #[test]
     fn oaep_encrypt_decrypt_roundtrip() {
         init_module();
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0x44u8; 48], &[0x55u8; 24], b"rsa3072-oaep").unwrap();
+        drbg.instantiate(&[0x44u8; 48], &[0x55u8; 24], b"rsa3072-oaep")
+            .unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let label = b"";
         let msg = b"hello OAEP 3072";
-        let ct = oaep_encrypt(&mut drbg, key.modulus_bytes(), key.public_exponent(), label, msg).unwrap();
+        let ct = oaep_encrypt(
+            &mut drbg,
+            key.modulus_bytes(),
+            key.public_exponent(),
+            label,
+            msg,
+        )
+        .unwrap();
         let mut out = [0u8; OAEP_MAX_MSG_LEN];
         let mlen = key.decrypt_oaep_sha256(label, &ct, &mut out).unwrap();
         assert_eq!(&out[..mlen], msg);
@@ -160,9 +178,17 @@ mod tests {
     fn oaep_rejects_wrong_label() {
         init_module();
         let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0x66u8; 48], &[0x77u8; 24], b"rsa3072-oaep-bad").unwrap();
+        drbg.instantiate(&[0x66u8; 48], &[0x77u8; 24], b"rsa3072-oaep-bad")
+            .unwrap();
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
-        let ct = oaep_encrypt(&mut drbg, key.modulus_bytes(), key.public_exponent(), b"right", b"msg").unwrap();
+        let ct = oaep_encrypt(
+            &mut drbg,
+            key.modulus_bytes(),
+            key.public_exponent(),
+            b"right",
+            b"msg",
+        )
+        .unwrap();
         let mut out = [0u8; OAEP_MAX_MSG_LEN];
         assert!(key.decrypt_oaep_sha256(b"wrong", &ct, &mut out).is_err());
     }

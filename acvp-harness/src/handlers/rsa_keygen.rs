@@ -121,10 +121,15 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let qinv_bytes: [u8; 128] = km.qinv.to_be_bytes();
 
                 results.push(keygen_result(
-                    test_case_id, &e_bytes,
-                    &n_bytes, &d_bytes,
-                    &p_bytes, &q_bytes,
-                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                    test_case_id,
+                    &e_bytes,
+                    &n_bytes,
+                    &d_bytes,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
                 ));
             }
             3072 => {
@@ -140,10 +145,15 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let qinv_bytes: [u8; 192] = km.qinv.to_be_bytes();
 
                 results.push(keygen_result(
-                    test_case_id, &e_bytes,
-                    &n_bytes, &d_bytes,
-                    &p_bytes, &q_bytes,
-                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                    test_case_id,
+                    &e_bytes,
+                    &n_bytes,
+                    &d_bytes,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
                 ));
             }
             4096 => {
@@ -159,10 +169,15 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 let qinv_bytes: [u8; 256] = km.qinv.to_be_bytes();
 
                 results.push(keygen_result(
-                    test_case_id, &e_bytes,
-                    &n_bytes, &d_bytes,
-                    &p_bytes, &q_bytes,
-                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                    test_case_id,
+                    &e_bytes,
+                    &n_bytes,
+                    &d_bytes,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
                 ));
             }
             _ => {
@@ -212,11 +227,17 @@ fn keygen_result(
         ("tcId".to_string(), JsonValue::Number(tc_id)),
         ("n".to_string(), JsonValue::String(hex::encode_upper(n))),
         ("d".to_string(), JsonValue::String(hex::encode_upper(d))),
-        ("e".to_string(), JsonValue::String(hex::encode_upper(e_bytes))),
+        (
+            "e".to_string(),
+            JsonValue::String(hex::encode_upper(e_bytes)),
+        ),
         ("p".to_string(), JsonValue::String(hex::encode_upper(p))),
         ("q".to_string(), JsonValue::String(hex::encode_upper(q))),
         ("dmp1".to_string(), JsonValue::String(hex::encode_upper(dp))),
         ("dmq1".to_string(), JsonValue::String(hex::encode_upper(dq))),
-        ("iqmp".to_string(), JsonValue::String(hex::encode_upper(qinv))),
+        (
+            "iqmp".to_string(),
+            JsonValue::String(hex::encode_upper(qinv)),
+        ),
     ])
 }

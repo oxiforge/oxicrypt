@@ -17,7 +17,10 @@ fn main() {
     println!("Signature:  {}...", hex(&signature[..32]));
 
     let result = oxicrypt_eddsa::verify(&public_key, message, &signature);
-    println!("Verify:     {}", if result.is_ok() { "valid" } else { "INVALID" });
+    println!(
+        "Verify:     {}",
+        if result.is_ok() { "valid" } else { "INVALID" }
+    );
 }
 
 fn hex(bytes: &[u8]) -> String {

@@ -33,8 +33,8 @@
     clippy::manual_let_else
 )]
 
-use crate::bigint1536::{U1536, BYTES as BYTES1536, LIMBS as LIMBS1536};
-use crate::bigint3072::{U3072, LIMBS as LIMBS3072};
+use crate::bigint1536::{BYTES as BYTES1536, LIMBS as LIMBS1536, U1536};
+use crate::bigint3072::{LIMBS as LIMBS3072, U3072};
 use crate::mont1536::MontCtx1536;
 use oxicrypt_drbg::HmacDrbgSha256;
 
@@ -123,11 +123,7 @@ mod tests {
         let mut drbg = make_drbg(b"pqclib-rsa3072-keygen-smoke-entropy-0001");
         let km = generate_3072(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 3072 bits).
-        assert_ne!(
-            km.n.limbs[LIMBS3072 - 1] >> 63,
-            0,
-            "n is not 3072-bit"
-        );
+        assert_ne!(km.n.limbs[LIMBS3072 - 1] >> 63, 0, "n is not 3072-bit");
         // d must be less than n.
         assert_eq!(km.d.ct_lt(&km.n), 1, "d ≥ n");
         // p and q must be 1536-bit (top bit set).

@@ -36,8 +36,8 @@
 
 use core::marker::PhantomData;
 
-use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
 use oxicrypt_aes::modes::BlockCipher;
+use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
 use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
 /// AES block size in bytes (`outlen` in SP 800-90A terminology).
@@ -310,11 +310,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
     }
 
     /// CTR_DRBG Reseed, `use df` variant (§10.2.1.4.2).
-    pub fn reseed_df(
-        &mut self,
-        entropy: &[u8],
-        additional_input: &[u8],
-    ) -> Result<(), DrbgError> {
+    pub fn reseed_df(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
         }
@@ -671,9 +667,8 @@ mod tests {
     // ---------------- AES-128 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes128_no_df_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "ce50f33da5d4c1d3d4004eb35244b7f2cd7f2e5076fbf6780a7ff634b249a5fc",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("ce50f33da5d4c1d3d4004eb35244b7f2cd7f2e5076fbf6780a7ff634b249a5fc");
         let expected: [u8; 64] = hex_to_bytes(
             "6545c0529d372443b392ceb3ae3a99a30f963eaf313280f1d1a1e87f9db373d361e75d18018266499cccd64d9bbb8de0185f213383080faddec46bae1f784e5a",
         );
@@ -738,8 +733,7 @@ mod tests {
     // ---------------- AES-192 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes192_df_count0() {
-        let entropy: [u8; 24] =
-            hex_to_bytes("c35c2fa2a89d52a11fa32aa96c95b8f1c9a8f9cb245a8b40");
+        let entropy: [u8; 24] = hex_to_bytes("c35c2fa2a89d52a11fa32aa96c95b8f1c9a8f9cb245a8b40");
         let nonce: [u8; 16] = hex_to_bytes("f3a6e5a7fbd9d3c68e277ba9ac9bbb00");
         let expected: [u8; 64] = hex_to_bytes(
             "8c2e72abfd9bb8284db79e17a43a3146cd7694e35249fc3383914a7117f41368e6d4f148ff49bf29076b5015c59f457945662e3d3503843f4aa5a3df9a9df10d",
@@ -755,9 +749,8 @@ mod tests {
     // ---------------- AES-256 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes256_df_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "36401940fa8b1fba91a1661f211d78a0b9389a74e5bccfece8d766af1a6d3b14",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("36401940fa8b1fba91a1661f211d78a0b9389a74e5bccfece8d766af1a6d3b14");
         let nonce: [u8; 16] = hex_to_bytes("496f25b0f1301b4f501be30380a137eb");
         let expected: [u8; 64] = hex_to_bytes(
             "5862eb38bd558dd978a696e6df164782ddd887e7e9a6c9f3f1fbafb78941b535a64912dfd224c6dc7454e5250b3d97165e16260c2faf1cc7735cb75fb4f07e1d",

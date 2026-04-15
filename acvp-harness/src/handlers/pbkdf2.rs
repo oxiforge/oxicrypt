@@ -74,9 +74,7 @@ fn pbkdf2_derive(
             .map_err(|_| DispatchError::Crypto("PBKDF2-HMAC-SHA3-384 derivation failed")),
         "SHA3-512" => Pbkdf2HmacSha3_512::derive(password, salt, iterations, out)
             .map_err(|_| DispatchError::Crypto("PBKDF2-HMAC-SHA3-512 derivation failed")),
-        _ => Err(DispatchError::Unsupported(
-            "PBKDF2: unsupported hmacAlg",
-        )),
+        _ => Err(DispatchError::Unsupported("PBKDF2: unsupported hmacAlg")),
     }
 }
 

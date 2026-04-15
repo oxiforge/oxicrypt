@@ -92,10 +92,7 @@ pub(crate) fn ml_kem_encaps(
 /// **Implicit rejection**: if the ciphertext is invalid, a
 /// pseudorandom key derived from the rejection seed `z` is
 /// returned (constant-time, no observable difference).
-pub(crate) fn ml_kem_decaps(
-    dk: &[u8; DK_LEN],
-    ct: &[u8; CT_LEN],
-) -> [u8; SHARED_SECRET_LEN] {
+pub(crate) fn ml_kem_decaps(dk: &[u8; DK_LEN], ct: &[u8; CT_LEN]) -> [u8; SHARED_SECRET_LEN] {
     let dk_pke_len = 384 * K; // 1536
 
     // Parse dk = dk_PKE ‖ ek ‖ H(ek) ‖ z

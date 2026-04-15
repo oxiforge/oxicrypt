@@ -42,7 +42,7 @@
     dead_code
 )]
 
-use crate::bigint1024::{U1024, LIMBS};
+use crate::bigint1024::{LIMBS, U1024};
 
 /// Derived Montgomery constants for a specific 1024-bit odd modulus.
 #[derive(Copy, Clone, Debug)]
@@ -85,7 +85,9 @@ impl MontCtx1024 {
             borrow = u64::from(b1 || b2);
         }
         debug_assert_eq!(borrow, 1);
-        let one_mont = U1024 { limbs: r_mod_n_limbs };
+        let one_mont = U1024 {
+            limbs: r_mod_n_limbs,
+        };
 
         // R^2 mod n via doubling.
         let mut acc = one_mont;
@@ -119,9 +121,8 @@ impl MontCtx1024 {
         for i in 0..LIMBS {
             let mut carry: u64 = 0;
             for j in 0..LIMBS {
-                let prod = (a.limbs[j] as u128) * (b.limbs[i] as u128)
-                    + (t[j] as u128)
-                    + (carry as u128);
+                let prod =
+                    (a.limbs[j] as u128) * (b.limbs[i] as u128) + (t[j] as u128) + (carry as u128);
                 t[j] = prod as u64;
                 carry = (prod >> 64) as u64;
             }
@@ -136,9 +137,8 @@ impl MontCtx1024 {
                 (prod >> 64) as u64
             };
             for j in 1..LIMBS {
-                let prod = (m as u128) * (self.n.limbs[j] as u128)
-                    + (t[j] as u128)
-                    + (carry2 as u128);
+                let prod =
+                    (m as u128) * (self.n.limbs[j] as u128) + (t[j] as u128) + (carry2 as u128);
                 t[j - 1] = prod as u64;
                 carry2 = (prod >> 64) as u64;
             }

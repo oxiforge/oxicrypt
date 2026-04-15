@@ -206,11 +206,7 @@ impl EdwardsPoint {
     /// Delegates to [`FieldElement::conditional_select`] per limb,
     /// so the running time is independent of both `choice` and the
     /// coordinate values.
-    pub fn conditional_select(
-        a: &EdwardsPoint,
-        b: &EdwardsPoint,
-        choice: u8,
-    ) -> EdwardsPoint {
+    pub fn conditional_select(a: &EdwardsPoint, b: &EdwardsPoint, choice: u8) -> EdwardsPoint {
         EdwardsPoint {
             x: FieldElement::conditional_select(&a.x, &b.x, choice),
             y: FieldElement::conditional_select(&a.y, &b.y, choice),
@@ -501,12 +497,12 @@ mod tests {
             (
                 3,
                 [
-                    92, 226, 248, 211, 95, 72, 98, 172, 134, 72, 98, 129, 25, 152, 67, 99, 58,
-                    200, 218, 62, 116, 174, 244, 31, 73, 143, 146, 34, 74, 156, 174, 103,
+                    92, 226, 248, 211, 95, 72, 98, 172, 134, 72, 98, 129, 25, 152, 67, 99, 58, 200,
+                    218, 62, 116, 174, 244, 31, 73, 143, 146, 34, 74, 156, 174, 103,
                 ],
                 [
-                    212, 180, 245, 120, 72, 104, 195, 2, 4, 3, 36, 103, 23, 236, 22, 159, 247,
-                    158, 38, 96, 142, 161, 38, 161, 171, 105, 238, 119, 209, 177, 103, 18,
+                    212, 180, 245, 120, 72, 104, 195, 2, 4, 3, 36, 103, 23, 236, 22, 159, 247, 158,
+                    38, 96, 142, 161, 38, 161, 171, 105, 238, 119, 209, 177, 103, 18,
                 ],
             ),
             (
@@ -538,8 +534,8 @@ mod tests {
                     156, 36, 8, 21, 43, 226, 184, 238, 58, 229, 39, 6, 134, 164, 35,
                 ],
                 [
-                    235, 39, 103, 193, 55, 171, 122, 216, 39, 156, 7, 142, 255, 17, 106, 176,
-                    120, 110, 173, 58, 46, 15, 152, 159, 114, 195, 127, 130, 242, 150, 150, 112,
+                    235, 39, 103, 193, 55, 171, 122, 216, 39, 156, 7, 142, 255, 17, 106, 176, 120,
+                    110, 173, 58, 46, 15, 152, 159, 114, 195, 127, 130, 242, 150, 150, 112,
                 ],
             ),
         ];
@@ -581,8 +577,8 @@ mod tests {
         //
         // gives the canonical 32-byte encodings below.
         const TWO_B_X: [u8; 32] = [
-            14, 206, 67, 40, 78, 161, 197, 131, 95, 164, 215, 21, 69, 142, 13, 8, 172, 231, 51,
-            24, 125, 59, 4, 61, 108, 4, 90, 159, 76, 56, 171, 54,
+            14, 206, 67, 40, 78, 161, 197, 131, 95, 164, 215, 21, 69, 142, 13, 8, 172, 231, 51, 24,
+            125, 59, 4, 61, 108, 4, 90, 159, 76, 56, 171, 54,
         ];
         const TWO_B_Y: [u8; 32] = [
             201, 163, 248, 106, 174, 70, 95, 14, 86, 81, 56, 100, 81, 15, 57, 151, 86, 31, 162,
@@ -633,16 +629,15 @@ mod tests {
     #[test]
     fn decompress_base_point_round_trip() {
         let compressed = EdwardsPoint::BASE.compress();
-        let recovered = EdwardsPoint::decompress(&compressed)
-            .expect("base point should decompress");
+        let recovered =
+            EdwardsPoint::decompress(&compressed).expect("base point should decompress");
         assert_eq!(recovered.ct_eq(&EdwardsPoint::BASE), 1);
     }
 
     #[test]
     fn decompress_identity_round_trip() {
         let compressed = EdwardsPoint::IDENTITY.compress();
-        let recovered = EdwardsPoint::decompress(&compressed)
-            .expect("identity should decompress");
+        let recovered = EdwardsPoint::decompress(&compressed).expect("identity should decompress");
         assert_eq!(recovered.ct_eq(&EdwardsPoint::IDENTITY), 1);
     }
 

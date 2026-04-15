@@ -19,7 +19,7 @@
     dead_code
 )]
 
-use crate::bigint3072::{U3072, LIMBS as LIMBS3072};
+use crate::bigint3072::{LIMBS as LIMBS3072, U3072};
 use crate::bigint_impl::define_bigint_type;
 
 define_bigint_type! {
@@ -272,7 +272,9 @@ mod tests {
 
     #[test]
     fn adding_wraps_with_carry() {
-        let ones = U1536 { limbs: [0xffff_ffff_ffff_ffff; LIMBS] };
+        let ones = U1536 {
+            limbs: [0xffff_ffff_ffff_ffff; LIMBS],
+        };
         let one = from_u64(1);
         let (sum, carry) = ones.adding(&one);
         assert_eq!(sum, U1536::ZERO);

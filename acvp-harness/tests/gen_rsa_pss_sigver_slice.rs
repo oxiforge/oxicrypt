@@ -72,10 +72,8 @@ fn generate_rsa_pss_sigver_slice() {
 
     for (i, msg_hex) in MESSAGES.iter().enumerate() {
         let msg = hex_decode(msg_hex);
-        let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(
-            &n_arr, &d_arr, &msg, &salt_arr,
-        )
-        .expect("PSS sign failed");
+        let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(&n_arr, &d_arr, &msg, &salt_arr)
+            .expect("PSS sign failed");
 
         // Valid test
         assert!(

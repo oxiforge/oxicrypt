@@ -11,25 +11,21 @@ fn main() {
     drbg.instantiate(&[0xEE; 32], &[0xFF; 16], b"ecdh-example")
         .expect("drbg instantiate");
 
-    let alice = oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg)
-        .expect("alice keygen");
-    let bob = oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg)
-        .expect("bob keygen");
+    let alice = oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg).expect("alice keygen");
+    let bob = oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg).expect("bob keygen");
 
     println!("Alice pub: {}...", hex(&alice.public_key()[..24]));
     println!("Bob pub:   {}...", hex(&bob.public_key()[..24]));
 
     // Each side computes the shared secret from their private scalar
     // and the other party's public key.
-    let secret_ab = oxicrypt_ecdh::compute_shared_secret_p256(
-        alice.private_scalar(),
-        &bob.public_key(),
-    ).expect("ecdh alice->bob");
+    let secret_ab =
+        oxicrypt_ecdh::compute_shared_secret_p256(alice.private_scalar(), &bob.public_key())
+            .expect("ecdh alice->bob");
 
-    let secret_ba = oxicrypt_ecdh::compute_shared_secret_p256(
-        bob.private_scalar(),
-        &alice.public_key(),
-    ).expect("ecdh bob->alice");
+    let secret_ba =
+        oxicrypt_ecdh::compute_shared_secret_p256(bob.private_scalar(), &alice.public_key())
+            .expect("ecdh bob->alice");
 
     assert_eq!(secret_ab, secret_ba, "shared secrets must match");
     println!("Shared:    {}", hex(&secret_ab));

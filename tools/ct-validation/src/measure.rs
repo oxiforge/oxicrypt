@@ -83,7 +83,11 @@ struct XorShift64 {
 
 impl XorShift64 {
     fn new(seed: u64) -> XorShift64 {
-        let s = if seed == 0 { 0xdead_beef_cafe_babe } else { seed };
+        let s = if seed == 0 {
+            0xdead_beef_cafe_babe
+        } else {
+            seed
+        };
         XorShift64 { state: s }
     }
 

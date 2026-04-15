@@ -130,10 +130,7 @@ impl AlgorithmHandler for TupleHashXof256Handler {
 }
 
 /// Shared group driver for TupleHash AFT.
-fn handle_tuplehash_group<F>(
-    group: &JsonValue,
-    mut compute: F,
-) -> Result<JsonValue, DispatchError>
+fn handle_tuplehash_group<F>(group: &JsonValue, mut compute: F) -> Result<JsonValue, DispatchError>
 where
     F: FnMut(&[Vec<u8>], &[u8], &mut [u8]) -> Result<(), DispatchError>,
 {
@@ -176,9 +173,9 @@ where
             .ok_or(DispatchError::MissingField("tuple"))?;
         let mut elements: Vec<Vec<u8>> = Vec::with_capacity(tuple_arr.len());
         for elem_val in tuple_arr {
-            let elem_hex = elem_val
-                .as_str()
-                .ok_or(DispatchError::Crypto("TupleHash AFT: tuple element is not a string"))?;
+            let elem_hex = elem_val.as_str().ok_or(DispatchError::Crypto(
+                "TupleHash AFT: tuple element is not a string",
+            ))?;
             if elem_hex.is_empty() {
                 elements.push(Vec::new());
             } else {

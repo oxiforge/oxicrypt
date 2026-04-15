@@ -257,7 +257,9 @@ fn run_demo_cli(args: &[String]) {
 fn print_demo_run_usage() {
     eprintln!("usage: acvp-harness demo-run --cert <cert.pem> --key <key.pem> --totp-secret <hex>");
     eprintln!("  optional: --algorithm <name>   test a single algorithm (e.g. SHA3-256)");
-    eprintln!("            --server <url>        ACVP server (default: https://demo.acvts.nist.gov)");
+    eprintln!(
+        "            --server <url>        ACVP server (default: https://demo.acvts.nist.gov)"
+    );
     eprintln!("            --log <path>          transcript log path (default: acvp-session.json)");
 }
 
@@ -271,18 +273,13 @@ fn print_self_test_banner() {
         println!("  - {}", kat.name);
     }
     let registry = acvp_harness::dispatch::with_default_handlers();
-    println!(
-        "ACVP dispatch: {} handler(s) registered.",
-        registry.len()
-    );
+    println!("ACVP dispatch: {} handler(s) registered.", registry.len());
     let shs_registry = acvp_harness::shs::with_default_shs_handlers();
     println!(
         "CAVP SHS dispatch: {} handler(s) registered.",
         shs_registry.len()
     );
-    println!(
-        "Run `acvp-harness dispatch <prompt.json> <response.json>` for an ACVP vector set,"
-    );
+    println!("Run `acvp-harness dispatch <prompt.json> <response.json>` for an ACVP vector set,");
     println!(
         "or `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>` for a CAVP SHS file,"
     );
@@ -304,17 +301,16 @@ fn run_dispatch_cli(args: &[String]) {
 }
 
 fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
-    let text = std::fs::read_to_string(prompt_path)
-        .map_err(|e| format!("read {prompt_path}: {e}"))?;
-    let prompt = acvp_harness::json::parse(&text)
-        .map_err(|e| format!("parse {prompt_path}: {e}"))?;
+    let text =
+        std::fs::read_to_string(prompt_path).map_err(|e| format!("read {prompt_path}: {e}"))?;
+    let prompt =
+        acvp_harness::json::parse(&text).map_err(|e| format!("parse {prompt_path}: {e}"))?;
     let registry = acvp_harness::dispatch::with_default_handlers();
     let response = acvp_harness::dispatch::process(&prompt, &registry)
         .map_err(|e| format!("dispatch: {e}"))?;
     let mut out = acvp_harness::json::to_pretty_string(&response);
     out.push('\n');
-    std::fs::write(response_path, out)
-        .map_err(|e| format!("write {response_path}: {e}"))?;
+    std::fs::write(response_path, out).map_err(|e| format!("write {response_path}: {e}"))?;
     println!(
         "oxicrypt acvp-harness: wrote ACVP response to {response_path} ({} test group(s))",
         response
@@ -327,9 +323,7 @@ fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
 
 fn run_dispatch_shs_cli(args: &[String]) {
     if args.len() != 5 {
-        eprintln!(
-            "usage: acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>"
-        );
+        eprintln!("usage: acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>");
         eprintln!(
             "  algorithm ∈ {{SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256}}"
         );
@@ -343,22 +337,16 @@ fn run_dispatch_shs_cli(args: &[String]) {
     }
 }
 
-fn run_dispatch_shs(
-    algorithm: &str,
-    prompt_path: &str,
-    response_path: &str,
-) -> Result<(), String> {
-    let text = std::fs::read_to_string(prompt_path)
-        .map_err(|e| format!("read {prompt_path}: {e}"))?;
-    let doc = acvp_harness::rsp::parse(&text)
-        .map_err(|e| format!("parse {prompt_path}: {e}"))?;
+fn run_dispatch_shs(algorithm: &str, prompt_path: &str, response_path: &str) -> Result<(), String> {
+    let text =
+        std::fs::read_to_string(prompt_path).map_err(|e| format!("read {prompt_path}: {e}"))?;
+    let doc = acvp_harness::rsp::parse(&text).map_err(|e| format!("parse {prompt_path}: {e}"))?;
     let registry = acvp_harness::shs::with_default_shs_handlers();
     let response = acvp_harness::shs::process_shs(algorithm, &doc, &registry)
         .map_err(|e| format!("dispatch-shs: {e}"))?;
     let mut out = acvp_harness::json::to_pretty_string(&response);
     out.push('\n');
-    std::fs::write(response_path, out)
-        .map_err(|e| format!("write {response_path}: {e}"))?;
+    std::fs::write(response_path, out).map_err(|e| format!("write {response_path}: {e}"))?;
     println!(
         "oxicrypt acvp-harness: wrote CAVP SHS response to {response_path} ({} test case(s))",
         response

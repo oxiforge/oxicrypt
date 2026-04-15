@@ -321,14 +321,14 @@ pub unsafe extern "C" fn oxicrypt_hmac_sha256(
 /// All pointer/length pairs must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn oxicrypt_aes256_gcm_encrypt(
-    key_ptr: *const u8,          // 32 bytes
-    iv_ptr: *const u8,           // 12 bytes
+    key_ptr: *const u8, // 32 bytes
+    iv_ptr: *const u8,  // 12 bytes
     aad_ptr: *const u8,
     aad_len: usize,
     pt_ptr: *const u8,
     pt_len: usize,
-    ct_out: *mut u8,             // pt_len bytes
-    tag_out: *mut u8,            // 16 bytes
+    ct_out: *mut u8,  // pt_len bytes
+    tag_out: *mut u8, // 16 bytes
 ) -> i32 {
     if key_ptr.is_null() || iv_ptr.is_null() || ct_out.is_null() || tag_out.is_null() {
         return ERR_INVALID_INPUT;
@@ -371,14 +371,14 @@ pub unsafe extern "C" fn oxicrypt_aes256_gcm_encrypt(
 /// All pointer/length pairs must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn oxicrypt_aes256_gcm_decrypt(
-    key_ptr: *const u8,          // 32 bytes
-    iv_ptr: *const u8,           // 12 bytes
+    key_ptr: *const u8, // 32 bytes
+    iv_ptr: *const u8,  // 12 bytes
     aad_ptr: *const u8,
     aad_len: usize,
     ct_ptr: *const u8,
     ct_len: usize,
-    tag_ptr: *const u8,          // 16 bytes
-    pt_out: *mut u8,             // ct_len bytes
+    tag_ptr: *const u8, // 16 bytes
+    pt_out: *mut u8,    // ct_len bytes
 ) -> i32 {
     if key_ptr.is_null() || iv_ptr.is_null() || tag_ptr.is_null() || pt_out.is_null() {
         return ERR_INVALID_INPUT;

@@ -144,12 +144,14 @@ pub mod rsa4096;
 pub mod rsa_3072_4096_stub;
 mod rsa_wide_impl;
 
-use bigint1024::{U1024, BYTES as U1024_BYTES, LIMBS as LIMBS1024};
-use bigint2048::{U2048, BYTES as U2048_BYTES, LIMBS as LIMBS2048};
-use oxicrypt_module::{require_operational, require_allowed, Service, Error, KatEntry, SelfTestFailure};
-use oxicrypt_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
+use bigint1024::{BYTES as U1024_BYTES, LIMBS as LIMBS1024, U1024};
+use bigint2048::{BYTES as U2048_BYTES, LIMBS as LIMBS2048, U2048};
 use mont1024::MontCtx1024;
 use mont2048::MontCtx2048;
+use oxicrypt_module::{
+    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+};
+use oxicrypt_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
 
 /// Fixed byte length of each 1024-bit half (`p`, `q`, `dP`, `dQ`,
 /// `qInv`) in the CRT-form private key.
@@ -945,8 +947,7 @@ pub fn rsa_oaep_encrypt_2048_sha256(
     let mut seed = [0u8; oaep::HLEN];
     drbg.generate(None, &mut seed)
         .map_err(|_| Error::InvalidInput)?;
-    rsa_oaep_encrypt_2048_sha256_internal(n_bytes, e, label, msg, &seed)
-        .ok_or(Error::InvalidInput)
+    rsa_oaep_encrypt_2048_sha256_internal(n_bytes, e, label, msg, &seed).ok_or(Error::InvalidInput)
 }
 
 // ------------------------------------------------------------------
@@ -1085,7 +1086,11 @@ impl RsaPrivateKey2048 {
     /// Returns [`Error::NotOperational`] if the FIPS module has not
     /// completed power-up self-tests. Returns [`Error::InvalidInput`]
     /// if the CRT PCT fails for any reason.
-    #[allow(clippy::too_many_arguments, clippy::similar_names, clippy::items_after_statements)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::similar_names,
+        clippy::items_after_statements
+    )]
     pub fn from_components_crt(
         n_bytes: &[u8; RSA_2048_MODULUS_BYTES],
         e: u64,
@@ -1104,8 +1109,7 @@ impl RsaPrivateKey2048 {
         // time — a CRT tuple that is inconsistent with `d` will
         // fail the verify-after-sign step before the signature
         // even reaches the outer verify.
-        const PROBE: &[u8] =
-            b"fips-rsa CRT PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
+        const PROBE: &[u8] = b"fips-rsa CRT PCT probe / RSA-2048 / PKCS#1 v1.5 / SHA-256";
         let Some(sig) = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
             n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, PROBE,
         ) else {
@@ -1246,7 +1250,8 @@ impl RsaPrivateKey2048 {
         require_operational()?;
         require_allowed(Service::RsaPssSign2048)?;
         let mut salt = [0u8; pss::SLEN];
-        drbg.generate(None, &mut salt).map_err(|_| Error::InvalidInput)?;
+        drbg.generate(None, &mut salt)
+            .map_err(|_| Error::InvalidInput)?;
         rsa_pss_sign_2048_sha256_internal(&self.n_bytes, &self.d_bytes, msg, &salt)
             .ok_or(Error::InvalidInput)
     }
@@ -1342,10 +1347,7 @@ impl RsaPrivateKey2048 {
     ///   * the resulting keypair fails the pairwise consistency
     ///     test (which indicates internal corruption).
     #[allow(clippy::similar_names)]
-    pub fn generate(
-        drbg: &mut oxicrypt_drbg::HmacDrbgSha256,
-        e: u64,
-    ) -> Result<Self, Error> {
+    pub fn generate(drbg: &mut oxicrypt_drbg::HmacDrbgSha256, e: u64) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::RsaKeygen2048)?;
         let km = keygen::generate_2048(drbg, e).map_err(|_| Error::InvalidInput)?;
@@ -1357,7 +1359,14 @@ impl RsaPrivateKey2048 {
         let dq_bytes = km.dq.to_be_bytes();
         let qinv_bytes = km.qinv.to_be_bytes();
         Self::from_components_crt(
-            &n_bytes, e, &d_bytes, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
+            &n_bytes,
+            e,
+            &d_bytes,
+            &p_bytes,
+            &q_bytes,
+            &dp_bytes,
+            &dq_bytes,
+            &qinv_bytes,
         )
     }
 }
@@ -1520,35 +1529,22 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
         return Err(SelfTestFailure);
     }
     // PSS sign (KAT reproduction).
-    let Some(pss_produced) = rsa_pss_sign_2048_sha256_internal(
-        &KAT_N_BYTES,
-        &KAT_D_BYTES,
-        KAT_PSS_MSG,
-        &KAT_PSS_SALT,
-    ) else {
+    let Some(pss_produced) =
+        rsa_pss_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_D_BYTES, KAT_PSS_MSG, &KAT_PSS_SALT)
+    else {
         return Err(SelfTestFailure);
     };
     if pss_produced != KAT_PSS_SIG_BYTES {
         return Err(SelfTestFailure);
     }
     // PSS verify (positive).
-    if !rsa_pss_verify_2048_sha256_internal(
-        &KAT_N_BYTES,
-        KAT_E,
-        KAT_PSS_MSG,
-        &KAT_PSS_SIG_BYTES,
-    ) {
+    if !rsa_pss_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_PSS_MSG, &KAT_PSS_SIG_BYTES) {
         return Err(SelfTestFailure);
     }
     // PSS verify (tamper inside maskedDB, not the trailer).
     let mut pss_tampered = KAT_PSS_SIG_BYTES;
     pss_tampered[10] ^= 0x01;
-    if rsa_pss_verify_2048_sha256_internal(
-        &KAT_N_BYTES,
-        KAT_E,
-        KAT_PSS_MSG,
-        &pss_tampered,
-    ) {
+    if rsa_pss_verify_2048_sha256_internal(&KAT_N_BYTES, KAT_E, KAT_PSS_MSG, &pss_tampered) {
         return Err(SelfTestFailure);
     }
     Ok(())
@@ -1584,7 +1580,10 @@ mod tests {
     #[test]
     fn kat_positive_verifies() {
         assert!(rsa_pkcs1_v15_verify_2048_sha256_internal(
-            &KAT_N_BYTES, KAT_E, KAT_MSG, &KAT_SIG_BYTES
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_MSG,
+            &KAT_SIG_BYTES
         ));
     }
 
@@ -1593,7 +1592,10 @@ mod tests {
         let mut bad = KAT_SIG_BYTES;
         bad[128] ^= 0x80;
         assert!(!rsa_pkcs1_v15_verify_2048_sha256_internal(
-            &KAT_N_BYTES, KAT_E, KAT_MSG, &bad
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_MSG,
+            &bad
         ));
     }
 
@@ -1601,7 +1603,10 @@ mod tests {
     fn kat_rejects_wrong_message() {
         let bad_msg = b"pqclib FIPS RSA-2048 PKCS1v15 SHA-256 power-up KAT (tampered)";
         assert!(!rsa_pkcs1_v15_verify_2048_sha256_internal(
-            &KAT_N_BYTES, KAT_E, bad_msg, &KAT_SIG_BYTES
+            &KAT_N_BYTES,
+            KAT_E,
+            bad_msg,
+            &KAT_SIG_BYTES
         ));
     }
 
@@ -1610,14 +1615,20 @@ mod tests {
         let mut bad_n = KAT_N_BYTES;
         bad_n[255] &= 0xfe;
         assert!(!rsa_pkcs1_v15_verify_2048_sha256_internal(
-            &bad_n, KAT_E, KAT_MSG, &KAT_SIG_BYTES
+            &bad_n,
+            KAT_E,
+            KAT_MSG,
+            &KAT_SIG_BYTES
         ));
     }
 
     #[test]
     fn kat_rejects_signature_ge_modulus() {
         assert!(!rsa_pkcs1_v15_verify_2048_sha256_internal(
-            &KAT_N_BYTES, KAT_E, KAT_MSG, &KAT_N_BYTES
+            &KAT_N_BYTES,
+            KAT_E,
+            KAT_MSG,
+            &KAT_N_BYTES
         ));
     }
 
@@ -1640,7 +1651,10 @@ mod tests {
             let sig =
                 rsa_pkcs1_v15_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_D_BYTES, msg).unwrap();
             assert!(rsa_pkcs1_v15_verify_2048_sha256_internal(
-                &KAT_N_BYTES, KAT_E, msg, &sig
+                &KAT_N_BYTES,
+                KAT_E,
+                msg,
+                &sig
             ));
         }
     }
@@ -1657,7 +1671,9 @@ mod tests {
     #[test]
     fn pct_passes_on_pinned_keypair() {
         assert!(pairwise_consistency_test_2048_internal(
-            &KAT_N_BYTES, KAT_E, &KAT_D_BYTES
+            &KAT_N_BYTES,
+            KAT_E,
+            &KAT_D_BYTES
         ));
     }
 
@@ -1666,7 +1682,9 @@ mod tests {
         let mut bad_d = KAT_D_BYTES;
         bad_d[0] ^= 0x01;
         assert!(!pairwise_consistency_test_2048_internal(
-            &KAT_N_BYTES, KAT_E, &bad_d
+            &KAT_N_BYTES,
+            KAT_E,
+            &bad_d
         ));
     }
 
@@ -1676,7 +1694,9 @@ mod tests {
         // must fail the PCT because 3 is coprime with phi and the
         // wrong exponent will produce nonsense signatures.
         assert!(!pairwise_consistency_test_2048_internal(
-            &KAT_N_BYTES, 3, &KAT_D_BYTES
+            &KAT_N_BYTES,
+            3,
+            &KAT_D_BYTES
         ));
     }
 
@@ -1772,13 +1792,8 @@ mod tests {
         let salts: [[u8; 32]; 2] = [[0u8; 32], [0xa5u8; 32]];
         for msg in messages {
             for salt in &salts {
-                let sig = rsa_pss_sign_2048_sha256_internal(
-                    &KAT_N_BYTES,
-                    &KAT_D_BYTES,
-                    msg,
-                    salt,
-                )
-                .unwrap();
+                let sig = rsa_pss_sign_2048_sha256_internal(&KAT_N_BYTES, &KAT_D_BYTES, msg, salt)
+                    .unwrap();
                 assert!(rsa_pss_verify_2048_sha256_internal(
                     &KAT_N_BYTES,
                     KAT_E,
@@ -1856,8 +1871,7 @@ mod tests {
         )
         .expect("drbg instantiates");
 
-        let sk =
-            RsaPrivateKey2048::generate(&mut drbg, 65537).expect("keygen + PCT succeeds");
+        let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).expect("keygen + PCT succeeds");
 
         // Two signatures over the same message must differ because
         // the salt is sampled fresh per call, then both must verify.
@@ -1871,10 +1885,8 @@ mod tests {
         assert_ne!(sig1, sig2, "PSS signatures must differ (fresh salt)");
 
         let n = sk.modulus_bytes();
-        rsa_pss_verify_2048_sha256(n, 65537, msg, &sig1)
-            .expect("sig1 verifies");
-        rsa_pss_verify_2048_sha256(n, 65537, msg, &sig2)
-            .expect("sig2 verifies");
+        rsa_pss_verify_2048_sha256(n, 65537, msg, &sig1).expect("sig1 verifies");
+        rsa_pss_verify_2048_sha256(n, 65537, msg, &sig2).expect("sig2 verifies");
     }
 
     /// R5: a freshly-generated key exposes the CRT path and the CRT
@@ -1890,8 +1902,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r5-crt-equiv-entropy-v1", b"pqclib-r5-crt-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"pqclib-r5-crt-equiv-entropy-v1",
+            b"pqclib-r5-crt-nonce",
+            b"",
+        )
+        .unwrap();
 
         // Pull raw keygen material so we can exercise both paths on
         // the same (n, e, d) with and without CRT plumbing.
@@ -1905,10 +1921,16 @@ mod tests {
         let qinv_bytes = km.qinv.to_be_bytes();
 
         let msg = b"pqclib R5 CRT equivalence probe";
-        let sig_non_crt =
-            rsa_pkcs1_v15_sign_2048_sha256_internal(&n_bytes, &d_bytes, msg).unwrap();
+        let sig_non_crt = rsa_pkcs1_v15_sign_2048_sha256_internal(&n_bytes, &d_bytes, msg).unwrap();
         let sig_crt = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
-            &n_bytes, 65537, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes, msg,
+            &n_bytes,
+            65537,
+            &p_bytes,
+            &q_bytes,
+            &dp_bytes,
+            &dq_bytes,
+            &qinv_bytes,
+            msg,
         )
         .unwrap();
         assert_eq!(
@@ -1935,8 +1957,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r5-bellcore-entropy-v1", b"pqclib-r5-bellcore-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"pqclib-r5-bellcore-entropy-v1",
+            b"pqclib-r5-bellcore-nonce",
+            b"",
+        )
+        .unwrap();
         let km = keygen::generate_2048(&mut drbg, 65537).unwrap();
         let n_bytes = km.n.to_be_bytes();
         let p_bytes = km.p.to_be_bytes();
@@ -1947,13 +1973,16 @@ mod tests {
         let qinv_bytes = km.qinv.to_be_bytes();
 
         let result = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
-            &n_bytes, 65537, &p_bytes, &q_bytes, &dp_bad, &dq_bytes, &qinv_bytes,
+            &n_bytes,
+            65537,
+            &p_bytes,
+            &q_bytes,
+            &dp_bad,
+            &dq_bytes,
+            &qinv_bytes,
             b"pqclib R5 Bellcore probe",
         );
-        assert!(
-            result.is_none(),
-            "Bellcore verify must catch a faulted dP"
-        );
+        assert!(result.is_none(), "Bellcore verify must catch a faulted dP");
     }
 
     /// R5: PSS sign via a CRT-form handle must produce a signature
@@ -1966,15 +1995,18 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r5-crt-pss-entropy", b"pqclib-r5-crt-pss-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"pqclib-r5-crt-pss-entropy",
+            b"pqclib-r5-crt-pss-nonce",
+            b"",
+        )
+        .unwrap();
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
         let salt = [0x42u8; pss::SLEN];
         let sig = sk
             .sign_pss_sha256_with_salt(b"R5 CRT PSS probe", &salt)
             .unwrap();
-        rsa_pss_verify_2048_sha256(sk.modulus_bytes(), 65537, b"R5 CRT PSS probe", &sig)
-            .unwrap();
+        rsa_pss_verify_2048_sha256(sk.modulus_bytes(), 65537, b"R5 CRT PSS probe", &sig).unwrap();
     }
 
     /// Sanity check: the `RsaPrivateKey2048::generate` path rejects
@@ -2036,8 +2068,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r6-oaep-crt-entropy", b"pqclib-r6-oaep-crt-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"pqclib-r6-oaep-crt-entropy",
+            b"pqclib-r6-oaep-crt-nonce",
+            b"",
+        )
+        .unwrap();
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
 
         let seed = [0xc3u8; oaep::HLEN];
@@ -2069,8 +2105,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r6-oaep-agree-entropy", b"pqclib-r6-oaep-agree-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"pqclib-r6-oaep-agree-entropy",
+            b"pqclib-r6-oaep-agree-nonce",
+            b"",
+        )
+        .unwrap();
         let sk_crt = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
         let sk_nocrt = RsaPrivateKey2048::from_components(
             sk_crt.modulus_bytes(),
@@ -2092,7 +2132,9 @@ mod tests {
         .unwrap();
 
         let mut out_crt = [0u8; oaep::MAX_MSG_LEN];
-        let mlen_crt = sk_crt.decrypt_oaep_sha256(label, &ct, &mut out_crt).unwrap();
+        let mlen_crt = sk_crt
+            .decrypt_oaep_sha256(label, &ct, &mut out_crt)
+            .unwrap();
 
         let mut out_nocrt = [0u8; oaep::MAX_MSG_LEN];
         let mlen_nocrt = sk_nocrt
@@ -2225,13 +2267,15 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r6-oaep-drbg-entropy", b"pqclib-r6-oaep-drbg-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"pqclib-r6-oaep-drbg-entropy",
+            b"pqclib-r6-oaep-drbg-nonce",
+            b"",
+        )
+        .unwrap();
         let msg: &[u8] = b"randomised OAEP";
-        let ct1 =
-            rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
-        let ct2 =
-            rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
+        let ct1 = rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
+        let ct2 = rsa_oaep_encrypt_2048_sha256(&mut drbg, &KAT_N_BYTES, KAT_E, b"", msg).unwrap();
         assert_ne!(ct1, ct2);
 
         // Both still decrypt to the same plaintext.

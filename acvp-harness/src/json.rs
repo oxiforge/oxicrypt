@@ -259,7 +259,10 @@ impl Parser<'_> {
                 self.pos += 1;
                 Ok(())
             }
-            Some(b) => Err(ParseError::UnexpectedByte { pos: self.pos, byte: b }),
+            Some(b) => Err(ParseError::UnexpectedByte {
+                pos: self.pos,
+                byte: b,
+            }),
             None => Err(ParseError::UnexpectedEof),
         }
     }
@@ -286,7 +289,10 @@ impl Parser<'_> {
             Some(b't' | b'f') => self.parse_bool(),
             Some(b'n') => self.parse_null(),
             Some(b) if b.is_ascii_digit() => self.parse_number(),
-            Some(b) => Err(ParseError::UnexpectedByte { pos: self.pos, byte: b }),
+            Some(b) => Err(ParseError::UnexpectedByte {
+                pos: self.pos,
+                byte: b,
+            }),
             None => Err(ParseError::UnexpectedEof),
         }
     }
@@ -320,7 +326,10 @@ impl Parser<'_> {
                     return Ok(JsonValue::Object(out));
                 }
                 Some(b) => {
-                    return Err(ParseError::UnexpectedByte { pos: self.pos, byte: b });
+                    return Err(ParseError::UnexpectedByte {
+                        pos: self.pos,
+                        byte: b,
+                    });
                 }
                 None => return Err(ParseError::UnexpectedEof),
             }
@@ -348,7 +357,10 @@ impl Parser<'_> {
                     return Ok(JsonValue::Array(out));
                 }
                 Some(b) => {
-                    return Err(ParseError::UnexpectedByte { pos: self.pos, byte: b });
+                    return Err(ParseError::UnexpectedByte {
+                        pos: self.pos,
+                        byte: b,
+                    });
                 }
                 None => return Err(ParseError::UnexpectedEof),
             }
@@ -394,7 +406,10 @@ impl Parser<'_> {
                 continue;
             }
             if b < 0x20 {
-                return Err(ParseError::UnexpectedByte { pos: self.pos, byte: b });
+                return Err(ParseError::UnexpectedByte {
+                    pos: self.pos,
+                    byte: b,
+                });
             }
             if has_escape {
                 out.push(b as char);
@@ -466,8 +481,8 @@ impl Parser<'_> {
         if slice.len() > 1 && slice.first() == Some(&b'0') {
             return Err(ParseError::InvalidNumber { pos: start });
         }
-        let s = core::str::from_utf8(slice)
-            .map_err(|_| ParseError::InvalidNumber { pos: start })?;
+        let s =
+            core::str::from_utf8(slice).map_err(|_| ParseError::InvalidNumber { pos: start })?;
         let n: i64 = s
             .parse()
             .map_err(|_| ParseError::NumberOutOfRange { pos: start })?;
@@ -637,18 +652,12 @@ mod tests {
 
     #[test]
     fn parse_rejects_leading_zero() {
-        assert!(matches!(
-            parse("01"),
-            Err(ParseError::InvalidNumber { .. })
-        ));
+        assert!(matches!(parse("01"), Err(ParseError::InvalidNumber { .. })));
     }
 
     #[test]
     fn parse_rejects_trailing_data() {
-        assert!(matches!(
-            parse("1 2"),
-            Err(ParseError::TrailingData { .. })
-        ));
+        assert!(matches!(parse("1 2"), Err(ParseError::TrailingData { .. })));
     }
 
     #[test]
@@ -664,11 +673,7 @@ mod tests {
         let v = parse("[1,2,[3,4]]").unwrap();
         assert_eq!(
             v,
-            JsonValue::Array(vec![
-                n(1),
-                n(2),
-                JsonValue::Array(vec![n(3), n(4)])
-            ])
+            JsonValue::Array(vec![n(1), n(2), JsonValue::Array(vec![n(3), n(4)])])
         );
 
         let v = parse("{\"k\":[null,true]}").unwrap();
@@ -699,10 +704,7 @@ mod tests {
         for _ in 0..MAX_DEPTH + 2 {
             s.push(']');
         }
-        assert!(matches!(
-            parse(&s),
-            Err(ParseError::DepthExceeded { .. })
-        ));
+        assert!(matches!(parse(&s), Err(ParseError::DepthExceeded { .. })));
     }
 
     #[test]

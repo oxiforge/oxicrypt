@@ -33,7 +33,7 @@ use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_hmac::{
-    HmacSha1, HmacSha224, HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512, HmacSha384,
+    HmacSha1, HmacSha224, HmacSha384, HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512,
     HmacSha512, HmacSha512_224, HmacSha512_256,
 };
 
@@ -313,9 +313,7 @@ fn parse_hmac_test(
     }
     let mac_bytes: usize = (mac_len_bits / 8) as usize;
     if mac_bytes == 0 || mac_bytes > full_out_bytes {
-        return Err(DispatchError::Crypto(
-            "HMAC: `macLen` outside legal range",
-        ));
+        return Err(DispatchError::Crypto("HMAC: `macLen` outside legal range"));
     }
     let key_hex = t
         .get("key")
@@ -327,7 +325,14 @@ fn parse_hmac_test(
         .ok_or(DispatchError::MissingField("msg"))?;
     let key = hex::decode(key_hex)?;
     let msg = hex::decode(msg_hex)?;
-    Ok((tc_id, HmacTestInputs { key, msg, mac_bytes }))
+    Ok((
+        tc_id,
+        HmacTestInputs {
+            key,
+            msg,
+            mac_bytes,
+        },
+    ))
 }
 
 // ----------------------------------------------------------------------

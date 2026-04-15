@@ -39,7 +39,7 @@ const NUM_TESTS: usize = 5;
 /// Per-test DRBG seed material. Each entry is (entropy, nonce, perso)
 /// as hex strings. The entropy and nonce values are long enough for
 /// HMAC_DRBG-SHA256 (entropy ≥ 32 bytes, nonce ≥ 16 bytes).
-const SEEDS: [(& str, &str, &str); NUM_TESTS] = [
+const SEEDS: [(&str, &str, &str); NUM_TESTS] = [
     (
         "AA00BB11CC22DD33EE44FF5500112233AA00BB11CC22DD33EE44FF5500112233",
         "1122334455667788990011223344556677889900",
@@ -112,12 +112,21 @@ fn generate_rsa_keygen_slice() {
         .unwrap_or_else(|| panic!("OAEP encrypt sanity failed for test {i}"));
         let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
         let pt_len = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
-            &n_bytes, e, &p_bytes, &q_bytes, &dp_bytes, &dq_bytes, &qinv_bytes,
-            label, &ct, &mut out,
+            &n_bytes,
+            e,
+            &p_bytes,
+            &q_bytes,
+            &dp_bytes,
+            &dq_bytes,
+            &qinv_bytes,
+            label,
+            &ct,
+            &mut out,
         )
         .unwrap_or_else(|| panic!("CRT decrypt sanity failed for test {i}"));
         assert_eq!(
-            &out[..pt_len], test_msg,
+            &out[..pt_len],
+            test_msg,
             "keygen sanity: round-trip mismatch for test {i}"
         );
 

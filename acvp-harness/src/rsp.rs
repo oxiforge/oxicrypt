@@ -99,12 +99,12 @@ impl fmt::Display for RspError {
                 line,
                 expected,
                 got,
-            } => write!(
-                f,
-                ".rsp:{line}: expected `{expected} = …` got {got:?}"
-            ),
+            } => write!(f, ".rsp:{line}: expected `{expected} = …` got {got:?}"),
             Self::InvalidInteger { line, field } => {
-                write!(f, ".rsp:{line}: field `{field}` is not a non-negative integer")
+                write!(
+                    f,
+                    ".rsp:{line}: field `{field}` is not a non-negative integer"
+                )
             }
             Self::InvalidHex {
                 line,
@@ -239,10 +239,7 @@ fn split_kv(line: &str) -> Option<(&str, &str)> {
 
 /// Return the name of the field the parser was expecting next, for
 /// use in [`RspError::UnexpectedField`] messages.
-fn next_expected(
-    pending_len: Option<&u64>,
-    pending_msg: Option<&Vec<u8>>,
-) -> &'static str {
+fn next_expected(pending_len: Option<&u64>, pending_msg: Option<&Vec<u8>>) -> &'static str {
     match (pending_len, pending_msg) {
         (None, _) => "Len",
         (Some(_), None) => "Msg",
@@ -303,7 +300,8 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
 
     #[test]
     fn tolerates_crlf_line_endings() {
-        let src = "[L = 20]\r\nLen = 0\r\nMsg = 00\r\nMD = da39a3ee5e6b4b0d3255bfef95601890afd80709\r\n";
+        let src =
+            "[L = 20]\r\nLen = 0\r\nMsg = 00\r\nMD = da39a3ee5e6b4b0d3255bfef95601890afd80709\r\n";
         let doc = parse(src).unwrap();
         assert_eq!(doc.digest_length_bytes, 20);
         assert_eq!(doc.cases.len(), 1);
@@ -320,7 +318,13 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
     fn out_of_order_field_is_error() {
         let src = "[L = 32]\nMsg = 00\nLen = 0\nMD = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n";
         let err = parse(src).unwrap_err();
-        assert!(matches!(err, RspError::UnexpectedField { expected: "Len", .. }));
+        assert!(matches!(
+            err,
+            RspError::UnexpectedField {
+                expected: "Len",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -333,10 +337,7 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
     fn non_integer_len_is_error() {
         let src = "[L = 32]\nLen = notanumber\nMsg = 00\nMD = 00\n";
         let err = parse(src).unwrap_err();
-        assert!(matches!(
-            err,
-            RspError::InvalidInteger { field: "Len", .. }
-        ));
+        assert!(matches!(err, RspError::InvalidInteger { field: "Len", .. }));
     }
 
     #[test]

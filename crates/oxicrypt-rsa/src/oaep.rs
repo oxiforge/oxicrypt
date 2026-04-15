@@ -160,11 +160,7 @@ fn ct_select_usize(cond: u8, a: usize, b: usize) -> usize {
 /// occurred, and MGF1 unmasking runs to completion regardless of the
 /// `Y` byte or `lHash'` state. All failure modes return the same
 /// generic `None` to the caller.
-pub fn emsa_oaep_decode(
-    label: &[u8],
-    em: &[u8; K],
-    out: &mut [u8; MAX_MSG_LEN],
-) -> Option<usize> {
+pub fn emsa_oaep_decode(label: &[u8], em: &[u8; K], out: &mut [u8; MAX_MSG_LEN]) -> Option<usize> {
     // Step 3a: lHash = Hash(L).
     let lhash = sha256_internal(label);
 
@@ -320,11 +316,7 @@ pub fn emsa_oaep_encode_n(
 /// `out.len()` must be at least `k − 2·hLen − 2`.
 ///
 /// Manger-resistant: single accumulator, no early exit.
-pub fn emsa_oaep_decode_n(
-    label: &[u8],
-    em: &[u8],
-    out: &mut [u8],
-) -> Option<usize> {
+pub fn emsa_oaep_decode_n(label: &[u8], em: &[u8], out: &mut [u8]) -> Option<usize> {
     let k = em.len();
     if !(2 * HLEN + 2..=MAX_K).contains(&k) {
         return None;

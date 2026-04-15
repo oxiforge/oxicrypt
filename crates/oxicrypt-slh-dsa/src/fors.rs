@@ -18,12 +18,7 @@ pub(crate) const FORS_SIG_LEN: usize = K * (1 + A) * N; // 10560
 /// Generate a single FORS secret-key value.
 ///
 /// `idx` identifies the leaf across all K trees (0 ≤ idx < K × 2^A).
-fn fors_sk_gen(
-    pk_seed: &[u8; N],
-    sk_seed: &[u8; N],
-    adrs: &Adrs,
-    idx: u32,
-) -> [u8; N] {
+fn fors_sk_gen(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs, idx: u32) -> [u8; N] {
     let mut sk_adrs = *adrs;
     sk_adrs.set_type(AdrsType::ForsPrf);
     sk_adrs.set_keypair_address(adrs.keypair_address());
@@ -55,7 +50,14 @@ fn fors_node(
         return thash::f(pk_seed, &leaf_adrs, &sk);
     }
 
-    let left = fors_node(pk_seed, sk_seed, 2 * node_idx, node_height - 1, adrs, tree_base);
+    let left = fors_node(
+        pk_seed,
+        sk_seed,
+        2 * node_idx,
+        node_height - 1,
+        adrs,
+        tree_base,
+    );
     let right = fors_node(
         pk_seed,
         sk_seed,

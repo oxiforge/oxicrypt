@@ -36,12 +36,7 @@ fn num_array(vals: &[i64]) -> JsonValue {
 
 /// Helper: build a JSON object from key-value pairs.
 fn obj(pairs: Vec<(&str, JsonValue)>) -> JsonValue {
-    JsonValue::Object(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
-    )
+    JsonValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
 /// Helper: a standard byte-aligned range domain.
@@ -123,10 +118,7 @@ pub fn cmac_aes_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                (
-                    "direction",
-                    str_array(&["gen", "ver"]),
-                ),
+                ("direction", str_array(&["gen", "ver"])),
                 ("keyLen", num_array(&[128, 192, 256])),
                 ("msgLen", range_domain(0, 65536, 8)),
                 ("macLen", range_domain(8, 128, 8)),
@@ -148,10 +140,7 @@ pub fn kmac_capability(algorithm: &str, xof: bool) -> JsonValue {
         ("msgLen", range_domain(0, 65536, 8)),
         ("keyLen", range_domain(128, 524_288, 8)),
         ("macLen", range_domain(32, 65536, 8)),
-        (
-            "xof",
-            JsonValue::Array(vec![JsonValue::Bool(xof)]),
-        ),
+        ("xof", JsonValue::Array(vec![JsonValue::Bool(xof)])),
     ])
 }
 
@@ -176,10 +165,7 @@ pub fn tuplehash_capability(algorithm: &str, xof: bool) -> JsonValue {
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
         ("outputLen", range_domain(16, 65536, 8)),
-        (
-            "xof",
-            JsonValue::Array(vec![JsonValue::Bool(xof)]),
-        ),
+        ("xof", JsonValue::Array(vec![JsonValue::Bool(xof)])),
     ])
 }
 
@@ -199,10 +185,7 @@ pub fn parallelhash_capability(algorithm: &str, xof: bool) -> JsonValue {
                 ("increment", num(1)),
             ])]),
         ),
-        (
-            "xof",
-            JsonValue::Array(vec![JsonValue::Bool(xof)]),
-        ),
+        ("xof", JsonValue::Array(vec![JsonValue::Bool(xof)])),
     ])
 }
 
@@ -213,10 +196,7 @@ pub fn aes_ecb_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-ECB")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
     ])
 }
@@ -226,10 +206,7 @@ pub fn aes_cbc_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-CBC")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
     ])
 }
@@ -239,10 +216,7 @@ pub fn aes_ctr_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-CTR")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
         ("payloadLen", range_domain(8, 128, 8)),
         ("incrementalCounter", JsonValue::Bool(true)),
@@ -255,10 +229,7 @@ pub fn aes_gcm_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-GCM")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
         ("ivLen", num_array(&[96])),
         ("ivGen", str_val("external")),
@@ -273,23 +244,11 @@ pub fn aes_ccm_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-CCM")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
-        (
-            "payloadLen",
-            range_domain(0, 256, 8),
-        ),
-        (
-            "ivLen",
-            num_array(&[56, 64, 72, 80, 88, 96, 104]),
-        ),
-        (
-            "tagLen",
-            num_array(&[32, 48, 64, 80, 96, 112, 128]),
-        ),
+        ("payloadLen", range_domain(0, 256, 8)),
+        ("ivLen", num_array(&[56, 64, 72, 80, 88, 96, 104])),
+        ("tagLen", num_array(&[32, 48, 64, 80, 96, 112, 128])),
         ("aadLen", range_domain(0, 524_288, 8)),
     ])
 }
@@ -299,15 +258,9 @@ pub fn aes_kw_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-KW")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
-        (
-            "kwCipher",
-            str_array(&["cipher", "inverse"]),
-        ),
+        ("kwCipher", str_array(&["cipher", "inverse"])),
         ("payloadLen", range_domain(128, 4096, 64)),
     ])
 }
@@ -317,15 +270,9 @@ pub fn aes_kwp_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ACVP-AES-KWP")),
         ("revision", str_val("1.0")),
-        (
-            "direction",
-            str_array(&["encrypt", "decrypt"]),
-        ),
+        ("direction", str_array(&["encrypt", "decrypt"])),
         ("keyLen", num_array(&[128, 192, 256])),
-        (
-            "kwCipher",
-            str_array(&["cipher", "inverse"]),
-        ),
+        ("kwCipher", str_array(&["cipher", "inverse"])),
         ("payloadLen", range_domain(8, 4096, 8)),
     ])
 }
@@ -447,14 +394,8 @@ pub fn kda_hkdf_capability() -> JsonValue {
         ),
         ("z", range_domain(224, 65536, 8)),
         ("l", num(2048)),
-        (
-            "fixedInfoPattern",
-            str_val("uPartyInfo||vPartyInfo||l"),
-        ),
-        (
-            "usesHybridSharedSecret",
-            JsonValue::Bool(true),
-        ),
+        ("fixedInfoPattern", str_val("uPartyInfo||vPartyInfo||l")),
+        ("usesHybridSharedSecret", JsonValue::Bool(true)),
     ])
 }
 
@@ -495,10 +436,7 @@ fn kbkdf_mode_entry(kdf_mode: &str) -> JsonValue {
             ]),
         ),
         ("counterLength", num_array(&[8, 16, 24, 32])),
-        (
-            "supportedLengths",
-            range_domain(8, 4096, 8),
-        ),
+        ("supportedLengths", range_domain(8, 4096, 8)),
     ])
 }
 
@@ -508,14 +446,8 @@ pub fn kdf_comp_tls_capability() -> JsonValue {
         ("algorithm", str_val("kdf-components")),
         ("mode", str_val("tls")),
         ("revision", str_val("1.0")),
-        (
-            "tlsVersion",
-            str_array(&["v1.2"]),
-        ),
-        (
-            "hashAlg",
-            str_array(&["SHA2-256", "SHA2-384", "SHA2-512"]),
-        ),
+        ("tlsVersion", str_array(&["v1.2"])),
+        ("hashAlg", str_array(&["SHA2-256", "SHA2-384", "SHA2-512"])),
     ])
 }
 
@@ -525,10 +457,7 @@ pub fn tls12_kdf_capability() -> JsonValue {
         ("algorithm", str_val("TLS-v1.2")),
         ("mode", str_val("KDF")),
         ("revision", str_val("RFC7627")),
-        (
-            "hashAlg",
-            str_array(&["SHA2-256", "SHA2-384", "SHA2-512"]),
-        ),
+        ("hashAlg", str_array(&["SHA2-256", "SHA2-384", "SHA2-512"])),
     ])
 }
 
@@ -582,28 +511,25 @@ pub fn rsa_sigver_capability() -> JsonValue {
 
 /// Build one RSA sigVer sigType capability entry.
 fn rsa_sigver_sigtype(sig_type: &str) -> JsonValue {
-    let hash_pairs = JsonValue::Array(vec![
-        obj(vec![
-            ("hashAlg", str_val("SHA2-256")),
-            ("saltLen", num(32)),
-        ]),
-    ]);
+    let hash_pairs = JsonValue::Array(vec![obj(vec![
+        ("hashAlg", str_val("SHA2-256")),
+        ("saltLen", num(32)),
+    ])]);
     obj(vec![
         ("sigType", str_val(sig_type)),
         (
             "properties",
-            JsonValue::Array(vec![obj(vec![
-                ("modulo", num(2048)),
-                ("hashPair", hash_pairs.clone()),
+            JsonValue::Array(vec![
+                obj(vec![
+                    ("modulo", num(2048)),
+                    ("hashPair", hash_pairs.clone()),
+                ]),
+                obj(vec![
+                    ("modulo", num(3072)),
+                    ("hashPair", hash_pairs.clone()),
+                ]),
+                obj(vec![("modulo", num(4096)), ("hashPair", hash_pairs)]),
             ]),
-            obj(vec![
-                ("modulo", num(3072)),
-                ("hashPair", hash_pairs.clone()),
-            ]),
-            obj(vec![
-                ("modulo", num(4096)),
-                ("hashPair", hash_pairs),
-            ])]),
         ),
     ])
 }
@@ -626,28 +552,25 @@ pub fn rsa_siggen_capability() -> JsonValue {
 
 /// Build one RSA sigGen sigType capability entry.
 fn rsa_siggen_sigtype(sig_type: &str) -> JsonValue {
-    let hash_pairs = JsonValue::Array(vec![
-        obj(vec![
-            ("hashAlg", str_val("SHA2-256")),
-            ("saltLen", num(32)),
-        ]),
-    ]);
+    let hash_pairs = JsonValue::Array(vec![obj(vec![
+        ("hashAlg", str_val("SHA2-256")),
+        ("saltLen", num(32)),
+    ])]);
     obj(vec![
         ("sigType", str_val(sig_type)),
         (
             "properties",
-            JsonValue::Array(vec![obj(vec![
-                ("modulo", num(2048)),
-                ("hashPair", hash_pairs.clone()),
+            JsonValue::Array(vec![
+                obj(vec![
+                    ("modulo", num(2048)),
+                    ("hashPair", hash_pairs.clone()),
+                ]),
+                obj(vec![
+                    ("modulo", num(3072)),
+                    ("hashPair", hash_pairs.clone()),
+                ]),
+                obj(vec![("modulo", num(4096)), ("hashPair", hash_pairs)]),
             ]),
-            obj(vec![
-                ("modulo", num(3072)),
-                ("hashPair", hash_pairs.clone()),
-            ]),
-            obj(vec![
-                ("modulo", num(4096)),
-                ("hashPair", hash_pairs),
-            ])]),
         ),
     ])
 }
@@ -693,10 +616,7 @@ pub fn rsa_oaep_capability() -> JsonValue {
             "capabilities",
             JsonValue::Array(vec![obj(vec![
                 ("modulo", num(2048)),
-                (
-                    "hashAlg",
-                    str_array(&["SHA2-256"]),
-                ),
+                ("hashAlg", str_array(&["SHA2-256"])),
             ])]),
         ),
     ])
@@ -710,10 +630,7 @@ pub fn rsa_decprim_capability() -> JsonValue {
         ("revision", str_val("Sp800-56Br2")),
         ("pubExpMode", str_val("fixed")),
         ("fixedPubExp", str_val("010001")),
-        (
-            "keyFormat",
-            str_array(&["standard", "crt"]),
-        ),
+        ("keyFormat", str_array(&["standard", "crt"])),
     ])
 }
 
@@ -725,10 +642,7 @@ pub fn rsa_sigprim_capability() -> JsonValue {
         ("revision", str_val("2.0")),
         ("pubExpMode", str_val("fixed")),
         ("fixedPubExp", str_val("010001")),
-        (
-            "keyFormat",
-            str_array(&["standard", "crt"]),
-        ),
+        ("keyFormat", str_array(&["standard", "crt"])),
     ])
 }
 
@@ -743,14 +657,8 @@ pub fn ecdsa_sigver_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                (
-                    "curve",
-                    str_array(&["P-256", "P-384"]),
-                ),
-                (
-                    "hashAlg",
-                    str_array(&["SHA2-256", "SHA-384"]),
-                ),
+                ("curve", str_array(&["P-256", "P-384"])),
+                ("hashAlg", str_array(&["SHA2-256", "SHA-384"])),
             ])]),
         ),
     ])
@@ -762,10 +670,7 @@ pub fn ecdsa_keyver_capability() -> JsonValue {
         ("algorithm", str_val("ECDSA")),
         ("mode", str_val("keyVer")),
         ("revision", str_val("FIPS186-5")),
-        (
-            "curve",
-            str_array(&["P-256", "P-384"]),
-        ),
+        ("curve", str_array(&["P-256", "P-384"])),
     ])
 }
 
@@ -778,20 +683,11 @@ pub fn ecdsa_siggen_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                (
-                    "curve",
-                    str_array(&["P-256", "P-384"]),
-                ),
-                (
-                    "hashAlg",
-                    str_array(&["SHA2-256", "SHA-384"]),
-                ),
+                ("curve", str_array(&["P-256", "P-384"])),
+                ("hashAlg", str_array(&["SHA2-256", "SHA-384"])),
             ])]),
         ),
-        (
-            "componentTest",
-            JsonValue::Bool(false),
-        ),
+        ("componentTest", JsonValue::Bool(false)),
     ])
 }
 
@@ -801,14 +697,8 @@ pub fn ecdsa_keygen_capability() -> JsonValue {
         ("algorithm", str_val("ECDSA")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("FIPS186-5")),
-        (
-            "curve",
-            str_array(&["P-256", "P-384"]),
-        ),
-        (
-            "secretGenerationMode",
-            str_array(&["testing candidates"]),
-        ),
+        ("curve", str_array(&["P-256", "P-384"])),
+        ("secretGenerationMode", str_array(&["testing candidates"])),
     ])
 }
 
@@ -820,10 +710,7 @@ pub fn eddsa_sigver_capability() -> JsonValue {
         ("algorithm", str_val("EDDSA")),
         ("mode", str_val("sigVer")),
         ("revision", str_val("1.0")),
-        (
-            "curve",
-            str_array(&["ED-25519"]),
-        ),
+        ("curve", str_array(&["ED-25519"])),
         ("pure", JsonValue::Bool(true)),
         ("preHash", JsonValue::Bool(false)),
     ])
@@ -835,10 +722,7 @@ pub fn eddsa_keyver_capability() -> JsonValue {
         ("algorithm", str_val("EDDSA")),
         ("mode", str_val("keyVer")),
         ("revision", str_val("1.0")),
-        (
-            "curve",
-            str_array(&["ED-25519"]),
-        ),
+        ("curve", str_array(&["ED-25519"])),
     ])
 }
 
@@ -848,10 +732,7 @@ pub fn eddsa_siggen_capability() -> JsonValue {
         ("algorithm", str_val("EDDSA")),
         ("mode", str_val("sigGen")),
         ("revision", str_val("1.0")),
-        (
-            "curve",
-            str_array(&["ED-25519"]),
-        ),
+        ("curve", str_array(&["ED-25519"])),
         ("pure", JsonValue::Bool(true)),
         ("preHash", JsonValue::Bool(false)),
     ])
@@ -863,10 +744,7 @@ pub fn eddsa_keygen_capability() -> JsonValue {
         ("algorithm", str_val("EDDSA")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("1.0")),
-        (
-            "curve",
-            str_array(&["ED-25519"]),
-        ),
+        ("curve", str_array(&["ED-25519"])),
     ])
 }
 
@@ -882,10 +760,7 @@ pub fn kas_ecc_ssc_capability() -> JsonValue {
             "scheme",
             obj(vec![(
                 "ephemeralUnified",
-                obj(vec![(
-                    "kasRole",
-                    str_array(&["initiator", "responder"]),
-                )]),
+                obj(vec![("kasRole", str_array(&["initiator", "responder"]))]),
             )]),
         ),
         (
@@ -907,16 +782,10 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
             "scheme",
             obj(vec![(
                 "dhEphem",
-                obj(vec![(
-                    "kasRole",
-                    str_array(&["initiator", "responder"]),
-                )]),
+                obj(vec![("kasRole", str_array(&["initiator", "responder"]))]),
             )]),
         ),
-        (
-            "domainParameterGenerationMethods",
-            str_array(&["FB"]),
-        ),
+        ("domainParameterGenerationMethods", str_array(&["FB"])),
     ])
 }
 
@@ -1020,14 +889,8 @@ pub fn lms_keygen_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                (
-                    "lmsMode",
-                    str_array(&["LMS_SHA256_M32_H10"]),
-                ),
-                (
-                    "lmOtsMode",
-                    str_array(&["LMOTS_SHA256_N32_W4"]),
-                ),
+                ("lmsMode", str_array(&["LMS_SHA256_M32_H10"])),
+                ("lmOtsMode", str_array(&["LMOTS_SHA256_N32_W4"])),
             ])]),
         ),
     ])
@@ -1042,14 +905,8 @@ pub fn lms_siggen_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                (
-                    "lmsMode",
-                    str_array(&["LMS_SHA256_M32_H10"]),
-                ),
-                (
-                    "lmOtsMode",
-                    str_array(&["LMOTS_SHA256_N32_W4"]),
-                ),
+                ("lmsMode", str_array(&["LMS_SHA256_M32_H10"])),
+                ("lmOtsMode", str_array(&["LMOTS_SHA256_N32_W4"])),
             ])]),
         ),
     ])
@@ -1064,14 +921,8 @@ pub fn lms_sigver_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                (
-                    "lmsMode",
-                    str_array(&["LMS_SHA256_M32_H10"]),
-                ),
-                (
-                    "lmOtsMode",
-                    str_array(&["LMOTS_SHA256_N32_W4"]),
-                ),
+                ("lmsMode", str_array(&["LMS_SHA256_M32_H10"])),
+                ("lmOtsMode", str_array(&["LMOTS_SHA256_N32_W4"])),
             ])]),
         ),
     ])
@@ -1085,10 +936,7 @@ pub fn xmss_keygen_capability() -> JsonValue {
         ("algorithm", str_val("XMSS")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("1.0")),
-        (
-            "parameterSets",
-            str_array(&["XMSS-SHA2_10_256"]),
-        ),
+        ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
     ])
 }
 
@@ -1098,10 +946,7 @@ pub fn xmss_siggen_capability() -> JsonValue {
         ("algorithm", str_val("XMSS")),
         ("mode", str_val("sigGen")),
         ("revision", str_val("1.0")),
-        (
-            "parameterSets",
-            str_array(&["XMSS-SHA2_10_256"]),
-        ),
+        ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
     ])
 }
 
@@ -1111,9 +956,6 @@ pub fn xmss_sigver_capability() -> JsonValue {
         ("algorithm", str_val("XMSS")),
         ("mode", str_val("sigVer")),
         ("revision", str_val("1.0")),
-        (
-            "parameterSets",
-            str_array(&["XMSS-SHA2_10_256"]),
-        ),
+        ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
     ])
 }

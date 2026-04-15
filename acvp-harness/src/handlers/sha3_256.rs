@@ -49,9 +49,10 @@ impl AlgorithmHandler for Sha3_256Handler {
                     .map_err(|_| DispatchError::Crypto("oxicrypt_sha::sha3::sha3_256 returned Err"))
             },
             |content, full_bytes| {
-                super::sha3::ldt_stream::<{ oxicrypt_sha::sha3::SHA3_256_RATE }, { oxicrypt_sha::sha3::SHA3_256_DIGEST_SIZE }>(
-                    content, full_bytes,
-                )
+                super::sha3::ldt_stream::<
+                    { oxicrypt_sha::sha3::SHA3_256_RATE },
+                    { oxicrypt_sha::sha3::SHA3_256_DIGEST_SIZE },
+                >(content, full_bytes)
             },
         )
     }

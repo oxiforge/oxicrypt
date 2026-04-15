@@ -243,10 +243,13 @@ fn read_input(path: Option<&str>) -> io::Result<Vec<u8>> {
 /// Quick hex encoder.
 #[allow(clippy::arithmetic_side_effects)]
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::with_capacity(bytes.len().saturating_mul(2)), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes.iter().fold(
+        String::with_capacity(bytes.len().saturating_mul(2)),
+        |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        },
+    )
 }
 
 /// Decode a hex string into bytes.
@@ -258,11 +261,8 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     (0..s.len())
         .step_by(2)
         .map(|i| {
-            u8::from_str_radix(
-                s.get(i..i + 2).ok_or_else(|| "short hex".to_string())?,
-                16,
-            )
-            .map_err(|e| format!("invalid hex at byte {}: {e}", i / 2))
+            u8::from_str_radix(s.get(i..i + 2).ok_or_else(|| "short hex".to_string())?, 16)
+                .map_err(|e| format!("invalid hex at byte {}: {e}", i / 2))
         })
         .collect()
 }

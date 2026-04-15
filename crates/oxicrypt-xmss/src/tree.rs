@@ -13,7 +13,7 @@
     clippy::integer_division,
     clippy::cast_possible_truncation,
     clippy::needless_range_loop,
-    clippy::many_single_char_names,
+    clippy::many_single_char_names
 )]
 
 use oxicrypt_sha::sha256::Sha256;
@@ -64,12 +64,7 @@ fn prf(key: &[u8; N], m: &[u8]) -> [u8; N] {
 /// BM_0 = PRF(pub_seed, ADRS{keyAndMask=1})
 /// BM_1 = PRF(pub_seed, ADRS{keyAndMask=2})
 /// return H(KEY, (left XOR BM_0) || (right XOR BM_1))
-fn rand_hash(
-    left: &[u8; N],
-    right: &[u8; N],
-    pub_seed: &[u8; N],
-    adrs: &mut Adrs,
-) -> [u8; N] {
+fn rand_hash(left: &[u8; N], right: &[u8; N], pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8; N] {
     adrs.set_key_and_mask(0);
     let key = prf(pub_seed, &adrs.bytes());
 
@@ -104,11 +99,7 @@ fn rand_hash(
 ///
 /// The L-tree uses RAND_HASH at each level, with an L-tree ADRS
 /// encoding the leaf index and tree height.
-fn ltree(
-    pk: &[[u8; N]; wots::LEN],
-    pub_seed: &[u8; N],
-    leaf_idx: u32,
-) -> [u8; N] {
+fn ltree(pk: &[[u8; N]; wots::LEN], pub_seed: &[u8; N], leaf_idx: u32) -> [u8; N] {
     // Copy into a working buffer. Max 67 elements.
     let mut buf = [[0u8; N]; wots::LEN];
     buf.copy_from_slice(pk);
@@ -138,11 +129,7 @@ fn ltree(
 // ── Leaf computation ────────────────────────────────────────────
 
 /// Compute a tree leaf: WOTS+ keygen → L-tree compression.
-fn compute_leaf(
-    sk_seed: &[u8; N],
-    pub_seed: &[u8; N],
-    leaf_idx: u32,
-) -> [u8; N] {
+fn compute_leaf(sk_seed: &[u8; N], pub_seed: &[u8; N], leaf_idx: u32) -> [u8; N] {
     let pk = wots::wots_pk_gen(sk_seed, pub_seed, leaf_idx);
     ltree(&pk, pub_seed, leaf_idx)
 }
@@ -179,12 +166,7 @@ fn hash_tree_node(
 ///
 /// Height 0 = leaf level. Height H = root. Index is the position
 /// at the given height (0-indexed from the left).
-fn compute_node(
-    sk_seed: &[u8; N],
-    pub_seed: &[u8; N],
-    height: u32,
-    index: u32,
-) -> [u8; N] {
+fn compute_node(sk_seed: &[u8; N], pub_seed: &[u8; N], height: u32, index: u32) -> [u8; N] {
     if height == 0 {
         compute_leaf(sk_seed, pub_seed, index)
     } else {
@@ -197,10 +179,7 @@ fn compute_node(
 // ── Public API ──────────────────────────────────────────────────
 
 /// Compute the tree root.
-pub(crate) fn compute_root(
-    sk_seed: &[u8; N],
-    pub_seed: &[u8; N],
-) -> [u8; N] {
+pub(crate) fn compute_root(sk_seed: &[u8; N], pub_seed: &[u8; N]) -> [u8; N] {
     compute_node(sk_seed, pub_seed, H as u32, 0)
 }
 
@@ -208,11 +187,7 @@ pub(crate) fn compute_root(
 ///
 /// Returns H sibling hashes from leaf level (index 0) to the
 /// root's child level (index H-1).
-pub(crate) fn compute_auth_path(
-    sk_seed: &[u8; N],
-    pub_seed: &[u8; N],
-    q: u32,
-) -> [[u8; N]; H] {
+pub(crate) fn compute_auth_path(sk_seed: &[u8; N], pub_seed: &[u8; N], q: u32) -> [[u8; N]; H] {
     let mut path = [[0u8; N]; H];
     let mut idx = q;
     for height in 0..H {
@@ -237,9 +212,21 @@ pub(crate) fn walk_auth_path(
     for height in 0..H {
         let parent_idx = idx >> 1;
         if idx & 1 == 0 {
-            tmp = hash_tree_node(&tmp, &auth[height], pub_seed, (height + 1) as u32, parent_idx);
+            tmp = hash_tree_node(
+                &tmp,
+                &auth[height],
+                pub_seed,
+                (height + 1) as u32,
+                parent_idx,
+            );
         } else {
-            tmp = hash_tree_node(&auth[height], &tmp, pub_seed, (height + 1) as u32, parent_idx);
+            tmp = hash_tree_node(
+                &auth[height],
+                &tmp,
+                pub_seed,
+                (height + 1) as u32,
+                parent_idx,
+            );
         }
         idx = parent_idx;
     }

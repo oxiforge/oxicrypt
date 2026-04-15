@@ -16,7 +16,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::keccak::Sponge;
-use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
 
 /// Domain-separation byte for SHA-3 fixed-length variants.
 const SHA3_DOMAIN: u8 = 0x06;

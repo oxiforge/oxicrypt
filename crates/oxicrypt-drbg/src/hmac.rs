@@ -395,9 +395,8 @@ mod tests {
     // NIST CAVP HMAC_DRBG no-reseed SHA-256 Count=0.
     #[test]
     fn cavp_hmac_drbg_sha256_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "ca851911349384bffe89de1cbdc46e6831e44d34a4fb935ee285dd14b71a7488",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("ca851911349384bffe89de1cbdc46e6831e44d34a4fb935ee285dd14b71a7488");
         let nonce: [u8; 16] = hex_to_bytes("659ba96c601dc69fc902940805ec0ca8");
         let expected: [u8; 128] = hex_to_bytes(
             "e528e9abf2dece54d47c7e75e5fe302149f817ea9fb4bee6f4199697d04d5b89d54fbb978a15b5c443c9ec21036d2460b6f73ebad0dc2aba6e624abf07745bc107694bb7547bb0995f70de25d6b29e2d3011bb19d27676c07162c8b5ccde0668961df86803482cb37ed6d5c0bb8d50cf1f50d476aa0458bdaba806f48be9dcb8",
@@ -412,9 +411,8 @@ mod tests {
 
     #[test]
     fn cavp_hmac_drbg_sha384_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "a1dc2dfeda4f3a1124e0e75ebfbe5f98cac11018221dda3fdcf8f9125d68447a",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("a1dc2dfeda4f3a1124e0e75ebfbe5f98cac11018221dda3fdcf8f9125d68447a");
         let nonce: [u8; 16] = hex_to_bytes("bae5ea27166540515268a493a96b5187");
         let expected: [u8; 192] = hex_to_bytes(
             "228293e59b1e4545a4ff9f232616fc5108a1128debd0f7c20ace837ca105cbf24c0dac1f9847dafd0d0500721ffad3c684a992d110a549a264d14a8911c50be8cd6a7e8fac783ad95b24f64fd8cc4c8b649eac2b15b363e30df79541a6b8a1caac238949b46643694c85e1d5fcbcd9aaae6260acee660b8a79bea48e079ceb6a5eaf4993a82c3f1b758d7c53e3094eeac63dc255be6dcdcc2b51e5ca45d2b20684a5a8fa5806b96f8461ebf51bc515a7dd8c5475c0e70f2fd0faf7869a99ab6c",
@@ -453,9 +451,8 @@ mod tests {
 
     #[test]
     fn cavp_hmac_drbg_sha512_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "35049f389a33c0ecb1293238fd951f8ffd517dfde06041d32945b3e26914ba15",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("35049f389a33c0ecb1293238fd951f8ffd517dfde06041d32945b3e26914ba15");
         let nonce: [u8; 16] = hex_to_bytes("f7328760be6168e6aa9fb54784989a11");
         let expected: [u8; 256] = hex_to_bytes(
             "e76491b0260aacfded01ad39fbf1a66a88284caa5123368a2ad9330ee48335e3c9c9ba90e6cbc9429962d60c1a6661edcfaa31d972b8264b9d4562cf18494128a092c17a8da6f3113e8a7edfcd4427082bd390675e9662408144971717303d8dc352c9e8b95e7f35fa2ac9f549b292bc7c4bc7f01ee0a577859ef6e82d79ef23892d167c140d22aac32b64ccdfeee2730528a38763b24227f91ac3ffe47fb11538e435307e77481802b0f613f370ffb0dbeab774fe1efbb1a80d01154a9459e73ad361108bbc86b0914f095136cbe634555ce0bb263618dc5c367291ce0825518987154fe9ecb052b3f0a256fcc30cc14572531c9628973639beda456f2bddf6",

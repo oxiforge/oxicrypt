@@ -56,8 +56,6 @@ pub fn verify(
 ///
 /// Returns an error when the DRBG fails or the pairwise
 /// consistency test (IG 10.3.A) rejects the new key pair.
-pub fn keygen(
-    drbg: &mut HmacDrbgSha256,
-) -> Result<p384_ecdsa::EcdsaP384PrivateKey, Error> {
+pub fn keygen(drbg: &mut HmacDrbgSha256) -> Result<p384_ecdsa::EcdsaP384PrivateKey, Error> {
     p384_ecdsa::EcdsaP384PrivateKey::generate(drbg)
 }

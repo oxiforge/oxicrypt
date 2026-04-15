@@ -145,11 +145,7 @@ fn handle_cmac_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
 /// Compute a full 128-bit CMAC tag over `msg` using the appropriate
 /// AES key size.
-fn compute_cmac(
-    key_len_bits: u64,
-    key: &[u8],
-    msg: &[u8],
-) -> Result<[u8; 16], DispatchError> {
+fn compute_cmac(key_len_bits: u64, key: &[u8], msg: &[u8]) -> Result<[u8; 16], DispatchError> {
     match key_len_bits {
         128 => {
             let k: [u8; 16] = key

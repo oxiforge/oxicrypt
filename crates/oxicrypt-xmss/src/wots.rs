@@ -14,7 +14,7 @@
     clippy::integer_division,
     clippy::cast_possible_truncation,
     clippy::needless_range_loop,
-    clippy::many_single_char_names,
+    clippy::many_single_char_names
 )]
 
 use oxicrypt_sha::sha256::Sha256;
@@ -112,12 +112,7 @@ fn msg_digit(msg: &[u8; N], i: usize) -> u8 {
 /// Generates KEY and BM from pub_seed via PRF, then computes
 /// F(KEY, tmp XOR BM). The ADRS is updated with the hash address
 /// and key-and-mask flag per RFC 8391 §3.1.
-fn chain_step(
-    tmp: &[u8; N],
-    j: u32,
-    pub_seed: &[u8; N],
-    adrs: &mut Adrs,
-) -> [u8; N] {
+fn chain_step(tmp: &[u8; N], j: u32, pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8; N] {
     adrs.set_hash_address(j);
 
     // KEY = PRF(pub_seed, ADRS with keyAndMask=0)
@@ -137,13 +132,7 @@ fn chain_step(
 }
 
 /// Apply the WOTS+ chain from step `start` for `steps` iterations.
-fn chain(
-    x: &[u8; N],
-    start: u32,
-    steps: u32,
-    pub_seed: &[u8; N],
-    adrs: &mut Adrs,
-) -> [u8; N] {
+fn chain(x: &[u8; N], start: u32, steps: u32, pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8; N] {
     let mut tmp = *x;
     for j in start..start + steps {
         tmp = chain_step(&tmp, j, pub_seed, adrs);
@@ -178,11 +167,7 @@ fn derive_sk_element(
 ///
 /// Returns `len` chain endpoints concatenated. The result is
 /// then compressed by the L-tree into a single n-byte value.
-pub(crate) fn wots_pk_gen(
-    sk_seed: &[u8; N],
-    pub_seed: &[u8; N],
-    ots_addr: u32,
-) -> [[u8; N]; LEN] {
+pub(crate) fn wots_pk_gen(sk_seed: &[u8; N], pub_seed: &[u8; N], ots_addr: u32) -> [[u8; N]; LEN] {
     let mut pk = [[0u8; N]; LEN];
     for i in 0..LEN {
         let sk_i = derive_sk_element(sk_seed, pub_seed, ots_addr, i as u32);

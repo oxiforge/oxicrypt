@@ -40,9 +40,7 @@
 
 use oxicrypt_drbg::HmacDrbgSha256;
 
-use crate::p256_ecdsa::{
-    derive_public_key_internal, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN,
-};
+use crate::p256_ecdsa::{derive_public_key_internal, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN};
 use crate::p256_scalar::Scalar;
 
 /// Maximum number of rejection-sampling attempts before we declare
@@ -60,9 +58,7 @@ const MAX_SAMPLE_ATTEMPTS: usize = 64;
 /// This is the `*_internal` primitive — it does not gate on module
 /// state and is safe to call from KATs, PCTs, and from the
 /// module-state-checked wrappers above.
-pub(crate) fn sample_scalar_internal(
-    drbg: &mut HmacDrbgSha256,
-) -> Option<[u8; PRIVATE_KEY_LEN]> {
+pub(crate) fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_KEY_LEN]> {
     let mut buf = [0u8; PRIVATE_KEY_LEN];
     for _ in 0..MAX_SAMPLE_ATTEMPTS {
         if drbg.generate(None, &mut buf).is_err() {

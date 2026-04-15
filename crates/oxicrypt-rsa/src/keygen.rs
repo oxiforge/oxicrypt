@@ -43,8 +43,8 @@
     clippy::manual_let_else
 )]
 
-use crate::bigint1024::{self, U1024, BYTES as BYTES1024, LIMBS as LIMBS1024};
-use crate::bigint2048::{U2048, LIMBS as LIMBS2048};
+use crate::bigint1024::{self, BYTES as BYTES1024, LIMBS as LIMBS1024, U1024};
+use crate::bigint2048::{LIMBS as LIMBS2048, U2048};
 use crate::mont1024::MontCtx1024;
 use oxicrypt_drbg::{DrbgError, HmacDrbgSha256};
 
@@ -128,11 +128,7 @@ const MR_ROUNDS: u32 = 5;
 /// on "probably prime", `false` on "definitely composite".
 ///
 /// Precondition: `n` is odd and `n > 3`.
-fn miller_rabin(
-    n: &U1024,
-    rounds: u32,
-    drbg: &mut HmacDrbgSha256,
-) -> Result<bool, KeygenError> {
+fn miller_rabin(n: &U1024, rounds: u32, drbg: &mut HmacDrbgSha256) -> Result<bool, KeygenError> {
     // Write n − 1 = 2^s · d.
     let (n_minus_1, _) = n.subtracting_u64(1);
     let mut d = n_minus_1;
@@ -231,10 +227,7 @@ fn sample_candidate(drbg: &mut HmacDrbgSha256) -> Result<U1024, KeygenError> {
 /// candidate `p` for which `gcd(p − 1, e) ≠ 1`. This is FIPS 186-5
 /// §A.1.1 steps 5.1–5.7 collapsed into a single loop for a 1024-bit
 /// factor of a 2048-bit RSA modulus.
-fn gen_probable_prime_1024(
-    drbg: &mut HmacDrbgSha256,
-    e: u64,
-) -> Result<U1024, KeygenError> {
+fn gen_probable_prime_1024(drbg: &mut HmacDrbgSha256, e: u64) -> Result<U1024, KeygenError> {
     for _ in 0..MAX_CANDIDATE_ATTEMPTS {
         let p = sample_candidate(drbg)?;
         // Cheap sieve first.
@@ -297,7 +290,11 @@ pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
         // yields the correct `shifted + 2^1024 - m`. Otherwise we
         // subtract only if `shifted >= m`.
         let must_sub = carry_out == 1 || shifted.ct_lt(m) == 0;
-        acc = if must_sub { shifted.subtracting(m).0 } else { shifted };
+        acc = if must_sub {
+            shifted.subtracting(m).0
+        } else {
+            shifted
+        };
     }
     acc
 }
@@ -339,10 +336,7 @@ impl Drop for KeyMaterial {
 /// Generate fresh RSA-2048 key material using `drbg` for all
 /// randomness. `e` must be an odd prime in `[65537, 2^64)` — in
 /// practice this crate is only ever called with `e = 65537`.
-pub fn generate_2048(
-    drbg: &mut HmacDrbgSha256,
-    e: u64,
-) -> Result<KeyMaterial, KeygenError> {
+pub fn generate_2048(drbg: &mut HmacDrbgSha256, e: u64) -> Result<KeyMaterial, KeygenError> {
     if e < 65537 || e & 1 == 0 {
         return Err(KeygenError::InvalidExponent);
     }

@@ -37,7 +37,7 @@ const E_HEX: &str = "010001";
 const D_HEX: &str = "0D9B3F1482F874D7EA85C006A3202AD23B759017B72667EB55F0595C69D9A66E5FC00382B05EF3B7A653F28BE1124487DCE35B59575416058FB416F015F383AF36F95F1F84C803EB10C0011747AB927DFD7944E6B783B6D2D038811FB7C6B1644EA3C6861F1F010AFE16233E6C072C3EECA8BDC40F8D5EF2CA39371948696167F297C5BA344881CF6C79C432513AFE8A176FBD699ECCD9399DB35589E75D5567D41209DD384E4B7B270706CCF8D4C21525F20309BE86AF85D18B7F6EE893DA8BDECF2911CA35BACF7415595C0569EAC95C7B0268563C948C5326A0ACFD3B1EBAFDA2FB6BBE137760C978208F2B54F39803FB4C7A07A2294F62F85A50034CA261";
 
 const MESSAGES: [&str; 5] = [
-    "48656C6C6F",                                // "Hello"
+    "48656C6C6F", // "Hello"
     "ABCDEF0123456789",
     "00112233445566778899AABBCCDDEEFF",
     "FF",
@@ -87,7 +87,11 @@ fn generate_rsa_oaep_slice() {
             &n_arr, &d_arr, label, &ct, &mut out,
         )
         .expect("OAEP decrypt failed");
-        assert_eq!(&out[..mlen], msg.as_slice(), "decrypt mismatch for test {i}");
+        assert_eq!(
+            &out[..mlen],
+            msg.as_slice(),
+            "decrypt mismatch for test {i}"
+        );
 
         encrypt_tests.push(format!(
             r#"        {{"tcId": {}, "msg": "{}", "seed": "{}", "ct": "{}"}}"#,

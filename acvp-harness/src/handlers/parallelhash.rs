@@ -44,7 +44,10 @@ impl AlgorithmHandler for ParallelHash128Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::parallelhash_capability("ParallelHash-128", false))
+        Some(super::caps::parallelhash_capability(
+            "ParallelHash-128",
+            false,
+        ))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {
@@ -65,7 +68,10 @@ impl AlgorithmHandler for ParallelHash256Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::parallelhash_capability("ParallelHash-256", false))
+        Some(super::caps::parallelhash_capability(
+            "ParallelHash-256",
+            false,
+        ))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {
@@ -92,7 +98,10 @@ impl AlgorithmHandler for ParallelHashXof128Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::parallelhash_capability("ParallelHashXOF-128", true))
+        Some(super::caps::parallelhash_capability(
+            "ParallelHashXOF-128",
+            true,
+        ))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {
@@ -114,7 +123,10 @@ impl AlgorithmHandler for ParallelHashXof256Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::parallelhash_capability("ParallelHashXOF-256", true))
+        Some(super::caps::parallelhash_capability(
+            "ParallelHashXOF-256",
+            true,
+        ))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {

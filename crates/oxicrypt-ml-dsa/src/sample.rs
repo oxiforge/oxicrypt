@@ -36,8 +36,7 @@ fn rej_ntt_poly(xof: &mut Shake128) -> Poly {
     while j < N {
         xof.squeeze(&mut buf);
         // Coefficient: little-endian 3 bytes, top bit masked off (23 bits)
-        let t = ((buf[0] as u32) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16))
-            & 0x7F_FFFF;
+        let t = ((buf[0] as u32) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16)) & 0x7F_FFFF;
         if t < Q as u32 {
             poly.coeffs[j] = t as i32;
             j += 1;
@@ -51,9 +50,7 @@ fn rej_ntt_poly(xof: &mut Shake128) -> Poly {
 /// A[i][j] = RejNTTPoly(SHAKE-128(ρ ‖ IntegerToBits(j, 8) ‖ IntegerToBits(i, 8)))
 /// per FIPS 204 Algorithm 30.
 pub(crate) fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
-    let mut mat: [[Poly; L]; K] = core::array::from_fn(|_| {
-        core::array::from_fn(|_| Poly::zero())
-    });
+    let mut mat: [[Poly; L]; K] = core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
 
     for i in 0..K {
         for j in 0..L {

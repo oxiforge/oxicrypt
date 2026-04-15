@@ -37,10 +37,10 @@
 
 use core::marker::PhantomData;
 
+use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 use oxicrypt_sha::sha256::Sha256;
 use oxicrypt_sha::sha384::Sha384;
 use oxicrypt_sha::sha512::Sha512;
-use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
 use crate::ctr::DrbgError;
 
@@ -251,15 +251,16 @@ impl<H: HashAlg> HashDrbg<H> {
 
         // Step 2: if additional_input != Null: w = Hash(0x02 || V || ai)
         if let Some(ai) = additional_input {
-            if ai.len().checked_add(1 + H::SEEDLEN).is_none_or(|t| t > HASH_DRBG_MAX_DF_INPUT) {
+            if ai
+                .len()
+                .checked_add(1 + H::SEEDLEN)
+                .is_none_or(|t| t > HASH_DRBG_MAX_DF_INPUT)
+            {
                 return Err(DrbgError::InputTooLong);
             }
             let mut w = [0u8; MAX_OUTLEN];
             let prefix = [0x02u8];
-            H::digest_parts(
-                &[&prefix, &self.v[..H::SEEDLEN], ai],
-                &mut w[..H::OUTLEN],
-            );
+            H::digest_parts(&[&prefix, &self.v[..H::SEEDLEN], ai], &mut w[..H::OUTLEN]);
             // V = (V + w) mod 2^(8*SEEDLEN)
             add_into_be(&mut self.v[..H::SEEDLEN], &w[..H::OUTLEN]);
         }
@@ -453,9 +454,8 @@ mod tests {
     // COUNT = 0
     #[test]
     fn cavp_hash_drbg_sha256_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "a65ad0f345db4e0effe875c3a2e71f42c7129d620ff5c119a9ef55f05185e0fb",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("a65ad0f345db4e0effe875c3a2e71f42c7129d620ff5c119a9ef55f05185e0fb");
         let nonce: [u8; 16] = hex_to_bytes("8581f9317517276e06e9607ddbcbcc2e");
         let expected: [u8; 128] = hex_to_bytes(
             "d3e160c35b99f340b2628264d1751060e0045da383ff57a57d73a673d2b8d80daaf6a6c35a91bb4579d73fd0c8fed111b0391306828adfed528f018121b3febdc343e797b87dbb63db1333ded9d1ece177cfa6b71fe8ab1da46624ed6415e51ccde2c7ca86e283990eeaeb91120415528b2295910281b02dd431f4c9f70427df",
@@ -470,9 +470,8 @@ mod tests {
 
     #[test]
     fn cavp_hash_drbg_sha384_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "9ef0b00381d6c8c54d08fcadc6f5ef331134bb986373f65c6a14f553bcb6c55d",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("9ef0b00381d6c8c54d08fcadc6f5ef331134bb986373f65c6a14f553bcb6c55d");
         let nonce: [u8; 16] = hex_to_bytes("9fce26ada7b1de39590312bd9d81c4f5");
         let expected: [u8; 192] = hex_to_bytes(
             "663ffb625e62c4eb67d7177a6abb808a9f68c2d5840f19992c11ea3a635d05b537fae1f1746c1314e1a75e141c2e094187d17b9daae1442e41d3a0d1fea94d8ef9d840111379a52e6c7ffafa7ee83b244ced129613d5b8bb089e7ea25de1c29897735cf95695043a648a2ef6fd4aa74ce8328a5550da8ddb51f98adcdc108e455603f6f18f5a50016f3e8ebcb244a16bc6b6e554a7546153c12f522c75ca5f1017e01da36650e6203f30ed5c3da3b6078736465eecb400eeaaa2c876e37564d8",
@@ -487,9 +486,8 @@ mod tests {
 
     #[test]
     fn cavp_hash_drbg_sha512_count0() {
-        let entropy: [u8; 32] = hex_to_bytes(
-            "6b50a7d8f8a55d7a3df8bb40bcc3b722d8708de67fda010b03c4c84d72096f8c",
-        );
+        let entropy: [u8; 32] =
+            hex_to_bytes("6b50a7d8f8a55d7a3df8bb40bcc3b722d8708de67fda010b03c4c84d72096f8c");
         let nonce: [u8; 16] = hex_to_bytes("3ec649cc6256d9fa31db7a2904aaf025");
         let expected: [u8; 256] = hex_to_bytes(
             "95b7f17e9802d3577392c6a9c08083b67dd1292265b5f42d237f1c55bb9b10bfcfd82c77a378b8266a0099143b3c2d64611eeeb69acdc055957c139e8b190c7a06955f2c797c2778de940396a501f40e91396acf8d7e45ebdbb53bbf8c975230d2f0ff9106c76119ae498e7fbc03d90f8e4c51627aed5c8d4263d5d2b978873a0de596ee6dc7f7c29e37eee8b34c90dd1cf6a9ddb22b4cbd086b14b35de93da2d5cb1806698cbd7bbb67bfe3d31fd2d1dbd2a1e058a3eb99d7e51f1a938eed5e1c1de23a6b4345d3191409f92f39b3670d8dbfb635d8e6a36932d81033d1448d63b403ddf88e121b6e819ac381226c1321e4b08644f6727c368c5a9f7a4b3ee2",

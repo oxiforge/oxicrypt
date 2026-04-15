@@ -102,10 +102,7 @@ fn decode_hex_field_or_empty(
 }
 
 /// Process one ACVP DRBG test group.
-fn handle_drbg_group(
-    family: DrbgFamily,
-    group: &JsonValue,
-) -> Result<JsonValue, DispatchError> {
+fn handle_drbg_group(family: DrbgFamily, group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
         .get("tgId")
         .and_then(JsonValue::as_i64)
@@ -197,10 +194,7 @@ struct DrbgGroupConfig<'a> {
 
 /// Execute a single DRBG test case: instantiate, walk `otherInput`,
 /// return the output of the last `generate`.
-fn run_drbg_test(
-    cfg: &DrbgGroupConfig<'_>,
-    test: &JsonValue,
-) -> Result<Vec<u8>, DispatchError> {
+fn run_drbg_test(cfg: &DrbgGroupConfig<'_>, test: &JsonValue) -> Result<Vec<u8>, DispatchError> {
     let entropy = hex::decode(
         test.get("entropyInput")
             .and_then(JsonValue::as_str)
@@ -271,11 +265,7 @@ trait CtrDrbgOps {
         perso: &[u8],
     ) -> Result<(), DispatchError>;
     fn do_instantiate_no_df(&mut self, seed_material: &[u8]) -> Result<(), DispatchError>;
-    fn do_reseed_df(
-        &mut self,
-        entropy: &[u8],
-        additional: &[u8],
-    ) -> Result<(), DispatchError>;
+    fn do_reseed_df(&mut self, entropy: &[u8], additional: &[u8]) -> Result<(), DispatchError>;
     fn do_reseed_no_df(&mut self, seed_material: &[u8]) -> Result<(), DispatchError>;
     fn do_generate_df(
         &mut self,
@@ -477,11 +467,7 @@ trait HashDrbgOps {
         nonce: &[u8],
         perso: &[u8],
     ) -> Result<(), DispatchError>;
-    fn do_reseed(
-        &mut self,
-        entropy: &[u8],
-        additional: &[u8],
-    ) -> Result<(), DispatchError>;
+    fn do_reseed(&mut self, entropy: &[u8], additional: &[u8]) -> Result<(), DispatchError>;
     fn do_generate(
         &mut self,
         additional: Option<&[u8]>,
@@ -630,11 +616,7 @@ trait HmacDrbgOps {
         nonce: &[u8],
         perso: &[u8],
     ) -> Result<(), DispatchError>;
-    fn do_reseed(
-        &mut self,
-        entropy: &[u8],
-        additional: &[u8],
-    ) -> Result<(), DispatchError>;
+    fn do_reseed(&mut self, entropy: &[u8], additional: &[u8]) -> Result<(), DispatchError>;
     fn do_generate(
         &mut self,
         additional: Option<&[u8]>,

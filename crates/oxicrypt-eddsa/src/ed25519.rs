@@ -25,7 +25,7 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{require_operational, require_allowed, Service, Error, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
 use oxicrypt_sha::sha512::Sha512;
 
 use crate::edwards::EdwardsPoint;

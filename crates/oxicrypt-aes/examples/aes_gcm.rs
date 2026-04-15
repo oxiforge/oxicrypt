@@ -7,7 +7,7 @@ fn main() {
     oxicrypt_module::initialize().expect("module init");
 
     let key = [0x42u8; 32]; // 256-bit key (demo only!)
-    let iv = [0x01u8; 12];  // 96-bit IV (use DRBG in production!)
+    let iv = [0x01u8; 12]; // 96-bit IV (use DRBG in production!)
     let aad = b"additional authenticated data";
     let plaintext = b"Secrets worth protecting";
 
@@ -18,7 +18,10 @@ fn main() {
     oxicrypt_aes::gcm_encrypt(&cipher, &iv, aad, plaintext, &mut ciphertext, &mut tag)
         .expect("gcm encrypt");
 
-    println!("Plaintext:  {:?}", std::str::from_utf8(plaintext).expect("utf8"));
+    println!(
+        "Plaintext:  {:?}",
+        std::str::from_utf8(plaintext).expect("utf8")
+    );
     println!("Ciphertext: {}", hex(&ciphertext));
     println!("Tag:        {}", hex(&tag));
 
@@ -28,7 +31,10 @@ fn main() {
         .expect("gcm decrypt");
 
     assert_eq!(plaintext.as_slice(), recovered.as_slice());
-    println!("Decrypted:  {:?} (verified)", std::str::from_utf8(&recovered).expect("utf8"));
+    println!(
+        "Decrypted:  {:?} (verified)",
+        std::str::from_utf8(&recovered).expect("utf8")
+    );
 }
 
 fn hex(bytes: &[u8]) -> String {

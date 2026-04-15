@@ -57,8 +57,7 @@ fn generate_rsa_oaep_lifecycle_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
-        .expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -100,11 +99,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
             .expect("drbg gen seed");
 
         let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
-            &n_bytes,
-            e,
-            b"", // empty label
-            msg,
-            &oaep_seed,
+            &n_bytes, e, b"", // empty label
+            msg, &oaep_seed,
         )
         .expect("OAEP encrypt");
 
@@ -128,7 +124,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
         )
         .expect("OAEP CRT decrypt");
         assert_eq!(
-            &crt_out[..crt_len], *msg,
+            &crt_out[..crt_len],
+            *msg,
             "CRT decrypt mismatch for msg {tc_id}"
         );
 
@@ -143,7 +140,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
         )
         .expect("OAEP non-CRT decrypt");
         assert_eq!(
-            &nocrt_out[..nocrt_len], *msg,
+            &nocrt_out[..nocrt_len],
+            *msg,
             "non-CRT decrypt mismatch for msg {tc_id}"
         );
 

@@ -498,10 +498,7 @@ pub fn active_profile() -> AlgorithmProfile {
 ///
 /// See [`initialize_with_tests`] for the backward-compatible wrapper
 /// that uses [`AlgorithmProfile::Unrestricted`].
-pub fn initialize_with_profile(
-    tests: &[KatEntry],
-    profile: AlgorithmProfile,
-) -> Result<(), Error> {
+pub fn initialize_with_profile(tests: &[KatEntry], profile: AlgorithmProfile) -> Result<(), Error> {
     // Store the profile before running KATs. This is safe even if
     // initialization fails: a failed init latches State::Error, so
     // no service call can reach require_allowed() anyway.

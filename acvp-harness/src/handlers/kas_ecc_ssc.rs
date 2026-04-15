@@ -51,9 +51,7 @@ fn handle_kas_ecc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
     let curve = group
         .get("domainParameterGenerationMode")
         .and_then(JsonValue::as_str)
-        .ok_or(DispatchError::MissingField(
-            "domainParameterGenerationMode",
-        ))?;
+        .ok_or(DispatchError::MissingField("domainParameterGenerationMode"))?;
     if curve != "P-256" && curve != "P-384" {
         return Err(DispatchError::Unsupported(
             "KAS-ECC-SSC: only P-256 and P-384 are supported",
@@ -110,15 +108,13 @@ fn handle_kas_ecc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
                 peer_pk[1..33].copy_from_slice(&pub_x);
                 peer_pk[33..65].copy_from_slice(&pub_y);
 
-                let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk)
-                    .ok_or(DispatchError::Crypto("KAS-ECC-SSC: ECDH computation failed"))?;
+                let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk).ok_or(
+                    DispatchError::Crypto("KAS-ECC-SSC: ECDH computation failed"),
+                )?;
 
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
-                    (
-                        "z".to_string(),
-                        JsonValue::String(hex::encode_upper(&z)),
-                    ),
+                    ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
                 ]));
             }
         }
@@ -164,23 +160,17 @@ fn handle_kas_ecc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
                 peer_pk[1..49].copy_from_slice(&pub_x);
                 peer_pk[49..97].copy_from_slice(&pub_y);
 
-                let z = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk)
-                    .ok_or(DispatchError::Crypto("KAS-ECC-SSC: ECDH computation failed"))?;
+                let z = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk).ok_or(
+                    DispatchError::Crypto("KAS-ECC-SSC: ECDH computation failed"),
+                )?;
 
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
-                    (
-                        "z".to_string(),
-                        JsonValue::String(hex::encode_upper(&z)),
-                    ),
+                    ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
                 ]));
             }
         }
-        _ => {
-            return Err(DispatchError::Unsupported(
-                "KAS-ECC-SSC: unsupported curve",
-            ))
-        }
+        _ => return Err(DispatchError::Unsupported("KAS-ECC-SSC: unsupported curve")),
     }
 
     Ok(JsonValue::Object(vec![

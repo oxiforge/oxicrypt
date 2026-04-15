@@ -45,8 +45,7 @@ fn hex(bytes: &[u8]) -> String {
 fn write_slice(dir: &str, filename: &str, json: &str) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("mkdir {dir}: {e}"));
     let path = format!("{dir}/{filename}");
-    let mut f =
-        std::fs::File::create(&path).unwrap_or_else(|e| panic!("create {path}: {e}"));
+    let mut f = std::fs::File::create(&path).unwrap_or_else(|e| panic!("create {path}: {e}"));
     f.write_all(json.as_bytes())
         .unwrap_or_else(|e| panic!("write {path}: {e}"));
     println!("wrote {path}");
@@ -65,9 +64,9 @@ fn test_cases(default_mac_bytes: usize) -> [Case; 5] {
     [
         Case {
             key: vec![
-                0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B,
-                0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
-                0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+                0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+                0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B,
+                0x5C, 0x5D, 0x5E, 0x5F,
             ],
             msg: vec![0x00, 0x01, 0x02, 0x03],
             s: b"My Tagged Application".to_vec(),
@@ -103,11 +102,7 @@ fn test_cases(default_mac_bytes: usize) -> [Case; 5] {
 type KmacComputeFn = fn(&[u8], &[u8], &[u8], &mut [u8]);
 
 /// Generate an MVT slice with two groups: valid MACs and bit-flipped MACs.
-fn gen_mvt_slice(
-    algorithm: &str,
-    compute: KmacComputeFn,
-    default_mac_bytes: usize,
-) -> String {
+fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usize) -> String {
     let cases = test_cases(default_mac_bytes);
 
     // Group 1: valid MACs (testPassed = true)

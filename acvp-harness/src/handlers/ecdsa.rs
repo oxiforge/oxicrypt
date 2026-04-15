@@ -409,7 +409,9 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     .map_err(|_| DispatchError::Crypto("ECDSA SigGen: k is not 48 bytes"))?;
 
                 let sig = oxicrypt_ecdsa::p384_ecdsa::sign_with_k_internal(&d, &message, &k)
-                    .ok_or(DispatchError::Crypto("ECDSA SigGen: sign_with_k_internal failed"))?;
+                    .ok_or(DispatchError::Crypto(
+                        "ECDSA SigGen: sign_with_k_internal failed",
+                    ))?;
 
                 // Split 96-byte signature into r (first 48) and s (last 48).
                 results.push(JsonValue::Object(vec![
@@ -488,10 +490,9 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     .try_into()
                     .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 32 bytes"))?;
 
-                let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
-                    .ok_or(DispatchError::Crypto(
-                        "ECDSA KeyGen: derive_public_key_internal failed",
-                    ))?;
+                let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d).ok_or(
+                    DispatchError::Crypto("ECDSA KeyGen: derive_public_key_internal failed"),
+                )?;
 
                 // pk is 65 bytes: 0x04 || X(32) || Y(32)
                 results.push(JsonValue::Object(vec![
@@ -524,10 +525,9 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     .try_into()
                     .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 48 bytes"))?;
 
-                let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d)
-                    .ok_or(DispatchError::Crypto(
-                        "ECDSA KeyGen: derive_public_key_internal failed",
-                    ))?;
+                let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d).ok_or(
+                    DispatchError::Crypto("ECDSA KeyGen: derive_public_key_internal failed"),
+                )?;
 
                 // pk is 97 bytes: 0x04 || X(48) || Y(48)
                 results.push(JsonValue::Object(vec![

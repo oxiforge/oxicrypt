@@ -63,7 +63,7 @@ macro_rules! define_rsa_wide {
         svc_pss_verify = $svc_pss_verify:expr;
         svc_oaep = $svc_oaep:expr;
     ) => {
-        use oxicrypt_module::{require_operational, require_allowed, Service, Error};
+        use oxicrypt_module::{require_allowed, require_operational, Error, Service};
 
         /// Fixed modulus byte length.
         pub const MODULUS_BYTES: usize = $fbytes;
@@ -430,7 +430,8 @@ macro_rules! define_rsa_wide {
                 "fips-rsa PCT probe / RSA-",
                 stringify!($nlen),
                 " / PKCS#1 v1.5 / SHA-256"
-            ).as_bytes();
+            )
+            .as_bytes();
             let Some(sig) = pkcs1_v15_sign_internal(n_bytes, d_bytes, PROBE) else {
                 return false;
             };
@@ -484,8 +485,7 @@ macro_rules! define_rsa_wide {
             let mut seed = [0u8; crate::oaep::HLEN];
             drbg.generate(None, &mut seed)
                 .map_err(|_| Error::InvalidInput)?;
-            oaep_encrypt_internal(n_bytes, e, label, msg, &seed)
-                .ok_or(Error::InvalidInput)
+            oaep_encrypt_internal(n_bytes, e, label, msg, &seed).ok_or(Error::InvalidInput)
         }
 
         // ──── Private-key handle ───────────────────────────────
@@ -548,7 +548,8 @@ macro_rules! define_rsa_wide {
                     "fips-rsa CRT PCT probe / RSA-",
                     stringify!($nlen),
                     " / PKCS#1 v1.5 / SHA-256"
-                ).as_bytes();
+                )
+                .as_bytes();
                 let Some(sig) = pkcs1_v15_sign_crt_internal(
                     n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, probe,
                 ) else {
@@ -644,7 +645,8 @@ macro_rules! define_rsa_wide {
                 require_operational()?;
                 require_allowed($svc_pss_sign)?;
                 let mut salt = [0u8; crate::pss::SLEN];
-                drbg.generate(None, &mut salt).map_err(|_| Error::InvalidInput)?;
+                drbg.generate(None, &mut salt)
+                    .map_err(|_| Error::InvalidInput)?;
                 if let Some(crt) = self.crt.as_ref() {
                     pss_sign_crt_internal(
                         &self.n_bytes,
@@ -691,14 +693,8 @@ macro_rules! define_rsa_wide {
                     )
                     .ok_or(Error::InvalidInput)
                 } else {
-                    oaep_decrypt_nocrt_internal(
-                        &self.n_bytes,
-                        &self.d_bytes,
-                        label,
-                        ct,
-                        out,
-                    )
-                    .ok_or(Error::InvalidInput)
+                    oaep_decrypt_nocrt_internal(&self.n_bytes, &self.d_bytes, label, ct, out)
+                        .ok_or(Error::InvalidInput)
                 }
             }
 
@@ -719,8 +715,14 @@ macro_rules! define_rsa_wide {
                 let dq_bytes = km.dq.to_be_bytes();
                 let qinv_bytes = km.qinv.to_be_bytes();
                 Self::from_components_crt(
-                    &n_bytes, e, &d_bytes, &p_bytes, &q_bytes,
-                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                    &n_bytes,
+                    e,
+                    &d_bytes,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
                 )
             }
         }

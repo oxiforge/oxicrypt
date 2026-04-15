@@ -17,10 +17,7 @@
 //! | 7    | 28–31   | key and mask    |
 //!
 //! Words 4–7 are zeroed whenever the type field changes.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-)]
+#![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 /// 32-byte address structure.
 #[derive(Clone, Copy)]

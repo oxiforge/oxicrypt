@@ -6,7 +6,7 @@
 )]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use oxicrypt_aes::{Aes256Key, gcm_encrypt};
+use oxicrypt_aes::{gcm_encrypt, Aes256Key};
 
 fn bench_aes256_gcm_encrypt(c: &mut Criterion) {
     oxicrypt_bench::init_module();
@@ -49,12 +49,8 @@ fn bench_aes256_ecb_block(c: &mut Criterion) {
 
     c.bench_function("AES-256-ECB single block", |b| {
         b.iter(|| {
-            oxicrypt_aes::ecb_encrypt(
-                black_box(&key),
-                black_box(&plaintext),
-                &mut ciphertext,
-            )
-            .expect("ecb_encrypt");
+            oxicrypt_aes::ecb_encrypt(black_box(&key), black_box(&plaintext), &mut ciphertext)
+                .expect("ecb_encrypt");
         });
     });
 }

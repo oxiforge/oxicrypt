@@ -69,8 +69,7 @@ use oxicrypt_module::{Error, KatEntry, SelfTestFailure, Service};
 /// XMSS signature length in bytes.
 ///
 /// Layout: idx(4) + r(32) + wots_sig(67×32) + auth(10×32) = 2500.
-pub const SIGNATURE_LEN: usize =
-    4 + N + wots::LEN * N + tree::H * N;
+pub const SIGNATURE_LEN: usize = 4 + N + wots::LEN * N + tree::H * N;
 
 /// XMSS public key length in bytes.
 ///
@@ -276,10 +275,7 @@ pub fn keygen_internal(xi: &[u8; 32]) -> (XmssPrivateKey, [u8; PUBLIC_KEY_LEN]) 
 /// # Errors
 ///
 /// Returns [`Error::InvalidInput`] if the key is exhausted.
-pub fn sign(
-    key: &mut XmssPrivateKey,
-    message: &[u8],
-) -> Result<[u8; SIGNATURE_LEN], Error> {
+pub fn sign(key: &mut XmssPrivateKey, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::XmssSign)?;
     sign_internal(key, message).ok_or(Error::InvalidInput)
@@ -287,10 +283,7 @@ pub fn sign(
 
 /// Internal sign bypassing module gating (for self-tests).
 #[doc(hidden)]
-pub fn sign_internal(
-    key: &mut XmssPrivateKey,
-    message: &[u8],
-) -> Option<[u8; SIGNATURE_LEN]> {
+pub fn sign_internal(key: &mut XmssPrivateKey, message: &[u8]) -> Option<[u8; SIGNATURE_LEN]> {
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
     if key.is_exhausted() {
@@ -367,9 +360,7 @@ pub fn verify_internal(
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
     // Parse public key.
-    let pk_oid = u32::from_be_bytes([
-        public_key[0], public_key[1], public_key[2], public_key[3],
-    ]);
+    let pk_oid = u32::from_be_bytes([public_key[0], public_key[1], public_key[2], public_key[3]]);
     if pk_oid != tree::XMSS_OID {
         return false;
     }
@@ -379,9 +370,7 @@ pub fn verify_internal(
     pub_seed.copy_from_slice(&public_key[4 + N..4 + 2 * N]);
 
     // Parse signature.
-    let idx = u32::from_be_bytes([
-        signature[0], signature[1], signature[2], signature[3],
-    ]);
+    let idx = u32::from_be_bytes([signature[0], signature[1], signature[2], signature[3]]);
     if idx >= tree::NUM_LEAVES {
         return false;
     }
@@ -409,9 +398,7 @@ pub fn verify_internal(
     let msg_hash = h_msg(&r, &expected_root, idx, message);
 
     // Compute root from signature.
-    let computed_root = tree::root_from_sig(
-        &msg_hash, &wots_sig, &pub_seed, idx, &auth,
-    );
+    let computed_root = tree::root_from_sig(&msg_hash, &wots_sig, &pub_seed, idx, &auth);
 
     // Constant-time comparison.
     let mut diff = 0u8;

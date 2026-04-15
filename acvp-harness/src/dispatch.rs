@@ -166,9 +166,7 @@ impl Registry {
     ) -> Option<&dyn AlgorithmHandler> {
         self.handlers
             .iter()
-            .find(|h| {
-                h.algorithm() == algorithm && h.mode() == mode && h.revision() == revision
-            })
+            .find(|h| h.algorithm() == algorithm && h.mode() == mode && h.revision() == revision)
             .map(AsRef::as_ref)
     }
 
@@ -380,13 +378,13 @@ pub fn process(prompt: &JsonValue, registry: &Registry) -> Result<JsonValue, Dis
     let algorithm = vs.algorithm()?;
     let mode = vs.mode()?;
     let revision = vs.revision()?;
-    let handler = registry
-        .find(algorithm, mode, revision)
-        .ok_or_else(|| DispatchError::UnsupportedAlgorithm {
+    let handler = registry.find(algorithm, mode, revision).ok_or_else(|| {
+        DispatchError::UnsupportedAlgorithm {
             algorithm: algorithm.to_string(),
             mode: mode.map(str::to_string),
             revision: revision.to_string(),
-        })?;
+        }
+    })?;
     let groups = vs.test_groups()?;
     let mut response_groups: Vec<JsonValue> = Vec::with_capacity(groups.len());
     for g in groups {
@@ -404,10 +402,7 @@ pub fn process(prompt: &JsonValue, registry: &Registry) -> Result<JsonValue, Dis
         "revision".to_string(),
         JsonValue::String(revision.to_string()),
     ));
-    response.push((
-        "testGroups".to_string(),
-        JsonValue::Array(response_groups),
-    ));
+    response.push(("testGroups".to_string(), JsonValue::Array(response_groups)));
     Ok(JsonValue::Object(response))
 }
 
@@ -474,7 +469,9 @@ mod tests {
         // R20 KBKDF (SP 800-108r1)
         assert!(r.find("KDF", None, "1.0").is_some());
         // R21 RSA DecryptionPrimitive (SP 800-56Br2)
-        assert!(r.find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2").is_some());
+        assert!(r
+            .find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2")
+            .is_some());
         // R22 TLS v1.2 KDF (RFC 7627)
         assert!(r.find("TLS-v1.2", Some("KDF"), "RFC7627").is_some());
         // R23 kdf-components / tls
@@ -484,9 +481,13 @@ mod tests {
         // R25 RSA SigGen
         assert!(r.find("RSA", Some("sigGen"), "FIPS186-5").is_some());
         // R26 KAS-ECC-SSC
-        assert!(r.find("KAS-ECC-SSC", Some("Component"), "Sp800-56Ar3").is_some());
+        assert!(r
+            .find("KAS-ECC-SSC", Some("Component"), "Sp800-56Ar3")
+            .is_some());
         // R59 KAS-FFC-SSC
-        assert!(r.find("KAS-FFC-SSC", Some("Component"), "Sp800-56Ar3").is_some());
+        assert!(r
+            .find("KAS-FFC-SSC", Some("Component"), "Sp800-56Ar3")
+            .is_some());
         // R27 RSA OAEP
         assert!(r.find("RSA", Some("OAEP"), "RFC8017").is_some());
         // R55 SP 800-185 derived functions + PBKDF2
@@ -539,13 +540,10 @@ mod tests {
     #[test]
     fn unsupported_algorithm_error() {
         let _ = crate::ensure_initialized();
-        let prompt = json::parse(r#"{"algorithm":"NOPE","revision":"1.0","testGroups":[]}"#)
-            .unwrap();
+        let prompt =
+            json::parse(r#"{"algorithm":"NOPE","revision":"1.0","testGroups":[]}"#).unwrap();
         let r = with_default_handlers();
         let err = process(&prompt, &r).unwrap_err();
-        assert!(matches!(
-            err,
-            DispatchError::UnsupportedAlgorithm { .. }
-        ));
+        assert!(matches!(err, DispatchError::UnsupportedAlgorithm { .. }));
     }
 }

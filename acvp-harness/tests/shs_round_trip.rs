@@ -26,8 +26,7 @@ use acvp_harness::{ensure_initialized, hex, json::JsonValue, rsp, shs};
 /// return its parsed form.
 fn load_rsp(relative: &str) -> rsp::RspDocument {
     let path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     rsp::parse(&text).unwrap_or_else(|e| panic!("parse {path}: {e}"))
 }
 
@@ -80,10 +79,7 @@ fn assert_shs_round_trip(relative: &str, algorithm: &str, label: &str) {
             .unwrap_or_else(|| panic!("{label}: case {i} missing `len`"));
         let expected_len = i64::try_from(expected.len_bits)
             .unwrap_or_else(|_| panic!("{label}: case {i} Len does not fit in i64"));
-        assert_eq!(
-            produced_len, expected_len,
-            "{label}: case {i} len mismatch"
-        );
+        assert_eq!(produced_len, expected_len, "{label}: case {i} len mismatch");
         let produced_md = produced
             .get("md")
             .and_then(JsonValue::as_str)

@@ -21,8 +21,8 @@
 )]
 
 use crate::params::{
-    CTILDE_LEN, D, ETA, ETA_PACKED, GAMMA1, H_PACKED, K, L, N, OMEGA, PK_LEN, Q, SIG_LEN,
-    SK_LEN, T0_PACKED, T1_PACKED, Z_PACKED,
+    CTILDE_LEN, D, ETA, ETA_PACKED, GAMMA1, H_PACKED, K, L, N, OMEGA, PK_LEN, Q, SIG_LEN, SK_LEN,
+    T0_PACKED, T1_PACKED, Z_PACKED,
 };
 use crate::poly::{Poly, PolyVecK, PolyVecL};
 
@@ -396,12 +396,7 @@ pub(crate) fn unpack_sk(
 }
 
 /// Pack a signature: sig = c̃ ‖ z ‖ h.
-pub(crate) fn pack_sig(
-    ctilde: &[u8],
-    z: &PolyVecL,
-    h: &PolyVecK,
-    sig: &mut [u8],
-) -> bool {
+pub(crate) fn pack_sig(ctilde: &[u8], z: &PolyVecL, h: &PolyVecK, sig: &mut [u8]) -> bool {
     debug_assert!(sig.len() >= SIG_LEN);
     debug_assert!(ctilde.len() == CTILDE_LEN);
 

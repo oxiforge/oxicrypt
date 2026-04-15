@@ -13,7 +13,7 @@
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     clippy::integer_division,
-    clippy::cast_possible_truncation,
+    clippy::cast_possible_truncation
 )]
 
 use oxicrypt_sha::sha256::Sha256;
@@ -56,12 +56,7 @@ fn hash_leaf(i_val: &[u8; 16], r: u32, kc: &[u8; N]) -> [u8; N] {
 /// Hash an internal node.
 ///
 /// T\[r\] = H(I || u32str(r) || u16str(D_INTR) || T\[2r\] || T\[2r+1\])
-fn hash_internal(
-    i_val: &[u8; 16],
-    r: u32,
-    left: &[u8; N],
-    right: &[u8; N],
-) -> [u8; N] {
+fn hash_internal(i_val: &[u8; 16], r: u32, left: &[u8; N], right: &[u8; N]) -> [u8; N] {
     let mut h = Sha256::new_internal();
     h.update(i_val);
     h.update(&r.to_be_bytes());
@@ -82,11 +77,7 @@ fn hash_internal(
 /// Maximum recursion depth is H = 10 (root to leaf). Each frame
 /// holds two `[u8; 32]` children plus locals — roughly 100 bytes,
 /// so total stack usage is ~1 KB.
-fn compute_node(
-    seed: &[u8; N],
-    i_val: &[u8; 16],
-    node_idx: u32,
-) -> [u8; N] {
+fn compute_node(seed: &[u8; N], i_val: &[u8; 16], node_idx: u32) -> [u8; N] {
     if node_idx >= NUM_LEAVES {
         // Leaf: compute the LM-OTS public key K and hash it.
         let q = node_idx - NUM_LEAVES;
@@ -119,11 +110,7 @@ pub(crate) fn compute_root(seed: &[u8; N], i_val: &[u8; 16]) -> [u8; N] {
 ///
 /// Each sibling node requires computing its entire subtree,
 /// totalling ~1023 leaf computations in aggregate.
-pub(crate) fn compute_auth_path(
-    seed: &[u8; N],
-    i_val: &[u8; 16],
-    q: u32,
-) -> [[u8; N]; H] {
+pub(crate) fn compute_auth_path(seed: &[u8; N], i_val: &[u8; 16], q: u32) -> [[u8; N]; H] {
     let mut path = [[0u8; N]; H];
     let mut node = NUM_LEAVES + q;
     for slot in &mut path {

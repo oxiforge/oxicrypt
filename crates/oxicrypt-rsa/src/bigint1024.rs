@@ -26,7 +26,7 @@
     dead_code
 )]
 
-use crate::bigint2048::{U2048, LIMBS as LIMBS2048};
+use crate::bigint2048::{LIMBS as LIMBS2048, U2048};
 
 /// Limb count for a 1024-bit value.
 pub const LIMBS: usize = 16;

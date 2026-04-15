@@ -11,7 +11,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha256::{compress256, BLOCK_SIZE as SHA256_BLOCK};
-use oxicrypt_module::{require_allowed, require_operational, Error, Service, SelfTestFailure};
+use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
 
 /// Output length of SHA-224 in bytes (28 = 224/8).
 pub const DIGEST_SIZE: usize = 28;

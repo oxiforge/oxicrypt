@@ -35,11 +35,7 @@ pub(crate) fn power2round(r: i32) -> (i32, i32) {
 
 /// Apply `Power2Round` to a polynomial vector, splitting into
 /// (t₁, t₀) component-wise.
-pub(crate) fn polyveck_power2round(
-    t: &PolyVecK,
-    t1: &mut PolyVecK,
-    t0: &mut PolyVecK,
-) {
+pub(crate) fn polyveck_power2round(t: &PolyVecK, t1: &mut PolyVecK, t0: &mut PolyVecK) {
     for i in 0..K {
         for j in 0..N {
             let (hi, lo) = power2round(t.polys[i].coeffs[j]);
@@ -127,11 +123,7 @@ pub(crate) fn polyveck_high_bits(w: &PolyVecK, w1: &mut PolyVecK) {
 }
 
 /// Apply `Decompose` to every coefficient of a polynomial vector.
-pub(crate) fn polyveck_decompose(
-    w: &PolyVecK,
-    w1: &mut PolyVecK,
-    w0: &mut PolyVecK,
-) {
+pub(crate) fn polyveck_decompose(w: &PolyVecK, w1: &mut PolyVecK, w0: &mut PolyVecK) {
     for i in 0..K {
         for j in 0..N {
             let (hi, lo) = decompose(w.polys[i].coeffs[j]);
@@ -186,11 +178,7 @@ pub(crate) fn use_hint(h: i32, r: i32) -> i32 {
 ///
 /// Returns the count of 1-bits across all k polynomials. If the count
 /// exceeds ω, the caller should reject.
-pub(crate) fn polyveck_make_hint(
-    h: &mut PolyVecK,
-    z: &PolyVecK,
-    r: &PolyVecK,
-) -> usize {
+pub(crate) fn polyveck_make_hint(h: &mut PolyVecK, z: &PolyVecK, r: &PolyVecK) -> usize {
     let mut count = 0;
     for i in 0..K {
         for j in 0..N {
@@ -205,8 +193,7 @@ pub(crate) fn polyveck_make_hint(
 pub(crate) fn polyveck_use_hint(w1_prime: &mut PolyVecK, w: &PolyVecK, h: &PolyVecK) {
     for i in 0..K {
         for j in 0..N {
-            w1_prime.polys[i].coeffs[j] =
-                use_hint(h.polys[i].coeffs[j], w.polys[i].coeffs[j]);
+            w1_prime.polys[i].coeffs[j] = use_hint(h.polys[i].coeffs[j], w.polys[i].coeffs[j]);
         }
     }
 }
@@ -231,8 +218,7 @@ pub(crate) fn pack_w1(w1: &PolyVecK, buf: &mut [u8]) {
     let mut offset = 0;
     for i in 0..K {
         for j in (0..N).step_by(2) {
-            buf[offset] = (w1.polys[i].coeffs[j] as u8)
-                | ((w1.polys[i].coeffs[j + 1] as u8) << 4);
+            buf[offset] = (w1.polys[i].coeffs[j] as u8) | ((w1.polys[i].coeffs[j + 1] as u8) << 4);
             offset += 1;
         }
     }

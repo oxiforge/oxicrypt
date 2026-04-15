@@ -73,10 +73,7 @@ impl AlgorithmHandler for CShake256Handler {
 }
 
 /// Shared group driver for cSHAKE AFT.
-fn handle_cshake_group<F>(
-    group: &JsonValue,
-    mut squeeze: F,
-) -> Result<JsonValue, DispatchError>
+fn handle_cshake_group<F>(group: &JsonValue, mut squeeze: F) -> Result<JsonValue, DispatchError>
 where
     F: FnMut(&[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
 {

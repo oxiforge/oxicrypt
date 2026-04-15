@@ -696,14 +696,28 @@ const CCM_VPT256_CT: [u8; 32] = [
 fn self_test_ccm_aes128() -> Result<(), SelfTestFailure> {
     let k = Aes128Key::new_internal(&CCM_VPT128_KEY);
     let mut ct = [0u8; 32];
-    ccm_encrypt(&k, &CCM_VPT128_NONCE, &CCM_VPT128_AAD, &CCM_VPT128_PT, 16, &mut ct)
-        .map_err(|_| SelfTestFailure)?;
+    ccm_encrypt(
+        &k,
+        &CCM_VPT128_NONCE,
+        &CCM_VPT128_AAD,
+        &CCM_VPT128_PT,
+        16,
+        &mut ct,
+    )
+    .map_err(|_| SelfTestFailure)?;
     if ct != CCM_VPT128_CT {
         return Err(SelfTestFailure);
     }
     let mut pt = [0u8; 16];
-    ccm_decrypt(&k, &CCM_VPT128_NONCE, &CCM_VPT128_AAD, &CCM_VPT128_CT, 16, &mut pt)
-        .map_err(|_| SelfTestFailure)?;
+    ccm_decrypt(
+        &k,
+        &CCM_VPT128_NONCE,
+        &CCM_VPT128_AAD,
+        &CCM_VPT128_CT,
+        16,
+        &mut pt,
+    )
+    .map_err(|_| SelfTestFailure)?;
     if pt != CCM_VPT128_PT {
         return Err(SelfTestFailure);
     }
@@ -713,14 +727,28 @@ fn self_test_ccm_aes128() -> Result<(), SelfTestFailure> {
 fn self_test_ccm_aes192() -> Result<(), SelfTestFailure> {
     let k = Aes192Key::new_internal(&CCM_VPT192_KEY);
     let mut ct = [0u8; 32];
-    ccm_encrypt(&k, &CCM_VPT192_NONCE, &CCM_VPT192_AAD, &CCM_VPT192_PT, 16, &mut ct)
-        .map_err(|_| SelfTestFailure)?;
+    ccm_encrypt(
+        &k,
+        &CCM_VPT192_NONCE,
+        &CCM_VPT192_AAD,
+        &CCM_VPT192_PT,
+        16,
+        &mut ct,
+    )
+    .map_err(|_| SelfTestFailure)?;
     if ct != CCM_VPT192_CT {
         return Err(SelfTestFailure);
     }
     let mut pt = [0u8; 16];
-    ccm_decrypt(&k, &CCM_VPT192_NONCE, &CCM_VPT192_AAD, &CCM_VPT192_CT, 16, &mut pt)
-        .map_err(|_| SelfTestFailure)?;
+    ccm_decrypt(
+        &k,
+        &CCM_VPT192_NONCE,
+        &CCM_VPT192_AAD,
+        &CCM_VPT192_CT,
+        16,
+        &mut pt,
+    )
+    .map_err(|_| SelfTestFailure)?;
     if pt != CCM_VPT192_PT {
         return Err(SelfTestFailure);
     }
@@ -730,14 +758,28 @@ fn self_test_ccm_aes192() -> Result<(), SelfTestFailure> {
 fn self_test_ccm_aes256() -> Result<(), SelfTestFailure> {
     let k = Aes256Key::new_internal(&CCM_VPT256_KEY);
     let mut ct = [0u8; 32];
-    ccm_encrypt(&k, &CCM_VPT256_NONCE, &CCM_VPT256_AAD, &CCM_VPT256_PT, 16, &mut ct)
-        .map_err(|_| SelfTestFailure)?;
+    ccm_encrypt(
+        &k,
+        &CCM_VPT256_NONCE,
+        &CCM_VPT256_AAD,
+        &CCM_VPT256_PT,
+        16,
+        &mut ct,
+    )
+    .map_err(|_| SelfTestFailure)?;
     if ct != CCM_VPT256_CT {
         return Err(SelfTestFailure);
     }
     let mut pt = [0u8; 16];
-    ccm_decrypt(&k, &CCM_VPT256_NONCE, &CCM_VPT256_AAD, &CCM_VPT256_CT, 16, &mut pt)
-        .map_err(|_| SelfTestFailure)?;
+    ccm_decrypt(
+        &k,
+        &CCM_VPT256_NONCE,
+        &CCM_VPT256_AAD,
+        &CCM_VPT256_CT,
+        16,
+        &mut pt,
+    )
+    .map_err(|_| SelfTestFailure)?;
     if pt != CCM_VPT256_PT {
         return Err(SelfTestFailure);
     }

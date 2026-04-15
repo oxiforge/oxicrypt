@@ -203,9 +203,11 @@ fn generate_vot_slice(
         // Generate a variable output length:
         // Range from minOutLen to minOutLen*4, byte-aligned
         let mut out_len_buf = [0u8; 2];
-        drbg.generate(None, &mut out_len_buf).expect("drbg generate");
+        drbg.generate(None, &mut out_len_buf)
+            .expect("drbg generate");
         let max_range = min_out_bytes * 4;
-        let out_bytes = min_out_bytes + (u16::from_be_bytes(out_len_buf) as usize % (max_range - min_out_bytes + 1));
+        let out_bytes = min_out_bytes
+            + (u16::from_be_bytes(out_len_buf) as usize % (max_range - min_out_bytes + 1));
         let out_bits = out_bytes * 8;
 
         // Compute SHAKE output
