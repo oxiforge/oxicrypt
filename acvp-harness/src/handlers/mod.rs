@@ -331,6 +331,7 @@ pub mod kdf_comp_tls;
 pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod kmac;
+pub mod ml_kem;
 pub mod parallelhash;
 pub mod pbkdf2;
 pub mod rsa;

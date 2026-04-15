@@ -322,6 +322,10 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::parallelhash::ParallelHashXof256Handler));
     // PBKDF2 (SP 800-132 / RFC 8018, R55: self-generated vectors)
     r.register(Box::new(handlers::pbkdf2::Pbkdf2Handler));
+    // ML-KEM-1024 (R59: keyGen / encaps / decaps, FIPS 203, post-quantum)
+    r.register(Box::new(handlers::ml_kem::MlKem1024KeyGenHandler));
+    r.register(Box::new(handlers::ml_kem::MlKem1024EncapsHandler));
+    r.register(Box::new(handlers::ml_kem::MlKem1024DecapsHandler));
     r
 }
 
@@ -464,12 +468,16 @@ mod tests {
         assert!(r.find("TupleHashXOF-256", None, "1.0").is_some());
         assert!(r.find("ParallelHashXOF-128", None, "1.0").is_some());
         assert!(r.find("ParallelHashXOF-256", None, "1.0").is_some());
+        // R59 ML-KEM-1024 (post-quantum)
+        assert!(r.find("ML-KEM-1024", Some("keyGen"), "1.0").is_some());
+        assert!(r.find("ML-KEM-1024", Some("encaps"), "1.0").is_some());
+        assert!(r.find("ML-KEM-1024", Some("decaps"), "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 63);
+        assert_eq!(r.len(), 66);
         assert!(!r.is_empty());
     }
 
