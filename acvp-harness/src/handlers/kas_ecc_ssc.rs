@@ -30,6 +30,7 @@ impl AlgorithmHandler for KasEccSscHandler {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_kas_ecc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
         .get("tgId")

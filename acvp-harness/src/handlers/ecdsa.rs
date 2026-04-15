@@ -270,6 +270,7 @@ fn handle_keyver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
 // ── SigGen group driver ─────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
         .get("tgId")

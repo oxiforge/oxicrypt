@@ -38,6 +38,7 @@ impl AlgorithmHandler for RsaSigVerHandler {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
         .get("tgId")
