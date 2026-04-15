@@ -145,7 +145,13 @@ impl Shake128 {
         Ok(Self::new_internal())
     }
 
-    const fn new_internal() -> Self {
+    /// Constructor that bypasses the module state machine.
+    ///
+    /// Used by downstream crates (e.g. `oxicrypt-ml-kem`) that need
+    /// SHAKE-128 during the `SelfTest` phase. Public callers must use
+    /// [`Shake128::new`] instead.
+    #[doc(hidden)]
+    pub const fn new_internal() -> Self {
         Self {
             core: ShakeCore::new_internal(),
         }
@@ -199,7 +205,13 @@ impl Shake256 {
         Ok(Self::new_internal())
     }
 
-    const fn new_internal() -> Self {
+    /// Constructor that bypasses the module state machine.
+    ///
+    /// Used by downstream crates (e.g. `oxicrypt-ml-kem`) that need
+    /// SHAKE-256 during the `SelfTest` phase. Public callers must use
+    /// [`Shake256::new`] instead.
+    #[doc(hidden)]
+    pub const fn new_internal() -> Self {
         Self {
             core: ShakeCore::new_internal(),
         }

@@ -446,6 +446,8 @@ name = "oxicrypt-ml-kem"
 version = "0.0.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-xof",
 ]
 
 [[package]]

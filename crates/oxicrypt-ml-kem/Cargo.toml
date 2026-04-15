@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-ml-kem"
-description = "ML-KEM (FIPS 203) — stub crate, implementation planned"
+description = "ML-KEM-1024 (FIPS 203) — lattice-based key encapsulation mechanism."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-xof = { path = "../oxicrypt-xof" }

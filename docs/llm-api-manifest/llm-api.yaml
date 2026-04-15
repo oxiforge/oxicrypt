@@ -186,6 +186,14 @@ modules:
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-rsa, oxicrypt-drbg]
 
+  - name: oxicrypt-ml-kem
+    description: >-
+      ML-KEM-1024 (FIPS 203) post-quantum key encapsulation mechanism.
+      Provides keygen, encapsulate, and decapsulate operations with
+      implicit-rejection construction and DRBG-backed randomness.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
+
   - name: oxicrypt-eddsa
     description: >-
       Ed25519 deterministic sign/verify/keygen (RFC 8032, FIPS 186-5).
@@ -1322,6 +1330,131 @@ functions:
       fips_approved: true
       fips_gate: Operational
 
+  # ── ML-KEM-1024 (FIPS 203) ────────────────────────────────────────
+
+  - name: keygen
+    module: oxicrypt-ml-kem
+    signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1568], [u8; 3168]), Error>"
+    description: >-
+      Generate an ML-KEM-1024 key pair. Both d and z must be 32 bytes
+      of fresh randomness from an approved DRBG (SP 800-90A).
+    parameters:
+      - name: d
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for K-PKE key generation."
+      - name: z
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for implicit-rejection seed."
+    returns:
+      type: "Result<([u8; 1568], [u8; 3168]), Error>"
+      description: "(encapsulation_key, decapsulation_key)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-1024 blocked by active profile.
+      - name: InvalidInput
+        condition: Invalid or insufficient randomness.
+    preconditions:
+      - description: Module must be Operational.
+      - description: d and z must each be 32 bytes of fresh random data from an approved DRBG.
+    postconditions:
+      - description: >-
+          Returns a valid ML-KEM-1024 key pair suitable for use with
+          encapsulate and decapsulate.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: encapsulate
+    module: oxicrypt-ml-kem
+    signature: "pub fn encapsulate(ek: &[u8; 1568], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1568]), Error>"
+    description: >-
+      Encapsulate a shared secret against an ML-KEM-1024 encapsulation key.
+      m must be 32 bytes of fresh randomness from an approved DRBG.
+    parameters:
+      - name: ek
+        type: "&[u8; 1568]"
+        direction: in
+        description: "Encapsulation key (from keygen)."
+      - name: m
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for encapsulation."
+    returns:
+      type: "Result<([u8; 32], [u8; 1568]), Error>"
+      description: "(shared_secret, ciphertext)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-1024 blocked by active profile.
+      - name: InvalidInput
+        condition: Invalid encapsulation key or randomness.
+    preconditions:
+      - description: Module must be Operational.
+      - description: ek must be a valid 1568-byte encapsulation key from keygen.
+      - description: m must be 32 bytes of fresh random data from an approved DRBG.
+    postconditions:
+      - description: >-
+          Returns a 32-byte shared secret and 1568-byte ciphertext.
+          The shared secret is deterministic and reproducible only with
+          access to the private decapsulation key.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: decapsulate
+    module: oxicrypt-ml-kem
+    signature: "pub fn decapsulate(dk: &[u8; 3168], ct: &[u8; 1568]) -> Result<[u8; 32], Error>"
+    description: >-
+      Decapsulate a shared secret from an ML-KEM-1024 ciphertext.
+      Uses implicit rejection: if the ciphertext is invalid, a
+      pseudorandom key is returned (constant-time, no observable difference).
+    parameters:
+      - name: dk
+        type: "&[u8; 3168]"
+        direction: in
+        description: "Decapsulation key (from keygen)."
+      - name: ct
+        type: "&[u8; 1568]"
+        direction: in
+        description: "Ciphertext (from encapsulate)."
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: "32-byte shared secret."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-1024 blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+      - description: dk must be a valid 3168-byte decapsulation key from keygen.
+      - description: ct must be a 1568-byte ciphertext from encapsulate.
+    postconditions:
+      - description: >-
+          Returns the 32-byte shared secret. By construction (implicit
+          rejection), this operation is constant-time and returns a
+          pseudorandom value even if ct is invalid or malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
 
   - name: oxicrypt_init
@@ -1598,3 +1731,27 @@ constants:
     type: usize
     value: "64"
     description: "ECDSA P-256 signature: r (32 bytes) || s (32 bytes)."
+
+  - name: EK_LEN
+    module: oxicrypt-ml-kem
+    type: usize
+    value: "1568"
+    description: ML-KEM-1024 encapsulation key size in bytes.
+
+  - name: DK_LEN
+    module: oxicrypt-ml-kem
+    type: usize
+    value: "3168"
+    description: ML-KEM-1024 decapsulation key size in bytes.
+
+  - name: CT_LEN
+    module: oxicrypt-ml-kem
+    type: usize
+    value: "1568"
+    description: ML-KEM-1024 ciphertext size in bytes.
+
+  - name: SHARED_SECRET_LEN
+    module: oxicrypt-ml-kem
+    type: usize
+    value: "32"
+    description: ML-KEM-1024 shared secret size in bytes.

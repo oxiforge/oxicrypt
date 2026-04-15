@@ -47,7 +47,7 @@ cargo test --workspace
 | ECDSA | P-256 and P-384 sign/verify/keygen with DRBG-backed rejection sampling | FIPS 186-5 |
 | ECDH | P-256 and P-384 CDH shared secret computation | SP 800-56Ar3 |
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
-| ML-KEM | ML-KEM-1024 encaps/decaps/keygen (stub) | FIPS 203 |
+| ML-KEM | ML-KEM-1024 keygen/encaps/decaps | FIPS 203 |
 | ML-DSA | ML-DSA-87 sign/verify/keygen (stub) | FIPS 204 |
 | SLH-DSA | SLH-DSA sign/verify/keygen (stub) | FIPS 205 |
 | LMS | LMS sign/verify (stub) | SP 800-208 |
@@ -80,7 +80,7 @@ crates/
   oxicrypt-ecdsa         ECDSA P-256 + P-384 (FIPS 186-5)
   oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
-  oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — stub
+  oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — implemented
   oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — stub
   oxicrypt-slh-dsa       SLH-DSA (FIPS 205) — stub
   oxicrypt-lms           LMS hash-based signatures (SP 800-208) — stub
@@ -202,7 +202,7 @@ gating is enforced across all 15 algorithm crates and the C ABI
 (`oxicrypt-ffi`). The FFI layer exposes profile selection via
 `oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with
 status code `-4` for restricted algorithms. Stub crates reserve surfaces
-for all post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS).
+for remaining post-quantum algorithms (ML-DSA, SLH-DSA, LMS, XMSS); ML-KEM-1024 is fully implemented.
 P-384 ECDSA/ECDH is complete. RSA-3072 and RSA-4096 are fully
 implemented: PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt,
 keygen with CRT + Bellcore verify-after-sign (IG D.G). DH-3072 key
@@ -216,8 +216,8 @@ submission.
 **Phase 4** — Performance hardening (AES-NI, bitsliced fallback), additional
 curves (Ed448, P-521), language bindings (C ABI, Python, Go, Node).
 
-**Phase 5** — Post-quantum algorithm implementations (ML-KEM-1024, ML-DSA-87,
-LMS, XMSS) and classical extensions (DH-3072).
+**Phase 5** — Post-quantum algorithm implementations (ML-DSA-87,
+LMS, XMSS) and classical extensions (DH-3072). ML-KEM-1024 is complete.
 
 ## `oxi` CLI
 

@@ -13,7 +13,7 @@ lama: "0.1"
 library:
   name: oxicrypt
   version: "0.1.0-beta.1"
-  description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module."
+  description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
   repository: "https://github.com/caraka/oxicrypt"
   homepage: "https://oxicrypt.com"
   license: "PolyForm-Noncommercial-1.0.0"
@@ -189,11 +189,20 @@ capabilities:
       - "ECDH P-256"
       - "ECDH P-384"
       - "DH-3072 (RFC 3526 Group 15)"
-      - "ML-KEM-1024 (stub)"
     standards:
       - "SP 800-56Ar3"
-      - "FIPS 203"
       - "RFC 3526"
+
+  - category: "Key encapsulation"
+    algorithms:
+      - "ML-KEM-1024 (FIPS 203)"
+    operations:
+      - "keygen"
+      - "encapsulate"
+      - "decapsulate"
+    crate: "oxicrypt-ml-kem"
+    standards:
+      - "FIPS 203"
     quickstart:
       language: "rust"
       code: |
