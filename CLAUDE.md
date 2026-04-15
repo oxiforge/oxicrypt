@@ -11,6 +11,20 @@ They are loaded automatically at the start of every session.
   HN talking points, launch roadmap, and other planning docs that
   live outside the repo
 
+## Session bootstrap
+
+At the start of every session — or after a context reset —
+read `llm-project-manifest.yaml` (repo root) before doing
+anything else. The manifest records what exists right now:
+repos, crates, tooling, docs, external dependencies, and their
+status (`complete` / `partial` / `stub`). It contains no plans
+and no priorities — just the current state of the world. Use it
+to avoid re-proposing finished work or spending time on
+reconnaissance that the manifest already answers.
+
+Update the manifest as part of the doc-sync (step 6 below)
+whenever a commit changes the status of anything it tracks.
+
 ## Compliance target
 
 Follow **FIPS 140-3 Implementation Guidance** as of the current IG release
@@ -19,15 +33,21 @@ affected decisions against the new text before shipping further work.
 
 ## Definition of done
 
-Every task is incomplete until `cargo clippy --workspace --all-targets
--- -D warnings` passes. Run it as the last step before handing control
-back to the user, and re-run it after any post-review fix-ups.
+Every task is incomplete until both of these pass:
+
+1. `cargo fmt --all --check` (no unformatted code)
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+
+Run both as the last step before handing control back to the user,
+and re-run them after any post-review fix-ups. If `cargo fmt --all
+--check` reports diffs, run `cargo fmt --all` to fix them before
+the clippy step — clippy output is easier to read on formatted code.
 
 ## Documentation sync at every commit point
 
 At each commit boundary, refresh documentation while the context is
 fresh. For any commit that touches a crate — directly or by
-reference — do all five of:
+reference — do all six of:
 
 1. **Rustdoc.** Update the `lib.rs` header and any affected item
    docs of every crate changed or referenced so the "Approved
@@ -57,10 +77,16 @@ reference — do all five of:
    current-status section and chunk checklists to reflect what
    the commit actually landed. This file lives outside the repo
    in the PQClib project folder — do not commit it.
+6. **Project manifest.** Update `llm-project-manifest.yaml`
+   (repo root) if the commit changes the status of any tracked
+   item — new crate, handler count change, doc completion,
+   external dependency update, etc. The manifest is what IS,
+   not what's planned; keep it factual and current.
 
-These five doc updates ship **in the same commit** as the code
-change — not as a follow-up — so reviewers always see the code
-and its documentation evolve together.
+Run `cargo fmt --all` before staging the commit so formatting
+is always clean. These six doc updates ship **in the same
+commit** as the code change — not as a follow-up — so reviewers
+always see the code and its documentation evolve together.
 
 ## Working style — check in at batch boundaries
 
