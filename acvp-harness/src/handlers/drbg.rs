@@ -66,6 +66,9 @@ impl AlgorithmHandler for HmacDrbgHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_drbg_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_drbg_group(DrbgFamily::Hmac, group)
     }

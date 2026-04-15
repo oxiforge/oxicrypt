@@ -115,6 +115,19 @@ pub trait AlgorithmHandler: Send + Sync {
 
     /// Process a single test group, returning the response group.
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError>;
+
+    /// Return the ACVP registration capability block for this handler,
+    /// or `None` if the handler has not yet declared its capabilities.
+    ///
+    /// When implemented, this should return a `JsonValue::Object` with
+    /// at least `algorithm`, `revision`, and enough capability detail
+    /// for the ACVP demo server to generate matching vector sets.
+    ///
+    /// Default is `None` — handlers opt in one at a time as we wire
+    /// up the transport client.
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        None
+    }
 }
 
 /// Mutable handler registry. Constructed with
@@ -169,6 +182,16 @@ impl Registry {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.handlers.is_empty()
+    }
+
+    /// Iterate over all registered handlers, calling `f` on each one.
+    ///
+    /// Used by the transport client to collect ACVP registration
+    /// capabilities from every handler that has declared them.
+    pub fn for_each_handler(&self, mut f: impl FnMut(&dyn AlgorithmHandler)) {
+        for h in &self.handlers {
+            f(h.as_ref());
+        }
     }
 }
 

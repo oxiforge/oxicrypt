@@ -56,6 +56,10 @@ impl AlgorithmHandler for HmacSha2_256Handler {
         "1.0"
     }
 
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA2-256", 256))
+    }
+
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         let tg_id = group
             .get("tgId")

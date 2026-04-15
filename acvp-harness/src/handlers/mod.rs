@@ -368,8 +368,21 @@
 //! SLH-DSA-SHA2-256s keyGen/sigGen/sigVer, LMS keyGen/sigGen/sigVer,
 //! XMSS keyGen/sigGen/sigVer). RSA extensions to existing handlers do not
 //! add new handler structs.
+//!
+//! Chunk 7 adds the ACVP transport client infrastructure:
+//!
+//! - [`caps`] — ACVP registration capability builders for the initial
+//!   transport dry run (SHA3-256, HMAC-SHA2-256, AES-CBC, AES-GCM,
+//!   HMAC_DRBG). The `acvp_capabilities()` trait method on
+//!   [`crate::dispatch::AlgorithmHandler`] returns `Option<JsonValue>`;
+//!   handlers opt in by implementing it with a call to the relevant
+//!   `caps::*` builder.
+//!
+//! Handler count stays at 78; no new handlers. Five handlers now
+//! declare `acvp_capabilities()` for the initial dry run.
 
 pub mod aes;
+pub mod caps;
 pub mod cmac;
 pub mod cshake;
 pub mod drbg;

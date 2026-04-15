@@ -35,6 +35,10 @@ impl AlgorithmHandler for Sha3_256Handler {
         "2.0"
     }
 
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::sha3_capability("SHA3-256", 256))
+    }
+
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         super::sha3::handle_hash_group(
             group,

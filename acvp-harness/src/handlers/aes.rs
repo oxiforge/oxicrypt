@@ -88,6 +88,9 @@ impl AlgorithmHandler for AesCbcHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_cbc_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Cbc)
     }
@@ -111,6 +114,9 @@ impl AlgorithmHandler for AesGcmHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_gcm_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Gcm)

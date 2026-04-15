@@ -256,6 +256,27 @@ modules:
     no_std: true
     depends_on: []
 
+  - name: acvp-harness
+    description: >-
+      ACVP protocol harness and transport client. 78 registered handlers
+      dispatch NIST ACVP vector sets offline (dispatch subcommand) and
+      online against the ACVP demo server (demo-run subcommand). The
+      demo-run transport uses TOTP-signed JWT login, curl-based HTTPS
+      with mutual TLS, and exponential-backoff polling. Outside the
+      cryptographic boundary.
+    no_std: false
+    entry_points:
+      - "acvp-harness dispatch <prompt.json> <response.json>"
+      - "acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>"
+      - "acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>"
+    depends_on:
+      - oxicrypt-module
+      - oxicrypt-sha
+      - oxicrypt-hmac
+      - oxicrypt-aes
+      - oxicrypt-drbg
+      - all algorithm crates
+
   - name: oxicrypt-ffi
     description: >-
       C ABI wrappers (extern "C") for language bindings. Builds as cdylib

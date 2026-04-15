@@ -231,6 +231,17 @@ capabilities:
     standards:
       - "FIPS 140-3 IG 10.3.A"
 
+  - category: "ACVP harness and transport"
+    note: >
+      acvp-harness binary processes NIST ACVP vector sets offline and
+      can run end-to-end sessions against the ACVP demo server. 78
+      registered algorithm handlers. The demo-run subcommand uses
+      TOTP-signed JWT login and curl-based HTTPS with mutual TLS.
+    entry_points:
+      - "acvp-harness dispatch <prompt.json> <response.json>"
+      - "acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>"
+      - "acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>"
+
   - category: "C ABI"
     note: >
       oxicrypt-ffi exposes extern "C" wrappers as cdylib and staticlib.

@@ -42,6 +42,23 @@
 //! [`dispatch::DispatchError::Module`] before any crypto primitive is
 //! touched, so a failed KAT can never yield an ACVP response.
 //!
+//! # ACVP transport client
+//!
+//! The [`transport`] module implements the ACVP REST protocol flow for
+//! end-to-end sessions against the NIST demo server
+//! (`demo.acvts.nist.gov`):
+//!
+//! 1. Authenticate via TOTP-signed JWT (RFC 6238 / RFC 7519, using
+//!    the module's own HMAC-SHA-256)
+//! 2. Register algorithm capabilities derived from the handler
+//!    registry via [`dispatch::AlgorithmHandler::acvp_capabilities`]
+//! 3. Fetch, process, submit, and poll each vector set
+//!
+//! HTTPS with mutual TLS is handled by shelling out to `curl(1)`,
+//! preserving the workspace's zero-third-party-dependencies policy.
+//! The `demo-run` CLI subcommand in `main.rs` is the user-facing
+//! entry point.
+//!
 //! # Zero-third-party-dependencies
 //!
 //! The JSON parser in [`json`] and the hex codec in [`hex`] are
@@ -70,6 +87,7 @@ pub mod hex;
 pub mod json;
 pub mod rsp;
 pub mod shs;
+pub mod transport;
 
 /// Convenience wrapper: run `oxicrypt_module::initialize()` and treat
 /// `AlreadyInitialized` as success.

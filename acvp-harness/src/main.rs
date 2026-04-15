@@ -19,6 +19,15 @@
 //!   `usnistgov/ACVP-Server` ships no top-level `SHA-*` vector
 //!   directories at the pinned commit — see §11.4 of the security
 //!   policy.
+//! - `acvp-harness demo-run --cert <cert.pem> --key <key.pem> --totp-secret <hex>`
+//!   — the ACVP transport client: connect to the NIST ACVP demo
+//!   server (`demo.acvts.nist.gov`), authenticate via TOTP-signed JWT,
+//!   register algorithm capabilities, fetch vector sets, process them
+//!   through the local dispatcher, submit responses, and poll for
+//!   verdicts. Uses `curl(1)` for HTTPS with mutual TLS, keeping the
+//!   zero-third-party-dependencies policy intact. JWT signing and TOTP
+//!   generation use the module's own HMAC-SHA-256. Optional
+//!   `--algorithm <name>` restricts the session to a single algorithm.
 //!
 //! Because this is a user-facing binary it is permitted to emit
 //! output to stdout/stderr — we override the workspace-wide
@@ -161,8 +170,95 @@ fn main() {
         run_dispatch_shs_cli(&args);
         return;
     }
+    if args.len() >= 2 && args[1] == "demo-run" {
+        run_demo_cli(&args);
+        return;
+    }
 
     print_self_test_banner();
+}
+
+fn run_demo_cli(args: &[String]) {
+    // Parse: demo-run --cert <cert> --key <key> --totp-secret <secret> [--algorithm <alg>]
+    let mut cert = String::new();
+    let mut key = String::new();
+    let mut totp_secret = String::new();
+    let mut algorithm: Option<String> = None;
+    let mut server = "https://demo.acvts.nist.gov".to_string();
+    let mut log_path = "acvp-session.json".to_string();
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cert" => {
+                i += 1;
+                if i < args.len() {
+                    cert.clone_from(&args[i]);
+                }
+            }
+            "--key" => {
+                i += 1;
+                if i < args.len() {
+                    key.clone_from(&args[i]);
+                }
+            }
+            "--totp-secret" => {
+                i += 1;
+                if i < args.len() {
+                    totp_secret.clone_from(&args[i]);
+                }
+            }
+            "--algorithm" => {
+                i += 1;
+                if i < args.len() {
+                    algorithm = Some(args[i].clone());
+                }
+            }
+            "--server" => {
+                i += 1;
+                if i < args.len() {
+                    server.clone_from(&args[i]);
+                }
+            }
+            "--log" => {
+                i += 1;
+                if i < args.len() {
+                    log_path.clone_from(&args[i]);
+                }
+            }
+            other => {
+                eprintln!("oxicrypt acvp-harness demo-run: unknown flag {other:?}");
+                print_demo_run_usage();
+                return;
+            }
+        }
+        i += 1;
+    }
+
+    if cert.is_empty() || key.is_empty() || totp_secret.is_empty() {
+        eprintln!("oxicrypt acvp-harness demo-run: --cert, --key, and --totp-secret are required");
+        print_demo_run_usage();
+        return;
+    }
+
+    let config = acvp_harness::transport::AcvpConfig {
+        server_url: server,
+        cert_path: cert,
+        key_path: key,
+        totp_secret,
+        filter_algorithm: algorithm,
+        log_path,
+    };
+
+    if let Err(msg) = acvp_harness::transport::run_demo(&config) {
+        eprintln!("oxicrypt acvp-harness: demo-run failed: {msg}");
+    }
+}
+
+fn print_demo_run_usage() {
+    eprintln!("usage: acvp-harness demo-run --cert <cert.pem> --key <key.pem> --totp-secret <hex>");
+    eprintln!("  optional: --algorithm <name>   test a single algorithm (e.g. SHA3-256)");
+    eprintln!("            --server <url>        ACVP server (default: https://demo.acvts.nist.gov)");
+    eprintln!("            --log <path>          transcript log path (default: acvp-session.json)");
 }
 
 fn print_self_test_banner() {
@@ -188,7 +284,10 @@ fn print_self_test_banner() {
         "Run `acvp-harness dispatch <prompt.json> <response.json>` for an ACVP vector set,"
     );
     println!(
-        "or `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>` for a CAVP SHS file."
+        "or `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>` for a CAVP SHS file,"
+    );
+    println!(
+        "or `acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>` for an end-to-end ACVP demo session."
     );
 }
 

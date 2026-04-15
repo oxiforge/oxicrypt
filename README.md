@@ -151,6 +151,25 @@ reproduces the vendored answer fields byte-for-byte.
     /tmp/sha256_response.json
 ```
 
+### ACVP demo-server session (end-to-end)
+
+```bash
+# Full session against the NIST ACVP demo server
+./target/debug/acvp-harness demo-run \
+    --cert client.pem --key client.key --totp-secret <hex>
+
+# Single-algorithm dry run
+./target/debug/acvp-harness demo-run \
+    --cert client.pem --key client.key --totp-secret <hex> \
+    --algorithm SHA3-256
+```
+
+The `demo-run` subcommand implements the full ACVP REST protocol: login
+with TOTP-signed JWT, register capabilities, fetch/process/submit vector
+sets, and poll for verdicts. Uses `curl(1)` for HTTPS with mutual TLS,
+keeping zero third-party deps. Session transcripts are written to
+`acvp-session.json` (configurable with `--log`).
+
 ### Constant-time validation
 
 ```bash
