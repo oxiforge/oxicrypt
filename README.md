@@ -43,7 +43,7 @@ cargo test --workspace
 | DRBG | CTR_DRBG (AES-128/192/256), Hash_DRBG (SHA-256/384/512), HMAC_DRBG (SHA-256/384/512) | SP 800-90A Rev. 1 |
 | KDF | SP 800-108r1 (counter/feedback/double-pipeline), SP 800-56C Rev 2 KDA-HKDF, TLS 1.2 KDF, PBKDF2 | SP 800-108, SP 800-56Cr2, SP 800-132 |
 | SP 800-185 | cSHAKE, KMAC, TupleHash, ParallelHash (+ XOF variants) | SP 800-185 |
-| RSA | RSA-2048 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt, keygen; RSA-3072/4096 bigint + Montgomery + keygen (encoding WIP) | FIPS 186-5, SP 800-56Br2 |
+| RSA | RSA-2048/3072/4096 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt, keygen with CRT + Bellcore | FIPS 186-5, SP 800-56Br2 |
 | ECDSA | P-256 and P-384 sign/verify/keygen with DRBG-backed rejection sampling | FIPS 186-5 |
 | ECDH | P-256 and P-384 CDH shared secret computation | SP 800-56Ar3 |
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
@@ -76,7 +76,7 @@ crates/
   oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
   oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246)
-  oxicrypt-rsa           RSA-2048 sign/verify/encrypt/decrypt/keygen + 3072/4096 bigint/mont/keygen
+  oxicrypt-rsa           RSA-2048/3072/4096 sign/verify/encrypt/decrypt/keygen with CRT + Bellcore
   oxicrypt-ecdsa         ECDSA P-256 + P-384 (FIPS 186-5)
   oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
@@ -203,10 +203,10 @@ gating is enforced across all 15 algorithm crates and the C ABI
 `oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with
 status code `-4` for restricted algorithms. Stub crates reserve surfaces
 for all post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS)
-and CNSA 1.0 classical extensions (P-384, RSA-3072/4096, DH-3072).
-P-384 ECDSA/ECDH is complete; RSA-3072/4096 has bigint, Montgomery,
-and keygen, with encoding (PKCS#1 v1.5, PSS, OAEP) next.
-Preparing for ACVP demo server dry run.
+and CNSA 1.0 classical extensions (DH-3072). P-384 ECDSA/ECDH is
+complete. RSA-3072 and RSA-4096 are fully implemented: PKCS#1 v1.5 and
+PSS sign/verify, OAEP encrypt/decrypt, keygen with CRT + Bellcore
+verify-after-sign (IG D.G). Preparing for ACVP demo server dry run.
 
 **Phase 3** — CST lab engagement, CAVP algorithm certificates, CMVP module
 submission.
@@ -215,8 +215,7 @@ submission.
 curves (Ed448, P-521), language bindings (C ABI, Python, Go, Node).
 
 **Phase 5** — Post-quantum algorithm implementations (ML-KEM-1024, ML-DSA-87,
-LMS, XMSS) and classical extensions (P-384 field/point/scalar, RSA-3072/4096
-bigint/montgomery, DH-3072).
+LMS, XMSS) and classical extensions (DH-3072).
 
 ## `oxi` CLI
 

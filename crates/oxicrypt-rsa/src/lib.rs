@@ -1,14 +1,14 @@
 //! RSA signature generation, verification, and key generation
 //! per FIPS 186-5 / RFC 8017.
 //!
-//! RSA-2048 is fully implemented end-to-end (sign, verify, keygen,
-//! OAEP encrypt/decrypt). RSA-3072 and RSA-4096 have big-integer
-//! types, Montgomery arithmetic, and key generation in place
-//! ([`bigint1536`]/[`bigint3072`]/[`bigint4096`],
-//! [`mont1536`]/[`mont3072`]/[`mont4096`],
-//! [`keygen3072`]/[`keygen4096`]); encoding and wiring are deferred
-//! to Chunk 5B.3. Until then, the higher-level entry points in
-//! [`rsa_3072_4096_stub`] still return `NotImplemented`.
+//! RSA-2048, RSA-3072, and RSA-4096 are fully implemented end-to-end:
+//! PKCS#1 v1.5 sign/verify, PSS sign/verify, OAEP encrypt/decrypt,
+//! and key generation with CRT components. Each width has its own
+//! validated private-key handle ([`RsaPrivateKey2048`],
+//! [`rsa3072::RsaPrivateKey3072`], [`rsa4096::RsaPrivateKey4096`])
+//! that runs a FIPS 140-3 IG 10.3.A pairwise consistency test on
+//! construction and selects the CRT sign path with Bellcore
+//! verify-after-sign (IG D.G) when CRT material is present.
 //!
 //! # Approved services
 //!
@@ -29,14 +29,13 @@
 //!
 //! # FIPS 186-5 §5.1 modulus size
 //!
-//! Only `|n| = 2048` bits is currently accepted at the service
+//! `|n| ∈ {2048, 3072, 4096}` bits are accepted at the service
 //! layer. Verification of legacy 1024- or 1280-bit RSA signatures
 //! is outside the approved boundary and this crate deliberately has
-//! no code path for it. RSA-3072 and RSA-4096 have complete
-//! big-integer arithmetic, Montgomery contexts, and key generation
-//! ([`keygen3072::generate_3072`], [`keygen4096::generate_4096`]);
-//! encoding (PKCS#1 v1.5, PSS, OAEP) at those widths lands in
-//! Chunk 5B.3.
+//! no code path for it. RSA-3072 and RSA-4096 are implemented in
+//! [`rsa3072`] and [`rsa4096`] respectively, sharing the same
+//! `define_rsa_wide` macro for the key struct, CRT sign path,
+//! Bellcore check, and all encoding variants.
 //!
 //! # Power-up self-tests
 //!
@@ -140,7 +139,10 @@ mod mont_impl;
 pub mod oaep;
 pub mod pkcs1_v15;
 pub mod pss;
+pub mod rsa3072;
+pub mod rsa4096;
 pub mod rsa_3072_4096_stub;
+mod rsa_wide_impl;
 
 use bigint1024::{U1024, BYTES as U1024_BYTES, LIMBS as LIMBS1024};
 use bigint2048::{U2048, BYTES as U2048_BYTES, LIMBS as LIMBS2048};

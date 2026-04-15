@@ -250,6 +250,147 @@ pub fn emsa_oaep_decode(
     Some(mlen)
 }
 
+// ------------------------------------------------------------------
+// Slice-based OAEP encode / decode for RSA-3072 and RSA-4096
+// ------------------------------------------------------------------
+
+/// Maximum modulus byte length (`k`) supported by the slice-based OAEP.
+/// RSA-4096 → k = 512.
+const MAX_K: usize = 512;
+/// Maximum DB length at `MAX_K`: `k − hLen − 1 = 479`.
+const MAX_DB_LEN: usize = MAX_K - HLEN - 1;
+/// Maximum plaintext length at `MAX_K`: `k − 2·hLen − 2 = 446`.
+pub const MAX_MSG_LEN_4096: usize = MAX_K - 2 * HLEN - 2;
+
+/// EME-OAEP-ENCODE for SHA-256, width-generic.
+///
+/// `em.len()` is the modulus byte length `k` (e.g. 384 for RSA-3072,
+/// 512 for RSA-4096). Returns `None` if `msg` is too long for the
+/// given `k`, or if `k > MAX_K`.
+pub fn emsa_oaep_encode_n(
+    label: &[u8],
+    msg: &[u8],
+    seed: &[u8; HLEN],
+    em: &mut [u8],
+) -> Option<()> {
+    let k = em.len();
+    if !(2 * HLEN + 2..=MAX_K).contains(&k) {
+        return None;
+    }
+    let max_msg_len = k - 2 * HLEN - 2;
+    if msg.len() > max_msg_len {
+        return None;
+    }
+    let db_len = k - HLEN - 1;
+
+    let lhash = sha256_internal(label);
+
+    let mut db = [0u8; MAX_DB_LEN];
+    db[..HLEN].copy_from_slice(&lhash);
+    let one_idx = db_len - msg.len() - 1;
+    db[one_idx] = 0x01;
+    db[one_idx + 1..one_idx + 1 + msg.len()].copy_from_slice(msg);
+
+    let mut db_mask = [0u8; MAX_DB_LEN];
+    mgf1_sha256(seed, &mut db_mask[..db_len]);
+
+    for i in 0..db_len {
+        db[i] ^= db_mask[i];
+    }
+
+    let mut seed_mask = [0u8; HLEN];
+    mgf1_sha256(&db[..db_len], &mut seed_mask);
+
+    let mut masked_seed = [0u8; HLEN];
+    for i in 0..HLEN {
+        masked_seed[i] = seed[i] ^ seed_mask[i];
+    }
+
+    em[0] = 0x00;
+    em[1..=HLEN].copy_from_slice(&masked_seed);
+    em[1 + HLEN..1 + HLEN + db_len].copy_from_slice(&db[..db_len]);
+
+    Some(())
+}
+
+/// EME-OAEP-DECODE for SHA-256, width-generic.
+///
+/// `em.len()` is the modulus byte length `k`. Writes the recovered
+/// plaintext into `out[..mLen]` and returns `Some(mLen)` on success.
+/// `out.len()` must be at least `k − 2·hLen − 2`.
+///
+/// Manger-resistant: single accumulator, no early exit.
+pub fn emsa_oaep_decode_n(
+    label: &[u8],
+    em: &[u8],
+    out: &mut [u8],
+) -> Option<usize> {
+    let k = em.len();
+    if !(2 * HLEN + 2..=MAX_K).contains(&k) {
+        return None;
+    }
+    let db_len = k - HLEN - 1;
+    let max_msg_len = k - 2 * HLEN - 2;
+    if out.len() < max_msg_len {
+        return None;
+    }
+
+    let lhash = sha256_internal(label);
+
+    let y = em[0];
+    let masked_seed = &em[1..=HLEN];
+    let masked_db = &em[1 + HLEN..];
+    debug_assert_eq!(masked_db.len(), db_len);
+
+    let mut seed_mask = [0u8; HLEN];
+    mgf1_sha256(masked_db, &mut seed_mask);
+
+    let mut seed = [0u8; HLEN];
+    for i in 0..HLEN {
+        seed[i] = masked_seed[i] ^ seed_mask[i];
+    }
+
+    let mut db_mask = [0u8; MAX_DB_LEN];
+    mgf1_sha256(&seed, &mut db_mask[..db_len]);
+
+    let mut db = [0u8; MAX_DB_LEN];
+    for i in 0..db_len {
+        db[i] = masked_db[i] ^ db_mask[i];
+    }
+
+    // Accumulator walk — identical to emsa_oaep_decode.
+    let mut bad: u8 = y;
+    for i in 0..HLEN {
+        bad |= db[i] ^ lhash[i];
+    }
+
+    let mut found_one: u8 = 0;
+    let mut msg_start: usize = 0;
+
+    for (offset, &b) in db[HLEN..db_len].iter().enumerate() {
+        let i = HLEN + offset;
+        let is_zero = ct_eq_u8(b, 0x00);
+        let is_one = ct_eq_u8(b, 0x01);
+        let not_found = 1 ^ found_one;
+        let bad_ps_byte = not_found & (1 ^ is_zero) & (1 ^ is_one);
+        bad |= bad_ps_byte;
+        let first_one = not_found & is_one;
+        msg_start = ct_select_usize(first_one, i + 1, msg_start);
+        found_one |= first_one;
+    }
+
+    bad |= 1 ^ found_one;
+
+    let nz = (bad | bad.wrapping_neg()) >> 7;
+    if nz != 0 {
+        return None;
+    }
+
+    let mlen = db_len - msg_start;
+    out[..mlen].copy_from_slice(&db[msg_start..msg_start + mlen]);
+    Some(mlen)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
@@ -378,5 +519,91 @@ mod tests {
         let em = [0u8; K];
         let mut out = [0u8; MAX_MSG_LEN];
         assert!(emsa_oaep_decode(b"", &em, &mut out).is_none());
+    }
+
+    // --- Slice-based OAEP (for RSA-3072 / RSA-4096) ---
+
+    #[test]
+    fn encode_n_matches_fixed_for_2048() {
+        let label = b"cross-check";
+        let msg = b"hello fixed-vs-slice";
+        let seed = [0x5au8; HLEN];
+        let mut em_fixed = [0u8; K];
+        emsa_oaep_encode(label, msg, &seed, &mut em_fixed).unwrap();
+        let mut em_slice = [0u8; K];
+        emsa_oaep_encode_n(label, msg, &seed, &mut em_slice).unwrap();
+        assert_eq!(em_fixed, em_slice);
+    }
+
+    #[test]
+    fn decode_n_matches_fixed_for_2048() {
+        let label = b"";
+        let msg = b"decode-crosscheck";
+        let seed = [0x7fu8; HLEN];
+        let mut em = [0u8; K];
+        emsa_oaep_encode(label, msg, &seed, &mut em).unwrap();
+        let mut out_fixed = [0u8; MAX_MSG_LEN];
+        let mlen_fixed = emsa_oaep_decode(label, &em, &mut out_fixed).unwrap();
+        let mut out_slice = [0u8; MAX_MSG_LEN];
+        let mlen_slice = emsa_oaep_decode_n(label, &em, &mut out_slice).unwrap();
+        assert_eq!(mlen_fixed, mlen_slice);
+        assert_eq!(&out_fixed[..mlen_fixed], &out_slice[..mlen_slice]);
+    }
+
+    #[test]
+    fn encode_n_roundtrip_3072() {
+        // RSA-3072: k = 384, max_msg_len = 384 - 64 - 2 = 318.
+        let k = 384;
+        let max_msg_len = k - 2 * HLEN - 2;
+        let msg = &[0xeeu8; 100];
+        let seed = [0xabu8; HLEN];
+        let mut em = [0u8; 384];
+        emsa_oaep_encode_n(b"", msg, &seed, &mut em).unwrap();
+        let mut out = [0u8; 318];
+        let mlen = emsa_oaep_decode_n(b"", &em, &mut out).unwrap();
+        assert_eq!(mlen, msg.len());
+        assert_eq!(&out[..mlen], msg);
+        // Max length message.
+        let max_msg = [0xffu8; 318];
+        emsa_oaep_encode_n(b"", &max_msg, &seed, &mut em).unwrap();
+        let mlen = emsa_oaep_decode_n(b"", &em, &mut out).unwrap();
+        assert_eq!(mlen, max_msg_len);
+    }
+
+    #[test]
+    fn encode_n_roundtrip_4096() {
+        // RSA-4096: k = 512, max_msg_len = 512 - 64 - 2 = 446.
+        let k = 512;
+        let max_msg_len = k - 2 * HLEN - 2;
+        let msg = b"oaep-4096-roundtrip";
+        let seed = [0xcdu8; HLEN];
+        let mut em = [0u8; 512];
+        emsa_oaep_encode_n(b"", msg, &seed, &mut em).unwrap();
+        let mut out = [0u8; 446];
+        let mlen = emsa_oaep_decode_n(b"", &em, &mut out).unwrap();
+        assert_eq!(mlen, msg.len());
+        assert_eq!(&out[..mlen], msg);
+        // Max length message.
+        let max_msg = [0x77u8; 446];
+        emsa_oaep_encode_n(b"", &max_msg, &seed, &mut em).unwrap();
+        let mlen = emsa_oaep_decode_n(b"", &em, &mut out).unwrap();
+        assert_eq!(mlen, max_msg_len);
+    }
+
+    #[test]
+    fn decode_n_rejects_wrong_label_3072() {
+        let seed = [0u8; HLEN];
+        let mut em = [0u8; 384];
+        emsa_oaep_encode_n(b"right", b"msg", &seed, &mut em).unwrap();
+        let mut out = [0u8; 318];
+        assert!(emsa_oaep_decode_n(b"wrong", &em, &mut out).is_none());
+    }
+
+    #[test]
+    fn encode_n_rejects_oversize() {
+        let seed = [0u8; HLEN];
+        let mut em = [0u8; 384];
+        let msg = [0u8; 319]; // max is 318 for k=384
+        assert!(emsa_oaep_encode_n(b"", &msg, &seed, &mut em).is_none());
     }
 }

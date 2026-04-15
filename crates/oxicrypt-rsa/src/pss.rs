@@ -210,6 +210,138 @@ pub fn emsa_pss_verify(m_hash: &[u8; HLEN], em: &[u8; EM_LEN]) -> bool {
     crate::pkcs1_v15::ct_eq(&h_prime, h) == 1
 }
 
+// ------------------------------------------------------------------
+// Slice-based PSS encode / verify for RSA-3072 and RSA-4096
+// ------------------------------------------------------------------
+
+/// Maximum `emLen` supported by the slice-based variants. RSA-4096 has
+/// `emLen = 512`, which is the largest size we'll ever need.
+const MAX_EM_LEN: usize = 512;
+
+/// Slice-based EMSA-PSS-ENCODE for SHA-256 with `sLen = hLen = 32`,
+/// writing into an `em` buffer of arbitrary length.
+///
+/// `em_bits` is `modBits − 1` (e.g. 3071 for RSA-3072, 4095 for
+/// RSA-4096). `em.len()` must equal `ceil(em_bits / 8)`.
+///
+/// This is the width-generic twin of [`emsa_pss_encode`]; it exists so
+/// that RSA-3072 and RSA-4096 can share the same PSS logic without
+/// duplicating the encode step. The fixed-array version is kept for
+/// RSA-2048 backwards compatibility and KAT pinning.
+pub fn emsa_pss_encode_n(
+    m_hash: &[u8; HLEN],
+    salt: &[u8; SLEN],
+    em_bits: usize,
+    em: &mut [u8],
+) -> Option<()> {
+    let em_len = em.len();
+    if em_len != (em_bits + 7) / 8 {
+        return None;
+    }
+    if !(HLEN + SLEN + 2..=MAX_EM_LEN).contains(&em_len) {
+        return None;
+    }
+    let top_bits_to_clear = (8 * em_len - em_bits) as u32;
+
+    // M' = (0x00)*8 || mHash || salt.
+    let mut m_prime = [0u8; 8 + HLEN + SLEN];
+    m_prime[8..8 + HLEN].copy_from_slice(m_hash);
+    m_prime[8 + HLEN..].copy_from_slice(salt);
+
+    // H = Hash(M').
+    let h = sha256_internal(&m_prime);
+
+    // DB = PS || 0x01 || salt.
+    let db_len = em_len - HLEN - 1;
+    let mut db = [0u8; MAX_EM_LEN];
+    let ps_len = db_len - SLEN - 1;
+    db[ps_len] = 0x01;
+    db[ps_len + 1..ps_len + 1 + SLEN].copy_from_slice(salt);
+
+    // dbMask = MGF1(H, db_len).
+    let mut db_mask = [0u8; MAX_EM_LEN];
+    mgf1_sha256(&h, &mut db_mask[..db_len]);
+
+    // maskedDB = DB ⊕ dbMask.
+    for i in 0..db_len {
+        db[i] ^= db_mask[i];
+    }
+
+    // Zero the leftmost (8·emLen − emBits) bits.
+    if top_bits_to_clear > 0 {
+        let mask = 0xffu8 >> top_bits_to_clear;
+        db[0] &= mask;
+    }
+
+    // EM = maskedDB || H || 0xbc.
+    em[..db_len].copy_from_slice(&db[..db_len]);
+    em[db_len..db_len + HLEN].copy_from_slice(&h);
+    em[em_len - 1] = 0xbc;
+
+    Some(())
+}
+
+/// Slice-based EMSA-PSS-VERIFY for SHA-256 with `sLen = hLen = 32`.
+///
+/// `em_bits` is `modBits − 1`. `em.len()` must equal `ceil(em_bits / 8)`.
+pub fn emsa_pss_verify_n(m_hash: &[u8; HLEN], em_bits: usize, em: &[u8]) -> bool {
+    let em_len = em.len();
+    if em_len != (em_bits + 7) / 8 {
+        return false;
+    }
+    if !(HLEN + SLEN + 2..=MAX_EM_LEN).contains(&em_len) {
+        return false;
+    }
+    let top_bits_to_clear = (8 * em_len - em_bits) as u32;
+
+    if em[em_len - 1] != 0xbc {
+        return false;
+    }
+
+    let db_len = em_len - HLEN - 1;
+    let masked_db = &em[..db_len];
+    let h = &em[db_len..db_len + HLEN];
+
+    if top_bits_to_clear > 0 {
+        let mask = 0xffu8 << (8 - top_bits_to_clear);
+        if masked_db[0] & mask != 0 {
+            return false;
+        }
+    }
+
+    let mut db_mask = [0u8; MAX_EM_LEN];
+    mgf1_sha256(h, &mut db_mask[..db_len]);
+
+    let mut db = [0u8; MAX_EM_LEN];
+    for i in 0..db_len {
+        db[i] = masked_db[i] ^ db_mask[i];
+    }
+
+    if top_bits_to_clear > 0 {
+        let mask = 0xffu8 >> top_bits_to_clear;
+        db[0] &= mask;
+    }
+
+    let ps_len = db_len - SLEN - 1;
+    for &b in &db[..ps_len] {
+        if b != 0 {
+            return false;
+        }
+    }
+    if db[ps_len] != 0x01 {
+        return false;
+    }
+
+    let salt = &db[ps_len + 1..ps_len + 1 + SLEN];
+
+    let mut m_prime = [0u8; 8 + HLEN + SLEN];
+    m_prime[8..8 + HLEN].copy_from_slice(m_hash);
+    m_prime[8 + HLEN..].copy_from_slice(salt);
+    let h_prime = sha256_internal(&m_prime);
+
+    crate::pkcs1_v15::ct_eq(&h_prime, h) == 1
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
@@ -294,5 +426,79 @@ mod tests {
         let mut em = [0u8; EM_LEN];
         emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
         assert!(!emsa_pss_verify(&other_hash, &em));
+    }
+
+    // --- Slice-based PSS (for RSA-3072 / RSA-4096) ---
+
+    #[test]
+    fn encode_n_matches_fixed_for_2048() {
+        // The slice-based variant at EM_BITS=2047, em_len=256 must produce
+        // identical output to the fixed-array version.
+        let m_hash = sha256_internal(b"cross-check-2048");
+        let salt = [0x44u8; SLEN];
+        let mut em_fixed = [0u8; EM_LEN];
+        emsa_pss_encode(&m_hash, &salt, &mut em_fixed).unwrap();
+        let mut em_slice = [0u8; EM_LEN];
+        emsa_pss_encode_n(&m_hash, &salt, EM_BITS, &mut em_slice).unwrap();
+        assert_eq!(em_fixed, em_slice);
+    }
+
+    #[test]
+    fn verify_n_matches_fixed_for_2048() {
+        let m_hash = sha256_internal(b"verify-cross-check-2048");
+        let salt = [0x55u8; SLEN];
+        let mut em = [0u8; EM_LEN];
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
+        assert!(emsa_pss_verify(&m_hash, &em));
+        assert!(emsa_pss_verify_n(&m_hash, EM_BITS, &em));
+    }
+
+    #[test]
+    fn encode_n_roundtrip_3072() {
+        // RSA-3072: emBits = 3071, emLen = 384.
+        let em_bits = 3071;
+        let em_len = 384;
+        let m_hash = sha256_internal(b"pss-3072-roundtrip");
+        let salt = [0xaau8; SLEN];
+        let mut em = [0u8; 384];
+        emsa_pss_encode_n(&m_hash, &salt, em_bits, &mut em).unwrap();
+        assert!(emsa_pss_verify_n(&m_hash, em_bits, &em));
+        // Top bit must be clear (8*384 - 3071 = 1 bit to clear).
+        assert_eq!(em[0] & 0x80, 0);
+        // Trailer byte.
+        assert_eq!(em[em_len - 1], 0xbc);
+    }
+
+    #[test]
+    fn encode_n_roundtrip_4096() {
+        // RSA-4096: emBits = 4095, emLen = 512.
+        let em_bits = 4095;
+        let em_len = 512;
+        let m_hash = sha256_internal(b"pss-4096-roundtrip");
+        let salt = [0xbbu8; SLEN];
+        let mut em = [0u8; 512];
+        emsa_pss_encode_n(&m_hash, &salt, em_bits, &mut em).unwrap();
+        assert!(emsa_pss_verify_n(&m_hash, em_bits, &em));
+        assert_eq!(em[0] & 0x80, 0);
+        assert_eq!(em[em_len - 1], 0xbc);
+    }
+
+    #[test]
+    fn verify_n_rejects_wrong_hash_3072() {
+        let m_hash = sha256_internal(b"orig-3072");
+        let other = sha256_internal(b"other-3072");
+        let salt = [0x01u8; SLEN];
+        let mut em = [0u8; 384];
+        emsa_pss_encode_n(&m_hash, &salt, 3071, &mut em).unwrap();
+        assert!(!emsa_pss_verify_n(&other, 3071, &em));
+    }
+
+    #[test]
+    fn encode_n_rejects_mismatched_em_len() {
+        let m_hash = sha256_internal(b"bad-len");
+        let salt = [0u8; SLEN];
+        // emBits=3071 requires emLen=384, pass a 256-byte buffer instead.
+        let mut em = [0u8; 256];
+        assert!(emsa_pss_encode_n(&m_hash, &salt, 3071, &mut em).is_none());
     }
 }

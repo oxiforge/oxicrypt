@@ -158,7 +158,7 @@ capabilities:
       - "Ed25519"
       - "RSA-2048 PKCS#1 v1.5"
       - "RSA-2048 PSS"
-      - "RSA-3072/4096 PKCS#1 v1.5 / PSS (bigint/mont/keygen ready, encoding WIP)"
+      - "RSA-3072/4096 PKCS#1 v1.5 / PSS sign/verify, keygen with CRT + Bellcore"
       - "ML-DSA-87 (stub)"
       - "SLH-DSA (stub)"
       - "LMS (stub)"
@@ -212,7 +212,7 @@ capabilities:
   - category: "Asymmetric encryption"
     algorithms:
       - "RSA-2048 OAEP"
-      - "RSA-3072/4096 OAEP (bigint/mont/keygen ready, encoding WIP)"
+      - "RSA-3072/4096 OAEP encrypt/decrypt, keygen with CRT + Bellcore"
     standards:
       - "SP 800-56Br2"
 
