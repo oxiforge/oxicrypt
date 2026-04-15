@@ -296,8 +296,10 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::rsa_sigprim::RsaSigPrimHandler));
     // RSA sigGen (R25: PKCS#1v1.5 non-CRT + PSS CRT, FIPS186-5)
     r.register(Box::new(handlers::rsa_siggen::RsaSigGenHandler));
-    // KAS-ECC-SSC (R26: P-256 ECDH shared secret, Sp800-56Ar3)
+    // KAS-ECC-SSC (R26: P-256 ECDH shared secret, Sp800-56Ar3; R59: add P-384)
     r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
+    // KAS-FFC-SSC (R59: DH-3072 shared secret computation, Sp800-56Ar3)
+    r.register(Box::new(handlers::kas_ffc_ssc::KasFfcSscHandler));
     // RSA OAEP (R27: encrypt/decrypt, RFC8017, RSA-2048/SHA2-256)
     r.register(Box::new(handlers::rsa_oaep::RsaOaepHandler));
     // RSA KeyGen (R32: FIPS186-5, RSA-2048, e=65537, DRBG-seeded)
@@ -440,6 +442,8 @@ mod tests {
         assert!(r.find("RSA", Some("sigGen"), "FIPS186-5").is_some());
         // R26 KAS-ECC-SSC
         assert!(r.find("KAS-ECC-SSC", Some("Component"), "Sp800-56Ar3").is_some());
+        // R59 KAS-FFC-SSC
+        assert!(r.find("KAS-FFC-SSC", Some("Component"), "Sp800-56Ar3").is_some());
         // R27 RSA OAEP
         assert!(r.find("RSA", Some("OAEP"), "RFC8017").is_some());
         // R55 SP 800-185 derived functions + PBKDF2
@@ -465,7 +469,7 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 62);
+        assert_eq!(r.len(), 63);
         assert!(!r.is_empty());
     }
 

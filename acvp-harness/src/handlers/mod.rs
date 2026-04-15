@@ -325,6 +325,7 @@ pub mod ecdsa;
 pub mod eddsa;
 pub mod hmac;
 pub mod kas_ecc_ssc;
+pub mod kas_ffc_ssc;
 pub mod hmac_sha2_256;
 pub mod kdf_comp_tls;
 pub mod kbkdf;
