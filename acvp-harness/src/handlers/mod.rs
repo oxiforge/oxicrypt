@@ -333,6 +333,41 @@
 //! Handler count: 62 → 66 (4 new handlers: KAS-FFC-SSC, ML-KEM-1024
 //! keyGen/encaps/decaps). Multiple classical extensions to existing handlers
 //! (P-384 ECDSA/KAS-ECC-SSC, RSA-3072/4096) do not add new handler structs.
+//!
+//! R60 adds post-quantum digital signature handlers for ML-DSA-87 (FIPS 204):
+//!
+//! - [`ml_dsa`] — `ML-DSA-87` / `keyGen`, `sigGen`, `sigVer` revision `1.0`,
+//!   deterministic lattice-based signatures: keygen from 32-byte seed,
+//!   deterministic sign, and verify
+//!
+//! R61 adds stateless hash-based signature handlers for SLH-DSA (FIPS 205):
+//!
+//! - [`slh_dsa`] — `SLH-DSA-SHA2-256s` / `keyGen`, `sigGen`, `sigVer`
+//!   revision `1.0`, stateless hash-based signatures: keygen from 96-byte
+//!   seed, deterministic sign, and verify
+//!
+//! R62 adds stateful hash-based signature handlers for LMS and XMSS
+//! (SP 800-208):
+//!
+//! - [`lms`] — `LMS` / `keyGen`, `sigGen`, `sigVer` revision `1.0`,
+//!   LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 parameter set: keygen from
+//!   32-byte seed, stateful sequential signing, and verify
+//! - [`xmss`] — `XMSS` / `keyGen`, `sigGen`, `sigVer` revision `1.0`,
+//!   XMSS-SHA2_10_256 parameter set: keygen from 32-byte seed, stateful
+//!   sequential signing, and verify
+//!
+//! R63 extends RSA handlers to support 3072- and 4096-bit moduli for
+//! sigGen and keyGen:
+//!
+//! - [`rsa_siggen`] — `RSA` / `sigGen` now dispatches on `modulo` field:
+//!   2048, 3072, and 4096-bit keys across PKCS#1v1.5 and PSS padding
+//! - [`rsa_keygen`] — `RSA` / `keyGen` now dispatches on `modulo` field:
+//!   2048, 3072, and 4096-bit key generation
+//!
+//! Handler count: 66 → 78 (12 new handlers: ML-DSA-87 keyGen/sigGen/sigVer,
+//! SLH-DSA-SHA2-256s keyGen/sigGen/sigVer, LMS keyGen/sigGen/sigVer,
+//! XMSS keyGen/sigGen/sigVer). RSA extensions to existing handlers do not
+//! add new handler structs.
 
 pub mod aes;
 pub mod cmac;
@@ -344,6 +379,10 @@ pub mod hmac;
 pub mod kas_ecc_ssc;
 pub mod kas_ffc_ssc;
 pub mod hmac_sha2_256;
+pub mod lms;
+pub mod ml_dsa;
+pub mod slh_dsa;
+pub mod xmss;
 pub mod kdf_comp_tls;
 pub mod kbkdf;
 pub mod kda_hkdf;

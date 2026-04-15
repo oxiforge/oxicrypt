@@ -3,18 +3,14 @@
 //!
 //! **RSA keyGen** (`RSA` / `keyGen` / `FIPS186-5`, `testType = "AFT"`):
 //! Given per-test DRBG seed material (`entropy`, `nonce`, `perso`),
-//! instantiate an HMAC_DRBG-SHA256 and generate an RSA-2048 key pair
+//! instantiate an HMAC_DRBG-SHA256 and generate an RSA key pair
 //! with `e = 65537` per FIPS 186-5 §A.1.1 / §B.3.1. Return
 //! `(n, d, p, q, dP, dQ, qInv)`.
 //!
-//! This handler exercises the FIPS 186-5 probable-prime key generation
-//! code through the ACVP harness, completing the asymmetric keygen
-//! trifecta (ECDSA R29, EdDSA R28, RSA R32). Because the DRBG seed
-//! material is supplied by the vector, the output is fully
-//! deterministic and round-trip testable.
-//!
 //! Supported configurations:
 //! - `modulo = 2048`, `fixedPubExp = "010001"` (65537)
+//! - `modulo = 3072`, `fixedPubExp = "010001"` (65537)
+//! - `modulo = 4096`, `fixedPubExp = "010001"` (65537)
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -59,11 +55,6 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("modulo")
         .and_then(JsonValue::as_u64)
         .ok_or(DispatchError::MissingField("modulo"))?;
-    if modulo != 2048 {
-        return Err(DispatchError::Unsupported(
-            "RSA keyGen: only modulo 2048 is supported",
-        ));
-    }
 
     // Parse fixed public exponent from group level.
     let e_hex = group
@@ -108,57 +99,75 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("perso"))?,
         )?;
 
-        // Instantiate DRBG from seed material and generate key.
+        // Instantiate DRBG from seed material.
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(&entropy, &nonce, &perso)
             .map_err(|_| DispatchError::Crypto("RSA keyGen: DRBG instantiate failed"))?;
 
-        let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, e)
-            .map_err(|_| DispatchError::Crypto("RSA keyGen: key generation failed"))?;
+        match modulo {
+            2048 => {
+                let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, e)
+                    .map_err(|_| DispatchError::Crypto("RSA keyGen: 2048 key generation failed"))?;
 
-        let n_bytes: [u8; 256] = km.n.to_be_bytes();
-        let d_bytes: [u8; 256] = km.d.to_be_bytes();
-        let p_bytes: [u8; 128] = km.p.to_be_bytes();
-        let q_bytes: [u8; 128] = km.q.to_be_bytes();
-        let dp_bytes: [u8; 128] = km.dp.to_be_bytes();
-        let dq_bytes: [u8; 128] = km.dq.to_be_bytes();
-        let qinv_bytes: [u8; 128] = km.qinv.to_be_bytes();
+                let n_bytes: [u8; 256] = km.n.to_be_bytes();
+                let d_bytes: [u8; 256] = km.d.to_be_bytes();
+                let p_bytes: [u8; 128] = km.p.to_be_bytes();
+                let q_bytes: [u8; 128] = km.q.to_be_bytes();
+                let dp_bytes: [u8; 128] = km.dp.to_be_bytes();
+                let dq_bytes: [u8; 128] = km.dq.to_be_bytes();
+                let qinv_bytes: [u8; 128] = km.qinv.to_be_bytes();
 
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            (
-                "n".to_string(),
-                JsonValue::String(hex::encode_upper(&n_bytes)),
-            ),
-            (
-                "d".to_string(),
-                JsonValue::String(hex::encode_upper(&d_bytes)),
-            ),
-            (
-                "e".to_string(),
-                JsonValue::String(hex::encode_upper(&e_bytes)),
-            ),
-            (
-                "p".to_string(),
-                JsonValue::String(hex::encode_upper(&p_bytes)),
-            ),
-            (
-                "q".to_string(),
-                JsonValue::String(hex::encode_upper(&q_bytes)),
-            ),
-            (
-                "dmp1".to_string(),
-                JsonValue::String(hex::encode_upper(&dp_bytes)),
-            ),
-            (
-                "dmq1".to_string(),
-                JsonValue::String(hex::encode_upper(&dq_bytes)),
-            ),
-            (
-                "iqmp".to_string(),
-                JsonValue::String(hex::encode_upper(&qinv_bytes)),
-            ),
-        ]));
+                results.push(keygen_result(
+                    test_case_id, &e_bytes,
+                    &n_bytes, &d_bytes,
+                    &p_bytes, &q_bytes,
+                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                ));
+            }
+            3072 => {
+                let km = oxicrypt_rsa::keygen3072::generate_3072(&mut drbg, e)
+                    .map_err(|_| DispatchError::Crypto("RSA keyGen: 3072 key generation failed"))?;
+
+                let n_bytes: [u8; 384] = km.n.to_be_bytes();
+                let d_bytes: [u8; 384] = km.d.to_be_bytes();
+                let p_bytes: [u8; 192] = km.p.to_be_bytes();
+                let q_bytes: [u8; 192] = km.q.to_be_bytes();
+                let dp_bytes: [u8; 192] = km.dp.to_be_bytes();
+                let dq_bytes: [u8; 192] = km.dq.to_be_bytes();
+                let qinv_bytes: [u8; 192] = km.qinv.to_be_bytes();
+
+                results.push(keygen_result(
+                    test_case_id, &e_bytes,
+                    &n_bytes, &d_bytes,
+                    &p_bytes, &q_bytes,
+                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                ));
+            }
+            4096 => {
+                let km = oxicrypt_rsa::keygen4096::generate_4096(&mut drbg, e)
+                    .map_err(|_| DispatchError::Crypto("RSA keyGen: 4096 key generation failed"))?;
+
+                let n_bytes: [u8; 512] = km.n.to_be_bytes();
+                let d_bytes: [u8; 512] = km.d.to_be_bytes();
+                let p_bytes: [u8; 256] = km.p.to_be_bytes();
+                let q_bytes: [u8; 256] = km.q.to_be_bytes();
+                let dp_bytes: [u8; 256] = km.dp.to_be_bytes();
+                let dq_bytes: [u8; 256] = km.dq.to_be_bytes();
+                let qinv_bytes: [u8; 256] = km.qinv.to_be_bytes();
+
+                results.push(keygen_result(
+                    test_case_id, &e_bytes,
+                    &n_bytes, &d_bytes,
+                    &p_bytes, &q_bytes,
+                    &dp_bytes, &dq_bytes, &qinv_bytes,
+                ));
+            }
+            _ => {
+                return Err(DispatchError::Unsupported(
+                    "RSA keyGen: only modulo 2048/3072/4096 are supported",
+                ));
+            }
+        }
     }
 
     Ok(JsonValue::Object(vec![
@@ -181,4 +190,30 @@ fn bytes_to_u64(bytes: &[u8]) -> Result<u64, DispatchError> {
         val = (val << 8) | u64::from(b);
     }
     Ok(val)
+}
+
+/// Build a keygen result JSON object (modulus-size-agnostic via slices).
+#[allow(clippy::too_many_arguments)]
+fn keygen_result(
+    tc_id: i64,
+    e_bytes: &[u8],
+    n: &[u8],
+    d: &[u8],
+    p: &[u8],
+    q: &[u8],
+    dp: &[u8],
+    dq: &[u8],
+    qinv: &[u8],
+) -> JsonValue {
+    JsonValue::Object(vec![
+        ("tcId".to_string(), JsonValue::Number(tc_id)),
+        ("n".to_string(), JsonValue::String(hex::encode_upper(n))),
+        ("d".to_string(), JsonValue::String(hex::encode_upper(d))),
+        ("e".to_string(), JsonValue::String(hex::encode_upper(e_bytes))),
+        ("p".to_string(), JsonValue::String(hex::encode_upper(p))),
+        ("q".to_string(), JsonValue::String(hex::encode_upper(q))),
+        ("dmp1".to_string(), JsonValue::String(hex::encode_upper(dp))),
+        ("dmq1".to_string(), JsonValue::String(hex::encode_upper(dq))),
+        ("iqmp".to_string(), JsonValue::String(hex::encode_upper(qinv))),
+    ])
 }

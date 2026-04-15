@@ -89,7 +89,7 @@ crates/
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
 
 crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) with profile selection
-acvp-harness/           ACVP protocol handler with 62 registered algorithm handlers
+acvp-harness/           ACVP protocol handler with 78 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors
@@ -119,7 +119,7 @@ were discovered and fixed by this harness.
 ## ACVP harness
 
 The ACVP harness is a zero-dependency binary that processes NIST ACVP vector
-sets end-to-end. It currently has 62 registered algorithm handlers covering
+sets end-to-end. It currently has 78 registered algorithm handlers covering
 all test types the demo server is expected to send:
 
 | Test type | Algorithms |
@@ -197,7 +197,7 @@ ACVP-Server slim slices).
 ## Roadmap
 
 **Phase 2 (current)** — Algorithm implementation and ACVP validation.
-62 handlers, 127 tests, all green. CNSA 2.0 / CNSA 1.0 algorithm-profile
+78 handlers, 127 tests, all green. CNSA 2.0 / CNSA 1.0 algorithm-profile
 gating is enforced across all 15 algorithm crates and the C ABI
 (`oxicrypt-ffi`). The FFI layer exposes profile selection via
 `oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with

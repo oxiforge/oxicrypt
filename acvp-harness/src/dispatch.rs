@@ -326,6 +326,22 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::ml_kem::MlKem1024KeyGenHandler));
     r.register(Box::new(handlers::ml_kem::MlKem1024EncapsHandler));
     r.register(Box::new(handlers::ml_kem::MlKem1024DecapsHandler));
+    // ML-DSA-87 (R60: keyGen / sigGen / sigVer, FIPS 204, post-quantum)
+    r.register(Box::new(handlers::ml_dsa::MlDsa87KeyGenHandler));
+    r.register(Box::new(handlers::ml_dsa::MlDsa87SigGenHandler));
+    r.register(Box::new(handlers::ml_dsa::MlDsa87SigVerHandler));
+    // SLH-DSA-SHA2-256s (R61: keyGen / sigGen / sigVer, FIPS 205, post-quantum)
+    r.register(Box::new(handlers::slh_dsa::SlhDsaKeyGenHandler));
+    r.register(Box::new(handlers::slh_dsa::SlhDsaSigGenHandler));
+    r.register(Box::new(handlers::slh_dsa::SlhDsaSigVerHandler));
+    // LMS (R62: keyGen / sigGen / sigVer, SP 800-208 / RFC 8554)
+    r.register(Box::new(handlers::lms::LmsKeyGenHandler));
+    r.register(Box::new(handlers::lms::LmsSigGenHandler));
+    r.register(Box::new(handlers::lms::LmsSigVerHandler));
+    // XMSS (R62: keyGen / sigGen / sigVer, SP 800-208 / RFC 8391)
+    r.register(Box::new(handlers::xmss::XmssKeyGenHandler));
+    r.register(Box::new(handlers::xmss::XmssSigGenHandler));
+    r.register(Box::new(handlers::xmss::XmssSigVerHandler));
     r
 }
 
@@ -472,12 +488,28 @@ mod tests {
         assert!(r.find("ML-KEM-1024", Some("keyGen"), "1.0").is_some());
         assert!(r.find("ML-KEM-1024", Some("encaps"), "1.0").is_some());
         assert!(r.find("ML-KEM-1024", Some("decaps"), "1.0").is_some());
+        // R60 ML-DSA-87 (FIPS 204, post-quantum)
+        assert!(r.find("ML-DSA-87", Some("keyGen"), "1.0").is_some());
+        assert!(r.find("ML-DSA-87", Some("sigGen"), "1.0").is_some());
+        assert!(r.find("ML-DSA-87", Some("sigVer"), "1.0").is_some());
+        // R61 SLH-DSA-SHA2-256s (FIPS 205, post-quantum)
+        assert!(r.find("SLH-DSA-SHA2-256s", Some("keyGen"), "1.0").is_some());
+        assert!(r.find("SLH-DSA-SHA2-256s", Some("sigGen"), "1.0").is_some());
+        assert!(r.find("SLH-DSA-SHA2-256s", Some("sigVer"), "1.0").is_some());
+        // R62 LMS (SP 800-208)
+        assert!(r.find("LMS", Some("keyGen"), "1.0").is_some());
+        assert!(r.find("LMS", Some("sigGen"), "1.0").is_some());
+        assert!(r.find("LMS", Some("sigVer"), "1.0").is_some());
+        // R62 XMSS (SP 800-208)
+        assert!(r.find("XMSS", Some("keyGen"), "1.0").is_some());
+        assert!(r.find("XMSS", Some("sigGen"), "1.0").is_some());
+        assert!(r.find("XMSS", Some("sigVer"), "1.0").is_some());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 66);
+        assert_eq!(r.len(), 78);
         assert!(!r.is_empty());
     }
 
