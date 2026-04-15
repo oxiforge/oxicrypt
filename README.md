@@ -48,14 +48,14 @@ cargo test --workspace
 | ECDH | P-256 and P-384 CDH shared secret computation | SP 800-56Ar3 |
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
 | ML-KEM | ML-KEM-1024 keygen/encaps/decaps | FIPS 203 |
-| ML-DSA | ML-DSA-87 sign/verify/keygen (stub) | FIPS 204 |
+| ML-DSA | ML-DSA-87 sign/verify/keygen | FIPS 204 |
 | SLH-DSA | SLH-DSA sign/verify/keygen (stub) | FIPS 205 |
 | LMS | LMS sign/verify (stub) | SP 800-208 |
 | XMSS | XMSS sign/verify (stub) | SP 800-208 |
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
 
-Every algorithm runs a known-answer test at module power-up. The 139 KATs include
+Every algorithm runs a known-answer test at module power-up. The 140 KATs include
 CAVP-sourced vectors (with 9 SP 800-90A §9.3 prediction-resistance DRBG KATs),
 plus 3 SP 800-90A §11.3 DRBG health tests, each traceable to its published source.
 
@@ -81,7 +81,7 @@ crates/
   oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
   oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — implemented
-  oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — stub
+  oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — implemented
   oxicrypt-slh-dsa       SLH-DSA (FIPS 205) — stub
   oxicrypt-lms           LMS hash-based signatures (SP 800-208) — stub
   oxicrypt-xmss          XMSS hash-based signatures (SP 800-208) — stub
@@ -202,7 +202,7 @@ gating is enforced across all 15 algorithm crates and the C ABI
 (`oxicrypt-ffi`). The FFI layer exposes profile selection via
 `oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with
 status code `-4` for restricted algorithms. Stub crates reserve surfaces
-for remaining post-quantum algorithms (ML-DSA, SLH-DSA, LMS, XMSS); ML-KEM-1024 is fully implemented.
+for remaining post-quantum algorithms (SLH-DSA, LMS, XMSS); ML-KEM-1024 and ML-DSA-87 are fully implemented.
 P-384 ECDSA/ECDH is complete. RSA-3072 and RSA-4096 are fully
 implemented: PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt,
 keygen with CRT + Bellcore verify-after-sign (IG D.G). DH-3072 key
@@ -216,8 +216,7 @@ submission.
 **Phase 4** — Performance hardening (AES-NI, bitsliced fallback), additional
 curves (Ed448, P-521), language bindings (C ABI, Python, Go, Node).
 
-**Phase 5** — Post-quantum algorithm implementations (ML-DSA-87,
-LMS, XMSS) and classical extensions (DH-3072). ML-KEM-1024 is complete.
+**Phase 5** — Post-quantum algorithm implementations (LMS, XMSS) and classical extensions (DH-3072). ML-KEM-1024 and ML-DSA-87 are complete.
 
 ## `oxi` CLI
 

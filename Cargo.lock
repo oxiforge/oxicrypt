@@ -439,6 +439,8 @@ name = "oxicrypt-ml-dsa"
 version = "0.0.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-xof",
 ]
 
 [[package]]

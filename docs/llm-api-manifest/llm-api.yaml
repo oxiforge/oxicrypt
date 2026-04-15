@@ -194,6 +194,14 @@ modules:
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
 
+  - name: oxicrypt-ml-dsa
+    description: >-
+      ML-DSA-87 (FIPS 204) post-quantum digital signature algorithm.
+      Provides keygen, sign, and verify operations with deterministic
+      Fiat-Shamir-with-aborts signing and FIPS 204 compliance.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha]
+
   - name: oxicrypt-eddsa
     description: >-
       Ed25519 deterministic sign/verify/keygen (RFC 8032, FIPS 186-5).
@@ -1455,6 +1463,136 @@ functions:
       fips_gate: Operational
     profiles: [Unrestricted, Cnsa2]
 
+  # ── ML-DSA-87 ──────────────────────────────────────────────────────
+
+  - name: keygen
+    module: oxicrypt-ml-dsa
+    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 2592], [u8; 4896]), Error>"
+    description: >-
+      Generate an ML-DSA-87 key pair. xi must be 32 bytes of fresh
+      randomness from an approved DRBG (SP 800-90A).
+    parameters:
+      - name: xi
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for key generation (FIPS 204 keygen seed)."
+    returns:
+      type: "Result<([u8; 2592], [u8; 4896]), Error>"
+      description: "(public_key, secret_key)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-DSA-87 blocked by active profile.
+      - name: InvalidInput
+        condition: Invalid or insufficient randomness.
+    preconditions:
+      - description: Module must be Operational.
+      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
+    postconditions:
+      - description: >-
+          Returns a valid ML-DSA-87 key pair: 2592-byte public key and
+          4896-byte secret key suitable for use with sign and verify.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: sign
+    module: oxicrypt-ml-dsa
+    signature: "pub fn sign(sk: &[u8; 4896], message: &[u8]) -> Result<[u8; 4627], Error>"
+    description: >-
+      Sign a message with an ML-DSA-87 secret key using deterministic
+      Fiat-Shamir-with-aborts (rejection sampling). The signing iteration
+      count leaks information about the secret key; this is a known and
+      accepted property of ML-DSA (NIST IG D.G §D.3.5).
+    parameters:
+      - name: sk
+        type: "&[u8; 4896]"
+        direction: in
+        description: "Secret key (from keygen)."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Message to sign (arbitrary length)."
+    returns:
+      type: "Result<[u8; 4627], Error>"
+      description: "4627-byte ML-DSA-87 signature."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-DSA-87 blocked by active profile.
+      - name: InvalidInput
+        condition: Invalid secret key or rejection loop exceeded limit.
+    preconditions:
+      - description: Module must be Operational.
+      - description: sk must be a valid 4896-byte secret key from keygen.
+      - description: message can be any byte string, including empty.
+    postconditions:
+      - description: >-
+          Returns a deterministic 4627-byte signature suitable for
+          verification with the corresponding public key. On signing
+          failure (rejection loop timeout), returns Err(InvalidInput).
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: verify
+    module: oxicrypt-ml-dsa
+    signature: "pub fn verify(pk: &[u8; 2592], message: &[u8], sig: &[u8; 4627]) -> Result<(), Error>"
+    description: >-
+      Verify an ML-DSA-87 signature with a public key. Returns Ok(()) if
+      the signature is valid, Err(InvalidInput) if verification fails.
+      All verification operations are public-data only (no secret-dependent
+      control flow).
+    parameters:
+      - name: pk
+        type: "&[u8; 2592]"
+        direction: in
+        description: "Public key (from keygen)."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Message to verify (arbitrary length)."
+      - name: sig
+        type: "&[u8; 4627]"
+        direction: in
+        description: "Signature to verify (from sign)."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok(()) if signature is valid, Err(InvalidInput) if invalid."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-DSA-87 blocked by active profile.
+      - name: InvalidInput
+        condition: Signature verification failed.
+    preconditions:
+      - description: Module must be Operational.
+      - description: pk must be a valid 2592-byte public key from keygen.
+      - description: sig must be a 4627-byte signature from sign.
+    postconditions:
+      - description: >-
+          Verification is deterministic and constant-time with respect to
+          secret data (no secrets involved in verify). Invalid signatures
+          produce Err(InvalidInput), not a panic or side channel.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
 
   - name: oxicrypt_init
@@ -1755,3 +1893,21 @@ constants:
     type: usize
     value: "32"
     description: ML-KEM-1024 shared secret size in bytes.
+
+  - name: PK_LEN
+    module: oxicrypt-ml-dsa
+    type: usize
+    value: "2592"
+    description: ML-DSA-87 public key size in bytes.
+
+  - name: SK_LEN
+    module: oxicrypt-ml-dsa
+    type: usize
+    value: "4896"
+    description: ML-DSA-87 secret key size in bytes.
+
+  - name: SIG_LEN
+    module: oxicrypt-ml-dsa
+    type: usize
+    value: "4627"
+    description: ML-DSA-87 signature size in bytes.

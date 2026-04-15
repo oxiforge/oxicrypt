@@ -159,7 +159,7 @@ capabilities:
       - "RSA-2048 PKCS#1 v1.5"
       - "RSA-2048 PSS"
       - "RSA-3072/4096 PKCS#1 v1.5 / PSS sign/verify, keygen with CRT + Bellcore"
-      - "ML-DSA-87 (stub)"
+      - "ML-DSA-87 keygen/sign/verify"
       - "SLH-DSA (stub)"
       - "LMS (stub)"
       - "XMSS (stub)"

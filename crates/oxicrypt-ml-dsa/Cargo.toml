@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-ml-dsa"
-description = "ML-DSA (FIPS 204) — stub crate, implementation planned"
+description = "ML-DSA-87 (FIPS 204) — lattice-based digital signatures"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-xof = { path = "../oxicrypt-xof" }
