@@ -14,10 +14,13 @@
 //!   return `(r, s)`. Deterministic because the ACVP vectors supply
 //!   both `d` and `k`.
 //! - **KeyGen** (`ECDSA` / `keyGen` / `FIPS186-5`): Given a per-test
-//!   private scalar `d`, derive the P-256 public key `(qx, qy)` via
+//!   private scalar `d`, derive the public key `(qx, qy)` via
 //!   `derive_public_key_internal`. Deterministic.
 //!
-//! Only P-256 with SHA-256 is supported (the oxicrypt configuration).
+//! Supported configurations:
+//! - **P-256** with **SHA-256** — 32-byte coordinates, 32-byte hash
+//! - **P-384** with **SHA-384** — 48-byte coordinates, 48-byte hash
+//!
 //! Unsupported curves or hash algorithms produce
 //! `DispatchError::Unsupported`.
 
@@ -123,22 +126,24 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Validate curve/hash — oxicrypt only supports P-256 + SHA2-256.
+    // Validate curve/hash — oxicrypt supports P-256 + SHA2-256 and P-384 + SHA2-384.
     let curve = group
         .get("curve")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("curve"))?;
-    if curve != "P-256" {
-        return Err(DispatchError::Unsupported("ECDSA SigVer: only P-256 is supported"));
-    }
     let hash_alg = group
         .get("hashAlg")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("hashAlg"))?;
-    if hash_alg != "SHA2-256" {
-        return Err(DispatchError::Unsupported(
-            "ECDSA SigVer: only SHA2-256 is supported",
-        ));
+
+    // Validate curve-hash pairing.
+    match (curve, hash_alg) {
+        ("P-256", "SHA2-256") | ("P-384", "SHA2-384") => {}
+        _ => {
+            return Err(DispatchError::Unsupported(
+                "ECDSA SigVer: only (P-256, SHA2-256) and (P-384, SHA2-384) are supported",
+            ))
+        }
     }
 
     let tests = group
@@ -179,7 +184,11 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("s"))?,
         )?;
 
-        let passed = ecdsa_p256_verify(&message, &qx, &qy, &r_bytes, &s_bytes);
+        let passed = match curve {
+            "P-256" => ecdsa_p256_verify(&message, &qx, &qy, &r_bytes, &s_bytes),
+            "P-384" => ecdsa_p384_verify(&message, &qx, &qy, &r_bytes, &s_bytes),
+            _ => false,
+        };
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -212,8 +221,10 @@ fn handle_keyver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("curve")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("curve"))?;
-    if curve != "P-256" {
-        return Err(DispatchError::Unsupported("ECDSA KeyVer: only P-256 is supported"));
+    if curve != "P-256" && curve != "P-384" {
+        return Err(DispatchError::Unsupported(
+            "ECDSA KeyVer: only P-256 and P-384 are supported",
+        ));
     }
 
     let tests = group
@@ -239,7 +250,11 @@ fn handle_keyver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("qy"))?,
         )?;
 
-        let passed = ecdsa_p256_key_validate(&qx, &qy);
+        let passed = match curve {
+            "P-256" => ecdsa_p256_key_validate(&qx, &qy),
+            "P-384" => ecdsa_p384_key_validate(&qx, &qy),
+            _ => false,
+        };
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -272,30 +287,20 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("curve")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("curve"))?;
-    if curve != "P-256" {
-        return Err(DispatchError::Unsupported("ECDSA SigGen: only P-256 is supported"));
-    }
     let hash_alg = group
         .get("hashAlg")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("hashAlg"))?;
-    if hash_alg != "SHA2-256" {
-        return Err(DispatchError::Unsupported(
-            "ECDSA SigGen: only SHA2-256 is supported",
-        ));
-    }
 
-    // Group-level private key.
-    let d_bytes = hex::decode(
-        group
-            .get("d")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("d"))?,
-    )?;
-    let d: [u8; 32] = d_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("ECDSA SigGen: d is not 32 bytes"))?;
+    // Validate curve-hash pairing.
+    match (curve, hash_alg) {
+        ("P-256", "SHA2-256") | ("P-384", "SHA2-384") => {}
+        _ => {
+            return Err(DispatchError::Unsupported(
+                "ECDSA SigGen: only (P-256, SHA2-256) and (P-384, SHA2-384) are supported",
+            ))
+        }
+    }
 
     let tests = group
         .get("tests")
@@ -303,42 +308,115 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .ok_or(DispatchError::MissingField("tests"))?;
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
-    for t in tests {
-        let test_case_id = t
-            .get("tcId")
-            .and_then(JsonValue::as_i64)
-            .ok_or(DispatchError::MissingField("tcId"))?;
 
-        let message = hex::decode(
-            t.get("message")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("message"))?,
-        )?;
-        let k_bytes = hex::decode(
-            t.get("k")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("k"))?,
-        )?;
-        let k: [u8; 32] = k_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("ECDSA SigGen: k is not 32 bytes"))?;
+    match curve {
+        "P-256" => {
+            // Group-level private key (32 bytes for P-256).
+            let d_bytes = hex::decode(
+                group
+                    .get("d")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("d"))?,
+            )?;
+            let d: [u8; 32] = d_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("ECDSA SigGen: d is not 32 bytes"))?;
 
-        let sig = oxicrypt_ecdsa::p256_ecdsa::sign_with_k(&d, &message, &k)
-            .map_err(|_| DispatchError::Crypto("ECDSA SigGen: sign_with_k failed"))?;
+            for t in tests {
+                let test_case_id = t
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
+                    .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // Split 64-byte signature into r (first 32) and s (last 32).
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            (
-                "r".to_string(),
-                JsonValue::String(hex::encode_upper(&sig[..32])),
-            ),
-            (
-                "s".to_string(),
-                JsonValue::String(hex::encode_upper(&sig[32..])),
-            ),
-        ]));
+                let message = hex::decode(
+                    t.get("message")
+                        .and_then(JsonValue::as_str)
+                        .ok_or(DispatchError::MissingField("message"))?,
+                )?;
+                let k_bytes = hex::decode(
+                    t.get("k")
+                        .and_then(JsonValue::as_str)
+                        .ok_or(DispatchError::MissingField("k"))?,
+                )?;
+                let k: [u8; 32] = k_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("ECDSA SigGen: k is not 32 bytes"))?;
+
+                let sig = oxicrypt_ecdsa::p256_ecdsa::sign_with_k(&d, &message, &k)
+                    .map_err(|_| DispatchError::Crypto("ECDSA SigGen: sign_with_k failed"))?;
+
+                // Split 64-byte signature into r (first 32) and s (last 32).
+                results.push(JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "r".to_string(),
+                        JsonValue::String(hex::encode_upper(&sig[..32])),
+                    ),
+                    (
+                        "s".to_string(),
+                        JsonValue::String(hex::encode_upper(&sig[32..])),
+                    ),
+                ]));
+            }
+        }
+        "P-384" => {
+            // Group-level private key (48 bytes for P-384).
+            let d_bytes = hex::decode(
+                group
+                    .get("d")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("d"))?,
+            )?;
+            let d: [u8; 48] = d_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("ECDSA SigGen: d is not 48 bytes"))?;
+
+            for t in tests {
+                let test_case_id = t
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
+                    .ok_or(DispatchError::MissingField("tcId"))?;
+
+                let message = hex::decode(
+                    t.get("message")
+                        .and_then(JsonValue::as_str)
+                        .ok_or(DispatchError::MissingField("message"))?,
+                )?;
+                let k_bytes = hex::decode(
+                    t.get("k")
+                        .and_then(JsonValue::as_str)
+                        .ok_or(DispatchError::MissingField("k"))?,
+                )?;
+                let k: [u8; 48] = k_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("ECDSA SigGen: k is not 48 bytes"))?;
+
+                let sig = oxicrypt_ecdsa::p384_ecdsa::sign_with_k_internal(&d, &message, &k)
+                    .ok_or(DispatchError::Crypto("ECDSA SigGen: sign_with_k_internal failed"))?;
+
+                // Split 96-byte signature into r (first 48) and s (last 48).
+                results.push(JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "r".to_string(),
+                        JsonValue::String(hex::encode_upper(&sig[..48])),
+                    ),
+                    (
+                        "s".to_string(),
+                        JsonValue::String(hex::encode_upper(&sig[48..])),
+                    ),
+                ]));
+            }
+        }
+        _ => {
+            return Err(DispatchError::Unsupported(
+                "ECDSA SigGen: unsupported curve",
+            ))
+        }
     }
 
     Ok(JsonValue::Object(vec![
@@ -366,9 +444,9 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("curve")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("curve"))?;
-    if curve != "P-256" {
+    if curve != "P-256" && curve != "P-384" {
         return Err(DispatchError::Unsupported(
-            "ECDSA KeyGen: only P-256 is supported",
+            "ECDSA KeyGen: only P-256 and P-384 are supported",
         ));
     }
 
@@ -378,39 +456,85 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .ok_or(DispatchError::MissingField("tests"))?;
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
-    for t in tests {
-        let test_case_id = t
-            .get("tcId")
-            .and_then(JsonValue::as_i64)
-            .ok_or(DispatchError::MissingField("tcId"))?;
 
-        let d_bytes = hex::decode(
-            t.get("d")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("d"))?,
-        )?;
-        let d: [u8; 32] = d_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 32 bytes"))?;
+    match curve {
+        "P-256" => {
+            for t in tests {
+                let test_case_id = t
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
+                    .ok_or(DispatchError::MissingField("tcId"))?;
 
-        let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
-            .ok_or(DispatchError::Crypto(
-                "ECDSA KeyGen: derive_public_key_internal failed",
-            ))?;
+                let d_bytes = hex::decode(
+                    t.get("d")
+                        .and_then(JsonValue::as_str)
+                        .ok_or(DispatchError::MissingField("d"))?,
+                )?;
+                let d: [u8; 32] = d_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 32 bytes"))?;
 
-        // pk is 65 bytes: 0x04 || X(32) || Y(32)
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            (
-                "qx".to_string(),
-                JsonValue::String(hex::encode_upper(&pk[1..33])),
-            ),
-            (
-                "qy".to_string(),
-                JsonValue::String(hex::encode_upper(&pk[33..65])),
-            ),
-        ]));
+                let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d)
+                    .ok_or(DispatchError::Crypto(
+                        "ECDSA KeyGen: derive_public_key_internal failed",
+                    ))?;
+
+                // pk is 65 bytes: 0x04 || X(32) || Y(32)
+                results.push(JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "qx".to_string(),
+                        JsonValue::String(hex::encode_upper(&pk[1..33])),
+                    ),
+                    (
+                        "qy".to_string(),
+                        JsonValue::String(hex::encode_upper(&pk[33..65])),
+                    ),
+                ]));
+            }
+        }
+        "P-384" => {
+            for t in tests {
+                let test_case_id = t
+                    .get("tcId")
+                    .and_then(JsonValue::as_i64)
+                    .ok_or(DispatchError::MissingField("tcId"))?;
+
+                let d_bytes = hex::decode(
+                    t.get("d")
+                        .and_then(JsonValue::as_str)
+                        .ok_or(DispatchError::MissingField("d"))?,
+                )?;
+                let d: [u8; 48] = d_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("ECDSA KeyGen: d is not 48 bytes"))?;
+
+                let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d)
+                    .ok_or(DispatchError::Crypto(
+                        "ECDSA KeyGen: derive_public_key_internal failed",
+                    ))?;
+
+                // pk is 97 bytes: 0x04 || X(48) || Y(48)
+                results.push(JsonValue::Object(vec![
+                    ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                    (
+                        "qx".to_string(),
+                        JsonValue::String(hex::encode_upper(&pk[1..49])),
+                    ),
+                    (
+                        "qy".to_string(),
+                        JsonValue::String(hex::encode_upper(&pk[49..97])),
+                    ),
+                ]));
+            }
+        }
+        _ => {
+            return Err(DispatchError::Unsupported(
+                "ECDSA KeyGen: unsupported curve",
+            ))
+        }
     }
 
     Ok(JsonValue::Object(vec![
@@ -462,4 +586,46 @@ fn ecdsa_p256_key_validate(qx: &[u8], qy: &[u8]) -> bool {
     pk[qy_offset..65].copy_from_slice(qy);
 
     oxicrypt_ecdsa::p256_point::Point::from_sec1_uncompressed_validated(&pk).is_some()
+}
+
+/// Build the 97-byte uncompressed SEC1 public key (0x04 || qx || qy) and the
+/// 96-byte signature (r || s), then call `oxicrypt_ecdsa::p384_ecdsa::verify_internal`.
+fn ecdsa_p384_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bool {
+    // qx, qy, r, s must each be exactly 48 bytes for P-384.
+    if qx.len() != 48 || qy.len() != 48 || r.len() != 48 || s.len() != 48 {
+        return false;
+    }
+    let mut pk = [0u8; 97];
+    pk[0] = 0x04;
+    pk[1..49].copy_from_slice(qx);
+    pk[49..97].copy_from_slice(qy);
+
+    let mut sig = [0u8; 96];
+    sig[..48].copy_from_slice(r);
+    sig[48..].copy_from_slice(s);
+
+    oxicrypt_ecdsa::p384_ecdsa::verify_internal(&pk, msg, &sig)
+}
+
+/// Build the 97-byte uncompressed SEC1 public key and validate it via
+/// the full SP 800-56Ar3 §5.6.2.3.3 public-key validation.
+fn ecdsa_p384_key_validate(qx: &[u8], qy: &[u8]) -> bool {
+    // If qx/qy are not exactly 48 bytes each, the key is invalid.
+    // ACVP KeyVer vectors may provide oversize coordinates to test
+    // rejection of out-of-range values.
+    if qx.len() > 48 || qy.len() > 48 {
+        return false;
+    }
+    // Left-pad to 48 bytes (coordinates < 48 bytes are valid but
+    // unusual; ACVP doesn't seem to test this, but be correct).
+    let mut pk = [0u8; 97];
+    pk[0] = 0x04;
+    // Right-align qx into pk[1..49]
+    let qx_offset = 49 - qx.len();
+    pk[qx_offset..49].copy_from_slice(qx);
+    // Right-align qy into pk[49..97]
+    let qy_offset = 97 - qy.len();
+    pk[qy_offset..97].copy_from_slice(qy);
+
+    oxicrypt_ecdsa::p384_point::Point384::from_sec1_uncompressed_validated(&pk).is_some()
 }
