@@ -315,7 +315,24 @@
 //! are also self-generated (computed with Python `hmac` module, then
 //! first nibble flipped for invalid-MAC groups).
 //!
-//! Later chunks will add additional modes (larger key sizes).
+//! R59 completes the Chunk 6 (ACVP handler build-out for all new algorithms)
+//! with classical and post-quantum additions:
+//!
+//! - [`ecdsa`] — `ECDSA` all four modes now support P-384 with SHA-384 in
+//!   addition to existing P-256/SHA-256
+//! - [`kas_ecc_ssc`] — `KAS-ECC-SSC` / `Component` extends to P-384 ECDH
+//!   shared secret computation
+//! - [`rsa`] — `RSA` / `sigVer` extends to handle 3072- and 4096-bit
+//!   moduli in addition to 2048-bit, covering PKCS#1v1.5 and PSS
+//! - [`kas_ffc_ssc`] — new handler `KAS-FFC-SSC` / `Component` for
+//!   DH-3072 shared secret computation (3072-bit Diffie-Hellman)
+//! - [`ml_kem`] — three new handlers for `ML-KEM-1024` (post-quantum):
+//!   `keyGen`, `encaps`, `decaps` per FIPS 203, implementing the full KEM
+//!   lifecycle with deterministic key generation and encapsulation
+//!
+//! Handler count: 62 → 66 (4 new handlers: KAS-FFC-SSC, ML-KEM-1024
+//! keyGen/encaps/decaps). Multiple classical extensions to existing handlers
+//! (P-384 ECDSA/KAS-ECC-SSC, RSA-3072/4096) do not add new handler structs.
 
 pub mod aes;
 pub mod cmac;
