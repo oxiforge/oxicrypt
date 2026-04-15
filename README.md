@@ -18,9 +18,9 @@ cargo build --workspace
 
 # Sign the harness binary for the integrity self-test
 cargo build -p oxicrypt-integrity
-./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
+./target/debug/fips-integrity-sign --sign target/debug/acvp-harness
 
-# Run all 140 power-up KATs + software integrity check
+# Run all 183 power-up self-tests + software integrity check
 ./target/debug/acvp-harness
 
 # Run the full test suite (120 ACVP round-trip + 7 CAVP SHS + unit tests)
@@ -55,14 +55,15 @@ cargo test --workspace
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
 
-Every algorithm runs a known-answer test at module power-up. The 140 KATs include
-CAVP-sourced vectors (with 9 SP 800-90A §9.3 prediction-resistance DRBG KATs),
-plus 3 SP 800-90A §11.3 DRBG health tests, each traceable to its published source.
+Every algorithm runs a known-answer test at module power-up. The 183
+power-up self-tests include CAVP-sourced vectors (with 9 SP 800-90A §9.3
+prediction-resistance DRBG KATs), plus 3 SP 800-90A §11.3 DRBG health
+tests, each traceable to its published source.
 
 ## Architecture
 
-oxicrypt is organized as a Cargo workspace with 21 algorithm crates, a module
-crate, and supporting tools:
+oxicrypt is organized as a Cargo workspace with 23 crates — 18 algorithm
+crates, a module crate, and 4 supporting crates — plus tools:
 
 ```
 crates/
@@ -80,15 +81,16 @@ crates/
   oxicrypt-ecdsa         ECDSA P-256 + P-384 (FIPS 186-5)
   oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
-  oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — implemented
-  oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — implemented
+  oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203)
+  oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204)
   oxicrypt-slh-dsa       SLH-DSA-SHA2-256s (FIPS 205)
-  oxicrypt-lms           LMS hash-based signatures (SP 800-208) — implemented
-  oxicrypt-xmss          XMSS hash-based signatures (SP 800-208) — implemented
+  oxicrypt-lms           LMS hash-based signatures (SP 800-208)
+  oxicrypt-xmss          XMSS hash-based signatures (SP 800-208)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
+  oxicrypt-ffi           C ABI wrappers (cdylib + staticlib) with profile selection
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
+  oxicrypt-zeroize       Volatile zeroization for sensitive security parameters
 
-crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) with profile selection
 acvp-harness/           ACVP protocol handler with 78 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
@@ -196,27 +198,30 @@ ACVP-Server slim slices).
 
 ## Roadmap
 
-**Phase 2 (current)** — Algorithm implementation and ACVP validation.
-78 handlers, 127 tests, all green. CNSA 2.0 / CNSA 1.0 algorithm-profile
-gating is enforced across all 15 algorithm crates and the C ABI
-(`oxicrypt-ffi`). The FFI layer exposes profile selection via
-`oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with
-status code `-4` for restricted algorithms. Stub crates reserve surfaces
-for remaining post-quantum algorithms (SLH-DSA, LMS, XMSS); ML-KEM-1024 and ML-DSA-87 are fully implemented.
-P-384 ECDSA/ECDH is complete. RSA-3072 and RSA-4096 are fully
-implemented: PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt,
-keygen with CRT + Bellcore verify-after-sign (IG D.G). DH-3072 key
-agreement and keygen over RFC 3526 Group 15 is complete with partial
-public-key validation per SP 800-56Ar3 §5.6.2.3.2. Preparing for
-ACVP demo server dry run.
+**Phase 1 (complete)** — Foundation. Workspace structure, module state
+machine, power-up self-test framework, core classical algorithms (SHA,
+HMAC, AES, DRBG, KDF, ECDSA P-256, Ed25519, RSA-2048), ACVP harness,
+integrity check, constant-time validation tooling.
 
-**Phase 3** — CST lab engagement, CAVP algorithm certificates, CMVP module
-submission.
+**Phase 2 (complete)** — Full algorithm coverage. All 18 algorithm crates
+are fully implemented: P-384 ECDSA/ECDH, RSA-3072/4096 (PKCS#1 v1.5,
+PSS, OAEP, keygen with CRT + Bellcore verify-after-sign per IG D.G),
+DH-3072 (RFC 3526 Group 15), ML-KEM-1024 (FIPS 203), ML-DSA-87
+(FIPS 204), SLH-DSA-SHA2-256s (FIPS 205), LMS (SP 800-208), and XMSS
+(SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
+across all algorithm crates and the C ABI (`oxicrypt-ffi`). 78 ACVP
+handlers, 183 power-up self-tests, 127 ACVP/CAVP round-trip tests — all
+green.
 
-**Phase 4** — Performance hardening (AES-NI, bitsliced fallback), additional
-curves (Ed448, P-521), language bindings (C ABI, Python, Go, Node).
+**Phase 3 (current)** — ACVP validation. Demo-server dry run, gap
+resolution, and preparation of the validation submission package.
 
-**Phase 5** — Post-quantum algorithm implementations (LMS, XMSS) and classical extensions (DH-3072). ML-KEM-1024 and ML-DSA-87 are complete.
+**Phase 4 (next)** — CST lab engagement. CAVP algorithm certificates,
+CMVP module submission, and lab review cycle.
+
+**Phase 5 (future)** — Extensions. Performance hardening (AES-NI,
+bitsliced AES fallback), additional parameter sets and curves (Ed448,
+P-521), and additional language bindings (Python, Go, Node).
 
 ## `oxi` CLI
 

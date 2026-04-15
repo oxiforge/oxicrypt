@@ -252,7 +252,7 @@ security:
   certification: "FIPS 140-3 Level 1 (targeting)"
   side_channel_posture: "disclosed"
   zeroization: "volatile-on-drop (all 15 CSP-holding types via oxicrypt-zeroize)"
-  self_tests: "142 power-up KATs from NIST-sourced vectors"
+  self_tests: "183 power-up self-tests from NIST-sourced vectors"
   algorithm_profiles:
     - name: "Unrestricted"
       description: "All FIPS-approved algorithms available (default)"
