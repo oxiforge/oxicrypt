@@ -32,6 +32,9 @@ impl AlgorithmHandler for RsaSigGenHandler {
     fn revision(&self) -> &'static str {
         "FIPS186-5"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::rsa_siggen_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
     }

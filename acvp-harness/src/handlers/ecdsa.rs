@@ -43,6 +43,9 @@ impl AlgorithmHandler for EcdsaSigVerHandler {
     fn revision(&self) -> &'static str {
         "FIPS186-5"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ecdsa_sigver_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)
     }
@@ -62,6 +65,9 @@ impl AlgorithmHandler for EcdsaKeyVerHandler {
     }
     fn revision(&self) -> &'static str {
         "FIPS186-5"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ecdsa_keyver_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keyver_group(group)
@@ -86,6 +92,9 @@ impl AlgorithmHandler for EcdsaSigGenHandler {
     fn revision(&self) -> &'static str {
         "FIPS186-5"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ecdsa_siggen_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
     }
@@ -105,6 +114,9 @@ impl AlgorithmHandler for EcdsaKeyGenHandler {
     }
     fn revision(&self) -> &'static str {
         "FIPS186-5"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ecdsa_keygen_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)

@@ -76,6 +76,9 @@ impl AlgorithmHandler for AesEcbHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_ecb_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Ecb)
     }
@@ -102,6 +105,9 @@ impl AlgorithmHandler for AesCtrHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_ctr_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Ctr)
@@ -130,6 +136,9 @@ impl AlgorithmHandler for AesCcmHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_ccm_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Ccm)
     }
@@ -142,6 +151,9 @@ impl AlgorithmHandler for AesKwHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_kw_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Kw)
     }
@@ -153,6 +165,9 @@ impl AlgorithmHandler for AesKwpHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::aes_kwp_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_aes_group(group, AesMode::Kwp)

@@ -27,6 +27,9 @@ impl AlgorithmHandler for CmacAesHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::cmac_aes_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_cmac_group(group)
     }

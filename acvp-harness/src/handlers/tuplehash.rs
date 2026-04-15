@@ -36,6 +36,9 @@ impl AlgorithmHandler for TupleHash128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::tuplehash_capability("TupleHash-128", false))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_tuplehash_group(group, |elements: &[Vec<u8>], s: &[u8], out: &mut [u8]| {
             let mut h = TupleHash128::new(s)
@@ -55,6 +58,9 @@ impl AlgorithmHandler for TupleHash256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::tuplehash_capability("TupleHash-256", false))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_tuplehash_group(group, |elements: &[Vec<u8>], s: &[u8], out: &mut [u8]| {
@@ -82,6 +88,9 @@ impl AlgorithmHandler for TupleHashXof128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::tuplehash_capability("TupleHashXOF-128", true))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_tuplehash_group(group, |elements: &[Vec<u8>], s: &[u8], out: &mut [u8]| {
             let mut h = TupleHashXof128::new(s)
@@ -102,6 +111,9 @@ impl AlgorithmHandler for TupleHashXof256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::tuplehash_capability("TupleHashXOF-256", true))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_tuplehash_group(group, |elements: &[Vec<u8>], s: &[u8], out: &mut [u8]| {

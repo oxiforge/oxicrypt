@@ -43,6 +43,9 @@ impl AlgorithmHandler for ParallelHash128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::parallelhash_capability("ParallelHash-128", false))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {
             let mut h = ParallelHash128::new(block_size, s)
@@ -60,6 +63,9 @@ impl AlgorithmHandler for ParallelHash256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::parallelhash_capability("ParallelHash-256", false))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {
@@ -85,6 +91,9 @@ impl AlgorithmHandler for ParallelHashXof128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::parallelhash_capability("ParallelHashXOF-128", true))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {
             let mut h = ParallelHashXof128::new(block_size, s)
@@ -103,6 +112,9 @@ impl AlgorithmHandler for ParallelHashXof256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::parallelhash_capability("ParallelHashXOF-256", true))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_parallelhash_group(group, |msg, block_size, s, out| {

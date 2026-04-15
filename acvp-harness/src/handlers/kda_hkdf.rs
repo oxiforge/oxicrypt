@@ -83,6 +83,9 @@ impl AlgorithmHandler for KdaHkdfHandler {
     fn revision(&self) -> &'static str {
         "Sp800-56Cr2"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kda_hkdf_capability())
+    }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kda_hkdf_group(g)
     }

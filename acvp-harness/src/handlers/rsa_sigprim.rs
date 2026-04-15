@@ -28,6 +28,9 @@ impl AlgorithmHandler for RsaSigPrimHandler {
     fn revision(&self) -> &'static str {
         "2.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::rsa_sigprim_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigprim_group(group)
     }

@@ -380,6 +380,22 @@
 //!
 //! Handler count stays at 78; no new handlers. Five handlers now
 //! declare `acvp_capabilities()` for the initial dry run.
+//!
+//! Chunk 9 completes ACVP registration capabilities across all handlers:
+//!
+//! - [`caps`] — expanded from 5 builder functions to full coverage of
+//!   every algorithm family: SHA-3, SHAKE, HMAC (all 11), CMAC-AES,
+//!   KMAC/KMACXOF, cSHAKE, TupleHash/XOF, ParallelHash/XOF, AES
+//!   (ECB/CBC/CTR/GCM/CCM/KW/KWP), all three DRBG families, KDA-HKDF,
+//!   KBKDF, kdf-components/tls, TLS-v1.2/KDF, PBKDF, RSA (sigVer/
+//!   sigGen/keyGen/OAEP/decPrim/sigPrim), ECDSA (all 4 modes), EdDSA
+//!   (all 4 modes), KAS-ECC-SSC, KAS-FFC-SSC, ML-KEM-1024 (keyGen/
+//!   encaps/decaps), ML-DSA-87 (keyGen/sigGen/sigVer), SLH-DSA-SHA2-256s
+//!   (keyGen/sigGen/sigVer), LMS (keyGen/sigGen/sigVer), and XMSS
+//!   (keyGen/sigGen/sigVer).
+//!
+//! All 78 handlers now declare `acvp_capabilities()`, enabling full
+//! demo-server registration for the complete algorithm suite.
 
 pub mod aes;
 pub mod caps;

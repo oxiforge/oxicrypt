@@ -24,6 +24,9 @@ impl AlgorithmHandler for KasFfcSscHandler {
     fn revision(&self) -> &'static str {
         "Sp800-56Ar3"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kas_ffc_ssc_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kas_ffc_ssc_group(group)
     }

@@ -34,6 +34,9 @@ impl AlgorithmHandler for RsaOaepHandler {
     fn revision(&self) -> &'static str {
         "RFC8017"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::rsa_oaep_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_oaep_group(group)
     }

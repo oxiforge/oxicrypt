@@ -27,6 +27,9 @@ impl AlgorithmHandler for SlhDsaKeyGenHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::slh_dsa_keygen_capability("SLH-DSA-SHA2-256s"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
     }
@@ -47,6 +50,9 @@ impl AlgorithmHandler for SlhDsaSigGenHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::slh_dsa_siggen_capability("SLH-DSA-SHA2-256s"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
     }
@@ -66,6 +72,9 @@ impl AlgorithmHandler for SlhDsaSigVerHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::slh_dsa_sigver_capability("SLH-DSA-SHA2-256s"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)

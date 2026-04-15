@@ -40,6 +40,9 @@ impl AlgorithmHandler for Shake128Handler {
     fn revision(&self) -> &'static str {
         "FIPS202"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::shake_capability("SHAKE-128"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_shake_dispatch(group, 128, |msg, out| {
             let mut x = Shake128::new()
@@ -58,6 +61,9 @@ impl AlgorithmHandler for Shake256Handler {
     }
     fn revision(&self) -> &'static str {
         "FIPS202"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::shake_capability("SHAKE-256"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_shake_dispatch(group, 256, |msg, out| {

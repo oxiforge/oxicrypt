@@ -47,6 +47,9 @@ impl AlgorithmHandler for Sha3_224Handler {
     fn revision(&self) -> &'static str {
         "2.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::sha3_capability("SHA3-224", 224))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hash_group(
             group,
@@ -72,6 +75,9 @@ impl AlgorithmHandler for Sha3_384Handler {
     fn revision(&self) -> &'static str {
         "2.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::sha3_capability("SHA3-384", 384))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hash_group(
             group,
@@ -96,6 +102,9 @@ impl AlgorithmHandler for Sha3_512Handler {
     }
     fn revision(&self) -> &'static str {
         "2.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::sha3_capability("SHA3-512", 512))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hash_group(

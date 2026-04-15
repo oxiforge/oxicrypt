@@ -166,7 +166,9 @@ reproduces the vendored answer fields byte-for-byte.
 
 The `demo-run` subcommand implements the full ACVP REST protocol: login
 with TOTP-signed JWT, register capabilities, fetch/process/submit vector
-sets, and poll for verdicts. Uses `curl(1)` for HTTPS with mutual TLS,
+sets, and poll for verdicts.  All 78 handlers declare registration
+capabilities, so the demo server receives the complete algorithm suite
+in a single session.  Uses `curl(1)` for HTTPS with mutual TLS,
 keeping zero third-party deps. Session transcripts are written to
 `acvp-session.json` (configurable with `--log`).
 

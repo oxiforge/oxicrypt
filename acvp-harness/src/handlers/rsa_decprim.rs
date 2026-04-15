@@ -35,6 +35,9 @@ impl AlgorithmHandler for RsaDecPrimHandler {
     fn revision(&self) -> &'static str {
         "Sp800-56Br2"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::rsa_decprim_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_decprim_group(group)
     }

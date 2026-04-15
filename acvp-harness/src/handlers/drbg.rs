@@ -36,6 +36,9 @@ impl AlgorithmHandler for CtrDrbgHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ctr_drbg_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_drbg_group(DrbgFamily::Ctr, group)
     }
@@ -50,6 +53,9 @@ impl AlgorithmHandler for HashDrbgHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hash_drbg_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_drbg_group(DrbgFamily::Hash, group)

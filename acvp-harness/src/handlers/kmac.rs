@@ -46,6 +46,9 @@ impl AlgorithmHandler for Kmac128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kmac_capability("KMAC-128", false))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kmac_group(group, |key, msg, s, out| {
             let mut m = Kmac128::new(key, s)
@@ -63,6 +66,9 @@ impl AlgorithmHandler for Kmac256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kmac_capability("KMAC-256", false))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kmac_group(group, |key, msg, s, out| {
@@ -88,6 +94,9 @@ impl AlgorithmHandler for KmacXof128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kmac_capability("KMACXOF-128", true))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kmac_group(group, |key, msg, s, out| {
             let mut m = KmacXof128::new(key, s)
@@ -106,6 +115,9 @@ impl AlgorithmHandler for KmacXof256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kmac_capability("KMACXOF-256", true))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kmac_group(group, |key, msg, s, out| {

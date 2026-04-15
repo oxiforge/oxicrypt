@@ -27,6 +27,9 @@ impl AlgorithmHandler for MlKem1024KeyGenHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ml_kem_keygen_capability("ML-KEM-1024"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
     }
@@ -47,6 +50,9 @@ impl AlgorithmHandler for MlKem1024EncapsHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ml_kem_encaps_capability("ML-KEM-1024"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_encaps_group(group)
     }
@@ -66,6 +72,9 @@ impl AlgorithmHandler for MlKem1024DecapsHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ml_kem_decaps_capability("ML-KEM-1024"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_decaps_group(group)

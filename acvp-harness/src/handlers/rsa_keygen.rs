@@ -29,6 +29,9 @@ impl AlgorithmHandler for RsaKeyGenHandler {
     fn revision(&self) -> &'static str {
         "FIPS186-5"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::rsa_keygen_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
     }

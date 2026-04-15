@@ -53,6 +53,9 @@ impl AlgorithmHandler for KbkdfHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kbkdf_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kbkdf_group(group)
     }

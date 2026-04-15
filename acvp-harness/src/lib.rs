@@ -27,12 +27,13 @@
 //!   (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224,
 //!   SHA-512/256) in [`handlers::shs`].
 //!
-//! Everything else — HKDF, AES, DRBG, ECDSA, EdDSA, RSA, the Monte
-//! Carlo and Large Data tests — is intentionally out of scope for
-//! these chunks. Both dispatchers are designed so future handlers
-//! slot in without touching the envelope layers; see
-//! [`dispatch::with_default_handlers`] and
-//! [`shs::with_default_shs_handlers`] for the extension points.
+//! Subsequent chunks expanded the handler set to 78 algorithms covering
+//! AES (7 modes), DRBG (3 families), KDFs (HKDF, KBKDF, TLS, PBKDF),
+//! SP 800-185 derived functions (cSHAKE, KMAC, TupleHash, ParallelHash),
+//! ECDSA, EdDSA, RSA (all modes), KAS-ECC-SSC, KAS-FFC-SSC, and
+//! post-quantum algorithms (ML-KEM-1024, ML-DSA-87, SLH-DSA-SHA2-256s,
+//! LMS, XMSS).  All 78 handlers declare ACVP registration capabilities
+//! via [`handlers::caps`], enabling full demo-server registration.
 //!
 //! # Module gating
 //!

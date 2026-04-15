@@ -27,6 +27,9 @@ impl AlgorithmHandler for MlDsa87KeyGenHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ml_dsa_keygen_capability("ML-DSA-87"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
     }
@@ -47,6 +50,9 @@ impl AlgorithmHandler for MlDsa87SigGenHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ml_dsa_siggen_capability("ML-DSA-87"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
     }
@@ -66,6 +72,9 @@ impl AlgorithmHandler for MlDsa87SigVerHandler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::ml_dsa_sigver_capability("ML-DSA-87"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)

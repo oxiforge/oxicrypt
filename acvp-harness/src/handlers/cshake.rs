@@ -35,6 +35,9 @@ impl AlgorithmHandler for CShake128Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::cshake_capability("cSHAKE-128"))
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_cshake_group(group, |msg, s, out| {
             let mut x = CShake128::new(b"", s)
@@ -53,6 +56,9 @@ impl AlgorithmHandler for CShake256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::cshake_capability("cSHAKE-256"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_cshake_group(group, |msg, s, out| {

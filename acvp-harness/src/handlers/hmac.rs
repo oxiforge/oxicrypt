@@ -82,6 +82,9 @@ impl AlgorithmHandler for HmacSha1Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA-1", 160))
+    }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 20, |k, m| {
             let mut h = HmacSha1::new(k)
@@ -98,6 +101,9 @@ impl AlgorithmHandler for HmacSha2_224Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA2-224", 224))
     }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 28, |k, m| {
@@ -116,6 +122,9 @@ impl AlgorithmHandler for HmacSha2_384Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA2-384", 384))
+    }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 48, |k, m| {
             let mut h = HmacSha384::new(k)
@@ -132,6 +141,9 @@ impl AlgorithmHandler for HmacSha2_512Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA2-512", 512))
     }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 64, |k, m| {
@@ -150,6 +162,9 @@ impl AlgorithmHandler for HmacSha2_512_224Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA2-512/224", 224))
+    }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 28, |k, m| {
             let mut h = HmacSha512_224::new(k)
@@ -166,6 +181,9 @@ impl AlgorithmHandler for HmacSha2_512_256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA2-512/256", 256))
     }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 32, |k, m| {
@@ -184,6 +202,9 @@ impl AlgorithmHandler for HmacSha3_224Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA3-224", 224))
+    }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 28, |k, m| {
             let mut h = HmacSha3_224::new(k)
@@ -200,6 +221,9 @@ impl AlgorithmHandler for HmacSha3_256Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA3-256", 256))
     }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 32, |k, m| {
@@ -218,6 +242,9 @@ impl AlgorithmHandler for HmacSha3_384Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA3-384", 384))
+    }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 48, |k, m| {
             let mut h = HmacSha3_384::new(k)
@@ -234,6 +261,9 @@ impl AlgorithmHandler for HmacSha3_512Handler {
     }
     fn revision(&self) -> &'static str {
         "1.0"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::hmac_capability("HMAC-SHA3-512", 512))
     }
     fn handle_group(&self, g: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_hmac_group(g, 64, |k, m| {

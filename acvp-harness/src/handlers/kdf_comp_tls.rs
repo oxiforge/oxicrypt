@@ -28,6 +28,9 @@ impl AlgorithmHandler for KdfComponentsTlsHandler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::kdf_comp_tls_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kdf_comp_tls_group(group)
     }

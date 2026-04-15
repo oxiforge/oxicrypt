@@ -35,6 +35,9 @@ impl AlgorithmHandler for Pbkdf2Handler {
     fn revision(&self) -> &'static str {
         "1.0"
     }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::pbkdf_capability())
+    }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_pbkdf2_group(group)
     }
