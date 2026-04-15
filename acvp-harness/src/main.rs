@@ -57,6 +57,7 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
             + oxicrypt_rsa::KATS.len()
             + oxicrypt_ecdh::KATS.len()
             + oxicrypt_tls_kdf::KATS.len()
+            + oxicrypt_dh::KATS.len()
     },
 >(&[
     oxicrypt_sha::KATS,
@@ -72,6 +73,7 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
     oxicrypt_rsa::KATS,
     oxicrypt_ecdh::KATS,
     oxicrypt_tls_kdf::KATS,
+    oxicrypt_dh::KATS,
 ]);
 
 /// Concatenate several `KatEntry` slices into a single fixed-size

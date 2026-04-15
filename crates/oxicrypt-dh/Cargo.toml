@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-dh"
-description = "Finite-field Diffie-Hellman (RFC 3526) — stub crate, implementation planned"
+description = "Finite-field Diffie-Hellman key agreement — RFC 3526 Group 15 (3072-bit)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-rsa = { path = "../oxicrypt-rsa" }
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }

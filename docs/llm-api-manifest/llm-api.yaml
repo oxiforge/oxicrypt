@@ -179,6 +179,13 @@ modules:
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-ecdsa]
 
+  - name: oxicrypt-dh
+    description: >-
+      Finite-field DH-3072 key agreement and keygen over RFC 3526 Group 15
+      (SP 800-56Ar3). Reuses U3072/MontCtx3072 from oxicrypt-rsa.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-rsa, oxicrypt-drbg]
+
   - name: oxicrypt-eddsa
     description: >-
       Ed25519 deterministic sign/verify/keygen (RFC 8032, FIPS 186-5).
@@ -1205,6 +1212,115 @@ functions:
           let mut okm = [0u8; 32];
           hkdf_sha256(&salt, &z, &info, &mut okm)?;
           let aes_key = Aes256Key::new(&okm)?;
+
+  # ── DH ──────────────────────────────────────────────────────────
+
+  - name: compute_shared_secret_3072
+    module: oxicrypt-dh
+    description: >-
+      Compute DH-3072 shared secret over RFC 3526 Group 15
+      (SP 800-56Ar3 §5.7.1.1 FFC DH). Partial public-key validation
+      per §5.6.2.3.2 (range check, sufficient for safe-prime groups).
+    signature: >-
+      pub fn compute_shared_secret_3072(x_bytes: &[u8; 384],
+      y_bytes: &[u8; 384]) -> Result<[u8; 384], Error>
+    parameters:
+      - name: x_bytes
+        type: "&[u8; 384]"
+        direction: in
+        description: Our private key (big-endian, 3072 bits).
+        constraints:
+          size: 384
+          encoding: big-endian
+          range: "1 ≤ x < q where q = (p−1)/2"
+      - name: y_bytes
+        type: "&[u8; 384]"
+        direction: in
+        description: >-
+          Peer's public key (big-endian, 3072 bits). Validated via
+          partial validation: 2 ≤ y ≤ p − 2.
+        constraints:
+          size: 384
+          encoding: big-endian
+          range: "2 ≤ y ≤ p − 2"
+    returns:
+      type: "Result<[u8; 384], Error>"
+      description: >-
+        384-byte raw shared secret Z = y^x mod p. Feed this to an
+        SP 800-56Cr2 KDF — do NOT use directly as keying material.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: InvalidInput
+          condition: Private key or peer public key out of range.
+        - name: AlgorithmRestricted
+          condition: DH-3072 blocked by active profile (e.g. CNSA 2.0).
+    preconditions:
+      - description: Module must be Operational.
+      - description: Peer public key must pass partial validation (2 ≤ y ≤ p − 2).
+    postconditions:
+      - description: >-
+          Returns Z = y^x mod p. Caller MUST pass through an SP 800-56Cr2
+          extractor before use as keying material.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          The raw DH shared secret must not be used directly as a
+          symmetric key. Always derive through a KDF (HKDF, SP 800-56Cr2).
+        wrong: |
+          let z = compute_shared_secret_3072(&x, &y)?;
+          let aes_key = Aes256Key::new(&z[..32])?;  // WRONG — no KDF
+        right: |
+          let z = compute_shared_secret_3072(&x, &y)?;
+          let mut okm = [0u8; 32];
+          hkdf_sha256(&salt, &z, &info, &mut okm)?;
+          let aes_key = Aes256Key::new(&okm)?;
+
+  - name: generate_keypair_3072
+    module: oxicrypt-dh
+    description: >-
+      Generate a DH-3072 key pair for RFC 3526 Group 15.
+      Private key x sampled from HMAC-DRBG-SHA-256 via rejection
+      sampling (x ∈ [1, q−1]). Public key y = 2^x mod p.
+    signature: >-
+      pub fn generate_keypair_3072(drbg: &mut HmacDrbgSha256)
+      -> Result<([u8; 384], [u8; 384]), Error>
+    parameters:
+      - name: drbg
+        type: "&mut HmacDrbgSha256"
+        direction: inout
+        description: >-
+          Instantiated HMAC-DRBG-SHA-256. Must have been instantiated
+          with sufficient entropy before calling.
+    returns:
+      type: "Result<([u8; 384], [u8; 384]), Error>"
+      description: >-
+        Tuple of (private_key, public_key) both as 384-byte big-endian arrays.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: InvalidInput
+          condition: Keygen failed (DRBG exhaustion or repeated failures).
+        - name: AlgorithmRestricted
+          condition: DH-3072 blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+      - description: DRBG must be instantiated with sufficient entropy.
+    postconditions:
+      - description: >-
+          Private key x ∈ [1, q−1], public key y = 2^x mod p. Both
+          keys are valid for use with compute_shared_secret_3072.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
 
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
 

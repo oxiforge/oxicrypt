@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
 oxicrypt-cmac = { path = "../crates/oxicrypt-cmac" }
+oxicrypt-dh = { path = "../crates/oxicrypt-dh" }
 oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
 oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
 oxicrypt-ecdsa = { path = "../crates/oxicrypt-ecdsa" }

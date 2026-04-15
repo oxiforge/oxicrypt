@@ -8,6 +8,7 @@ version = "0.0.0"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-cmac",
+ "oxicrypt-dh",
  "oxicrypt-drbg",
  "oxicrypt-ecdh",
  "oxicrypt-ecdsa",
@@ -338,7 +339,9 @@ dependencies = [
 name = "oxicrypt-dh"
 version = "0.0.0"
 dependencies = [
+ "oxicrypt-drbg",
  "oxicrypt-module",
+ "oxicrypt-rsa",
 ]
 
 [[package]]

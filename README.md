@@ -20,7 +20,7 @@ cargo build --workspace
 cargo build -p oxicrypt-integrity
 ./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
 
-# Run all 139 power-up KATs + software integrity check
+# Run all 140 power-up KATs + software integrity check
 ./target/debug/acvp-harness
 
 # Run the full test suite (120 ACVP round-trip + 7 CAVP SHS + unit tests)
@@ -52,7 +52,7 @@ cargo test --workspace
 | SLH-DSA | SLH-DSA sign/verify/keygen (stub) | FIPS 205 |
 | LMS | LMS sign/verify (stub) | SP 800-208 |
 | XMSS | XMSS sign/verify (stub) | SP 800-208 |
-| DH | DH-3072 key agreement (stub) | RFC 3526 |
+| DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
 
 Every algorithm runs a known-answer test at module power-up. The 139 KATs include
@@ -85,7 +85,7 @@ crates/
   oxicrypt-slh-dsa       SLH-DSA (FIPS 205) — stub
   oxicrypt-lms           LMS hash-based signatures (SP 800-208) — stub
   oxicrypt-xmss          XMSS hash-based signatures (SP 800-208) — stub
-  oxicrypt-dh            Finite-field DH >= 3072 (RFC 3526) — stub
+  oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
 
 crates/oxicrypt-ffi     C ABI wrappers (cdylib + staticlib) with profile selection
@@ -202,11 +202,13 @@ gating is enforced across all 15 algorithm crates and the C ABI
 (`oxicrypt-ffi`). The FFI layer exposes profile selection via
 `oxicrypt_init_with_profile()` and `oxicrypt_active_profile()`, with
 status code `-4` for restricted algorithms. Stub crates reserve surfaces
-for all post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS)
-and CNSA 1.0 classical extensions (DH-3072). P-384 ECDSA/ECDH is
-complete. RSA-3072 and RSA-4096 are fully implemented: PKCS#1 v1.5 and
-PSS sign/verify, OAEP encrypt/decrypt, keygen with CRT + Bellcore
-verify-after-sign (IG D.G). Preparing for ACVP demo server dry run.
+for all post-quantum algorithms (ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS).
+P-384 ECDSA/ECDH is complete. RSA-3072 and RSA-4096 are fully
+implemented: PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt,
+keygen with CRT + Bellcore verify-after-sign (IG D.G). DH-3072 key
+agreement and keygen over RFC 3526 Group 15 is complete with partial
+public-key validation per SP 800-56Ar3 §5.6.2.3.2. Preparing for
+ACVP demo server dry run.
 
 **Phase 3** — CST lab engagement, CAVP algorithm certificates, CMVP module
 submission.
