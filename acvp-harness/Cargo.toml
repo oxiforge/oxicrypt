@@ -30,3 +30,8 @@ oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
 oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
 oxicrypt-tls-kdf = { path = "../crates/oxicrypt-tls-kdf" }
 oxicrypt-integrity = { path = "../crates/oxicrypt-integrity" }
+oxicrypt-ml-kem = { path = "../crates/oxicrypt-ml-kem" }
+oxicrypt-ml-dsa = { path = "../crates/oxicrypt-ml-dsa" }
+oxicrypt-slh-dsa = { path = "../crates/oxicrypt-slh-dsa" }
+oxicrypt-lms = { path = "../crates/oxicrypt-lms" }
+oxicrypt-xmss = { path = "../crates/oxicrypt-xmss" }

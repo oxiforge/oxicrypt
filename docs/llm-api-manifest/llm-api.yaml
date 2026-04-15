@@ -223,6 +223,17 @@ modules:
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-zeroize]
 
+  - name: oxicrypt-slh-dsa
+    description: >-
+      SLH-DSA-SHA2-256s stateless hash-based digital signatures (FIPS 205).
+      Parameter set SHA2-256s: n=32, h=64, d=8, a=14, k=22, w=16. Public
+      key 64 bytes, secret key 128 bytes, signature 29792 bytes. Stateless
+      — no per-signature state management required. Allowed in Unrestricted
+      profile only. Signing is computationally expensive (many SHA-256
+      evaluations) but security rests entirely on hash function properties.
+    no_std: true
+    depends_on: [oxicrypt-module, oxicrypt-sha]
+
   - name: oxicrypt-eddsa
     description: >-
       Ed25519 deterministic sign/verify/keygen (RFC 8032, FIPS 186-5).
@@ -1914,6 +1925,122 @@ functions:
       fips_gate: Operational
     profiles: [Unrestricted, Cnsa2]
 
+  # ── SLH-DSA (FIPS 205) ───────────────────────────────────────────
+
+  - name: keygen
+    module: oxicrypt-slh-dsa
+    kind: function
+    description: >
+      Generate an SLH-DSA-SHA2-256s key pair. xi must be 96 bytes of
+      fresh randomness (SK.seed || SK.prf || PK.seed). Returns (pk, sk)
+      where pk is 64 bytes (PK.seed || PK.root) and sk is 128 bytes
+      (SK.seed || SK.prf || PK.seed || PK.root). This is a STATELESS
+      scheme — no per-signature state management required.
+    parameters:
+      - name: xi
+        type: "&[u8]"
+        direction: in
+        description: "96 bytes of fresh randomness."
+    returns:
+      type: "Result<([u8; 64], [u8; 128]), Error>"
+      description: "Public key (64 B) and secret key (128 B)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: SLH-DSA blocked by active profile.
+      - name: InvalidInput
+        condition: xi is not 96 bytes.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: sign
+    module: oxicrypt-slh-dsa
+    kind: function
+    description: >
+      Sign a message with SLH-DSA-SHA2-256s (deterministic mode,
+      opt_rand = PK.seed). Returns a 29792-byte signature. Signing
+      involves many SHA-256 evaluations and is computationally expensive.
+    parameters:
+      - name: sk
+        type: "&[u8]"
+        direction: in
+        description: "128-byte secret key."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Message to sign (arbitrary length)."
+    returns:
+      type: "Result<[u8; 29792], Error>"
+      description: "29792-byte SLH-DSA signature (R || FORS sig || HT sig)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: SLH-DSA blocked by active profile.
+      - name: InvalidInput
+        condition: sk is not 128 bytes.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+    pitfalls:
+      - description: >
+          SLH-DSA signatures are large (29792 bytes for SHA2-256s)
+          and signing is slow (many hash evaluations). Consider ML-DSA
+          if signature size or signing speed is a concern.
+
+  - name: verify
+    module: oxicrypt-slh-dsa
+    kind: function
+    description: >
+      Verify an SLH-DSA-SHA2-256s signature. Returns Ok(()) if valid,
+      Err(InvalidInput) if invalid.
+    parameters:
+      - name: pk
+        type: "&[u8]"
+        direction: in
+        description: "64-byte public key."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Signed message."
+      - name: signature
+        type: "&[u8]"
+        direction: in
+        description: "29792-byte SLH-DSA signature."
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok(()) if valid, Err(InvalidInput) if invalid."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: SLH-DSA blocked by active profile.
+      - name: InvalidInput
+        condition: Signature verification failed or malformed inputs.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
 
   - name: oxicrypt_init
@@ -2268,3 +2395,21 @@ constants:
     type: u32
     value: "1024"
     description: "Maximum signatures per XMSS key (2^H where H=10)."
+
+  - name: PK_LEN
+    module: oxicrypt-slh-dsa
+    type: usize
+    value: "64"
+    description: "SLH-DSA-SHA2-256s public key size: PK.seed (32) + PK.root (32)."
+
+  - name: SK_LEN
+    module: oxicrypt-slh-dsa
+    type: usize
+    value: "128"
+    description: "SLH-DSA-SHA2-256s secret key size: SK.seed (32) + SK.prf (32) + PK.seed (32) + PK.root (32)."
+
+  - name: SIG_LEN
+    module: oxicrypt-slh-dsa
+    type: usize
+    value: "29792"
+    description: "SLH-DSA-SHA2-256s signature size: R (32) + FORS sig (10560) + HT sig (19200)."

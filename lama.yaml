@@ -160,7 +160,7 @@ capabilities:
       - "RSA-2048 PSS"
       - "RSA-3072/4096 PKCS#1 v1.5 / PSS sign/verify, keygen with CRT + Bellcore"
       - "ML-DSA-87 keygen/sign/verify"
-      - "SLH-DSA (stub)"
+      - "SLH-DSA-SHA2-256s keygen/sign/verify (stateless, FIPS 205)"
       - "LMS LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 sign/verify/keygen (stateful)"
       - "XMSS XMSS-SHA2_10_256 sign/verify/keygen (stateful)"
     standards:

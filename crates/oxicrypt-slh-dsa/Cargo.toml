@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-slh-dsa"
-description = "SLH-DSA (FIPS 205) — stub crate, implementation planned"
+description = "SLH-DSA (FIPS 205) — stateless hash-based digital signature"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-sha = { path = "../oxicrypt-sha" }

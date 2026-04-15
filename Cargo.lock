@@ -16,10 +16,15 @@ dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-integrity",
  "oxicrypt-kdf",
+ "oxicrypt-lms",
+ "oxicrypt-ml-dsa",
+ "oxicrypt-ml-kem",
  "oxicrypt-module",
  "oxicrypt-rsa",
  "oxicrypt-sha",
+ "oxicrypt-slh-dsa",
  "oxicrypt-tls-kdf",
+ "oxicrypt-xmss",
  "oxicrypt-xof",
 ]
 
@@ -481,6 +486,7 @@ name = "oxicrypt-slh-dsa"
 version = "0.0.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-sha",
 ]
 
 [[package]]

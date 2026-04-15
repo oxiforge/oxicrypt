@@ -49,7 +49,7 @@ cargo test --workspace
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
 | ML-KEM | ML-KEM-1024 keygen/encaps/decaps | FIPS 203 |
 | ML-DSA | ML-DSA-87 sign/verify/keygen | FIPS 204 |
-| SLH-DSA | SLH-DSA sign/verify/keygen (stub) | FIPS 205 |
+| SLH-DSA | SLH-DSA-SHA2-256s sign/verify/keygen | FIPS 205 |
 | LMS | LMS sign/verify (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) | SP 800-208 (RFC 8554) |
 | XMSS | XMSS sign/verify (XMSS-SHA2_10_256) | SP 800-208 (RFC 8391) |
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
@@ -82,7 +82,7 @@ crates/
   oxicrypt-eddsa         Ed25519 (RFC 8032)
   oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203) — implemented
   oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204) — implemented
-  oxicrypt-slh-dsa       SLH-DSA (FIPS 205) — stub
+  oxicrypt-slh-dsa       SLH-DSA-SHA2-256s (FIPS 205)
   oxicrypt-lms           LMS hash-based signatures (SP 800-208) — implemented
   oxicrypt-xmss          XMSS hash-based signatures (SP 800-208) — implemented
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
