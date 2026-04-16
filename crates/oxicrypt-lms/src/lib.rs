@@ -198,6 +198,35 @@ pub fn keygen_internal(xi: &[u8; 32]) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
     (sk, pk)
 }
 
+/// Internal keygen from explicit seed and identifier (for ACVP KAT vectors).
+///
+/// Unlike [`keygen_internal`], which derives the tree seed and identifier
+/// from a 32-byte `xi` via SHA-256, this function accepts them directly.
+/// This matches the ACVP keyGen test format, which supplies `seed` and
+/// `I` (identifier) as separate fields.
+#[doc(hidden)]
+pub fn keygen_from_parts(
+    seed: &[u8; N],
+    identifier: &[u8; 16],
+) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
+    #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+
+    let root = tree::compute_root(seed, identifier);
+
+    let mut pk = [0u8; PUBLIC_KEY_LEN];
+    pk[..4].copy_from_slice(&tree::LMS_TYPE.to_be_bytes());
+    pk[4..8].copy_from_slice(&lmots::LMOTS_TYPE.to_be_bytes());
+    pk[8..24].copy_from_slice(identifier);
+    pk[24..24 + N].copy_from_slice(&root);
+
+    let sk = LmsPrivateKey {
+        seed: *seed,
+        identifier: *identifier,
+        leaf_index: 0,
+    };
+    (sk, pk)
+}
+
 // ── Signing ─────────────────────────────────────────────────────
 
 /// Sign `message` with the LMS private key, advancing the leaf index.

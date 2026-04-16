@@ -115,6 +115,18 @@ HKDF_SHA3_256 = { tgId = 149, tcId = 741, l_bits = 1024, hmacAlg = "SHA3-256" }
 HKDF_SHA3_384 = { tgId = 171, tcId = 851, l_bits = 1024, hmacAlg = "SHA3-384" }
 HKDF_SHA3_512 = { tgId = 197, tcId = 981, l_bits = 1024, hmacAlg = "SHA3-512" }
 
+[acvp_server.pqc]
+ML_KEM_1024_keyGen     = { dir = "ML-KEM-keyGen-FIPS203",     tgId = 3,  tcIds = [51, 52],  parameterSet = "ML-KEM-1024" }
+ML_KEM_1024_encapDecap = { dir = "ML-KEM-encapDecap-FIPS203", tgId = 3,  tcIds = [51, 52],  parameterSet = "ML-KEM-1024", function = "encapsulation" }
+ML_DSA_87_keyGen       = { dir = "ML-DSA-keyGen-FIPS204",     tgId = 3,  tcIds = [51, 52],  parameterSet = "ML-DSA-87" }
+ML_DSA_87_sigGen_ext   = { dir = "ML-DSA-sigGen-FIPS204",     tgId = 5,  tcIds = [73],      parameterSet = "ML-DSA-87", signatureInterface = "external", deterministic = true }
+ML_DSA_87_sigGen_int   = { dir = "ML-DSA-sigGen-FIPS204",     tgId = 12, tcIds = [166],     parameterSet = "ML-DSA-87", signatureInterface = "internal", deterministic = true }
+SLH_DSA_SHA2_256s_keyGen   = { dir = "SLH-DSA-keyGen-FIPS205", tgId = 9,  tcIds = [81, 82], parameterSet = "SLH-DSA-SHA2-256s" }
+SLH_DSA_SHA2_256s_sigGen_ext = { dir = "SLH-DSA-sigGen-FIPS205", tgId = 23, tcIds = [199],  parameterSet = "SLH-DSA-SHA2-256s", signatureInterface = "external", deterministic = true }
+SLH_DSA_SHA2_256s_sigGen_int = { dir = "SLH-DSA-sigGen-FIPS205", tgId = 33, tcIds = [285],  parameterSet = "SLH-DSA-SHA2-256s", signatureInterface = "internal", deterministic = true }
+LMS_SHA256_H10_keyGen  = { dir = "LMS-keyGen-1.0",  tgId = 27, tcIds = [89, 90],   lmsMode = "LMS_SHA256_M32_H10", lmOtsMode = "LMOTS_SHA256_N32_W4" }
+LMS_SHA256_H10_sigVer  = { dir = "LMS-sigVer-1.0",  tgId = 27, tcIds = [105, 107], lmsMode = "LMS_SHA256_M32_H10", lmOtsMode = "LMOTS_SHA256_N32_W4" }
+
 [acvp_server.aes_aft]
 ACVP_AES_ECB_1_0 = { dir = "ACVP-AES-ECB-1.0", groups = 6, tests = 18, sha256 = "a804bbe1b4efbb775ec5a365245739ffaedad50f43d91b07ede26733e0f3b256" }
 ACVP_AES_CBC_1_0 = { dir = "ACVP-AES-CBC-1.0", groups = 6, tests = 18, sha256 = "b6d11e684b279a384f27f4f711319dc2542bbe55f568bd8f11d5567a1df4a1df" }

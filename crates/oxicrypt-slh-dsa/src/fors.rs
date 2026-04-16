@@ -45,6 +45,8 @@ fn fors_node(
         let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + node_idx);
         let mut leaf_adrs = *adrs;
         leaf_adrs.set_type(AdrsType::ForsTree);
+        // set_type zeroes bytes 20..32; restore the FORS-instance keypair address.
+        leaf_adrs.set_keypair_address(adrs.keypair_address());
         leaf_adrs.set_tree_height(0);
         leaf_adrs.set_tree_index(tree_base + node_idx);
         return thash::f(pk_seed, &leaf_adrs, &sk);
@@ -69,6 +71,8 @@ fn fors_node(
 
     let mut node_adrs = *adrs;
     node_adrs.set_type(AdrsType::ForsTree);
+    // set_type zeroes bytes 20..32; restore the FORS-instance keypair address.
+    node_adrs.set_keypair_address(adrs.keypair_address());
     node_adrs.set_tree_height(node_height);
     node_adrs.set_tree_index(tree_base / (1 << node_height) + node_idx);
     thash::h(pk_seed, &node_adrs, &left, &right)
@@ -135,6 +139,8 @@ pub(crate) fn fors_pk_from_sig(
         sk.copy_from_slice(&sig[sig_offset..sig_offset + N]);
         let mut leaf_adrs = *adrs;
         leaf_adrs.set_type(AdrsType::ForsTree);
+        // set_type zeroes bytes 20..32; restore the FORS-instance keypair address.
+        leaf_adrs.set_keypair_address(adrs.keypair_address());
         leaf_adrs.set_tree_height(0);
         leaf_adrs.set_tree_index(tree_base + idx);
         let mut node = thash::f(pk_seed, &leaf_adrs, &sk);
@@ -147,6 +153,8 @@ pub(crate) fn fors_pk_from_sig(
 
             let mut tree_adrs = *adrs;
             tree_adrs.set_type(AdrsType::ForsTree);
+            // set_type zeroes bytes 20..32; restore the FORS-instance keypair address.
+            tree_adrs.set_keypair_address(adrs.keypair_address());
             tree_adrs.set_tree_height((j + 1) as u32);
 
             if (idx >> j) & 1 == 0 {

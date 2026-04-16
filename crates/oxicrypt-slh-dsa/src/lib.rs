@@ -6,7 +6,9 @@
 //! LMS/XMSS it is **stateless**: the signer does not need to track
 //! which leaf indices have been used.  Security rests entirely on the
 //! collision resistance and preimage resistance of the underlying
-//! hash function (SHA-256 for this parameter set).
+//! hash functions.  For the SHA2-256s parameter set, F and PRF use
+//! SHA-256 while H, T_l, PRF_msg, and H_msg use SHA-512 (truncated
+//! to n=32 bytes), per FIPS 205 §10.1.
 //!
 //! # Parameter set
 //!

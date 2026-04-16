@@ -1,0 +1,28 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "112690e8484dba7077709a05b1f3af58ddefdd5d",
+    "path": "gen-val/json-files/LMS-keyGen-1.0/internalProjection.json",
+    "selected_tgId": 27,
+    "selected_tcId": 89
+  },
+  "algorithm": "LMS",
+  "mode": "keyGen",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 27,
+      "testType": "AFT",
+      "lmsMode": "LMS_SHA256_M32_H10",
+      "lmOtsMode": "LMOTS_SHA256_N32_W4",
+      "tests": [
+        {
+          "tcId": 89,
+          "seed": "5647A0EF4A6DC481D47B8DACA37FF63DCBC800654C3E8508458AC361AC059D35",
+          "i": "38EC314EEEA3D485229E3E70283B0023",
+          "publicKey": "000000060000000338EC314EEEA3D485229E3E70283B002395262F7BB22C7B77C2BFAE3BDEE46EE194FFDF69D09E36A3C63587A7D68314FB"
+        }
+      ]
+    }
+  ]
+}

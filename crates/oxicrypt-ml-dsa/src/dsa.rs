@@ -118,12 +118,15 @@ pub(crate) fn ml_dsa_sign(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_
         h.squeeze(&mut mu);
     }
 
-    // 3. ρ'' = H(K ‖ μ)  (deterministic mode: no randomness)
+    // 3. ρ'' = H(K ‖ rnd ‖ μ)  (FIPS 204 §5.2 Algorithm 3, step 5)
+    //    In deterministic mode rnd = 0^32 (32 zero bytes).
     //    (64 bytes via SHAKE-256)
+    let rnd = [0u8; 32];
     let mut rho_pp = [0u8; 64];
     {
         let mut h = Shake256::new_internal();
         h.update(&key);
+        h.update(&rnd);
         h.update(&mu);
         h.finalize();
         h.squeeze(&mut rho_pp);

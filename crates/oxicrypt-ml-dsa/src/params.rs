@@ -26,10 +26,14 @@ pub const Q_I64: i64 = 8_380_417;
 pub const ETA: i32 = 2;
 
 /// Number of ±1 coefficients in challenge polynomial c.
-pub const TAU: usize = 75;
+///
+/// FIPS 204 Table 1: ML-DSA-87 uses τ = 60.
+pub const TAU: usize = 60;
 
 /// Norm bound β = τ · η.
-pub const BETA: i32 = 150; // TAU as i32 * ETA
+///
+/// FIPS 204 Table 1: β = τ · η = 60 · 2 = 120.
+pub const BETA: i32 = 120; // TAU as i32 * ETA
 
 /// Mask range: y coefficients in [−γ₁+1, γ₁].
 pub const GAMMA1: i32 = 1 << 19; // 524288
