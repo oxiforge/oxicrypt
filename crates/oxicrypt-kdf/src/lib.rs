@@ -221,7 +221,7 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
 
     /// Gateless HKDF-Extract used by power-up KATs.
     #[doc(hidden)]
-    pub fn extract_internal(salt: Option<&[u8]>, ikm: &[u8]) -> Self {
+    pub(crate) fn extract_internal(salt: Option<&[u8]>, ikm: &[u8]) -> Self {
         let zero_salt = [0u8; L];
         let salt_bytes: &[u8] = match salt {
             Some(s) => s,
@@ -277,7 +277,7 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
 
     /// Gateless HKDF-Expand used by power-up KATs.
     #[doc(hidden)]
-    pub fn expand_internal(&self, info: &[u8], okm: &mut [u8]) -> Result<(), KdfError> {
+    pub(crate) fn expand_internal(&self, info: &[u8], okm: &mut [u8]) -> Result<(), KdfError> {
         if okm.is_empty() {
             return Ok(());
         }
@@ -583,7 +583,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
     /// `Label || 0x00 || Context || [L]_32` and runs the counter-mode
     /// PRF loop over it via [`derive_with_fixed_data_internal`].
     #[doc(hidden)]
-    pub fn derive_internal(
+    pub(crate) fn derive_internal(
         key: &[u8],
         label: &[u8],
         context: &[u8],
@@ -885,7 +885,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
     /// `Label || 0x00 || Context || [L]_32` and runs the feedback
     /// recurrence via [`derive_with_fixed_data_pieces`].
     #[doc(hidden)]
-    pub fn derive_internal(
+    pub(crate) fn derive_internal(
         key: &[u8],
         iv: &[u8],
         label: &[u8],
@@ -1188,7 +1188,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
     /// `Label || 0x00 || Context || [L]_32` and runs the double-
     /// pipeline recurrence via [`derive_with_fixed_data_pieces`].
     #[doc(hidden)]
-    pub fn derive_internal(
+    pub(crate) fn derive_internal(
         key: &[u8],
         label: &[u8],
         context: &[u8],
@@ -1479,7 +1479,7 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
     /// Gateless variant used by the boot-time KATs.
     #[doc(hidden)]
     #[allow(clippy::many_single_char_names)]
-    pub fn derive_internal(
+    pub(crate) fn derive_internal(
         password: &[u8],
         salt: &[u8],
         iterations: u32,
