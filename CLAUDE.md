@@ -67,6 +67,19 @@ reference — do all six of:
    an alpha draft and does not need formal revision numbers;
    internal versioning is the git history. Formal versioning
    will begin once human editing starts.
+
+   **Insight capture (CMVP gem rule):** Before closing the security
+   policy update, pause and ask: *did this session surface any
+   mechanistic insight — about why a design choice is correct, how a
+   security property is guaranteed, or what structural constraint
+   prevents a class of bug — that a NIST auditor or CST lab reviewer
+   would need to understand in order to accept the claim?* If yes,
+   write it into the policy as a prose paragraph, not just a table
+   row. Good candidates: language/compiler guarantees that enforce a
+   security property (e.g. Drop ordering, `forbid(unsafe_code)` as a
+   hard build-time control), composition patterns that extend coverage
+   transitively, and rationale for why a zeroization or gating
+   approach is complete. Capture every gem while the context is warm.
 3. **README.** Update `README.md` if the commit changes the
    user-facing status of the crate — algorithm coverage, build
    instructions, workspace layout, or the project phase.
