@@ -6,7 +6,7 @@ They are loaded automatically at the start of every session.
 ## Key paths
 
 - **Repo:** `/home/rick/repos/oxicrypt`
-- **LAMA spec repo:** `/home/rick/repos/lama-spec`
+- **LAMA spec repo:** `/home/rick/repos/lama` (remote: `github.com/lamaspec/lama`)
 - **Project folder:** `~/carakastan/Projects/OxiCrypt/` — project plan,
   HN talking points, launch roadmap, and other planning docs that
   live outside the repo
