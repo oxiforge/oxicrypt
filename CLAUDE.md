@@ -67,19 +67,6 @@ reference — do all six of:
    an alpha draft and does not need formal revision numbers;
    internal versioning is the git history. Formal versioning
    will begin once human editing starts.
-
-   **Insight capture (CMVP gem rule):** Before closing the security
-   policy update, pause and ask: *did this session surface any
-   mechanistic insight — about why a design choice is correct, how a
-   security property is guaranteed, or what structural constraint
-   prevents a class of bug — that a NIST auditor or CST lab reviewer
-   would need to understand in order to accept the claim?* If yes,
-   write it into the policy as a prose paragraph, not just a table
-   row. Good candidates: language/compiler guarantees that enforce a
-   security property (e.g. Drop ordering, `forbid(unsafe_code)` as a
-   hard build-time control), composition patterns that extend coverage
-   transitively, and rationale for why a zeroization or gating
-   approach is complete. Capture every gem while the context is warm.
 3. **README.** Update `README.md` if the commit changes the
    user-facing status of the crate — algorithm coverage, build
    instructions, workspace layout, or the project phase.
@@ -106,6 +93,39 @@ Run `cargo fmt --all` before staging the commit so formatting
 is always clean. These six doc updates ship **in the same
 commit** as the code change — not as a follow-up — so reviewers
 always see the code and its documentation evolve together.
+
+## Insight capture at every commit (CMVP gem rule)
+
+Before staging **any** commit — not only commits that touch the
+security policy — pause and ask: *did this session surface any
+mechanistic insight — about why a design choice is correct, how a
+security property is guaranteed, what structural constraint prevents
+a class of bug, or why a conformance property holds — that a NIST
+auditor or CST lab reviewer would need to understand in order to
+accept the claim?*
+
+If yes, write it into `docs/security-policy/security-policy.md` as
+a prose paragraph (not just a table row) in the same commit. Good
+candidates:
+
+- Language/compiler guarantees that enforce a security property
+  (e.g. `Drop` ordering, `forbid(unsafe_code)` as a hard build-time
+  control).
+- Composition patterns that extend coverage transitively (e.g. a
+  zeroization invariant inherited by every struct that embeds a
+  zeroizing primitive).
+- Rationale for why a zeroization, gating, or self-test approach is
+  complete — especially when completeness is non-obvious.
+- Conformance properties where two services intentionally diverge
+  because they implement different specifications, and where the
+  divergence would otherwise look like a bug.
+
+Insights surface during code work, not during policy work. A
+manifest-only commit or a refactor commit is just as likely to
+expose a gem as a policy commit — so this check runs at **every**
+commit gate, independent of which doc-sync steps apply. Capture
+every gem while the context is warm; a gem deferred is usually a
+gem lost.
 
 ## Working style — check in at batch boundaries
 
