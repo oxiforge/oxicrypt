@@ -375,7 +375,7 @@ types:
     implements: []
     security:
       contains_secret: false
-      zeroize_on_drop: false
+      zeroize_on_drop: true
       constant_time: true
 
   - name: HmacSha256
@@ -556,6 +556,205 @@ types:
       contains_secret: true
       zeroize_on_drop: true
       constant_time: true
+
+  - name: Sha1
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-1 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 20].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha224
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-224 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 28].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha384
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-384 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 48].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha512
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-512 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 64].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha512_224
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-512/224 hasher (SHA-512 truncated to 224 bits). Digest is [u8; 28].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha512_256
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA-512/256 hasher (SHA-512 truncated to 256 bits). Digest is [u8; 32].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha3_224
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA3-224 hasher (Keccak sponge, FIPS 202). Digest is [u8; 28].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha3_256
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA3-256 hasher (Keccak sponge, FIPS 202). Digest is [u8; 32].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha3_384
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA3-384 hasher (Keccak sponge, FIPS 202). Digest is [u8; 48].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Sha3_512
+    module: oxicrypt-sha
+    kind: struct
+    description: Streaming SHA3-512 hasher (Keccak sponge, FIPS 202). Digest is [u8; 64].
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha1
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha1, 64, 20>. HMAC-SHA-1. Tag is [u8; 20]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha224
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha224, 64, 28>. HMAC-SHA-224. Tag is [u8; 28]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha384
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha384, 128, 48>. HMAC-SHA-384. Tag is [u8; 48]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha512
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha512, 128, 64>. HMAC-SHA-512. Tag is [u8; 64]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha512_224
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha512_224, 128, 28>. HMAC-SHA-512/224. Tag is [u8; 28]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha512_256
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha512_256, 128, 32>. HMAC-SHA-512/256. Tag is [u8; 32]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha3_224
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha3<144,28>, 144, 28>. HMAC-SHA3-224. Tag is [u8; 28]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha3_256
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha3<136,32>, 136, 32>. HMAC-SHA3-256. Tag is [u8; 32]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha3_384
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha3<104,48>, 104, 48>. HMAC-SHA3-384. Tag is [u8; 48]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: HmacSha3_512
+    module: oxicrypt-hmac
+    kind: alias
+    description: "Type alias for Hmac<Sha3<72,64>, 72, 64>. HMAC-SHA3-512. Tag is [u8; 64]."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: BlockCipher
+    module: oxicrypt-aes
+    kind: trait
+    description: >-
+      Sealed trait implemented by Aes128Key, Aes192Key, and Aes256Key.
+      All mode functions (gcm_encrypt, gcm_decrypt, ecb_encrypt, ecb_decrypt,
+      cbc_encrypt, cbc_decrypt, ctr_xor, cmac_tag) are generic over BlockCipher.
+      Construct a key struct, then pass a reference to any mode function.
+
+  - name: KdfError
+    module: oxicrypt-kdf
+    kind: enum
+    description: Error type returned by all HKDF, SP 800-108, and PBKDF2 functions.
+    variants:
+      - name: Module
+        description: Module state error (wraps oxicrypt_module::Error — NotOperational, AlgorithmRestricted, etc.).
+      - name: OutputTooLong
+        description: "Requested OKM length exceeds the algorithm maximum: 255*HashLen for HKDF; (2^32-1)*HashLen for PBKDF2."
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -806,6 +1005,246 @@ functions:
           h.update(b"more");
           let digest = h.finalize();
 
+  - name: sha1
+    module: oxicrypt-sha
+    description: One-shot SHA-1 hash.
+    signature: "pub fn sha1(data: &[u8]) -> Result<[u8; 20], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 20], Error>"
+      description: 20-byte SHA-1 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha224
+    module: oxicrypt-sha
+    description: One-shot SHA-224 hash.
+    signature: "pub fn sha224(data: &[u8]) -> Result<[u8; 28], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 28], Error>"
+      description: 28-byte SHA-224 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha384
+    module: oxicrypt-sha
+    description: One-shot SHA-384 hash.
+    signature: "pub fn sha384(data: &[u8]) -> Result<[u8; 48], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 48], Error>"
+      description: 48-byte SHA-384 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha512
+    module: oxicrypt-sha
+    description: One-shot SHA-512 hash.
+    signature: "pub fn sha512(data: &[u8]) -> Result<[u8; 64], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 64], Error>"
+      description: 64-byte SHA-512 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha512_224
+    module: oxicrypt-sha
+    description: One-shot SHA-512/224 hash (SHA-512 truncated to 224 bits).
+    signature: "pub fn sha512_224(data: &[u8]) -> Result<[u8; 28], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 28], Error>"
+      description: 28-byte SHA-512/224 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha512_256
+    module: oxicrypt-sha
+    description: One-shot SHA-512/256 hash (SHA-512 truncated to 256 bits).
+    signature: "pub fn sha512_256(data: &[u8]) -> Result<[u8; 32], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: 32-byte SHA-512/256 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha3_224
+    module: oxicrypt-sha
+    description: One-shot SHA3-224 hash (Keccak sponge, FIPS 202).
+    signature: "pub fn sha3_224(data: &[u8]) -> Result<[u8; 28], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 28], Error>"
+      description: 28-byte SHA3-224 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha3_256
+    module: oxicrypt-sha
+    description: One-shot SHA3-256 hash (Keccak sponge, FIPS 202).
+    signature: "pub fn sha3_256(data: &[u8]) -> Result<[u8; 32], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: 32-byte SHA3-256 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha3_384
+    module: oxicrypt-sha
+    description: One-shot SHA3-384 hash (Keccak sponge, FIPS 202).
+    signature: "pub fn sha3_384(data: &[u8]) -> Result<[u8; 48], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 48], Error>"
+      description: 48-byte SHA3-384 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: sha3_512
+    module: oxicrypt-sha
+    description: One-shot SHA3-512 hash (Keccak sponge, FIPS 202).
+    signature: "pub fn sha3_512(data: &[u8]) -> Result<[u8; 64], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to hash.
+    returns:
+      type: "Result<[u8; 64], Error>"
+      description: 64-byte SHA3-512 digest.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
   # ── HMAC ──────────────────────────────────────────────────────────
 
   - name: "HmacSha256::new"
@@ -845,6 +1284,192 @@ functions:
         let mut mac = oxicrypt_hmac::HmacSha256::new(b"secret-key")?;
         mac.update(b"message");
         let tag = mac.finalize();  // [u8; 32]
+
+  - name: "HmacSha256::update"
+    module: oxicrypt-hmac
+    description: >-
+      Feed data into the HMAC computation. Applies to all HMAC variants
+      (HmacSha1, HmacSha384, HmacSha512, HmacSha3_256, etc.) — only the
+      tag-length type parameter differs.
+    signature: "pub fn update(&mut self, data: &[u8])"
+    parameters:
+      - name: self
+        type: "&mut HmacSha256"
+        direction: in-out
+        description: The HMAC instance to update.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to absorb. May be called multiple times.
+    returns:
+      type: "()"
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha256::finalize"
+    module: oxicrypt-hmac
+    description: >-
+      Compute and return the HMAC tag. IMPORTANT: unlike SHA::finalize, this
+      takes &mut self — the instance is NOT consumed. After calling finalize,
+      the hasher resets to the initial keyed state and can accept new update
+      calls. Applies to all HMAC variants; the return type is [u8; L] where L
+      is the hash output length.
+    signature: "pub fn finalize(&mut self) -> [u8; 32]"
+    parameters:
+      - name: self
+        type: "&mut HmacSha256"
+        direction: in-out
+        description: The HMAC instance. Not consumed — resets to initial keyed state.
+    returns:
+      type: "[u8; 32]"
+      description: 32-byte HMAC-SHA-256 tag.
+    postconditions:
+      - description: Tag is returned. Instance resets to the initial key-padded state.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          HMAC finalize takes &mut self, NOT self. The object is NOT consumed.
+          It resets to the initial keyed state — you can call update() again.
+          This differs from SHA::finalize which consumes self.
+        wrong: |
+          let mac = HmacSha256::new(b"key")?;  // immutable — cannot call update
+          let tag = mac.finalize();              // compile error: immutable binding
+        right: |
+          let mut mac = HmacSha256::new(b"key")?;
+          mac.update(b"message");
+          let tag = mac.finalize();  // mac still valid; can re-use for next message
+
+  # Remaining HMAC variant constructors — same pattern as HmacSha256::new.
+  # update/finalize signatures are identical except for tag-length type param.
+
+  - name: "HmacSha1::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA-1. Tag is [u8; 20]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha1::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha1, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha224::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA-224. Tag is [u8; 28]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha224::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha224, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha384::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA-384. Tag is [u8; 48]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha384::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha384, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha512::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA-512. Tag is [u8; 64]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha512::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha512, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha512_224::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA-512/224. Tag is [u8; 28]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha512_224::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha512_224, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha512_256::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA-512/256. Tag is [u8; 32]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha512_256::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha512_256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha3_224::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA3-224. Tag is [u8; 28]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha3_224::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha3_224, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha3_256::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA3-256. Tag is [u8; 32]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha3_256::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha3_256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha3_384::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA3-384. Tag is [u8; 48]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha3_384::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha3_384, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HmacSha3_512::new"
+    module: oxicrypt-hmac
+    description: "Create HMAC-SHA3-512. Tag is [u8; 64]. See HmacSha256::new for full documentation."
+    signature: "pub fn HmacSha3_512::new(key: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<HmacSha3_512, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
 
   # ── AES-GCM ──────────────────────────────────────────────────────
 
@@ -927,6 +1552,270 @@ functions:
           let iv = &iv_counter.to_be_bytes()[4..];  // 96-bit counter
           gcm_encrypt(&key, iv.try_into().unwrap(), &[], &msg, &mut ct, &mut tag)?;
           iv_counter += 1;
+
+  - name: gcm_decrypt
+    module: oxicrypt-aes
+    description: >-
+      AES-GCM authenticated decryption. Verifies the authentication tag
+      before writing to plaintext_out. If TagMismatch, do NOT use the
+      output buffer — it may contain partially decrypted attacker data.
+    signature: >-
+      pub fn gcm_decrypt<B: BlockCipher>(cipher: &B, iv: &[u8], aad: &[u8],
+      ciphertext: &[u8], tag: &[u8; 16], plaintext_out: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule (Aes128Key, Aes192Key, or Aes256Key)."
+      - name: iv
+        type: "&[u8]"
+        direction: in
+        description: >-
+          Initialization vector. Must be 12 bytes (returns Err(InvalidIvLength) otherwise).
+        constraints:
+          size: 12
+      - name: aad
+        type: "&[u8]"
+        direction: in
+        description: Additional authenticated data. Must match exactly what was used in gcm_encrypt.
+      - name: ciphertext
+        type: "&[u8]"
+        direction: in
+        description: Data to decrypt.
+      - name: tag
+        type: "&[u8; 16]"
+        direction: in
+        description: 128-bit authentication tag from gcm_encrypt.
+        constraints:
+          size: 16
+      - name: plaintext_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer.
+        constraints:
+          size: "ciphertext.len()"
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: InvalidIvLength
+          condition: iv.len() != 12
+        - name: LengthMismatch
+          condition: plaintext_out.len() != ciphertext.len()
+        - name: TagMismatch
+          condition: Authentication tag verification failed (constant-time compare).
+    preconditions:
+      - description: Module must be Operational.
+      - description: Tag, IV, and AAD must match what was used during encryption.
+    postconditions:
+      - description: If Ok, plaintext_out contains decrypted data.
+      - description: If TagMismatch, plaintext_out content is undefined — discard it.
+    thread_safety: thread-safe
+    security:
+      constant_time: false  # AES table-based; tag comparison is constant-time
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          Do NOT use plaintext_out if gcm_decrypt returns Err(TagMismatch).
+          The buffer may contain attacker-controlled partially decrypted data.
+        wrong: |
+          let _ = gcm_decrypt(&key, &iv, &aad, &ct, &tag, &mut pt);
+          process(&pt);  // BUG: may use tampered data if tag failed
+        right: |
+          gcm_decrypt(&key, &iv, &aad, &ct, &tag, &mut pt)?;
+          process(&pt);  // safe: only reached if authentication passed
+
+  # ── AES-ECB (SP 800-38A §6.1) ─────────────────────────────────────
+
+  - name: ecb_encrypt
+    module: oxicrypt-aes
+    description: >-
+      AES-ECB encrypt. Identical plaintext blocks produce identical ciphertext
+      blocks — do not use ECB for general-purpose encryption. Exists for
+      FIPS compliance testing and key-wrapping primitives only.
+    signature: >-
+      pub fn ecb_encrypt<B: BlockCipher>(cipher: &B, input: &[u8],
+      output: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: input
+        type: "&[u8]"
+        direction: in
+        description: Plaintext. Must equal output.len() and be a multiple of 16.
+      - name: output
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer. Same length as input.
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: NotBlockAligned
+          condition: "input.len() != output.len() or input.len() % 16 != 0"
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: ecb_decrypt
+    module: oxicrypt-aes
+    description: AES-ECB decrypt. Same block-alignment constraints as ecb_encrypt.
+    signature: >-
+      pub fn ecb_decrypt<B: BlockCipher>(cipher: &B, input: &[u8],
+      output: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: input
+        type: "&[u8]"
+        direction: in
+        description: Ciphertext. Must be a multiple of 16 bytes.
+      - name: output
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer. Same length as input.
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: NotBlockAligned
+          condition: "input.len() != output.len() or input.len() % 16 != 0"
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── AES-CBC (SP 800-38A §6.2) ─────────────────────────────────────
+
+  - name: cbc_encrypt
+    module: oxicrypt-aes
+    description: >-
+      AES-CBC encrypt. IV must be 16 bytes. No padding is applied — input
+      must be a multiple of 16. The IV must be unpredictable (random) per
+      SP 800-38A; a predictable IV weakens confidentiality.
+    signature: >-
+      pub fn cbc_encrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 16],
+      input: &[u8], output: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: iv
+        type: "&[u8; 16]"
+        direction: in
+        description: "16-byte IV. Must be random and unique per message."
+        constraints:
+          size: 16
+      - name: input
+        type: "&[u8]"
+        direction: in
+        description: Plaintext. Must equal output.len() and be a multiple of 16.
+      - name: output
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer. Same length as input.
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: NotBlockAligned
+          condition: "input.len() != output.len() or input.len() % 16 != 0"
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: cbc_decrypt
+    module: oxicrypt-aes
+    description: AES-CBC decrypt. Same block-alignment constraints as cbc_encrypt.
+    signature: >-
+      pub fn cbc_decrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 16],
+      input: &[u8], output: &mut [u8]) -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: iv
+        type: "&[u8; 16]"
+        direction: in
+        description: "16-byte IV used during encryption."
+        constraints:
+          size: 16
+      - name: input
+        type: "&[u8]"
+        direction: in
+        description: Ciphertext. Must be a multiple of 16 bytes.
+      - name: output
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer. Same length as input.
+    returns:
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: NotBlockAligned
+          condition: "input.len() != output.len() or input.len() % 16 != 0"
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── AES-CTR (SP 800-38A §6.5) ─────────────────────────────────────
+
+  - name: ctr_xor
+    module: oxicrypt-aes
+    description: >-
+      AES-CTR encrypt/decrypt (the same XOR operation). Uses icb as the
+      initial counter block; the full 128-bit block is incremented as a
+      big-endian counter per SP 800-38A Appendix F.5 convention (not
+      just the low 32 bits as GCM uses). Input and output may be any
+      length — no block alignment required.
+    signature: >-
+      pub fn ctr_xor<B: BlockCipher>(cipher: &B, icb: &[u8; 16],
+      input: &[u8], output: &mut [u8])
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: icb
+        type: "&[u8; 16]"
+        direction: in
+        description: "Initial counter block (16 bytes). Must be unique per (key, message) pair."
+        constraints:
+          size: 16
+      - name: input
+        type: "&[u8]"
+        direction: in
+        description: Plaintext or ciphertext. Any length.
+      - name: output
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer. Must be >= input.len() bytes.
+    returns:
+      type: "()"
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          CTR ICB must be unique per (key, message) pair. Reusing an ICB
+          XORs two plaintexts together, making both trivially recoverable.
 
   # ── DRBG ──────────────────────────────────────────────────────────
 
@@ -1022,6 +1911,558 @@ functions:
       - description: out is filled with pseudorandom bytes.
       - description: Internal reseed counter incremented.
     thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── CMAC (SP 800-38B) ────────────────────────────────────────────
+
+  - name: cmac_aes128
+    module: oxicrypt-cmac
+    description: >-
+      One-shot AES-128-CMAC (SP 800-38B). Takes a raw 16-byte key and
+      builds the key schedule internally. Returns a 16-byte authentication
+      tag (full AES block size).
+    signature: "pub fn cmac_aes128(key: &[u8; 16], msg: &[u8]) -> Result<[u8; 16], Error>"
+    parameters:
+      - name: key
+        type: "&[u8; 16]"
+        direction: in
+        description: 128-bit AES key.
+        constraints:
+          size: 16
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to authenticate. Any length.
+    returns:
+      type: "Result<[u8; 16], Error>"
+      description: 16-byte CMAC tag.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false  # AES table-based
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let tag = oxicrypt_cmac::cmac_aes128(&[0u8; 16], b"message")?;
+        assert_eq!(tag.len(), 16);
+
+  - name: cmac_aes192
+    module: oxicrypt-cmac
+    description: One-shot AES-192-CMAC. Returns a 16-byte authentication tag.
+    signature: "pub fn cmac_aes192(key: &[u8; 24], msg: &[u8]) -> Result<[u8; 16], Error>"
+    parameters:
+      - name: key
+        type: "&[u8; 24]"
+        direction: in
+        description: 192-bit AES key.
+        constraints:
+          size: 24
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to authenticate.
+    returns:
+      type: "Result<[u8; 16], Error>"
+      description: 16-byte CMAC tag.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: cmac_aes256
+    module: oxicrypt-cmac
+    description: One-shot AES-256-CMAC. Returns a 16-byte authentication tag.
+    signature: "pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> Result<[u8; 16], Error>"
+    parameters:
+      - name: key
+        type: "&[u8; 32]"
+        direction: in
+        description: 256-bit AES key.
+        constraints:
+          size: 32
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to authenticate.
+    returns:
+      type: "Result<[u8; 16], Error>"
+      description: 16-byte CMAC tag.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: cmac_tag
+    module: oxicrypt-cmac
+    description: >-
+      Generic CMAC over any BlockCipher. No module-state gating — this is
+      an internal composition helper used by cmac_aes128/192/256 and the
+      CTR_DRBG. Callers that need FIPS gating should use the typed variants.
+    signature: "pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> [u8; 16]"
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: Pre-built AES key schedule.
+      - name: msg
+        type: "&[u8]"
+        direction: in
+        description: Message to authenticate.
+    returns:
+      type: "[u8; 16]"
+      description: 16-byte CMAC tag.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: null
+
+  # ── KDF — HKDF (SP 800-56Cr2 / RFC 5869) ─────────────────────────
+
+  - name: "HkdfSha256::extract"
+    module: oxicrypt-kdf
+    description: >-
+      HKDF-Extract (RFC 5869 §2.2) with SHA-256. Produces a PRK from IKM
+      and an optional salt. A None salt is treated as 32 zero bytes per
+      RFC 5869 §2.2. Use HkdfSha1/HkdfSha384/HkdfSha512/HkdfSha3_* for
+      other hash variants.
+    signature: "pub fn HkdfSha256::extract(salt: Option<&[u8]>, ikm: &[u8]) -> Result<Self, KdfError>"
+    parameters:
+      - name: salt
+        type: "Option<&[u8]>"
+        direction: in
+        description: >-
+          Optional non-secret salt. None is treated as 32 zero bytes.
+          A random salt of 32 bytes is recommended.
+      - name: ikm
+        type: "&[u8]"
+        direction: in
+        description: Input keying material (e.g. raw ECDH shared secret Z).
+    returns:
+      type: "Result<HkdfSha256, KdfError>"
+      description: HKDF instance holding the 32-byte PRK, ready for expand().
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let hkdf = HkdfSha256::extract(Some(b"salt"), &z)?;
+        let mut okm = [0u8; 32];
+        hkdf.expand(b"info", &mut okm)?;
+
+  - name: "HkdfSha256::from_prk"
+    module: oxicrypt-kdf
+    description: >-
+      Construct an HkdfSha256 from a pre-existing PRK. prk must be exactly
+      32 bytes; any other length returns Err(OutputTooLong).
+    signature: "pub fn HkdfSha256::from_prk(prk: &[u8]) -> Result<Self, KdfError>"
+    parameters:
+      - name: prk
+        type: "&[u8]"
+        direction: in
+        description: Pre-extracted PRK. Must be exactly 32 bytes for HkdfSha256.
+        constraints:
+          valid_range: "exactly 32 bytes"
+    returns:
+      type: "Result<HkdfSha256, KdfError>"
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+        - name: OutputTooLong
+          condition: prk.len() != 32
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "HkdfSha256::expand"
+    module: oxicrypt-kdf
+    description: >-
+      HKDF-Expand (RFC 5869 §2.3) with SHA-256. Fills okm with derived key
+      material. okm.len() must not exceed 255 * 32 = 8160 bytes.
+    signature: "pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), KdfError>"
+    parameters:
+      - name: self
+        type: "&HkdfSha256"
+        direction: in
+        description: HKDF instance from extract() or from_prk().
+      - name: info
+        type: "&[u8]"
+        direction: in
+        description: "Context / application-specific info string. May be empty."
+      - name: okm
+        type: "&mut [u8]"
+        direction: out
+        description: Output key material buffer. Filled with derived bytes.
+        constraints:
+          valid_range: "0..=8160 bytes (255 * 32)"
+    returns:
+      type: "Result<(), KdfError>"
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+        - name: OutputTooLong
+          condition: okm.len() > 255 * 32
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── KDF — SP 800-108r1 KBKDF ─────────────────────────────────────
+
+  - name: "Sp800_108CounterHmacSha256::derive"
+    module: oxicrypt-kdf
+    description: >-
+      SP 800-108r1 §5.2 Counter Mode KBKDF with HMAC-SHA-256. Assembles
+      the fixed-data structure (label || 0x00 || context || [L]_32) internally.
+      Use Sp800_108CounterHmacSha1/384/512/Sha3_* for other PRF variants.
+    signature: >-
+      pub fn Sp800_108CounterHmacSha256::derive(key: &[u8], label: &[u8],
+      context: &[u8], out: &mut [u8]) -> Result<(), KdfError>
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: Derivation key (KI).
+      - name: label
+        type: "&[u8]"
+        direction: in
+        description: Human-readable label identifying the derived key's purpose.
+      - name: context
+        type: "&[u8]"
+        direction: in
+        description: Context binding (e.g. parties, session identifiers).
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer filled with derived key material.
+        constraints:
+          valid_range: "1..=2^29-1 bytes (out.len()*8 must fit in u32)"
+    returns:
+      type: "Result<(), KdfError>"
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+        - name: OutputTooLong
+          condition: out.len() * 8 does not fit in a u32 bit-length field.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut okm = [0u8; 32];
+        Sp800_108CounterHmacSha256::derive(&master_key, b"enc", b"ctx", &mut okm)?;
+
+  - name: "Sp800_108FeedbackHmacSha256::derive"
+    module: oxicrypt-kdf
+    description: >-
+      SP 800-108r1 §5.3 Feedback Mode KBKDF with HMAC-SHA-256. Requires
+      an IV (initial chaining value). The IV is non-secret and may be empty
+      for zero-IV mode.
+    signature: >-
+      pub fn Sp800_108FeedbackHmacSha256::derive(key: &[u8], iv: &[u8],
+      label: &[u8], context: &[u8], out: &mut [u8]) -> Result<(), KdfError>
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: Derivation key.
+      - name: iv
+        type: "&[u8]"
+        direction: in
+        description: Initial chaining value. May be empty for zero-IV mode.
+      - name: label
+        type: "&[u8]"
+        direction: in
+        description: Label identifying the derived key.
+      - name: context
+        type: "&[u8]"
+        direction: in
+        description: Context binding.
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer.
+    returns:
+      type: "Result<(), KdfError>"
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+        - name: OutputTooLong
+          condition: Output too large for 32-bit counter encoding.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "Sp800_108DoublePipelineHmacSha256::derive"
+    module: oxicrypt-kdf
+    description: >-
+      SP 800-108r1 §5.4 Double-Pipeline Mode KBKDF with HMAC-SHA-256.
+      No IV required. Uses a two-stage pipeline: A(i) = PRF(key, A(i-1))
+      then K(i) = PRF(key, A(i) || fixed_data).
+    signature: >-
+      pub fn Sp800_108DoublePipelineHmacSha256::derive(key: &[u8], label: &[u8],
+      context: &[u8], out: &mut [u8]) -> Result<(), KdfError>
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: Derivation key.
+      - name: label
+        type: "&[u8]"
+        direction: in
+        description: Label.
+      - name: context
+        type: "&[u8]"
+        direction: in
+        description: Context.
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer.
+    returns:
+      type: "Result<(), KdfError>"
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+        - name: OutputTooLong
+          condition: Output too large for 32-bit counter encoding.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── KDF — PBKDF2 (SP 800-132) ────────────────────────────────────
+
+  - name: "Pbkdf2HmacSha256::derive"
+    module: oxicrypt-kdf
+    description: >-
+      PBKDF2 with HMAC-SHA-256 (SP 800-132, RFC 8018 §5.2). Derives
+      out.len() bytes from password and salt using c iterations.
+      Use Pbkdf2HmacSha1/384/512/Sha3_* for other PRF variants.
+    signature: >-
+      pub fn Pbkdf2HmacSha256::derive(password: &[u8], salt: &[u8],
+      c: u32, out: &mut [u8]) -> Result<(), KdfError>
+    parameters:
+      - name: password
+        type: "&[u8]"
+        direction: in
+        description: Password (secret). Any length.
+      - name: salt
+        type: "&[u8]"
+        direction: in
+        description: >-
+          Salt (non-secret, unique per password). SP 800-132 recommends
+          at least 16 bytes from an approved RBG.
+      - name: c
+        type: u32
+        direction: in
+        description: >-
+          Iteration count. Must be > 0 (panics if 0). SP 800-132 minimum
+          is 1000; OWASP 2024 recommendation for password storage is >= 600000.
+        constraints:
+          valid_range: "1..=2^32-1"
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for derived key material.
+        constraints:
+          valid_range: "1..=(2^32-1)*32 bytes"
+    returns:
+      type: "Result<(), KdfError>"
+      error_variants:
+        - name: Module
+          condition: Module not operational or service restricted.
+        - name: OutputTooLong
+          condition: "out.len() > (2^32-1) * 32"
+    preconditions:
+      - description: Module must be Operational.
+      - description: c must be > 0.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          Low iteration counts make PBKDF2 vulnerable to offline dictionary
+          attacks. SP 800-132 minimum is 1000; for password storage use >= 600000.
+        wrong: |
+          Pbkdf2HmacSha256::derive(password, salt, 1, &mut key)?;  // far too few
+        right: |
+          Pbkdf2HmacSha256::derive(password, salt, 600_000, &mut key)?;
+
+  # ── TLS 1.2 KDF (RFC 5246, RFC 7627) ─────────────────────────────
+
+  - name: tls12_prf
+    module: oxicrypt-tls-kdf
+    description: >-
+      TLS 1.2 PRF (RFC 5246 §5) — generic over HMAC. In standard TLS 1.2,
+      use P=HmacSha256 (SHA-256 cipher suites) or P=HmacSha384 (SHA-384
+      suites). Fills out with PRF-derived bytes.
+    signature: >-
+      pub fn tls12_prf<P: PrfHmac<L>, const L: usize>(secret: &[u8],
+      label: &[u8], seed: &[u8], out: &mut [u8]) -> Result<(), Error>
+    parameters:
+      - name: secret
+        type: "&[u8]"
+        direction: in
+        description: "TLS secret input (e.g. pre_master_secret or master_secret)."
+      - name: label
+        type: "&[u8]"
+        direction: in
+        description: "ASCII label string (e.g. b\"master secret\", b\"key expansion\")."
+      - name: seed
+        type: "&[u8]"
+        direction: in
+        description: "Seed (typically client_random || server_random or session_hash)."
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer filled with PRF bytes.
+    returns:
+      type: "Result<(), Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: tls12_extended_master_secret
+    module: oxicrypt-tls-kdf
+    description: >-
+      TLS 1.2 master secret derivation with RFC 7627 Extended Master Secret.
+      Runs two PRF calls:
+      (1) master_secret = PRF(pms, "extended master secret", session_hash)[0..48]
+      (2) key_block = PRF(master_secret, "key expansion", server_random || client_random)
+      Returns the 48-byte master secret; fills key_block_out.
+      Panics if server_random.len() + client_random.len() > 64.
+    signature: >-
+      pub fn tls12_extended_master_secret<P: PrfHmac<L>, const L: usize>(
+      pre_master_secret: &[u8], session_hash: &[u8], server_random: &[u8],
+      client_random: &[u8], key_block_out: &mut [u8]) -> Result<[u8; 48], Error>
+    parameters:
+      - name: pre_master_secret
+        type: "&[u8]"
+        direction: in
+        description: The pre-master secret (e.g. from ECDH).
+      - name: session_hash
+        type: "&[u8]"
+        direction: in
+        description: Hash of the full handshake transcript (per RFC 7627).
+      - name: server_random
+        type: "&[u8]"
+        direction: in
+        description: "ServerHello.random (32 bytes). With client_random must total <= 64 bytes."
+      - name: client_random
+        type: "&[u8]"
+        direction: in
+        description: "ClientHello.random (32 bytes)."
+      - name: key_block_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for key block. Length determines how much key material is derived.
+    returns:
+      type: "Result<[u8; 48], Error>"
+      description: 48-byte TLS master secret.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: tls12_master_secret
+    module: oxicrypt-tls-kdf
+    description: >-
+      TLS 1.2 master secret derivation without RFC 7627 EMS (standard
+      RFC 5246 §8.1). Runs two PRF calls:
+      (1) master_secret = PRF(pms, "master secret", chr || shr)[0..48]
+      (2) key_block = PRF(master_secret, "key expansion", server_random || client_random)
+      Panics if any concatenated pair exceeds 64 bytes.
+    signature: >-
+      pub fn tls12_master_secret<P: PrfHmac<L>, const L: usize>(
+      pre_master_secret: &[u8], client_hello_random: &[u8],
+      server_hello_random: &[u8], server_random: &[u8],
+      client_random: &[u8], key_block_out: &mut [u8]) -> Result<[u8; 48], Error>
+    parameters:
+      - name: pre_master_secret
+        type: "&[u8]"
+        direction: in
+        description: The pre-master secret.
+      - name: client_hello_random
+        type: "&[u8]"
+        direction: in
+        description: ClientHello.random (32 bytes).
+      - name: server_hello_random
+        type: "&[u8]"
+        direction: in
+        description: ServerHello.random (32 bytes).
+      - name: server_random
+        type: "&[u8]"
+        direction: in
+        description: server_random for key expansion phase.
+      - name: client_random
+        type: "&[u8]"
+        direction: in
+        description: client_random for key expansion phase.
+      - name: key_block_out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer for the key block.
+    returns:
+      type: "Result<[u8; 48], Error>"
+      description: 48-byte TLS master secret.
+    thread_safety: thread-safe
     security:
       constant_time: true
       handles_secrets: true
@@ -2304,6 +3745,24 @@ error_types:
         description: Requested more than 65536 bytes in one call.
         recoverable: true
         user_action: Split into multiple generate calls.
+
+  - name: KdfError
+    module: oxicrypt-kdf
+    variants:
+      - name: Module
+        description: Module state error (wraps oxicrypt_module::Error).
+        recoverable: false
+        user_action: >-
+          Check that initialize_with_tests() has been called (NotOperational)
+          or that the active algorithm profile permits the KDF service
+          (AlgorithmRestricted).
+      - name: OutputTooLong
+        description: Requested output exceeds the algorithm maximum.
+        recoverable: true
+        user_action: >-
+          For HKDF: reduce okm.len() to at most 255 * HashLen (e.g. 8160 for SHA-256).
+          For PBKDF2: reduce to at most (2^32-1) * HashLen.
+          For SP 800-108: reduce to fit a 32-bit bit-length field.
 
 # ─────────────────────────────────────────────────────────────────────
 # Constants
