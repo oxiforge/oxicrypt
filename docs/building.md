@@ -20,7 +20,7 @@ in-tree.
 ## Compiling the workspace
 
 ```bash
-git clone https://github.com/caraka/oxicrypt.git
+git clone https://github.com/oxilabs/oxicrypt.git
 cd oxicrypt
 cargo build --workspace
 ```
