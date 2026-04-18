@@ -369,6 +369,7 @@ types:
 
   - name: Sha256
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-256 hasher. Absorbs data via update(), produces digest via finalize().
     size_bytes: null  # Internal state, not fixed public size
@@ -380,6 +381,7 @@ types:
 
   - name: HmacSha256
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha256, 64, 32>. HMAC-SHA-256."
     security:
@@ -559,6 +561,7 @@ types:
 
   - name: Sha1
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-1 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 20].
     security:
@@ -568,6 +571,7 @@ types:
 
   - name: Sha224
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-224 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 28].
     security:
@@ -577,6 +581,7 @@ types:
 
   - name: Sha384
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-384 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 48].
     security:
@@ -586,6 +591,7 @@ types:
 
   - name: Sha512
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-512 hasher. Same new/update/finalize pattern as Sha256; digest is [u8; 64].
     security:
@@ -595,6 +601,7 @@ types:
 
   - name: Sha512_224
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-512/224 hasher (SHA-512 truncated to 224 bits). Digest is [u8; 28].
     security:
@@ -604,6 +611,7 @@ types:
 
   - name: Sha512_256
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA-512/256 hasher (SHA-512 truncated to 256 bits). Digest is [u8; 32].
     security:
@@ -613,6 +621,7 @@ types:
 
   - name: Sha3_224
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA3-224 hasher (Keccak sponge, FIPS 202). Digest is [u8; 28].
     security:
@@ -622,6 +631,7 @@ types:
 
   - name: Sha3_256
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA3-256 hasher (Keccak sponge, FIPS 202). Digest is [u8; 32].
     security:
@@ -631,6 +641,7 @@ types:
 
   - name: Sha3_384
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA3-384 hasher (Keccak sponge, FIPS 202). Digest is [u8; 48].
     security:
@@ -640,6 +651,7 @@ types:
 
   - name: Sha3_512
     module: oxicrypt-sha
+    family: sha-streaming-hasher
     kind: struct
     description: Streaming SHA3-512 hasher (Keccak sponge, FIPS 202). Digest is [u8; 64].
     security:
@@ -649,6 +661,7 @@ types:
 
   - name: HmacSha1
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha1, 64, 20>. HMAC-SHA-1. Tag is [u8; 20]."
     security:
@@ -658,6 +671,7 @@ types:
 
   - name: HmacSha224
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha224, 64, 28>. HMAC-SHA-224. Tag is [u8; 28]."
     security:
@@ -667,6 +681,7 @@ types:
 
   - name: HmacSha384
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha384, 128, 48>. HMAC-SHA-384. Tag is [u8; 48]."
     security:
@@ -676,6 +691,7 @@ types:
 
   - name: HmacSha512
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha512, 128, 64>. HMAC-SHA-512. Tag is [u8; 64]."
     security:
@@ -685,6 +701,7 @@ types:
 
   - name: HmacSha512_224
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha512_224, 128, 28>. HMAC-SHA-512/224. Tag is [u8; 28]."
     security:
@@ -694,6 +711,7 @@ types:
 
   - name: HmacSha512_256
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha512_256, 128, 32>. HMAC-SHA-512/256. Tag is [u8; 32]."
     security:
@@ -703,6 +721,7 @@ types:
 
   - name: HmacSha3_224
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha3<144,28>, 144, 28>. HMAC-SHA3-224. Tag is [u8; 28]."
     security:
@@ -712,6 +731,7 @@ types:
 
   - name: HmacSha3_256
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha3<136,32>, 136, 32>. HMAC-SHA3-256. Tag is [u8; 32]."
     security:
@@ -721,6 +741,7 @@ types:
 
   - name: HmacSha3_384
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha3<104,48>, 104, 48>. HMAC-SHA3-384. Tag is [u8; 48]."
     security:
@@ -730,6 +751,7 @@ types:
 
   - name: HmacSha3_512
     module: oxicrypt-hmac
+    family: hmac-type
     kind: alias
     description: "Type alias for Hmac<Sha3<72,64>, 72, 64>. HMAC-SHA3-512. Tag is [u8; 64]."
     security:
@@ -882,6 +904,7 @@ functions:
 
   - name: sha256
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-256 hash.
     signature: "pub fn sha256(data: &[u8]) -> Result<[u8; 32], Error>"
     parameters:
@@ -1007,6 +1030,7 @@ functions:
 
   - name: sha1
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-1 hash.
     signature: "pub fn sha1(data: &[u8]) -> Result<[u8; 20], Error>"
     parameters:
@@ -1031,6 +1055,7 @@ functions:
 
   - name: sha224
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-224 hash.
     signature: "pub fn sha224(data: &[u8]) -> Result<[u8; 28], Error>"
     parameters:
@@ -1055,6 +1080,7 @@ functions:
 
   - name: sha384
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-384 hash.
     signature: "pub fn sha384(data: &[u8]) -> Result<[u8; 48], Error>"
     parameters:
@@ -1079,6 +1105,7 @@ functions:
 
   - name: sha512
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-512 hash.
     signature: "pub fn sha512(data: &[u8]) -> Result<[u8; 64], Error>"
     parameters:
@@ -1103,6 +1130,7 @@ functions:
 
   - name: sha512_224
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-512/224 hash (SHA-512 truncated to 224 bits).
     signature: "pub fn sha512_224(data: &[u8]) -> Result<[u8; 28], Error>"
     parameters:
@@ -1127,6 +1155,7 @@ functions:
 
   - name: sha512_256
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA-512/256 hash (SHA-512 truncated to 256 bits).
     signature: "pub fn sha512_256(data: &[u8]) -> Result<[u8; 32], Error>"
     parameters:
@@ -1151,6 +1180,7 @@ functions:
 
   - name: sha3_224
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA3-224 hash (Keccak sponge, FIPS 202).
     signature: "pub fn sha3_224(data: &[u8]) -> Result<[u8; 28], Error>"
     parameters:
@@ -1175,6 +1205,7 @@ functions:
 
   - name: sha3_256
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA3-256 hash (Keccak sponge, FIPS 202).
     signature: "pub fn sha3_256(data: &[u8]) -> Result<[u8; 32], Error>"
     parameters:
@@ -1199,6 +1230,7 @@ functions:
 
   - name: sha3_384
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA3-384 hash (Keccak sponge, FIPS 202).
     signature: "pub fn sha3_384(data: &[u8]) -> Result<[u8; 48], Error>"
     parameters:
@@ -1223,6 +1255,7 @@ functions:
 
   - name: sha3_512
     module: oxicrypt-sha
+    family: sha-oneshot
     description: One-shot SHA3-512 hash (Keccak sponge, FIPS 202).
     signature: "pub fn sha3_512(data: &[u8]) -> Result<[u8; 64], Error>"
     parameters:
@@ -1249,6 +1282,7 @@ functions:
 
   - name: "HmacSha256::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: Create an HMAC-SHA-256 instance with the given key.
     signature: "pub fn HmacSha256::new(key: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -1353,6 +1387,7 @@ functions:
 
   - name: "HmacSha1::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA-1. Tag is [u8; 20]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha1::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1365,6 +1400,7 @@ functions:
 
   - name: "HmacSha224::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA-224. Tag is [u8; 28]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha224::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1377,6 +1413,7 @@ functions:
 
   - name: "HmacSha384::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA-384. Tag is [u8; 48]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha384::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1389,6 +1426,7 @@ functions:
 
   - name: "HmacSha512::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA-512. Tag is [u8; 64]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha512::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1401,6 +1439,7 @@ functions:
 
   - name: "HmacSha512_224::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA-512/224. Tag is [u8; 28]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha512_224::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1413,6 +1452,7 @@ functions:
 
   - name: "HmacSha512_256::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA-512/256. Tag is [u8; 32]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha512_256::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1425,6 +1465,7 @@ functions:
 
   - name: "HmacSha3_224::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA3-224. Tag is [u8; 28]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha3_224::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1437,6 +1478,7 @@ functions:
 
   - name: "HmacSha3_256::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA3-256. Tag is [u8; 32]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha3_256::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1449,6 +1491,7 @@ functions:
 
   - name: "HmacSha3_384::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA3-384. Tag is [u8; 48]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha3_384::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1461,6 +1504,7 @@ functions:
 
   - name: "HmacSha3_512::new"
     module: oxicrypt-hmac
+    family: hmac-new
     description: "Create HMAC-SHA3-512. Tag is [u8; 64]. See HmacSha256::new for full documentation."
     signature: "pub fn HmacSha3_512::new(key: &[u8]) -> Result<Self, Error>"
     returns:
@@ -1475,6 +1519,7 @@ functions:
 
   - name: gcm_encrypt
     module: oxicrypt-aes
+    family: aes-mode-encrypt
     description: AES-GCM authenticated encryption.
     signature: >-
       pub fn gcm_encrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 12],
@@ -1555,6 +1600,7 @@ functions:
 
   - name: gcm_decrypt
     module: oxicrypt-aes
+    family: aes-mode-decrypt
     description: >-
       AES-GCM authenticated decryption. Verifies the authentication tag
       before writing to plaintext_out. If TagMismatch, do NOT use the
@@ -1630,6 +1676,7 @@ functions:
 
   - name: ecb_encrypt
     module: oxicrypt-aes
+    family: aes-mode-encrypt
     description: >-
       AES-ECB encrypt. Identical plaintext blocks produce identical ciphertext
       blocks — do not use ECB for general-purpose encryption. Exists for
@@ -1664,6 +1711,7 @@ functions:
 
   - name: ecb_decrypt
     module: oxicrypt-aes
+    family: aes-mode-decrypt
     description: AES-ECB decrypt. Same block-alignment constraints as ecb_encrypt.
     signature: >-
       pub fn ecb_decrypt<B: BlockCipher>(cipher: &B, input: &[u8],
@@ -1697,6 +1745,7 @@ functions:
 
   - name: cbc_encrypt
     module: oxicrypt-aes
+    family: aes-mode-encrypt
     description: >-
       AES-CBC encrypt. IV must be 16 bytes. No padding is applied — input
       must be a multiple of 16. The IV must be unpredictable (random) per
@@ -1737,6 +1786,7 @@ functions:
 
   - name: cbc_decrypt
     module: oxicrypt-aes
+    family: aes-mode-decrypt
     description: AES-CBC decrypt. Same block-alignment constraints as cbc_encrypt.
     signature: >-
       pub fn cbc_decrypt<B: BlockCipher>(cipher: &B, iv: &[u8; 16],
@@ -1921,6 +1971,7 @@ functions:
 
   - name: cmac_aes128
     module: oxicrypt-cmac
+    family: cmac-aes
     description: >-
       One-shot AES-128-CMAC (SP 800-38B). Takes a raw 16-byte key and
       builds the key schedule internally. Returns a 16-byte authentication
@@ -1959,6 +2010,7 @@ functions:
 
   - name: cmac_aes192
     module: oxicrypt-cmac
+    family: cmac-aes
     description: One-shot AES-192-CMAC. Returns a 16-byte authentication tag.
     signature: "pub fn cmac_aes192(key: &[u8; 24], msg: &[u8]) -> Result<[u8; 16], Error>"
     parameters:
@@ -1987,6 +2039,7 @@ functions:
 
   - name: cmac_aes256
     module: oxicrypt-cmac
+    family: cmac-aes
     description: One-shot AES-256-CMAC. Returns a 16-byte authentication tag.
     signature: "pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> Result<[u8; 16], Error>"
     parameters:
@@ -2147,6 +2200,7 @@ functions:
 
   - name: "Sp800_108CounterHmacSha256::derive"
     module: oxicrypt-kdf
+    family: kdf-sp800108-mode
     description: >-
       SP 800-108r1 §5.2 Counter Mode KBKDF with HMAC-SHA-256. Assembles
       the fixed-data structure (label || 0x00 || context || [L]_32) internally.
@@ -2194,6 +2248,7 @@ functions:
 
   - name: "Sp800_108FeedbackHmacSha256::derive"
     module: oxicrypt-kdf
+    family: kdf-sp800108-mode
     description: >-
       SP 800-108r1 §5.3 Feedback Mode KBKDF with HMAC-SHA-256. Requires
       an IV (initial chaining value). The IV is non-secret and may be empty
@@ -2238,6 +2293,7 @@ functions:
 
   - name: "Sp800_108DoublePipelineHmacSha256::derive"
     module: oxicrypt-kdf
+    family: kdf-sp800108-mode
     description: >-
       SP 800-108r1 §5.4 Double-Pipeline Mode KBKDF with HMAC-SHA-256.
       No IV required. Uses a two-stage pipeline: A(i) = PRF(key, A(i-1))
