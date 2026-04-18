@@ -7,7 +7,7 @@ They are loaded automatically at the start of every session.
 
 - **Repo:** `/home/rick/repos/oxicrypt`
 - **LAMA spec repo:** `/home/rick/repos/lama-spec`
-- **Project folder:** `~/carakastan/Projects/PQClib/` — project plan,
+- **Project folder:** `~/carakastan/Projects/OxiCrypt/` — project plan,
   HN talking points, launch roadmap, and other planning docs that
   live outside the repo
 
@@ -23,7 +23,7 @@ to avoid re-proposing finished work or spending time on
 reconnaissance that the manifest already answers.
 
 The manifest lives **outside the repo** in the project folder
-(`~/carakastan/Projects/PQClib/llm-project-manifest.yaml`)
+(`~/carakastan/Projects/OxiCrypt/llm-project-manifest.yaml`)
 because it contains internal paths and references that should
 not be committed to version control. Update it as part of the
 doc-sync (step 6 below) whenever a commit changes the status
@@ -77,17 +77,17 @@ reference — do all six of:
    The manifests are how AI agents discover the library, so
    they must stay in sync with the actual API surface.
 5. **Project plan.** Update
-   `~/carakastan/Projects/PQClib/rust-fips-project-plan.md`
+   `~/carakastan/Projects/OxiCrypt/rust-fips-project-plan.md`
    current-status section and chunk checklists to reflect what
    the commit actually landed. This file lives outside the repo
-   in the PQClib project folder — do not commit it.
+   in the OxiCrypt project folder — do not commit it.
 6. **Project manifest.** Update
-   `~/carakastan/Projects/PQClib/llm-project-manifest.yaml`
+   `~/carakastan/Projects/OxiCrypt/llm-project-manifest.yaml`
    if the commit changes the status of any tracked item — new
    crate, handler count change, doc completion, external
    dependency update, etc. The manifest is what IS, not what's
    planned; keep it factual and current. This file lives outside
-   the repo in the PQClib project folder — do not commit it.
+   the repo in the OxiCrypt project folder — do not commit it.
 
 Run `cargo fmt --all` before staging the commit so formatting
 is always clean. These six doc updates ship **in the same
