@@ -295,6 +295,69 @@ modules:
       - oxicrypt-ecdh
 
 # ─────────────────────────────────────────────────────────────────────
+# Variant families
+#
+# Declarative legend and style guide for `family:` tags carried on
+# individual `types:` and `functions:` entries below. Per LAMA SPEC
+# §"Variant families — the `family:` tag", this section is the
+# canonical answer to "what are the family conventions in this
+# manifest?" It is authoritative about family vocabulary and shape,
+# not about membership — the `family:` tag on each entry is the
+# single source of truth for which entries belong to a family.
+# Structural queries (e.g. `grep -A N 'family: hmac-new'`) remain the
+# sole membership mechanism.
+# ─────────────────────────────────────────────────────────────────────
+
+families:
+  - name: sha-oneshot
+    description: >-
+      One-shot hash functions taking a message slice and returning a
+      fixed-size digest array. One variant per backing hash.
+    applies_to: functions
+
+  - name: sha-streaming-hasher
+    description: >-
+      Incremental hasher types exposing new/update/finalize with
+      zeroize-on-drop state. One variant per backing hash.
+    applies_to: types
+
+  - name: hmac-new
+    description: >-
+      HMAC keyed-hasher constructors taking a key slice and returning
+      a zeroize-on-drop hasher. One variant per backing hash.
+    applies_to: functions
+
+  - name: hmac-type
+    description: >-
+      HMAC keyed-hasher types exposing new/update/finalize with
+      zeroize-on-drop ipad/opad state. One variant per backing hash.
+    applies_to: types
+
+  - name: aes-mode-encrypt
+    description: >-
+      AES mode-of-operation encrypt entry points taking a key and
+      plaintext and producing ciphertext. One variant per mode.
+    applies_to: functions
+
+  - name: aes-mode-decrypt
+    description: >-
+      AES mode-of-operation decrypt entry points taking a key and
+      ciphertext and producing plaintext. One variant per mode.
+    applies_to: functions
+
+  - name: cmac-aes
+    description: >-
+      CMAC-AES one-shot tag functions taking a key and message and
+      returning a 16-byte tag. One variant per AES key size.
+    applies_to: functions
+
+  - name: kdf-sp800108-mode
+    description: >-
+      SP 800-108 KDF modes (Counter, Feedback, Double-Pipeline) built
+      over HMAC-SHA-256, exposing identical `derive` entry points.
+    applies_to: functions
+
+# ─────────────────────────────────────────────────────────────────────
 # Types
 # ─────────────────────────────────────────────────────────────────────
 
