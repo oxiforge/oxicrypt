@@ -256,6 +256,13 @@ impl Sha512State {
     }
 }
 
+impl Drop for Sha512State {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u64(&mut self.state);
+        oxicrypt_zeroize::zeroize(&mut self.buffer);
+    }
+}
+
 // ------------------------------------------------------------------------
 // SHA-512 public type
 // ------------------------------------------------------------------------

@@ -162,6 +162,13 @@ impl Sha1 {
     }
 }
 
+impl Drop for Sha1 {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u32(&mut self.state);
+        oxicrypt_zeroize::zeroize(&mut self.buffer);
+    }
+}
+
 /// SHA-1 compression function — one 512-bit block.
 fn compress(state: &mut [u32; 5], block: &[u8; BLOCK_SIZE]) {
     // 1. Prepare the message schedule W[0..80].

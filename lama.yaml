@@ -206,17 +206,21 @@ capabilities:
     quickstart:
       language: "rust"
       code: |
-        use oxicrypt_ecdsa::EcdsaP256PrivateKey;
-        use oxicrypt_ecdh::compute_shared_secret_p256;
+        use oxicrypt_ml_kem::{keygen, encapsulate, decapsulate, SEED_LEN};
         use oxicrypt_drbg::HmacDrbgSha256;
 
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
-        let alice = EcdsaP256PrivateKey::generate(&mut drbg).unwrap();
-        let bob = EcdsaP256PrivateKey::generate(&mut drbg).unwrap();
-        let shared = compute_shared_secret_p256(
-            alice.private_scalar(), &bob.public_key()
-        ).unwrap();
+        let mut d = [0u8; SEED_LEN];
+        let mut z = [0u8; SEED_LEN];
+        drbg.generate(None, &mut d).unwrap();
+        drbg.generate(None, &mut z).unwrap();
+        let (ek, dk) = keygen(&d, &z).unwrap();
+        let mut m = [0u8; SEED_LEN];
+        drbg.generate(None, &mut m).unwrap();
+        let (ss_a, ct) = encapsulate(&ek, &m).unwrap();
+        let ss_b = decapsulate(&dk, &ct).unwrap();
+        assert_eq!(ss_a, ss_b);
 
   - category: "Asymmetric encryption"
     algorithms:
@@ -262,7 +266,7 @@ capabilities:
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"
   side_channel_posture: "disclosed"
-  zeroization: "volatile-on-drop (all 15 CSP-holding types via oxicrypt-zeroize)"
+  zeroization: "volatile-on-drop (all CSP-holding types via oxicrypt-zeroize: SHA-1/SHA-2 streaming state, Keccak sponge, HMAC ipad/opad state, AES round-key schedules, DRBG state, private-key types)"
   self_tests: "183 power-up self-tests from NIST-sourced vectors"
   algorithm_profiles:
     - name: "Unrestricted"

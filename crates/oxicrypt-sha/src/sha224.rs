@@ -133,6 +133,13 @@ impl Sha224 {
     }
 }
 
+impl Drop for Sha224 {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u32(&mut self.state);
+        oxicrypt_zeroize::zeroize(&mut self.buffer);
+    }
+}
+
 /// One-shot SHA-224: hash `data` and return the digest.
 pub fn sha224(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
     let mut h = Sha224::new()?;

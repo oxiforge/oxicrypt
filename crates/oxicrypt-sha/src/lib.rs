@@ -31,8 +31,13 @@
 //!
 //! # Sensitive security parameters
 //!
-//! None. Hash functions are keyless public primitives; all
-//! inputs and outputs are public.
+//! Hash functions are keyless public primitives; their outputs are public.
+//! However, when hash state is used as the inner state of an HMAC
+//! construction (key absorbed via ipad), it becomes a CSP. All
+//! SHA-1/SHA-2 streaming types implement `Drop` to volatile-zeroize
+//! `state` and `buffer` fields via `oxicrypt-zeroize`. The `Sponge`
+//! type (used by SHA-3 and SHAKE, and by KMAC via `oxicrypt-xof`) also
+//! implements `Drop` to zeroize the 200-byte Keccak state.
 //!
 //! # FIPS module gating
 //!

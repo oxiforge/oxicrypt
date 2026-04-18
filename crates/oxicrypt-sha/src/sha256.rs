@@ -242,6 +242,13 @@ impl Sha256 {
     }
 }
 
+impl Drop for Sha256 {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u32(&mut self.state);
+        oxicrypt_zeroize::zeroize(&mut self.buffer);
+    }
+}
+
 /// SHA-256 compression function — one 512-bit block.
 ///
 /// Exposed at the crate level so SHA-224 (FIPS 180-4 §6.3) can share

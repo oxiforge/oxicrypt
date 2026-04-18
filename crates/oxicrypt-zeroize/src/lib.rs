@@ -59,6 +59,20 @@ pub fn zeroize(buf: &mut [u8]) {
     }
 }
 
+/// Overwrite a `[u32]` slice with zeroes using volatile stores.
+///
+/// Used by SHA-1 and SHA-2 (32-bit) types whose internal state is
+/// `[u32; N]` word arrays.
+#[inline]
+pub fn zeroize_u32(buf: &mut [u32]) {
+    for word in buf.iter_mut() {
+        // SAFETY: same argument as `zeroize` — valid, aligned, owned.
+        unsafe {
+            core::ptr::write_volatile(word, 0);
+        }
+    }
+}
+
 /// Overwrite a `[u64]` slice with zeroes using volatile stores.
 ///
 /// Used by RSA bigint types whose internal representation is

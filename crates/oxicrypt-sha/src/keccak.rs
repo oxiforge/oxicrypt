@@ -247,6 +247,12 @@ impl<const RATE_BYTES: usize> Default for Sponge<RATE_BYTES> {
     }
 }
 
+impl<const RATE_BYTES: usize> Drop for Sponge<RATE_BYTES> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u64(&mut self.state);
+    }
+}
+
 // ------------------------------------------------------------------------
 // Permutation unit tests
 // ------------------------------------------------------------------------
