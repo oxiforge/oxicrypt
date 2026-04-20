@@ -17,7 +17,7 @@ library:
     Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
     NIST-approved classical algorithms with a formal module boundary,
     power-up self-tests, and zero third-party dependencies.
-  repository: https://github.com/oxilabs/oxicrypt
+  repository: https://github.com/oxiforge/oxicrypt
   homepage: https://oxicrypt.dev
   license: PolyForm-Noncommercial-1.0.0
   languages:

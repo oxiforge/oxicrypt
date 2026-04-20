@@ -14,7 +14,7 @@ library:
   name: oxicrypt
   version: "0.1.0-beta.1"
   description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
-  repository: "https://github.com/oxilabs/oxicrypt"
+  repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
   license: "PolyForm-Noncommercial-1.0.0"
   languages:

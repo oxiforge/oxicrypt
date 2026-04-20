@@ -43,7 +43,7 @@ rust-version = "1.94"
 # appropriately licensed. All member crates still set `publish = false`
 # so we never actually hit crates.io's SPDX requirement either.
 license-file = "LICENSE"
-repository = "https://github.com/oxilabs/oxicrypt"
+repository = "https://github.com/oxiforge/oxicrypt"
 homepage = "https://oxicrypt.dev"
 keywords = ["cryptography", "fips", "fips-140-3", "no-std", "nist"]
 categories = ["cryptography", "no-std"]
