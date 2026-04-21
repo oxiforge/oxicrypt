@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Pre-commit hook: enforce doc-sync for public API surface changes.
+#
+# Fires when:
+#   1. any file matching  crates/*/src/**/*.rs  is staged, AND
+#   2. the staged diff adds or removes a line starting with
+#      `pub fn|struct|enum|const|type|trait|static|union|mod`, AND
+#   3. docs/llm-api-manifest/llm-api.yaml is NOT staged.
+#
+# Bypass with  git commit --no-verify  only when the pub-item line
+# change is truly internal — rustdoc-only edits, or a refactor that
+# shifts a signature's position without altering it. Always explain
+# the bypass in the commit body so reviewers see the rationale.
+#
+# This hook guards the one doc-sync target where drift is invisible
+# until an external consumer trips over it: the LLM API manifest, which
+# captures full signatures, parameters, error variants, preconditions,
+# and postconditions for every exported function. Other doc-sync
+# targets (security-policy.md, lama.yaml, README.md) are listed in the
+# error message but not blocked — they trigger on rarer diffs (service
+# table / profile / gate changes, algorithm coverage, crate additions)
+# and are easier to spot in human review.
+#
+# The hook is a no-op in repos that do not (yet) ship the manifest at
+# the expected path, so it can be dropped into sibling repos as a
+# forward-looking scaffold.
+
+set -euo pipefail
+
+API_PATHS_REGEX='^crates/[^/]+/src/.*\.rs$'
+MANIFEST_PATH='docs/llm-api-manifest/llm-api.yaml'
+PUB_ITEMS_REGEX='^[+-]pub (fn|struct|enum|const|type|trait|static|union|mod )'
+
+# No-op if this repo has not adopted the manifest yet.
+if [[ ! -f "$MANIFEST_PATH" ]]; then
+    exit 0
+fi
+
+staged_rs=$(git diff --cached --name-only --diff-filter=ACMR \
+            | grep -E "$API_PATHS_REGEX" || true)
+[[ -z "$staged_rs" ]] && exit 0
+
+# -U0: no context lines, so we only see true additions / removals of
+# the pub declaration lines themselves — not doc-comment edits above.
+pub_hits=$(git diff --cached -U0 -- $staged_rs \
+           | grep -E "$PUB_ITEMS_REGEX" || true)
+[[ -z "$pub_hits" ]] && exit 0
+
+if git diff --cached --name-only | grep -qxF "$MANIFEST_PATH"; then
+    exit 0
+fi
+
+cat >&2 <<EOF
+pre-commit: public API surface touched, but $MANIFEST_PATH is not staged.
+
+Offending staged diff lines:
+$pub_hits
+
+Doc-sync matrix for this commit:
+  [ ] $MANIFEST_PATH
+        signature, parameters, error_variants, preconditions,
+        postconditions, security block — always when a pub item
+        changes (even just a signature tweak).
+
+  [ ] docs/security-policy/security-policy.md
+        only if the Service enum, gate, profile, or any row in the
+        service table changed — add a revision log entry (R-number)
+        in the same commit.
+
+  [ ] lama.yaml
+        only if algorithm coverage itself changed (new crate,
+        algorithm added or removed).
+
+  [ ] README.md
+        only if the crate map or the "workspace layout" block needs
+        to reflect a new or renamed crate.
+
+Update the manifest (and any other boxes above that apply), stage
+the files, and re-commit.
+
+To bypass (pub-item change is truly internal):
+  git commit --no-verify
+and state the reason in the commit body.
+EOF
+exit 1

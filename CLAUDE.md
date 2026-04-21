@@ -75,7 +75,15 @@ reference — do all six of:
    manifest) if the commit adds, removes, renames, or changes
    the signature of any public function, type, or entry point.
    The manifests are how AI agents discover the library, so
-   they must stay in sync with the actual API surface.
+   they must stay in sync with the actual API surface. The
+   pre-commit hook at `scripts/git-hooks/pre-commit` enforces
+   the `llm-api.yaml` half of this mechanically — it fails any
+   commit that touches a `pub fn|struct|enum|const|type|trait`
+   line under `crates/*/src/` without also staging the manifest.
+   If the hook fires on a change that is genuinely internal
+   (rustdoc-only, signature-position reflow), bypass with
+   `git commit --no-verify` and explain the bypass in the
+   commit body so reviewers see the rationale.
 5. **Project plan.** Update
    `~/carakastan/Projects/OxiCrypt/rust-fips-project-plan.md`
    current-status section and chunk checklists to reflect what

@@ -33,6 +33,19 @@ cargo test --workspace
 - No third-party dependencies — all cryptography is pure Rust, written in-tree
 - Builds on Linux, macOS, and Windows; `no_std` core crates work on any target
 
+### Installing the git hooks
+
+Contributors should enable the versioned hooks on a fresh clone — this
+activates the pre-commit doc-sync guard that keeps
+`docs/llm-api-manifest/llm-api.yaml` in step with the public API:
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+The hooks live under `scripts/git-hooks/` so they are reviewable in
+PRs rather than hidden in each contributor's `.git/hooks/`.
+
 ## Algorithms
 
 | Family | Algorithms | Standard |
