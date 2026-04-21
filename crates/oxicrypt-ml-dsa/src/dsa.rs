@@ -93,9 +93,17 @@ pub(crate) fn ml_dsa_keygen(xi: &[u8; 32]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
 
 /// Sign a message with an ML-DSA-87 secret key (deterministic mode).
 ///
+/// `m_prefix` is absorbed into μ between `tr` and `message`. For the
+/// internal primitive (FIPS 204 §6.2) pass `&[]`; for the external API
+/// (FIPS 204 §5.2 Algorithm 2) pass `0x00 || |ctx| || ctx`.
+///
 /// Returns `Some(signature)` on success, `None` if signing fails
 /// after too many iterations (should not happen in practice).
-pub(crate) fn ml_dsa_sign(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_LEN]> {
+pub(crate) fn ml_dsa_sign(
+    sk: &[u8; SK_LEN],
+    m_prefix: &[u8],
+    message: &[u8],
+) -> Option<[u8; SIG_LEN]> {
     // Unpack secret key
     let mut rho = [0u8; 32];
     let mut key = [0u8; 32];
@@ -108,11 +116,14 @@ pub(crate) fn ml_dsa_sign(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_
     // 1. A ← ExpandA(ρ)
     let a_hat = sample::expand_a(&rho);
 
-    // 2. μ = H(tr ‖ M)  (64 bytes via SHAKE-256)
+    // 2. μ = H(tr ‖ M')  (64 bytes via SHAKE-256)
+    //    where M' = m_prefix ‖ message.  For internal callers m_prefix
+    //    is empty and μ = H(tr ‖ M) exactly as FIPS 204 §6.2 specifies.
     let mut mu = [0u8; 64];
     {
         let mut h = Shake256::new_internal();
         h.update(&tr);
+        h.update(m_prefix);
         h.update(message);
         h.finalize();
         h.squeeze(&mut mu);
@@ -274,8 +285,17 @@ pub(crate) fn ml_dsa_sign(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_
 
 /// Verify an ML-DSA-87 signature.
 ///
+/// `m_prefix` is absorbed into μ between `tr` and `message`. For the
+/// internal primitive (FIPS 204 §6.3) pass `&[]`; for the external API
+/// (FIPS 204 §5.2 Algorithm 3) pass `0x00 || |ctx| || ctx`.
+///
 /// Returns `true` if the signature is valid.
-pub(crate) fn ml_dsa_verify(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
+pub(crate) fn ml_dsa_verify(
+    pk: &[u8; PK_LEN],
+    m_prefix: &[u8],
+    message: &[u8],
+    sig: &[u8; SIG_LEN],
+) -> bool {
     // 1. Unpack public key
     let mut rho = [0u8; 32];
     let mut t1 = PolyVecK::zero();
@@ -306,11 +326,14 @@ pub(crate) fn ml_dsa_verify(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LE
         h_pk.squeeze(&mut tr);
     }
 
-    // 6. μ = H(tr ‖ M) (64 bytes)
+    // 6. μ = H(tr ‖ M') (64 bytes)
+    //    where M' = m_prefix ‖ message.  For internal callers m_prefix
+    //    is empty and μ = H(tr ‖ M) exactly as FIPS 204 §6.3 specifies.
     let mut mu = [0u8; 64];
     {
         let mut h_mu = Shake256::new_internal();
         h_mu.update(&tr);
+        h_mu.update(m_prefix);
         h_mu.update(message);
         h_mu.finalize();
         h_mu.squeeze(&mut mu);

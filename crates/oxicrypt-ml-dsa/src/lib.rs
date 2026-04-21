@@ -55,6 +55,22 @@
 //! | s₁, s₂ | Secret vectors | Embedded in sk |
 //! | K   | Signing key seed (32 bytes) | Embedded in sk |
 //!
+//! # External vs internal API
+//!
+//! The public [`sign`] and [`verify`] functions implement the
+//! **external** ML-DSA.Sign / ML-DSA.Verify API defined in FIPS 204
+//! §5.2 (Algorithms 2 and 3): they accept a `ctx` byte string and frame
+//! the message as `M' = 0x00 || |ctx| || ctx || M` before invoking the
+//! internal primitive.  This is the shape consumed by X.509, CMS, the
+//! LAMPS profile, OpenSSL 3.5, and any other spec-conformant caller —
+//! `ctx` is `b""` for those use cases.
+//!
+//! The `*_internal` surface ([`sign_internal`], [`verify_internal`])
+//! exposes Algorithms 7 and 8 directly (`Sign_internal` /
+//! `Verify_internal` in §6.2 / §6.3) — the raw-message primitive with
+//! no framing.  These are `#[doc(hidden)]` and intended for FIPS 204
+//! CAVP / ACVP test harnesses that exercise the internal primitive.
+//!
 //! # FIPS module gating
 //!
 //! Public entry points ([`keygen`], [`sign`], [`verify`]) gate on
@@ -104,24 +120,109 @@ pub fn keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
 
 /// Sign a message with an ML-DSA-87 secret key (deterministic mode).
 ///
+/// This is the **external** ML-DSA.Sign API defined in FIPS 204 §5.2
+/// Algorithm 2: it frames the message as `M' = 0x00 || |ctx| || ctx || M`
+/// (pure ML-DSA, empty or caller-supplied context) before applying the
+/// internal signing primitive (Algorithm 7, §6.2).
+///
+/// `ctx` is the application-supplied context string. Pass `b""` for
+/// the empty context used by X.509, CMS, and other LAMPS-conformant
+/// callers.
+///
 /// Returns the 4627-byte signature.
-pub fn sign(sk: &[u8; SK_LEN], message: &[u8]) -> Result<[u8; SIG_LEN], Error> {
+///
+/// # Errors
+///
+/// - [`Error::NotOperational`] if the module is not in `Operational` state.
+/// - [`Error::AlgorithmRestricted`] if the active profile forbids ML-DSA-87.
+/// - [`Error::InvalidInput`] if `ctx.len() > 255` (FIPS 204 §5.2 limit) or
+///   signing fails after the rejection-sampling bound.
+pub fn sign(
+    sk: &[u8; SK_LEN],
+    message: &[u8],
+    ctx: &[u8],
+) -> Result<[u8; SIG_LEN], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::MlDsa87Sign)?;
-    sign_internal(sk, message).ok_or(Error::InvalidInput)
+    let prefix_buf = build_external_prefix(ctx)?;
+    dsa::ml_dsa_sign(sk, prefix_buf.as_slice(), message).ok_or(Error::InvalidInput)
 }
 
 /// Verify a signature with an ML-DSA-87 public key.
 ///
-/// Returns `Ok(())` if the signature is valid, `Err` otherwise.
-pub fn verify(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> Result<(), Error> {
+/// This is the **external** ML-DSA.Verify API defined in FIPS 204 §5.2
+/// Algorithm 3: it frames the message as `M' = 0x00 || |ctx| || ctx || M`
+/// (pure ML-DSA, empty or caller-supplied context) before applying the
+/// internal verification primitive (Algorithm 8, §6.3).
+///
+/// `ctx` is the application-supplied context string. Pass `b""` for the
+/// empty context used by X.509, CMS, and other LAMPS-conformant callers.
+///
+/// Returns `Ok(())` if the signature is valid, `Err(InvalidInput)`
+/// otherwise.
+///
+/// # Errors
+///
+/// - [`Error::NotOperational`] if the module is not in `Operational` state.
+/// - [`Error::AlgorithmRestricted`] if the active profile forbids ML-DSA-87.
+/// - [`Error::InvalidInput`] if `ctx.len() > 255` (FIPS 204 §5.2 limit)
+///   or the signature fails verification.
+pub fn verify(
+    pk: &[u8; PK_LEN],
+    message: &[u8],
+    ctx: &[u8],
+    sig: &[u8; SIG_LEN],
+) -> Result<(), Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::MlDsa87Verify)?;
-    if verify_internal(pk, message, sig) {
+    let prefix_buf = build_external_prefix(ctx)?;
+    if dsa::ml_dsa_verify(pk, prefix_buf.as_slice(), message, sig) {
         Ok(())
     } else {
         Err(Error::InvalidInput)
     }
+}
+
+/// Maximum size of the external API framing prefix: 2 header bytes
+/// (`0x00` domain separator + `|ctx|` length byte) plus the 255-byte
+/// ctx cap from FIPS 204 §5.2.
+const EXT_PREFIX_MAX: usize = 2 + 255;
+
+/// Stack-allocated `0x00 || |ctx| || ctx` buffer for the external
+/// ML-DSA.{Sign,Verify} framing.  Keeps the crate free of any heap
+/// allocation while still supporting the full FIPS 204 §5.2 ctx range.
+struct ExternalPrefix {
+    buf: [u8; EXT_PREFIX_MAX],
+    len: usize,
+}
+
+impl ExternalPrefix {
+    // Range slice is sound by construction: `len` is written exactly
+    // once by `build_external_prefix` as `2 + ctx.len()` with
+    // `ctx.len() ≤ 255`, so `len ≤ EXT_PREFIX_MAX`.
+    #[allow(clippy::indexing_slicing)]
+    fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+// Arithmetic and slicing are sound by construction: the early-return
+// on `ctx.len() > 255` establishes `2 + ctx.len() ≤ EXT_PREFIX_MAX`,
+// so the following index operations cannot overflow or panic.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::indexing_slicing
+)]
+fn build_external_prefix(ctx: &[u8]) -> Result<ExternalPrefix, Error> {
+    if ctx.len() > 255 {
+        return Err(Error::InvalidInput);
+    }
+    let mut buf = [0u8; EXT_PREFIX_MAX];
+    buf[0] = 0x00; // pure ML-DSA (HashML-DSA would use 0x01)
+    buf[1] = ctx.len() as u8;
+    buf[2..2 + ctx.len()].copy_from_slice(ctx);
+    Ok(ExternalPrefix { buf, len: 2 + ctx.len() })
 }
 
 // ── Internal API (gate-free, for KATs) ──────────────────────────
@@ -132,16 +233,24 @@ pub fn keygen_internal(xi: &[u8; 32]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
     dsa::ml_dsa_keygen(xi)
 }
 
-/// Internal sign — no module gate.
+/// Internal sign — FIPS 204 §6.2 Algorithm 7 (Sign_internal).
+///
+/// Operates directly on the raw message with no external-API framing,
+/// matching the `ML-DSA.Sign_internal` abstraction used by FIPS 204
+/// CAVP / ACVP test vectors.  Gate-free so power-up KATs can run
+/// during `SelfTest`.
 #[doc(hidden)]
 pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_LEN]> {
-    dsa::ml_dsa_sign(sk, message)
+    dsa::ml_dsa_sign(sk, &[], message)
 }
 
-/// Internal verify — no module gate.
+/// Internal verify — FIPS 204 §6.3 Algorithm 8 (Verify_internal).
+///
+/// Operates directly on the raw message with no external-API framing.
+/// Gate-free so power-up KATs can run during `SelfTest`.
 #[doc(hidden)]
 pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
-    dsa::ml_dsa_verify(pk, message, sig)
+    dsa::ml_dsa_verify(pk, &[], message, sig)
 }
 
 // ── Power-up KATs ───────────────────────────────────────────────

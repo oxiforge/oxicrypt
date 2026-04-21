@@ -100,10 +100,20 @@ pub(crate) fn prf(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] 
 
 /// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §10.1.
 ///
-/// Computes `Trunc_n(HMAC-SHA-512(SK.prf, opt_rand ‖ M))`.
+/// Computes `Trunc_n(HMAC-SHA-512(SK.prf, opt_rand ‖ m_prefix ‖ msg))`.
 /// For SLH-DSA-SHA2-256s n=32, the 64-byte SHA-512 HMAC output is truncated
 /// to 32 bytes.  FIPS 205 §10.1 (SHA-2 instantiation, n=32).
-pub(crate) fn prf_msg(sk_prf: &[u8; N], opt_rand: &[u8; N], msg: &[u8]) -> [u8; N] {
+///
+/// `m_prefix` is absorbed between `opt_rand` and `msg` so that the
+/// external API (FIPS 205 §9.2 Algorithm 22) can supply
+/// `0x00 || |ctx| || ctx`.  Pass `&[]` to get the raw internal-primitive
+/// behaviour (FIPS 205 §9.1 Algorithm 19).
+pub(crate) fn prf_msg(
+    sk_prf: &[u8; N],
+    opt_rand: &[u8; N],
+    m_prefix: &[u8],
+    msg: &[u8],
+) -> [u8; N] {
     // HMAC-SHA-512(key, data) — inlined per FIPS 198-1.
     // SHA-512 block size is 128 bytes.
     const BLOCK_SIZE: usize = 128;
@@ -122,10 +132,11 @@ pub(crate) fn prf_msg(sk_prf: &[u8; N], opt_rand: &[u8; N], msg: &[u8]) -> [u8; 
         opad_key[i] = OPAD;
     }
 
-    // inner = SHA-512(ipad_key ‖ opt_rand ‖ M)
+    // inner = SHA-512(ipad_key ‖ opt_rand ‖ m_prefix ‖ M)
     let mut inner = Sha512::new_internal();
     inner.update(&ipad_key);
     inner.update(opt_rand);
+    inner.update(m_prefix);
     inner.update(msg);
     let inner_hash = inner.finalize(); // 64 bytes
 
@@ -159,18 +170,30 @@ pub(crate) fn prf_msg(sk_prf: &[u8; N], opt_rand: &[u8; N], msg: &[u8]) -> [u8; 
 ///   in a 64-byte buffer),
 /// - `tree_idx` is the hyper-tree index (H − H/D bits),
 /// - `leaf_idx` is the leaf index within the bottom XMSS tree (H/D bits).
-pub(crate) fn h_msg(r: &[u8; N], pk_seed: &[u8; N], pk_root: &[u8; N], msg: &[u8]) -> HMsgOutput {
+///
+/// `m_prefix` is absorbed into `seed_inner` between `pk_root` and `msg`
+/// so that the external API (FIPS 205 §9.2 / §9.3 Algorithms 22 and 24)
+/// can supply `0x00 || |ctx| || ctx`.  Pass `&[]` to get the raw
+/// internal-primitive behaviour (FIPS 205 §9.1 Algorithms 19 and 20).
+pub(crate) fn h_msg(
+    r: &[u8; N],
+    pk_seed: &[u8; N],
+    pk_root: &[u8; N],
+    m_prefix: &[u8],
+    msg: &[u8],
+) -> HMsgOutput {
     use crate::params::{A, H, H_PRIME, K};
 
     // Declare constants first so they precede all statements (clippy::items_after_statements).
     const FORS_DIGEST_BYTES: usize = (K * A + 7) / 8; // 39
     const TREE_BYTES: usize = (H - H_PRIME + 7) / 8; // 7
 
-    // ── Step 1: seed_inner = SHA-512(R ‖ PK.seed ‖ PK.root ‖ M) ──
+    // ── Step 1: seed_inner = SHA-512(R ‖ PK.seed ‖ PK.root ‖ m_prefix ‖ M) ──
     let mut h_inner = Sha512::new_internal();
     h_inner.update(r);
     h_inner.update(pk_seed);
     h_inner.update(pk_root);
+    h_inner.update(m_prefix);
     h_inner.update(msg);
     let seed_inner = h_inner.finalize(); // 64 bytes
 

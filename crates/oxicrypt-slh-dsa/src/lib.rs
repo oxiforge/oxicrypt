@@ -35,6 +35,22 @@
 //! | SLH-DSA sign   | FIPS 205 | Unrestricted |
 //! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
+//! # External vs internal API
+//!
+//! The public [`sign`] and [`verify`] functions implement the
+//! **external** `slh_sign` / `slh_verify` API defined in FIPS 205 §9.2
+//! / §9.3 (Algorithms 22 and 24): they accept a `ctx` byte string and
+//! frame the message as `M' = 0x00 || |ctx| || ctx || M` before
+//! invoking the internal primitive.  This is the shape consumed by
+//! X.509, CMS, the LAMPS profile, OpenSSL 3.5, and any other
+//! spec-conformant caller — `ctx` is `b""` for those use cases.
+//!
+//! The `*_internal` surface ([`sign_internal`], [`verify_internal`])
+//! exposes Algorithms 19 and 20 directly (`slh_sign_internal` /
+//! `slh_verify_internal`) — the raw-message primitive with no framing.
+//! These are `#[doc(hidden)]` and intended for FIPS 205 CAVP / ACVP
+//! test harnesses that exercise the internal primitive.
+//!
 //! # Self-tests
 //!
 //! Power-up KAT: deterministic keygen → sign → verify round-trip
@@ -130,23 +146,46 @@ pub fn keygen_internal(xi: &[u8; 96]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
 
 /// Sign a message with SLH-DSA-SHA2-256s (deterministic mode).
 ///
+/// This is the **external** `slh_sign` API defined in FIPS 205 §9.2
+/// Algorithm 22: it frames the message as
+/// `M' = 0x00 || |ctx| || ctx || M` (pure SLH-DSA, empty or
+/// caller-supplied context) before applying the internal signing
+/// primitive (Algorithm 19).
+///
+/// `ctx` is the application-supplied context string.  Pass `b""` for
+/// the empty context used by X.509, CMS, and other LAMPS-conformant
+/// callers.
+///
 /// Returns the signature (29 792 bytes).
 ///
 /// # Errors
 ///
 /// - [`Error::NotOperational`] if the module is not in `Operational` state.
 /// - [`Error::AlgorithmRestricted`] if the active profile forbids SLH-DSA.
-/// - [`Error::InvalidInput`] if `sk` is not `SK_LEN` bytes.
-pub fn sign(sk: &[u8], message: &[u8]) -> Result<[u8; SIG_LEN], Error> {
+/// - [`Error::InvalidInput`] if `sk` is not `SK_LEN` bytes or
+///   `ctx.len() > 255` (FIPS 205 §9.2 limit).
+pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; SIG_LEN], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::SlhDsaSign)?;
     let sk_arr: &[u8; SK_LEN] = sk.try_into().map_err(|_| Error::InvalidInput)?;
-    Ok(sign_internal(sk_arr, message))
+    let prefix = build_external_prefix(ctx)?;
+    Ok(sign_with_prefix(sk_arr, prefix.as_slice(), message))
 }
 
-/// Gate-free signing for self-tests.
+/// Gate-free signing — FIPS 205 §9.1 Algorithm 19 (`slh_sign_internal`).
+///
+/// Operates directly on the raw message with no external-API framing,
+/// matching the internal primitive exercised by FIPS 205 CAVP / ACVP
+/// test vectors.
 #[doc(hidden)]
 pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> [u8; SIG_LEN] {
+    sign_with_prefix(sk, &[], message)
+}
+
+/// Shared signing core.  `m_prefix` is absorbed into both `PRF_msg` and
+/// `H_msg` before `message`; pass `&[]` for the internal primitive or
+/// `0x00 || |ctx| || ctx` for the external API.
+fn sign_with_prefix(sk: &[u8; SK_LEN], m_prefix: &[u8], message: &[u8]) -> [u8; SIG_LEN] {
     let sk_seed: &[u8; N] = sk[..N].try_into().unwrap();
     let sk_prf: &[u8; N] = sk[N..2 * N].try_into().unwrap();
     let pk_seed: &[u8; N] = sk[2 * N..3 * N].try_into().unwrap();
@@ -157,12 +196,12 @@ pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> [u8; SIG_LEN] {
     // Deterministic mode: opt_rand = PK.seed.
     let opt_rand = pk_seed;
 
-    // R = PRF_msg(SK.prf, opt_rand, M).
-    let r = thash::prf_msg(sk_prf, opt_rand, message);
+    // R = PRF_msg(SK.prf, opt_rand, m_prefix ‖ M).
+    let r = thash::prf_msg(sk_prf, opt_rand, m_prefix, message);
     sig[..N].copy_from_slice(&r);
 
     // Derive FORS digest and tree/leaf indices.
-    let h_out = thash::h_msg(&r, pk_seed, pk_root, message);
+    let h_out = thash::h_msg(&r, pk_seed, pk_root, m_prefix, message);
 
     // FORS signature.
     let mut fors_adrs = Adrs::zero();
@@ -188,29 +227,58 @@ pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> [u8; SIG_LEN] {
 
 /// Verify an SLH-DSA-SHA2-256s signature.
 ///
+/// This is the **external** `slh_verify` API defined in FIPS 205 §9.3
+/// Algorithm 24: it frames the message as
+/// `M' = 0x00 || |ctx| || ctx || M` (pure SLH-DSA, empty or
+/// caller-supplied context) before applying the internal verification
+/// primitive (Algorithm 20).
+///
+/// `ctx` is the application-supplied context string.  Pass `b""` for
+/// the empty context used by X.509, CMS, and other LAMPS-conformant
+/// callers.
+///
 /// Returns `Ok(())` if the signature is valid, `Err(InvalidInput)` otherwise.
 ///
 /// # Errors
 ///
 /// - [`Error::NotOperational`] if the module is not in `Operational` state.
 /// - [`Error::AlgorithmRestricted`] if the active profile forbids SLH-DSA.
-/// - [`Error::InvalidInput`] if any input has the wrong length or the
-///   signature is invalid.
-pub fn verify(pk: &[u8], message: &[u8], signature: &[u8]) -> Result<(), Error> {
+/// - [`Error::InvalidInput`] if any input has the wrong length,
+///   `ctx.len() > 255` (FIPS 205 §9.3 limit), or the signature fails
+///   verification.
+pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::SlhDsaVerify)?;
     let pk_arr: &[u8; PK_LEN] = pk.try_into().map_err(|_| Error::InvalidInput)?;
     let sig_arr: &[u8; SIG_LEN] = signature.try_into().map_err(|_| Error::InvalidInput)?;
-    if verify_internal(pk_arr, message, sig_arr) {
+    let prefix = build_external_prefix(ctx)?;
+    if verify_with_prefix(pk_arr, prefix.as_slice(), message, sig_arr) {
         Ok(())
     } else {
         Err(Error::InvalidInput)
     }
 }
 
-/// Gate-free verification for self-tests.
+/// Gate-free verification — FIPS 205 §9.1 Algorithm 20
+/// (`slh_verify_internal`).
+///
+/// Operates directly on the raw message with no external-API framing,
+/// matching the internal primitive exercised by FIPS 205 CAVP / ACVP
+/// test vectors.
 #[doc(hidden)]
 pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
+    verify_with_prefix(pk, &[], message, sig)
+}
+
+/// Shared verification core.  `m_prefix` is absorbed into `H_msg`
+/// before `message`; pass `&[]` for the internal primitive or
+/// `0x00 || |ctx| || ctx` for the external API.
+fn verify_with_prefix(
+    pk: &[u8; PK_LEN],
+    m_prefix: &[u8],
+    message: &[u8],
+    sig: &[u8; SIG_LEN],
+) -> bool {
     let pk_seed: &[u8; N] = pk[..N].try_into().unwrap();
     let pk_root: &[u8; N] = pk[N..2 * N].try_into().unwrap();
 
@@ -218,7 +286,7 @@ pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -
     let r: &[u8; N] = sig[..N].try_into().unwrap();
 
     // Derive FORS digest and indices.
-    let h_out = thash::h_msg(r, pk_seed, pk_root, message);
+    let h_out = thash::h_msg(r, pk_seed, pk_root, m_prefix, message);
 
     // Reconstruct FORS public key.
     let mut fors_adrs = Adrs::zero();
@@ -240,6 +308,50 @@ pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -
         h_out.tree_idx,
         h_out.leaf_idx,
     )
+}
+
+// ── External-API prefix helper (FIPS 205 §9.2 / §9.3) ───────────────
+
+/// Maximum size of the external API framing prefix: 2 header bytes
+/// (`0x00` domain separator + `|ctx|` length byte) plus the 255-byte
+/// ctx cap from FIPS 205 §9.2.
+const EXT_PREFIX_MAX: usize = 2 + 255;
+
+/// Stack-allocated `0x00 || |ctx| || ctx` buffer for the external
+/// `slh_sign` / `slh_verify` framing.  Keeps the crate free of any
+/// heap allocation while still supporting the full FIPS 205 ctx range.
+struct ExternalPrefix {
+    buf: [u8; EXT_PREFIX_MAX],
+    len: usize,
+}
+
+impl ExternalPrefix {
+    // Range slice is sound by construction: `len` is written exactly
+    // once by `build_external_prefix` as `2 + ctx.len()` with
+    // `ctx.len() ≤ 255`, so `len ≤ EXT_PREFIX_MAX`.
+    #[allow(clippy::indexing_slicing)]
+    fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+// Arithmetic and slicing are sound by construction: the early-return
+// on `ctx.len() > 255` establishes `2 + ctx.len() ≤ EXT_PREFIX_MAX`,
+// so the following index operations cannot overflow or panic.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::indexing_slicing
+)]
+fn build_external_prefix(ctx: &[u8]) -> Result<ExternalPrefix, Error> {
+    if ctx.len() > 255 {
+        return Err(Error::InvalidInput);
+    }
+    let mut buf = [0u8; EXT_PREFIX_MAX];
+    buf[0] = 0x00; // pure SLH-DSA (HashSLH-DSA would use 0x01)
+    buf[1] = ctx.len() as u8;
+    buf[2..2 + ctx.len()].copy_from_slice(ctx);
+    Ok(ExternalPrefix { buf, len: 2 + ctx.len() })
 }
 
 // ── Self-tests ──────────────────────────────────────────────────────
