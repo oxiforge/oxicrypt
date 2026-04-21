@@ -1,85 +1,114 @@
 #!/usr/bin/env bash
-# Pre-commit hook: enforce doc-sync for public API surface changes.
+# Pre-commit hook: enforce doc-sync for the two targets where missing
+# them has the highest cost.
 #
-# Fires when:
-#   1. any file matching  crates/*/src/**/*.rs  is staged, AND
-#   2. the staged diff adds or removes a line starting with
-#      `pub fn|struct|enum|const|type|trait|static|union|mod`, AND
-#   3. docs/llm-api-manifest/llm-api.yaml is NOT staged.
+# Check 1 — LLM API manifest (silent-drift guard)
+#   Trigger: staged diff adds or removes a line starting with
+#            `pub fn|struct|enum|const|type|trait|static|union|mod `
+#            under `crates/*/src/`.
+#   Require: `docs/llm-api-manifest/llm-api.yaml` to be staged too.
+#   Why:     a public-surface change without a manifest update is
+#            invisible until an external consumer trips over it.
 #
-# Bypass with  git commit --no-verify  only when the pub-item line
-# change is truly internal — rustdoc-only edits, or a refactor that
-# shifts a signature's position without altering it. Always explain
-# the bypass in the commit body so reviewers see the rationale.
+# Check 2 — Security policy (warm-context gem capture)
+#   Trigger: any file under `crates/*/src/` is staged.
+#   Require: `docs/security-policy/security-policy.md` to be staged too.
+#   Why:     CLAUDE.md's "Insight capture at every commit" rule states
+#            that every code commit should be a forcing function for
+#            capturing CMVP gems — compiler-enforced invariants,
+#            zeroization composition, conformance rationale, design-by-
+#            construction arguments — while the working context is warm.
+#            A gem deferred is usually a gem lost. If there really is no
+#            gem to capture (typo fix, reformat, pure refactor), state
+#            so in the commit body and bypass.
 #
-# This hook guards the one doc-sync target where drift is invisible
-# until an external consumer trips over it: the LLM API manifest, which
-# captures full signatures, parameters, error variants, preconditions,
-# and postconditions for every exported function. Other doc-sync
-# targets (security-policy.md, lama.yaml, README.md) are listed in the
-# error message but not blocked — they trigger on rarer diffs (service
-# table / profile / gate changes, algorithm coverage, crate additions)
-# and are easier to spot in human review.
+# Bypass:
+#   git commit --no-verify
+#   ALWAYS explain in the commit body — either "change is internal, no
+#   manifest delta" or "no gem surfaced, <reason>". The --no-verify
+#   loophole is fine as long as its use is documented; the hook's
+#   purpose is to force the thought, not to make the thought impossible
+#   to skip.
 #
-# The hook is a no-op in repos that do not (yet) ship the manifest at
-# the expected path, so it can be dropped into sibling repos as a
-# forward-looking scaffold.
+# Portability:
+#   The hook no-ops when neither target exists in this repo, so it can
+#   be carried into sibling repos as a forward-looking scaffold that
+#   activates as docs are added.
 
 set -euo pipefail
 
 API_PATHS_REGEX='^crates/[^/]+/src/.*\.rs$'
 MANIFEST_PATH='docs/llm-api-manifest/llm-api.yaml'
+POLICY_PATH='docs/security-policy/security-policy.md'
 PUB_ITEMS_REGEX='^[+-]pub (fn|struct|enum|const|type|trait|static|union|mod )'
-
-# No-op if this repo has not adopted the manifest yet.
-if [[ ! -f "$MANIFEST_PATH" ]]; then
-    exit 0
-fi
 
 staged_rs=$(git diff --cached --name-only --diff-filter=ACMR \
             | grep -E "$API_PATHS_REGEX" || true)
 [[ -z "$staged_rs" ]] && exit 0
 
-# -U0: no context lines, so we only see true additions / removals of
-# the pub declaration lines themselves — not doc-comment edits above.
-pub_hits=$(git diff --cached -U0 -- $staged_rs \
-           | grep -E "$PUB_ITEMS_REGEX" || true)
-[[ -z "$pub_hits" ]] && exit 0
+staged_all=$(git diff --cached --name-only)
 
-if git diff --cached --name-only | grep -qxF "$MANIFEST_PATH"; then
+require_manifest=0
+require_policy=0
+pub_hits=""
+
+# Check 1: pub-item surface touched → require LLM API manifest.
+if [[ -f "$MANIFEST_PATH" ]]; then
+    # -U0: no context lines, so we only see true additions / removals
+    # of the pub declaration lines themselves — not doc-comment edits
+    # above them.
+    pub_hits=$(git diff --cached -U0 -- $staged_rs \
+               | grep -E "$PUB_ITEMS_REGEX" || true)
+    if [[ -n "$pub_hits" ]] \
+       && ! echo "$staged_all" | grep -qxF "$MANIFEST_PATH"; then
+        require_manifest=1
+    fi
+fi
+
+# Check 2: any crate source touched → require security policy review.
+if [[ -f "$POLICY_PATH" ]] \
+   && ! echo "$staged_all" | grep -qxF "$POLICY_PATH"; then
+    require_policy=1
+fi
+
+if [[ $require_manifest -eq 0 && $require_policy -eq 0 ]]; then
     exit 0
 fi
 
-cat >&2 <<EOF
-pre-commit: public API surface touched, but $MANIFEST_PATH is not staged.
+{
+    echo "pre-commit: doc-sync check failed."
+    echo ""
+    if [[ $require_manifest -eq 1 ]]; then
+        echo "[ENFORCED] $MANIFEST_PATH not staged."
+        echo "  The staged diff adds or removes a public item. The LLM API"
+        echo "  manifest captures signatures, parameters, error_variants,"
+        echo "  preconditions, and postconditions for every exported"
+        echo "  function. It must move in the same commit as the pub-item"
+        echo "  change — otherwise external consumers see drift."
+        echo ""
+        echo "  Example offending staged diff lines:"
+        echo "$pub_hits" | head -8 | sed 's/^/    /'
+        echo ""
+    fi
+    if [[ $require_policy -eq 1 ]]; then
+        echo "[ENFORCED] $POLICY_PATH not staged."
+        echo "  Crate sources changed. CLAUDE.md's \"Insight capture at"
+        echo "  every commit\" rule asks you to pause and consider whether"
+        echo "  the change surfaced a CMVP gem — a compiler-enforced"
+        echo "  invariant, a zeroization composition, a conformance"
+        echo "  rationale, a design-by-construction argument that an"
+        echo "  auditor would need to accept the claim. If yes, capture it"
+        echo "  as a prose paragraph in the same commit, while the context"
+        echo "  is warm."
+        echo ""
+    fi
+    echo "Reminder — these targets are NOT enforced but may also apply:"
+    echo "  lama.yaml     (only if algorithm coverage changed)"
+    echo "  README.md     (only if the crate map or project phase changed)"
+    echo ""
+    echo "To bypass:  git commit --no-verify"
+    echo "and state the reason in the commit body (e.g. \"pure refactor,"
+    echo "no pub-item semantics changed, no new invariant surfaced\")."
+} >&2
 
-Offending staged diff lines:
-$pub_hits
-
-Doc-sync matrix for this commit:
-  [ ] $MANIFEST_PATH
-        signature, parameters, error_variants, preconditions,
-        postconditions, security block — always when a pub item
-        changes (even just a signature tweak).
-
-  [ ] docs/security-policy/security-policy.md
-        only if the Service enum, gate, profile, or any row in the
-        service table changed — add a revision log entry (R-number)
-        in the same commit.
-
-  [ ] lama.yaml
-        only if algorithm coverage itself changed (new crate,
-        algorithm added or removed).
-
-  [ ] README.md
-        only if the crate map or the "workspace layout" block needs
-        to reflect a new or renamed crate.
-
-Update the manifest (and any other boxes above that apply), stage
-the files, and re-commit.
-
-To bypass (pub-item change is truly internal):
-  git commit --no-verify
-and state the reason in the commit body.
-EOF
 exit 1

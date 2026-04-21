@@ -77,13 +77,12 @@ reference — do all six of:
    The manifests are how AI agents discover the library, so
    they must stay in sync with the actual API surface. The
    pre-commit hook at `scripts/git-hooks/pre-commit` enforces
-   the `llm-api.yaml` half of this mechanically — it fails any
-   commit that touches a `pub fn|struct|enum|const|type|trait`
-   line under `crates/*/src/` without also staging the manifest.
-   If the hook fires on a change that is genuinely internal
-   (rustdoc-only, signature-position reflow), bypass with
-   `git commit --no-verify` and explain the bypass in the
-   commit body so reviewers see the rationale.
+   `llm-api.yaml` mechanically on any change to a
+   `pub fn|struct|enum|const|type|trait` line under
+   `crates/*/src/`. If the hook fires on a change that is
+   genuinely internal (rustdoc-only, signature-position reflow),
+   bypass with `git commit --no-verify` and explain the bypass
+   in the commit body so reviewers see the rationale.
 5. **Project plan.** Update
    `~/carakastan/Projects/OxiCrypt/rust-fips-project-plan.md`
    current-status section and chunk checklists to reflect what
@@ -134,6 +133,16 @@ expose a gem as a policy commit — so this check runs at **every**
 commit gate, independent of which doc-sync steps apply. Capture
 every gem while the context is warm; a gem deferred is usually a
 gem lost.
+
+The pre-commit hook at `scripts/git-hooks/pre-commit` enforces
+this by requiring `docs/security-policy/security-policy.md` to be
+staged alongside any change under `crates/*/src/`. That does not
+mean every commit must add a gem — many changes legitimately
+surface none. It means every commit must force the thought, which
+is the only reliable way to avoid deferring a gem past the point
+where the context is warm enough to write it. When no gem applies,
+bypass with `git commit --no-verify` and say so in the commit body
+("pure refactor, no new invariant surfaced" is a valid rationale).
 
 ## Working style — check in at batch boundaries
 
