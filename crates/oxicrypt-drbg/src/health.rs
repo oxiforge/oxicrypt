@@ -63,7 +63,10 @@ pub fn run_ctr_drbg_health() -> Result<(), SelfTestFailure> {
     }
 
     // Check (2): normal instantiate + generate.
-    drbg.instantiate_df(&ENTROPY_32[..16], &NONCE_16[..8], &[])
+    // Use `instantiate_df_internal` because this function runs during
+    // power-up self-tests, when the module is in `SelfTest` state and
+    // `require_operational()` would reject the gated public API.
+    drbg.instantiate_df_internal(&ENTROPY_32[..16], &NONCE_16[..8], &[])
         .map_err(|_| SelfTestFailure)?;
     drbg.generate_df(None, &mut out)
         .map_err(|_| SelfTestFailure)?;
@@ -96,7 +99,8 @@ pub fn run_hash_drbg_health() -> Result<(), SelfTestFailure> {
         _ => return Err(SelfTestFailure),
     }
 
-    drbg.instantiate(&ENTROPY_32, &NONCE_16, &[])
+    // Use `instantiate_internal` — runs during self-test, module not yet Operational.
+    drbg.instantiate_internal(&ENTROPY_32, &NONCE_16, &[])
         .map_err(|_| SelfTestFailure)?;
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
 
@@ -125,7 +129,8 @@ pub fn run_hmac_drbg_health() -> Result<(), SelfTestFailure> {
         _ => return Err(SelfTestFailure),
     }
 
-    drbg.instantiate(&ENTROPY_32, &NONCE_16, &[])
+    // Use `instantiate_internal` — runs during self-test, module not yet Operational.
+    drbg.instantiate_internal(&ENTROPY_32, &NONCE_16, &[])
         .map_err(|_| SelfTestFailure)?;
     drbg.generate(None, &mut out).map_err(|_| SelfTestFailure)?;
 
