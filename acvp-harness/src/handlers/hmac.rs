@@ -293,28 +293,19 @@ struct HmacTestInputs {
     mac_bytes: usize,
 }
 
-/// Parse the common per-test fields (key, msg, macLen).
+/// Parse the per-test fields (key, msg). `mac_bytes` is supplied by
+/// the caller after reading and validating the group-level `macLen`
+/// — ACVP places that field on the test group, not the per-test
+/// case (verified against live demo prompts 2026-04-26
+/// HMAC-SHA2-256 / 2026-04-27 HMAC-SHA2-512).
 fn parse_hmac_test(
     t: &JsonValue,
-    full_out_bytes: usize,
+    mac_bytes: usize,
 ) -> Result<(i64, HmacTestInputs), DispatchError> {
     let tc_id = t
         .get("tcId")
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tcId"))?;
-    let mac_len_bits = t
-        .get("macLen")
-        .and_then(JsonValue::as_u64)
-        .ok_or(DispatchError::MissingField("macLen"))?;
-    if !mac_len_bits.is_multiple_of(8) {
-        return Err(DispatchError::Unsupported(
-            "HMAC with non-byte-aligned `macLen`",
-        ));
-    }
-    let mac_bytes: usize = (mac_len_bits / 8) as usize;
-    if mac_bytes == 0 || mac_bytes > full_out_bytes {
-        return Err(DispatchError::Crypto("HMAC: `macLen` outside legal range"));
-    }
     let key_hex = t
         .get("key")
         .and_then(JsonValue::as_str)
@@ -369,13 +360,31 @@ where
         "MVT" => HmacTestType::Mvt,
         other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
     };
+    // ACVP places `macLen` on the test group, not on each test case
+    // (per the spec excerpt in this file's module-level docs and
+    // verified against the live demo prompts 2026-04-26 / 2026-04-27).
+    // Read once here, validate against this handler's full output
+    // length, and pass the pre-computed `mac_bytes` to each test.
+    let mac_len_bits = group
+        .get("macLen")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("macLen"))?;
+    if !mac_len_bits.is_multiple_of(8) {
+        return Err(DispatchError::Unsupported(
+            "HMAC with non-byte-aligned `macLen`",
+        ));
+    }
+    let mac_bytes: usize = (mac_len_bits / 8) as usize;
+    if mac_bytes == 0 || mac_bytes > full_out_bytes {
+        return Err(DispatchError::Crypto("HMAC: `macLen` outside legal range"));
+    }
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
     for t in tests {
-        let (tc_id, inputs) = parse_hmac_test(t, full_out_bytes)?;
+        let (tc_id, inputs) = parse_hmac_test(t, mac_bytes)?;
         let full = compute(&inputs.key, &inputs.msg)?;
         if full.len() != full_out_bytes {
             return Err(DispatchError::Crypto(
@@ -412,4 +421,37 @@ where
         ("tgId".to_string(), JsonValue::Number(group_id)),
         ("tests".to_string(), JsonValue::Array(results)),
     ]))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::json;
+
+    /// ACVP places `macLen` on the test group, not the per-test case.
+    /// Live demo prompt 2026-04-27 (HMAC-SHA2-512 session 724129)
+    /// confirmed this against the family handler. The test exercises
+    /// the AFT path with a group-level macLen and no per-test macLen,
+    /// which is what the live server actually sends.
+    #[test]
+    fn handle_hmac_group_reads_mac_len_from_group() {
+        let group = json::parse(
+            r#"{
+                "tgId": 1,
+                "testType": "AFT",
+                "macLen": 256,
+                "tests": [
+                    {"tcId": 1, "key": "00", "msg": "00"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let result = handle_hmac_group(&group, 32, |_key, _msg| Ok(vec![0u8; 32]));
+        assert!(
+            result.is_ok(),
+            "expected Ok, got {:?}",
+            result.err()
+        );
+    }
 }
