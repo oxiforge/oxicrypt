@@ -351,7 +351,10 @@ fn build_external_prefix(ctx: &[u8]) -> Result<ExternalPrefix, Error> {
     buf[0] = 0x00; // pure SLH-DSA (HashSLH-DSA would use 0x01)
     buf[1] = ctx.len() as u8;
     buf[2..2 + ctx.len()].copy_from_slice(ctx);
-    Ok(ExternalPrefix { buf, len: 2 + ctx.len() })
+    Ok(ExternalPrefix {
+        buf,
+        len: 2 + ctx.len(),
+    })
 }
 
 // ── Self-tests ──────────────────────────────────────────────────────

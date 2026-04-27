@@ -137,11 +137,7 @@ pub fn keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
 /// - [`Error::AlgorithmRestricted`] if the active profile forbids ML-DSA-87.
 /// - [`Error::InvalidInput`] if `ctx.len() > 255` (FIPS 204 §5.2 limit) or
 ///   signing fails after the rejection-sampling bound.
-pub fn sign(
-    sk: &[u8; SK_LEN],
-    message: &[u8],
-    ctx: &[u8],
-) -> Result<[u8; SIG_LEN], Error> {
+pub fn sign(sk: &[u8; SK_LEN], message: &[u8], ctx: &[u8]) -> Result<[u8; SIG_LEN], Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::MlDsa87Sign)?;
     let prefix_buf = build_external_prefix(ctx)?;
@@ -222,7 +218,10 @@ fn build_external_prefix(ctx: &[u8]) -> Result<ExternalPrefix, Error> {
     buf[0] = 0x00; // pure ML-DSA (HashML-DSA would use 0x01)
     buf[1] = ctx.len() as u8;
     buf[2..2 + ctx.len()].copy_from_slice(ctx);
-    Ok(ExternalPrefix { buf, len: 2 + ctx.len() })
+    Ok(ExternalPrefix {
+        buf,
+        len: 2 + ctx.len(),
+    })
 }
 
 // ── Internal API (gate-free, for KATs) ──────────────────────────

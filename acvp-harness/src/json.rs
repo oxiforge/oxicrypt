@@ -686,7 +686,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_negative_leading_zero() {
-        assert!(matches!(parse("-01"), Err(ParseError::InvalidNumber { .. })));
+        assert!(matches!(
+            parse("-01"),
+            Err(ParseError::InvalidNumber { .. })
+        ));
     }
 
     #[test]

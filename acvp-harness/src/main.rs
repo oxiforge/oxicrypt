@@ -399,12 +399,8 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
 }
 
 fn print_demo_run_usage() {
-    eprintln!(
-        "usage: acvp-harness demo-run --cert <cert.pem> --totp-secret <hex>"
-    );
-    eprintln!(
-        "               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')"
-    );
+    eprintln!("usage: acvp-harness demo-run --cert <cert.pem> --totp-secret <hex>");
+    eprintln!("               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')");
     eprintln!("               [--pkcs11-module <path>] [--pkcs11-pin-source <path>]");
     eprintln!("               [--http-backend curl|s_client] [--algorithm <name>]");
     eprintln!("               [--server <url>] [--log <path>]");
@@ -412,28 +408,20 @@ fn print_demo_run_usage() {
     eprintln!("  --key                 file-based PEM key (default backend: curl)");
     eprintln!("  --pkcs11-key          PKCS#11 URI for hardware key (default backend: s_client)");
     eprintln!("  --pkcs11-module       PKCS#11 provider module .so (default: opensc-pkcs11)");
-    eprintln!(
-        "  --pkcs11-pin-source   path to a file containing the PIV PIN (avoids tty prompts;"
-    );
+    eprintln!("  --pkcs11-pin-source   path to a file containing the PIV PIN (avoids tty prompts;");
     eprintln!("                        place on /dev/shm with mode 0600, shred after use)");
     eprintln!("  --http-backend        override transport: curl or s_client");
     eprintln!("  --algorithm <name>    test a single algorithm (e.g. SHA2-256)");
     eprintln!(
         "  --query-session <url> fetch verdict for an existing session (skip register+submit);"
     );
-    eprintln!("                        URL may be relative (/acvp/v1/testSessions/...) or absolute");
     eprintln!(
-        "  --refresh-with <jwt>  send existing session-bound accessToken at login;"
+        "                        URL may be relative (/acvp/v1/testSessions/...) or absolute"
     );
-    eprintln!(
-        "                        server re-issues a fresh token with same tsId/vsId scope"
-    );
-    eprintln!(
-        "  --refresh-with-file <path>  same as --refresh-with but read token from file"
-    );
-    eprintln!(
-        "  --server <url>        ACVP server (default: https://demo.acvts.nist.gov)"
-    );
+    eprintln!("  --refresh-with <jwt>  send existing session-bound accessToken at login;");
+    eprintln!("                        server re-issues a fresh token with same tsId/vsId scope");
+    eprintln!("  --refresh-with-file <path>  same as --refresh-with but read token from file");
+    eprintln!("  --server <url>        ACVP server (default: https://demo.acvts.nist.gov)");
     eprintln!("  --log <path>          transcript log path (default: acvp-session.json)");
 }
 

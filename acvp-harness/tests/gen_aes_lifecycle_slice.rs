@@ -15,7 +15,11 @@
     clippy::ignore_without_reason,
     clippy::similar_names,
     clippy::integer_division,
-    clippy::manual_div_ceil
+    clippy::manual_div_ceil,
+    // Lifecycle generators use `let mut tc_id = 1; for _ in 0..N { ...; tc_id += 1; }`
+    // as a deliberate fixture-builder idiom; rewriting to `for tc_id in 1..=N` would
+    // be cosmetic. Allow at file scope rather than every test-scaffold module.
+    clippy::explicit_counter_loop
 )]
 //! One-shot helper that generates AES encrypt-decrypt lifecycle vector
 //! files for all seven AES modes:

@@ -115,8 +115,7 @@ pub struct AcvpConfig {
 
 impl AcvpConfig {
     /// Default OpenSC PKCS#11 module `.so` path on Debian/Ubuntu.
-    pub const DEFAULT_PKCS11_MODULE: &'static str =
-        "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so";
+    pub const DEFAULT_PKCS11_MODULE: &'static str = "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so";
 
     /// Resolved PKCS#11 module path (config override or platform default).
     pub fn resolved_pkcs11_module(&self) -> &str {
@@ -191,9 +190,7 @@ fn redact_pkcs11_pin_value(uri: &str) -> String {
         let tail = uri.get(prefix_end..).unwrap_or("");
         // pin-value runs until the next URI delimiter (`&`, `;`, `?`)
         // or end of string.
-        let stop = tail
-            .find(['&', ';', '?'])
-            .unwrap_or(tail.len());
+        let stop = tail.find(['&', ';', '?']).unwrap_or(tail.len());
         let suffix = tail.get(stop..).unwrap_or("");
         format!("{prefix}<REDACTED>{suffix}")
     } else {
@@ -215,8 +212,16 @@ fn urlencode_unreserved(s: &str) -> String {
         } else {
             // Two-digit uppercase hex per RFC 3986 §2.1.
             out.push('%');
-            out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0').to_ascii_uppercase());
-            out.push(char::from_digit(u32::from(b & 0x0f), 16).unwrap_or('0').to_ascii_uppercase());
+            out.push(
+                char::from_digit(u32::from(b >> 4), 16)
+                    .unwrap_or('0')
+                    .to_ascii_uppercase(),
+            );
+            out.push(
+                char::from_digit(u32::from(b & 0x0f), 16)
+                    .unwrap_or('0')
+                    .to_ascii_uppercase(),
+            );
         }
     }
     out
@@ -430,8 +435,7 @@ impl SClientConnection {
             buf
         } else {
             return Err(
-                "response missing both Content-Length and chunked Transfer-Encoding"
-                    .to_string(),
+                "response missing both Content-Length and chunked Transfer-Encoding".to_string(),
             );
         };
 
@@ -569,7 +573,9 @@ impl<'a> Transport<'a> {
         bearer: &str,
     ) -> Result<HttpResponse, String> {
         match self {
-            Transport::Curl(config) => http_request_curl_with_retry(method, url, body, config, bearer),
+            Transport::Curl(config) => {
+                http_request_curl_with_retry(method, url, body, config, bearer)
+            }
             Transport::SClient(conn, config) => {
                 // Honor a prior Connection: close signal before
                 // issuing the next request. The reconnect costs one
@@ -708,10 +714,7 @@ fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
         .get(scheme_sep.wrapping_add(3)..)
         .ok_or_else(|| format!("URL has no authority: {url}"))?;
     let (host_port, path) = match rest.find('/') {
-        Some(i) => (
-            rest.get(..i).unwrap_or(""),
-            rest.get(i..).unwrap_or("/"),
-        ),
+        Some(i) => (rest.get(..i).unwrap_or(""), rest.get(i..).unwrap_or("/")),
         None => (rest, "/"),
     };
     let (host, port) = match host_port.rfind(':') {

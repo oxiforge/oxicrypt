@@ -13,7 +13,11 @@
     clippy::uninlined_format_args,
     clippy::items_after_statements,
     clippy::ignore_without_reason,
-    clippy::similar_names
+    clippy::similar_names,
+    // Lifecycle generators use `let mut tc_id = 1; for _ in 0..N { ...; tc_id += 1; }`
+    // as a deliberate fixture-builder idiom; rewriting to `for tc_id in 1..=N` would
+    // be cosmetic. Allow at file scope rather than every test-scaffold module.
+    clippy::explicit_counter_loop
 )]
 //! One-shot helper that generates RSA primitive lifecycle vector files:
 //!
