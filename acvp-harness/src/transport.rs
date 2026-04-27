@@ -1124,6 +1124,25 @@ fn process_one_vector_set(
     }
 }
 
+/// Classify a vector-set disposition as a harness-level error.
+///
+/// Returns `true` when the disposition came from a transport, dispatch,
+/// submission, or polling failure inside the harness itself — these
+/// are the kinds of errors that should produce a non-zero process
+/// exit so wrappers and CI can detect them. Returns `false` for the
+/// ACVP grader's verdict strings (`passed` / `failed`) and any other
+/// unknown disposition: a `failed` verdict is a meaningful test
+/// outcome, not a harness error.
+fn is_error_disposition(disp: &str) -> bool {
+    disp.starts_with("DISPATCH_ERROR")
+        || disp.starts_with("FETCH_ERROR")
+        || disp.starts_with("PARSE_ERROR")
+        || disp.starts_with("SUBMIT_")
+        || disp.starts_with("RETRY_TIMEOUT")
+        || disp.starts_with("POLL_ERROR")
+        || disp.starts_with("HTTP_")
+}
+
 /// Print and log the session summary, then write the transcript file.
 fn write_session_summary(
     results: &[(String, String)],
@@ -1159,6 +1178,30 @@ fn write_session_summary(
     log.log_json("session_summary", &summary);
     log.write_to_file(log_path)?;
     eprintln!("[transport] transcript written to {log_path}");
+
+    // Bubble harness-level errors to caller so main()'s ExitCode
+    // propagation reflects them (exit 3 = runtime failure). The
+    // transcript is fully written before this check so operators
+    // always have the per-vector-set details on disk. ACVP-grader
+    // verdicts ("passed"/"failed") are deliberately not errors —
+    // a "failed" verdict is a real test outcome, communicated via
+    // stdout and the transcript JSON.
+    let errors: Vec<&(String, String)> = results
+        .iter()
+        .filter(|(_, disp)| is_error_disposition(disp))
+        .collect();
+    if !errors.is_empty() {
+        let detail = errors
+            .iter()
+            .map(|(url, disp)| format!("{url} → {disp}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!(
+            "{} of {} vector set(s) had harness-level errors: {detail}",
+            errors.len(),
+            results.len()
+        ));
+    }
     Ok(())
 }
 
@@ -1457,5 +1500,67 @@ mod tests {
     fn clamp_retry_hint_at_boundaries() {
         assert_eq!(clamp_retry_hint(5), Some(5));
         assert_eq!(clamp_retry_hint(120), Some(120));
+    }
+
+    #[test]
+    fn is_error_disposition_dispatch() {
+        assert!(is_error_disposition("DISPATCH_ERROR"));
+    }
+
+    #[test]
+    fn is_error_disposition_fetch() {
+        assert!(is_error_disposition("FETCH_ERROR"));
+    }
+
+    #[test]
+    fn is_error_disposition_parse() {
+        assert!(is_error_disposition("PARSE_ERROR"));
+    }
+
+    #[test]
+    fn is_error_disposition_submit_plain() {
+        assert!(is_error_disposition("SUBMIT_ERROR"));
+    }
+
+    #[test]
+    fn is_error_disposition_submit_http_status() {
+        assert!(is_error_disposition("SUBMIT_HTTP_500"));
+        assert!(is_error_disposition("SUBMIT_HTTP_400"));
+    }
+
+    #[test]
+    fn is_error_disposition_retry_timeout() {
+        assert!(is_error_disposition("RETRY_TIMEOUT"));
+    }
+
+    #[test]
+    fn is_error_disposition_poll_error() {
+        assert!(is_error_disposition("POLL_ERROR"));
+    }
+
+    #[test]
+    fn is_error_disposition_http_4xx_5xx() {
+        assert!(is_error_disposition("HTTP_404"));
+        assert!(is_error_disposition("HTTP_500"));
+        assert!(is_error_disposition("HTTP_503"));
+    }
+
+    #[test]
+    fn is_error_disposition_passed_is_not_error() {
+        assert!(!is_error_disposition("passed"));
+    }
+
+    #[test]
+    fn is_error_disposition_failed_verdict_is_not_harness_error() {
+        // ACVP-grader test failures are a meaningful outcome, not a
+        // harness-level error. Exit code stays 0; the disposition
+        // string in stdout/transcript carries the signal.
+        assert!(!is_error_disposition("failed"));
+    }
+
+    #[test]
+    fn is_error_disposition_unknown_disposition_is_not_error() {
+        assert!(!is_error_disposition("incomplete"));
+        assert!(!is_error_disposition(""));
     }
 }
