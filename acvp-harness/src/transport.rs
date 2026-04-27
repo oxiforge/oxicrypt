@@ -1316,15 +1316,12 @@ fn poll_verdict(
         if poll > max_polls {
             return Ok("POLL_TIMEOUT".to_string());
         }
-        let (delay_ms, source) = match retry_hint.take() {
-            Some(secs) => (secs.saturating_mul(1000), "server-body-retry"),
-            None => (
-                std::cmp::min(2000u64.wrapping_mul(1u64 << poll.min(4)), 30_000),
-                "local-backoff-fallback",
-            ),
+        let delay_ms = match retry_hint.take() {
+            Some(secs) => secs.saturating_mul(1000),
+            None => std::cmp::min(2000u64.wrapping_mul(1u64 << poll.min(4)), 30_000),
         };
         eprintln!(
-            "    [poll {poll}/{max_polls}] sleeping {}s ({source}) before next /results fetch",
+            "    [poll {poll}/{max_polls}] sleeping {}s before next /results fetch",
             delay_ms / 1000
         );
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
