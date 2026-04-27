@@ -126,7 +126,17 @@ fn noop_kat() -> Result<(), oxicrypt_module::SelfTestFailure> {
     Ok(())
 }
 
-fn main() {
+/// Process exit codes used by this binary.
+///
+/// `0` — success.
+/// `1` — power-up self-test failed (FIPS module integrity, KAT
+///       failure, or other initialization error). The harness will
+///       not perform any cryptographic work.
+/// `2` — invalid CLI usage (missing required flag, unknown flag,
+///       mutually-exclusive flag combination).
+/// `3` — runtime failure during a subcommand (network, I/O, parse
+///       error, or remote rejection).
+fn main() -> std::process::ExitCode {
     // ── LAMA manifest ───────────────────────────────────────────────
     // If the caller passes `--lama`, print the compile-time-embedded
     // YAML manifest and exit immediately — before module
@@ -140,7 +150,7 @@ fn main() {
             "{}",
             include_str!("../../docs/llm-api-manifest/llm-api.yaml")
         );
-        std::process::exit(0);
+        return std::process::ExitCode::from(0);
     }
 
     // Self-signing has deliberately been removed: the Linux kernel
@@ -154,35 +164,30 @@ fn main() {
         Ok(()) | Err(Error::AlreadyInitialized) => {}
         Err(e) => {
             eprintln!("oxicrypt acvp-harness: initialization failed: {e}");
-            // Deliberately not using `std::process::exit` here so the
-            // scaffold stays minimal; we will introduce a proper
-            // CLI error type in a later phase.
-            return;
+            return std::process::ExitCode::from(1);
         }
     }
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 && args[1] == "dispatch" {
-        run_dispatch_cli(&args);
-        return;
+        return run_dispatch_cli(&args);
     }
     if args.len() >= 2 && args[1] == "dispatch-shs" {
-        run_dispatch_shs_cli(&args);
-        return;
+        return run_dispatch_shs_cli(&args);
     }
     if args.len() >= 2 && args[1] == "demo-run" {
-        run_demo_cli(&args);
-        return;
+        return run_demo_cli(&args);
     }
 
     print_self_test_banner();
+    std::process::ExitCode::from(0)
 }
 
 // CLI parser with many flags; splitting it would add boilerplate without
 // clarity. The function is a flat sequence of flag-match arms followed by
 // validation and config construction.
 #[allow(clippy::too_many_lines)]
-fn run_demo_cli(args: &[String]) {
+fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     use acvp_harness::transport::{AcvpConfig, HttpBackend};
 
     // demo-run --cert <cert> --totp-secret <hex>
@@ -199,6 +204,7 @@ fn run_demo_cli(args: &[String]) {
     let mut totp_secret = String::new();
     let mut algorithm: Option<String> = None;
     let mut query_session: Option<String> = None;
+    let mut refresh_with: Option<String> = None;
     let mut server = "https://demo.acvts.nist.gov".to_string();
     let mut log_path = "acvp-session.json".to_string();
     let mut i = 2;
@@ -245,7 +251,7 @@ fn run_demo_cli(args: &[String]) {
                                 "oxicrypt acvp-harness demo-run: unknown --http-backend value \
                                  {other:?} (valid: curl, s_client)"
                             );
-                            return;
+                            return std::process::ExitCode::from(2);
                         }
                     };
                 }
@@ -268,6 +274,27 @@ fn run_demo_cli(args: &[String]) {
                     query_session = Some(args[i].clone());
                 }
             }
+            "--refresh-with" => {
+                i += 1;
+                if i < args.len() {
+                    refresh_with = Some(args[i].clone());
+                }
+            }
+            "--refresh-with-file" => {
+                i += 1;
+                if i < args.len() {
+                    match std::fs::read_to_string(&args[i]) {
+                        Ok(s) => refresh_with = Some(s.trim().to_string()),
+                        Err(e) => {
+                            eprintln!(
+                                "oxicrypt acvp-harness demo-run: cannot read --refresh-with-file {:?}: {e}",
+                                &args[i]
+                            );
+                            return std::process::ExitCode::from(2);
+                        }
+                    }
+                }
+            }
             "--server" => {
                 i += 1;
                 if i < args.len() {
@@ -283,7 +310,7 @@ fn run_demo_cli(args: &[String]) {
             other => {
                 eprintln!("oxicrypt acvp-harness demo-run: unknown flag {other:?}");
                 print_demo_run_usage();
-                return;
+                return std::process::ExitCode::from(2);
             }
         }
         i += 1;
@@ -292,7 +319,7 @@ fn run_demo_cli(args: &[String]) {
     if cert.is_empty() || totp_secret.is_empty() {
         eprintln!("oxicrypt acvp-harness demo-run: --cert and --totp-secret are required");
         print_demo_run_usage();
-        return;
+        return std::process::ExitCode::from(2);
     }
 
     // Exactly one of --key or --pkcs11-key.
@@ -305,13 +332,13 @@ fn run_demo_cli(args: &[String]) {
                  --pkcs11-key <pkcs11:URI>"
             );
             print_demo_run_usage();
-            return;
+            return std::process::ExitCode::from(2);
         }
         (true, true) => {
             eprintln!(
                 "oxicrypt acvp-harness demo-run: --key and --pkcs11-key are mutually exclusive"
             );
-            return;
+            return std::process::ExitCode::from(2);
         }
         _ => {}
     }
@@ -352,7 +379,7 @@ fn run_demo_cli(args: &[String]) {
                     eprintln!(
                         "oxicrypt acvp-harness demo-run: cannot read PIN from {pkcs11_pin_source:?}: {e}"
                     );
-                    return;
+                    return std::process::ExitCode::from(2);
                 }
             }
         },
@@ -360,12 +387,15 @@ fn run_demo_cli(args: &[String]) {
         totp_secret,
         filter_algorithm: algorithm,
         query_session_url: query_session,
+        refresh_with_token: refresh_with,
         log_path,
     };
 
     if let Err(msg) = acvp_harness::transport::run_demo(&config) {
         eprintln!("oxicrypt acvp-harness: demo-run failed: {msg}");
+        return std::process::ExitCode::from(3);
     }
+    std::process::ExitCode::from(0)
 }
 
 fn print_demo_run_usage() {
@@ -392,6 +422,15 @@ fn print_demo_run_usage() {
         "  --query-session <url> fetch verdict for an existing session (skip register+submit);"
     );
     eprintln!("                        URL may be relative (/acvp/v1/testSessions/...) or absolute");
+    eprintln!(
+        "  --refresh-with <jwt>  send existing session-bound accessToken at login;"
+    );
+    eprintln!(
+        "                        server re-issues a fresh token with same tsId/vsId scope"
+    );
+    eprintln!(
+        "  --refresh-with-file <path>  same as --refresh-with but read token from file"
+    );
     eprintln!(
         "  --server <url>        ACVP server (default: https://demo.acvts.nist.gov)"
     );
@@ -423,16 +462,18 @@ fn print_self_test_banner() {
     );
 }
 
-fn run_dispatch_cli(args: &[String]) {
+fn run_dispatch_cli(args: &[String]) -> std::process::ExitCode {
     if args.len() != 4 {
         eprintln!("usage: acvp-harness dispatch <prompt.json> <response.json>");
-        return;
+        return std::process::ExitCode::from(2);
     }
     let prompt_path = &args[2];
     let response_path = &args[3];
     if let Err(msg) = run_dispatch(prompt_path, response_path) {
         eprintln!("oxicrypt acvp-harness: dispatch failed: {msg}");
+        return std::process::ExitCode::from(3);
     }
+    std::process::ExitCode::from(0)
 }
 
 fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
@@ -456,20 +497,22 @@ fn run_dispatch(prompt_path: &str, response_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_dispatch_shs_cli(args: &[String]) {
+fn run_dispatch_shs_cli(args: &[String]) -> std::process::ExitCode {
     if args.len() != 5 {
         eprintln!("usage: acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>");
         eprintln!(
             "  algorithm ∈ {{SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256}}"
         );
-        return;
+        return std::process::ExitCode::from(2);
     }
     let algorithm = &args[2];
     let prompt_path = &args[3];
     let response_path = &args[4];
     if let Err(msg) = run_dispatch_shs(algorithm, prompt_path, response_path) {
         eprintln!("oxicrypt acvp-harness: dispatch-shs failed: {msg}");
+        return std::process::ExitCode::from(3);
     }
+    std::process::ExitCode::from(0)
 }
 
 fn run_dispatch_shs(algorithm: &str, prompt_path: &str, response_path: &str) -> Result<(), String> {

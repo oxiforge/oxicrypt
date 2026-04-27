@@ -102,6 +102,13 @@ pub struct AcvpConfig {
     /// created by a previous run, without burning another vector-set
     /// generation cycle on the demo server.
     pub query_session_url: Option<String>,
+    /// Optional: an existing session-bound accessToken (potentially
+    /// expired) to send alongside the TOTP at login. The ACVP server
+    /// validates the JWT signature and, if it matches, issues a fresh
+    /// session-bound token with the same `tsId`/`vsId` scope. Required
+    /// to authorize on /testSessions/{id}/* endpoints — those reject
+    /// the general login token alone.
+    pub refresh_with_token: Option<String>,
     /// Path to write the session transcript JSON log.
     pub log_path: String,
 }
@@ -812,8 +819,20 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     // No JWT wrapping.
     eprintln!("[transport] logging in to {}...", config.server_url);
     let totp_code = totp_now(&totp_secret)?;
-    let login_body =
-        format!("[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\"}}]");
+    // If the caller provided an existing session-bound accessToken via
+    // --refresh-with, embed it in the login body. The server validates
+    // its signature (ignoring the JWT's exp) and re-issues a fresh
+    // session-bound token with the same tsId/vsId scope, suitable for
+    // re-accessing /testSessions/{id}/* after the original 30-minute
+    // token expiry.
+    let login_body = if let Some(token) = &config.refresh_with_token {
+        eprintln!("[transport] requesting refresh of existing session token");
+        format!(
+            "[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\",\"accessToken\":\"{token}\"}}]"
+        )
+    } else {
+        format!("[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\"}}]")
+    };
     let login_url = format!("{}/acvp/v1/login", config.server_url);
     let login_resp = transport.post(&login_url, &login_body, "")?;
     if login_resp.status < 200 || login_resp.status >= 300 {
