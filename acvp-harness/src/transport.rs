@@ -927,6 +927,15 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         &format!("{} vector sets", vector_set_urls.len()),
     );
     log.log_json("registration_response", &reg_json);
+    // Incremental flush — the registration response carries the
+    // session-bound JWT needed to fetch verdicts later. If the operator
+    // Ctrl+C's mid-session, the partial transcript on disk is enough
+    // to recover the token via `--refresh-with`. Flush failures are
+    // non-fatal: the network workflow can still succeed and the final
+    // write_session_summary will surface the disk error.
+    if let Err(e) = log.write_to_file(&config.log_path) {
+        eprintln!("[transport] transcript flush failed after registration (continuing): {e}");
+    }
 
     // ── Steps 3–5: Fetch → Process → Submit per vector set ─────────
     let results = process_vector_sets(
@@ -936,6 +945,7 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         &session_token,
         &registry,
         &mut log,
+        &config.log_path,
     );
 
     // ── Summary ────────────────────────────────────────────────────
@@ -952,6 +962,7 @@ fn process_vector_sets(
     bearer: &str,
     registry: &Registry,
     log: &mut TranscriptLog,
+    log_path: &str,
 ) -> Vec<(String, String)> {
     let mut results: Vec<(String, String)> = Vec::new();
     for (i, vs_url) in urls.iter().enumerate() {
@@ -964,6 +975,7 @@ fn process_vector_sets(
             bearer,
             registry,
             log,
+            log_path,
         );
         results.push((vs_url.clone(), disposition));
     }
@@ -982,6 +994,7 @@ fn process_one_vector_set(
     bearer: &str,
     registry: &Registry,
     log: &mut TranscriptLog,
+    log_path: &str,
 ) -> String {
     let full_url = resolve_url(server_url, vs_url);
     eprintln!("[transport] [{index}/{total}] fetching {vs_url}...");
@@ -1075,6 +1088,13 @@ fn process_one_vector_set(
         Ok(r) if r.status >= 200 && r.status < 300 => {
             eprintln!("  [transport] submitted OK");
             log.log("submit_ok", vs_url);
+            // Incremental flush — captures the just-submitted state so
+            // an operator interruption between submit and verdict-poll
+            // doesn't lose the vector-set URL needed to fetch the
+            // verdict via `--query-session`.
+            if let Err(e) = log.write_to_file(log_path) {
+                eprintln!("  [transport] transcript flush failed after submit (continuing): {e}");
+            }
         }
         Ok(r) => {
             eprintln!("  [transport] submit returned HTTP {}", r.status);
