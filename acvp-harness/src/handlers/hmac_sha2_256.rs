@@ -74,13 +74,21 @@ impl AlgorithmHandler for HmacSha2_256Handler {
             "MVT" => TestType::Mvt,
             other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
         };
+        // ACVP places `macLen` on the testGroup, not on each test case
+        // (per the spec excerpt in this file's module-level docs and
+        // verified against the live demo prompt 2026-04-26). Read once
+        // here and pass into each `run_case`.
+        let mac_len_bits = group
+            .get("macLen")
+            .and_then(JsonValue::as_u64)
+            .ok_or(DispatchError::MissingField("macLen"))?;
         let tests = group
             .get("tests")
             .and_then(JsonValue::as_array)
             .ok_or(DispatchError::MissingField("tests"))?;
         let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
         for t in tests {
-            results.push(run_case(t, test_type)?);
+            results.push(run_case(t, test_type, mac_len_bits)?);
         }
         Ok(JsonValue::Object(vec![
             ("tgId".to_string(), JsonValue::Number(tg_id)),
@@ -89,16 +97,16 @@ impl AlgorithmHandler for HmacSha2_256Handler {
     }
 }
 
-fn run_case(t: &JsonValue, test_type: TestType) -> Result<JsonValue, DispatchError> {
+fn run_case(
+    t: &JsonValue,
+    test_type: TestType,
+    mac_len_bits: u64,
+) -> Result<JsonValue, DispatchError> {
     let tc_id = t
         .get("tcId")
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tcId"))?;
-    let mac_len_bits = t
-        .get("macLen")
-        .and_then(JsonValue::as_u64)
-        .ok_or(DispatchError::MissingField("macLen"))?;
-    if mac_len_bits % 8 != 0 {
+    if !mac_len_bits.is_multiple_of(8) {
         return Err(DispatchError::Unsupported(
             "HMAC-SHA2-256 with non-byte-aligned `macLen`",
         ));

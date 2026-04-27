@@ -1261,16 +1261,25 @@ fn resolve_url(server_base: &str, url: &str) -> String {
     }
 }
 
-/// Poll a vector-set URL until the status is `"complete"`, with
-/// exponential backoff. Returns the disposition string. Uses the
-/// session's persistent transport, so each poll is just an HTTP
-/// request over the existing TLS tunnel — no per-poll touch.
+/// Poll the vector-set's *results* endpoint until the verdict is
+/// available, with exponential backoff. Returns the disposition string.
+/// Uses the session's persistent transport, so each poll is just an
+/// HTTP request over the existing TLS tunnel — no per-poll touch.
+///
+/// **URL is `<vsUrl>/results`, not `<vsUrl>` itself.** The vector-set
+/// URL returns the prompt JSON regardless of grading state; the
+/// `/results` sub-URL is what carries the verdict envelope. Confirmed
+/// 2026-04-26 by comparing the earlier prompt fetch (`/vectorSets/{id}`
+/// returned ~900KB prompt with no status field even after grading) to
+/// the verdict fetch (`/vectorSets/{id}/results` returned 22KB body
+/// with `disposition: passed`).
 fn poll_verdict(
-    url: &str,
+    vs_url: &str,
     transport: &mut Transport,
     bearer: &str,
     log: &mut TranscriptLog,
 ) -> Result<String, String> {
+    let results_url = format!("{vs_url}/results");
     let max_polls = 20u32;
     let mut poll = 0u32;
     loop {
@@ -1278,29 +1287,41 @@ fn poll_verdict(
         if poll > max_polls {
             return Ok("POLL_TIMEOUT".to_string());
         }
-        // Wait before polling (start with 2s, cap at 30s)
+        // Wait before polling (start with 2s, cap at 30s).
         let delay = std::cmp::min(2000u64.wrapping_mul(1u64 << poll.min(4)), 30_000);
+        eprintln!(
+            "    [poll {poll}/{max_polls}] sleeping {}s before next /results fetch",
+            delay / 1000
+        );
         std::thread::sleep(std::time::Duration::from_millis(delay));
 
-        let resp = transport.get(url, bearer)?;
+        let resp = transport.get(&results_url, bearer)?;
         if resp.status < 200 || resp.status >= 300 {
+            eprintln!("    [poll {poll}/{max_polls}] HTTP {}", resp.status);
             log.log("poll_error", &format!("HTTP {}", resp.status));
             continue;
         }
         let parsed = json::parse(&resp.body).map_err(|e| format!("parse poll response: {e}"))?;
         let body = unwrap_acvp_array(&parsed);
 
-        if let Some(status) = body.get("status").and_then(JsonValue::as_str) {
-            if status == "complete" {
-                let disposition = body
-                    .get("disposition")
-                    .and_then(JsonValue::as_str)
-                    .unwrap_or("unknown")
-                    .to_string();
-                return Ok(disposition);
-            }
-            eprintln!("    [poll {poll}/{max_polls}] status={status}");
+        // Verdict envelope (per the SHA3-256 verdict observed 2026-04-26):
+        //   {"vsId": ..., "disposition": "passed"|"failed", "tests": [...]}
+        // `disposition` at top level means grading is complete. If the
+        // server is still grading it returns either {"retry": N} or a
+        // similar holding response — handle both by looping.
+        if let Some(disposition) = body.get("disposition").and_then(JsonValue::as_str) {
+            return Ok(disposition.to_string());
         }
+        if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64) {
+            eprintln!(
+                "    [poll {poll}/{max_polls}] server says retry in {retry_secs}s (still grading)"
+            );
+            continue;
+        }
+        let preview: String = resp.body.chars().take(120).collect();
+        eprintln!(
+            "    [poll {poll}/{max_polls}] HTTP 200 but no disposition/retry; body[0..120]: {preview:?}"
+        );
     }
 }
 
