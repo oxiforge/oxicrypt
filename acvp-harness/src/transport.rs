@@ -1028,15 +1028,15 @@ fn process_one_vector_set(
         // Detect retry envelope. ACVP wraps responses in a two-element
         // array `[{"acvVersion":...},{"retry":N}]`; we unwrap before
         // checking. A non-positive retry value or absent field means
-        // the body is the actual vector set.
+        // the body is the actual vector set. Server-supplied retry
+        // seconds are routed through `clamp_retry_hint` for the same
+        // defense-in-depth bound applied in `poll_verdict`.
         let body = unwrap_acvp_array(&parsed);
         if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64) {
-            if retry_secs > 0 {
-                // Safe because of the > 0 guard above.
-                let secs = retry_secs.unsigned_abs();
+            if let Some(secs) = clamp_retry_hint(retry_secs) {
                 eprintln!(
-                    "  [transport] vector set not ready; server says retry in {secs}s \
-                     (poll {poll}/{max_polls})"
+                    "  [transport] vector set not ready; server says retry in {retry_secs}s, \
+                     sleeping {secs}s (poll {poll}/{max_polls})"
                 );
                 log.log("vector_set_retry", &format!("{secs}s, poll {poll}"));
                 std::thread::sleep(std::time::Duration::from_secs(secs));
@@ -1261,10 +1261,38 @@ fn resolve_url(server_base: &str, url: &str) -> String {
     }
 }
 
+/// Clamp a server-supplied retry hint (seconds) to `[5, 120]`, or
+/// return `None` for non-positive hints so the caller falls through
+/// to its own backoff schedule.
+///
+/// Floor prevents a server-induced retry storm if the server asks
+/// for an unreasonably tight cadence; ceiling bounds the worst-case
+/// total polling wall-clock at `max_polls × 120s`.
+fn clamp_retry_hint(secs: i64) -> Option<u64> {
+    let pos = u64::try_from(secs).ok()?;
+    if pos == 0 {
+        None
+    } else {
+        Some(pos.clamp(5, 120))
+    }
+}
+
 /// Poll the vector-set's *results* endpoint until the verdict is
-/// available, with exponential backoff. Returns the disposition string.
-/// Uses the session's persistent transport, so each poll is just an
-/// HTTP request over the existing TLS tunnel — no per-poll touch.
+/// available, honoring server-supplied retry hints when present and
+/// falling back to local exponential backoff otherwise. Returns the
+/// disposition string. Uses the session's persistent transport, so
+/// each poll is just an HTTP request over the existing TLS tunnel —
+/// no per-poll touch.
+///
+/// **Sleep schedule:** when the server returns `{"retry": N}` on a
+/// still-grading response, the next iteration sleeps for `N` seconds
+/// (clamped to `[5s, 120s]` via [`clamp_retry_hint`]). When no hint
+/// is available, the loop falls back to the legacy local schedule
+/// `min(2s × 2^poll.min(4), 30s)`. Honoring the server's hint is the
+/// politeness fix per ACVP demo etiquette — last night's session
+/// (723934) showed the harness polling at 8s while the server
+/// explicitly asked for 30s, which is a small retry storm on a
+/// shared resource.
 ///
 /// **URL is `<vsUrl>/results`, not `<vsUrl>` itself.** The vector-set
 /// URL returns the prompt JSON regardless of grading state; the
@@ -1282,18 +1310,24 @@ fn poll_verdict(
     let results_url = format!("{vs_url}/results");
     let max_polls = 20u32;
     let mut poll = 0u32;
+    let mut retry_hint: Option<u64> = None;
     loop {
         poll = poll.wrapping_add(1);
         if poll > max_polls {
             return Ok("POLL_TIMEOUT".to_string());
         }
-        // Wait before polling (start with 2s, cap at 30s).
-        let delay = std::cmp::min(2000u64.wrapping_mul(1u64 << poll.min(4)), 30_000);
+        let (delay_ms, source) = match retry_hint.take() {
+            Some(secs) => (secs.saturating_mul(1000), "server-body-retry"),
+            None => (
+                std::cmp::min(2000u64.wrapping_mul(1u64 << poll.min(4)), 30_000),
+                "local-backoff-fallback",
+            ),
+        };
         eprintln!(
-            "    [poll {poll}/{max_polls}] sleeping {}s before next /results fetch",
-            delay / 1000
+            "    [poll {poll}/{max_polls}] sleeping {}s ({source}) before next /results fetch",
+            delay_ms / 1000
         );
-        std::thread::sleep(std::time::Duration::from_millis(delay));
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
 
         let resp = transport.get(&results_url, bearer)?;
         if resp.status < 200 || resp.status >= 300 {
@@ -1313,8 +1347,9 @@ fn poll_verdict(
             return Ok(disposition.to_string());
         }
         if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64) {
+            retry_hint = clamp_retry_hint(retry_secs);
             eprintln!(
-                "    [poll {poll}/{max_polls}] server says retry in {retry_secs}s (still grading)"
+                "    [poll {poll}/{max_polls}] server says retry in {retry_secs}s (still grading; honoring on next sleep)"
             );
             continue;
         }
@@ -1374,5 +1409,36 @@ mod tests {
     #[test]
     fn base64_decode_rejects_invalid() {
         assert!(base64_decode("SG!Vs").is_err());
+    }
+
+    #[test]
+    fn clamp_retry_hint_typical() {
+        assert_eq!(clamp_retry_hint(60), Some(60));
+    }
+
+    #[test]
+    fn clamp_retry_hint_below_floor() {
+        assert_eq!(clamp_retry_hint(2), Some(5));
+    }
+
+    #[test]
+    fn clamp_retry_hint_above_ceiling() {
+        assert_eq!(clamp_retry_hint(300), Some(120));
+    }
+
+    #[test]
+    fn clamp_retry_hint_zero_falls_through() {
+        assert_eq!(clamp_retry_hint(0), None);
+    }
+
+    #[test]
+    fn clamp_retry_hint_negative_falls_through() {
+        assert_eq!(clamp_retry_hint(-1), None);
+    }
+
+    #[test]
+    fn clamp_retry_hint_at_boundaries() {
+        assert_eq!(clamp_retry_hint(5), Some(5));
+        assert_eq!(clamp_retry_hint(120), Some(120));
     }
 }
