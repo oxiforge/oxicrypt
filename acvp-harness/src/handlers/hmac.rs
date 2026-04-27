@@ -16,13 +16,19 @@
 //! - `HMAC-SHA3-512`   (revision `1.0`, output 64 bytes)
 //!
 //! **AFT** (Algorithm Functional Test): each test case carries `tcId`,
-//! `macLen` (in bits, byte-aligned), hex-encoded `key` and `msg`, and
-//! produces a hex-encoded `mac` truncated to `macLen / 8` leading bytes.
+//! hex-encoded `key` and `msg`, and produces a hex-encoded `mac`
+//! truncated to `macLen / 8` leading bytes. `macLen` (in bits,
+//! byte-aligned) is placed on the test group by the live ACVTS demo
+//! server and on the per-test case by the offline ACVP-server
+//! fixtures; this handler accepts either, with per-test taking
+//! precedence over group.
 //!
 //! **MVT** (MAC Verification Test): each test case carries the same
-//! fields as AFT plus a hex-encoded `mac` expected value. The handler
-//! computes the HMAC, compares against the expected value, and returns
-//! a `testPassed` boolean.
+//! fields as AFT plus a hex-encoded `mac` expected value, and a
+//! per-test `macLen` that varies across the group (different MAC
+//! lengths are exercised within one MVT group). The handler computes
+//! the HMAC, compares against the expected value, and returns a
+//! `testPassed` boolean.
 //!
 //! Note that the SHA-512 truncated variants publish their algorithm
 //! string with a slash (`HMAC-SHA2-512/224`, `HMAC-SHA2-512/256`),
@@ -294,10 +300,10 @@ struct HmacTestInputs {
 }
 
 /// Parse the per-test fields (key, msg). `mac_bytes` is supplied by
-/// the caller after reading and validating the group-level `macLen`
-/// — ACVP places that field on the test group, not the per-test
-/// case (verified against live demo prompts 2026-04-26
-/// HMAC-SHA2-256 / 2026-04-27 HMAC-SHA2-512).
+/// the caller after resolving `macLen` for this test — ACVP places
+/// that field on either the test group (live ACVTS demo server, AFT)
+/// or the per-test case (offline ACVP-server fixtures, MVT). The
+/// caller picks per-test first with group fallback.
 fn parse_hmac_test(
     t: &JsonValue,
     mac_bytes: usize,
@@ -360,30 +366,34 @@ where
         "MVT" => HmacTestType::Mvt,
         other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
     };
-    // ACVP places `macLen` on the test group, not on each test case
-    // (per the spec excerpt in this file's module-level docs and
-    // verified against the live demo prompts 2026-04-26 / 2026-04-27).
-    // Read once here, validate against this handler's full output
-    // length, and pass the pre-computed `mac_bytes` to each test.
-    let mac_len_bits = group
-        .get("macLen")
-        .and_then(JsonValue::as_u64)
-        .ok_or(DispatchError::MissingField("macLen"))?;
-    if !mac_len_bits.is_multiple_of(8) {
-        return Err(DispatchError::Unsupported(
-            "HMAC with non-byte-aligned `macLen`",
-        ));
-    }
-    let mac_bytes: usize = (mac_len_bits / 8) as usize;
-    if mac_bytes == 0 || mac_bytes > full_out_bytes {
-        return Err(DispatchError::Crypto("HMAC: `macLen` outside legal range"));
-    }
+    // ACVP places `macLen` either on the test group (live ACVTS demo
+    // server, AFT) or on each test case (offline ACVP-server fixtures,
+    // especially MVT where macLen varies across tests in one group).
+    // Read group-level as an optional fallback; the per-test loop
+    // prefers the per-test value.
+    let group_mac_len_bits: Option<u64> = group.get("macLen").and_then(JsonValue::as_u64);
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
     for t in tests {
+        // Per-test `macLen` takes precedence; group-level is the
+        // fallback for the live-server AFT shape.
+        let mac_len_bits = t
+            .get("macLen")
+            .and_then(JsonValue::as_u64)
+            .or(group_mac_len_bits)
+            .ok_or(DispatchError::MissingField("macLen"))?;
+        if !mac_len_bits.is_multiple_of(8) {
+            return Err(DispatchError::Unsupported(
+                "HMAC with non-byte-aligned `macLen`",
+            ));
+        }
+        let mac_bytes: usize = (mac_len_bits / 8) as usize;
+        if mac_bytes == 0 || mac_bytes > full_out_bytes {
+            return Err(DispatchError::Crypto("HMAC: `macLen` outside legal range"));
+        }
         let (tc_id, inputs) = parse_hmac_test(t, mac_bytes)?;
         let full = compute(&inputs.key, &inputs.msg)?;
         if full.len() != full_out_bytes {
@@ -429,11 +439,10 @@ mod tests {
     use super::*;
     use crate::json;
 
-    /// ACVP places `macLen` on the test group, not the per-test case.
-    /// Live demo prompt 2026-04-27 (HMAC-SHA2-512 session 724129)
-    /// confirmed this against the family handler. The test exercises
-    /// the AFT path with a group-level macLen and no per-test macLen,
-    /// which is what the live server actually sends.
+    /// AFT shape from the live ACVTS demo server: `macLen` on the
+    /// test group, no per-test `macLen`. Live demo prompt 2026-04-27
+    /// (HMAC-SHA2-512 session 724129) confirmed this against the
+    /// family handler.
     #[test]
     fn handle_hmac_group_reads_mac_len_from_group() {
         let group = json::parse(
@@ -448,10 +457,79 @@ mod tests {
         )
         .unwrap();
         let result = handle_hmac_group(&group, 32, |_key, _msg| Ok(vec![0u8; 32]));
+        assert!(result.is_ok(), "expected Ok, got {:?}", result.err());
+    }
+
+    /// MVT shape from the offline ACVP-server fixtures (e.g.
+    /// `vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA-1-1.0/mvt-slice.json`):
+    /// `macLen` per-test-case, no group-level `macLen`, with values
+    /// varying across tests in one group. This test exercises the
+    /// per-test fallback path with two different per-test macLen
+    /// values.
+    #[test]
+    fn handle_hmac_group_reads_mac_len_per_test_for_mvt() {
+        let group = json::parse(
+            r#"{
+                "tgId": 1,
+                "testType": "MVT",
+                "tests": [
+                    {"tcId": 1, "macLen": 160, "key": "00", "msg": "00", "mac": "0000000000000000000000000000000000000000"},
+                    {"tcId": 2, "macLen": 128, "key": "00", "msg": "00", "mac": "00000000000000000000000000000000"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let result = handle_hmac_group(&group, 32, |_key, _msg| Ok(vec![0u8; 32]));
         assert!(
             result.is_ok(),
-            "expected Ok, got {:?}",
+            "expected Ok (MVT dispatch with per-test macLen), got {:?}",
             result.err()
         );
+    }
+
+    /// Mixed shape: group-level `macLen` set as a fallback, per-test
+    /// `macLen` overrides on tc2. Belt-and-suspenders test that the
+    /// `or(group_mac_len_bits)` precedence chain behaves.
+    #[test]
+    fn handle_hmac_group_per_test_mac_len_overrides_group() {
+        let group = json::parse(
+            r#"{
+                "tgId": 1,
+                "testType": "AFT",
+                "macLen": 256,
+                "tests": [
+                    {"tcId": 1, "key": "00", "msg": "00"},
+                    {"tcId": 2, "macLen": 128, "key": "00", "msg": "00"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let result = handle_hmac_group(&group, 32, |_key, _msg| Ok(vec![0u8; 32]));
+        assert!(
+            result.is_ok(),
+            "expected Ok (mixed per-test override), got {:?}",
+            result.err()
+        );
+    }
+
+    /// Neither group nor per-test `macLen` present → MissingField.
+    #[test]
+    fn handle_hmac_group_missing_mac_len_errors() {
+        let group = json::parse(
+            r#"{
+                "tgId": 1,
+                "testType": "AFT",
+                "tests": [
+                    {"tcId": 1, "key": "00", "msg": "00"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let result = handle_hmac_group(&group, 32, |_key, _msg| Ok(vec![0u8; 32]));
+        match result {
+            Err(DispatchError::MissingField(name)) => assert_eq!(name, "macLen"),
+            Ok(v) => panic!("expected MissingField(macLen), got Ok({v:?})"),
+            Err(other) => panic!("expected MissingField(macLen), got {other:?}"),
+        }
     }
 }
