@@ -9,15 +9,18 @@
 //!   * arrays
 //!   * strings with the JSON escape set `\"`, `\\`, `\/`, `\n`, `\r`,
 //!     `\t`, `\b`, `\f`, and `\uXXXX`
-//!   * non-negative integers up to `i64::MAX`
+//!   * integers in `i64`'s range (negatives supported as of
+//!     2026-04-26 — required for live ACVP session-metadata fields
+//!     such as `sizeConstraint: -1` returned by the demo server)
 //!   * the literals `true`, `false`, `null`
 //!   * insignificant whitespace (`' '`, `\t`, `\n`, `\r`) between tokens
 //!
-//! Floating-point numbers, scientific notation, negative numbers, and
-//! duplicate keys in objects are all rejected. ACVP vector sets never
-//! use them — `tgId`, `tcId`, `keyLen`, `msgLen`, `macLen`, `len`, and
-//! `outLen` are all non-negative integers, and every data field is a
-//! hex-encoded string.
+//! Floating-point numbers, scientific notation, and duplicate keys in
+//! objects are still rejected. ACVP *vector sets* themselves never use
+//! these — every data field is a hex-encoded string and every counter
+//! (`tgId`, `tcId`, `keyLen`, `msgLen`, `macLen`, `len`, `outLen`) is
+//! non-negative — but the live ACVP login/registration responses
+//! contain negative integers in metadata, so the parser was relaxed.
 //!
 //! # Why in-crate instead of serde_json?
 //!
@@ -288,7 +291,7 @@ impl Parser<'_> {
             Some(b'"') => self.parse_string().map(JsonValue::String),
             Some(b't' | b'f') => self.parse_bool(),
             Some(b'n') => self.parse_null(),
-            Some(b) if b.is_ascii_digit() => self.parse_number(),
+            Some(b) if b.is_ascii_digit() || b == b'-' => self.parse_number(),
             Some(b) => Err(ParseError::UnexpectedByte {
                 pos: self.pos,
                 byte: b,
@@ -463,6 +466,11 @@ impl Parser<'_> {
 
     fn parse_number(&mut self) -> Result<JsonValue, ParseError> {
         let start = self.pos;
+        // Optional leading minus per RFC 8259 §6.
+        if self.peek() == Some(b'-') {
+            self.pos += 1;
+        }
+        let digits_start = self.pos;
         while let Some(b) = self.peek() {
             if b.is_ascii_digit() {
                 self.pos += 1;
@@ -470,17 +478,23 @@ impl Parser<'_> {
                 break;
             }
         }
+        let digits = self
+            .bytes
+            .get(digits_start..self.pos)
+            .ok_or(ParseError::UnexpectedEof)?;
+        if digits.is_empty() {
+            // A lone `-` with no digits, or empty input.
+            return Err(ParseError::InvalidNumber { pos: start });
+        }
+        // Reject a leading zero on a multi-digit digit-run (e.g. "00",
+        // "01", "-01"). A bare `0` or `-0` is fine.
+        if digits.len() > 1 && digits.first() == Some(&b'0') {
+            return Err(ParseError::InvalidNumber { pos: start });
+        }
         let slice = self
             .bytes
             .get(start..self.pos)
             .ok_or(ParseError::UnexpectedEof)?;
-        if slice.is_empty() {
-            return Err(ParseError::InvalidNumber { pos: start });
-        }
-        // Reject a leading zero on a multi-digit literal.
-        if slice.len() > 1 && slice.first() == Some(&b'0') {
-            return Err(ParseError::InvalidNumber { pos: start });
-        }
         let s =
             core::str::from_utf8(slice).map_err(|_| ParseError::InvalidNumber { pos: start })?;
         let n: i64 = s
@@ -653,6 +667,26 @@ mod tests {
     #[test]
     fn parse_rejects_leading_zero() {
         assert!(matches!(parse("01"), Err(ParseError::InvalidNumber { .. })));
+    }
+
+    #[test]
+    fn parse_negative_integer() {
+        assert_eq!(parse("-1").unwrap(), n(-1));
+        assert_eq!(parse("-12345").unwrap(), n(-12_345));
+        // Embedded in object, the original failure mode from ACVP login
+        // metadata returning `sizeConstraint: -1`.
+        let v = parse("{\"sizeConstraint\":-1}").unwrap();
+        assert_eq!(v.get("sizeConstraint"), Some(&n(-1)));
+    }
+
+    #[test]
+    fn parse_rejects_lone_minus() {
+        assert!(matches!(parse("-"), Err(ParseError::InvalidNumber { .. })));
+    }
+
+    #[test]
+    fn parse_rejects_negative_leading_zero() {
+        assert!(matches!(parse("-01"), Err(ParseError::InvalidNumber { .. })));
     }
 
     #[test]

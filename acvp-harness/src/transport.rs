@@ -41,29 +41,108 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── Configuration ──────────────────────────────────────────────────
 
+/// Which HTTP transport backend to use.
+///
+/// `Curl` shells out to `curl(1)` and is the default for software-key
+/// mTLS. `OpenSslSClient` pipes a hand-built HTTP request through
+/// `openssl s_client`; this is required against TLS-fingerprint-filtering
+/// CDNs (notably the NIST ACVTS demo CDN, which silently drops curl's
+/// ClientHello while accepting s_client's).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpBackend {
+    /// Shell out to `curl(1)`.
+    Curl,
+    /// Pipe raw HTTP through `openssl s_client`.
+    OpenSslSClient,
+}
+
 /// Configuration for an ACVP demo-server session.
 pub struct AcvpConfig {
     /// Base URL of the ACVP server (e.g. `https://demo.acvts.nist.gov`).
     pub server_url: String,
     /// Path to the TLS client certificate (PEM).
     pub cert_path: String,
-    /// Path to the TLS client private key (PEM).
+    /// Path to the TLS client private key (PEM). Used when `pkcs11_uri`
+    /// is `None`.
     pub key_path: String,
-    /// TOTP shared secret (base-32 or raw hex, depending on server).
+    /// PKCS#11 URI for a hardware-backed private key, e.g.
+    /// `pkcs11:object=PIV%20AUTH%20key;type=private`. When set, this
+    /// takes precedence over `key_path` and the harness invokes its
+    /// HTTP backend with the appropriate engine flags.
+    pub pkcs11_uri: Option<String>,
+    /// Path to the PKCS#11 provider module (e.g. `opensc-pkcs11.so`).
+    /// `None` selects the platform default
+    /// (`AcvpConfig::DEFAULT_PKCS11_MODULE`).
+    pub pkcs11_module_path: Option<String>,
+    /// Optional PIV PIN value. When non-empty, the PKCS#11 URI is
+    /// augmented with `?pin-value=<URL-encoded>` so opensc-pkcs11
+    /// authenticates without prompting on the terminal. Eliminates
+    /// per-request PIN prompts and the associated terminal-state echo
+    /// bug observed when opensc's prompt routine is interrupted by a
+    /// TLS error mid-handshake.
+    ///
+    /// Loaded by the CLI from a file (typically on `/dev/shm` with
+    /// mode 0600), so the PIN never appears in the harness's own argv.
+    /// It does appear in the spawned s_client subprocess's argv as
+    /// part of the PKCS#11 URI, which is visible to same-UID
+    /// processes via `/proc/<pid>/cmdline`. Acceptable trade-off for
+    /// development against the ACVTS demo server; production
+    /// validation would use a hardened PIN-callback path.
+    pub pkcs11_pin: String,
+    /// Which HTTP transport backend to use for outbound requests.
+    pub http_backend: HttpBackend,
+    /// TOTP shared secret as base64 (NIST ACVTS demo distributes the
+    /// secret in this form). Decoded once before the first login.
     pub totp_secret: String,
     /// Optional: only register and test this single algorithm.
     pub filter_algorithm: Option<String>,
+    /// Optional: instead of registering a new test session, just GET
+    /// the supplied URL (relative or absolute) and print the response.
+    /// Use to fetch verdict status of an existing session that was
+    /// created by a previous run, without burning another vector-set
+    /// generation cycle on the demo server.
+    pub query_session_url: Option<String>,
     /// Path to write the session transcript JSON log.
     pub log_path: String,
 }
 
+impl AcvpConfig {
+    /// Default OpenSC PKCS#11 module `.so` path on Debian/Ubuntu.
+    pub const DEFAULT_PKCS11_MODULE: &'static str =
+        "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so";
+
+    /// Resolved PKCS#11 module path (config override or platform default).
+    pub fn resolved_pkcs11_module(&self) -> &str {
+        self.pkcs11_module_path
+            .as_deref()
+            .unwrap_or(Self::DEFAULT_PKCS11_MODULE)
+    }
+
+    /// PKCS#11 URI to hand to curl/s_client. If `pkcs11_pin` is set,
+    /// returns `<uri>?pin-value=<URL-encoded-PIN>`. Otherwise returns
+    /// `pkcs11_uri` as-is. Returns `None` when no hardware key is
+    /// configured.
+    fn composed_pkcs11_uri(&self) -> Option<String> {
+        let base = self.pkcs11_uri.as_deref()?;
+        if self.pkcs11_pin.is_empty() {
+            Some(base.to_string())
+        } else {
+            Some(format!(
+                "{base}?pin-value={}",
+                urlencode_unreserved(&self.pkcs11_pin)
+            ))
+        }
+    }
+}
+
 // ── TOTP (RFC 6238) ───────────────────────────────────────────────
 
-/// Generate a 6-digit TOTP code using HMAC-SHA-256.
+/// Generate an 8-digit TOTP code using HMAC-SHA-256, matching the
+/// NIST ACVTS demo server's expectation. (NIST diverges from RFC 6238
+/// defaults: SHA-256 instead of SHA-1, 8 digits instead of 6.)
 ///
 /// Uses the standard 30-second time step with T0 = 0. The secret is
-/// expected as raw bytes (the caller decodes from hex/base32 before
-/// calling).
+/// expected as raw bytes (the caller decodes from base64 before calling).
 fn totp_now(secret: &[u8]) -> Result<String, String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -72,7 +151,7 @@ fn totp_now(secret: &[u8]) -> Result<String, String> {
     totp_at(secret, time_step)
 }
 
-/// Generate a TOTP code for a specific time counter value.
+/// Generate an 8-digit TOTP code for a specific time counter value.
 fn totp_at(secret: &[u8], counter: u64) -> Result<String, String> {
     let counter_bytes = counter.to_be_bytes();
     // Use oxicrypt's own HMAC-SHA-256 (internal constructor to avoid
@@ -81,7 +160,7 @@ fn totp_at(secret: &[u8], counter: u64) -> Result<String, String> {
     mac.update(&counter_bytes);
     let hmac_result = mac.finalize();
 
-    // Dynamic truncation per RFC 4226 §5.4
+    // Dynamic truncation per RFC 4226 §5.4.
     let offset = (hmac_result.get(31).copied().unwrap_or(0) & 0x0f) as usize;
     let code_bytes = hmac_result
         .get(offset..offset.wrapping_add(4))
@@ -92,68 +171,83 @@ fn totp_at(secret: &[u8], counter: u64) -> Result<String, String> {
         code_bytes.get(2).copied().unwrap_or(0),
         code_bytes.get(3).copied().unwrap_or(0),
     ]);
-    Ok(format!("{:06}", code % 1_000_000))
+    // NIST uses 8-digit codes: modulo 10^8, zero-padded.
+    Ok(format!("{:08}", code % 100_000_000))
 }
 
-// ── JWT (RFC 7519, minimal) ───────────────────────────────────────
-
-/// Build a minimal JWT for ACVP login, signed with HMAC-SHA-256.
-///
-/// The JWT carries the TOTP as the `password` claim. The ACVP demo
-/// server expects the JWT in the `accessToken` field of the login
-/// request body.
-fn build_login_jwt(totp_secret: &[u8]) -> Result<String, String> {
-    let totp_code = totp_now(totp_secret)?;
-
-    // Header: {"alg":"HS256","typ":"JWT"}
-    let header = base64url_encode(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
-
-    // Payload: {"password":"<TOTP>"}
-    let payload_json = format!("{{\"password\":\"{totp_code}\"}}");
-    let payload = base64url_encode(payload_json.as_bytes());
-
-    let signing_input = format!("{header}.{payload}");
-
-    // Sign with HMAC-SHA-256 using the TOTP secret as key
-    let mut mac = oxicrypt_hmac::HmacSha256::new_internal(totp_secret);
-    mac.update(signing_input.as_bytes());
-    let signature = mac.finalize();
-    let sig_b64 = base64url_encode(&signature);
-
-    Ok(format!("{signing_input}.{sig_b64}"))
+/// Replace any `pin-value=...` segment in a PKCS#11 URI with
+/// `pin-value=<REDACTED>` for safe debug printing.
+fn redact_pkcs11_pin_value(uri: &str) -> String {
+    if let Some(idx) = uri.find("pin-value=") {
+        let prefix_end = idx.wrapping_add("pin-value=".len());
+        let prefix = uri.get(..prefix_end).unwrap_or("");
+        let tail = uri.get(prefix_end..).unwrap_or("");
+        // pin-value runs until the next URI delimiter (`&`, `;`, `?`)
+        // or end of string.
+        let stop = tail
+            .find(['&', ';', '?'])
+            .unwrap_or(tail.len());
+        let suffix = tail.get(stop..).unwrap_or("");
+        format!("{prefix}<REDACTED>{suffix}")
+    } else {
+        uri.to_string()
+    }
 }
 
-/// Base64url encoding (RFC 4648 §5) without padding.
-fn base64url_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((input.len() * 4).div_ceil(3));
-    let mut i = 0;
-    while i < input.len() {
-        let b0 = input.get(i).copied().unwrap_or(0);
-        let b1 = input.get(i.wrapping_add(1)).copied().unwrap_or(0);
-        let b2 = input.get(i.wrapping_add(2)).copied().unwrap_or(0);
-        let remaining = input.len().wrapping_sub(i);
+// ── URL encoding for PKCS#11 URI query values ────────────────────
 
-        out.push(char::from(ALPHABET[((b0 >> 2) & 0x3f) as usize]));
-        out.push(char::from(
-            ALPHABET[(((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)) as usize],
-        ));
-        if remaining > 1 {
-            out.push(char::from(
-                ALPHABET[(((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)) as usize],
-            ));
+/// Percent-encode a string for use as a value inside a PKCS#11 URI
+/// query (RFC 7512 / RFC 3986). All bytes that aren't in the unreserved
+/// set (`A-Z a-z 0-9 - _ . ~`) are percent-encoded. Conservative — we
+/// only need to handle PIN values, which are realistically alphanumeric.
+fn urlencode_unreserved(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            // Two-digit uppercase hex per RFC 3986 §2.1.
+            out.push('%');
+            out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0').to_ascii_uppercase());
+            out.push(char::from_digit(u32::from(b & 0x0f), 16).unwrap_or('0').to_ascii_uppercase());
         }
-        if remaining > 2 {
-            out.push(char::from(ALPHABET[(b2 & 0x3f) as usize]));
-        }
-        i = i.wrapping_add(3);
     }
     out
 }
 
-// ── HTTP via curl ─────────────────────────────────────────────────
+// ── Base64 decode (RFC 4648 §4) ───────────────────────────────────
 
-/// HTTP response from a curl invocation.
+/// Decode standard base64 to bytes. Accepts both the `+/` and `-_`
+/// alphabet variants (treated equivalently). Padding (`=`) is optional;
+/// whitespace is ignored.
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    let mut out: Vec<u8> = Vec::with_capacity(s.len().wrapping_mul(3) / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for c in s.chars() {
+        let v: u32 = match c {
+            'A'..='Z' => (c as u32).wrapping_sub('A' as u32),
+            'a'..='z' => (c as u32).wrapping_sub('a' as u32).wrapping_add(26),
+            '0'..='9' => (c as u32).wrapping_sub('0' as u32).wrapping_add(52),
+            '+' | '-' => 62,
+            '/' | '_' => 63,
+            '=' => break, // optional padding terminator
+            ' ' | '\r' | '\n' | '\t' => continue,
+            other => return Err(format!("invalid base64 character: {other:?}")),
+        };
+        buf = (buf << 6) | v;
+        bits = bits.wrapping_add(6);
+        if bits >= 8 {
+            bits = bits.wrapping_sub(8);
+            out.push(((buf >> bits) & 0xff) as u8);
+        }
+    }
+    Ok(out)
+}
+
+// ── HTTP transport ────────────────────────────────────────────────
+
+/// HTTP response.
 struct HttpResponse {
     /// HTTP status code.
     status: u16,
@@ -161,23 +255,303 @@ struct HttpResponse {
     body: String,
 }
 
-/// Perform an HTTP GET with mutual TLS via curl.
-fn http_get(url: &str, config: &AcvpConfig, bearer: &str) -> Result<HttpResponse, String> {
-    http_request("GET", url, None, config, bearer)
+/// A persistent `openssl s_client` TLS tunnel for HTTP/1.1 keep-alive
+/// sessions. One TLS handshake = one CertVerify signature = one
+/// hardware-key touch for the entire ACVP session, regardless of how
+/// many HTTP requests are made.
+///
+/// Ownership: holds the spawned child plus its stdin/stdout pipes.
+/// Drop closes stdin (s_client sees EOF, sends TLS close_notify, exits).
+struct SClientConnection {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    host: String,
 }
 
-/// Perform an HTTP POST with mutual TLS via curl.
-fn http_post(
-    url: &str,
-    body: &str,
-    config: &AcvpConfig,
-    bearer: &str,
-) -> Result<HttpResponse, String> {
-    http_request("POST", url, Some(body), config, bearer)
+impl SClientConnection {
+    /// Spawn `openssl s_client`, perform the TLS handshake, and ready
+    /// the pipes for HTTP/1.1 keep-alive requests. The handshake
+    /// performs the one-and-only YubiKey touch for the session.
+    fn open(config: &AcvpConfig) -> Result<Self, String> {
+        let (host, port, _) = parse_https_url(&config.server_url)?;
+
+        let mut cmd = std::process::Command::new("openssl");
+        cmd.arg("s_client")
+            .arg("-connect")
+            .arg(format!("{host}:{port}"))
+            .arg("-servername")
+            .arg(&host)
+            .arg("-cert")
+            .arg(&config.cert_path);
+
+        if let Some(uri) = config.composed_pkcs11_uri() {
+            let redacted = redact_pkcs11_pin_value(&uri);
+            eprintln!(
+                "[transport] s_client persistent -key {redacted:?}\n  \
+                 ← TOUCH YUBIKEY (one touch covers the entire session)"
+            );
+            cmd.arg("-engine")
+                .arg("pkcs11")
+                .arg("-keyform")
+                .arg("engine")
+                .arg("-key")
+                .arg(uri);
+            cmd.env("PKCS11_MODULE_PATH", config.resolved_pkcs11_module());
+        } else {
+            cmd.arg("-key").arg(&config.key_path);
+        }
+
+        cmd.arg("-quiet").arg("-ign_eof");
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("openssl s_client spawn: {e}"))?;
+        let stdin = child.stdin.take().ok_or("missing s_client stdin")?;
+        let stdout = child.stdout.take().ok_or("missing s_client stdout")?;
+
+        Ok(SClientConnection {
+            child,
+            stdin,
+            stdout: std::io::BufReader::new(stdout),
+            host,
+        })
+    }
+
+    /// Send one HTTP/1.1 keep-alive request and parse the response.
+    fn request(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+        bearer: &str,
+    ) -> Result<HttpResponse, String> {
+        use std::io::Write as _;
+
+        // Build raw HTTP/1.1 request with explicit keep-alive.
+        let body_bytes: &[u8] = body.map_or(&[], str::as_bytes);
+        let mut req: Vec<u8> = Vec::with_capacity(256_usize.wrapping_add(body_bytes.len()));
+        req.extend_from_slice(method.as_bytes());
+        req.extend_from_slice(b" ");
+        req.extend_from_slice(path.as_bytes());
+        req.extend_from_slice(b" HTTP/1.1\r\n");
+        req.extend_from_slice(format!("Host: {}\r\n", self.host).as_bytes());
+        req.extend_from_slice(b"User-Agent: oxicrypt-acvp-harness/0.1\r\n");
+        if !bearer.is_empty() {
+            req.extend_from_slice(format!("Authorization: Bearer {bearer}\r\n").as_bytes());
+        }
+        req.extend_from_slice(b"Content-Type: application/json\r\n");
+        req.extend_from_slice(format!("Content-Length: {}\r\n", body_bytes.len()).as_bytes());
+        req.extend_from_slice(b"Connection: keep-alive\r\n\r\n");
+        if !body_bytes.is_empty() {
+            req.extend_from_slice(body_bytes);
+        }
+
+        self.stdin
+            .write_all(&req)
+            .map_err(|e| format!("write to s_client stdin: {e}"))?;
+        self.stdin
+            .flush()
+            .map_err(|e| format!("flush s_client stdin: {e}"))?;
+
+        // Read response headers byte-by-byte until \r\n\r\n.
+        let mut headers_buf: Vec<u8> = Vec::with_capacity(1024);
+        loop {
+            let mut byte = [0u8; 1];
+            let n = std::io::Read::read(&mut self.stdout, &mut byte)
+                .map_err(|e| format!("read response headers: {e}"))?;
+            if n == 0 {
+                return Err("s_client closed connection mid-response".to_string());
+            }
+            headers_buf.push(byte[0]);
+            if headers_buf.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let headers_end = headers_buf.len().wrapping_sub(4);
+        let headers_bytes = headers_buf.get(..headers_end).unwrap_or(&[]);
+        let headers_text = std::str::from_utf8(headers_bytes)
+            .map_err(|e| format!("non-UTF-8 HTTP headers: {e}"))?;
+
+        // Status line.
+        let first_line = headers_text
+            .split("\r\n")
+            .next()
+            .ok_or("empty headers section")?;
+        let mut parts = first_line.splitn(3, ' ');
+        let _proto = parts
+            .next()
+            .ok_or_else(|| format!("bad status line: {first_line}"))?;
+        let code_str = parts
+            .next()
+            .ok_or_else(|| format!("bad status line: {first_line}"))?;
+        let status: u16 = code_str
+            .parse()
+            .map_err(|_| format!("bad HTTP status code: {code_str}"))?;
+
+        // Body framing: prefer Content-Length, fall back to chunked.
+        let mut content_length: Option<usize> = None;
+        let mut is_chunked = false;
+        for line in headers_text.split("\r\n") {
+            let lower = line.to_ascii_lowercase();
+            if let Some(rest) = lower.strip_prefix("content-length:") {
+                if let Ok(n) = rest.trim().parse::<usize>() {
+                    content_length = Some(n);
+                }
+            }
+            if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
+                is_chunked = true;
+            }
+        }
+
+        let body_bytes_out: Vec<u8> = if is_chunked {
+            self.read_chunked_body()?
+        } else if let Some(n) = content_length {
+            let mut buf = vec![0u8; n];
+            std::io::Read::read_exact(&mut self.stdout, &mut buf)
+                .map_err(|e| format!("read response body ({n} bytes): {e}"))?;
+            buf
+        } else {
+            return Err(
+                "response missing both Content-Length and chunked Transfer-Encoding"
+                    .to_string(),
+            );
+        };
+
+        Ok(HttpResponse {
+            status,
+            body: String::from_utf8_lossy(&body_bytes_out).into_owned(),
+        })
+    }
+
+    /// Read an HTTP/1.1 chunked body from the connection.
+    fn read_chunked_body(&mut self) -> Result<Vec<u8>, String> {
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            // Read chunk-size line until CRLF.
+            let mut size_line: Vec<u8> = Vec::new();
+            loop {
+                let mut byte = [0u8; 1];
+                let n = std::io::Read::read(&mut self.stdout, &mut byte)
+                    .map_err(|e| format!("read chunk size: {e}"))?;
+                if n == 0 {
+                    return Err("s_client closed mid-chunked-body".to_string());
+                }
+                size_line.push(byte[0]);
+                if size_line.ends_with(b"\r\n") {
+                    break;
+                }
+            }
+            let size_line_end = size_line.len().wrapping_sub(2);
+            let size_line_bytes = size_line.get(..size_line_end).unwrap_or(&[]);
+            let size_str_full =
+                std::str::from_utf8(size_line_bytes).map_err(|_| "non-UTF-8 chunk size line")?;
+            let size_str = size_str_full
+                .split(';')
+                .next()
+                .unwrap_or(size_str_full)
+                .trim();
+            let size = usize::from_str_radix(size_str, 16)
+                .map_err(|_| format!("bad chunk size: '{size_str}'"))?;
+            if size == 0 {
+                // Read trailer (empty line) then return.
+                let mut trailer = [0u8; 2];
+                let _ = std::io::Read::read_exact(&mut self.stdout, &mut trailer);
+                return Ok(out);
+            }
+            let start = out.len();
+            out.resize(start.wrapping_add(size), 0);
+            let target = out.get_mut(start..).unwrap_or(&mut []);
+            std::io::Read::read_exact(&mut self.stdout, target)
+                .map_err(|e| format!("read chunk data ({size} bytes): {e}"))?;
+            // Trailing CRLF after each chunk's data.
+            let mut crlf = [0u8; 2];
+            std::io::Read::read_exact(&mut self.stdout, &mut crlf)
+                .map_err(|e| format!("read chunk CRLF: {e}"))?;
+        }
+    }
+
+    /// Close the connection.
+    ///
+    /// We force-terminate the child rather than relying on stdin EOF
+    /// because s_client is launched with `-ign_eof` (required so the
+    /// TLS tunnel survives across multiple HTTP/1.1 keep-alive
+    /// requests during the session). With `-ign_eof`, dropping stdin
+    /// doesn't trigger s_client to exit — it would block until the
+    /// server-side keep-alive timer fires (~60 s for typical CDNs).
+    /// SIGKILL is fine here because we've already consumed the final
+    /// response we care about; any in-flight server bytes are
+    /// inconsequential.
+    fn close(mut self) {
+        drop(self.stdin);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
-/// Core curl invocation with retry logic.
-fn http_request(
+/// Transport handle threaded through one ACVP session. Owned by
+/// [`run_demo`] for the lifetime of the session, mutably borrowed by
+/// every HTTP-issuing function. For the curl backend it just borrows
+/// the config (each request spawns a new process); for the s_client
+/// backend it owns the persistent TLS tunnel.
+enum Transport<'a> {
+    Curl(&'a AcvpConfig),
+    SClient(SClientConnection),
+}
+
+impl<'a> Transport<'a> {
+    fn open(config: &'a AcvpConfig) -> Result<Self, String> {
+        match config.http_backend {
+            HttpBackend::Curl => Ok(Transport::Curl(config)),
+            HttpBackend::OpenSslSClient => {
+                let conn = SClientConnection::open(config)?;
+                Ok(Transport::SClient(conn))
+            }
+        }
+    }
+
+    fn close(self) {
+        match self {
+            Transport::Curl(_) => {}
+            Transport::SClient(conn) => conn.close(),
+        }
+    }
+
+    fn get(&mut self, url: &str, bearer: &str) -> Result<HttpResponse, String> {
+        self.dispatch("GET", url, None, bearer)
+    }
+
+    fn post(&mut self, url: &str, body: &str, bearer: &str) -> Result<HttpResponse, String> {
+        self.dispatch("POST", url, Some(body), bearer)
+    }
+
+    fn dispatch(
+        &mut self,
+        method: &str,
+        url: &str,
+        body: Option<&str>,
+        bearer: &str,
+    ) -> Result<HttpResponse, String> {
+        match self {
+            Transport::Curl(config) => http_request_curl_with_retry(method, url, body, config, bearer),
+            Transport::SClient(conn) => {
+                let (_host, _port, path) = parse_https_url(url)?;
+                conn.request(method, &path, body, bearer)
+            }
+        }
+    }
+}
+
+/// Curl-backed HTTP request with bounded retry. Used only for the
+/// `Curl` transport backend (each curl invocation is its own process,
+/// so retries are inexpensive). The s_client backend has no equivalent
+/// retry wrapper — a connection drop there means the persistent TLS
+/// session is dead and we don't want to silently reconnect (which
+/// would burn another hardware-key touch without telling the user).
+fn http_request_curl_with_retry(
     method: &str,
     url: &str,
     body: Option<&str>,
@@ -188,7 +562,7 @@ fn http_request(
     let mut attempt = 0u32;
     loop {
         attempt = attempt.wrapping_add(1);
-        match http_request_once(method, url, body, config, bearer) {
+        match http_request_once_curl(method, url, body, config, bearer) {
             Ok(resp) => return Ok(resp),
             Err(e) if attempt < max_attempts => {
                 let delay_ms = 1000u64.wrapping_mul(1u64 << attempt);
@@ -207,8 +581,9 @@ fn http_request(
     }
 }
 
-/// Single curl invocation.
-fn http_request_once(
+/// Curl-backed HTTP request. Supports both file-PEM keys and PKCS#11
+/// hardware keys via the `engine_pkcs11` engine.
+fn http_request_once_curl(
     method: &str,
     url: &str,
     body: Option<&str>,
@@ -222,11 +597,22 @@ fn http_request_once(
         .arg("--write-out")
         .arg("\n%{http_code}")
         .arg("--cert")
-        .arg(&config.cert_path)
-        .arg("--key")
-        .arg(&config.key_path)
-        .arg("-X")
-        .arg(method);
+        .arg(&config.cert_path);
+
+    // Key source: hardware (PKCS#11 URI) takes precedence over file path.
+    if let Some(uri) = config.composed_pkcs11_uri() {
+        cmd.arg("--engine")
+            .arg("pkcs11")
+            .arg("--key-type")
+            .arg("ENG")
+            .arg("--key")
+            .arg(uri);
+        cmd.env("PKCS11_MODULE_PATH", config.resolved_pkcs11_module());
+    } else {
+        cmd.arg("--key").arg(&config.key_path);
+    }
+
+    cmd.arg("-X").arg(method);
 
     if !bearer.is_empty() {
         cmd.arg("-H").arg(format!("Authorization: Bearer {bearer}"));
@@ -249,7 +635,7 @@ fn http_request_once(
         return Err(format!("curl exited with {}: {stderr}", output.status));
     }
 
-    // Last line of stdout is the HTTP status code
+    // Last line of stdout is the HTTP status code (from --write-out).
     let (body_part, status_str) = match stdout.rsplit_once('\n') {
         Some((b, s)) => (b.to_string(), s.trim()),
         None => return Err("unexpected curl output format".to_string()),
@@ -262,6 +648,40 @@ fn http_request_once(
         status,
         body: body_part,
     })
+}
+
+/// Parse `https://host[:port]/path` into (host, port, path).
+fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
+    let url = url.trim();
+    let scheme_sep = url
+        .find("://")
+        .ok_or_else(|| format!("URL missing scheme separator: {url}"))?;
+    let scheme = url.get(..scheme_sep).unwrap_or("");
+    if scheme != "https" {
+        return Err(format!("only https supported, got '{scheme}'"));
+    }
+    let rest = url
+        .get(scheme_sep.wrapping_add(3)..)
+        .ok_or_else(|| format!("URL has no authority: {url}"))?;
+    let (host_port, path) = match rest.find('/') {
+        Some(i) => (
+            rest.get(..i).unwrap_or(""),
+            rest.get(i..).unwrap_or("/"),
+        ),
+        None => (rest, "/"),
+    };
+    let (host, port) = match host_port.rfind(':') {
+        Some(i) => {
+            let h = host_port.get(..i).unwrap_or("");
+            let p_str = host_port.get(i.wrapping_add(1)..).unwrap_or("");
+            let p: u16 = p_str
+                .parse()
+                .map_err(|_| format!("bad port in URL: {p_str}"))?;
+            (h.to_string(), p)
+        }
+        None => (host_port.to_string(), 443u16),
+    };
+    Ok((host, port, path.to_string()))
 }
 
 // ── Capabilities builder ──────────────────────────────────────────
@@ -333,10 +753,10 @@ impl TranscriptLog {
 
 // ── Hex decoding for TOTP secret ──────────────────────────────────
 
-/// Decode the TOTP secret from hex. The user provides the secret as
-/// a hex string on the CLI.
+/// Decode the TOTP secret from base64 (RFC 4648 §4). NIST ACVTS demo
+/// distributes the shared secret in this form.
 fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String> {
-    crate::hex::decode(s).map_err(|e| format!("bad TOTP secret hex: {e}"))
+    base64_decode(s.trim()).map_err(|e| format!("bad TOTP secret base64: {e}"))
 }
 
 // ── Main transport loop ───────────────────────────────────────────
@@ -344,33 +764,58 @@ fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String> {
 /// Run a full ACVP demo-server session.
 ///
 /// This is the top-level entry point for the `demo-run` subcommand.
+/// The function naturally exceeds clippy's pedantic line limit because
+/// it linearly orchestrates: capabilities → transport open → login →
+/// (query-session branch) → register → vector-set processing →
+/// summary. Splitting it would scatter the protocol flow.
+#[allow(clippy::too_many_lines)]
 pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     let mut log = TranscriptLog::new();
     log.log("session_start", &format!("server={}", config.server_url));
 
     let totp_secret = decode_totp_secret(&config.totp_secret)?;
 
-    // Build handler registry
+    // Build handler registry (only needed for register-and-submit mode;
+    // query-session mode bypasses the dispatcher entirely).
     let registry = dispatch::with_default_handlers();
-    let caps = build_capabilities(&registry, config.filter_algorithm.as_deref());
-    if caps.is_empty() {
-        return Err("no handlers returned ACVP capabilities".to_string());
-    }
-    eprintln!(
-        "[transport] built {} capability registration(s)",
-        caps.len()
-    );
-    log.log(
-        "capabilities_built",
-        &format!("{} registrations", caps.len()),
-    );
+    let caps = if config.query_session_url.is_some() {
+        Vec::new()
+    } else {
+        let caps = build_capabilities(&registry, config.filter_algorithm.as_deref());
+        if caps.is_empty() {
+            return Err("no handlers returned ACVP capabilities".to_string());
+        }
+        eprintln!(
+            "[transport] built {} capability registration(s)",
+            caps.len()
+        );
+        log.log(
+            "capabilities_built",
+            &format!("{} registrations", caps.len()),
+        );
+        caps
+    };
+
+    // Open the session-wide transport. For the s_client backend this
+    // performs the one-and-only TLS handshake (and YubiKey touch) for
+    // the entire session; all subsequent HTTP requests are routed over
+    // the persistent connection via HTTP/1.1 keep-alive. For the curl
+    // backend each request still spawns its own process — that path
+    // doesn't need the persistence because software keys don't require
+    // hardware touches.
+    let mut transport = Transport::open(config)?;
 
     // ── Step 1: Login ──────────────────────────────────────────────
+    // The ACVP demo server expects the current 8-digit TOTP code as a
+    // flat `password` field (per ACVP §10.1-10.2; verified empirically
+    // 2026-04-26 against demo.acvts.nist.gov via mtls-login-sclient.sh).
+    // No JWT wrapping.
     eprintln!("[transport] logging in to {}...", config.server_url);
-    let jwt = build_login_jwt(&totp_secret)?;
-    let login_body = format!("[{{\"acvVersion\":\"1.0\"}},{{\"accessToken\":\"{jwt}\"}}]");
+    let totp_code = totp_now(&totp_secret)?;
+    let login_body =
+        format!("[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\"}}]");
     let login_url = format!("{}/acvp/v1/login", config.server_url);
-    let login_resp = http_post(&login_url, &login_body, config, "")?;
+    let login_resp = transport.post(&login_url, &login_body, "")?;
     if login_resp.status < 200 || login_resp.status >= 300 {
         log.log("login_failed", &format!("HTTP {}", login_resp.status));
         log.write_to_file(&config.log_path)?;
@@ -381,17 +826,56 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     }
     // Extract the access token from the login response.
     // Response shape: [{"acvVersion":"1.0"},{"accessToken":"..."}]
-    let login_json =
-        json::parse(&login_resp.body).map_err(|e| format!("parse login response: {e}"))?;
+    // On parse failure, dump the raw body next to the transcript log so
+    // the operator can inspect it manually (it may contain a still-valid
+    // JWT — shred after use).
+    let login_json = json::parse(&login_resp.body).map_err(|e| {
+        let dump_path = format!("{}.login-raw.bin", config.log_path);
+        let _ = std::fs::write(&dump_path, login_resp.body.as_bytes());
+        let head: String = login_resp.body.chars().take(120).collect();
+        format!(
+            "parse login response: {e}\n  body length: {} bytes\n  body[0..120]: {head:?}\n  raw body dumped to: {dump_path}",
+            login_resp.body.len()
+        )
+    })?;
     let access_token = extract_access_token(&login_json)?;
     eprintln!("[transport] login successful, got access token");
     log.log("login_ok", "access token obtained");
+
+    // ── Branch: query-session mode skips registration + submission.
+    if let Some(query_url) = config.query_session_url.clone() {
+        let absolute = resolve_url(&config.server_url, &query_url);
+        eprintln!("[transport] querying existing session {query_url}...");
+        log.log("query_session", &absolute);
+        let resp = transport.get(&absolute, &access_token)?;
+        eprintln!(
+            "[transport] session query: HTTP {} ({} bytes)",
+            resp.status,
+            resp.body.len()
+        );
+        log.log("query_response_status", &format!("HTTP {}", resp.status));
+        // Pretty-print the body if it's parseable JSON; fall back to raw.
+        if let Ok(parsed) = json::parse(&resp.body) {
+            log.log_json("query_response_body", &parsed);
+            println!("{}", json::to_pretty_string(&parsed));
+        } else {
+            log.log("query_response_body_raw", &resp.body);
+            println!("{}", resp.body);
+        }
+        let summary_result = write_session_summary(
+            &[(query_url, format!("HTTP_{}", resp.status))],
+            &mut log,
+            &config.log_path,
+        );
+        transport.close();
+        return summary_result;
+    }
 
     // ── Step 2: Register test session ──────────────────────────────
     eprintln!("[transport] registering test session...");
     let reg_body = build_registration_body(&caps);
     let reg_url = format!("{}/acvp/v1/testSessions", config.server_url);
-    let reg_resp = http_post(&reg_url, &reg_body, config, &access_token)?;
+    let reg_resp = transport.post(&reg_url, &reg_body, &access_token)?;
     if reg_resp.status < 200 || reg_resp.status >= 300 {
         log.log("register_failed", &format!("HTTP {}", reg_resp.status));
         log.write_to_file(&config.log_path)?;
@@ -403,6 +887,18 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     let reg_json =
         json::parse(&reg_resp.body).map_err(|e| format!("parse registration response: {e}"))?;
     let vector_set_urls = extract_vector_set_urls(&reg_json)?;
+    // The registration response carries a NEW, session-specific
+    // accessToken bound to the test session and vector-set ids. Per the
+    // ACVP demo server's authorization model, vector-set fetches and
+    // submissions MUST use this session token rather than the
+    // general-purpose login token, otherwise they return HTTP 403.
+    let session_token = extract_access_token(&reg_json).unwrap_or_else(|_| {
+        eprintln!(
+            "[transport] WARN: registration returned no accessToken; falling \
+             back to login token (vector-set requests may 403)"
+        );
+        access_token.clone()
+    });
     eprintln!(
         "[transport] registered: {} vector set(s)",
         vector_set_urls.len()
@@ -414,16 +910,26 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     log.log_json("registration_response", &reg_json);
 
     // ── Steps 3–5: Fetch → Process → Submit per vector set ─────────
-    let results = process_vector_sets(&vector_set_urls, config, &access_token, &registry, &mut log);
+    let results = process_vector_sets(
+        &vector_set_urls,
+        &mut transport,
+        &config.server_url,
+        &session_token,
+        &registry,
+        &mut log,
+    );
 
     // ── Summary ────────────────────────────────────────────────────
-    write_session_summary(&results, &mut log, &config.log_path)
+    let summary_result = write_session_summary(&results, &mut log, &config.log_path);
+    transport.close();
+    summary_result
 }
 
 /// Fetch, process, submit, and poll each vector set in the session.
 fn process_vector_sets(
     urls: &[String],
-    config: &AcvpConfig,
+    transport: &mut Transport,
+    server_url: &str,
     bearer: &str,
     registry: &Registry,
     log: &mut TranscriptLog,
@@ -434,7 +940,8 @@ fn process_vector_sets(
             vs_url,
             i.wrapping_add(1),
             urls.len(),
-            config,
+            transport,
+            server_url,
             bearer,
             registry,
             log,
@@ -444,46 +951,83 @@ fn process_vector_sets(
     results
 }
 
-/// Process a single vector set: fetch → dispatch → submit → poll.
+/// Process a single vector set: fetch (with retry-envelope polling)
+/// → dispatch → submit → poll verdict.
+#[allow(clippy::too_many_arguments)]
 fn process_one_vector_set(
     vs_url: &str,
     index: usize,
     total: usize,
-    config: &AcvpConfig,
+    transport: &mut Transport,
+    server_url: &str,
     bearer: &str,
     registry: &Registry,
     log: &mut TranscriptLog,
 ) -> String {
-    let full_url = resolve_url(&config.server_url, vs_url);
+    let full_url = resolve_url(server_url, vs_url);
     eprintln!("[transport] [{index}/{total}] fetching {vs_url}...");
     log.log("fetch_vectors", vs_url);
 
-    // Fetch
-    let vs_resp = match http_get(&full_url, config, bearer) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("  [transport] fetch failed: {e}");
-            log.log("fetch_error", &e);
-            return "FETCH_ERROR".to_string();
+    // Fetch loop. Per ACVP §11.4, when a vector set isn't yet generated
+    // the server responds with `{"retry": <seconds>}` instead of the
+    // vector data. The client is expected to wait the indicated seconds
+    // and re-fetch. We bound the loop at `max_polls` to avoid spinning
+    // forever on a wedged session.
+    let max_polls = 30u32;
+    let mut poll = 0u32;
+    let prompt = loop {
+        poll = poll.wrapping_add(1);
+        if poll > max_polls {
+            eprintln!("  [transport] vector set never ready after {max_polls} polls");
+            log.log("retry_timeout", vs_url);
+            return "RETRY_TIMEOUT".to_string();
         }
-    };
-    if vs_resp.status < 200 || vs_resp.status >= 300 {
-        eprintln!("  [transport] fetch returned HTTP {}", vs_resp.status);
-        log.log("fetch_http_error", &format!("HTTP {}", vs_resp.status));
-        return format!("HTTP_{}", vs_resp.status);
-    }
 
-    // Parse the ACVP prompt
-    let prompt = match json::parse(&vs_resp.body) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("  [transport] parse error: {e}");
-            log.log("parse_error", &format!("{e}"));
-            return "PARSE_ERROR".to_string();
+        let vs_resp = match transport.get(&full_url, bearer) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("  [transport] fetch failed: {e}");
+                log.log("fetch_error", &e);
+                return "FETCH_ERROR".to_string();
+            }
+        };
+        if vs_resp.status < 200 || vs_resp.status >= 300 {
+            eprintln!("  [transport] fetch returned HTTP {}", vs_resp.status);
+            log.log("fetch_http_error", &format!("HTTP {}", vs_resp.status));
+            return format!("HTTP_{}", vs_resp.status);
         }
+
+        let parsed = match json::parse(&vs_resp.body) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("  [transport] parse error: {e}");
+                log.log("parse_error", &format!("{e}"));
+                return "PARSE_ERROR".to_string();
+            }
+        };
+
+        // Detect retry envelope. ACVP wraps responses in a two-element
+        // array `[{"acvVersion":...},{"retry":N}]`; we unwrap before
+        // checking. A non-positive retry value or absent field means
+        // the body is the actual vector set.
+        let body = unwrap_acvp_array(&parsed);
+        if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64) {
+            if retry_secs > 0 {
+                // Safe because of the > 0 guard above.
+                let secs = retry_secs.unsigned_abs();
+                eprintln!(
+                    "  [transport] vector set not ready; server says retry in {secs}s \
+                     (poll {poll}/{max_polls})"
+                );
+                log.log("vector_set_retry", &format!("{secs}s, poll {poll}"));
+                std::thread::sleep(std::time::Duration::from_secs(secs));
+                continue;
+            }
+        }
+        break parsed;
     };
 
-    // The ACVP server wraps vector sets in a two-element array
+    // The ACVP server wraps vector sets in a two-element array.
     let vs_body = unwrap_acvp_array(&prompt);
     log.log_json("vector_set_prompt", vs_body);
 
@@ -497,13 +1041,18 @@ fn process_one_vector_set(
             return "DISPATCH_ERROR".to_string();
         }
     };
+    // ACVP responses must echo back the prompt's `vsId` so the server
+    // can bind the submission to its issued vector set. The dispatcher
+    // produces `{algorithm, revision, testGroups}` and doesn't carry
+    // `vsId` through, so we inject it here from the prompt.
+    let response = inject_vs_id(&response, vs_body);
     log.log_json("vector_set_response", &response);
 
     // Submit response
     let results_url = format!("{full_url}/results");
     let response_body = build_acvp_response_body(&response);
     eprintln!("  [transport] submitting response...");
-    match http_post(&results_url, &response_body, config, bearer) {
+    match transport.post(&results_url, &response_body, bearer) {
         Ok(r) if r.status >= 200 && r.status < 300 => {
             eprintln!("  [transport] submitted OK");
             log.log("submit_ok", vs_url);
@@ -522,7 +1071,7 @@ fn process_one_vector_set(
 
     // Poll for verdict
     eprintln!("  [transport] polling for verdict...");
-    match poll_verdict(&full_url, config, bearer, log) {
+    match poll_verdict(&full_url, transport, bearer, log) {
         Ok(d) => {
             eprintln!("  [transport] verdict: {d}");
             log.log("verdict", &format!("{vs_url}: {d}"));
@@ -638,6 +1187,28 @@ fn build_registration_body(caps: &[JsonValue]) -> String {
     json::to_pretty_string(&body)
 }
 
+/// Copy the `vsId` field from the prompt into the response object if
+/// the response doesn't already have it. ACVP requires the response to
+/// echo the prompt's `vsId` so the server can bind the submission to
+/// its issued vector set; without it, submissions return HTTP 409.
+fn inject_vs_id(response: &JsonValue, prompt: &JsonValue) -> JsonValue {
+    let JsonValue::Object(fields) = response else {
+        return response.clone();
+    };
+    if fields.iter().any(|(k, _)| k == "vsId") {
+        return response.clone();
+    }
+    let Some(vs_id) = prompt.get("vsId") else {
+        return response.clone();
+    };
+    let mut new_fields: Vec<(String, JsonValue)> = Vec::with_capacity(fields.len().wrapping_add(1));
+    new_fields.push(("vsId".to_string(), vs_id.clone()));
+    for (k, v) in fields {
+        new_fields.push((k.clone(), v.clone()));
+    }
+    JsonValue::Object(new_fields)
+}
+
 /// Wrap a response in the ACVP envelope.
 fn build_acvp_response_body(response: &JsonValue) -> String {
     let body = JsonValue::Array(vec![
@@ -672,10 +1243,12 @@ fn resolve_url(server_base: &str, url: &str) -> String {
 }
 
 /// Poll a vector-set URL until the status is `"complete"`, with
-/// exponential backoff. Returns the disposition string.
+/// exponential backoff. Returns the disposition string. Uses the
+/// session's persistent transport, so each poll is just an HTTP
+/// request over the existing TLS tunnel — no per-poll touch.
 fn poll_verdict(
     url: &str,
-    config: &AcvpConfig,
+    transport: &mut Transport,
     bearer: &str,
     log: &mut TranscriptLog,
 ) -> Result<String, String> {
@@ -690,7 +1263,7 @@ fn poll_verdict(
         let delay = std::cmp::min(2000u64.wrapping_mul(1u64 << poll.min(4)), 30_000);
         std::thread::sleep(std::time::Duration::from_millis(delay));
 
-        let resp = http_get(url, config, bearer)?;
+        let resp = transport.get(url, bearer)?;
         if resp.status < 200 || resp.status >= 300 {
             log.log("poll_error", &format!("HTTP {}", resp.status));
             continue;
@@ -718,46 +1291,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn base64url_encode_empty() {
-        assert_eq!(base64url_encode(b""), "");
-    }
-
-    #[test]
-    fn base64url_encode_hello() {
-        // "Hello" → "SGVsbG8"
-        assert_eq!(base64url_encode(b"Hello"), "SGVsbG8");
-    }
-
-    #[test]
-    fn base64url_no_padding() {
-        // Base64url should not have = padding
-        let encoded = base64url_encode(b"a");
-        assert!(!encoded.contains('='));
-    }
-
-    #[test]
-    fn totp_deterministic() {
+    fn totp_deterministic_8_digit() {
         let secret = b"12345678901234567890";
-        // Same counter should produce the same code
+        // Same counter should produce the same code.
         let a = totp_at(secret, 1).unwrap();
         let b = totp_at(secret, 1).unwrap();
         assert_eq!(a, b);
-        assert_eq!(a.len(), 6);
-        // Different counters should (very likely) differ
+        // NIST ACVTS uses 8-digit codes (not the RFC 6238 default of 6).
+        assert_eq!(a.len(), 8);
+        // Different counters should (very likely) produce different codes.
         let c = totp_at(secret, 2).unwrap();
         assert_ne!(a, c);
     }
 
     #[test]
-    fn jwt_structure() {
-        // A JWT should have exactly two dots separating three parts
-        let secret = b"test-secret-key-1234";
-        let jwt = build_login_jwt(secret).unwrap();
-        let parts: Vec<&str> = jwt.split('.').collect();
-        assert_eq!(parts.len(), 3);
-        // Header and payload should be non-empty
-        assert!(!parts[0].is_empty());
-        assert!(!parts[1].is_empty());
-        assert!(!parts[2].is_empty());
+    fn base64_decode_empty() {
+        assert!(base64_decode("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn base64_decode_basic() {
+        // "Hello" → "SGVsbG8=" (with padding) or "SGVsbG8" (without)
+        assert_eq!(base64_decode("SGVsbG8=").unwrap(), b"Hello");
+        assert_eq!(base64_decode("SGVsbG8").unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn base64_decode_url_alphabet() {
+        // "?>" base64-standard = "Pz4=", base64url = "Pz4="; pick a value
+        // that actually differs: byte 0xFB (rare in text) → "+w==" /
+        // "-w==". This proves the decoder accepts both alphabets.
+        assert_eq!(base64_decode("+w==").unwrap(), vec![0xfbu8]);
+        assert_eq!(base64_decode("-w==").unwrap(), vec![0xfbu8]);
+    }
+
+    #[test]
+    fn base64_decode_ignores_whitespace() {
+        assert_eq!(base64_decode("SGVs\nbG8=").unwrap(), b"Hello");
+        assert_eq!(base64_decode("  SGVsbG8  ").unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn base64_decode_rejects_invalid() {
+        assert!(base64_decode("SG!Vs").is_err());
     }
 }

@@ -178,12 +178,27 @@ fn main() {
     print_self_test_banner();
 }
 
+// CLI parser with many flags; splitting it would add boilerplate without
+// clarity. The function is a flat sequence of flag-match arms followed by
+// validation and config construction.
+#[allow(clippy::too_many_lines)]
 fn run_demo_cli(args: &[String]) {
-    // Parse: demo-run --cert <cert> --key <key> --totp-secret <secret> [--algorithm <alg>]
+    use acvp_harness::transport::{AcvpConfig, HttpBackend};
+
+    // demo-run --cert <cert> --totp-secret <hex>
+    //   { --key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private' }
+    //   [--pkcs11-module <path>]
+    //   [--http-backend curl|s_client] [--algorithm <name>]
+    //   [--server <url>] [--log <path>]
     let mut cert = String::new();
     let mut key = String::new();
+    let mut pkcs11_key = String::new();
+    let mut pkcs11_module = String::new();
+    let mut pkcs11_pin_source = String::new();
+    let mut http_backend_explicit: Option<HttpBackend> = None;
     let mut totp_secret = String::new();
     let mut algorithm: Option<String> = None;
+    let mut query_session: Option<String> = None;
     let mut server = "https://demo.acvts.nist.gov".to_string();
     let mut log_path = "acvp-session.json".to_string();
     let mut i = 2;
@@ -201,6 +216,40 @@ fn run_demo_cli(args: &[String]) {
                     key.clone_from(&args[i]);
                 }
             }
+            "--pkcs11-key" => {
+                i += 1;
+                if i < args.len() {
+                    pkcs11_key.clone_from(&args[i]);
+                }
+            }
+            "--pkcs11-module" => {
+                i += 1;
+                if i < args.len() {
+                    pkcs11_module.clone_from(&args[i]);
+                }
+            }
+            "--pkcs11-pin-source" => {
+                i += 1;
+                if i < args.len() {
+                    pkcs11_pin_source.clone_from(&args[i]);
+                }
+            }
+            "--http-backend" => {
+                i += 1;
+                if i < args.len() {
+                    http_backend_explicit = match args[i].as_str() {
+                        "curl" => Some(HttpBackend::Curl),
+                        "s_client" | "openssl-s_client" => Some(HttpBackend::OpenSslSClient),
+                        other => {
+                            eprintln!(
+                                "oxicrypt acvp-harness demo-run: unknown --http-backend value \
+                                 {other:?} (valid: curl, s_client)"
+                            );
+                            return;
+                        }
+                    };
+                }
+            }
             "--totp-secret" => {
                 i += 1;
                 if i < args.len() {
@@ -211,6 +260,12 @@ fn run_demo_cli(args: &[String]) {
                 i += 1;
                 if i < args.len() {
                     algorithm = Some(args[i].clone());
+                }
+            }
+            "--query-session" => {
+                i += 1;
+                if i < args.len() {
+                    query_session = Some(args[i].clone());
                 }
             }
             "--server" => {
@@ -234,18 +289,77 @@ fn run_demo_cli(args: &[String]) {
         i += 1;
     }
 
-    if cert.is_empty() || key.is_empty() || totp_secret.is_empty() {
-        eprintln!("oxicrypt acvp-harness demo-run: --cert, --key, and --totp-secret are required");
+    if cert.is_empty() || totp_secret.is_empty() {
+        eprintln!("oxicrypt acvp-harness demo-run: --cert and --totp-secret are required");
         print_demo_run_usage();
         return;
     }
 
-    let config = acvp_harness::transport::AcvpConfig {
+    // Exactly one of --key or --pkcs11-key.
+    let have_key = !key.is_empty();
+    let have_pkcs11 = !pkcs11_key.is_empty();
+    match (have_key, have_pkcs11) {
+        (false, false) => {
+            eprintln!(
+                "oxicrypt acvp-harness demo-run: must supply either --key <file.pem> or \
+                 --pkcs11-key <pkcs11:URI>"
+            );
+            print_demo_run_usage();
+            return;
+        }
+        (true, true) => {
+            eprintln!(
+                "oxicrypt acvp-harness demo-run: --key and --pkcs11-key are mutually exclusive"
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    // Default backend: curl for software keys, s_client for hardware keys.
+    // (The NIST ACVTS demo CDN filters curl's TLS fingerprint when curl
+    // signs CertVerify via PKCS#11 — observed 2026-04-26. s_client's
+    // handshake is accepted.)
+    let http_backend = http_backend_explicit.unwrap_or(if have_pkcs11 {
+        HttpBackend::OpenSslSClient
+    } else {
+        HttpBackend::Curl
+    });
+
+    let config = AcvpConfig {
         server_url: server,
         cert_path: cert,
         key_path: key,
+        pkcs11_uri: if pkcs11_key.is_empty() {
+            None
+        } else {
+            Some(pkcs11_key)
+        },
+        pkcs11_module_path: if pkcs11_module.is_empty() {
+            None
+        } else {
+            Some(pkcs11_module)
+        },
+        pkcs11_pin: if pkcs11_pin_source.is_empty() {
+            String::new()
+        } else {
+            // Read PIN from the file once at startup. The file path comes
+            // from --pkcs11-pin-source. We trim trailing whitespace
+            // (newline if the file was written with `echo`).
+            match std::fs::read_to_string(&pkcs11_pin_source) {
+                Ok(s) => s.trim_end().to_string(),
+                Err(e) => {
+                    eprintln!(
+                        "oxicrypt acvp-harness demo-run: cannot read PIN from {pkcs11_pin_source:?}: {e}"
+                    );
+                    return;
+                }
+            }
+        },
+        http_backend,
         totp_secret,
         filter_algorithm: algorithm,
+        query_session_url: query_session,
         log_path,
     };
 
@@ -255,12 +369,33 @@ fn run_demo_cli(args: &[String]) {
 }
 
 fn print_demo_run_usage() {
-    eprintln!("usage: acvp-harness demo-run --cert <cert.pem> --key <key.pem> --totp-secret <hex>");
-    eprintln!("  optional: --algorithm <name>   test a single algorithm (e.g. SHA3-256)");
     eprintln!(
-        "            --server <url>        ACVP server (default: https://demo.acvts.nist.gov)"
+        "usage: acvp-harness demo-run --cert <cert.pem> --totp-secret <hex>"
     );
-    eprintln!("            --log <path>          transcript log path (default: acvp-session.json)");
+    eprintln!(
+        "               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')"
+    );
+    eprintln!("               [--pkcs11-module <path>] [--pkcs11-pin-source <path>]");
+    eprintln!("               [--http-backend curl|s_client] [--algorithm <name>]");
+    eprintln!("               [--server <url>] [--log <path>]");
+    eprintln!();
+    eprintln!("  --key                 file-based PEM key (default backend: curl)");
+    eprintln!("  --pkcs11-key          PKCS#11 URI for hardware key (default backend: s_client)");
+    eprintln!("  --pkcs11-module       PKCS#11 provider module .so (default: opensc-pkcs11)");
+    eprintln!(
+        "  --pkcs11-pin-source   path to a file containing the PIV PIN (avoids tty prompts;"
+    );
+    eprintln!("                        place on /dev/shm with mode 0600, shred after use)");
+    eprintln!("  --http-backend        override transport: curl or s_client");
+    eprintln!("  --algorithm <name>    test a single algorithm (e.g. SHA2-256)");
+    eprintln!(
+        "  --query-session <url> fetch verdict for an existing session (skip register+submit);"
+    );
+    eprintln!("                        URL may be relative (/acvp/v1/testSessions/...) or absolute");
+    eprintln!(
+        "  --server <url>        ACVP server (default: https://demo.acvts.nist.gov)"
+    );
+    eprintln!("  --log <path>          transcript log path (default: acvp-session.json)");
 }
 
 fn print_self_test_banner() {
