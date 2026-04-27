@@ -306,6 +306,117 @@ pub fn tls12_master_secret<P: PrfHmac<L>, const L: usize>(
     ))
 }
 
+// ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
+//
+// HKDF-Expand-Label and Derive-Secret. Built on the HMAC-iterated
+// HKDF-Expand of RFC 5869 §2.3, kept inline (rather than calling
+// oxicrypt-kdf::Hkdf) to match the style of the tls12_* family above
+// and to avoid the module-state gating layer inside the harness,
+// which already runs behind `require_operational`.
+//
+// Public gated wrappers (`tls13_hkdf_expand_label`,
+// `tls13_derive_secret`) are deferred to a follow-up PR that adds
+// `Service::Tls13Kdf` to oxicrypt-module — that variant doesn't
+// exist yet, and the ACVP harness uses the `_internal` entry
+// points directly so the chunk-1 scope ships without it.
+
+/// Maximum HkdfLabel wire size on the stack. Per RFC 8446 §7.1:
+/// `uint16 length` (2) + `opaque label<7..255>` (1 + ≤255) +
+/// `opaque context<0..255>` (1 + ≤255). Realistic TLS 1.3 use is
+/// far smaller — labels are ≤16 chars, context is a 32- or 48-byte
+/// transcript hash — but the upper bound is the spec maximum.
+const HKDF_LABEL_SCRATCH: usize = 2 + 1 + 255 + 1 + 255;
+
+/// Internal HKDF-Expand-Label per RFC 8446 §7.1.
+///
+/// Builds the HkdfLabel wire structure
+/// `length || "tls13 " + label || context` and runs HKDF-Expand
+/// (RFC 5869 §2.3) to fill `out`. `out.len()` must fit in `u16`;
+/// realistic TLS 1.3 outputs are ≤96 bytes, far below the cap.
+///
+/// This is the gateless variant used by the ACVP harness and the
+/// power-up self-test. The (eventual) public `tls13_hkdf_expand_label`
+/// will wrap this with `require_operational` + `require_allowed`
+/// once `Service::Tls13Kdf` lands in oxicrypt-module.
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+pub fn tls13_hkdf_expand_label_internal<P: PrfHmac<L>, const L: usize>(
+    secret: &[u8],
+    label: &[u8],
+    context: &[u8],
+    out: &mut [u8],
+) {
+    // Build HkdfLabel into a stack scratch buffer.
+    let mut scratch = [0u8; HKDF_LABEL_SCRATCH];
+    // `out.len()` is bounded above by realistic TLS 1.3 use (≤96 bytes);
+    // the `u16::MAX` saturation handles theoretical overflow.
+    let length: u16 = u16::try_from(out.len()).unwrap_or(u16::MAX);
+    scratch[0..2].copy_from_slice(&length.to_be_bytes());
+    // `full_label_len` is clamped to 255 by the `.min(255)` above, so the
+    // `u8::try_from` cannot fail in practice; the `unwrap_or` is belt-and-
+    // suspenders matching the same saturation guarantee.
+    let full_label_len = 6usize.saturating_add(label.len()).min(255);
+    scratch[2] = u8::try_from(full_label_len).unwrap_or(u8::MAX);
+    scratch[3..9].copy_from_slice(b"tls13 ");
+    let label_take = full_label_len.saturating_sub(6);
+    scratch[9..9 + label_take].copy_from_slice(&label[..label_take]);
+    let context_off = 9 + label_take;
+    // Same saturation reasoning as `full_label_len`: clamped to 255.
+    let context_take = context.len().min(255);
+    scratch[context_off] = u8::try_from(context_take).unwrap_or(u8::MAX);
+    scratch[context_off + 1..context_off + 1 + context_take]
+        .copy_from_slice(&context[..context_take]);
+    let info_len = context_off + 1 + context_take;
+    let info = &scratch[..info_len];
+
+    // HKDF-Expand (RFC 5869 §2.3): OKM = T(1) || T(2) || ... truncated
+    //   T(0) = empty
+    //   T(i) = HMAC(secret, T(i-1) || info || i)
+    let mut prev_block = [0u8; L];
+    let mut have_prev = false;
+    let mut counter: u8 = 1;
+    let mut offset = 0;
+    while offset < out.len() {
+        let mut mac = P::prf_new(secret);
+        if have_prev {
+            mac.prf_update(&prev_block);
+        }
+        mac.prf_update(info);
+        mac.prf_update(&[counter]);
+        let t = mac.prf_finalize();
+
+        let remaining = out.len() - offset;
+        let to_copy = if remaining < L { remaining } else { L };
+        out[offset..offset + to_copy].copy_from_slice(&t[..to_copy]);
+        offset += to_copy;
+
+        prev_block.copy_from_slice(&t);
+        have_prev = true;
+        counter = counter.wrapping_add(1);
+    }
+}
+
+/// Internal Derive-Secret per RFC 8446 §7.1:
+///
+/// ```text
+/// Derive-Secret(secret, label, messages)
+///   = HKDF-Expand-Label(secret, label, Hash(messages), Hash.length)
+/// ```
+///
+/// Caller computes `Hash(messages)` (the running transcript hash)
+/// and passes it as `transcript_hash`. Keeping the transcript-hash
+/// computation outside this crate matches how TLS 1.3 stacks
+/// already maintain a transcript-hash context separately from the
+/// KDF, and keeps `oxicrypt-tls-kdf` free of a dependency on
+/// `oxicrypt-sha`.
+pub fn tls13_derive_secret_internal<P: PrfHmac<L>, const L: usize>(
+    secret: &[u8],
+    label: &[u8],
+    transcript_hash: &[u8],
+    out: &mut [u8],
+) {
+    tls13_hkdf_expand_label_internal::<P, L>(secret, label, transcript_hash, out);
+}
+
 // ── Power-up KAT ─────────────────────────────────────────────────
 
 /// KAT secret: 48 bytes of `0x0b`.
@@ -375,5 +486,62 @@ mod tests {
         tls12_prf_internal::<HmacSha256, 32>(&secret, label, &seed, &mut out1);
         tls12_prf_internal::<HmacSha256, 32>(&secret, label, &seed, &mut out2);
         assert_eq!(out1, out2);
+    }
+
+    /// RFC 8448 §3 (1-RTT handshake), client handshake-traffic-secret
+    /// expansion: HKDF-Expand-Label using "c hs traffic" + transcript
+    /// hash of `ClientHello || ServerHello`. Authoritative byte-perfect
+    /// vector from the published TLS 1.3 example handshakes.
+    #[test]
+    fn tls13_hkdf_expand_label_rfc8448_c_hs_traffic() {
+        let prk: [u8; 32] = [
+            0x1d, 0xc8, 0x26, 0xe9, 0x36, 0x06, 0xaa, 0x6f, 0xdc, 0x0a, 0xad, 0xc1, 0x2f, 0x74,
+            0x1b, 0x01, 0x04, 0x6a, 0xa6, 0xb9, 0x9f, 0x69, 0x1e, 0xd2, 0x21, 0xa9, 0xf0, 0xca,
+            0x04, 0x3f, 0xbe, 0xac,
+        ];
+        let transcript_hash: [u8; 32] = [
+            0x86, 0x0c, 0x06, 0xed, 0xc0, 0x78, 0x58, 0xee, 0x8e, 0x78, 0xf0, 0xe7, 0x42, 0x8c,
+            0x58, 0xed, 0xd6, 0xb4, 0x3f, 0x2c, 0xa3, 0xe6, 0xe9, 0x5f, 0x02, 0xed, 0x06, 0x3c,
+            0xf0, 0xe1, 0xca, 0xd8,
+        ];
+        let expected: [u8; 32] = [
+            0xb3, 0xed, 0xdb, 0x12, 0x6e, 0x06, 0x7f, 0x35, 0xa7, 0x80, 0xb3, 0xab, 0xf4, 0x5e,
+            0x2d, 0x8f, 0x3b, 0x1a, 0x95, 0x07, 0x38, 0xf5, 0x2e, 0x96, 0x00, 0x74, 0x6a, 0x0e,
+            0x27, 0xa5, 0x5a, 0x21,
+        ];
+        let mut out = [0u8; 32];
+        tls13_hkdf_expand_label_internal::<HmacSha256, 32>(
+            &prk,
+            b"c hs traffic",
+            &transcript_hash,
+            &mut out,
+        );
+        assert_eq!(out, expected);
+    }
+
+    /// `tls13_derive_secret_internal(secret, label, transcript_hash)`
+    /// is defined as `HKDF-Expand-Label(secret, label, transcript_hash,
+    /// HashLen)`. With output sized to the hash length, the two must
+    /// produce identical bytes for the same inputs (RFC 8446 §7.1).
+    #[test]
+    fn tls13_derive_secret_matches_expand_label_with_hashlen_output() {
+        let secret = [0x42u8; 32];
+        let label = b"derived";
+        let transcript_hash = [0xa5u8; 32];
+        let mut via_derive = [0u8; 32];
+        let mut via_expand = [0u8; 32];
+        tls13_derive_secret_internal::<HmacSha256, 32>(
+            &secret,
+            label,
+            &transcript_hash,
+            &mut via_derive,
+        );
+        tls13_hkdf_expand_label_internal::<HmacSha256, 32>(
+            &secret,
+            label,
+            &transcript_hash,
+            &mut via_expand,
+        );
+        assert_eq!(via_derive, via_expand);
     }
 }

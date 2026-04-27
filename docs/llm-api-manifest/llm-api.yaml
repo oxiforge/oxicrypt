@@ -2456,6 +2456,18 @@ functions:
         right: |
           Pbkdf2HmacSha256::derive(password, salt, 600_000, &mut key)?;
 
+  # ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
+  #
+  # `tls13_hkdf_expand_label_internal` and `tls13_derive_secret_internal`
+  # are intentionally NOT listed here. By prior project agreement,
+  # `*_internal` symbols are out of LAMA spec scope — they are `pub` in
+  # Rust solely for in-tree reachability (ACVP harness, power-up self-
+  # test) and are not part of the consumable external API. The matching
+  # FIPS-gated wrappers `tls13_hkdf_expand_label` / `tls13_derive_secret`
+  # require a `Service::Tls13Kdf` enum variant in `oxicrypt-module` and
+  # land — together with their LAMA manifest entries — in a dedicated
+  # follow-up PR.
+  #
   # ── TLS 1.2 KDF (RFC 5246, RFC 7627) ─────────────────────────────
 
   - name: tls12_prf

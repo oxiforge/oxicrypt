@@ -429,5 +429,6 @@ pub mod shake;
 pub mod shs;
 pub mod slh_dsa;
 pub mod tls12_kdf;
+pub mod tls13_kdf;
 pub mod tuplehash;
 pub mod xmss;

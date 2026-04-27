@@ -461,6 +461,28 @@ pub fn tls12_kdf_capability() -> JsonValue {
     ])
 }
 
+/// Build an ACVP registration block for TLS v1.3 KDF (RFC 8446).
+///
+/// Capability shape per `draft-hammett-acvp-kdf-tls-v1.3` §7.3.2:
+/// ```json
+/// {
+///   "algorithm": "TLS-v1.3",
+///   "mode": "KDF",
+///   "revision": "RFC8446",
+///   "hmacAlg": ["SHA2-256", "SHA2-384"],
+///   "runningMode": ["DHE", "PSK", "PSK-DHE"]
+/// }
+/// ```
+pub fn tls13_kdf_capability() -> JsonValue {
+    obj(vec![
+        ("algorithm", str_val("TLS-v1.3")),
+        ("mode", str_val("KDF")),
+        ("revision", str_val("RFC8446")),
+        ("hmacAlg", str_array(&["SHA2-256", "SHA2-384"])),
+        ("runningMode", str_array(&["DHE", "PSK", "PSK-DHE"])),
+    ])
+}
+
 /// Build an ACVP registration block for PBKDF (SP 800-132).
 pub fn pbkdf_capability() -> JsonValue {
     obj(vec![
