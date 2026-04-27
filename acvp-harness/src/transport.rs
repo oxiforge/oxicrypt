@@ -274,6 +274,10 @@ struct SClientConnection {
     stdin: std::process::ChildStdin,
     stdout: std::io::BufReader<std::process::ChildStdout>,
     host: String,
+    /// `true` when the previous HTTP response carried a `Connection:
+    /// close` directive. The pre-request gate in [`Transport::dispatch`]
+    /// reconnects before the next request when this is set.
+    server_wants_close: bool,
 }
 
 impl SClientConnection {
@@ -325,6 +329,7 @@ impl SClientConnection {
             stdin,
             stdout: std::io::BufReader::new(stdout),
             host,
+            server_wants_close: false,
         })
     }
 
@@ -378,6 +383,8 @@ impl SClientConnection {
                 break;
             }
         }
+        // Capture the server's keep-alive intent for the next request.
+        self.server_wants_close = scan_connection_close(&headers_buf);
         let headers_end = headers_buf.len().wrapping_sub(4);
         let headers_bytes = headers_buf.get(..headers_end).unwrap_or(&[]);
         let headers_text = std::str::from_utf8(headers_bytes)
@@ -497,6 +504,21 @@ impl SClientConnection {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    /// Atomically tear down the current s_client tunnel and spawn a
+    /// fresh one. Used by the pre-request gate when a prior response
+    /// signaled `Connection: close`. Pre-opens the new connection
+    /// before swapping, so a spawn failure leaves the old (already-
+    /// doomed) connection intact and the caller sees the error.
+    ///
+    /// Cost: one YubiKey touch per call (the new TLS handshake
+    /// performs a certificate-verify signature against the PIV slot).
+    fn reopen(&mut self, config: &AcvpConfig) -> Result<(), String> {
+        let new_self = Self::open(config)?;
+        let old = std::mem::replace(self, new_self);
+        old.close();
+        Ok(())
+    }
 }
 
 /// Transport handle threaded through one ACVP session. Owned by
@@ -506,7 +528,11 @@ impl SClientConnection {
 /// backend it owns the persistent TLS tunnel.
 enum Transport<'a> {
     Curl(&'a AcvpConfig),
-    SClient(SClientConnection),
+    /// Persistent s_client tunnel plus a config reference so the
+    /// pre-request gate in [`Transport::dispatch`] can reconnect
+    /// (via [`SClientConnection::reopen`]) when the previous response
+    /// signaled `Connection: close`.
+    SClient(SClientConnection, &'a AcvpConfig),
 }
 
 impl<'a> Transport<'a> {
@@ -515,7 +541,7 @@ impl<'a> Transport<'a> {
             HttpBackend::Curl => Ok(Transport::Curl(config)),
             HttpBackend::OpenSslSClient => {
                 let conn = SClientConnection::open(config)?;
-                Ok(Transport::SClient(conn))
+                Ok(Transport::SClient(conn, config))
             }
         }
     }
@@ -523,7 +549,7 @@ impl<'a> Transport<'a> {
     fn close(self) {
         match self {
             Transport::Curl(_) => {}
-            Transport::SClient(conn) => conn.close(),
+            Transport::SClient(conn, _) => conn.close(),
         }
     }
 
@@ -544,7 +570,18 @@ impl<'a> Transport<'a> {
     ) -> Result<HttpResponse, String> {
         match self {
             Transport::Curl(config) => http_request_curl_with_retry(method, url, body, config, bearer),
-            Transport::SClient(conn) => {
+            Transport::SClient(conn, config) => {
+                // Honor a prior Connection: close signal before
+                // issuing the next request. The reconnect costs one
+                // YubiKey touch; operator-visible eprintln so the
+                // touch isn't surprising.
+                if conn.server_wants_close {
+                    eprintln!(
+                        "[transport] server requested connection close on prior response; \
+                         reconnecting (one YubiKey touch)"
+                    );
+                    conn.reopen(config)?;
+                }
                 let (_host, _port, path) = parse_https_url(url)?;
                 conn.request(method, &path, body, bearer)
             }
@@ -1324,6 +1361,39 @@ fn resolve_url(server_base: &str, url: &str) -> String {
     }
 }
 
+/// Scan an HTTP response-headers byte buffer for a `Connection: close`
+/// directive.
+///
+/// HTTP header names are case-insensitive (RFC 9110 §5.1) and
+/// multi-value `Connection` headers carry comma-separated tokens
+/// (RFC 9110 §7.6.1) — we match the literal token `close` case-
+/// insensitively, with token-boundary discipline, so a value like
+/// `closeAfter` does not false-positive. Operates on the raw byte
+/// buffer the read-headers loop already accumulates; non-UTF-8 input
+/// is treated as "no signal" (returns `false`) so a malformed header
+/// can't accidentally trigger a reconnect.
+fn scan_connection_close(headers: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(headers) else {
+        return false;
+    };
+    for line in text.split("\r\n") {
+        let Some(colon_idx) = line.find(':') else {
+            continue;
+        };
+        let (name, value) = line.split_at(colon_idx);
+        if !name.trim().eq_ignore_ascii_case("connection") {
+            continue;
+        }
+        // Skip the `:` separator before splitting tokens.
+        for token in value[1..].split(',') {
+            if token.trim().eq_ignore_ascii_case("close") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Clamp a server-supplied retry hint (seconds) to `[5, 120]`, or
 /// return `None` for non-positive hints so the caller falls through
 /// to its own backoff schedule.
@@ -1562,5 +1632,59 @@ mod tests {
     fn is_error_disposition_unknown_disposition_is_not_error() {
         assert!(!is_error_disposition("incomplete"));
         assert!(!is_error_disposition(""));
+    }
+
+    #[test]
+    fn scan_connection_close_missing_header() {
+        let buf = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+        assert!(!scan_connection_close(buf));
+    }
+
+    #[test]
+    fn scan_connection_close_keep_alive() {
+        let buf = b"HTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n";
+        assert!(!scan_connection_close(buf));
+    }
+
+    #[test]
+    fn scan_connection_close_lowercase() {
+        let buf = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
+        assert!(scan_connection_close(buf));
+    }
+
+    #[test]
+    fn scan_connection_close_mixed_case_value() {
+        let buf_a = b"HTTP/1.1 200 OK\r\nConnection: Close\r\n\r\n";
+        let buf_b = b"HTTP/1.1 200 OK\r\nConnection: CLOSE\r\n\r\n";
+        assert!(scan_connection_close(buf_a));
+        assert!(scan_connection_close(buf_b));
+    }
+
+    #[test]
+    fn scan_connection_close_substring_is_not_a_token_match() {
+        // "closeAfter" contains "close" as a substring but is a
+        // different token. RFC 9110 Connection-header values are
+        // tokens, not free-form text.
+        let buf = b"HTTP/1.1 200 OK\r\nConnection: closeAfter\r\n\r\n";
+        assert!(!scan_connection_close(buf));
+    }
+
+    #[test]
+    fn scan_connection_close_comma_list_contains_close() {
+        let buf = b"HTTP/1.1 200 OK\r\nConnection: keep-alive, close\r\n\r\n";
+        assert!(scan_connection_close(buf));
+    }
+
+    #[test]
+    fn scan_connection_close_comma_list_without_close() {
+        let buf = b"HTTP/1.1 200 OK\r\nConnection: keep-alive, upgrade\r\n\r\n";
+        assert!(!scan_connection_close(buf));
+    }
+
+    #[test]
+    fn scan_connection_close_header_name_case_insensitive() {
+        // RFC 9110 §5.1: header field names are case-insensitive.
+        let buf = b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n";
+        assert!(scan_connection_close(buf));
     }
 }
