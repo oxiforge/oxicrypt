@@ -284,86 +284,106 @@ pub fn ctr_drbg_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ctrDRBG")),
         ("revision", str_val("1.0")),
-        ("predResistance", bool_pair()),
+        ("predResistanceEnabled", bool_pair()),
+        ("reseedImplemented", JsonValue::Bool(false)),
         (
             "capabilities",
             JsonValue::Array(vec![
-                obj(vec![
-                    ("mode", str_val("AES-128")),
-                    ("derFunc", JsonValue::Bool(true)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("AES-128")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("AES-192")),
-                    ("derFunc", JsonValue::Bool(true)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("AES-192")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("AES-256")),
-                    ("derFunc", JsonValue::Bool(true)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("AES-256")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
+                // Entropy / nonce values per ACVP-server validation:
+                // entropy = seedlen (security_strength + AES blocklen) and
+                // nonce = 0 for ALL (mode, derFunc) entries. The server
+                // enforces seedlen-style values uniformly regardless of
+                // derFunc — stricter than SP 800-90A Rev 1 Table 3 alone
+                // suggests but matches the demo server's per-mode rules
+                // (verified empirically 2026-04-28).
+                ctr_drbg_mode_entry("AES-128", true, 256, 0),
+                ctr_drbg_mode_entry("AES-128", false, 256, 0),
+                ctr_drbg_mode_entry("AES-192", true, 320, 0),
+                ctr_drbg_mode_entry("AES-192", false, 320, 0),
+                ctr_drbg_mode_entry("AES-256", true, 384, 0),
+                ctr_drbg_mode_entry("AES-256", false, 384, 0),
             ]),
         ),
+    ])
+}
+
+/// Build a single ctrDRBG mode entry with its per-(mode, derFunc) domain
+/// fields. Entropy / nonce values are spec-mandated per SP 800-90A Rev 1
+/// Table 3 and constrained by the demo server's per-mode validation.
+fn ctr_drbg_mode_entry(mode: &str, der_func: bool, entropy_len: i64, nonce_len: i64) -> JsonValue {
+    obj(vec![
+        ("mode", str_val(mode)),
+        ("derFunc", JsonValue::Bool(der_func)),
+        // Fixed (spec-mandated) values use num_array to produce `[N]`;
+        // ranges use range_domain. The server enforces strict min < max
+        // on range objects, so single-value entries must use the array
+        // form.
+        ("entropyInputLen", num_array(&[entropy_len])),
+        ("nonceLen", num_array(&[nonce_len])),
+        ("persoStringLen", range_domain(0, 256, 8)),
+        ("additionalInputLen", range_domain(0, 256, 8)),
+        ("returnedBitsLen", num(256)),
     ])
 }
 
 /// Build an ACVP registration block for Hash_DRBG.
+///
+/// Per-mode entropy/nonce values follow the same shape pattern as
+/// ctrDRBG (verified empirically 2026-04-28 against the demo server),
+/// but the specific values for hashDRBG modes have not been live-
+/// verified yet — values match SP 800-90A Rev 1 Table 2 minima
+/// (security_strength=256 for all SHA2-{256,384,512}, nonce =
+/// security_strength/2 = 128). A live-demo verification follow-up
+/// PR will tune these as needed.
 pub fn hash_drbg_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("hashDRBG")),
         ("revision", str_val("1.0")),
-        ("predResistance", bool_pair()),
+        ("predResistanceEnabled", bool_pair()),
+        ("reseedImplemented", JsonValue::Bool(false)),
         (
             "capabilities",
             JsonValue::Array(vec![
-                obj(vec![
-                    ("mode", str_val("SHA2-256")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("SHA2-384")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("SHA2-512")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
+                hash_drbg_mode_entry("SHA2-256", 256, 128),
+                hash_drbg_mode_entry("SHA2-384", 256, 128),
+                hash_drbg_mode_entry("SHA2-512", 256, 128),
             ]),
         ),
     ])
 }
 
+/// Build a single hashDRBG / hmacDRBG mode entry with per-mode domain
+/// fields. Hash/HMAC DRBGs do not have a derFunc concept — entropy
+/// compression is intrinsic to the algorithm.
+fn hash_drbg_mode_entry(mode: &str, entropy_len: i64, nonce_len: i64) -> JsonValue {
+    obj(vec![
+        ("mode", str_val(mode)),
+        ("entropyInputLen", num_array(&[entropy_len])),
+        ("nonceLen", num_array(&[nonce_len])),
+        ("persoStringLen", range_domain(0, 256, 8)),
+        ("additionalInputLen", range_domain(0, 256, 8)),
+        ("returnedBitsLen", num(256)),
+    ])
+}
+
 /// Build an ACVP registration block for HMAC_DRBG.
+///
+/// Per-mode entropy/nonce values follow the same shape pattern as
+/// ctrDRBG (verified empirically 2026-04-28). HMAC_DRBG specific values
+/// have not been live-verified yet — see `hash_drbg_capability` for the
+/// same caveat.
 pub fn hmac_drbg_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("hmacDRBG")),
         ("revision", str_val("1.0")),
-        ("predResistance", bool_pair()),
+        ("predResistanceEnabled", bool_pair()),
+        ("reseedImplemented", JsonValue::Bool(false)),
         (
             "capabilities",
             JsonValue::Array(vec![
-                obj(vec![
-                    ("mode", str_val("SHA2-256")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("SHA2-384")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
-                obj(vec![
-                    ("mode", str_val("SHA2-512")),
-                    ("derFunc", JsonValue::Bool(false)),
-                ]),
+                hash_drbg_mode_entry("SHA2-256", 256, 128),
+                hash_drbg_mode_entry("SHA2-384", 256, 128),
+                hash_drbg_mode_entry("SHA2-512", 256, 128),
             ]),
         ),
     ])
@@ -372,6 +392,12 @@ pub fn hmac_drbg_capability() -> JsonValue {
 // ── KDF family ───────────────────────────────────────────────────
 
 /// Build an ACVP registration block for KDA-HKDF (SP 800-56C Rev 2).
+///
+/// `macSaltMethods`, `encoding`, and (when `usesHybridSharedSecret:
+/// true`) `auxSharedSecretLen` are required by the demo server per
+/// draft-celi-acvp-kda-1.0; see SP 800-56Cr2 §4.5 (encoding /
+/// salt-method) and §5.9.2 (hybrid shared-secret form, where the
+/// auxiliary shared secret is concatenated alongside Z).
 pub fn kda_hkdf_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KDA")),
@@ -392,7 +418,10 @@ pub fn kda_hkdf_capability() -> JsonValue {
                 "SHA3-512",
             ]),
         ),
+        ("macSaltMethods", str_array(&["default", "random"])),
+        ("encoding", str_array(&["concatenation"])),
         ("z", range_domain(224, 65536, 8)),
+        ("auxSharedSecretLen", range_domain(112, 65536, 8)),
         ("l", num(2048)),
         ("fixedInfoPattern", str_val("uPartyInfo||vPartyInfo||l")),
         ("usesHybridSharedSecret", JsonValue::Bool(true)),
