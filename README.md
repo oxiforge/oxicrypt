@@ -54,7 +54,7 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | MAC | HMAC over all 11 approved hashes, AES-CMAC (128/192/256) | FIPS 198-1, SP 800-38B |
 | Symmetric | AES-128/192/256 in ECB, CBC, CTR, GCM, CCM, KW, KWP modes | FIPS 197, SP 800-38A/C/D/F |
 | DRBG | CTR_DRBG (AES-128/192/256), Hash_DRBG (SHA-256/384/512), HMAC_DRBG (SHA-256/384/512) | SP 800-90A Rev. 1 |
-| KDF | SP 800-108r1 (counter/feedback/double-pipeline), SP 800-56C Rev 2 KDA-HKDF, TLS 1.2 KDF, PBKDF2 | SP 800-108, SP 800-56Cr2, SP 800-132 |
+| KDF | SP 800-108r1 (counter/feedback/double-pipeline), SP 800-56C Rev 2 KDA-HKDF, TLS 1.2 KDF, TLS 1.3 KDF, PBKDF2 | SP 800-108, SP 800-56Cr2, SP 800-132, RFC 8446 |
 | SP 800-185 | cSHAKE, KMAC, TupleHash, ParallelHash (+ XOF variants) | SP 800-185 |
 | RSA | RSA-2048/3072/4096 PKCS#1 v1.5 and PSS sign/verify, OAEP encrypt/decrypt, keygen with CRT + Bellcore | FIPS 186-5, SP 800-56Br2 |
 | ECDSA | P-256 and P-384 sign/verify/keygen with DRBG-backed rejection sampling | FIPS 186-5 |
@@ -89,7 +89,7 @@ crates/
   oxicrypt-aes           AES block cipher and all approved modes
   oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
-  oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246)
+  oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246) + TLS 1.3 KDF (RFC 8446 §7.1)
   oxicrypt-rsa           RSA-2048/3072/4096 sign/verify/encrypt/decrypt/keygen with CRT + Bellcore
   oxicrypt-ecdsa         ECDSA P-256 + P-384 (FIPS 186-5)
   oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)

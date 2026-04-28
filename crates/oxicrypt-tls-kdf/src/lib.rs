@@ -315,10 +315,12 @@ pub fn tls12_master_secret<P: PrfHmac<L>, const L: usize>(
 // which already runs behind `require_operational`.
 //
 // Public gated wrappers (`tls13_hkdf_expand_label`,
-// `tls13_derive_secret`) are deferred to a follow-up PR that adds
-// `Service::Tls13Kdf` to oxicrypt-module — that variant doesn't
-// exist yet, and the ACVP harness uses the `_internal` entry
-// points directly so the chunk-1 scope ships without it.
+// `tls13_derive_secret`) sit alongside the gateless `*_internal`
+// entry points: the public surface enforces `require_operational` +
+// `require_allowed(Service::Tls13Kdf)`, while the ACVP harness
+// continues to dispatch through `_internal` directly so its test
+// runs do not depend on the module's profile-gating state. Same
+// architectural separation as ML-DSA / SLH-DSA / EdDSA.
 
 /// Maximum HkdfLabel wire size on the stack. Per RFC 8446 §7.1:
 /// `uint16 length` (2) + `opaque label<7..255>` (1 + ≤255) +
@@ -335,9 +337,9 @@ const HKDF_LABEL_SCRATCH: usize = 2 + 1 + 255 + 1 + 255;
 /// realistic TLS 1.3 outputs are ≤96 bytes, far below the cap.
 ///
 /// This is the gateless variant used by the ACVP harness and the
-/// power-up self-test. The (eventual) public `tls13_hkdf_expand_label`
-/// will wrap this with `require_operational` + `require_allowed`
-/// once `Service::Tls13Kdf` lands in oxicrypt-module.
+/// power-up self-test. The public, FIPS-gated counterpart
+/// [`tls13_hkdf_expand_label`] wraps this with `require_operational`
+/// + `require_allowed(Service::Tls13Kdf)` for normal-call use.
 #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 pub fn tls13_hkdf_expand_label_internal<P: PrfHmac<L>, const L: usize>(
     secret: &[u8],
@@ -417,6 +419,66 @@ pub fn tls13_derive_secret_internal<P: PrfHmac<L>, const L: usize>(
     tls13_hkdf_expand_label_internal::<P, L>(secret, label, transcript_hash, out);
 }
 
+/// HKDF-Expand-Label per RFC 8446 §7.1 — FIPS-gated public entry point.
+///
+/// Builds the HkdfLabel wire structure
+/// `length || "tls13 " + label || context` and runs HKDF-Expand
+/// (RFC 5869 §2.3) to fill `out`.
+///
+/// Wraps [`tls13_hkdf_expand_label_internal`] with the FIPS 140-3
+/// algorithm-profile gating via [`require_allowed`]. Returns
+/// [`Error::AlgorithmRestricted`] if the active profile forbids
+/// `Service::Tls13Kdf`, and [`Error::NotOperational`] if the module
+/// has not yet completed power-up self-tests.
+///
+/// # Errors
+///
+/// - [`Error::NotOperational`] if the module is not in the
+///   `Operational` state.
+/// - [`Error::AlgorithmRestricted`] if the active profile does not
+///   allow [`Service::Tls13Kdf`].
+pub fn tls13_hkdf_expand_label<P: PrfHmac<L>, const L: usize>(
+    secret: &[u8],
+    label: &[u8],
+    context: &[u8],
+    out: &mut [u8],
+) -> Result<(), Error> {
+    require_operational()?;
+    require_allowed(Service::Tls13Kdf)?;
+    tls13_hkdf_expand_label_internal::<P, L>(secret, label, context, out);
+    Ok(())
+}
+
+/// Derive-Secret per RFC 8446 §7.1 — FIPS-gated public entry point.
+///
+/// ```text
+/// Derive-Secret(secret, label, messages)
+///   = HKDF-Expand-Label(secret, label, Hash(messages), Hash.length)
+/// ```
+///
+/// Caller computes `Hash(messages)` (the running transcript hash) and
+/// passes it as `transcript_hash`. Wraps
+/// [`tls13_derive_secret_internal`] with the FIPS 140-3
+/// algorithm-profile gating via [`require_allowed`].
+///
+/// # Errors
+///
+/// - [`Error::NotOperational`] if the module is not in the
+///   `Operational` state.
+/// - [`Error::AlgorithmRestricted`] if the active profile does not
+///   allow [`Service::Tls13Kdf`].
+pub fn tls13_derive_secret<P: PrfHmac<L>, const L: usize>(
+    secret: &[u8],
+    label: &[u8],
+    transcript_hash: &[u8],
+    out: &mut [u8],
+) -> Result<(), Error> {
+    require_operational()?;
+    require_allowed(Service::Tls13Kdf)?;
+    tls13_derive_secret_internal::<P, L>(secret, label, transcript_hash, out);
+    Ok(())
+}
+
 // ── Power-up KAT ─────────────────────────────────────────────────
 
 /// KAT secret: 48 bytes of `0x0b`.
@@ -447,11 +509,73 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
+/// RFC 8448 §3 (1-RTT handshake) PRK for the client handshake-traffic-secret
+/// expansion. Pinned reference for the TLS 1.3 KDF KAT.
+const TLS13_KAT_PRK: [u8; 32] = [
+    0x1d, 0xc8, 0x26, 0xe9, 0x36, 0x06, 0xaa, 0x6f, 0xdc, 0x0a, 0xad, 0xc1, 0x2f, 0x74, 0x1b, 0x01,
+    0x04, 0x6a, 0xa6, 0xb9, 0x9f, 0x69, 0x1e, 0xd2, 0x21, 0xa9, 0xf0, 0xca, 0x04, 0x3f, 0xbe, 0xac,
+];
+
+/// RFC 8448 §3 transcript hash — `SHA-256(ClientHello || ServerHello)`.
+const TLS13_KAT_TRANSCRIPT_HASH: [u8; 32] = [
+    0x86, 0x0c, 0x06, 0xed, 0xc0, 0x78, 0x58, 0xee, 0x8e, 0x78, 0xf0, 0xe7, 0x42, 0x8c, 0x58, 0xed,
+    0xd6, 0xb4, 0x3f, 0x2c, 0xa3, 0xe6, 0xe9, 0x5f, 0x02, 0xed, 0x06, 0x3c, 0xf0, 0xe1, 0xca, 0xd8,
+];
+
+/// RFC 8448 §3 expected client handshake-traffic-secret (32 bytes).
+const TLS13_KAT_EXPECTED: [u8; 32] = [
+    0xb3, 0xed, 0xdb, 0x12, 0x6e, 0x06, 0x7f, 0x35, 0xa7, 0x80, 0xb3, 0xab, 0xf4, 0x5e, 0x2d, 0x8f,
+    0x3b, 0x1a, 0x95, 0x07, 0x38, 0xf5, 0x2e, 0x96, 0x00, 0x74, 0x6a, 0x0e, 0x27, 0xa5, 0x5a, 0x21,
+];
+
+/// Power-up known-answer test for TLS 1.3 KDF (HKDF-Expand-Label and
+/// Derive-Secret) over HMAC-SHA-256.
+///
+/// Exercises both `tls13_hkdf_expand_label_internal` and
+/// `tls13_derive_secret_internal` against the RFC 8448 §3 client
+/// handshake-traffic-secret derivation: HKDF-Expand-Label with label
+/// `"c hs traffic"` and `SHA-256(ClientHello || ServerHello)` as the
+/// context, expanding to a 32-byte output. Because the output is
+/// exactly `Hash.length`, `tls13_derive_secret_internal` must produce
+/// byte-identical bytes to `tls13_hkdf_expand_label_internal` for the
+/// same inputs (RFC 8446 §7.1) — the KAT verifies both invariants.
+pub fn tls13_self_test() -> Result<(), SelfTestFailure> {
+    use oxicrypt_hmac::HmacSha256;
+    let mut via_expand = [0u8; 32];
+    tls13_hkdf_expand_label_internal::<HmacSha256, 32>(
+        &TLS13_KAT_PRK,
+        b"c hs traffic",
+        &TLS13_KAT_TRANSCRIPT_HASH,
+        &mut via_expand,
+    );
+    if via_expand != TLS13_KAT_EXPECTED {
+        return Err(SelfTestFailure);
+    }
+    let mut via_derive = [0u8; 32];
+    tls13_derive_secret_internal::<HmacSha256, 32>(
+        &TLS13_KAT_PRK,
+        b"c hs traffic",
+        &TLS13_KAT_TRANSCRIPT_HASH,
+        &mut via_derive,
+    );
+    if via_derive != TLS13_KAT_EXPECTED {
+        return Err(SelfTestFailure);
+    }
+    Ok(())
+}
+
 /// Power-up KATs exported by this crate.
-pub const KATS: &[KatEntry] = &[KatEntry {
-    name: "TLS 1.2 PRF KAT (HMAC-SHA-256 P_hash expansion, SP 800-135r1)",
-    run: self_test,
-}];
+pub const KATS: &[KatEntry] = &[
+    KatEntry {
+        name: "TLS 1.2 PRF KAT (HMAC-SHA-256 P_hash expansion, SP 800-135r1)",
+        run: self_test,
+    },
+    KatEntry {
+        name:
+            "TLS 1.3 KDF KAT (HKDF-Expand-Label + Derive-Secret, RFC 8446 §7.1; RFC 8448 §3 vector)",
+        run: tls13_self_test,
+    },
+];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
@@ -473,6 +597,11 @@ mod tests {
     #[test]
     fn self_test_passes() {
         self_test().unwrap();
+    }
+
+    #[test]
+    fn tls13_self_test_passes() {
+        tls13_self_test().unwrap();
     }
 
     /// PRF is deterministic.

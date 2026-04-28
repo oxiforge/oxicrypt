@@ -670,8 +670,9 @@ pub enum Service {
     Ed25519Verify = 231,
     Ed25519Keygen = 232,
 
-    // ----- oxicrypt-tls-kdf: SP 800-135r1 -----
+    // ----- oxicrypt-tls-kdf: SP 800-135r1 + RFC 8446 §7.1 -----
     Tls12Kdf = 240,
+    Tls13Kdf = 241,
 
     // ----- oxicrypt-ml-kem: FIPS 203 (stub) -----
     MlKem1024Encaps = 300,
@@ -826,6 +827,7 @@ impl fmt::Display for Service {
             Self::Ed25519Verify => "Ed25519 verify",
             Self::Ed25519Keygen => "Ed25519 keygen",
             Self::Tls12Kdf => "TLS 1.2 KDF",
+            Self::Tls13Kdf => "TLS 1.3 KDF",
             Self::MlKem1024Encaps => "ML-KEM-1024 encaps",
             Self::MlKem1024Decaps => "ML-KEM-1024 decaps",
             Self::MlKem1024Keygen => "ML-KEM-1024 keygen",
@@ -930,6 +932,8 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::KbkdfCmacAes256
             | Service::Pbkdf2HmacSha384
             | Service::Pbkdf2HmacSha512
+            // TLS 1.3 KDF — mandatory transport in CNSA 2.0
+            | Service::Tls13Kdf
             // Post-quantum (CNSA 2.0 core)
             | Service::MlKem1024Encaps
             | Service::MlKem1024Decaps
@@ -1028,6 +1032,10 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
             | Service::RsaPssVerify4096
             // DH >= 3072
             | Service::Dh3072
+            // TLS 1.3 KDF — accepted as the modern transport KDF in the
+            // transition profile too (TLS 1.3 with classical-only ciphers
+            // is CNSA-1.0-compatible)
+            | Service::Tls13Kdf
             // PQ algorithms (allowed during transition for hybrid use)
             | Service::MlKem1024Encaps
             | Service::MlKem1024Decaps
@@ -1256,6 +1264,7 @@ mod tests {
             Service::Dh3072,
             Service::SlhDsaSign,
             Service::Tls12Kdf,
+            Service::Tls13Kdf,
         ];
         for svc in spot {
             assert!(
@@ -1291,6 +1300,7 @@ mod tests {
             Service::LmsVerify,
             Service::XmssSign,
             Service::XmssVerify,
+            Service::Tls13Kdf,
         ];
         for svc in allowed {
             assert!(
@@ -1357,6 +1367,7 @@ mod tests {
             Service::Dh3072,
             Service::MlKem1024Encaps,
             Service::LmsSign,
+            Service::Tls13Kdf,
         ];
         for svc in allowed {
             assert!(

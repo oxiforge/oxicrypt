@@ -2458,16 +2458,99 @@ functions:
 
   # ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
   #
-  # `tls13_hkdf_expand_label_internal` and `tls13_derive_secret_internal`
-  # are intentionally NOT listed here. By prior project agreement,
-  # `*_internal` symbols are out of LAMA spec scope — they are `pub` in
-  # Rust solely for in-tree reachability (ACVP harness, power-up self-
-  # test) and are not part of the consumable external API. The matching
-  # FIPS-gated wrappers `tls13_hkdf_expand_label` / `tls13_derive_secret`
-  # require a `Service::Tls13Kdf` enum variant in `oxicrypt-module` and
-  # land — together with their LAMA manifest entries — in a dedicated
-  # follow-up PR.
-  #
+  # FIPS-gated public wrappers around the gateless `*_internal` entry
+  # points. The `*_internal` symbols stay out of this manifest by
+  # project convention — they are `pub` in Rust solely for in-tree
+  # reachability (ACVP harness, power-up self-test) and are not part of
+  # the consumable external API.
+
+  - name: tls13_hkdf_expand_label
+    module: oxicrypt-tls-kdf
+    description: >-
+      HKDF-Expand-Label per RFC 8446 §7.1. Builds the HkdfLabel wire
+      structure (length || "tls13 " + label || context) and runs
+      HKDF-Expand (RFC 5869 §2.3) to fill `out`. Generic over the HMAC
+      PRF — typical TLS 1.3 use is HmacSha256, HmacSha384, or
+      HmacSha512. FIPS-gated public wrapper around
+      tls13_hkdf_expand_label_internal.
+    signature: >-
+      pub fn tls13_hkdf_expand_label<P: PrfHmac<L>, const L: usize>(
+      secret: &[u8], label: &[u8], context: &[u8], out: &mut [u8])
+      -> Result<(), Error>
+    parameters:
+      - name: secret
+        type: "&[u8]"
+        direction: in
+        description: "Pseudorandom key (PRK), L bytes (HMAC output size)."
+      - name: label
+        type: "&[u8]"
+        direction: in
+        description: "Short ASCII label (e.g. b\"c hs traffic\", b\"derived\"). Combined with the \"tls13 \" prefix the full label must be <= 255 bytes."
+      - name: context
+        type: "&[u8]"
+        direction: in
+        description: "Context bytes (typically transcript-hash digest). Length must be <= 255."
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: "Output buffer; length must fit u16. Realistic TLS 1.3 outputs are <= 96 bytes."
+    returns:
+      type: "Result<(), Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized, in SelfTest, or latched in Error state.
+        - name: AlgorithmRestricted
+          condition: Active AlgorithmProfile does not allow Service::Tls13Kdf.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Tls13Kdf
+
+  - name: tls13_derive_secret
+    module: oxicrypt-tls-kdf
+    description: >-
+      Derive-Secret per RFC 8446 §7.1, defined as
+      HKDF-Expand-Label(secret, label, Hash(messages), Hash.length).
+      Caller computes the running transcript hash separately and
+      passes it as `transcript_hash`. FIPS-gated public wrapper around
+      tls13_derive_secret_internal.
+    signature: >-
+      pub fn tls13_derive_secret<P: PrfHmac<L>, const L: usize>(
+      secret: &[u8], label: &[u8], transcript_hash: &[u8],
+      out: &mut [u8]) -> Result<(), Error>
+    parameters:
+      - name: secret
+        type: "&[u8]"
+        direction: in
+        description: "Pseudorandom key (PRK), L bytes."
+      - name: label
+        type: "&[u8]"
+        direction: in
+        description: "Short ASCII label (e.g. b\"derived\", b\"c hs traffic\")."
+      - name: transcript_hash
+        type: "&[u8]"
+        direction: in
+        description: "Hash(messages) — pre-computed transcript-hash digest."
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: "Output buffer; typically Hash.length bytes for derived secrets."
+    returns:
+      type: "Result<(), Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized, in SelfTest, or latched in Error state.
+        - name: AlgorithmRestricted
+          condition: Active AlgorithmProfile does not allow Service::Tls13Kdf.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Tls13Kdf
+
   # ── TLS 1.2 KDF (RFC 5246, RFC 7627) ─────────────────────────────
 
   - name: tls12_prf
