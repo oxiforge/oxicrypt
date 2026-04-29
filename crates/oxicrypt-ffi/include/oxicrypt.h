@@ -19,24 +19,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ Opaque AES-256 key handle. The internal layout
+ (`OxiHandle<Aes256Key>`) is implementation detail and not part
+ of the C ABI; cbindgen renders this as an opaque struct.
+
+ */
+typedef struct OxiAes256Key OxiAes256Key;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
-
-/*
- Initialise the FIPS module with the `Unrestricted` profile,
- running all power-up KATs.
-
- Equivalent to `oxicrypt_init_with_profile(0)`.
-
- Must be called exactly once before any other `oxicrypt_*`
- function. Returns `0` on success or a negative error code.
-
- # Safety
-
- No pointers; always safe to call.
- */
-int32_t oxicrypt_init(void);
 
 /*
  Initialise the FIPS module with the given algorithm profile,
@@ -49,16 +42,28 @@ int32_t oxicrypt_init(void);
    LMS, XMSS)
  - `2` — CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072)
 
- Any other value is treated as `1` (CNSA 2.0) as a defence-in-depth
- default — the most restrictive standard profile.
+ Any other value returns [`OxiResult::InvalidInput`] without
+ performing initialisation. This is per F4 reviewer-framing —
+ distinct error variants per failure mode rather than silently
+ defaulting unknown codes to a profile.
 
- Returns `0` on success, or a negative error code.
+ Idempotent: calling `oxi_init` more than once returns
+ [`OxiResult::Ok`] on the second call. **The first init's outcome
+ is authoritative** — both the success/failure state AND the
+ active profile are determined by the first successful call. A
+ second call passing a *different* profile selector is silently
+ accepted and the *original* profile remains active. Callers that
+ need to verify which profile is in effect must call
+ [`oxi_active_profile`] after `oxi_init` returns.
+
+ Must be called exactly once before any other `oxi_*` function.
+ Returns `0` on success or a non-zero `OxiResult` discriminant.
 
  # Safety
 
  No pointers; always safe to call.
  */
-int32_t oxicrypt_init_with_profile(int32_t profile);
+int oxi_init(int profile);
 
 /*
  Query the active algorithm profile.
@@ -72,7 +77,28 @@ int32_t oxicrypt_init_with_profile(int32_t profile);
 
  No pointers; always safe to call.
  */
-int32_t oxicrypt_active_profile(void);
+int oxi_active_profile(void);
+
+/*
+ Query whether the module is in the `Operational` state.
+
+ Returns `1` if the module has completed power-up self-tests
+ without failure and is currently servicing approved cryptographic
+ requests, `0` otherwise (any other state: `PowerOff`, `SelfTest`,
+ `Error`).
+
+ This is a query, not a gate — operational-only entry points
+ already gate themselves via `oxicrypt_module::require_operational`
+ and return [`OxiResult::NotOperational`] when called outside the
+ operational state. The query exists so C callers can present a
+ clear "module ready" signal without needing to make a
+ cryptographic call to discover the state.
+
+ # Safety
+
+ No pointers; always safe to call.
+ */
+int oxi_is_operational(void);
 
 /*
  Compute SHA-256 over `data_len` bytes at `data_ptr`.
@@ -84,7 +110,7 @@ int32_t oxicrypt_active_profile(void);
  Caller must ensure `data_ptr` is valid for `data_len` bytes
  and `out` is valid for 32 bytes.
  */
-int32_t oxicrypt_sha256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+int oxi_sha256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
 
 /*
  Compute SHA-512 over `data_len` bytes at `data_ptr`.
@@ -96,7 +122,7 @@ int32_t oxicrypt_sha256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *ou
  Caller must ensure `data_ptr` is valid for `data_len` bytes
  and `out` is valid for 64 bytes.
  */
-int32_t oxicrypt_sha512(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+int oxi_sha512(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
 
 /*
  Compute HMAC-SHA-256 over `data_len` bytes with the given key.
@@ -107,48 +133,99 @@ int32_t oxicrypt_sha512(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *ou
 
  All pointer/length pairs must be valid.
  */
-int32_t oxicrypt_hmac_sha256(const uint8_t *key_ptr,
-                             uintptr_t key_len,
-                             const uint8_t *data_ptr,
-                             uintptr_t data_len,
-                             uint8_t *out);
+int oxi_hmac_sha256(const uint8_t *key_ptr,
+                    uintptr_t key_len,
+                    const uint8_t *data_ptr,
+                    uintptr_t data_len,
+                    uint8_t *out);
 
 /*
- Encrypt with AES-256-GCM (96-bit IV, 128-bit tag).
+ Allocate a new AES-256 key handle from raw 32-byte key material.
 
- `ct_out` must be at least `pt_len` bytes; `tag_out` at least 16.
+ On success, writes a heap-allocated handle pointer through
+ `out_handle` and returns `OxiResult::Ok = 0`. The caller owns the
+ handle and MUST release it with [`oxi_aes256_free`].
 
  # Safety
 
- All pointer/length pairs must be valid.
+ - `out_handle` must be a valid pointer to a writable
+   `*mut OxiAes256Key`.
+ - `key` must point to at least 32 readable bytes.
  */
-int32_t oxicrypt_aes256_gcm_encrypt(const uint8_t *key_ptr,
-                                    const uint8_t *iv_ptr,
-                                    const uint8_t *aad_ptr,
-                                    uintptr_t aad_len,
-                                    const uint8_t *pt_ptr,
-                                    uintptr_t pt_len,
-                                    uint8_t *ct_out,
-                                    uint8_t *tag_out);
+int oxi_aes256_new(OxiAes256Key **out_handle, const uint8_t *key);
 
 /*
- Decrypt with AES-256-GCM (96-bit IV, 128-bit tag).
+ Free an AES-256 key handle. NULL-safe.
 
- Returns `0` on success (tag valid) or `-3` on tag mismatch.
- `pt_out` must be at least `ct_len` bytes.
+ After this call the caller's pointer is dangling; the caller
+ SHOULD set their pointer to NULL to avoid use-after-free. A
+ double-free of the same non-NULL pointer is undefined behaviour
+ (matches malloc/free semantics — the shim cannot detect it).
 
  # Safety
 
- All pointer/length pairs must be valid.
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_aes256_new`] that has not yet been freed.
  */
-int32_t oxicrypt_aes256_gcm_decrypt(const uint8_t *key_ptr,
-                                    const uint8_t *iv_ptr,
-                                    const uint8_t *aad_ptr,
-                                    uintptr_t aad_len,
-                                    const uint8_t *ct_ptr,
-                                    uintptr_t ct_len,
-                                    const uint8_t *tag_ptr,
-                                    uint8_t *pt_out);
+void oxi_aes256_free(OxiAes256Key *handle);
+
+/*
+ AES-256-GCM authenticated encryption (one-shot).
+
+ Buffer requirements:
+ - `iv` — exactly 12 readable bytes (96-bit nonce).
+ - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
+   when `aad_len == 0` (per F9).
+ - `plaintext` — `pt_len` readable bytes; may be NULL when
+   `pt_len == 0`.
+ - `ciphertext` — `pt_len` writable bytes.
+ - `tag` — exactly 16 writable bytes (128-bit authentication tag).
+
+ Returns `OxiResult::Ok = 0` on success or a non-zero discriminant
+ per the [`OxiResult`] mapping. `OxiResult::AlgorithmRestricted = 6`
+ is returned when AES-256-GCM is blocked by the active profile.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_gcm_encrypt(const OxiAes256Key *key,
+                           const uint8_t *iv,
+                           const uint8_t *aad,
+                           uintptr_t aad_len,
+                           const uint8_t *plaintext,
+                           uintptr_t pt_len,
+                           uint8_t *ciphertext,
+                           uint8_t *tag);
+
+/*
+ AES-256-GCM authenticated decryption (one-shot).
+
+ Returns `OxiResult::TagMismatch = 22` on authentication failure.
+ On tag mismatch the `plaintext` buffer contents are UNDEFINED —
+ the caller MUST NOT use them. (FIPS 140-3 expects the
+ implementation to release the plaintext only after successful
+ tag verification, but operating-system buffers may have been
+ touched during the constant-time tag check; treat the buffer as
+ untrusted on any non-Ok return.)
+
+ Buffer requirements identical to [`oxi_aes256_gcm_encrypt`] with
+ `ciphertext`/`plaintext` directions swapped and `tag` as input.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_gcm_decrypt(const OxiAes256Key *key,
+                           const uint8_t *iv,
+                           const uint8_t *aad,
+                           uintptr_t aad_len,
+                           const uint8_t *ciphertext,
+                           uintptr_t ct_len,
+                           uint8_t *plaintext,
+                           const uint8_t *tag);
 
 #ifdef __cplusplus
 }  // extern "C"

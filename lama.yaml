@@ -251,19 +251,31 @@ capabilities:
   - category: "C ABI"
     note: >
       oxicrypt-ffi exposes extern "C" wrappers as cdylib and staticlib.
-      See include/oxicrypt.h for the C header. Supports algorithm-profile
-      selection via oxicrypt_init_with_profile(). Status code -4
-      (OXICRYPT_ERR_RESTRICTED) is returned when an algorithm is blocked
-      by the active profile.
+      All symbols use the `oxi_` prefix. See include/oxicrypt.h for the
+      C header (cbindgen-generated, committed). Status codes follow the
+      OxiResult enum: 0 = success, distinct non-zero discriminants per
+      failure mode (1-7 module errors, 10-11 FFI errors, 20-27 AES-mode
+      errors, 255 internal). oxi_init(int profile) is the single
+      initialisation entry point — 0=Unrestricted, 1=CNSA 2.0, 2=CNSA 1.0;
+      unknown values return OxiResult::InvalidInput (=5). AES-256-GCM
+      handle-based exposure (OxiAes256Key opaque) lives in oxi_aes256_*.
+      The handle is allocated by oxi_aes256_new(out_handle, key_bytes_32),
+      released by oxi_aes256_free(NULL-safe), and used as a const handle
+      argument to the GCM encrypt/decrypt entry points. AAD-NULL with
+      aad_len=0 is allowed (F9, SP 800-38D logical-by-length); tag
+      mismatch on decrypt returns OxiResult::TagMismatch=22 with
+      undefined plaintext-buffer contents.
     entry_points:
-      - "oxicrypt_init"
-      - "oxicrypt_init_with_profile"
-      - "oxicrypt_active_profile"
-      - "oxicrypt_sha256"
-      - "oxicrypt_sha512"
-      - "oxicrypt_hmac_sha256"
-      - "oxicrypt_aes256_gcm_encrypt"
-      - "oxicrypt_aes256_gcm_decrypt"
+      - "oxi_init"
+      - "oxi_active_profile"
+      - "oxi_is_operational"
+      - "oxi_sha256"
+      - "oxi_sha512"
+      - "oxi_hmac_sha256"
+      - "oxi_aes256_new"
+      - "oxi_aes256_free"
+      - "oxi_aes256_gcm_encrypt"
+      - "oxi_aes256_gcm_decrypt"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"

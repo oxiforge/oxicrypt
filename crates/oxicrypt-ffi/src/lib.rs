@@ -7,90 +7,87 @@
 //! boundary; this crate is a thin translation layer that sits
 //! outside that boundary.
 //!
-//! # Conventions
+//! # Symbol prefix
 //!
-//! Every function returns an `i32` status code:
+//! Every function exported by this crate uses the `oxi_` prefix
+//! (e.g. `oxi_init`, `oxi_sha256`). The prefix is short, namespaced,
+//! and consistent — see `docs/c-api-design.md` for the design
+//! rationale.
 //!
-//! | Code | Meaning |
-//! |------|---------|
-//! | `0`  | Success |
-//! | `-1` | Module not operational (power-up self-tests not run) |
-//! | `-2` | Invalid input (null pointer, wrong length, etc.) |
-//! | `-3` | Cryptographic operation failed |
-//! | `-4` | Algorithm restricted by the active profile |
+//! # Status codes
+//!
+//! Every function returns a `c_int` whose value is an [`OxiResult`]
+//! discriminant. `OxiResult::Ok = 0` is success; non-zero values are
+//! distinct failure modes banded by source crate. See
+//! [`crate::error`] for the full mapping.
+//!
+//! # Output buffers
 //!
 //! Output buffers are caller-allocated. The caller must ensure
 //! they are at least as large as the documented minimum size.
 //!
 //! # Safety
 //!
-//! All functions in this crate are `unsafe` because they accept
-//! raw pointers from C callers. Every function performs null checks
-//! and length validation before dereferencing any pointer.
+//! All functions in this crate that take pointers are `unsafe`
+//! because they accept raw pointers from C callers. Every function
+//! performs null checks and length validation before dereferencing
+//! any pointer.
 //!
 //! # Initialisation
 //!
-//! The module must be initialised by calling [`oxicrypt_init`]
-//! (defaults to `Unrestricted` profile) or
-//! [`oxicrypt_init_with_profile`] before any cryptographic function.
-//! This runs all power-up KATs. Calling a cryptographic function
-//! before init returns status code `-1`.
+//! The module must be initialised by calling [`oxi_init`] before
+//! any cryptographic function. This runs all power-up KATs.
+//! Calling a cryptographic function before init returns
+//! [`OxiResult::NotOperational`].
 //!
 //! # Algorithm profiles
 //!
-//! [`oxicrypt_init_with_profile`] accepts a profile selector:
+//! [`oxi_init`] accepts a profile selector:
 //!
 //! | Value | Profile |
 //! |-------|---------|
-//! | `0`   | Unrestricted (default — all approved algorithms) |
+//! | `0`   | Unrestricted (all approved algorithms) |
 //! | `1`   | CNSA 2.0 (AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS) |
 //! | `2`   | CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072) |
 //!
+//! Unknown profile codes return [`OxiResult::InvalidInput`].
 //! Once a profile is active, calling a restricted algorithm returns
-//! status code `-4` (`OXICRYPT_ERR_RESTRICTED`).
-//! [`oxicrypt_active_profile`] queries the current profile.
+//! [`OxiResult::AlgorithmRestricted`].
+//! [`oxi_active_profile`] queries the current profile;
+//! [`oxi_is_operational`] queries the module state.
 
 // This crate is the FFI boundary — unsafe is required by definition.
 #![allow(unsafe_code, clippy::missing_safety_doc)]
 
+mod aes;
 mod error;
+mod handle;
+pub use aes::{
+    oxi_aes256_free, oxi_aes256_gcm_decrypt, oxi_aes256_gcm_encrypt, oxi_aes256_new, OxiAes256Key,
+};
 pub use error::OxiResult;
 
-// ── Status codes ─────────────────────────────────────────────────
-
-/// Operation succeeded.
-const OK: i32 = 0;
-/// Module not operational.
-const ERR_NOT_OPERATIONAL: i32 = -1;
-/// Invalid input (null pointer, wrong length, bad key, etc.).
-const ERR_INVALID_INPUT: i32 = -2;
-/// Cryptographic operation failed.
-#[allow(dead_code)]
-const ERR_CRYPTO_FAILED: i32 = -3;
-/// Algorithm restricted by the active profile.
-const ERR_RESTRICTED: i32 = -4;
+use crate::error::{status_module, OxiResult as R};
+use core::ffi::c_int;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-/// Convert a module `Error` to an FFI status code.
-fn status(r: Result<(), oxicrypt_module::Error>) -> i32 {
-    match r {
-        Ok(()) => OK,
-        Err(oxicrypt_module::Error::NotOperational { .. }) => ERR_NOT_OPERATIONAL,
-        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => ERR_RESTRICTED,
-        _ => ERR_INVALID_INPUT,
-    }
-}
-
 /// Build a `&[u8]` from a raw pointer and length, returning
-/// `ERR_INVALID_INPUT` on null.
+/// [`OxiResult::NullPointer`] on null with non-zero length.
+///
+/// The returned slice is borrowed for the unbounded lifetime `'a`,
+/// chosen by the caller. Sound usage requires the caller to confine
+/// `'a` to the FFI call's stack frame so the slice can never escape
+/// the underlying C-side buffer's lifetime. The bound is unbounded
+/// rather than `'static` so a misuse that stashes the slice into a
+/// `static`/`OnceCell`/return value is rejected by the borrow checker.
 ///
 /// # Safety
 ///
 /// The caller must ensure the pointer is valid for `len` bytes.
-unsafe fn slice_from_raw(ptr: *const u8, len: usize) -> Result<&'static [u8], i32> {
+unsafe fn slice_from_raw<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], c_int> {
     if ptr.is_null() && len > 0 {
-        return Err(ERR_INVALID_INPUT);
+        return Err(R::NullPointer as c_int);
     }
     if len == 0 {
         return Ok(&[]);
@@ -100,12 +97,14 @@ unsafe fn slice_from_raw(ptr: *const u8, len: usize) -> Result<&'static [u8], i3
 
 /// Build a `&mut [u8]` from a raw pointer and length.
 ///
+/// Unbounded lifetime per the same convention as [`slice_from_raw`].
+///
 /// # Safety
 ///
 /// The caller must ensure the pointer is valid for `len` bytes.
-unsafe fn slice_from_raw_mut(ptr: *mut u8, len: usize) -> Result<&'static mut [u8], i32> {
+unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8], c_int> {
     if ptr.is_null() && len > 0 {
-        return Err(ERR_INVALID_INPUT);
+        return Err(R::NullPointer as c_int);
     }
     if len == 0 {
         // Return a valid empty slice even for null ptr with len=0.
@@ -118,6 +117,22 @@ unsafe fn slice_from_raw_mut(ptr: *mut u8, len: usize) -> Result<&'static mut [u
 
 /// Collect every KAT entry from every algorithm crate into a single
 /// flat `Vec`.
+///
+/// The integrity self-test KAT (`oxicrypt_integrity::KATS`) is
+/// deliberately NOT bundled here. `integrity_self_test` resolves the
+/// current binary via `env::current_exe()`, which for a cdylib
+/// loaded into a host process returns the host's path, not the
+/// `liboxicrypt_ffi.so` path. Wiring the existing KAT into `oxi_init`
+/// would cause every C-ABI consumer to fail with
+/// `OxiResult::SelfTestFailed` because the slot scanner would scan
+/// the wrong binary.
+///
+/// The integrity slot still ships in the cdylib/staticlib (forced via
+/// the `_SLOT_REF` static below) and is sign-able via
+/// `fips-integrity-sign --cdylib-target …`. Runtime verification for
+/// the cdylib path requires a `dladdr`-based "find this .so's own
+/// path" helper, which is tracked as a future-work item in the
+/// security policy.
 fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
     let all_kats: &[&[oxicrypt_module::KatEntry]] = &[
         oxicrypt_sha::KATS,
@@ -137,21 +152,17 @@ fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
     merged
 }
 
-/// Initialise the FIPS module with the `Unrestricted` profile,
-/// running all power-up KATs.
+/// Force the integrity slot into the cdylib/staticlib output.
 ///
-/// Equivalent to `oxicrypt_init_with_profile(0)`.
-///
-/// Must be called exactly once before any other `oxicrypt_*`
-/// function. Returns `0` on success or a negative error code.
-///
-/// # Safety
-///
-/// No pointers; always safe to call.
-#[no_mangle]
-pub extern "C" fn oxicrypt_init() -> i32 {
-    oxicrypt_init_with_profile(0)
-}
+/// `oxicrypt_integrity::FIPS_INTEGRITY_SLOT` is `#[used]` in its own
+/// crate, but the rlib-to-cdylib linker may still drop unreferenced
+/// symbols during dead-code elimination. The explicit `&'static`
+/// reference here creates an actual code-level pointer to the slot,
+/// guaranteeing its 64 bytes (header magic + 32-byte MAC + footer
+/// magic) land contiguously in the output binary's `.rodata` so
+/// `fips-integrity-sign` can locate and update them.
+#[used]
+static _SLOT_REF: &oxicrypt_integrity::IntegritySlot = &oxicrypt_integrity::FIPS_INTEGRITY_SLOT;
 
 /// Initialise the FIPS module with the given algorithm profile,
 /// running all power-up KATs.
@@ -163,26 +174,46 @@ pub extern "C" fn oxicrypt_init() -> i32 {
 ///   LMS, XMSS)
 /// - `2` — CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072)
 ///
-/// Any other value is treated as `1` (CNSA 2.0) as a defence-in-depth
-/// default — the most restrictive standard profile.
+/// Any other value returns [`OxiResult::InvalidInput`] without
+/// performing initialisation. This is per F4 reviewer-framing —
+/// distinct error variants per failure mode rather than silently
+/// defaulting unknown codes to a profile.
 ///
-/// Returns `0` on success, or a negative error code.
+/// Idempotent: calling `oxi_init` more than once returns
+/// [`OxiResult::Ok`] on the second call. **The first init's outcome
+/// is authoritative** — both the success/failure state AND the
+/// active profile are determined by the first successful call. A
+/// second call passing a *different* profile selector is silently
+/// accepted and the *original* profile remains active. Callers that
+/// need to verify which profile is in effect must call
+/// [`oxi_active_profile`] after `oxi_init` returns.
+///
+/// Must be called exactly once before any other `oxi_*` function.
+/// Returns `0` on success or a non-zero `OxiResult` discriminant.
 ///
 /// # Safety
 ///
 /// No pointers; always safe to call.
 #[no_mangle]
-pub extern "C" fn oxicrypt_init_with_profile(profile: i32) -> i32 {
+pub extern "C" fn oxi_init(profile: c_int) -> c_int {
     let p = match profile {
         0 => oxicrypt_module::AlgorithmProfile::Unrestricted,
+        1 => oxicrypt_module::AlgorithmProfile::Cnsa2,
         2 => oxicrypt_module::AlgorithmProfile::Cnsa1,
-        // 1 or any unknown value → CNSA 2.0 (defence-in-depth)
-        _ => oxicrypt_module::AlgorithmProfile::Cnsa2,
+        _ => return R::InvalidInput as c_int,
     };
+    // Idempotent fast-path: skip KAT collection on already-operational
+    // re-init. `collect_kats` aggregates ~13 crate slices into a fresh
+    // `Vec` and `initialize_with_profile` would discard them via
+    // `AlreadyInitialized` regardless. One atomic load saves the
+    // allocation on every subsequent call.
+    if oxicrypt_module::is_operational() {
+        return R::Ok as c_int;
+    }
     let kats = collect_kats();
     match oxicrypt_module::initialize_with_profile(&kats, p) {
-        Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => OK,
-        Err(e) => status(Err(e)),
+        Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => R::Ok as c_int,
+        Err(e) => status_module(Err(e)),
     }
 }
 
@@ -197,12 +228,34 @@ pub extern "C" fn oxicrypt_init_with_profile(profile: i32) -> i32 {
 ///
 /// No pointers; always safe to call.
 #[no_mangle]
-pub extern "C" fn oxicrypt_active_profile() -> i32 {
+pub extern "C" fn oxi_active_profile() -> c_int {
     match oxicrypt_module::active_profile() {
         oxicrypt_module::AlgorithmProfile::Unrestricted => 0,
         oxicrypt_module::AlgorithmProfile::Cnsa2 => 1,
         oxicrypt_module::AlgorithmProfile::Cnsa1 => 2,
     }
+}
+
+/// Query whether the module is in the `Operational` state.
+///
+/// Returns `1` if the module has completed power-up self-tests
+/// without failure and is currently servicing approved cryptographic
+/// requests, `0` otherwise (any other state: `PowerOff`, `SelfTest`,
+/// `Error`).
+///
+/// This is a query, not a gate — operational-only entry points
+/// already gate themselves via `oxicrypt_module::require_operational`
+/// and return [`OxiResult::NotOperational`] when called outside the
+/// operational state. The query exists so C callers can present a
+/// clear "module ready" signal without needing to make a
+/// cryptographic call to discover the state.
+///
+/// # Safety
+///
+/// No pointers; always safe to call.
+#[no_mangle]
+pub extern "C" fn oxi_is_operational() -> c_int {
+    c_int::from(oxicrypt_module::is_operational())
 }
 
 // ── SHA-256 ──────────────────────────────────────────────────────
@@ -216,26 +269,20 @@ pub extern "C" fn oxicrypt_active_profile() -> i32 {
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 32 bytes.
 #[no_mangle]
-pub unsafe extern "C" fn oxicrypt_sha256(
-    data_ptr: *const u8,
-    data_len: usize,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn oxi_sha256(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
         Err(e) => return e,
     };
     if out.is_null() {
-        return ERR_INVALID_INPUT;
+        return R::NullPointer as c_int;
     }
     match oxicrypt_sha::sha256(data) {
         Ok(digest) => {
             unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 32) };
-            OK
+            R::Ok as c_int
         }
-        Err(oxicrypt_module::Error::NotOperational { .. }) => ERR_NOT_OPERATIONAL,
-        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => ERR_RESTRICTED,
-        Err(_) => ERR_INVALID_INPUT,
+        Err(e) => status_module(Err(e)),
     }
 }
 
@@ -250,26 +297,20 @@ pub unsafe extern "C" fn oxicrypt_sha256(
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 64 bytes.
 #[no_mangle]
-pub unsafe extern "C" fn oxicrypt_sha512(
-    data_ptr: *const u8,
-    data_len: usize,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn oxi_sha512(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
         Err(e) => return e,
     };
     if out.is_null() {
-        return ERR_INVALID_INPUT;
+        return R::NullPointer as c_int;
     }
     match oxicrypt_sha::sha512(data) {
         Ok(digest) => {
             unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 64) };
-            OK
+            R::Ok as c_int
         }
-        Err(oxicrypt_module::Error::NotOperational { .. }) => ERR_NOT_OPERATIONAL,
-        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => ERR_RESTRICTED,
-        Err(_) => ERR_INVALID_INPUT,
+        Err(e) => status_module(Err(e)),
     }
 }
 
@@ -283,13 +324,13 @@ pub unsafe extern "C" fn oxicrypt_sha512(
 ///
 /// All pointer/length pairs must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn oxicrypt_hmac_sha256(
+pub unsafe extern "C" fn oxi_hmac_sha256(
     key_ptr: *const u8,
     key_len: usize,
     data_ptr: *const u8,
     data_len: usize,
     out: *mut u8,
-) -> i32 {
+) -> c_int {
     let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
         Ok(s) => s,
         Err(e) => return e,
@@ -299,117 +340,14 @@ pub unsafe extern "C" fn oxicrypt_hmac_sha256(
         Err(e) => return e,
     };
     if out.is_null() {
-        return ERR_INVALID_INPUT;
+        return R::NullPointer as c_int;
     }
     let mut mac = match oxicrypt_hmac::HmacSha256::new(key) {
         Ok(m) => m,
-        Err(oxicrypt_module::Error::NotOperational { .. }) => return ERR_NOT_OPERATIONAL,
-        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => return ERR_RESTRICTED,
-        Err(_) => return ERR_INVALID_INPUT,
+        Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
     let tag = mac.finalize();
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
-    OK
-}
-
-// ── AES-256-GCM ──────────────────────────────────────────────────
-
-/// Encrypt with AES-256-GCM (96-bit IV, 128-bit tag).
-///
-/// `ct_out` must be at least `pt_len` bytes; `tag_out` at least 16.
-///
-/// # Safety
-///
-/// All pointer/length pairs must be valid.
-#[no_mangle]
-pub unsafe extern "C" fn oxicrypt_aes256_gcm_encrypt(
-    key_ptr: *const u8, // 32 bytes
-    iv_ptr: *const u8,  // 12 bytes
-    aad_ptr: *const u8,
-    aad_len: usize,
-    pt_ptr: *const u8,
-    pt_len: usize,
-    ct_out: *mut u8,  // pt_len bytes
-    tag_out: *mut u8, // 16 bytes
-) -> i32 {
-    if key_ptr.is_null() || iv_ptr.is_null() || ct_out.is_null() || tag_out.is_null() {
-        return ERR_INVALID_INPUT;
-    }
-    let key_bytes: &[u8; 32] = unsafe { &*(key_ptr.cast::<[u8; 32]>()) };
-    let iv: &[u8; 12] = unsafe { &*(iv_ptr.cast::<[u8; 12]>()) };
-    let aad = match unsafe { slice_from_raw(aad_ptr, aad_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let pt = match unsafe { slice_from_raw(pt_ptr, pt_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ct = match unsafe { slice_from_raw_mut(ct_out, pt_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let tag: &mut [u8; 16] = unsafe { &mut *(tag_out.cast::<[u8; 16]>()) };
-
-    let key = match oxicrypt_aes::Aes256Key::new(key_bytes) {
-        Ok(k) => k,
-        Err(oxicrypt_module::Error::NotOperational { .. }) => return ERR_NOT_OPERATIONAL,
-        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => return ERR_RESTRICTED,
-        Err(_) => return ERR_INVALID_INPUT,
-    };
-    match oxicrypt_aes::gcm_encrypt(&key, iv, aad, pt, ct, tag) {
-        Ok(()) => OK,
-        Err(_) => ERR_INVALID_INPUT,
-    }
-}
-
-/// Decrypt with AES-256-GCM (96-bit IV, 128-bit tag).
-///
-/// Returns `0` on success (tag valid) or `-3` on tag mismatch.
-/// `pt_out` must be at least `ct_len` bytes.
-///
-/// # Safety
-///
-/// All pointer/length pairs must be valid.
-#[no_mangle]
-pub unsafe extern "C" fn oxicrypt_aes256_gcm_decrypt(
-    key_ptr: *const u8, // 32 bytes
-    iv_ptr: *const u8,  // 12 bytes
-    aad_ptr: *const u8,
-    aad_len: usize,
-    ct_ptr: *const u8,
-    ct_len: usize,
-    tag_ptr: *const u8, // 16 bytes
-    pt_out: *mut u8,    // ct_len bytes
-) -> i32 {
-    if key_ptr.is_null() || iv_ptr.is_null() || tag_ptr.is_null() || pt_out.is_null() {
-        return ERR_INVALID_INPUT;
-    }
-    let key_bytes: &[u8; 32] = unsafe { &*(key_ptr.cast::<[u8; 32]>()) };
-    let iv: &[u8; 12] = unsafe { &*(iv_ptr.cast::<[u8; 12]>()) };
-    let aad = match unsafe { slice_from_raw(aad_ptr, aad_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let ct = match unsafe { slice_from_raw(ct_ptr, ct_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let tag: &[u8; 16] = unsafe { &*(tag_ptr.cast::<[u8; 16]>()) };
-    let pt = match unsafe { slice_from_raw_mut(pt_out, ct_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-
-    let key = match oxicrypt_aes::Aes256Key::new(key_bytes) {
-        Ok(k) => k,
-        Err(oxicrypt_module::Error::NotOperational { .. }) => return ERR_NOT_OPERATIONAL,
-        Err(oxicrypt_module::Error::AlgorithmRestricted { .. }) => return ERR_RESTRICTED,
-        Err(_) => return ERR_INVALID_INPUT,
-    };
-    match oxicrypt_aes::gcm_decrypt(&key, iv, aad, ct, tag, pt) {
-        Ok(()) => OK,
-        Err(_) => ERR_CRYPTO_FAILED,
-    }
+    R::Ok as c_int
 }

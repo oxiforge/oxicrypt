@@ -257,6 +257,60 @@ CMVP module submission, and lab review cycle.
 bitsliced AES fallback), additional parameter sets and curves (Ed448,
 P-521), and additional language bindings (Python, Go, Node).
 
+## C ABI (`oxicrypt-ffi`)
+
+The module exposes a C ABI for non-Rust consumers via the
+`oxicrypt-ffi` crate. The full design is documented in
+[`docs/c-api-design.md`](docs/c-api-design.md); the cbindgen-generated
+header lives at
+[`crates/oxicrypt-ffi/include/oxicrypt.h`](crates/oxicrypt-ffi/include/oxicrypt.h).
+
+All exported symbols use the `oxi_` prefix. Status codes are
+`OxiResult` discriminants (0 = `Ok`; non-zero values are distinct
+failure modes — see `crates/oxicrypt-ffi/src/error.rs`). AES-256-GCM
+uses an opaque `OxiAes256Key` handle allocated via `oxi_aes256_new`
+and released via `oxi_aes256_free` (NULL-safe).
+
+Build the C library:
+
+```bash
+cargo build --release -p oxicrypt-ffi
+# Outputs:
+#   target/release/liboxicrypt_ffi.so   (cdylib — dynamic linking)
+#   target/release/liboxicrypt_ffi.a    (staticlib — static linking)
+```
+
+Sign both artifacts with `fips-integrity-sign` before use in a
+FIPS-validated context (the embedded HMAC-SHA-256 slot is populated
+in place):
+
+```bash
+cargo build --release -p oxicrypt-integrity --bin fips-integrity-sign
+./target/release/fips-integrity-sign --sign \
+    --cdylib-target    target/release/liboxicrypt_ffi.so \
+    --staticlib-target target/release/liboxicrypt_ffi.a
+```
+
+C integration tests live at
+`crates/oxicrypt-ffi/tests/c-integration/`. Run them after building +
+signing:
+
+```bash
+make -C crates/oxicrypt-ffi/tests/c-integration test-cdylib
+make -C crates/oxicrypt-ffi/tests/c-integration test-staticlib
+```
+
+The harness exercises the McGrew/Viega "GCM" reference Case 15
+(AES-256) — the same vector the underlying primitive's power-up KAT
+trusts — plus decrypt round-trip and tag-tamper rejection.
+
+The `oxicrypt-ffi` crate currently exposes module lifecycle
+(`oxi_init`, `oxi_active_profile`, `oxi_is_operational`), one-shot
+SHA-256 / SHA-512 / HMAC-SHA-256, and AES-256-GCM with an opaque key
+handle. Per-algorithm exposure of the remaining approved services
+(SHA-3, RSA, ECDSA, ECDH, EdDSA, KDF, DRBG, ML-DSA, ML-KEM, SLH-DSA,
+LMS, XMSS) lands in subsequent algorithm chunks.
+
 ## `oxi` CLI
 
 A lightweight command-line tool that exposes the module's approved

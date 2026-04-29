@@ -1,8 +1,27 @@
 # oxicrypt C API Design Document
 
-**Status:** Design intent — not yet implemented. This document defines the
-planned C ABI surface for oxicrypt. The implementation will follow after the
-ACVP dry run validates the underlying Rust cryptographic core.
+**Status:** Foundation implemented (2026-04-29). The C ABI shim is live in
+`crates/oxicrypt-ffi/` with the design described below realised through
+two staged PRs:
+
+- **Phase 1** (PR #6, merged 2026-04-29) — build infrastructure (`cdylib` +
+  `staticlib` targets, `cbindgen` build-dep, generated header committed),
+  `OxiResult` discriminant-banded error enum with exhaustive
+  `From<oxicrypt_module::Error>` and `From<oxicrypt_aes::ModeError>` mappings.
+- **Phase 2** (PR #7, this chunk) — `OxiHandle<T>` consumed-sentinel for
+  safe-no-op-after-finalize lifecycle, symbol rename `oxicrypt_*` → `oxi_*`,
+  single-function `oxi_init(int profile)` (F3) with distinct
+  `OxiResult::InvalidInput` for unknown profile codes (F4),
+  `oxi_is_operational` state query, AES-256-GCM canonical exposure with
+  opaque `OxiAes256Key` handle (F4 distinct `OxiResult::TagMismatch`,
+  F5 NULL-safe `_free`, F9 NULL-AAD-with-len-0 allowed),
+  `fips-integrity-sign` extended for multi-target signing (F8 per-binary
+  integrity slots in cdylib + staticlib), C integration test harness
+  (McGrew/Viega Case 15 + tag-tamper + handle lifecycle, 6 test runs
+  spanning both link modes).
+
+The implementation tracks the design below; deltas during implementation
+are recorded inline in the Implementation Plan section.
 
 **Boundary note:** The C FFI shim resides *inside* the FIPS 140-3 module
 boundary. It is thin glue that calls the same Rust functions exercised by
@@ -377,13 +396,44 @@ const char *oxi_version(void);
 
 ## Implementation plan
 
-1. Create `crates/oxicrypt-ffi/` as a `cdylib` + `staticlib` crate.
-2. Implement the `extern "C"` functions as thin wrappers over the
-   existing Rust API.
-3. Generate `oxicrypt.h` from the Rust source via `cbindgen`.
-4. Add C integration tests using a vendored test harness.
-5. The FFI crate ships inside the FIPS boundary alongside the
-   algorithm crates.
+1. ✅ **Complete** (PR #6) — `crates/oxicrypt-ffi/` builds as `cdylib` +
+   `staticlib` (`rlib` deliberately omitted; the crate is FFI-only).
+2. ✅ **Complete** (PR #7) — `extern "C"` functions implemented as thin
+   wrappers over the Rust API: `oxi_init`, `oxi_active_profile`,
+   `oxi_is_operational`, `oxi_sha256`, `oxi_sha512`, `oxi_hmac_sha256`,
+   `oxi_aes256_new`, `oxi_aes256_free`, `oxi_aes256_gcm_encrypt`,
+   `oxi_aes256_gcm_decrypt`. Streaming AES-GCM exposure deferred —
+   the underlying `oxicrypt-aes` public API does not expose streaming
+   GCM yet; exposing a caller-managed streaming surface ahead of the
+   Rust API would invert the dependency direction.
+3. ✅ **Complete** (PR #6) — `oxicrypt.h` is cbindgen-generated and
+   committed under version control. Deterministic regeneration is
+   verified by build (force-delete + rebuild yields empty diff).
+4. ✅ **Complete** (PR #7) — C integration test harness lives at
+   `crates/oxicrypt-ffi/tests/c-integration/`, with `make test-cdylib`
+   and `make test-staticlib` independent targets. Tests cover the
+   McGrew/Viega Case 15 vector (AES-256, no AAD), decrypt round-trip,
+   tag tamper rejection (`OxiResult::TagMismatch=22`), and handle
+   lifecycle (NULL-free safe no-op, NULL-arg rejection).
+5. ✅ **Complete** (PR #6) — The FFI crate is workspace-internal and
+   ships inside the FIPS boundary alongside the algorithm crates. Both
+   the cdylib and staticlib outputs embed the integrity slot per F8;
+   `fips-integrity-sign --cdylib-target … --staticlib-target …`
+   signs both in one invocation.
+
+**Future work** (tracked separately):
+
+- Streaming AES-GCM exposure once `oxicrypt-aes` adds streaming Rust API.
+- SHA-3 / KMAC / SLH-DSA / ML-DSA / ML-KEM / ECDSA / ECDH / EdDSA / RSA
+  / DRBG / KDF C ABI exposures (per-algorithm chunks, each adding
+  `oxi_<alg>_*` symbols + handle types as needed).
+- Runtime integrity verification of the cdylib slot under host-process
+  loading. The current `integrity_self_test` resolves
+  `env::current_exe()` which for a cdylib returns the host's path,
+  not the .so's. A `dladdr`-based "find this .so's own path" helper
+  is the proper fix; tracked in security policy §4.7.1.
+- Language bindings (Python, Go, Java, Node, .NET) — separate
+  adoption-accessories chunks, each consuming the C ABI.
 
 ## What this document is NOT
 

@@ -3811,59 +3811,50 @@ functions:
     profiles: [Unrestricted]
 
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
+  #
+  # All symbols use the `oxi_` prefix. Status codes are OxiResult
+  # discriminants (see OxiResult error_type below): 0 = Ok, 1-7 =
+  # module errors, 10-11 = FFI errors, 20-27 = AES-mode errors,
+  # 255 = Internal (catch-all reserved). AES-256-GCM exposure with
+  # OxiAes256Key handle is added in T7 of the C ABI foundation chunk.
 
-  - name: oxicrypt_init
-    module: oxicrypt-ffi
-    description: >-
-      Initialise the FIPS module with the Unrestricted profile from C.
-      Equivalent to oxicrypt_init_with_profile(0). Runs all power-up KATs.
-      Safe to call more than once (returns 0 on AlreadyInitialized).
-    signature: "int32_t oxicrypt_init(void)"
-    parameters: []
-    returns:
-      type: int32_t
-      description: "0 = success, -1 = self-test failed."
-    preconditions: []
-    postconditions:
-      - description: Module is in Operational state (on success).
-    security:
-      constant_time: false
-      handles_secrets: false
-      fips_approved: false
-
-  - name: oxicrypt_init_with_profile
+  - name: oxi_init
     module: oxicrypt-ffi
     description: >-
       Initialise the FIPS module with the given algorithm profile,
-      running all power-up KATs. Profile 0 = Unrestricted,
-      1 = CNSA 2.0, 2 = CNSA 1.0. Unknown values default to CNSA 2.0
-      (defence-in-depth). Safe to call more than once.
-    signature: "int32_t oxicrypt_init_with_profile(int32_t profile)"
+      running all power-up KATs. Single initialisation entry point —
+      replaces the parallel oxicrypt_init / oxicrypt_init_with_profile
+      pair from Phase 0 per F3 reviewer-framing. Profile 0 = Unrestricted,
+      1 = CNSA 2.0, 2 = CNSA 1.0. Unknown values return
+      OxiResult::InvalidInput rather than silently defaulting (F4).
+      Idempotent: subsequent calls return Ok (the first init's outcome
+      is authoritative).
+    signature: "int oxi_init(int profile)"
     parameters:
       - name: profile
-        type: int32_t
+        type: int
         direction: in
         description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
     returns:
-      type: int32_t
-      description: "0 = success, -1 = self-test failed."
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput, 2 = SelfTestFailed, ...)."
     preconditions: []
     postconditions:
-      - description: Module is in Operational state with the selected profile.
+      - description: Module is in Operational state with the selected profile (on Ok).
     security:
       constant_time: false
       handles_secrets: false
       fips_approved: false
 
-  - name: oxicrypt_active_profile
+  - name: oxi_active_profile
     module: oxicrypt-ffi
     description: >-
       Query the currently active algorithm profile.
       Returns 0 (Unrestricted), 1 (CNSA 2.0), or 2 (CNSA 1.0).
-    signature: "int32_t oxicrypt_active_profile(void)"
+    signature: "int oxi_active_profile(void)"
     parameters: []
     returns:
-      type: int32_t
+      type: int
       description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
     preconditions:
       - description: Module must be initialized.
@@ -3872,13 +3863,35 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: oxicrypt_sha256
+  - name: oxi_is_operational
+    module: oxicrypt-ffi
+    description: >-
+      Query whether the module is in the Operational state. Returns 1
+      if power-up self-tests have completed without failure and the
+      module is currently servicing approved cryptographic requests, 0
+      otherwise (PowerOff, SelfTest, or Error). This is a query, not a
+      gate — operational-only entry points self-gate via
+      require_operational and return OxiResult::NotOperational when
+      called outside the operational state. The query exists so C
+      callers can present a clear "module ready" signal without making
+      a cryptographic call to discover state.
+    signature: "int oxi_is_operational(void)"
+    parameters: []
+    returns:
+      type: int
+      description: "1 = Operational, 0 = otherwise."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_sha256
     module: oxicrypt-ffi
     description: >-
       Compute SHA-256 over data_len bytes. out must be >= 32 bytes.
-    signature: "int32_t oxicrypt_sha256(const uint8_t *data, size_t data_len, uint8_t *out)"
+    signature: "int oxi_sha256(const uint8_t *data_ptr, size_t data_len, uint8_t *out)"
     parameters:
-      - name: data
+      - name: data_ptr
         type: "const uint8_t *"
         direction: in
         description: Data to hash.
@@ -3891,16 +3904,16 @@ functions:
         direction: out
         description: Output buffer, must be >= 32 bytes.
     returns:
-      type: int32_t
-      description: "0 = success, -1 = not operational, -2 = null pointer, -4 = restricted."
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
 
-  - name: oxicrypt_sha512
+  - name: oxi_sha512
     module: oxicrypt-ffi
     description: >-
       Compute SHA-512 over data_len bytes. out must be >= 64 bytes.
-    signature: "int32_t oxicrypt_sha512(const uint8_t *data, size_t data_len, uint8_t *out)"
+    signature: "int oxi_sha512(const uint8_t *data_ptr, size_t data_len, uint8_t *out)"
     parameters:
-      - name: data
+      - name: data_ptr
         type: "const uint8_t *"
         direction: in
       - name: data_len
@@ -3911,24 +3924,24 @@ functions:
         direction: out
         description: Output buffer, must be >= 64 bytes.
     returns:
-      type: int32_t
-      description: "0 = success, -1 = not operational, -2 = null pointer, -4 = restricted."
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
 
-  - name: oxicrypt_hmac_sha256
+  - name: oxi_hmac_sha256
     module: oxicrypt-ffi
     description: >-
       Compute HMAC-SHA-256. out must be >= 32 bytes.
     signature: >-
-      int32_t oxicrypt_hmac_sha256(const uint8_t *key, size_t key_len,
-      const uint8_t *data, size_t data_len, uint8_t *out)
+      int oxi_hmac_sha256(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
     parameters:
-      - name: key
+      - name: key_ptr
         type: "const uint8_t *"
         direction: in
       - name: key_len
         type: size_t
         direction: in
-      - name: data
+      - name: data_ptr
         type: "const uint8_t *"
         direction: in
       - name: data_len
@@ -3939,52 +3952,114 @@ functions:
         direction: out
         description: Output buffer, must be >= 32 bytes.
     returns:
-      type: int32_t
-      description: "0 = success, -1 = not operational, -2 = invalid input, -4 = restricted."
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
 
-  - name: oxicrypt_aes256_gcm_encrypt
+  # AES-256-GCM with opaque OxiAes256Key handle. One-shot only —
+  # streaming exposure deferred per PRD Decision D1.
+
+  - name: oxi_aes256_new
     module: oxicrypt-ffi
     description: >-
-      AES-256-GCM encrypt. key=32B, iv=12B, ct_out>=pt_len, tag_out=16B.
-    signature: >-
-      int32_t oxicrypt_aes256_gcm_encrypt(const uint8_t *key,
-      const uint8_t *iv, const uint8_t *aad, size_t aad_len,
-      const uint8_t *pt, size_t pt_len, uint8_t *ct_out,
-      uint8_t *tag_out)
+      Allocate a new AES-256 key handle from raw 32-byte key material.
+      On Ok, writes a heap-allocated OxiAes256Key pointer through
+      out_handle. The caller owns the handle and MUST release it with
+      oxi_aes256_free.
+    signature: "int oxi_aes256_new(OxiAes256Key **out_handle, const uint8_t *key)"
     parameters:
-      - { name: key, type: "const uint8_t *", direction: in, description: "32-byte AES key" }
+      - name: out_handle
+        type: "OxiAes256Key **"
+        direction: out
+        description: "Receives the heap-allocated handle pointer on success."
+      - name: key
+        type: "const uint8_t *"
+        direction: in
+        description: "32-byte AES-256 key material."
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 1 = NotOperational, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an AES-256 key handle. NULL-safe (early return). After
+      this call the caller's pointer is dangling; the caller SHOULD
+      set their pointer to NULL. A double-free of the same non-NULL
+      pointer is undefined behaviour (matches malloc/free semantics).
+    signature: "void oxi_aes256_free(OxiAes256Key *handle)"
+    parameters:
+      - name: handle
+        type: "OxiAes256Key *"
+        direction: in
+        description: "Handle from oxi_aes256_new, or NULL."
+    returns:
+      type: void
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_gcm_encrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-GCM authenticated encryption (one-shot). Buffer rules —
+      iv = 12 bytes, ciphertext >= pt_len bytes, tag = 16 bytes. AAD
+      may be NULL when aad_len == 0 (F9, SP 800-38D logical-by-length).
+      Plaintext may be NULL when pt_len == 0.
+    signature: >-
+      int oxi_aes256_gcm_encrypt(const OxiAes256Key *key,
+      const uint8_t *iv, const uint8_t *aad, size_t aad_len,
+      const uint8_t *plaintext, size_t pt_len,
+      uint8_t *ciphertext, uint8_t *tag)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
       - { name: iv, type: "const uint8_t *", direction: in, description: "12-byte nonce" }
       - { name: aad, type: "const uint8_t *", direction: in }
       - { name: aad_len, type: size_t, direction: in }
-      - { name: pt, type: "const uint8_t *", direction: in }
+      - { name: plaintext, type: "const uint8_t *", direction: in }
       - { name: pt_len, type: size_t, direction: in }
-      - { name: ct_out, type: "uint8_t *", direction: out, description: ">= pt_len bytes" }
-      - { name: tag_out, type: "uint8_t *", direction: out, description: "16-byte tag" }
+      - { name: ciphertext, type: "uint8_t *", direction: out, description: ">= pt_len bytes" }
+      - { name: tag, type: "uint8_t *", direction: out, description: "16-byte tag" }
     returns:
-      type: int32_t
-      description: "0 = success, -1 = not operational, -2 = invalid input, -4 = restricted."
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 21 = InvalidIvLength, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
-  - name: oxicrypt_aes256_gcm_decrypt
+  - name: oxi_aes256_gcm_decrypt
     module: oxicrypt-ffi
     description: >-
-      AES-256-GCM decrypt. Returns -3 on tag mismatch.
+      AES-256-GCM authenticated decryption (one-shot). Returns
+      OxiResult::TagMismatch (=22) on authentication failure. On any
+      non-Ok return the plaintext-buffer contents are UNDEFINED — the
+      caller MUST NOT use them.
     signature: >-
-      int32_t oxicrypt_aes256_gcm_decrypt(const uint8_t *key,
+      int oxi_aes256_gcm_decrypt(const OxiAes256Key *key,
       const uint8_t *iv, const uint8_t *aad, size_t aad_len,
-      const uint8_t *ct, size_t ct_len, const uint8_t *tag,
-      uint8_t *pt_out)
+      const uint8_t *ciphertext, size_t ct_len,
+      uint8_t *plaintext, const uint8_t *tag)
     parameters:
-      - { name: key, type: "const uint8_t *", direction: in, description: "32-byte AES key" }
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
       - { name: iv, type: "const uint8_t *", direction: in, description: "12-byte nonce" }
       - { name: aad, type: "const uint8_t *", direction: in }
       - { name: aad_len, type: size_t, direction: in }
-      - { name: ct, type: "const uint8_t *", direction: in }
+      - { name: ciphertext, type: "const uint8_t *", direction: in }
       - { name: ct_len, type: size_t, direction: in }
+      - { name: plaintext, type: "uint8_t *", direction: out, description: ">= ct_len bytes; UNDEFINED on non-Ok" }
       - { name: tag, type: "const uint8_t *", direction: in, description: "16-byte tag" }
-      - { name: pt_out, type: "uint8_t *", direction: out, description: ">= ct_len bytes" }
     returns:
-      type: int32_t
-      description: "0 = success, -1 = not operational, -2 = invalid input, -3 = tag mismatch, -4 = restricted."
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 21 = InvalidIvLength, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)

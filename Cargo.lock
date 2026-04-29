@@ -599,6 +599,7 @@ dependencies = [
  "oxicrypt-ecdsa",
  "oxicrypt-eddsa",
  "oxicrypt-hmac",
+ "oxicrypt-integrity",
  "oxicrypt-module",
  "oxicrypt-sha",
 ]
