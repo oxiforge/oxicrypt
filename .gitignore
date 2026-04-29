@@ -30,3 +30,4 @@ Cargo.lock.bak
 # Project manifest — lives in the project folder, not the repo.
 # Contains internal paths and organizational metadata.
 llm-project-manifest.yaml
+.worktrees/

@@ -53,6 +53,9 @@
 // This crate is the FFI boundary — unsafe is required by definition.
 #![allow(unsafe_code, clippy::missing_safety_doc)]
 
+mod error;
+pub use error::OxiResult;
+
 // ── Status codes ─────────────────────────────────────────────────
 
 /// Operation succeeded.

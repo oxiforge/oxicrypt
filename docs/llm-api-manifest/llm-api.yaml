@@ -430,6 +430,64 @@ types:
         type: "fn() -> Result<(), SelfTestFailure>"
         description: Function that executes the KAT and returns Ok or Err.
 
+  - name: OxiResult
+    module: oxicrypt-ffi
+    kind: enum
+    description: >
+      C ABI status code returned by every oxi_* function. Discriminants
+      are banded by source crate so the originating failure mode is
+      identifiable at a glance: 0 = success, 1-7 = oxicrypt_module::Error
+      variants, 10-11 = FFI-layer errors (null pointer, buffer too small),
+      20-27 = oxicrypt_aes::ModeError variants, 255 = Internal (catch-all,
+      reserved for should-never-happen). #[repr(C)] so the C-side
+      discriminants are stable across cbindgen regenerations.
+      From<oxicrypt_module::Error> and From<oxicrypt_aes::ModeError>
+      impls give exhaustive distinct-discriminant mapping — adding a new
+      Error variant without an OxiResult mapping is a compile error,
+      structurally preventing aliasing-by-default.
+    variants:
+      - name: Ok
+        description: Operation succeeded. Discriminant 0.
+      - name: NotOperational
+        description: Module not in Operational state. Discriminant 1.
+      - name: SelfTestFailed
+        description: Power-up self-test failed during init. Discriminant 2.
+      - name: ConditionalTestFailed
+        description: Conditional self-test (DRBG CRNGT, PCT) failed during operation. Discriminant 3.
+      - name: AlreadyInitialized
+        description: oxi_init called more than once. Discriminant 4.
+      - name: InvalidInput
+        description: Cryptographic input is not a valid domain element. Discriminant 5.
+      - name: AlgorithmRestricted
+        description: Service blocked by the active algorithm profile. Discriminant 6.
+      - name: NotImplemented
+        description: Service is in the Service enum but implementation is a stub. Discriminant 7.
+      - name: NullPointer
+        description: Caller passed a NULL pointer where one is required. Discriminant 10.
+      - name: BufferTooSmall
+        description: Caller-allocated output buffer is smaller than the documented minimum. Discriminant 11.
+      - name: NotBlockAligned
+        description: Input length is not aligned to the cipher block size. Discriminant 20.
+      - name: InvalidIvLength
+        description: IV length doesn't match mode specification (e.g. GCM requires 12 bytes). Discriminant 21.
+      - name: TagMismatch
+        description: AEAD tag verification failed. Plaintext output is UNDEFINED. Discriminant 22.
+      - name: LengthMismatch
+        description: Input/output buffer lengths don't match. Discriminant 23.
+      - name: InvalidNonceLength
+        description: Nonce length doesn't match mode specification. Discriminant 24.
+      - name: InvalidTagLength
+        description: Tag length doesn't match mode specification. Discriminant 25.
+      - name: InvalidPayloadLength
+        description: Payload length exceeds the mode's allowed maximum. Discriminant 26.
+      - name: InvalidAadLength
+        description: AAD length exceeds the mode's allowed maximum. Discriminant 27.
+      - name: Internal
+        description: >-
+          Catch-all for should-never-happen cases. New error sources should
+          be paired with new OxiResult variants in the same change set —
+          reaching Internal is a flag for reviewer attention. Discriminant 255.
+
   - name: Sha256
     module: oxicrypt-sha
     family: sha-streaming-hasher

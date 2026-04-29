@@ -1,0 +1,32 @@
+language = "C"
+header = """/* SPDX-License-Identifier: Apache-2.0 OR MIT */
+/*
+ * oxicrypt — pure-Rust FIPS 140-3 cryptographic module
+ *
+ * This header is GENERATED from the Rust source by cbindgen.
+ * Do not edit by hand — edit the Rust signatures and rerun the build.
+ *
+ * The C ABI shim resides INSIDE the FIPS 140-3 module boundary.
+ * See docs/security-policy/ for the formal CMVP Security Policy.
+ *
+ * Generated headers are committed under version control and verified
+ * by CI to match cbindgen's deterministic output.
+ */
+"""
+include_guard = "OXICRYPT_H"
+cpp_compat = true
+documentation = true
+documentation_style = "c"
+style = "type"
+sys_includes = ["stddef.h", "stdint.h"]
+no_includes = true
+
+[export]
+item_types = ["enums", "structs", "opaque", "typedefs", "functions"]
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[parse]
+parse_deps = false
