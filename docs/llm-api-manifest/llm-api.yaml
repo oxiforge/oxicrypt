@@ -4048,6 +4048,174 @@ functions:
       type: int
       description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
 
+  - name: oxi_hmac_sha384
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA-384. out must be >= 48 bytes.
+    signature: >-
+      int oxi_hmac_sha384(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 48 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hmac_sha512
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA-512. out must be >= 64 bytes.
+    signature: >-
+      int oxi_hmac_sha512(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 64 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hmac_sha3_224
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA3-224. out must be >= 28 bytes.
+    signature: >-
+      int oxi_hmac_sha3_224(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 28 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hmac_sha3_256
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA3-256. out must be >= 32 bytes.
+    signature: >-
+      int oxi_hmac_sha3_256(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 32 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hmac_sha3_384
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA3-384. out must be >= 48 bytes.
+    signature: >-
+      int oxi_hmac_sha3_384(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 48 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hmac_sha3_512
+    module: oxicrypt-ffi
+    description: >-
+      Compute HMAC-SHA3-512. out must be >= 64 bytes.
+    signature: >-
+      int oxi_hmac_sha3_512(const uint8_t *key_ptr, size_t key_len,
+      const uint8_t *data_ptr, size_t data_len, uint8_t *out)
+    parameters:
+      - name: key_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: key_len
+        type: size_t
+        direction: in
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: data_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 64 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
   # AES-256-GCM with opaque OxiAes256Key handle. One-shot only —
   # streaming exposure deferred per PRD Decision D1.
 

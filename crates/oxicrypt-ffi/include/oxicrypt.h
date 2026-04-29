@@ -188,6 +188,96 @@ int oxi_hmac_sha256(const uint8_t *key_ptr,
                     uint8_t *out);
 
 /*
+ Compute HMAC-SHA-384 over `data_len` bytes with the given key.
+
+ `out` must point to a buffer of at least 48 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_hmac_sha384(const uint8_t *key_ptr,
+                    uintptr_t key_len,
+                    const uint8_t *data_ptr,
+                    uintptr_t data_len,
+                    uint8_t *out);
+
+/*
+ Compute HMAC-SHA-512 over `data_len` bytes with the given key.
+
+ `out` must point to a buffer of at least 64 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_hmac_sha512(const uint8_t *key_ptr,
+                    uintptr_t key_len,
+                    const uint8_t *data_ptr,
+                    uintptr_t data_len,
+                    uint8_t *out);
+
+/*
+ Compute HMAC-SHA3-224 over `data_len` bytes with the given key.
+
+ `out` must point to a buffer of at least 28 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_hmac_sha3_224(const uint8_t *key_ptr,
+                      uintptr_t key_len,
+                      const uint8_t *data_ptr,
+                      uintptr_t data_len,
+                      uint8_t *out);
+
+/*
+ Compute HMAC-SHA3-256 over `data_len` bytes with the given key.
+
+ `out` must point to a buffer of at least 32 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_hmac_sha3_256(const uint8_t *key_ptr,
+                      uintptr_t key_len,
+                      const uint8_t *data_ptr,
+                      uintptr_t data_len,
+                      uint8_t *out);
+
+/*
+ Compute HMAC-SHA3-384 over `data_len` bytes with the given key.
+
+ `out` must point to a buffer of at least 48 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_hmac_sha3_384(const uint8_t *key_ptr,
+                      uintptr_t key_len,
+                      const uint8_t *data_ptr,
+                      uintptr_t data_len,
+                      uint8_t *out);
+
+/*
+ Compute HMAC-SHA3-512 over `data_len` bytes with the given key.
+
+ `out` must point to a buffer of at least 64 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_hmac_sha3_512(const uint8_t *key_ptr,
+                      uintptr_t key_len,
+                      const uint8_t *data_ptr,
+                      uintptr_t data_len,
+                      uint8_t *out);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through

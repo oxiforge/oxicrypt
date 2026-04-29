@@ -466,3 +466,231 @@ pub unsafe extern "C" fn oxi_hmac_sha256(
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
     R::Ok as c_int
 }
+
+// ── HMAC-SHA-384 ─────────────────────────────────────────────────
+
+/// Compute HMAC-SHA-384 over `data_len` bytes with the given key.
+///
+/// `out` must point to a buffer of at least 48 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_sha384(
+    key_ptr: *const u8,
+    key_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let mut mac = match oxicrypt_hmac::HmacSha384::new(key) {
+        Ok(m) => m,
+        Err(e) => return status_module(Err(e)),
+    };
+    mac.update(data);
+    let tag = mac.finalize();
+    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 48) };
+    R::Ok as c_int
+}
+
+// ── HMAC-SHA-512 ─────────────────────────────────────────────────
+
+/// Compute HMAC-SHA-512 over `data_len` bytes with the given key.
+///
+/// `out` must point to a buffer of at least 64 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_sha512(
+    key_ptr: *const u8,
+    key_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let mut mac = match oxicrypt_hmac::HmacSha512::new(key) {
+        Ok(m) => m,
+        Err(e) => return status_module(Err(e)),
+    };
+    mac.update(data);
+    let tag = mac.finalize();
+    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
+    R::Ok as c_int
+}
+
+// ── HMAC-SHA3-224 ────────────────────────────────────────────────
+
+/// Compute HMAC-SHA3-224 over `data_len` bytes with the given key.
+///
+/// `out` must point to a buffer of at least 28 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_sha3_224(
+    key_ptr: *const u8,
+    key_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let mut mac = match oxicrypt_hmac::HmacSha3_224::new(key) {
+        Ok(m) => m,
+        Err(e) => return status_module(Err(e)),
+    };
+    mac.update(data);
+    let tag = mac.finalize();
+    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 28) };
+    R::Ok as c_int
+}
+
+// ── HMAC-SHA3-256 ────────────────────────────────────────────────
+
+/// Compute HMAC-SHA3-256 over `data_len` bytes with the given key.
+///
+/// `out` must point to a buffer of at least 32 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_sha3_256(
+    key_ptr: *const u8,
+    key_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let mut mac = match oxicrypt_hmac::HmacSha3_256::new(key) {
+        Ok(m) => m,
+        Err(e) => return status_module(Err(e)),
+    };
+    mac.update(data);
+    let tag = mac.finalize();
+    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
+    R::Ok as c_int
+}
+
+// ── HMAC-SHA3-384 ────────────────────────────────────────────────
+
+/// Compute HMAC-SHA3-384 over `data_len` bytes with the given key.
+///
+/// `out` must point to a buffer of at least 48 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_sha3_384(
+    key_ptr: *const u8,
+    key_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let mut mac = match oxicrypt_hmac::HmacSha3_384::new(key) {
+        Ok(m) => m,
+        Err(e) => return status_module(Err(e)),
+    };
+    mac.update(data);
+    let tag = mac.finalize();
+    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 48) };
+    R::Ok as c_int
+}
+
+// ── HMAC-SHA3-512 ────────────────────────────────────────────────
+
+/// Compute HMAC-SHA3-512 over `data_len` bytes with the given key.
+///
+/// `out` must point to a buffer of at least 64 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_sha3_512(
+    key_ptr: *const u8,
+    key_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let key = match unsafe { slice_from_raw(key_ptr, key_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let mut mac = match oxicrypt_hmac::HmacSha3_512::new(key) {
+        Ok(m) => m,
+        Err(e) => return status_module(Err(e)),
+    };
+    mac.update(data);
+    let tag = mac.finalize();
+    unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
+    R::Ok as c_int
+}
