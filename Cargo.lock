@@ -594,6 +594,7 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "oxicrypt-aes",
+ "oxicrypt-cmac",
  "oxicrypt-drbg",
  "oxicrypt-ecdh",
  "oxicrypt-ecdsa",

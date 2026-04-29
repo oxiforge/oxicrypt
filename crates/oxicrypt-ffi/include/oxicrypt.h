@@ -365,6 +365,219 @@ int oxi_aes256_gcm_decrypt(const OxiAes256Key *key,
                            uint8_t *plaintext,
                            const uint8_t *tag);
 
+/*
+ AES-256-CBC encryption (one-shot).
+
+ Buffer requirements:
+ - `iv` — exactly 16 readable bytes.
+ - `input` — `input_len` readable bytes; must be a positive multiple of 16.
+ - `output` — `input_len` writable bytes.
+
+ Returns `OxiResult::NotBlockAligned = 20` when `input_len` is not
+ a multiple of 16, `OxiResult::LengthMismatch = 23` when the output
+ buffer length doesn't match.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_cbc_encrypt(const OxiAes256Key *key,
+                           const uint8_t *iv,
+                           const uint8_t *input,
+                           uintptr_t input_len,
+                           uint8_t *output);
+
+/*
+ AES-256-CBC decryption (one-shot).
+
+ Buffer requirements identical to [`oxi_aes256_cbc_encrypt`] with
+ input/output directions reversed.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_cbc_decrypt(const OxiAes256Key *key,
+                           const uint8_t *iv,
+                           const uint8_t *input,
+                           uintptr_t input_len,
+                           uint8_t *output);
+
+/*
+ AES-256-CTR XOR (one-shot).
+
+ Buffer requirements:
+ - `icb` — exactly 16 readable bytes (initial counter block).
+ - `input` — `len` readable bytes (any length).
+ - `output` — `len` writable bytes.
+
+ CTR is symmetric: encrypt and decrypt are the same operation.
+ Same `(key, icb)` pair MUST NOT be reused — the caller is
+ responsible for nonce uniqueness within a key (SP 800-38A
+ Appendix B).
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_ctr(const OxiAes256Key *key,
+                   const uint8_t *icb,
+                   const uint8_t *input,
+                   uintptr_t len,
+                   uint8_t *output);
+
+/*
+ AES-256-CCM authenticated encryption (one-shot).
+
+ Buffer requirements:
+ - `nonce` — `nonce_len` readable bytes; valid range 7..=13 per SP 800-38C.
+ - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
+   when `aad_len == 0` (per F9, AAD logically defined by length).
+ - `plaintext` — `pt_len` readable bytes; may be NULL when `pt_len == 0`.
+ - `tlen` — tag length in bytes; valid set {4, 6, 8, 10, 12, 14, 16}.
+ - `out` — exactly `pt_len + tlen` writable bytes; layout `C || T`.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_ccm_encrypt(const OxiAes256Key *key,
+                           const uint8_t *nonce,
+                           uintptr_t nonce_len,
+                           const uint8_t *aad,
+                           uintptr_t aad_len,
+                           const uint8_t *plaintext,
+                           uintptr_t pt_len,
+                           uintptr_t tlen,
+                           uint8_t *out);
+
+/*
+ AES-256-CCM authenticated decryption (one-shot).
+
+ `ciphertext` is the full `C || T` buffer of length
+ `ct_len = pt_len + tlen`. On success writes the recovered plaintext
+ (length `ct_len - tlen`) into `out`.
+
+ On tag-verification failure returns `OxiResult::TagMismatch = 22`
+ and the upstream zeroises the output buffer so unverified plaintext
+ is never exposed.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_ccm_decrypt(const OxiAes256Key *key,
+                           const uint8_t *nonce,
+                           uintptr_t nonce_len,
+                           const uint8_t *aad,
+                           uintptr_t aad_len,
+                           const uint8_t *ciphertext,
+                           uintptr_t ct_len,
+                           uintptr_t tlen,
+                           uint8_t *out);
+
+/*
+ CMAC-AES-256 (one-shot).
+
+ Buffer requirements:
+ - `msg` — `msg_len` readable bytes; may be NULL when `msg_len == 0`.
+ - `tag` — exactly 16 writable bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_cmac(const OxiAes256Key *key, const uint8_t *msg, uintptr_t msg_len, uint8_t *tag);
+
+/*
+ AES-256-KW wrap (SP 800-38F §6.2 KW-AE).
+
+ Buffer requirements:
+ - `plaintext` — `pt_len` readable bytes; must be a positive
+   multiple of 8 and at least 16.
+ - `out` — exactly `pt_len + 8` writable bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_kw_wrap(const OxiAes256Key *key,
+                       const uint8_t *plaintext,
+                       uintptr_t pt_len,
+                       uint8_t *out);
+
+/*
+ AES-256-KW unwrap (SP 800-38F §6.2 KW-AD).
+
+ Buffer requirements:
+ - `ciphertext` — `ct_len` readable bytes; must be a positive
+   multiple of 8 and at least 24.
+ - `out` — exactly `ct_len - 8` writable bytes.
+
+ Returns `OxiResult::TagMismatch = 22` if the integrity check
+ value did not verify.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_kw_unwrap(const OxiAes256Key *key,
+                         const uint8_t *ciphertext,
+                         uintptr_t ct_len,
+                         uint8_t *out);
+
+/*
+ AES-256-KWP wrap (SP 800-38F §6.3 KWP-AE / RFC 5649).
+
+ Buffer requirements:
+ - `plaintext` — `pt_len` readable bytes; must be `1..=2^32-1`.
+ - `out` — exactly `((pt_len + 7) / 8) * 8 + 8` writable bytes
+   (padded plaintext + 8-byte AIV).
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_kwp_wrap(const OxiAes256Key *key,
+                        const uint8_t *plaintext,
+                        uintptr_t pt_len,
+                        uint8_t *out);
+
+/*
+ AES-256-KWP unwrap (SP 800-38F §6.3 KWP-AD / RFC 5649).
+
+ Buffer requirements:
+ - `ciphertext` — `ct_len` readable bytes; must be a positive
+   multiple of 8 and at least 16.
+ - `out_scratch` — exactly `ct_len - 8` writable bytes (padded
+   plaintext buffer; only the first `*out_len` bytes are the
+   recovered message after success).
+ - `out_len` — pointer to a `size_t` that receives the recovered
+   plaintext length (≤ `ct_len - 8`) on success.
+
+ Returns `OxiResult::TagMismatch = 22` on AIV / padding mismatch.
+ `*out_len` is unmodified on any non-Ok return.
+
+ # Safety
+
+ All pointer/length pairs must be valid as documented above.
+ `key` must be a live handle from [`oxi_aes256_new`].
+ */
+int oxi_aes256_kwp_unwrap(const OxiAes256Key *key,
+                          const uint8_t *ciphertext,
+                          uintptr_t ct_len,
+                          uint8_t *out_scratch,
+                          uintptr_t *out_len);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

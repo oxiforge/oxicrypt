@@ -261,10 +261,17 @@ capabilities:
       handle-based exposure (OxiAes256Key opaque) lives in oxi_aes256_*.
       The handle is allocated by oxi_aes256_new(out_handle, key_bytes_32),
       released by oxi_aes256_free(NULL-safe), and used as a const handle
-      argument to the GCM encrypt/decrypt entry points. AAD-NULL with
-      aad_len=0 is allowed (F9, SP 800-38D logical-by-length); tag
-      mismatch on decrypt returns OxiResult::TagMismatch=22 with
-      undefined plaintext-buffer contents.
+      argument to all AES-256 mode entry points (GCM, CBC, CTR, CCM,
+      CMAC, KW, KWP). AAD-NULL with aad_len=0 is allowed for AEAD modes
+      (F9, SP 800-38D logical-by-length); tag mismatch on AEAD decrypt
+      returns OxiResult::TagMismatch=22 with undefined plaintext-buffer
+      contents. CBC inputs/outputs are block-aligned (caller-managed
+      padding); CTR is symmetric (single oxi_aes256_ctr entry point);
+      CCM accepts caller-chosen nonce length 7..=13 and tag length
+      {4,6,8,10,12,14,16}; CMAC tag is fixed 16 bytes; KW requires
+      plaintext multiples of 8 (≥16 bytes); KWP accepts any 1..=2^32-1
+      byte plaintext and reports recovered length on unwrap through an
+      out_len pointer.
     entry_points:
       - "oxi_init"
       - "oxi_active_profile"
@@ -286,6 +293,16 @@ capabilities:
       - "oxi_aes256_free"
       - "oxi_aes256_gcm_encrypt"
       - "oxi_aes256_gcm_decrypt"
+      - "oxi_aes256_cbc_encrypt"
+      - "oxi_aes256_cbc_decrypt"
+      - "oxi_aes256_ctr"
+      - "oxi_aes256_ccm_encrypt"
+      - "oxi_aes256_ccm_decrypt"
+      - "oxi_aes256_cmac"
+      - "oxi_aes256_kw_wrap"
+      - "oxi_aes256_kw_unwrap"
+      - "oxi_aes256_kwp_wrap"
+      - "oxi_aes256_kwp_unwrap"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"

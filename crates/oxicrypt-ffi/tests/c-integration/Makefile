@@ -24,7 +24,7 @@ INCLUDE_DIR := ../../include
 CC := cc
 CFLAGS := -I$(INCLUDE_DIR) -Wall -Wextra -O2
 
-TESTS := test_init test_aes_gcm test_handles
+TESTS := test_init test_aes_gcm test_aes_modes test_handles
 
 .PHONY: all test-cdylib test-staticlib clean help
 
@@ -33,7 +33,7 @@ help:
 	@echo ""
 	@echo "  make test-cdylib    — link tests against liboxicrypt_ffi.so + run"
 	@echo "  make test-staticlib — link tests against liboxicrypt_ffi.a + run"
-	@echo "  make all            — both target sets (6 test runs)"
+	@echo "  make all            — both target sets (8 test runs)"
 	@echo "  make clean          — remove built test binaries"
 	@echo ""
 	@echo "  CARGO_TARGET_DIR ?= $(CARGO_TARGET_DIR)"

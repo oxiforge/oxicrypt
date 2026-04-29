@@ -22,6 +22,7 @@ oxicrypt-integrity = { path = "../oxicrypt-integrity" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-hmac = { path = "../oxicrypt-hmac" }
 oxicrypt-aes = { path = "../oxicrypt-aes" }
+oxicrypt-cmac = { path = "../oxicrypt-cmac" }
 oxicrypt-drbg = { path = "../oxicrypt-drbg" }
 oxicrypt-ecdsa = { path = "../oxicrypt-ecdsa" }
 oxicrypt-eddsa = { path = "../oxicrypt-eddsa" }

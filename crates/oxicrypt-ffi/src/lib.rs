@@ -63,7 +63,10 @@ mod aes;
 mod error;
 mod handle;
 pub use aes::{
-    oxi_aes256_free, oxi_aes256_gcm_decrypt, oxi_aes256_gcm_encrypt, oxi_aes256_new, OxiAes256Key,
+    oxi_aes256_cbc_decrypt, oxi_aes256_cbc_encrypt, oxi_aes256_ccm_decrypt, oxi_aes256_ccm_encrypt,
+    oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free, oxi_aes256_gcm_decrypt,
+    oxi_aes256_gcm_encrypt, oxi_aes256_kw_unwrap, oxi_aes256_kw_wrap, oxi_aes256_kwp_unwrap,
+    oxi_aes256_kwp_wrap, oxi_aes256_new, OxiAes256Key,
 };
 pub use error::OxiResult;
 

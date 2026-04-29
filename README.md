@@ -267,9 +267,11 @@ header lives at
 
 All exported symbols use the `oxi_` prefix. Status codes are
 `OxiResult` discriminants (0 = `Ok`; non-zero values are distinct
-failure modes — see `crates/oxicrypt-ffi/src/error.rs`). AES-256-GCM
-uses an opaque `OxiAes256Key` handle allocated via `oxi_aes256_new`
-and released via `oxi_aes256_free` (NULL-safe).
+failure modes — see `crates/oxicrypt-ffi/src/error.rs`). All AES-256
+modes (GCM, CBC, CTR, CCM, KW, KWP) and CMAC-AES-256 share a single
+opaque `OxiAes256Key` handle allocated via `oxi_aes256_new` and
+released via `oxi_aes256_free` (NULL-safe); a key constructed once
+can be reused across modes.
 
 Build the C library:
 
@@ -302,14 +304,28 @@ make -C crates/oxicrypt-ffi/tests/c-integration test-staticlib
 
 The harness exercises the McGrew/Viega "GCM" reference Case 15
 (AES-256) — the same vector the underlying primitive's power-up KAT
-trusts — plus decrypt round-trip and tag-tamper rejection.
+trusts — plus decrypt round-trip and tag-tamper rejection. The
+companion `test_aes_modes` covers the AES-256 non-GCM mode suite
+(CBC, CTR, CCM, CMAC, KW, KWP) against the same KAT vectors the
+underlying `oxicrypt-aes` and `oxicrypt-cmac` self-tests use
+(SP 800-38A F.2.5 / F.5.5, SP 800-38B D.3, RFC 3394 §4.3 + §4.6,
+plus round-trip + AIV-tamper for KWP), so every C-side mode test
+is verified against a value the Rust core's self-test trusts.
 
-The `oxicrypt-ffi` crate currently exposes module lifecycle
-(`oxi_init`, `oxi_active_profile`, `oxi_is_operational`), one-shot
-SHA-256 / SHA-512 / HMAC-SHA-256, and AES-256-GCM with an opaque key
-handle. Per-algorithm exposure of the remaining approved services
-(SHA-3, RSA, ECDSA, ECDH, EdDSA, KDF, DRBG, ML-DSA, ML-KEM, SLH-DSA,
-LMS, XMSS) lands in subsequent algorithm chunks.
+The `oxicrypt-ffi` crate currently exposes:
+
+- Module lifecycle: `oxi_init`, `oxi_active_profile`, `oxi_is_operational`.
+- Hash one-shots: SHA-256, SHA-512, and the four SHA-3 variants
+  (`oxi_sha3_{224,256,384,512}`).
+- HMAC one-shots over all seven SHA-2/SHA-3 hashes:
+  `oxi_hmac_{sha256, sha384, sha512, sha3_224, sha3_256, sha3_384, sha3_512}`.
+- AES-256 with an opaque `OxiAes256Key` handle: GCM (encrypt/decrypt),
+  CBC (encrypt/decrypt), CTR (single symmetric entry point), CCM
+  (encrypt/decrypt), CMAC, KW (wrap/unwrap), KWP (wrap/unwrap).
+
+Per-algorithm exposure of the remaining approved services
+(RSA, ECDSA, ECDH, EdDSA, KDF, DRBG, ML-DSA, ML-KEM, SLH-DSA,
+LMS, XMSS, DH-3072) lands in subsequent algorithm chunks.
 
 ## `oxi` CLI
 

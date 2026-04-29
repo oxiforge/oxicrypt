@@ -4322,6 +4322,272 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_aes256_cbc_encrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-CBC encryption (one-shot, SP 800-38A §6.2). Confidentiality
+      only — no authentication. `input_len` MUST be a positive multiple
+      of 16; padding is the caller's responsibility. Returns
+      OxiResult::NotBlockAligned (=20) when length is not a positive
+      multiple of 16.
+    signature: >-
+      int oxi_aes256_cbc_encrypt(const OxiAes256Key *key,
+      const uint8_t *iv, const uint8_t *input, size_t input_len,
+      uint8_t *output)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: iv, type: "const uint8_t *", direction: in, description: "16-byte IV" }
+      - { name: input, type: "const uint8_t *", direction: in }
+      - { name: input_len, type: size_t, direction: in, description: "Positive multiple of 16" }
+      - { name: output, type: "uint8_t *", direction: out, description: "input_len writable bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_cbc_decrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-CBC decryption (one-shot, SP 800-38A §6.2). Buffer rules
+      identical to oxi_aes256_cbc_encrypt with input/output directions
+      reversed. No authentication is performed.
+    signature: >-
+      int oxi_aes256_cbc_decrypt(const OxiAes256Key *key,
+      const uint8_t *iv, const uint8_t *input, size_t input_len,
+      uint8_t *output)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: iv, type: "const uint8_t *", direction: in, description: "16-byte IV" }
+      - { name: input, type: "const uint8_t *", direction: in }
+      - { name: input_len, type: size_t, direction: in, description: "Positive multiple of 16" }
+      - { name: output, type: "uint8_t *", direction: out, description: "input_len writable bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_ctr
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-CTR XOR (one-shot, SP 800-38A §6.5). CTR is symmetric:
+      encrypt and decrypt are the same operation, hence a single entry
+      point. `icb` is the full 16-byte initial counter block; the FFI
+      does not impose a particular nonce/counter split (mirroring SP
+      800-38A Appendix B). `(key, icb)` MUST NOT be reused — caller
+      is responsible for nonce uniqueness within a key.
+    signature: >-
+      int oxi_aes256_ctr(const OxiAes256Key *key,
+      const uint8_t *icb, const uint8_t *input, size_t len,
+      uint8_t *output)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: icb, type: "const uint8_t *", direction: in, description: "16-byte initial counter block" }
+      - { name: input, type: "const uint8_t *", direction: in }
+      - { name: len, type: size_t, direction: in, description: "Any length" }
+      - { name: output, type: "uint8_t *", direction: out, description: "len writable bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_ccm_encrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-CCM authenticated encryption (one-shot, SP 800-38C).
+      Caller-chosen nonce length 7..=13 and tag length from
+      {4, 6, 8, 10, 12, 14, 16}. `aad` may be NULL when `aad_len == 0`
+      (F9, AAD logically defined by length). `plaintext` may be NULL
+      when `pt_len == 0`. Output buffer is `pt_len + tlen` bytes;
+      layout is `C || T` (ciphertext concatenated with tag).
+    signature: >-
+      int oxi_aes256_ccm_encrypt(const OxiAes256Key *key,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *aad, size_t aad_len,
+      const uint8_t *plaintext, size_t pt_len,
+      size_t tlen, uint8_t *out)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: nonce, type: "const uint8_t *", direction: in }
+      - { name: nonce_len, type: size_t, direction: in, description: "7..=13 per SP 800-38C" }
+      - { name: aad, type: "const uint8_t *", direction: in }
+      - { name: aad_len, type: size_t, direction: in }
+      - { name: plaintext, type: "const uint8_t *", direction: in }
+      - { name: pt_len, type: size_t, direction: in }
+      - { name: tlen, type: size_t, direction: in, description: "Tag length: {4,6,8,10,12,14,16}" }
+      - { name: out, type: "uint8_t *", direction: out, description: "pt_len + tlen writable bytes; layout C || T" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 21 = InvalidIvLength, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_ccm_decrypt
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-CCM authenticated decryption (one-shot, SP 800-38C).
+      `ciphertext` is the full `C || T` buffer of length
+      `ct_len = pt_len + tlen`. On success writes the recovered
+      plaintext (length `ct_len - tlen`) into `out`. On tag-verification
+      failure returns OxiResult::TagMismatch (=22) and the upstream
+      zeroises the output buffer so unverified plaintext is never
+      exposed.
+    signature: >-
+      int oxi_aes256_ccm_decrypt(const OxiAes256Key *key,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *aad, size_t aad_len,
+      const uint8_t *ciphertext, size_t ct_len,
+      size_t tlen, uint8_t *out)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: nonce, type: "const uint8_t *", direction: in }
+      - { name: nonce_len, type: size_t, direction: in, description: "7..=13 per SP 800-38C" }
+      - { name: aad, type: "const uint8_t *", direction: in }
+      - { name: aad_len, type: size_t, direction: in }
+      - { name: ciphertext, type: "const uint8_t *", direction: in, description: "C || T packed buffer" }
+      - { name: ct_len, type: size_t, direction: in, description: "pt_len + tlen" }
+      - { name: tlen, type: size_t, direction: in, description: "Tag length: {4,6,8,10,12,14,16}" }
+      - { name: out, type: "uint8_t *", direction: out, description: "ct_len - tlen writable bytes; UNDEFINED on TagMismatch (zeroised by upstream)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 21 = InvalidIvLength, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_cmac
+    module: oxicrypt-ffi
+    description: >-
+      CMAC-AES-256 (one-shot, SP 800-38B). MAC over arbitrary-length
+      message under an AES-256 block cipher; tag is always 16 bytes
+      (full BLOCK_SIZE). Callers that need a truncated MAC must
+      truncate at the application layer per SP 800-38B §4. Gated on
+      Service::CmacAes256 (60-band) distinct from the cipher-mode
+      Aes256* services (90-band). `msg` may be NULL when `msg_len == 0`.
+    signature: >-
+      int oxi_aes256_cmac(const OxiAes256Key *key,
+      const uint8_t *msg, size_t msg_len, uint8_t *tag)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: msg, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: tag, type: "uint8_t *", direction: out, description: "16-byte tag" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_kw_wrap
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-KW wrap (SP 800-38F §6.2 KW-AE). `pt_len` MUST be a
+      positive multiple of 8 and at least 16 bytes. Output is
+      `pt_len + 8` bytes (plaintext + 8-byte ICV).
+    signature: >-
+      int oxi_aes256_kw_wrap(const OxiAes256Key *key,
+      const uint8_t *plaintext, size_t pt_len, uint8_t *out)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: plaintext, type: "const uint8_t *", direction: in }
+      - { name: pt_len, type: size_t, direction: in, description: "Positive multiple of 8, >= 16" }
+      - { name: out, type: "uint8_t *", direction: out, description: "pt_len + 8 writable bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_kw_unwrap
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-KW unwrap (SP 800-38F §6.2 KW-AD). `ct_len` MUST be a
+      positive multiple of 8 and at least 24 bytes. Output is
+      `ct_len - 8` bytes. Returns OxiResult::TagMismatch (=22) if the
+      integrity check value did not verify.
+    signature: >-
+      int oxi_aes256_kw_unwrap(const OxiAes256Key *key,
+      const uint8_t *ciphertext, size_t ct_len, uint8_t *out)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: ciphertext, type: "const uint8_t *", direction: in }
+      - { name: ct_len, type: size_t, direction: in, description: "Positive multiple of 8, >= 24" }
+      - { name: out, type: "uint8_t *", direction: out, description: "ct_len - 8 writable bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_kwp_wrap
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-KWP wrap (SP 800-38F §6.3 KWP-AE / RFC 5649). Accepts
+      any plaintext length in `1..=2^32-1` bytes. Output is
+      `((pt_len + 7) / 8) * 8 + 8` bytes — padded plaintext plus the
+      8-byte AIV. KWP differs from KW only in the alternative IV
+      and the implicit zero-padding to a multiple of 8.
+    signature: >-
+      int oxi_aes256_kwp_wrap(const OxiAes256Key *key,
+      const uint8_t *plaintext, size_t pt_len, uint8_t *out)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: plaintext, type: "const uint8_t *", direction: in }
+      - { name: pt_len, type: size_t, direction: in, description: "1..=2^32-1" }
+      - { name: out, type: "uint8_t *", direction: out, description: "((pt_len+7)/8)*8 + 8 writable bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_aes256_kwp_unwrap
+    module: oxicrypt-ffi
+    description: >-
+      AES-256-KWP unwrap (SP 800-38F §6.3 KWP-AD / RFC 5649).
+      `ct_len` MUST be a positive multiple of 8 and at least 16
+      bytes. `out_scratch` is the padded plaintext buffer of length
+      `ct_len - 8`; only the first `*out_len` bytes are the recovered
+      message after success. `out_len` is unmodified on any non-Ok
+      return. Returns OxiResult::TagMismatch (=22) on AIV / padding
+      mismatch.
+    signature: >-
+      int oxi_aes256_kwp_unwrap(const OxiAes256Key *key,
+      const uint8_t *ciphertext, size_t ct_len,
+      uint8_t *out_scratch, size_t *out_len)
+    parameters:
+      - { name: key, type: "const OxiAes256Key *", direction: in, description: "Live handle from oxi_aes256_new" }
+      - { name: ciphertext, type: "const uint8_t *", direction: in }
+      - { name: ct_len, type: size_t, direction: in, description: "Positive multiple of 8, >= 16" }
+      - { name: out_scratch, type: "uint8_t *", direction: out, description: "ct_len - 8 writable bytes (padded plaintext scratch)" }
+      - { name: out_len, type: "size_t *", direction: out, description: "Recovered plaintext length on success; unmodified on non-Ok" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────
