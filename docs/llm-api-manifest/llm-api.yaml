@@ -3927,6 +3927,99 @@ functions:
       type: int
       description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
 
+  # SHA-3 family (FIPS 202). Sponge-construction hashes exposed as
+  # one-shot entry points only. Streaming exposure is deferred until
+  # the underlying oxicrypt_sha Rust API exposes streaming SHA-3
+  # publicly (same rationale as PRD Decision D1 for AES-GCM streaming).
+
+  - name: oxi_sha3_224
+    module: oxicrypt-ffi
+    description: >-
+      Compute SHA3-224 over data_len bytes. out must be >= 28 bytes.
+    signature: "int oxi_sha3_224(const uint8_t *data_ptr, size_t data_len, uint8_t *out)"
+    parameters:
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Data to hash.
+      - name: data_len
+        type: size_t
+        direction: in
+        description: Length of data in bytes.
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 28 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_sha3_256
+    module: oxicrypt-ffi
+    description: >-
+      Compute SHA3-256 over data_len bytes. out must be >= 32 bytes.
+    signature: "int oxi_sha3_256(const uint8_t *data_ptr, size_t data_len, uint8_t *out)"
+    parameters:
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Data to hash.
+      - name: data_len
+        type: size_t
+        direction: in
+        description: Length of data in bytes.
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 32 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_sha3_384
+    module: oxicrypt-ffi
+    description: >-
+      Compute SHA3-384 over data_len bytes. out must be >= 48 bytes.
+    signature: "int oxi_sha3_384(const uint8_t *data_ptr, size_t data_len, uint8_t *out)"
+    parameters:
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Data to hash.
+      - name: data_len
+        type: size_t
+        direction: in
+        description: Length of data in bytes.
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 48 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_sha3_512
+    module: oxicrypt-ffi
+    description: >-
+      Compute SHA3-512 over data_len bytes. out must be >= 64 bytes.
+    signature: "int oxi_sha3_512(const uint8_t *data_ptr, size_t data_len, uint8_t *out)"
+    parameters:
+      - name: data_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Data to hash.
+      - name: data_len
+        type: size_t
+        direction: in
+        description: Length of data in bytes.
+      - name: out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 64 bytes.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
   - name: oxi_hmac_sha256
     module: oxicrypt-ffi
     description: >-

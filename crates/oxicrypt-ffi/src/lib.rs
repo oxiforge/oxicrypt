@@ -314,6 +314,121 @@ pub unsafe extern "C" fn oxi_sha512(data_ptr: *const u8, data_len: usize, out: *
     }
 }
 
+// ── SHA-3 family ─────────────────────────────────────────────────
+//
+// SHA-3 (FIPS 202) is a separate primitive family from SHA-2 with a
+// different (sponge) construction; it is exposed as one-shot entry
+// points only, mirroring the existing `oxi_sha256` / `oxi_sha512`
+// shape. Streaming exposure is deferred until the underlying
+// `oxicrypt_sha` Rust API exposes streaming SHA-3 publicly — exposing
+// a caller-managed streaming surface ahead of the Rust API would
+// invert the dependency direction (same rationale as PRD foundation
+// Decision D1 for AES-GCM streaming).
+
+/// Compute SHA3-224 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 28 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 28 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha3_224(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha3_224(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 28) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
+/// Compute SHA3-256 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 32 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha3_256(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha3_256(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 32) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
+/// Compute SHA3-384 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 48 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 48 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha3_384(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha3_384(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 48) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
+/// Compute SHA3-512 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 64 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 64 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha3_512(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha3_512(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 64) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
 // ── HMAC-SHA-256 ─────────────────────────────────────────────────
 
 /// Compute HMAC-SHA-256 over `data_len` bytes with the given key.

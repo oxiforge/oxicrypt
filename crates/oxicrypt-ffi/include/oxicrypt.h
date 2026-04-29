@@ -125,6 +125,54 @@ int oxi_sha256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
 int oxi_sha512(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
 
 /*
+ Compute SHA3-224 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 28 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 28 bytes.
+ */
+int oxi_sha3_224(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
+ Compute SHA3-256 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 32 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 32 bytes.
+ */
+int oxi_sha3_256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
+ Compute SHA3-384 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 48 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 48 bytes.
+ */
+int oxi_sha3_384(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
+ Compute SHA3-512 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 64 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 64 bytes.
+ */
+int oxi_sha3_512(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
  Compute HMAC-SHA-256 over `data_len` bytes with the given key.
 
  `out` must point to a buffer of at least 32 bytes.
