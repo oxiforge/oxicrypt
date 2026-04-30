@@ -307,6 +307,16 @@ capabilities:
       - "oxi_aes256_kw_unwrap"
       - "oxi_aes256_kwp_wrap"
       - "oxi_aes256_kwp_unwrap"
+      - "oxi_hkdf_sha256_extract"
+      - "oxi_hkdf_sha256_expand"
+      - "oxi_hkdf_sha384_extract"
+      - "oxi_hkdf_sha384_expand"
+      - "oxi_hkdf_sha512_extract"
+      - "oxi_hkdf_sha512_expand"
+      - "oxi_tls13_hkdf_expand_label_sha256"
+      - "oxi_tls13_hkdf_expand_label_sha384"
+      - "oxi_tls13_derive_secret_sha256"
+      - "oxi_tls13_derive_secret_sha384"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"

@@ -326,9 +326,16 @@ The `oxicrypt-ffi` crate currently exposes:
 - AES-256 with an opaque `OxiAes256Key` handle: GCM (encrypt/decrypt),
   CBC (encrypt/decrypt), CTR (single symmetric entry point), CCM
   (encrypt/decrypt), CMAC, KW (wrap/unwrap), KWP (wrap/unwrap).
+- HKDF (RFC 5869) two-step extract/expand for the CNSA-2.0 baseline
+  hashes: `oxi_hkdf_{sha256,sha384,sha512}_extract` and `_expand`.
+  PRK crosses the FFI boundary as raw bytes (`L` = 32/48/64); the
+  caller chooses storage between the two calls.
+- TLS 1.3 KDF (RFC 8446 §7.1) HKDF-Expand-Label and Derive-Secret
+  for the two ciphersuite hashes pinned by RFC 8446 §B.4:
+  `oxi_tls13_{hkdf_expand_label,derive_secret}_{sha256,sha384}`.
 
 Per-algorithm exposure of the remaining approved services
-(RSA, ECDSA, ECDH, EdDSA, KDF, DRBG, ML-DSA, ML-KEM, SLH-DSA,
+(RSA, ECDSA, ECDH, EdDSA, DRBG, ML-DSA, ML-KEM, SLH-DSA,
 LMS, XMSS, DH-3072) lands in subsequent algorithm chunks.
 
 ## `oxi` CLI

@@ -4308,6 +4308,390 @@ functions:
       type: int
       description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
 
+  # HKDF (RFC 5869, SP 800-56C Rev. 2 §4.1) — two-step extract / expand.
+  # PRK is L bytes (32/48/64 for SHA-256/384/512) and is the entire HKDF
+  # state; the C ABI passes it as raw bytes between calls instead of
+  # wrapping it in an opaque handle. Profile gating routes through
+  # P::KDF_SERVICE — same KDF mechanism, different PRF, distinct
+  # approved service per SP 800-56C Rev. 2.
+
+  - name: oxi_hkdf_sha256_extract
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-256.
+      Computes PRK = HMAC-SHA-256(salt, IKM) and writes the 32-byte
+      pseudorandom key into prk_out. A NULL or zero-length salt is
+      interpreted as 32 zero bytes per RFC 5869 §2.2.
+    signature: >-
+      int oxi_hkdf_sha256_extract(const uint8_t *salt_ptr, size_t salt_len,
+      const uint8_t *ikm_ptr, size_t ikm_len, uint8_t *prk_out)
+    parameters:
+      - name: salt_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional salt; pass NULL with salt_len=0 for the zero-salt default.
+      - name: salt_len
+        type: size_t
+        direction: in
+      - name: ikm_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: ikm_len
+        type: size_t
+        direction: in
+      - name: prk_out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 32 bytes; receives the 32-byte PRK.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hkdf_sha256_expand
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-256.
+      Reconstructs HKDF state from a 32-byte PRK and fills okm_out
+      with okm_len bytes of derived key material. Returns
+      OxiResult::OutputTooLong (12) when okm_len exceeds 255*32 = 8160.
+    signature: >-
+      int oxi_hkdf_sha256_expand(const uint8_t *prk_ptr,
+      const uint8_t *info_ptr, size_t info_len,
+      uint8_t *okm_out, size_t okm_len)
+    parameters:
+      - name: prk_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Pseudorandom key; must point to exactly 32 bytes.
+      - name: info_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional context/info string; pass NULL with info_len=0 for empty info.
+      - name: info_len
+        type: size_t
+        direction: in
+      - name: okm_out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer of okm_len bytes; receives the derived key material.
+      - name: okm_len
+        type: size_t
+        direction: in
+        description: Output length; capped at 255*32 = 8160 bytes by RFC 5869 §2.3.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 12 = OutputTooLong, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hkdf_sha384_extract
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-384.
+      Computes PRK = HMAC-SHA-384(salt, IKM) and writes the 48-byte
+      pseudorandom key into prk_out. A NULL or zero-length salt is
+      interpreted as 48 zero bytes per RFC 5869 §2.2.
+    signature: >-
+      int oxi_hkdf_sha384_extract(const uint8_t *salt_ptr, size_t salt_len,
+      const uint8_t *ikm_ptr, size_t ikm_len, uint8_t *prk_out)
+    parameters:
+      - name: salt_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional salt; pass NULL with salt_len=0 for the zero-salt default.
+      - name: salt_len
+        type: size_t
+        direction: in
+      - name: ikm_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: ikm_len
+        type: size_t
+        direction: in
+      - name: prk_out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 48 bytes; receives the 48-byte PRK.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hkdf_sha384_expand
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-384.
+      Reconstructs HKDF state from a 48-byte PRK and fills okm_out
+      with okm_len bytes of derived key material. Returns
+      OxiResult::OutputTooLong (12) when okm_len exceeds 255*48 = 12240.
+    signature: >-
+      int oxi_hkdf_sha384_expand(const uint8_t *prk_ptr,
+      const uint8_t *info_ptr, size_t info_len,
+      uint8_t *okm_out, size_t okm_len)
+    parameters:
+      - name: prk_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Pseudorandom key; must point to exactly 48 bytes.
+      - name: info_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional context/info string; pass NULL with info_len=0 for empty info.
+      - name: info_len
+        type: size_t
+        direction: in
+      - name: okm_out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer of okm_len bytes; receives the derived key material.
+      - name: okm_len
+        type: size_t
+        direction: in
+        description: Output length; capped at 255*48 = 12240 bytes by RFC 5869 §2.3.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 12 = OutputTooLong, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hkdf_sha512_extract
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-512.
+      Computes PRK = HMAC-SHA-512(salt, IKM) and writes the 64-byte
+      pseudorandom key into prk_out. A NULL or zero-length salt is
+      interpreted as 64 zero bytes per RFC 5869 §2.2.
+    signature: >-
+      int oxi_hkdf_sha512_extract(const uint8_t *salt_ptr, size_t salt_len,
+      const uint8_t *ikm_ptr, size_t ikm_len, uint8_t *prk_out)
+    parameters:
+      - name: salt_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional salt; pass NULL with salt_len=0 for the zero-salt default.
+      - name: salt_len
+        type: size_t
+        direction: in
+      - name: ikm_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: ikm_len
+        type: size_t
+        direction: in
+      - name: prk_out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer, must be >= 64 bytes; receives the 64-byte PRK.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_hkdf_sha512_expand
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-512.
+      Reconstructs HKDF state from a 64-byte PRK and fills okm_out
+      with okm_len bytes of derived key material. Returns
+      OxiResult::OutputTooLong (12) when okm_len exceeds 255*64 = 16320.
+    signature: >-
+      int oxi_hkdf_sha512_expand(const uint8_t *prk_ptr,
+      const uint8_t *info_ptr, size_t info_len,
+      uint8_t *okm_out, size_t okm_len)
+    parameters:
+      - name: prk_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Pseudorandom key; must point to exactly 64 bytes.
+      - name: info_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional context/info string; pass NULL with info_len=0 for empty info.
+      - name: info_len
+        type: size_t
+        direction: in
+      - name: okm_out
+        type: "uint8_t *"
+        direction: out
+        description: Output buffer of okm_len bytes; receives the derived key material.
+      - name: okm_len
+        type: size_t
+        direction: in
+        description: Output length; capped at 255*64 = 16320 bytes by RFC 5869 §2.3.
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 12 = OutputTooLong, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  # TLS 1.3 KDF (RFC 8446 §7.1) — HKDF-Expand-Label and Derive-Secret.
+  # Exposed for the two ciphersuite hashes pinned by RFC 8446 §B.4
+  # (SHA-256: TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256;
+  # SHA-384: TLS_AES_256_GCM_SHA384). SHA-512 is not in the IANA TLS
+  # 1.3 ciphersuite registry and is intentionally not exposed.
+
+  - name: oxi_tls13_hkdf_expand_label_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-256.
+      Builds the HkdfLabel wire structure
+      length || "tls13 " + label || context and runs HKDF-Expand
+      (RFC 5869 §2.3) to fill out with out_len bytes.
+    signature: >-
+      int oxi_tls13_hkdf_expand_label_sha256(const uint8_t *secret_ptr, size_t secret_len,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *context_ptr, size_t context_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - name: secret_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: secret_len
+        type: size_t
+        direction: in
+      - name: label_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Label suffix; the "tls13 " prefix is prepended internally per RFC 8446 §7.1.
+      - name: label_len
+        type: size_t
+        direction: in
+      - name: context_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional context bytes; pass NULL with context_len=0 for empty context.
+      - name: context_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+      - name: out_len
+        type: size_t
+        direction: in
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_tls13_hkdf_expand_label_sha384
+    module: oxicrypt-ffi
+    description: >-
+      Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-384.
+      Builds the HkdfLabel wire structure
+      length || "tls13 " + label || context and runs HKDF-Expand
+      (RFC 5869 §2.3) to fill out with out_len bytes.
+    signature: >-
+      int oxi_tls13_hkdf_expand_label_sha384(const uint8_t *secret_ptr, size_t secret_len,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *context_ptr, size_t context_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - name: secret_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: secret_len
+        type: size_t
+        direction: in
+      - name: label_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Label suffix; the "tls13 " prefix is prepended internally per RFC 8446 §7.1.
+      - name: label_len
+        type: size_t
+        direction: in
+      - name: context_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Optional context bytes; pass NULL with context_len=0 for empty context.
+      - name: context_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+      - name: out_len
+        type: size_t
+        direction: in
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_tls13_derive_secret_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-256.
+      Equivalent to HKDF-Expand-Label(secret, label, transcript_hash, out_len).
+      The caller computes Hash(messages) — the running TLS 1.3 transcript hash —
+      and passes it as transcript_hash.
+    signature: >-
+      int oxi_tls13_derive_secret_sha256(const uint8_t *secret_ptr, size_t secret_len,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *transcript_hash_ptr, size_t transcript_hash_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - name: secret_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: secret_len
+        type: size_t
+        direction: in
+      - name: label_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: label_len
+        type: size_t
+        direction: in
+      - name: transcript_hash_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Caller-computed Hash(messages) — running TLS 1.3 transcript hash.
+      - name: transcript_hash_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+      - name: out_len
+        type: size_t
+        direction: in
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
+  - name: oxi_tls13_derive_secret_sha384
+    module: oxicrypt-ffi
+    description: >-
+      Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-384.
+      Equivalent to HKDF-Expand-Label(secret, label, transcript_hash, out_len).
+      The caller computes Hash(messages) — the running TLS 1.3 transcript hash —
+      and passes it as transcript_hash.
+    signature: >-
+      int oxi_tls13_derive_secret_sha384(const uint8_t *secret_ptr, size_t secret_len,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *transcript_hash_ptr, size_t transcript_hash_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - name: secret_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: secret_len
+        type: size_t
+        direction: in
+      - name: label_ptr
+        type: "const uint8_t *"
+        direction: in
+      - name: label_len
+        type: size_t
+        direction: in
+      - name: transcript_hash_ptr
+        type: "const uint8_t *"
+        direction: in
+        description: Caller-computed Hash(messages) — running TLS 1.3 transcript hash.
+      - name: transcript_hash_len
+        type: size_t
+        direction: in
+      - name: out
+        type: "uint8_t *"
+        direction: out
+      - name: out_len
+        type: size_t
+        direction: in
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+
   # AES-256-GCM with opaque OxiAes256Key handle. One-shot only —
   # streaming exposure deferred per PRD Decision D1.
 

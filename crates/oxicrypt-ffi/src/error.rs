@@ -10,7 +10,7 @@
 //!
 //! - 0:           Success
 //! - 1-7:         `oxicrypt_module::Error` variants
-//! - 10-11:       FFI-layer errors (null pointer, buffer too small)
+//! - 10-12:       FFI-layer errors (null pointer, buffer too small, output too long)
 //! - 20-27:       `oxicrypt_aes::ModeError` variants
 //! - 255:         Catch-all `Internal` (reserved)
 //!
@@ -51,6 +51,8 @@ pub enum OxiResult {
     NullPointer = 10,
     /// Caller-allocated output buffer is smaller than the documented minimum.
     BufferTooSmall = 11,
+    /// HKDF-Expand requested more than `255 * HashLen` bytes (RFC 5869 §2.3).
+    OutputTooLong = 12,
 
     // AES-mode errors (oxicrypt_aes::ModeError)
     /// Input length is not aligned to the cipher block size (where required).
@@ -119,6 +121,23 @@ pub(crate) fn status_module(r: Result<(), oxicrypt_module::Error>) -> c_int {
 /// Convert a `Result<(), oxicrypt_aes::ModeError>` into the C `int` status code.
 #[allow(dead_code)] // call sites land in Task 7 (AES-GCM exposure)
 pub(crate) fn status_aes(r: Result<(), oxicrypt_aes::ModeError>) -> c_int {
+    match r {
+        Ok(()) => OxiResult::Ok as c_int,
+        Err(e) => OxiResult::from(e) as c_int,
+    }
+}
+
+impl From<oxicrypt_kdf::KdfError> for OxiResult {
+    fn from(e: oxicrypt_kdf::KdfError) -> Self {
+        match e {
+            oxicrypt_kdf::KdfError::Module(m) => OxiResult::from(m),
+            oxicrypt_kdf::KdfError::OutputTooLong => OxiResult::OutputTooLong,
+        }
+    }
+}
+
+/// Convert a `Result<(), oxicrypt_kdf::KdfError>` into the C `int` status code.
+pub(crate) fn status_kdf(r: Result<(), oxicrypt_kdf::KdfError>) -> c_int {
     match r {
         Ok(()) => OxiResult::Ok as c_int,
         Err(e) => OxiResult::from(e) as c_int,
@@ -201,5 +220,26 @@ mod tests {
         let aes_err: Result<(), oxicrypt_aes::ModeError> =
             Err(oxicrypt_aes::ModeError::TagMismatch);
         assert_eq!(status_aes(aes_err), OxiResult::TagMismatch as i32);
+    }
+
+    #[test]
+    fn kdf_error_maps_to_distinct_oxi_results() {
+        // KdfError::OutputTooLong has its own discriminant; the
+        // Module(_) wrapper passes through to the inner Error mapping.
+        assert_eq!(
+            OxiResult::from(oxicrypt_kdf::KdfError::OutputTooLong),
+            OxiResult::OutputTooLong
+        );
+        assert_eq!(
+            OxiResult::from(oxicrypt_kdf::KdfError::Module(
+                oxicrypt_module::Error::InvalidInput
+            )),
+            OxiResult::InvalidInput
+        );
+        let kdf_ok: Result<(), oxicrypt_kdf::KdfError> = Ok(());
+        assert_eq!(status_kdf(kdf_ok), 0);
+        let kdf_err: Result<(), oxicrypt_kdf::KdfError> =
+            Err(oxicrypt_kdf::KdfError::OutputTooLong);
+        assert_eq!(status_kdf(kdf_err), OxiResult::OutputTooLong as i32);
     }
 }

@@ -601,8 +601,10 @@ dependencies = [
  "oxicrypt-eddsa",
  "oxicrypt-hmac",
  "oxicrypt-integrity",
+ "oxicrypt-kdf",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-tls-kdf",
 ]
 
 [[package]]

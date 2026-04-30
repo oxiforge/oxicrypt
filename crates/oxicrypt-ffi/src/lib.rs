@@ -70,7 +70,7 @@ pub use aes::{
 };
 pub use error::OxiResult;
 
-use crate::error::{status_module, OxiResult as R};
+use crate::error::{status_kdf, status_module, OxiResult as R};
 use core::ffi::c_int;
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -824,4 +824,446 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
     let tag = mac.finalize();
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
     R::Ok as c_int
+}
+
+// ── HKDF (RFC 5869, SP 800-56C Rev. 2 §4.1) ──────────────────────
+//
+// Two-step extract/expand surface — RFC 5869 §2's pure-function
+// abstract. The PRK is `L` bytes (32/48/64 for SHA-256/384/512) and
+// is the entire HKDF state, so we expose it as raw bytes between
+// `extract` and `expand` rather than wrapping it in an opaque
+// handle. Caller decides PRK storage (RAM, KMS, file). Profile
+// gating routes through `P::KDF_SERVICE` per CMVP gem D5 — same
+// KDF mechanism with a different PRF is a different approved
+// service per SP 800-56C Rev. 2.
+
+// ── HKDF-SHA-256 ─────────────────────────────────────────────────
+
+/// Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-256.
+///
+/// Computes `PRK = HMAC-SHA-256(salt, IKM)` and writes the 32-byte
+/// PRK into `prk_out`. A NULL or zero-length salt is interpreted as
+/// 32 zero bytes per RFC 5869 §2.2.
+///
+/// `prk_out` must point to a buffer of at least 32 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `prk_out` must be a
+/// non-NULL writable pointer to ≥32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hkdf_sha256_extract(
+    salt_ptr: *const u8,
+    salt_len: usize,
+    ikm_ptr: *const u8,
+    ikm_len: usize,
+    prk_out: *mut u8,
+) -> c_int {
+    let salt = match unsafe { slice_from_raw(salt_ptr, salt_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ikm = match unsafe { slice_from_raw(ikm_ptr, ikm_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if prk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let salt_opt = if salt.is_empty() { None } else { Some(salt) };
+    let hk = match oxicrypt_kdf::HkdfSha256::extract(salt_opt, ikm) {
+        Ok(h) => h,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(hk.prk().as_ptr(), prk_out, 32) };
+    R::Ok as c_int
+}
+
+/// Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-256.
+///
+/// Reconstructs HKDF state from a 32-byte PRK and fills `okm_out`
+/// with `okm_len` bytes of derived key material. Returns
+/// `OxiResult::OutputTooLong` when `okm_len > 255 * 32 = 8160`.
+///
+/// `prk_ptr` must point to exactly 32 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `okm_out` must be a
+/// writable pointer to at least `okm_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hkdf_sha256_expand(
+    prk_ptr: *const u8,
+    info_ptr: *const u8,
+    info_len: usize,
+    okm_out: *mut u8,
+    okm_len: usize,
+) -> c_int {
+    let prk = match unsafe { slice_from_raw(prk_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let info = match unsafe { slice_from_raw(info_ptr, info_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let okm = match unsafe { slice_from_raw_mut(okm_out, okm_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let hk = match oxicrypt_kdf::HkdfSha256::from_prk(prk) {
+        Ok(h) => h,
+        Err(e) => return R::from(e) as c_int,
+    };
+    status_kdf(hk.expand(info, okm))
+}
+
+// ── HKDF-SHA-384 ─────────────────────────────────────────────────
+
+/// Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-384.
+///
+/// Computes `PRK = HMAC-SHA-384(salt, IKM)` and writes the 48-byte
+/// PRK into `prk_out`. A NULL or zero-length salt is interpreted as
+/// 48 zero bytes per RFC 5869 §2.2.
+///
+/// `prk_out` must point to a buffer of at least 48 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `prk_out` must be a
+/// non-NULL writable pointer to ≥48 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hkdf_sha384_extract(
+    salt_ptr: *const u8,
+    salt_len: usize,
+    ikm_ptr: *const u8,
+    ikm_len: usize,
+    prk_out: *mut u8,
+) -> c_int {
+    let salt = match unsafe { slice_from_raw(salt_ptr, salt_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ikm = match unsafe { slice_from_raw(ikm_ptr, ikm_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if prk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let salt_opt = if salt.is_empty() { None } else { Some(salt) };
+    let hk = match oxicrypt_kdf::HkdfSha384::extract(salt_opt, ikm) {
+        Ok(h) => h,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(hk.prk().as_ptr(), prk_out, 48) };
+    R::Ok as c_int
+}
+
+/// Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-384.
+///
+/// Reconstructs HKDF state from a 48-byte PRK and fills `okm_out`
+/// with `okm_len` bytes of derived key material. Returns
+/// `OxiResult::OutputTooLong` when `okm_len > 255 * 48 = 12240`.
+///
+/// `prk_ptr` must point to exactly 48 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `okm_out` must be a
+/// writable pointer to at least `okm_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hkdf_sha384_expand(
+    prk_ptr: *const u8,
+    info_ptr: *const u8,
+    info_len: usize,
+    okm_out: *mut u8,
+    okm_len: usize,
+) -> c_int {
+    let prk = match unsafe { slice_from_raw(prk_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let info = match unsafe { slice_from_raw(info_ptr, info_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let okm = match unsafe { slice_from_raw_mut(okm_out, okm_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let hk = match oxicrypt_kdf::HkdfSha384::from_prk(prk) {
+        Ok(h) => h,
+        Err(e) => return R::from(e) as c_int,
+    };
+    status_kdf(hk.expand(info, okm))
+}
+
+// ── HKDF-SHA-512 ─────────────────────────────────────────────────
+
+/// Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-512.
+///
+/// Computes `PRK = HMAC-SHA-512(salt, IKM)` and writes the 64-byte
+/// PRK into `prk_out`. A NULL or zero-length salt is interpreted as
+/// 64 zero bytes per RFC 5869 §2.2.
+///
+/// `prk_out` must point to a buffer of at least 64 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `prk_out` must be a
+/// non-NULL writable pointer to ≥64 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hkdf_sha512_extract(
+    salt_ptr: *const u8,
+    salt_len: usize,
+    ikm_ptr: *const u8,
+    ikm_len: usize,
+    prk_out: *mut u8,
+) -> c_int {
+    let salt = match unsafe { slice_from_raw(salt_ptr, salt_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ikm = match unsafe { slice_from_raw(ikm_ptr, ikm_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if prk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let salt_opt = if salt.is_empty() { None } else { Some(salt) };
+    let hk = match oxicrypt_kdf::HkdfSha512::extract(salt_opt, ikm) {
+        Ok(h) => h,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(hk.prk().as_ptr(), prk_out, 64) };
+    R::Ok as c_int
+}
+
+/// Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-512.
+///
+/// Reconstructs HKDF state from a 64-byte PRK and fills `okm_out`
+/// with `okm_len` bytes of derived key material. Returns
+/// `OxiResult::OutputTooLong` when `okm_len > 255 * 64 = 16320`.
+///
+/// `prk_ptr` must point to exactly 64 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `okm_out` must be a
+/// writable pointer to at least `okm_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
+    prk_ptr: *const u8,
+    info_ptr: *const u8,
+    info_len: usize,
+    okm_out: *mut u8,
+    okm_len: usize,
+) -> c_int {
+    let prk = match unsafe { slice_from_raw(prk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let info = match unsafe { slice_from_raw(info_ptr, info_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let okm = match unsafe { slice_from_raw_mut(okm_out, okm_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let hk = match oxicrypt_kdf::HkdfSha512::from_prk(prk) {
+        Ok(h) => h,
+        Err(e) => return R::from(e) as c_int,
+    };
+    status_kdf(hk.expand(info, okm))
+}
+
+// ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
+//
+// HKDF-Expand-Label and Derive-Secret over the TLS 1.3 ciphersuite
+// hashes. RFC 8446 §B.4 pins TLS 1.3 to SHA-256
+// (TLS_AES_128_GCM_SHA256 / TLS_CHACHA20_POLY1305_SHA256) or
+// SHA-384 (TLS_AES_256_GCM_SHA384) — SHA-512 is not in the IANA
+// TLS 1.3 ciphersuite registry, so it is intentionally not exposed.
+// Profile gating: `Service::Tls13Kdf` (one service for both hash
+// instantiations, matching the upstream TLS-KDF crate's gating).
+
+// ── TLS 1.3 HKDF-Expand-Label ────────────────────────────────────
+
+/// Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-256.
+///
+/// Builds the HkdfLabel wire structure
+/// `length || "tls13 " + label || context` and runs HKDF-Expand
+/// (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `out` must be a writable
+/// pointer to at least `out_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha256(
+    secret_ptr: *const u8,
+    secret_len: usize,
+    label_ptr: *const u8,
+    label_len: usize,
+    context_ptr: *const u8,
+    context_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    let secret = match unsafe { slice_from_raw(secret_ptr, secret_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let context = match unsafe { slice_from_raw(context_ptr, context_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    status_module(oxicrypt_tls_kdf::tls13_hkdf_expand_label::<
+        oxicrypt_hmac::HmacSha256,
+        32,
+    >(secret, label, context, out_slice))
+}
+
+/// Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-384.
+///
+/// Builds the HkdfLabel wire structure
+/// `length || "tls13 " + label || context` and runs HKDF-Expand
+/// (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `out` must be a writable
+/// pointer to at least `out_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha384(
+    secret_ptr: *const u8,
+    secret_len: usize,
+    label_ptr: *const u8,
+    label_len: usize,
+    context_ptr: *const u8,
+    context_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    let secret = match unsafe { slice_from_raw(secret_ptr, secret_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let context = match unsafe { slice_from_raw(context_ptr, context_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    status_module(oxicrypt_tls_kdf::tls13_hkdf_expand_label::<
+        oxicrypt_hmac::HmacSha384,
+        48,
+    >(secret, label, context, out_slice))
+}
+
+// ── TLS 1.3 Derive-Secret ────────────────────────────────────────
+
+/// Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-256.
+///
+/// Equivalent to `HKDF-Expand-Label(secret, label, transcript_hash,
+/// out_len)`. The caller computes `Hash(messages)` (the running
+/// transcript hash) and passes it as `transcript_hash`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `out` must be a writable
+/// pointer to at least `out_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_tls13_derive_secret_sha256(
+    secret_ptr: *const u8,
+    secret_len: usize,
+    label_ptr: *const u8,
+    label_len: usize,
+    transcript_hash_ptr: *const u8,
+    transcript_hash_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    let secret = match unsafe { slice_from_raw(secret_ptr, secret_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let transcript_hash = match unsafe { slice_from_raw(transcript_hash_ptr, transcript_hash_len) }
+    {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    status_module(oxicrypt_tls_kdf::tls13_derive_secret::<
+        oxicrypt_hmac::HmacSha256,
+        32,
+    >(secret, label, transcript_hash, out_slice))
+}
+
+/// Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-384.
+///
+/// Equivalent to `HKDF-Expand-Label(secret, label, transcript_hash,
+/// out_len)`. The caller computes `Hash(messages)` (the running
+/// transcript hash) and passes it as `transcript_hash`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `out` must be a writable
+/// pointer to at least `out_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
+    secret_ptr: *const u8,
+    secret_len: usize,
+    label_ptr: *const u8,
+    label_len: usize,
+    transcript_hash_ptr: *const u8,
+    transcript_hash_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    let secret = match unsafe { slice_from_raw(secret_ptr, secret_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let transcript_hash = match unsafe { slice_from_raw(transcript_hash_ptr, transcript_hash_len) }
+    {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let out_slice = match unsafe { slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    status_module(oxicrypt_tls_kdf::tls13_derive_secret::<
+        oxicrypt_hmac::HmacSha384,
+        48,
+    >(secret, label, transcript_hash, out_slice))
 }

@@ -326,6 +326,210 @@ int oxi_hmac_sha3_512(const uint8_t *key_ptr,
                       uint8_t *out);
 
 /*
+ Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-256.
+
+ Computes `PRK = HMAC-SHA-256(salt, IKM)` and writes the 32-byte
+ PRK into `prk_out`. A NULL or zero-length salt is interpreted as
+ 32 zero bytes per RFC 5869 §2.2.
+
+ `prk_out` must point to a buffer of at least 32 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `prk_out` must be a
+ non-NULL writable pointer to ≥32 bytes.
+ */
+int oxi_hkdf_sha256_extract(const uint8_t *salt_ptr,
+                            uintptr_t salt_len,
+                            const uint8_t *ikm_ptr,
+                            uintptr_t ikm_len,
+                            uint8_t *prk_out);
+
+/*
+ Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-256.
+
+ Reconstructs HKDF state from a 32-byte PRK and fills `okm_out`
+ with `okm_len` bytes of derived key material. Returns
+ `OxiResult::OutputTooLong` when `okm_len > 255 * 32 = 8160`.
+
+ `prk_ptr` must point to exactly 32 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `okm_out` must be a
+ writable pointer to at least `okm_len` bytes.
+ */
+int oxi_hkdf_sha256_expand(const uint8_t *prk_ptr,
+                           const uint8_t *info_ptr,
+                           uintptr_t info_len,
+                           uint8_t *okm_out,
+                           uintptr_t okm_len);
+
+/*
+ Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-384.
+
+ Computes `PRK = HMAC-SHA-384(salt, IKM)` and writes the 48-byte
+ PRK into `prk_out`. A NULL or zero-length salt is interpreted as
+ 48 zero bytes per RFC 5869 §2.2.
+
+ `prk_out` must point to a buffer of at least 48 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `prk_out` must be a
+ non-NULL writable pointer to ≥48 bytes.
+ */
+int oxi_hkdf_sha384_extract(const uint8_t *salt_ptr,
+                            uintptr_t salt_len,
+                            const uint8_t *ikm_ptr,
+                            uintptr_t ikm_len,
+                            uint8_t *prk_out);
+
+/*
+ Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-384.
+
+ Reconstructs HKDF state from a 48-byte PRK and fills `okm_out`
+ with `okm_len` bytes of derived key material. Returns
+ `OxiResult::OutputTooLong` when `okm_len > 255 * 48 = 12240`.
+
+ `prk_ptr` must point to exactly 48 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `okm_out` must be a
+ writable pointer to at least `okm_len` bytes.
+ */
+int oxi_hkdf_sha384_expand(const uint8_t *prk_ptr,
+                           const uint8_t *info_ptr,
+                           uintptr_t info_len,
+                           uint8_t *okm_out,
+                           uintptr_t okm_len);
+
+/*
+ Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-512.
+
+ Computes `PRK = HMAC-SHA-512(salt, IKM)` and writes the 64-byte
+ PRK into `prk_out`. A NULL or zero-length salt is interpreted as
+ 64 zero bytes per RFC 5869 §2.2.
+
+ `prk_out` must point to a buffer of at least 64 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `prk_out` must be a
+ non-NULL writable pointer to ≥64 bytes.
+ */
+int oxi_hkdf_sha512_extract(const uint8_t *salt_ptr,
+                            uintptr_t salt_len,
+                            const uint8_t *ikm_ptr,
+                            uintptr_t ikm_len,
+                            uint8_t *prk_out);
+
+/*
+ Run HKDF-Expand per RFC 5869 §2.3 with HMAC-SHA-512.
+
+ Reconstructs HKDF state from a 64-byte PRK and fills `okm_out`
+ with `okm_len` bytes of derived key material. Returns
+ `OxiResult::OutputTooLong` when `okm_len > 255 * 64 = 16320`.
+
+ `prk_ptr` must point to exactly 64 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `okm_out` must be a
+ writable pointer to at least `okm_len` bytes.
+ */
+int oxi_hkdf_sha512_expand(const uint8_t *prk_ptr,
+                           const uint8_t *info_ptr,
+                           uintptr_t info_len,
+                           uint8_t *okm_out,
+                           uintptr_t okm_len);
+
+/*
+ Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-256.
+
+ Builds the HkdfLabel wire structure
+ `length || "tls13 " + label || context` and runs HKDF-Expand
+ (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `out` must be a writable
+ pointer to at least `out_len` bytes.
+ */
+int oxi_tls13_hkdf_expand_label_sha256(const uint8_t *secret_ptr,
+                                       uintptr_t secret_len,
+                                       const uint8_t *label_ptr,
+                                       uintptr_t label_len,
+                                       const uint8_t *context_ptr,
+                                       uintptr_t context_len,
+                                       uint8_t *out,
+                                       uintptr_t out_len);
+
+/*
+ Run HKDF-Expand-Label per RFC 8446 §7.1 with HMAC-SHA-384.
+
+ Builds the HkdfLabel wire structure
+ `length || "tls13 " + label || context` and runs HKDF-Expand
+ (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `out` must be a writable
+ pointer to at least `out_len` bytes.
+ */
+int oxi_tls13_hkdf_expand_label_sha384(const uint8_t *secret_ptr,
+                                       uintptr_t secret_len,
+                                       const uint8_t *label_ptr,
+                                       uintptr_t label_len,
+                                       const uint8_t *context_ptr,
+                                       uintptr_t context_len,
+                                       uint8_t *out,
+                                       uintptr_t out_len);
+
+/*
+ Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-256.
+
+ Equivalent to `HKDF-Expand-Label(secret, label, transcript_hash,
+ out_len)`. The caller computes `Hash(messages)` (the running
+ transcript hash) and passes it as `transcript_hash`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `out` must be a writable
+ pointer to at least `out_len` bytes.
+ */
+int oxi_tls13_derive_secret_sha256(const uint8_t *secret_ptr,
+                                   uintptr_t secret_len,
+                                   const uint8_t *label_ptr,
+                                   uintptr_t label_len,
+                                   const uint8_t *transcript_hash_ptr,
+                                   uintptr_t transcript_hash_len,
+                                   uint8_t *out,
+                                   uintptr_t out_len);
+
+/*
+ Run Derive-Secret per RFC 8446 §7.1 with HMAC-SHA-384.
+
+ Equivalent to `HKDF-Expand-Label(secret, label, transcript_hash,
+ out_len)`. The caller computes `Hash(messages)` (the running
+ transcript hash) and passes it as `transcript_hash`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `out` must be a writable
+ pointer to at least `out_len` bytes.
+ */
+int oxi_tls13_derive_secret_sha384(const uint8_t *secret_ptr,
+                                   uintptr_t secret_len,
+                                   const uint8_t *label_ptr,
+                                   uintptr_t label_len,
+                                   const uint8_t *transcript_hash_ptr,
+                                   uintptr_t transcript_hash_len,
+                                   uint8_t *out,
+                                   uintptr_t out_len);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through
