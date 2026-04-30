@@ -315,8 +315,12 @@ is verified against a value the Rust core's self-test trusts.
 The `oxicrypt-ffi` crate currently exposes:
 
 - Module lifecycle: `oxi_init`, `oxi_active_profile`, `oxi_is_operational`.
-- Hash one-shots: SHA-256, SHA-512, and the four SHA-3 variants
-  (`oxi_sha3_{224,256,384,512}`).
+- Hash one-shots: the full SHA-2 family
+  (`oxi_sha224`, `oxi_sha256`, `oxi_sha384`, `oxi_sha512`,
+  `oxi_sha512_224`, `oxi_sha512_256`) and the four SHA-3 variants
+  (`oxi_sha3_{224,256,384,512}`). SHA-512/224 and SHA-512/256 use
+  the FIPS 180-4 §5.3.6 distinct-IV construction — they are not
+  truncations of the SHA-512 output.
 - HMAC one-shots over all seven SHA-2/SHA-3 hashes:
   `oxi_hmac_{sha256, sha384, sha512, sha3_224, sha3_256, sha3_384, sha3_512}`.
 - AES-256 with an opaque `OxiAes256Key` handle: GCM (encrypt/decrypt),

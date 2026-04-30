@@ -317,6 +317,134 @@ pub unsafe extern "C" fn oxi_sha512(data_ptr: *const u8, data_len: usize, out: *
     }
 }
 
+// ── SHA-224 ──────────────────────────────────────────────────────
+
+/// Compute SHA-224 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 28 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 28 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha224(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha224(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 28) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
+// ── SHA-384 ──────────────────────────────────────────────────────
+
+/// Compute SHA-384 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 48 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 48 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha384(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha384(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 48) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
+// ── SHA-512/224 ──────────────────────────────────────────────────
+//
+// SHA-512/224 (FIPS 180-4 §6.6) is the truncated SHA-512 variant
+// using its own distinct IV per FIPS 180-4 §5.3.6.1; it is NOT a
+// post-hoc truncation of SHA-512 output. The Rust API
+// `oxicrypt_sha::sha512_224` enforces this distinction internally.
+
+/// Compute SHA-512/224 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 28 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 28 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha512_224(
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha512_224(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 28) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
+// ── SHA-512/256 ──────────────────────────────────────────────────
+//
+// SHA-512/256 (FIPS 180-4 §6.7) likewise uses its own distinct IV
+// per FIPS 180-4 §5.3.6.2 — not a post-hoc truncation of SHA-512.
+
+/// Compute SHA-512/256 over `data_len` bytes at `data_ptr`.
+///
+/// `out` must point to a buffer of at least 32 bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `data_ptr` is valid for `data_len` bytes
+/// and `out` is valid for 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_sha512_256(
+    data_ptr: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> c_int {
+    let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    match oxicrypt_sha::sha512_256(data) {
+        Ok(digest) => {
+            unsafe { core::ptr::copy_nonoverlapping(digest.as_ptr(), out, 32) };
+            R::Ok as c_int
+        }
+        Err(e) => status_module(Err(e)),
+    }
+}
+
 // ── SHA-3 family ─────────────────────────────────────────────────
 //
 // SHA-3 (FIPS 202) is a separate primitive family from SHA-2 with a

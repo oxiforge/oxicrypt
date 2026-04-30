@@ -125,6 +125,54 @@ int oxi_sha256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
 int oxi_sha512(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
 
 /*
+ Compute SHA-224 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 28 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 28 bytes.
+ */
+int oxi_sha224(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
+ Compute SHA-384 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 48 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 48 bytes.
+ */
+int oxi_sha384(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
+ Compute SHA-512/224 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 28 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 28 bytes.
+ */
+int oxi_sha512_224(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
+ Compute SHA-512/256 over `data_len` bytes at `data_ptr`.
+
+ `out` must point to a buffer of at least 32 bytes.
+
+ # Safety
+
+ Caller must ensure `data_ptr` is valid for `data_len` bytes
+ and `out` is valid for 32 bytes.
+ */
+int oxi_sha512_256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+
+/*
  Compute SHA3-224 over `data_len` bytes at `data_ptr`.
 
  `out` must point to a buffer of at least 28 bytes.
