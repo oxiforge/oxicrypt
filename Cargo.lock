@@ -603,6 +603,7 @@ dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-integrity",
  "oxicrypt-kdf",
+ "oxicrypt-ml-dsa",
  "oxicrypt-module",
  "oxicrypt-rsa",
  "oxicrypt-sha",

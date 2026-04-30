@@ -326,6 +326,9 @@ capabilities:
       - "oxi_ed25519_keygen"
       - "oxi_ed25519_sign"
       - "oxi_ed25519_verify"
+      - "oxi_ml_dsa_87_keygen"
+      - "oxi_ml_dsa_87_sign"
+      - "oxi_ml_dsa_87_verify"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"

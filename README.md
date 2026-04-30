@@ -373,9 +373,22 @@ The `oxicrypt-ffi` crate currently exposes:
   signature-invalid and input-decode-fail into one Err variant;
   the FFI maps both to TagMismatch). DRBG-driven sign + OAEP
   encrypt + keygen defer to post-DRBG follow-ups.
+- ML-DSA-87 (FIPS 204): three stateless entry points —
+  `oxi_ml_dsa_87_keygen`, `oxi_ml_dsa_87_sign`, and
+  `oxi_ml_dsa_87_verify`. `keygen` reads a 32-byte caller-supplied
+  seed `xi` and writes the 2592-byte public key + 4896-byte
+  secret key (deterministic in `xi`; caller sources from an
+  SP 800-90A DRBG). `sign` is deterministic (FIPS 204 §5.2
+  Algorithm 2 in pure mode — bit-identical signatures for the
+  same `(sk, msg, ctx)` triple); pass `ctx_len = 0` for the
+  empty context used by X.509 / CMS / LAMPS. `verify` returns
+  `OxiResult::TagMismatch = 22` for any verify failure (same
+  `Result<()>` upstream collapse as RSA verify; same FFI
+  mapping). Single-variant for now; `oxi_ml_dsa_44_*` and
+  `oxi_ml_dsa_65_*` ship later as additive function names.
 
 Per-algorithm exposure of the remaining approved services
-(DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS) lands in subsequent
+(DRBG, ML-KEM, SLH-DSA, LMS, XMSS) lands in subsequent
 algorithm chunks.
 
 ## `oxi` CLI

@@ -5578,6 +5578,89 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  - name: oxi_ml_dsa_87_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an ML-DSA-87 key pair from a 32-byte caller-supplied seed
+      (FIPS 204 §6.1). Reads exactly 32 bytes from `seed_ptr`. Writes the
+      2592-byte public key into `pk_out` and the 4896-byte secret key
+      into `sk_out`. Deterministic in `seed_ptr` — caller is responsible
+      for sourcing the seed from an SP 800-90A DRBG. Forwards to
+      `oxicrypt_ml_dsa::keygen`.
+    signature: >-
+      int oxi_ml_dsa_87_keygen(const uint8_t *seed_ptr, uint8_t *pk_out,
+      uint8_t *sk_out)
+    parameters:
+      - { name: seed_ptr, type: "const uint8_t *", direction: in, description: "32-byte keygen seed (xi)" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "2592-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "4896-byte secret key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_dsa_87_sign
+    module: oxicrypt-ffi
+    description: >-
+      Sign a message with ML-DSA-87 using the external pure-mode API
+      (FIPS 204 §5.2 Algorithm 2). Reads exactly 4896 bytes from
+      `sk_ptr`, `msg_len` bytes from `msg_ptr`, and `ctx_len` bytes from
+      `ctx_ptr` (max 255 per FIPS 204 §5.2). Writes the 4627-byte
+      signature into `sig_out`. Signing is deterministic. Pass
+      `ctx_len = 0` for the empty context used by X.509 / CMS / LAMPS.
+      Forwards to `oxicrypt_ml_dsa::sign`.
+    signature: >-
+      int oxi_ml_dsa_87_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr,
+      size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len,
+      uint8_t *sig_out)
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "4896-byte ML-DSA-87 secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "context byte string (b\"\" for X.509/CMS/LAMPS)" }
+      - { name: ctx_len, type: size_t, direction: in, description: "context length (0..=255)" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "4627-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput if ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_dsa_87_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an ML-DSA-87 signature using the external pure-mode API
+      (FIPS 204 §5.2 Algorithm 3). Reads exactly 2592 bytes from
+      `pk_ptr`, `msg_len` bytes from `msg_ptr`, `ctx_len` bytes from
+      `ctx_ptr`, and 4627 bytes from `sig_ptr`. Pass `ctx_len = 0`
+      for the empty context used by X.509 / CMS / LAMPS. Returns
+      OxiResult::TagMismatch (= 22) for any verification failure
+      (decode-fail OR signature-invalid; same shape as RSA verify).
+      Forwards to `oxicrypt_ml_dsa::verify`.
+    signature: >-
+      int oxi_ml_dsa_87_verify(const uint8_t *pk_ptr,
+      const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr,
+      size_t ctx_len, const uint8_t *sig_ptr)
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "2592-byte ML-DSA-87 public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "context byte string (b\"\" for X.509/CMS/LAMPS)" }
+      - { name: ctx_len, type: size_t, direction: in, description: "context length (0..=255)" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "4627-byte ML-DSA-87 signature" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

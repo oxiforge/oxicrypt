@@ -2212,3 +2212,190 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
         Err(e) => R::from(e) as c_int,
     }
 }
+
+// ── ML-DSA-87 (FIPS 204) — stateless surface ─────────────────────
+//
+// Three pure entry points: keygen, sign, verify. ML-DSA-87 is the
+// CNSA 2.0 digital-signature algorithm (lattice-based, post-quantum).
+// All three operations are deterministic on the byte-array surface:
+//
+//   - keygen(xi) → (pk, sk)  per FIPS 204 §6.1 — `xi` is a 32-byte
+//     caller-supplied seed. NO DRBG is consumed inside the FFI; the
+//     caller is responsible for sourcing `xi` from an SP 800-90A
+//     DRBG (or any approved entropy source). Mirrors the EdDSA
+//     pattern: the `Service::MlDsa87Keygen` gate is "is the algorithm
+//     allowed?", NOT "do we have entropy?".
+//   - sign(sk, msg, ctx) → sig  per FIPS 204 §5.2 Algorithm 2 — the
+//     external pure-ML-DSA Sign API. Signing is **deterministic**:
+//     the rejection-sampling iteration count varies with the secret
+//     key, but for any given `(sk, msg, ctx)` the signature is
+//     bit-identical across calls. NO randomized variant is exposed
+//     (FIPS 204 §5.2.1 randomized mode is intentionally omitted).
+//   - verify(pk, msg, ctx, sig) → bool  per FIPS 204 §5.2 Algorithm 3.
+//     Upstream returns `Result<(), Error>` collapsing decode-fail and
+//     verify-fail into `Err(Error::InvalidInput)`; the FFI maps that
+//     to `OxiResult::TagMismatch = 22` per the cross-family
+//     verify-mismatch convention (security-policy §4.8). Same shape
+//     as RSA verify (PR #17).
+//
+// Byte layout: xi = 32 bytes; pk = 2592 bytes; sk = 4896 bytes;
+// sig = 4627 bytes; ctx = 0..=255 bytes (FIPS 204 §5.2 limit,
+// enforced upstream as `Error::InvalidInput`). Pass `ctx_len = 0`
+// for the empty context used by X.509, CMS, and other LAMPS-
+// conformant callers.
+//
+// Per-variant naming: this is `ml_dsa_87` (not `ml_dsa(param: int)`)
+// per stabilized arc pattern #8 — when ML-DSA-44 / ML-DSA-65 ship,
+// they will be added as new fns (`oxi_ml_dsa_44_*`, `oxi_ml_dsa_65_*`)
+// rather than as enum-dispatched parameters on these. Existing C
+// callers do not recompile when new variants ship.
+
+/// Generate an ML-DSA-87 key pair from a 32-byte seed (FIPS 204 §6.1).
+///
+/// Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
+/// `xi`). Writes the 2592-byte public key into `pk_out` and the
+/// 4896-byte secret key into `sk_out`. The caller is responsible for
+/// sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
+/// performs no entropy generation.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
+/// each be non-NULL writable pointers to ≥2592 and ≥4896 bytes
+/// respectively.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
+    seed_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
+        return R::Internal as c_int;
+    };
+    let (pk, sk) = match oxicrypt_ml_dsa::keygen(seed_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 2592) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 4896) };
+    R::Ok as c_int
+}
+
+/// Sign a message with ML-DSA-87 (FIPS 204 §5.2 Algorithm 2).
+///
+/// Reads exactly 4896 bytes from `sk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+/// 4627-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
+/// `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
+///
+/// Signing is deterministic: bit-identical signature across calls
+/// for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
+/// is exposed.
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+/// `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
+/// after the upstream bound, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥4627 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ml_dsa_87_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 4896) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(sk_arr) = <&[u8; 4896]>::try_from(sk) else {
+        return R::Internal as c_int;
+    };
+    let sig = match oxicrypt_ml_dsa::sign(sk_arr, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 4627) };
+    R::Ok as c_int
+}
+
+/// Verify an ML-DSA-87 signature (FIPS 204 §5.2 Algorithm 3).
+///
+/// Reads exactly 2592 bytes from `pk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 4627 bytes from
+/// `sig_ptr`. Pass `ctx_len = 0` for the empty context used by
+/// X.509 / CMS / LAMPS.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (decode-fail OR signature-invalid — upstream collapses these into
+/// a single `Err(InvalidInput)`; same shape as RSA verify), or a
+/// module error variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 2592) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 4627) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(pk_arr) = <&[u8; 2592]>::try_from(pk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 4627]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_ml_dsa::verify(pk_arr, msg, ctx, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
