@@ -344,10 +344,20 @@ The `oxicrypt-ffi` crate currently exposes:
   DRBG consumed), and `sign(seed, msg)` produces bit-identical
   signatures for the same input pair (per-message nonce derived
   internally per RFC 8032 §5.1.6).
+- ECDH P-256 / P-384 (SP 800-56Ar3 §5.7.1.2):
+  `oxi_ecdh_p{256,384}_compute_shared_secret`. Reads a 32/48-byte
+  private scalar plus a 65/97-byte SEC1 uncompressed peer public
+  key, returns the raw 32/48-byte shared secret `Z`. No
+  `derive_public_key` in this round — callers reuse
+  `oxi_ecdsa_p{256,384}_derive_public_key` since the underlying
+  scalar-multiplication primitive is shared. `Z` is the **raw**
+  ECDH output per SP 800-56Ar3; callers MUST run an SP 800-56C
+  Rev. 2 extractor (HKDF, KBKDF) over `Z` before using it as
+  keying material.
 
 Per-algorithm exposure of the remaining approved services
-(RSA, ECDH, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS,
-DH-3072) lands in subsequent algorithm chunks.
+(RSA, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS, DH-3072) lands
+in subsequent algorithm chunks.
 
 ## `oxi` CLI
 

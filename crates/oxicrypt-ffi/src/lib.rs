@@ -1682,3 +1682,135 @@ pub unsafe extern "C" fn oxi_ed25519_verify(
         Err(e) => R::from(e) as c_int,
     }
 }
+
+// ── ECDH (SP 800-56Ar3 §5.7.1.2) — stateless surface ─────────────
+//
+// Two pure entry points, one per curve, computing the SP 800-56Ar3
+// §5.7.1.2 ECC CDH primitive `Z = x(d * Q)`. No `derive_public_key`
+// in this round — ECDH and ECDSA share the same scalar-multiplication
+// primitive on each curve, so callers needing the public key from a
+// stored private scalar should reuse `oxi_ecdsa_p{256,384}_derive_
+// public_key` from the ECDSA family.
+//
+// Byte layout: private scalar `d` = 32 bytes (P-256) or 48 bytes
+// (P-384); peer public key = 65 bytes (P-256) or 97 bytes (P-384),
+// SEC1 uncompressed encoding `0x04 || X || Y` (same shape as ECDSA);
+// shared secret `Z` = 32 bytes (P-256) or 48 bytes (P-384), the raw
+// big-endian x-coordinate of `d * Q`. `Z` is the **raw** ECDH output
+// per SP 800-56Ar3 — callers MUST run an SP 800-56C Rev. 2 extractor
+// (HKDF, KBKDF) over `Z` before using it as keying material; the FFI
+// intentionally does not bundle a KDF (see paragraph in
+// `docs/security-policy/security-policy.md` §4.8).
+//
+// Errors: `InvalidInput = 5` covers BOTH a non-canonical private
+// scalar `d` AND a peer public key that fails SP 800-56Ar3 §5.6.2.3.3
+// public-key validation (canonical SEC1, coordinate canonicality,
+// non-identity, on-curve `y² ≡ x³ − 3x + b (mod p)`). There is NO
+// `TagMismatch = 22` mapping here — ECDH compute is `Result<bytes,
+// Error>`, never `Ok(false)`, so the cross-family verify-mismatch
+// code does not apply.
+
+// ── ECDH P-256 ───────────────────────────────────────────────────
+
+/// Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH shared secret for
+/// P-256: `Z = x(d * Q)`.
+///
+/// Reads exactly 32 bytes from `d_ptr` (the caller's private scalar)
+/// and exactly 65 bytes from `peer_public_key_ptr` (the peer's
+/// uncompressed SEC1 public key, `0x04 || X(32) || Y(32)`). Writes
+/// 32 bytes (the raw big-endian x-coordinate of `d * Q`) into
+/// `shared_secret_out`. The shared secret is the **raw** ECDH output
+/// per SP 800-56Ar3; the caller MUST run an SP 800-56C Rev. 2
+/// extractor (HKDF, KBKDF) over `Z` before using it as keying
+/// material.
+///
+/// Peer public key undergoes full SP 800-56Ar3 §5.6.2.3.3 validation
+/// (canonical encoding, coordinate canonicality, non-identity,
+/// on-curve) before any scalar multiplication; a peer key failing
+/// any check causes the call to return `OxiResult::InvalidInput = 5`
+/// without performing the scalar-mul.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `shared_secret_out` must
+/// be a non-NULL writable pointer to ≥32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdh_p256_compute_shared_secret(
+    d_ptr: *const u8,
+    peer_public_key_ptr: *const u8,
+    shared_secret_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let peer_pk = match unsafe { slice_from_raw(peer_public_key_ptr, 65) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if shared_secret_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let Ok(peer_pk_arr) = <&[u8; 65]>::try_from(peer_pk) else {
+        return R::Internal as c_int;
+    };
+    let z = match oxicrypt_ecdh::compute_shared_secret_p256(d_arr, peer_pk_arr) {
+        Ok(z) => z,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 32) };
+    R::Ok as c_int
+}
+
+// ── ECDH P-384 ───────────────────────────────────────────────────
+
+/// Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH shared secret for
+/// P-384: `Z = x(d * Q)`.
+///
+/// Reads exactly 48 bytes from `d_ptr` and exactly 97 bytes from
+/// `peer_public_key_ptr` (uncompressed SEC1, `0x04 || X(48) || Y(48)`).
+/// Writes 48 bytes (raw big-endian x-coordinate) into
+/// `shared_secret_out`. The shared secret is the raw ECDH output;
+/// the caller MUST run an SP 800-56C Rev. 2 extractor before use as
+/// keying material.
+///
+/// Peer public key undergoes full SP 800-56Ar3 §5.6.2.3.3 validation
+/// before scalar multiplication.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `shared_secret_out` must
+/// be a non-NULL writable pointer to ≥48 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
+    d_ptr: *const u8,
+    peer_public_key_ptr: *const u8,
+    shared_secret_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let peer_pk = match unsafe { slice_from_raw(peer_public_key_ptr, 97) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if shared_secret_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 48]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let Ok(peer_pk_arr) = <&[u8; 97]>::try_from(peer_pk) else {
+        return R::Internal as c_int;
+    };
+    let z = match oxicrypt_ecdh::compute_shared_secret_p384(d_arr, peer_pk_arr) {
+        Ok(z) => z,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 48) };
+    R::Ok as c_int
+}

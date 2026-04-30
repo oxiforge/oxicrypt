@@ -5295,6 +5295,74 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  # ECDH (SP 800-56Ar3 §5.7.1.2) — two stateless entry points, one per
+  # curve. No `derive_public_key` in this round because ECDH and ECDSA
+  # share scalar-multiplication on each curve; callers reuse
+  # `oxi_ecdsa_p{256,384}_derive_public_key` from the ECDSA family
+  # when a private scalar needs to be turned into its public key.
+
+  - name: oxi_ecdh_p256_compute_shared_secret
+    module: oxicrypt-ffi
+    description: >-
+      Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH shared secret for
+      P-256: `Z = x(d * Q)`. Reads exactly 32 bytes from `d_ptr` (the
+      caller's private scalar) and exactly 65 bytes from
+      `peer_public_key_ptr` (peer's uncompressed SEC1 public key,
+      `0x04 || X(32) || Y(32)`). Writes 32 bytes (the raw big-endian
+      x-coordinate) into `shared_secret_out`. The shared secret is
+      the **raw** ECDH output per SP 800-56Ar3 — the caller MUST run
+      an SP 800-56C Rev. 2 extractor (HKDF, KBKDF) over `Z` before
+      using it as keying material; the FFI intentionally does not
+      bundle a KDF (see security-policy §4.8). Peer public key
+      undergoes full SP 800-56Ar3 §5.6.2.3.3 validation (canonical
+      SEC1, coordinate canonicality, non-identity, on-curve) before
+      any scalar multiplication; a peer key failing any check causes
+      the call to return `InvalidInput = 5` without performing the
+      scalar-mul.
+    signature: >-
+      int oxi_ecdh_p256_compute_shared_secret(const uint8_t *d_ptr,
+      const uint8_t *peer_public_key_ptr,
+      uint8_t *shared_secret_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "32-byte private scalar (the secret material)" }
+      - { name: peer_public_key_ptr, type: "const uint8_t *", direction: in, description: "65-byte SEC1 uncompressed peer public key (0x04 || X || Y)" }
+      - { name: shared_secret_out, type: "uint8_t *", direction: out, description: "Output buffer >= 32 bytes; receives the raw shared-secret x-coordinate" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical d or peer-key validation failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdh_p384_compute_shared_secret
+    module: oxicrypt-ffi
+    description: >-
+      Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH shared secret for
+      P-384: `Z = x(d * Q)`. Reads exactly 48 bytes from `d_ptr` and
+      exactly 97 bytes from `peer_public_key_ptr` (uncompressed SEC1,
+      `0x04 || X(48) || Y(48)`). Writes 48 bytes (raw x-coordinate)
+      into `shared_secret_out`. The shared secret is the raw ECDH
+      output; the caller MUST run an SP 800-56C Rev. 2 extractor
+      before using it as keying material. Peer public key undergoes
+      full SP 800-56Ar3 §5.6.2.3.3 validation before scalar
+      multiplication.
+    signature: >-
+      int oxi_ecdh_p384_compute_shared_secret(const uint8_t *d_ptr,
+      const uint8_t *peer_public_key_ptr,
+      uint8_t *shared_secret_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "48-byte private scalar (the secret material)" }
+      - { name: peer_public_key_ptr, type: "const uint8_t *", direction: in, description: "97-byte SEC1 uncompressed peer public key (0x04 || X || Y)" }
+      - { name: shared_secret_out, type: "uint8_t *", direction: out, description: "Output buffer >= 48 bytes; receives the raw shared-secret x-coordinate" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical d or peer-key validation failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

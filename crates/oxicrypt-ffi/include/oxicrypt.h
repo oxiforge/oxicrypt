@@ -693,6 +693,57 @@ int oxi_ed25519_verify(const uint8_t *public_key_ptr,
                        const uint8_t *sig_ptr);
 
 /*
+ Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH shared secret for
+ P-256: `Z = x(d * Q)`.
+
+ Reads exactly 32 bytes from `d_ptr` (the caller's private scalar)
+ and exactly 65 bytes from `peer_public_key_ptr` (the peer's
+ uncompressed SEC1 public key, `0x04 || X(32) || Y(32)`). Writes
+ 32 bytes (the raw big-endian x-coordinate of `d * Q`) into
+ `shared_secret_out`. The shared secret is the **raw** ECDH output
+ per SP 800-56Ar3; the caller MUST run an SP 800-56C Rev. 2
+ extractor (HKDF, KBKDF) over `Z` before using it as keying
+ material.
+
+ Peer public key undergoes full SP 800-56Ar3 §5.6.2.3.3 validation
+ (canonical encoding, coordinate canonicality, non-identity,
+ on-curve) before any scalar multiplication; a peer key failing
+ any check causes the call to return `OxiResult::InvalidInput = 5`
+ without performing the scalar-mul.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `shared_secret_out` must
+ be a non-NULL writable pointer to ≥32 bytes.
+ */
+int oxi_ecdh_p256_compute_shared_secret(const uint8_t *d_ptr,
+                                        const uint8_t *peer_public_key_ptr,
+                                        uint8_t *shared_secret_out);
+
+/*
+ Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH shared secret for
+ P-384: `Z = x(d * Q)`.
+
+ Reads exactly 48 bytes from `d_ptr` and exactly 97 bytes from
+ `peer_public_key_ptr` (uncompressed SEC1, `0x04 || X(48) || Y(48)`).
+ Writes 48 bytes (raw big-endian x-coordinate) into
+ `shared_secret_out`. The shared secret is the raw ECDH output;
+ the caller MUST run an SP 800-56C Rev. 2 extractor before use as
+ keying material.
+
+ Peer public key undergoes full SP 800-56Ar3 §5.6.2.3.3 validation
+ before scalar multiplication.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `shared_secret_out` must
+ be a non-NULL writable pointer to ≥48 bytes.
+ */
+int oxi_ecdh_p384_compute_shared_secret(const uint8_t *d_ptr,
+                                        const uint8_t *peer_public_key_ptr,
+                                        uint8_t *shared_secret_out);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through
