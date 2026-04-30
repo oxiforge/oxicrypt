@@ -145,6 +145,7 @@ fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
         oxicrypt_ecdsa::KATS,
         oxicrypt_eddsa::KATS,
         oxicrypt_ecdh::KATS,
+        oxicrypt_dh::KATS,
     ];
     let mut merged = Vec::new();
     for group in all_kats {
@@ -1812,5 +1813,93 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
         Err(e) => return R::from(e) as c_int,
     };
     unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 48) };
+    R::Ok as c_int
+}
+
+// ── DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1) ───────────
+//
+// One stateless entry point computing the SP 800-56Ar3 §5.7.1.1
+// finite-field DH (FFC) primitive `Z = y^x mod p` over the RFC 3526
+// Group 15 safe prime (3072-bit `p`, generator `g = 2`). All three
+// values — private key `x`, peer public key `y`, and shared secret
+// `Z` — are exactly 384 bytes (the byte-length of `p`), big-endian.
+//
+// Peer public-key validation follows SP 800-56Ar3 §5.6.2.3.1 (FFC
+// **partial** validation: `2 ≤ y ≤ p − 2`), distinct from ECDH's
+// §5.6.2.3.3 (ECC **full** validation). This is upstream-mandated:
+// safe-prime FFC groups have cofactor `h = 2`, so `[2, p − 2]`
+// excludes the only small-subgroup element `p − 1` of order 2 —
+// see security-policy §4.8 paragraph on FFC vs ECC validation
+// differential.
+//
+// `Z` is the **raw** FFC-DH output per SP 800-56Ar3 — callers MUST
+// run an SP 800-56C Rev. 2 extractor (HKDF, KBKDF) over `Z` before
+// using it as keying material; same composition discipline as ECDH.
+//
+// Errors: `InvalidInput = 5` covers a non-canonical private key
+// `x` (outside `[1, q − 1]`), peer-key validation failure, OR the
+// degenerate result `Z == 1` (the §5.7.1.1 "shall fail" condition,
+// which can only occur for adversarially-chosen peer keys that
+// passed partial validation but happened to lie in the order-2
+// subgroup mod the cofactor — `[2, p − 2]` already excludes the
+// trivial case but the upstream check is defence-in-depth).
+//
+// DRBG-driven keygen (`oxicrypt_dh::generate_keypair_3072`)
+// deferred to a post-DRBG follow-up per stabilized arc pattern #1,
+// same as ECDSA's `generate(drbg)` and ECDH's eventual `generate`.
+
+/// Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
+/// over RFC 3526 Group 15 (3072-bit safe prime): `Z = y^x mod p`.
+///
+/// Reads exactly 384 bytes from `x_ptr` (the caller's private key,
+/// big-endian, in `[1, q − 1]` where `q = (p − 1) / 2`) and exactly
+/// 384 bytes from `peer_public_key_ptr` (the peer's public key, big-
+/// endian, in `[2, p − 2]`). Writes 384 bytes (the raw shared
+/// secret `Z`) into `shared_secret_out`.
+///
+/// The shared secret is the **raw** FFC-DH output; the caller MUST
+/// run an SP 800-56C Rev. 2 extractor over `Z` before using it as
+/// keying material — same discipline as ECDH (see security-policy
+/// §4.8 ECDH raw-Z paragraph).
+///
+/// Peer public key undergoes SP 800-56Ar3 §5.6.2.3.1 partial
+/// validation (`2 ≤ y ≤ p − 2`) before any modular exponentiation;
+/// a peer key failing the bound check causes the call to return
+/// `OxiResult::InvalidInput = 5` without performing the exponent.
+/// The post-exponent `Z != 1` check guards against the degenerate
+/// SP 800-56Ar3 §5.7.1.1 "shall fail" outcome.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `shared_secret_out` must
+/// be a non-NULL writable pointer to ≥384 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
+    x_ptr: *const u8,
+    peer_public_key_ptr: *const u8,
+    shared_secret_out: *mut u8,
+) -> c_int {
+    let x = match unsafe { slice_from_raw(x_ptr, 384) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let y = match unsafe { slice_from_raw(peer_public_key_ptr, 384) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if shared_secret_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(x_arr) = <&[u8; 384]>::try_from(x) else {
+        return R::Internal as c_int;
+    };
+    let Ok(y_arr) = <&[u8; 384]>::try_from(y) else {
+        return R::Internal as c_int;
+    };
+    let z = match oxicrypt_dh::compute_shared_secret_3072(x_arr, y_arr) {
+        Ok(z) => z,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 384) };
     R::Ok as c_int
 }

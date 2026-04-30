@@ -354,10 +354,18 @@ The `oxicrypt-ffi` crate currently exposes:
   ECDH output per SP 800-56Ar3; callers MUST run an SP 800-56C
   Rev. 2 extractor (HKDF, KBKDF) over `Z` before using it as
   keying material.
+- DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1):
+  `oxi_dh3072_compute_shared_secret`. Reads a 384-byte private
+  key `x` plus a 384-byte peer public key `y`, returns the raw
+  384-byte shared secret `Z = y^x mod p`. Peer key undergoes
+  SP 800-56Ar3 §5.6.2.3.1 partial validation (`2 ≤ y ≤ p − 2`) —
+  the safe-prime FFC group structure makes this sufficient,
+  unlike ECDH's full §5.6.2.3.3 validation. DRBG-driven keygen
+  defers to a post-DRBG follow-up.
 
 Per-algorithm exposure of the remaining approved services
-(RSA, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS, DH-3072) lands
-in subsequent algorithm chunks.
+(RSA, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS) lands in
+subsequent algorithm chunks.
 
 ## `oxi` CLI
 

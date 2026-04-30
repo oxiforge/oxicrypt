@@ -744,6 +744,37 @@ int oxi_ecdh_p384_compute_shared_secret(const uint8_t *d_ptr,
                                         uint8_t *shared_secret_out);
 
 /*
+ Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
+ over RFC 3526 Group 15 (3072-bit safe prime): `Z = y^x mod p`.
+
+ Reads exactly 384 bytes from `x_ptr` (the caller's private key,
+ big-endian, in `[1, q − 1]` where `q = (p − 1) / 2`) and exactly
+ 384 bytes from `peer_public_key_ptr` (the peer's public key, big-
+ endian, in `[2, p − 2]`). Writes 384 bytes (the raw shared
+ secret `Z`) into `shared_secret_out`.
+
+ The shared secret is the **raw** FFC-DH output; the caller MUST
+ run an SP 800-56C Rev. 2 extractor over `Z` before using it as
+ keying material — same discipline as ECDH (see security-policy
+ §4.8 ECDH raw-Z paragraph).
+
+ Peer public key undergoes SP 800-56Ar3 §5.6.2.3.1 partial
+ validation (`2 ≤ y ≤ p − 2`) before any modular exponentiation;
+ a peer key failing the bound check causes the call to return
+ `OxiResult::InvalidInput = 5` without performing the exponent.
+ The post-exponent `Z != 1` check guards against the degenerate
+ SP 800-56Ar3 §5.7.1.1 "shall fail" outcome.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `shared_secret_out` must
+ be a non-NULL writable pointer to ≥384 bytes.
+ */
+int oxi_dh3072_compute_shared_secret(const uint8_t *x_ptr,
+                                     const uint8_t *peer_public_key_ptr,
+                                     uint8_t *shared_secret_out);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through

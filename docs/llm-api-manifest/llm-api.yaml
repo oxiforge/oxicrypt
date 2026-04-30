@@ -5363,6 +5363,52 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  # DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1) — one stateless
+  # entry point computing the finite-field DH primitive Z = y^x mod p
+  # over the 3072-bit safe prime. DRBG-driven keygen
+  # (oxicrypt_dh::generate_keypair_3072) deferred to a post-DRBG
+  # follow-up per stabilized arc pattern #1.
+
+  - name: oxi_dh3072_compute_shared_secret
+    module: oxicrypt-ffi
+    description: >-
+      Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
+      over RFC 3526 Group 15 (3072-bit safe prime, generator `g = 2`):
+      `Z = y^x mod p`. Reads exactly 384 bytes from `x_ptr` (the
+      caller's private key, big-endian, in `[1, q − 1]` where
+      `q = (p − 1) / 2`) and exactly 384 bytes from
+      `peer_public_key_ptr` (the peer's public key, big-endian, in
+      `[2, p − 2]`). Writes 384 bytes (the raw shared secret `Z`,
+      big-endian) into `shared_secret_out`. The shared secret is the
+      **raw** FFC-DH output — the caller MUST run an SP 800-56C
+      Rev. 2 extractor (HKDF, KBKDF) over `Z` before using it as
+      keying material; same composition discipline as ECDH (see
+      security-policy §4.8). Peer public key undergoes SP 800-56Ar3
+      §5.6.2.3.1 **partial** validation (`2 ≤ y ≤ p − 2`) — distinct
+      from ECDH's §5.6.2.3.3 **full** validation; the differential
+      is upstream-mandated and FIPS-correct because safe-prime FFC
+      groups have cofactor 2 and `[2, p − 2]` already excludes the
+      sole order-2 element `p − 1` (see security-policy §4.8 FFC vs
+      ECC validation paragraph). Errors: `InvalidInput = 5` covers
+      non-canonical private key `x`, peer-key validation failure,
+      OR the degenerate `Z == 1` outcome (the SP 800-56Ar3 §5.7.1.1
+      "shall fail" condition).
+    signature: >-
+      int oxi_dh3072_compute_shared_secret(const uint8_t *x_ptr,
+      const uint8_t *peer_public_key_ptr,
+      uint8_t *shared_secret_out)
+    parameters:
+      - { name: x_ptr, type: "const uint8_t *", direction: in, description: "384-byte private key x in [1, q-1] (big-endian; the secret material)" }
+      - { name: peer_public_key_ptr, type: "const uint8_t *", direction: in, description: "384-byte peer public key y in [2, p-2] (big-endian)" }
+      - { name: shared_secret_out, type: "uint8_t *", direction: out, description: "Output buffer >= 384 bytes; receives the raw shared secret Z (big-endian)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical x, peer-key validation failure, or Z==1, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

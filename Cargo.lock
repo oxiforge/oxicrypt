@@ -595,6 +595,7 @@ dependencies = [
  "cbindgen",
  "oxicrypt-aes",
  "oxicrypt-cmac",
+ "oxicrypt-dh",
  "oxicrypt-drbg",
  "oxicrypt-ecdh",
  "oxicrypt-ecdsa",
