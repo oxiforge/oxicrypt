@@ -5210,6 +5210,91 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  # EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8) — three pure-deterministic
+  # entry points over byte arrays. Unlike ECDSA, every operation
+  # (keygen, sign, verify) is deterministic by construction; there is
+  # no `sign_with_k` variant because RFC 8032 §5.1.6 supplies the
+  # per-message nonce internally via HMAC-SHA512.
+
+  - name: oxi_ed25519_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Derive the Ed25519 public key from a 32-byte seed (RFC 8032
+      §5.1.5). Reads exactly 32 bytes from `seed_ptr`. Writes 32
+      bytes (compressed twisted Edwards point per RFC 8032 §5.1.2 —
+      Y-coord plus 1 sign bit packed into the high bit of the last
+      byte; NOT SEC1 uncompressed, distinct from ECDSA's 65/97 byte
+      public keys) into `public_key_out`. **Deterministic**: same
+      seed → same public key. The `Service::Ed25519Keygen` gate
+      enforces curve restriction, NOT entropy availability — no DRBG
+      is consumed.
+    signature: >-
+      int oxi_ed25519_keygen(const uint8_t *seed_ptr, uint8_t *public_key_out)
+    parameters:
+      - { name: seed_ptr, type: "const uint8_t *", direction: in, description: "32-byte seed (the secret material)" }
+      - { name: public_key_out, type: "uint8_t *", direction: out, description: "Output buffer >= 32 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ed25519_sign
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with Ed25519 using the 32-byte seed (RFC 8032 §5.1.6).
+      Reads exactly 32 bytes from `seed_ptr`. Writes 64 bytes
+      (`R(32) || S(32)`) into `sig_out`. **Deterministic**: the
+      per-message nonce is derived via HMAC-SHA512 over a prefix of
+      the secret and the message, so signatures are bit-identical
+      for the same `(seed, msg)` pair. There is NO `sign_with_k`
+      variant because RFC 8032 supplies the `k` internally — distinct
+      from ECDSA's `oxi_ecdsa_*_sign_with_k`.
+    signature: >-
+      int oxi_ed25519_sign(const uint8_t *seed_ptr,
+      const uint8_t *msg_ptr, size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: seed_ptr, type: "const uint8_t *", direction: in, description: "32-byte seed (the secret material)" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "Output buffer >= 64 bytes; receives R(32) || S(32)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ed25519_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an Ed25519 signature over `msg` against the public key
+      (RFC 8032 §5.1.7). Reads exactly 32 bytes from
+      `public_key_ptr` and exactly 64 bytes from `sig_ptr`. Returns
+      `OxiResult::TagMismatch = 22` for well-formed-but-invalid
+      signatures (the upstream `Ok(false)`) — same cross-family
+      verify-mismatch code as ECDSA verify and AEAD AES-GCM/CCM/KW
+      authentication failures (see security-policy §4.7).
+    signature: >-
+      int oxi_ed25519_verify(const uint8_t *public_key_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: public_key_ptr, type: "const uint8_t *", direction: in, description: "32-byte compressed Edwards public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "64-byte signature (R || S)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok valid signature, 22 = TagMismatch invalid signature, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

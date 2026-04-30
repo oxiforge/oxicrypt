@@ -338,9 +338,15 @@ The `oxicrypt-ffi` crate currently exposes:
   Caller supplies the per-message secret `k` for `sign_with_k`; the
   DRBG-driven `generate` and `sign_sha*` surfaces land in a follow-up
   PR after the DRBG family C ABI ships.
+- EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8): `oxi_ed25519_{keygen,
+  sign, verify}`. Every operation is deterministic by construction —
+  `keygen(seed)` returns the same public key for the same seed (no
+  DRBG consumed), and `sign(seed, msg)` produces bit-identical
+  signatures for the same input pair (per-message nonce derived
+  internally per RFC 8032 §5.1.6).
 
 Per-algorithm exposure of the remaining approved services
-(RSA, ECDH, EdDSA, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS,
+(RSA, ECDH, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS,
 DH-3072) lands in subsequent algorithm chunks.
 
 ## `oxi` CLI

@@ -637,6 +637,62 @@ int oxi_tls13_derive_secret_sha384(const uint8_t *secret_ptr,
                                    uintptr_t out_len);
 
 /*
+ Derive the Ed25519 public key from a 32-byte seed (RFC 8032 §5.1.5).
+
+ Reads exactly 32 bytes from `seed_ptr`. Writes the 32-byte
+ compressed-Edwards-point public key into `public_key_out`. This
+ operation is **deterministic**: given the same seed, the same
+ public key. Distinct from ECDSA's DRBG-sampled key generation —
+ the `Service::Ed25519Keygen` gate fires for profile-restriction
+ purposes, NOT because randomness is consumed.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `public_key_out` must be a
+ non-NULL writable pointer to ≥32 bytes.
+ */
+int oxi_ed25519_keygen(const uint8_t *seed_ptr, uint8_t *public_key_out);
+
+/*
+ Sign `msg` with Ed25519 using the 32-byte seed (RFC 8032 §5.1.6).
+
+ Reads exactly 32 bytes from `seed_ptr`. Writes 64 bytes
+ (`R(32) || S(32)`) into `sig_out`. Signing is **deterministic** —
+ the per-message nonce is derived via HMAC-SHA512 over a prefix of
+ the secret and the message, so signatures are bit-identical for
+ the same `(seed, msg)` pair. There is NO `sign_with_k` variant
+ because RFC 8032 supplies the `k` internally.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must be a
+ non-NULL writable pointer to ≥64 bytes.
+ */
+int oxi_ed25519_sign(const uint8_t *seed_ptr,
+                     const uint8_t *msg_ptr,
+                     uintptr_t msg_len,
+                     uint8_t *sig_out);
+
+/*
+ Verify an Ed25519 signature over `msg` (RFC 8032 §5.1.7).
+
+ Reads exactly 32 bytes from `public_key_ptr` and exactly 64 bytes
+ from `sig_ptr`. Returns `OxiResult::Ok = 0` for valid,
+ `OxiResult::TagMismatch = 22` for well-formed-but-invalid (the
+ upstream `Ok(false)` — same cross-family verify-mismatch code as
+ AEAD AES-GCM/CCM/KW/KWP and ECDSA verify), or a module error
+ variant on `Err`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_ed25519_verify(const uint8_t *public_key_ptr,
+                       const uint8_t *msg_ptr,
+                       uintptr_t msg_len,
+                       const uint8_t *sig_ptr);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through

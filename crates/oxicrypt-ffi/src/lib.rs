@@ -1540,3 +1540,145 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
         48,
     >(secret, label, transcript_hash, out_slice))
 }
+
+// ── EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8) ────────────────────
+//
+// Three pure-deterministic entry points: keygen, sign, verify.
+// Unlike ECDSA, EVERY operation is deterministic by construction:
+//   - keygen(seed) → public_key  per RFC 8032 §5.1.5 — given the
+//     same seed, the same public key. NO DRBG involved (the
+//     `Service::Ed25519Keygen` gate is "is the curve allowed?",
+//     NOT "do we have entropy?").
+//   - sign(seed, msg) → signature  per RFC 8032 §5.1.6 — the
+//     per-message nonce is derived via HMAC-SHA512 over a prefix
+//     of the secret and the message. Bit-identical signatures for
+//     the same `(seed, msg)` pair. NO `sign_with_k` variant
+//     because there is no `k` to supply.
+//   - verify(pk, msg, sig) → bool  per RFC 8032 §5.1.7 — returns
+//     `Ok(false)` for well-formed-but-invalid; we map that to
+//     `OxiResult::TagMismatch = 22` per the cross-family
+//     verify-mismatch generalization (security-policy §4.7).
+//
+// Byte layout: seed = 32 bytes; public_key = 32 bytes (compressed
+// twisted Edwards point per RFC 8032 §5.1.2 — Y-coord plus 1 sign
+// bit packed into the high bit of the last byte; NOT SEC1
+// uncompressed); signature = 64 bytes (R(32) || S(32)).
+
+/// Derive the Ed25519 public key from a 32-byte seed (RFC 8032 §5.1.5).
+///
+/// Reads exactly 32 bytes from `seed_ptr`. Writes the 32-byte
+/// compressed-Edwards-point public key into `public_key_out`. This
+/// operation is **deterministic**: given the same seed, the same
+/// public key. Distinct from ECDSA's DRBG-sampled key generation —
+/// the `Service::Ed25519Keygen` gate fires for profile-restriction
+/// purposes, NOT because randomness is consumed.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `public_key_out` must be a
+/// non-NULL writable pointer to ≥32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ed25519_keygen(seed_ptr: *const u8, public_key_out: *mut u8) -> c_int {
+    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if public_key_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
+        return R::Internal as c_int;
+    };
+    let pk = match oxicrypt_eddsa::ed25519::keygen(seed_arr) {
+        Ok(p) => p,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 32) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with Ed25519 using the 32-byte seed (RFC 8032 §5.1.6).
+///
+/// Reads exactly 32 bytes from `seed_ptr`. Writes 64 bytes
+/// (`R(32) || S(32)`) into `sig_out`. Signing is **deterministic** —
+/// the per-message nonce is derived via HMAC-SHA512 over a prefix of
+/// the secret and the message, so signatures are bit-identical for
+/// the same `(seed, msg)` pair. There is NO `sign_with_k` variant
+/// because RFC 8032 supplies the `k` internally.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥64 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ed25519_sign(
+    seed_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
+        return R::Internal as c_int;
+    };
+    let sig = match oxicrypt_eddsa::ed25519::sign(seed_arr, msg) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 64) };
+    R::Ok as c_int
+}
+
+/// Verify an Ed25519 signature over `msg` (RFC 8032 §5.1.7).
+///
+/// Reads exactly 32 bytes from `public_key_ptr` and exactly 64 bytes
+/// from `sig_ptr`. Returns `OxiResult::Ok = 0` for valid,
+/// `OxiResult::TagMismatch = 22` for well-formed-but-invalid (the
+/// upstream `Ok(false)` — same cross-family verify-mismatch code as
+/// AEAD AES-GCM/CCM/KW/KWP and ECDSA verify), or a module error
+/// variant on `Err`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ed25519_verify(
+    public_key_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(public_key_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(pk_arr) = <&[u8; 32]>::try_from(pk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 64]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_eddsa::ed25519::verify(pk_arr, msg, sig_arr) {
+        Ok(true) => R::Ok as c_int,
+        Ok(false) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
