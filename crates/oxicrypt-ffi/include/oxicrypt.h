@@ -326,6 +326,113 @@ int oxi_hmac_sha3_512(const uint8_t *key_ptr,
                       uint8_t *out);
 
 /*
+ Derive the uncompressed SEC1 public key for an ECDSA P-256 private
+ scalar (FIPS 186-5 §6.2.1).
+
+ `d_ptr` must point to exactly 32 bytes (the private scalar). On
+ success, writes 65 bytes (`0x04 || X(32) || Y(32)`) into
+ `public_key_out`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `public_key_out` must be a
+ non-NULL writable pointer to ≥65 bytes.
+ */
+int oxi_ecdsa_p256_derive_public_key(const uint8_t *d_ptr, uint8_t *public_key_out);
+
+/*
+ Sign `msg` with ECDSA P-256 using a caller-supplied per-message
+ secret `k` (FIPS 186-5 §6.4.1).
+
+ `d_ptr` and `k_ptr` must each point to exactly 32 bytes; `k` must
+ be uniformly random in `[1, n-1]` per FIPS 186-5 §A.2.2 — the FFI
+ cannot enforce uniformity, only document the requirement. On
+ success, writes 64 bytes (`r(32) || s(32)`) into `sig_out`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must be a
+ non-NULL writable pointer to ≥64 bytes.
+ */
+int oxi_ecdsa_p256_sign_with_k(const uint8_t *d_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *k_ptr,
+                               uint8_t *sig_out);
+
+/*
+ Verify an ECDSA P-256 signature over `msg` against the public key
+ `pk` (FIPS 186-5 §6.4.2).
+
+ `public_key_ptr` must point to exactly 65 bytes (uncompressed SEC1)
+ and `sig_ptr` to exactly 64 bytes (`r || s`).
+
+ Returns `OxiResult::Ok = 0` for valid, `OxiResult::TagMismatch = 22`
+ for well-formed-but-invalid (the upstream `Ok(false)`), or a module
+ error variant on `Err`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_ecdsa_p256_verify(const uint8_t *public_key_ptr,
+                          const uint8_t *msg_ptr,
+                          uintptr_t msg_len,
+                          const uint8_t *sig_ptr);
+
+/*
+ Derive the uncompressed SEC1 public key for an ECDSA P-384 private
+ scalar (FIPS 186-5 §6.2.1).
+
+ `d_ptr` must point to exactly 48 bytes. On success, writes 97
+ bytes (`0x04 || X(48) || Y(48)`) into `public_key_out`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `public_key_out` must be a
+ non-NULL writable pointer to ≥97 bytes.
+ */
+int oxi_ecdsa_p384_derive_public_key(const uint8_t *d_ptr, uint8_t *public_key_out);
+
+/*
+ Sign `msg` with ECDSA P-384 using a caller-supplied per-message
+ secret `k` (FIPS 186-5 §6.4.1).
+
+ `d_ptr` and `k_ptr` must each point to exactly 48 bytes; `k` must
+ be uniformly random in `[1, n-1]` per FIPS 186-5 §A.2.2. On
+ success, writes 96 bytes (`r(48) || s(48)`) into `sig_out`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must be a
+ non-NULL writable pointer to ≥96 bytes.
+ */
+int oxi_ecdsa_p384_sign_with_k(const uint8_t *d_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *k_ptr,
+                               uint8_t *sig_out);
+
+/*
+ Verify an ECDSA P-384 signature over `msg` against the public key
+ `pk` (FIPS 186-5 §6.4.2).
+
+ `public_key_ptr` must point to exactly 97 bytes (uncompressed SEC1)
+ and `sig_ptr` to exactly 96 bytes (`r || s`).
+
+ Returns `OxiResult::Ok = 0` for valid, `OxiResult::TagMismatch = 22`
+ for well-formed-but-invalid, or a module error on `Err`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_ecdsa_p384_verify(const uint8_t *public_key_ptr,
+                          const uint8_t *msg_ptr,
+                          uintptr_t msg_len,
+                          const uint8_t *sig_ptr);
+
+/*
  Run HKDF-Extract per RFC 5869 §2.2 with HMAC-SHA-256.
 
  Computes `PRK = HMAC-SHA-256(salt, IKM)` and writes the 32-byte

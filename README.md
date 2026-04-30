@@ -333,10 +333,15 @@ The `oxicrypt-ffi` crate currently exposes:
 - TLS 1.3 KDF (RFC 8446 §7.1) HKDF-Expand-Label and Derive-Secret
   for the two ciphersuite hashes pinned by RFC 8446 §B.4:
   `oxi_tls13_{hkdf_expand_label,derive_secret}_{sha256,sha384}`.
+- ECDSA P-256 / P-384 stateless surface (FIPS 186-5 §6.2/§6.4):
+  `oxi_ecdsa_p{256,384}_{derive_public_key, sign_with_k, verify}`.
+  Caller supplies the per-message secret `k` for `sign_with_k`; the
+  DRBG-driven `generate` and `sign_sha*` surfaces land in a follow-up
+  PR after the DRBG family C ABI ships.
 
 Per-algorithm exposure of the remaining approved services
-(RSA, ECDSA, ECDH, EdDSA, DRBG, ML-DSA, ML-KEM, SLH-DSA,
-LMS, XMSS, DH-3072) lands in subsequent algorithm chunks.
+(RSA, ECDH, EdDSA, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS,
+DH-3072) lands in subsequent algorithm chunks.
 
 ## `oxi` CLI
 

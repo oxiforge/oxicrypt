@@ -5064,6 +5064,152 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  # ECDSA (FIPS 186-5) — stateless surface. Three pure-functional
+  # entry points per curve over byte arrays. The DRBG-driven keygen
+  # and DRBG-sampled signing surfaces (`*_generate`, `*_sign_sha*`)
+  # land in a follow-up PR after the DRBG family C ABI ships.
+
+  - name: oxi_ecdsa_p256_derive_public_key
+    module: oxicrypt-ffi
+    description: >-
+      Derive the uncompressed SEC1 public key for an ECDSA P-256
+      private scalar (FIPS 186-5 §6.2.1). Reads exactly 32 bytes
+      from `d_ptr`. Writes 65 bytes (`0x04 || X(32) || Y(32)`) into
+      `public_key_out` per SEC1 §2.3.3 — the leading 0x04 is the
+      uncompressed-point indicator, NOT a length prefix.
+    signature: >-
+      int oxi_ecdsa_p256_derive_public_key(const uint8_t *d_ptr, uint8_t *public_key_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "32-byte private scalar" }
+      - { name: public_key_out, type: "uint8_t *", direction: out, description: "Output buffer >= 65 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on out-of-range scalar, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p256_sign_with_k
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with ECDSA P-256 using a caller-supplied per-message
+      secret `k` (FIPS 186-5 §6.4.1). The hash step is computed
+      INSIDE the upstream sign — caller passes the raw message, not
+      a digest. `k` must be uniformly random in `[1, n-1]` per
+      FIPS 186-5 §A.2.2 — the FFI cannot enforce uniformity.
+    signature: >-
+      int oxi_ecdsa_p256_sign_with_k(const uint8_t *d_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *k_ptr, uint8_t *sig_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "32-byte private scalar" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: k_ptr, type: "const uint8_t *", direction: in, description: "32-byte uniformly-random per-message secret" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "Output buffer >= 64 bytes; receives r(32) || s(32)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on r=0/s=0/scalar-out-of-range, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p256_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an ECDSA P-256 signature over `msg` against the public
+      key (FIPS 186-5 §6.4.2). Returns 0 (Ok) for valid, 22
+      (TagMismatch) for well-formed-but-invalid (the upstream
+      Ok(false)). The TagMismatch reuse generalizes the AEAD
+      tag-mismatch semantic to the signature-verification family —
+      see security-policy §4.7 for the cross-family rationale.
+    signature: >-
+      int oxi_ecdsa_p256_verify(const uint8_t *public_key_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: public_key_ptr, type: "const uint8_t *", direction: in, description: "65-byte uncompressed SEC1 public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "64-byte signature (r || s)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok valid signature, 22 = TagMismatch invalid signature, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_derive_public_key
+    module: oxicrypt-ffi
+    description: >-
+      Derive the uncompressed SEC1 public key for an ECDSA P-384
+      private scalar (FIPS 186-5 §6.2.1). Reads exactly 48 bytes
+      from `d_ptr`. Writes 97 bytes (`0x04 || X(48) || Y(48)`) into
+      `public_key_out` per SEC1 §2.3.3.
+    signature: >-
+      int oxi_ecdsa_p384_derive_public_key(const uint8_t *d_ptr, uint8_t *public_key_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "48-byte private scalar" }
+      - { name: public_key_out, type: "uint8_t *", direction: out, description: "Output buffer >= 97 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on out-of-range scalar, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_sign_with_k
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with ECDSA P-384 using a caller-supplied per-message
+      secret `k` (FIPS 186-5 §6.4.1). The hash step is computed
+      INSIDE the upstream sign. `k` must be uniformly random in
+      `[1, n-1]` per FIPS 186-5 §A.2.2.
+    signature: >-
+      int oxi_ecdsa_p384_sign_with_k(const uint8_t *d_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *k_ptr, uint8_t *sig_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "48-byte private scalar" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: k_ptr, type: "const uint8_t *", direction: in, description: "48-byte uniformly-random per-message secret" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "Output buffer >= 96 bytes; receives r(48) || s(48)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on r=0/s=0/scalar-out-of-range, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an ECDSA P-384 signature over `msg` against the public
+      key (FIPS 186-5 §6.4.2). Returns 0 (Ok) for valid, 22
+      (TagMismatch) for well-formed-but-invalid.
+    signature: >-
+      int oxi_ecdsa_p384_verify(const uint8_t *public_key_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: public_key_ptr, type: "const uint8_t *", direction: in, description: "97-byte uncompressed SEC1 public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "96-byte signature (r || s)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok valid signature, 22 = TagMismatch invalid signature, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

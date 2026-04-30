@@ -826,6 +826,279 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
     R::Ok as c_int
 }
 
+// ── ECDSA (FIPS 186-5) — stateless surface ───────────────────────
+//
+// Three pure-functional entry points per curve: derive_public_key,
+// sign_with_k (caller supplies per-message secret `k`), verify. The
+// stateful surface — DRBG-sampled keygen and DRBG-sampled signing —
+// lands in a follow-up PR after the DRBG family C ABI ships.
+//
+// Byte layouts (per curve):
+//   P-256: d=32, public_key=65 (SEC1 §2.3.3 uncompressed: 0x04||X||Y),
+//          k=32, signature=64 (r||s).
+//   P-384: d=48, public_key=97, k=48, signature=96.
+//
+// Verify returns OxiResult::TagMismatch = 22 for well-formed-but-
+// invalid signatures (Ok(false) upstream), generalizing the AEAD
+// tag-mismatch semantic to the signature-verification family.
+
+// ── ECDSA P-256 ──────────────────────────────────────────────────
+
+/// Derive the uncompressed SEC1 public key for an ECDSA P-256 private
+/// scalar (FIPS 186-5 §6.2.1).
+///
+/// `d_ptr` must point to exactly 32 bytes (the private scalar). On
+/// success, writes 65 bytes (`0x04 || X(32) || Y(32)`) into
+/// `public_key_out`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `public_key_out` must be a
+/// non-NULL writable pointer to ≥65 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_derive_public_key(
+    d_ptr: *const u8,
+    public_key_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if public_key_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let pk = match oxicrypt_ecdsa::p256_ecdsa::derive_public_key(d_arr) {
+        Ok(p) => p,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 65) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with ECDSA P-256 using a caller-supplied per-message
+/// secret `k` (FIPS 186-5 §6.4.1).
+///
+/// `d_ptr` and `k_ptr` must each point to exactly 32 bytes; `k` must
+/// be uniformly random in `[1, n-1]` per FIPS 186-5 §A.2.2 — the FFI
+/// cannot enforce uniformity, only document the requirement. On
+/// success, writes 64 bytes (`r(32) || s(32)`) into `sig_out`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥64 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_sign_with_k(
+    d_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    k_ptr: *const u8,
+    sig_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let k = match unsafe { slice_from_raw(k_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let Ok(k_arr) = <&[u8; 32]>::try_from(k) else {
+        return R::Internal as c_int;
+    };
+    let sig = match oxicrypt_ecdsa::p256_ecdsa::sign_with_k(d_arr, msg, k_arr) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 64) };
+    R::Ok as c_int
+}
+
+/// Verify an ECDSA P-256 signature over `msg` against the public key
+/// `pk` (FIPS 186-5 §6.4.2).
+///
+/// `public_key_ptr` must point to exactly 65 bytes (uncompressed SEC1)
+/// and `sig_ptr` to exactly 64 bytes (`r || s`).
+///
+/// Returns `OxiResult::Ok = 0` for valid, `OxiResult::TagMismatch = 22`
+/// for well-formed-but-invalid (the upstream `Ok(false)`), or a module
+/// error variant on `Err`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_verify(
+    public_key_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(public_key_ptr, 65) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(pk_arr) = <&[u8; 65]>::try_from(pk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 64]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_ecdsa::p256_ecdsa::verify(pk_arr, msg, sig_arr) {
+        Ok(true) => R::Ok as c_int,
+        Ok(false) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── ECDSA P-384 ──────────────────────────────────────────────────
+
+/// Derive the uncompressed SEC1 public key for an ECDSA P-384 private
+/// scalar (FIPS 186-5 §6.2.1).
+///
+/// `d_ptr` must point to exactly 48 bytes. On success, writes 97
+/// bytes (`0x04 || X(48) || Y(48)`) into `public_key_out`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `public_key_out` must be a
+/// non-NULL writable pointer to ≥97 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_derive_public_key(
+    d_ptr: *const u8,
+    public_key_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if public_key_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 48]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let pk = match oxicrypt_ecdsa::p384_ecdsa::derive_public_key(d_arr) {
+        Ok(p) => p,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 97) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with ECDSA P-384 using a caller-supplied per-message
+/// secret `k` (FIPS 186-5 §6.4.1).
+///
+/// `d_ptr` and `k_ptr` must each point to exactly 48 bytes; `k` must
+/// be uniformly random in `[1, n-1]` per FIPS 186-5 §A.2.2. On
+/// success, writes 96 bytes (`r(48) || s(48)`) into `sig_out`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥96 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_sign_with_k(
+    d_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    k_ptr: *const u8,
+    sig_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let k = match unsafe { slice_from_raw(k_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 48]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let Ok(k_arr) = <&[u8; 48]>::try_from(k) else {
+        return R::Internal as c_int;
+    };
+    let sig = match oxicrypt_ecdsa::p384_ecdsa::sign_with_k(d_arr, msg, k_arr) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 96) };
+    R::Ok as c_int
+}
+
+/// Verify an ECDSA P-384 signature over `msg` against the public key
+/// `pk` (FIPS 186-5 §6.4.2).
+///
+/// `public_key_ptr` must point to exactly 97 bytes (uncompressed SEC1)
+/// and `sig_ptr` to exactly 96 bytes (`r || s`).
+///
+/// Returns `OxiResult::Ok = 0` for valid, `OxiResult::TagMismatch = 22`
+/// for well-formed-but-invalid, or a module error on `Err`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_verify(
+    public_key_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(public_key_ptr, 97) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(pk_arr) = <&[u8; 97]>::try_from(pk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 96]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_ecdsa::p384_ecdsa::verify(pk_arr, msg, sig_arr) {
+        Ok(true) => R::Ok as c_int,
+        Ok(false) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
 // ── HKDF (RFC 5869, SP 800-56C Rev. 2 §4.1) ──────────────────────
 //
 // Two-step extract/expand surface — RFC 5869 §2's pure-function

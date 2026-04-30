@@ -59,7 +59,17 @@ pub enum OxiResult {
     NotBlockAligned = 20,
     /// IV length doesn't match the mode's specification (e.g. GCM requires exactly 12 bytes).
     InvalidIvLength = 21,
-    /// AEAD tag verification failed. Plaintext output buffer contents are UNDEFINED.
+    /// Cryptographic verification mismatched.
+    ///
+    /// Covers BOTH AEAD tag verification (AES-GCM, AES-CCM, AES-KW, AES-KWP)
+    /// AND signature verification (ECDSA `Ok(false)` from FIPS 186-5 §6.4.2,
+    /// and future RSA-PSS / EdDSA / ML-DSA / SLH-DSA / LMS / XMSS verify
+    /// fns). The semantic is uniform: "the cryptographic verification
+    /// primitive ran cleanly but the result disagrees with the claimed
+    /// value." Distinct from [`OxiResult::InvalidInput`] (= 5), which
+    /// signals input that failed to decode BEFORE any cryptographic
+    /// comparison. AEAD plaintext output buffer contents are UNDEFINED
+    /// when this code is returned.
     TagMismatch = 22,
     /// Input/output buffer length pair is mismatched (e.g. plaintext.len() != ciphertext.len()).
     LengthMismatch = 23,

@@ -317,6 +317,12 @@ capabilities:
       - "oxi_tls13_hkdf_expand_label_sha384"
       - "oxi_tls13_derive_secret_sha256"
       - "oxi_tls13_derive_secret_sha384"
+      - "oxi_ecdsa_p256_derive_public_key"
+      - "oxi_ecdsa_p256_sign_with_k"
+      - "oxi_ecdsa_p256_verify"
+      - "oxi_ecdsa_p384_derive_public_key"
+      - "oxi_ecdsa_p384_sign_with_k"
+      - "oxi_ecdsa_p384_verify"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"
