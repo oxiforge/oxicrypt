@@ -604,6 +604,7 @@ dependencies = [
  "oxicrypt-integrity",
  "oxicrypt-kdf",
  "oxicrypt-module",
+ "oxicrypt-rsa",
  "oxicrypt-sha",
  "oxicrypt-tls-kdf",
 ]

@@ -775,6 +775,122 @@ int oxi_dh3072_compute_shared_secret(const uint8_t *x_ptr,
                                      uint8_t *shared_secret_out);
 
 /*
+ Verify an RSASSA-PKCS#1-v1.5 signature with a 2048-bit RSA public
+ key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+
+ Reads exactly 256 bytes from `n_ptr` (modulus, big-endian), takes
+ the public exponent `e` as a `uint64_t`, reads `msg_len` bytes
+ from `msg_ptr`, and reads exactly 256 bytes from `sig_ptr`.
+
+ Returns `OxiResult::Ok = 0` on a valid signature,
+ `OxiResult::TagMismatch = 22` for any verification failure
+ (invalid modulus, malformed signature, digest mismatch — upstream
+ collapses these into a single Err), or a module error variant on
+ `NotOperational` / `AlgorithmRestricted`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_rsa_pkcs1_v15_verify_2048_sha256(const uint8_t *n_ptr,
+                                         uint64_t e,
+                                         const uint8_t *msg_ptr,
+                                         uintptr_t msg_len,
+                                         const uint8_t *sig_ptr);
+
+/*
+ Verify an RSASSA-PSS signature with a 2048-bit RSA public key,
+ SHA-256 as both message hash and MGF1 hash, salt length 32 bytes
+ (FIPS 186-5 §5.4 / RFC 8017 §8.1).
+
+ Reads exactly 256 bytes from `n_ptr`, takes `e` as `uint64_t`,
+ reads `msg_len` bytes from `msg_ptr`, and reads exactly 256 bytes
+ from `sig_ptr`. Returns `Ok = 0` on a valid signature,
+ `TagMismatch = 22` on any verification failure (see TagMismatch
+ paragraph in security-policy §4.8 for upstream-Err mapping
+ rationale), or a module error variant.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_rsa_pss_verify_2048_sha256(const uint8_t *n_ptr,
+                                   uint64_t e,
+                                   const uint8_t *msg_ptr,
+                                   uintptr_t msg_len,
+                                   const uint8_t *sig_ptr);
+
+/*
+ Verify an RSASSA-PKCS#1-v1.5 signature with a 3072-bit RSA public
+ key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+
+ Reads exactly 384 bytes from `n_ptr` and 384 bytes from `sig_ptr`.
+ See the `oxi_rsa_pkcs1_v15_verify_2048_sha256` rustdoc for return
+ semantics — identical except for byte sizes.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_rsa_pkcs1_v15_verify_3072_sha256(const uint8_t *n_ptr,
+                                         uint64_t e,
+                                         const uint8_t *msg_ptr,
+                                         uintptr_t msg_len,
+                                         const uint8_t *sig_ptr);
+
+/*
+ Verify an RSASSA-PSS signature with a 3072-bit RSA public key,
+ SHA-256 as both message hash and MGF1 hash (FIPS 186-5 §5.4 /
+ RFC 8017 §8.1).
+
+ Reads exactly 384 bytes from `n_ptr` and 384 bytes from `sig_ptr`.
+ PSS parameters per `oxicrypt_rsa::rsa3072` rustdoc:
+ `emBits = 3071`, `emLen = 384`, `sLen = hLen = 32`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_rsa_pss_verify_3072_sha256(const uint8_t *n_ptr,
+                                   uint64_t e,
+                                   const uint8_t *msg_ptr,
+                                   uintptr_t msg_len,
+                                   const uint8_t *sig_ptr);
+
+/*
+ Verify an RSASSA-PKCS#1-v1.5 signature with a 4096-bit RSA public
+ key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+
+ Reads exactly 512 bytes from `n_ptr` and 512 bytes from `sig_ptr`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_rsa_pkcs1_v15_verify_4096_sha256(const uint8_t *n_ptr,
+                                         uint64_t e,
+                                         const uint8_t *msg_ptr,
+                                         uintptr_t msg_len,
+                                         const uint8_t *sig_ptr);
+
+/*
+ Verify an RSASSA-PSS signature with a 4096-bit RSA public key,
+ SHA-256 as both message hash and MGF1 hash (FIPS 186-5 §5.4 /
+ RFC 8017 §8.1).
+
+ Reads exactly 512 bytes from `n_ptr` and 512 bytes from `sig_ptr`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_rsa_pss_verify_4096_sha256(const uint8_t *n_ptr,
+                                   uint64_t e,
+                                   const uint8_t *msg_ptr,
+                                   uintptr_t msg_len,
+                                   const uint8_t *sig_ptr);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through

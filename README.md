@@ -362,10 +362,21 @@ The `oxicrypt-ffi` crate currently exposes:
   the safe-prime FFC group structure makes this sufficient,
   unlike ECDH's full §5.6.2.3.3 validation. DRBG-driven keygen
   defers to a post-DRBG follow-up.
+- RSA verify (FIPS 186-5 §5.4 / RFC 8017 §8): six stateless
+  entry points across `{2048, 3072, 4096} × {PKCS#1 v1.5, PSS}`,
+  all SHA-256 — `oxi_rsa_pkcs1_v15_verify_{2048,3072,4096}_sha256`
+  and `oxi_rsa_pss_verify_{2048,3072,4096}_sha256`. Each takes
+  the public modulus `n`, the public exponent `e` (as
+  `uint64_t`), the message bytes, and the signature. Returns
+  `OxiResult::TagMismatch = 22` for any verify failure
+  (cross-family convention — the upstream RSA API collapses
+  signature-invalid and input-decode-fail into one Err variant;
+  the FFI maps both to TagMismatch). DRBG-driven sign + OAEP
+  encrypt + keygen defer to post-DRBG follow-ups.
 
 Per-algorithm exposure of the remaining approved services
-(RSA, DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS) lands in
-subsequent algorithm chunks.
+(DRBG, ML-DSA, ML-KEM, SLH-DSA, LMS, XMSS) lands in subsequent
+algorithm chunks.
 
 ## `oxi` CLI
 

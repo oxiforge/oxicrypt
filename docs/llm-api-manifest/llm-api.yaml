@@ -5409,6 +5409,175 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  # RSA verify (FIPS 186-5 §5.4 / RFC 8017 §8) — six stateless entry
+  # points across {2048, 3072, 4096} × {PKCS#1 v1.5, PSS}, all hash-
+  # locked to SHA-256 (the only hash the upstream RSA crate currently
+  # exposes for the 3072 and 4096 sizes). All six map upstream Err to
+  # TagMismatch=22 to maintain the cross-family verify-mismatch
+  # convention even though the upstream API collapses signature-
+  # invalid and input-decode-fail into Err(InvalidInput); see security-
+  # policy §4.8 RSA-Err-mapping paragraph for the boundary rationale.
+
+  - name: oxi_rsa_pkcs1_v15_verify_2048_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Verify an RSASSA-PKCS#1-v1.5 signature with a 2048-bit RSA
+      public key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+      Reads exactly 256 bytes from `n_ptr` (modulus, big-endian),
+      takes the public exponent `e` as `uint64_t`, reads `msg_len`
+      bytes from `msg_ptr`, and reads exactly 256 bytes from
+      `sig_ptr`. Returns `OxiResult::Ok = 0` on a valid signature,
+      `TagMismatch = 22` for any verification failure (upstream
+      collapses signature-invalid and input-decode-fail into a
+      single Err). Forwards to
+      `oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256`.
+    signature: >-
+      int oxi_rsa_pkcs1_v15_verify_2048_sha256(const uint8_t *n_ptr,
+      uint64_t e, const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "256-byte RSA-2048 public modulus, big-endian" }
+      - { name: e, type: uint64_t, direction: in, description: "Public exponent (common values 3, 17, 65537 = F4)" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "256-byte signature, big-endian" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verify failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_pss_verify_2048_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Verify an RSASSA-PSS signature with a 2048-bit RSA public key,
+      SHA-256 as both message hash and MGF1 hash, salt length fixed
+      at 32 bytes (FIPS 186-5 §5.4 / RFC 8017 §8.1). Reads exactly
+      256 bytes from `n_ptr` and `sig_ptr`. Forwards to
+      `oxicrypt_rsa::rsa_pss_verify_2048_sha256`. Same upstream-Err
+      → TagMismatch mapping as the PKCS#1 v1.5 variant.
+    signature: >-
+      int oxi_rsa_pss_verify_2048_sha256(const uint8_t *n_ptr,
+      uint64_t e, const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "256-byte RSA-2048 public modulus, big-endian" }
+      - { name: e, type: uint64_t, direction: in }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "256-byte signature, big-endian" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_pkcs1_v15_verify_3072_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Verify an RSASSA-PKCS#1-v1.5 signature with a 3072-bit RSA
+      public key, SHA-256 (FIPS 186-5 §5.4 / RFC 8017 §8.2). Reads
+      exactly 384 bytes from `n_ptr` and `sig_ptr`. Forwards to
+      `oxicrypt_rsa::rsa_3072_4096_stub::pkcs1_v15_verify_3072`.
+    signature: >-
+      int oxi_rsa_pkcs1_v15_verify_3072_sha256(const uint8_t *n_ptr,
+      uint64_t e, const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "384-byte RSA-3072 public modulus, big-endian" }
+      - { name: e, type: uint64_t, direction: in }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "384-byte signature, big-endian" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_pss_verify_3072_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Verify an RSASSA-PSS signature with a 3072-bit RSA public key,
+      SHA-256, MGF1-SHA-256, sLen = hLen = 32 bytes. PSS encoding
+      parameters per `oxicrypt_rsa::rsa3072` rustdoc: emBits = 3071,
+      emLen = 384. Reads exactly 384 bytes from `n_ptr` and
+      `sig_ptr`. Forwards to
+      `oxicrypt_rsa::rsa_3072_4096_stub::pss_verify_3072`.
+    signature: >-
+      int oxi_rsa_pss_verify_3072_sha256(const uint8_t *n_ptr,
+      uint64_t e, const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "384-byte RSA-3072 public modulus, big-endian" }
+      - { name: e, type: uint64_t, direction: in }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "384-byte signature, big-endian" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_pkcs1_v15_verify_4096_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Verify an RSASSA-PKCS#1-v1.5 signature with a 4096-bit RSA
+      public key, SHA-256 (FIPS 186-5 §5.4 / RFC 8017 §8.2). Reads
+      exactly 512 bytes from `n_ptr` and `sig_ptr`. Forwards to
+      `oxicrypt_rsa::rsa_3072_4096_stub::pkcs1_v15_verify_4096`.
+    signature: >-
+      int oxi_rsa_pkcs1_v15_verify_4096_sha256(const uint8_t *n_ptr,
+      uint64_t e, const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "512-byte RSA-4096 public modulus, big-endian" }
+      - { name: e, type: uint64_t, direction: in }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "512-byte signature, big-endian" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_pss_verify_4096_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Verify an RSASSA-PSS signature with a 4096-bit RSA public key,
+      SHA-256, MGF1-SHA-256, sLen = hLen = 32 bytes. Reads exactly
+      512 bytes from `n_ptr` and `sig_ptr`. Forwards to
+      `oxicrypt_rsa::rsa_3072_4096_stub::pss_verify_4096`.
+    signature: >-
+      int oxi_rsa_pss_verify_4096_sha256(const uint8_t *n_ptr,
+      uint64_t e, const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "512-byte RSA-4096 public modulus, big-endian" }
+      - { name: e, type: uint64_t, direction: in }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "512-byte signature, big-endian" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

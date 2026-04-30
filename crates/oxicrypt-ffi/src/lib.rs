@@ -146,6 +146,7 @@ fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
         oxicrypt_eddsa::KATS,
         oxicrypt_ecdh::KATS,
         oxicrypt_dh::KATS,
+        oxicrypt_rsa::KATS,
     ];
     let mut merged = Vec::new();
     for group in all_kats {
@@ -1902,4 +1903,312 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
     };
     unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 384) };
     R::Ok as c_int
+}
+
+// ── RSA verify (FIPS 186-5 §5.4, RFC 8017 §8) — stateless surface ─
+//
+// Six stateless entry points for RSA signature verification, mirroring
+// the upstream `oxicrypt-rsa` Rust public API:
+//
+//   {2048, 3072, 4096} × {PKCS#1-v1.5, PSS}
+//
+// Hash variant is fixed at SHA-256 for all six — the only hash the
+// upstream RSA crate currently exposes for the 3072 and 4096 sizes.
+// All six fns take the public modulus `n` as a raw byte array
+// (256 / 384 / 512 bytes big-endian), the public exponent `e` as a
+// u64 (covers RFC-mandated common values 3, 17, 65537 = F4 with
+// 32-bit headroom), the message bytes, and the signature as a raw
+// byte array (same length as the modulus).
+//
+// **TagMismatch=22 mapping** (CMVP gem in security-policy §4.8): the
+// upstream RSA verify fns return `Result<(), Error>` rather than
+// `Result<bool, Error>` — they collapse signature-invalid AND
+// input-decode-fail into a single `Err(Error::InvalidInput)`. The
+// FFI maps any non-NotOperational, non-AlgorithmRestricted Err to
+// `OxiResult::TagMismatch = 22` to maintain the cross-family
+// verify-mismatch convention established for ECDSA / EdDSA / AEAD.
+// This is a deliberate boundary choice: we lose the upstream
+// distinction between "your modulus parsed wrong" and "this signature
+// doesn't verify" but gain a uniform reviewer-facing semantic across
+// all verify families.
+//
+// DRBG-driven sign + OAEP encrypt + keygen surfaces are deferred to
+// post-DRBG follow-up rounds per stabilized arc pattern #1.
+
+// ── RSA-2048 PKCS#1 v1.5 verify ──────────────────────────────────
+
+/// Verify an RSASSA-PKCS#1-v1.5 signature with a 2048-bit RSA public
+/// key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+///
+/// Reads exactly 256 bytes from `n_ptr` (modulus, big-endian), takes
+/// the public exponent `e` as a `uint64_t`, reads `msg_len` bytes
+/// from `msg_ptr`, and reads exactly 256 bytes from `sig_ptr`.
+///
+/// Returns `OxiResult::Ok = 0` on a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (invalid modulus, malformed signature, digest mismatch — upstream
+/// collapses these into a single Err), or a module error variant on
+/// `NotOperational` / `AlgorithmRestricted`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_2048_sha256(
+    n_ptr: *const u8,
+    e: u64,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let n = match unsafe { slice_from_raw(n_ptr, 256) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 256) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(n_arr) = <&[u8; 256]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 256]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256(n_arr, e, msg, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── RSA-2048 PSS verify ──────────────────────────────────────────
+
+/// Verify an RSASSA-PSS signature with a 2048-bit RSA public key,
+/// SHA-256 as both message hash and MGF1 hash, salt length 32 bytes
+/// (FIPS 186-5 §5.4 / RFC 8017 §8.1).
+///
+/// Reads exactly 256 bytes from `n_ptr`, takes `e` as `uint64_t`,
+/// reads `msg_len` bytes from `msg_ptr`, and reads exactly 256 bytes
+/// from `sig_ptr`. Returns `Ok = 0` on a valid signature,
+/// `TagMismatch = 22` on any verification failure (see TagMismatch
+/// paragraph in security-policy §4.8 for upstream-Err mapping
+/// rationale), or a module error variant.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_pss_verify_2048_sha256(
+    n_ptr: *const u8,
+    e: u64,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let n = match unsafe { slice_from_raw(n_ptr, 256) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 256) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(n_arr) = <&[u8; 256]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 256]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_rsa::rsa_pss_verify_2048_sha256(n_arr, e, msg, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── RSA-3072 PKCS#1 v1.5 verify ──────────────────────────────────
+
+/// Verify an RSASSA-PKCS#1-v1.5 signature with a 3072-bit RSA public
+/// key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+///
+/// Reads exactly 384 bytes from `n_ptr` and 384 bytes from `sig_ptr`.
+/// See the `oxi_rsa_pkcs1_v15_verify_2048_sha256` rustdoc for return
+/// semantics — identical except for byte sizes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_3072_sha256(
+    n_ptr: *const u8,
+    e: u64,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let n = match unsafe { slice_from_raw(n_ptr, 384) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 384) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(n_arr) = <&[u8; 384]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 384]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_rsa::rsa_3072_4096_stub::pkcs1_v15_verify_3072(n_arr, e, msg, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── RSA-3072 PSS verify ──────────────────────────────────────────
+
+/// Verify an RSASSA-PSS signature with a 3072-bit RSA public key,
+/// SHA-256 as both message hash and MGF1 hash (FIPS 186-5 §5.4 /
+/// RFC 8017 §8.1).
+///
+/// Reads exactly 384 bytes from `n_ptr` and 384 bytes from `sig_ptr`.
+/// PSS parameters per `oxicrypt_rsa::rsa3072` rustdoc:
+/// `emBits = 3071`, `emLen = 384`, `sLen = hLen = 32`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_pss_verify_3072_sha256(
+    n_ptr: *const u8,
+    e: u64,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let n = match unsafe { slice_from_raw(n_ptr, 384) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 384) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(n_arr) = <&[u8; 384]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 384]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_rsa::rsa_3072_4096_stub::pss_verify_3072(n_arr, e, msg, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── RSA-4096 PKCS#1 v1.5 verify ──────────────────────────────────
+
+/// Verify an RSASSA-PKCS#1-v1.5 signature with a 4096-bit RSA public
+/// key, SHA-256 hash (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+///
+/// Reads exactly 512 bytes from `n_ptr` and 512 bytes from `sig_ptr`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_4096_sha256(
+    n_ptr: *const u8,
+    e: u64,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let n = match unsafe { slice_from_raw(n_ptr, 512) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 512) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(n_arr) = <&[u8; 512]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 512]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_rsa::rsa_3072_4096_stub::pkcs1_v15_verify_4096(n_arr, e, msg, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── RSA-4096 PSS verify ──────────────────────────────────────────
+
+/// Verify an RSASSA-PSS signature with a 4096-bit RSA public key,
+/// SHA-256 as both message hash and MGF1 hash (FIPS 186-5 §5.4 /
+/// RFC 8017 §8.1).
+///
+/// Reads exactly 512 bytes from `n_ptr` and 512 bytes from `sig_ptr`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
+    n_ptr: *const u8,
+    e: u64,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let n = match unsafe { slice_from_raw(n_ptr, 512) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 512) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(n_arr) = <&[u8; 512]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 512]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_rsa::rsa_3072_4096_stub::pss_verify_4096(n_arr, e, msg, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
 }
