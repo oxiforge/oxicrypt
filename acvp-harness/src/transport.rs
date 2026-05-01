@@ -96,6 +96,12 @@ pub struct AcvpConfig {
     pub totp_secret: String,
     /// Optional: only register and test this single algorithm.
     pub filter_algorithm: Option<String>,
+    /// Optional: only register handlers whose `mode()` matches this
+    /// string (in combination with `filter_algorithm`). Used for
+    /// multi-mode algorithms (ECDSA, RSA, EDDSA) where a single
+    /// algorithm name has multiple mode-specific handlers and ACVTS
+    /// demo etiquette requires one vector set per session.
+    pub filter_mode: Option<String>,
     /// Optional: instead of registering a new test session, just GET
     /// the supplied URL (relative or absolute) and print the response.
     /// Use to fetch verdict status of an existing session that was
@@ -734,12 +740,25 @@ fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
 // ── Capabilities builder ──────────────────────────────────────────
 
 /// Build the ACVP registration capabilities array from handler
-/// `acvp_capabilities()` methods.
-fn build_capabilities(registry: &Registry, filter: Option<&str>) -> Vec<JsonValue> {
+/// `acvp_capabilities()` methods. When `filter_mode` is supplied it
+/// is matched against `h.mode()` — handlers whose `mode()` does not
+/// equal `Some(filter_mode)` are skipped, narrowing the registration
+/// to a single (algorithm, mode) tuple as ACVTS demo etiquette
+/// requires (one vector set per session).
+fn build_capabilities(
+    registry: &Registry,
+    filter_alg: Option<&str>,
+    filter_mode: Option<&str>,
+) -> Vec<JsonValue> {
     let mut caps = Vec::new();
     registry.for_each_handler(|h: &dyn AlgorithmHandler| {
-        if let Some(filter_alg) = filter {
-            if h.algorithm() != filter_alg {
+        if let Some(name) = filter_alg {
+            if h.algorithm() != name {
+                return;
+            }
+        }
+        if let Some(mode_name) = filter_mode {
+            if h.mode() != Some(mode_name) {
                 return;
             }
         }
@@ -828,7 +847,11 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     let caps = if config.query_session_url.is_some() {
         Vec::new()
     } else {
-        let caps = build_capabilities(&registry, config.filter_algorithm.as_deref());
+        let caps = build_capabilities(
+            &registry,
+            config.filter_algorithm.as_deref(),
+            config.filter_mode.as_deref(),
+        );
         if caps.is_empty() {
             return Err("no handlers returned ACVP capabilities".to_string());
         }

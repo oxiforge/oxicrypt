@@ -203,6 +203,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     let mut http_backend_explicit: Option<HttpBackend> = None;
     let mut totp_secret = String::new();
     let mut algorithm: Option<String> = None;
+    let mut mode: Option<String> = None;
     let mut query_session: Option<String> = None;
     let mut refresh_with: Option<String> = None;
     let mut server = "https://demo.acvts.nist.gov".to_string();
@@ -266,6 +267,12 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
                 i += 1;
                 if i < args.len() {
                     algorithm = Some(args[i].clone());
+                }
+            }
+            "--mode" => {
+                i += 1;
+                if i < args.len() {
+                    mode = Some(args[i].clone());
                 }
             }
             "--query-session" => {
@@ -386,6 +393,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         http_backend,
         totp_secret,
         filter_algorithm: algorithm,
+        filter_mode: mode,
         query_session_url: query_session,
         refresh_with_token: refresh_with,
         log_path,
@@ -402,7 +410,7 @@ fn print_demo_run_usage() {
     eprintln!("usage: acvp-harness demo-run --cert <cert.pem> --totp-secret <hex>");
     eprintln!("               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')");
     eprintln!("               [--pkcs11-module <path>] [--pkcs11-pin-source <path>]");
-    eprintln!("               [--http-backend curl|s_client] [--algorithm <name>]");
+    eprintln!("               [--http-backend curl|s_client] [--algorithm <name>] [--mode <mode>]");
     eprintln!("               [--server <url>] [--log <path>]");
     eprintln!();
     eprintln!("  --key                 file-based PEM key (default backend: curl)");
@@ -412,6 +420,10 @@ fn print_demo_run_usage() {
     eprintln!("                        place on /dev/shm with mode 0600, shred after use)");
     eprintln!("  --http-backend        override transport: curl or s_client");
     eprintln!("  --algorithm <name>    test a single algorithm (e.g. SHA2-256)");
+    eprintln!(
+        "  --mode <mode>         narrow to one mode for multi-mode algorithms (e.g. sigVer);"
+    );
+    eprintln!("                        produces exactly one vector set per session");
     eprintln!(
         "  --query-session <url> fetch verdict for an existing session (skip register+submit);"
     );
