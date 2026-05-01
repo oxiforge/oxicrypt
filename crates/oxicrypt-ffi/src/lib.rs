@@ -2595,3 +2595,200 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
     unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
     R::Ok as c_int
 }
+
+// ── SLH-DSA-SHA2-256s (FIPS 205) — stateless surface ─────────────
+//
+// Three pure entry points: keygen, sign, verify. SLH-DSA is the
+// third NIST-standardized post-quantum signature scheme — pure
+// hash-based, stateless, with security resting on the collision /
+// preimage resistance of SHA-2 alone. The SHA2-256s parameter set
+// ("small signatures") is the slow-sign / fast-verify, smallest-key
+// profile per FIPS 205 §10.1.
+//
+// All three operations are exposed at a stateless byte-array surface
+// with NO DRBG plumbing at the FFI boundary:
+//
+//   - keygen(xi) → (pk, sk)  per FIPS 205 §9.1 Algorithm 17.
+//     `xi` is 96 bytes (3 × 32) of caller-supplied randomness,
+//     internally split as `SK.seed ‖ SK.prf ‖ PK.seed`. The three
+//     32-byte components are NOT interchangeable: SK.seed drives
+//     WOTS+ / FORS secret derivation, SK.prf is the PRF key for
+//     deterministic message-randomness in sign, and PK.seed is the
+//     domain-separation tweak baked into every hash call. Mixing
+//     them would put PRF key material into the secret-derivation
+//     slot or vice-versa, breaking the FIPS 205 §10.2 security
+//     argument. Caller is responsible for sourcing each independently
+//     from an SP 800-90A DRBG.
+//   - sign(sk, msg, ctx) → sig  per FIPS 205 §9.2 Algorithm 22
+//     (external `slh_sign`). Signing is **deterministic** in this
+//     crate (opt_rand = PK.seed): bit-identical signature for the
+//     same `(sk, msg, ctx)` triple. Pass `ctx_len = 0` (with any
+//     `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
+//   - verify(pk, msg, ctx, sig)  per FIPS 205 §9.3 Algorithm 24
+//     (external `slh_verify`). Upstream returns `Result<(), Error>`
+//     where `Err(InvalidInput)` collapses decode-fail and
+//     verify-fail into a single discriminant. The FFI maps that to
+//     `OxiResult::TagMismatch = 22` per the cross-family
+//     verify-mismatch convention established by RSA verify
+//     (PR #17) and ML-DSA verify (PR #18). Third PQ family with
+//     this mapping; the `Result<()>` upstream shape is the load-
+//     bearing structural property here.
+//
+// Byte layout (FIPS 205 §10.1, SHA2-256s parameter set):
+//   xi  = 96 bytes (3 × 32: SK.seed ‖ SK.prf ‖ PK.seed)
+//   pk  = 64 bytes
+//   sk  = 128 bytes
+//   sig = 29 792 bytes (fixed — no length-out pointer)
+//   ctx ≤ 255 bytes (FIPS 205 §9.2 limit)
+//
+// Per-variant naming: this is `slh_dsa_sha2_256s` (not
+// `slh_dsa(param_set: int)` and not `slh_dsa_256s` collapsing the
+// hash family) per stabilized arc pattern #8. Future variants
+// (SHA2-128s/f, 192s/f, 256f, SHAKE-128s/f / 192s/f / 256s/f —
+// twelve total per FIPS 205) will be added as new fns rather than
+// as enum-dispatched parameters on these. Existing C callers do not
+// recompile when new variants ship.
+
+/// Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
+/// caller-supplied seed (FIPS 205 §9.1 Algorithm 17).
+///
+/// Reads exactly 96 bytes from `xi_ptr`, internally framed as
+/// `SK.seed ‖ SK.prf ‖ PK.seed`. Writes the 64-byte public key
+/// into `pk_out` and the 128-byte secret key into `sk_out`. The
+/// caller MUST source the 96 bytes from an approved DRBG
+/// (SP 800-90A); the FFI performs no entropy generation. The three
+/// 32-byte components are NOT interchangeable — see the section
+/// comment above for the semantic distinction.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error
+/// variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `pk_out` and `sk_out`
+/// must each be non-NULL writable pointers to ≥64 and ≥128 bytes
+/// respectively.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHA2-256s (FIPS 205 §9.2
+/// Algorithm 22, external `slh_sign`).
+///
+/// Reads exactly 128 bytes from `sk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+/// 29 792-byte signature into `sig_out`. Pass `ctx_len = 0` (with
+/// any `ctx_ptr`) for the empty context used by X.509 / CMS /
+/// LAMPS.
+///
+/// Signing is **deterministic** (opt_rand = PK.seed): bit-identical
+/// signature across calls for the same `(sk, msg, ctx)` triple.
+/// NO randomized-mode variant is exposed.
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+/// `ctx_len > 255` (FIPS 205 §9.2 limit), or a module error
+/// variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥29 792 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 128) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 29_792) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHA2-256s signature (FIPS 205 §9.3
+/// Algorithm 24, external `slh_verify`).
+///
+/// Reads exactly 64 bytes from `pk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 29 792 bytes
+/// from `sig_ptr`. Pass `ctx_len = 0` for the empty context used
+/// by X.509 / CMS / LAMPS.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (decode-fail OR signature-invalid — upstream collapses these
+/// into a single `Err(InvalidInput)`; same shape as RSA verify and
+/// ML-DSA verify), or a module error variant (`NotOperational`,
+/// `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 29_792) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}

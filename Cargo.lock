@@ -608,6 +608,7 @@ dependencies = [
  "oxicrypt-module",
  "oxicrypt-rsa",
  "oxicrypt-sha",
+ "oxicrypt-slh-dsa",
  "oxicrypt-tls-kdf",
 ]
 

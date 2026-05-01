@@ -224,6 +224,32 @@ capabilities:
         let ss_b = decapsulate(&dk, &ct).unwrap();
         assert_eq!(ss_a, ss_b);
 
+  - category: "Post-quantum signatures (hash-based)"
+    algorithms:
+      - "SLH-DSA-SHA2-256s (FIPS 205)"
+    operations:
+      - "keygen"
+      - "sign"
+      - "verify"
+    crate: "oxicrypt-slh-dsa"
+    standards:
+      - "FIPS 205"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_slh_dsa::{keygen, sign, verify};
+        use oxicrypt_drbg::HmacDrbgSha256;
+
+        let mut drbg = HmacDrbgSha256::new();
+        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
+        let mut xi = [0u8; 96];
+        drbg.generate(None, &mut xi).unwrap();
+        let (pk, sk) = keygen(&xi).unwrap();
+        let msg = b"hello SLH-DSA";
+        let ctx = b"";
+        let sig = sign(&sk, msg, ctx).unwrap();
+        verify(&pk, msg, ctx, &sig).unwrap();
+
   - category: "Asymmetric encryption"
     algorithms:
       - "RSA-2048 OAEP"

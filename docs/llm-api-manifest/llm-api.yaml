@@ -5896,6 +5896,100 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_slh_dsa_sha2_256s_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
+      caller-supplied seed (FIPS 205 §9.1 Algorithm 17). Reads exactly
+      96 bytes from `xi_ptr`, internally framed as `SK.seed ‖ SK.prf
+      ‖ PK.seed` (3 × 32 bytes). Writes the 64-byte public key into
+      `pk_out` and the 128-byte secret key into `sk_out`. The 96 bytes
+      are caller-sourced from an SP 800-90A DRBG. The three 32-byte
+      components are NOT interchangeable: SK.seed drives WOTS+ / FORS
+      secret derivation, SK.prf is the PRF key for deterministic
+      message-randomness in sign, and PK.seed is the domain-separation
+      tweak baked into every hash call. Mixing them would put PRF key
+      material into the secret-derivation slot or vice-versa, breaking
+      the FIPS 205 §10.2 security argument. Forwards to
+      `oxicrypt_slh_dsa::keygen`.
+    signature: >-
+      int oxi_slh_dsa_sha2_256s_keygen(const uint8_t *xi_ptr,
+      uint8_t *pk_out, uint8_t *sk_out)
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "96-byte caller-supplied seed (SK.seed ‖ SK.prf ‖ PK.seed)" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "64-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "128-byte secret key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_slh_dsa_sha2_256s_sign
+    module: oxicrypt-ffi
+    description: >-
+      Sign a message with SLH-DSA-SHA2-256s (FIPS 205 §9.2 Algorithm
+      22, external `slh_sign`). Reads exactly 128 bytes from `sk_ptr`,
+      `msg_len` bytes from `msg_ptr`, and `ctx_len` bytes from
+      `ctx_ptr` (≤ 255 per FIPS 205 §9.2). Writes the 29 792-byte
+      signature into `sig_out`. Pass `ctx_len = 0` for the empty
+      context used by X.509 / CMS / LAMPS. Signing is **deterministic**
+      (opt_rand = PK.seed): bit-identical signature across calls for
+      the same `(sk, msg, ctx)` triple. Forwards to
+      `oxicrypt_slh_dsa::sign`.
+    signature: >-
+      int oxi_slh_dsa_sha2_256s_sign(const uint8_t *sk_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "128-byte SLH-DSA-256s secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (length given by ctx_len; ≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes (FIPS 205 §9.2 caps at 255)" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "29 792-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_slh_dsa_sha2_256s_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an SLH-DSA-SHA2-256s signature (FIPS 205 §9.3 Algorithm
+      24, external `slh_verify`). Reads exactly 64 bytes from
+      `pk_ptr`, `msg_len` bytes from `msg_ptr`, `ctx_len` bytes from
+      `ctx_ptr` (≤ 255), and 29 792 bytes from `sig_ptr`. Pass
+      `ctx_len = 0` for the empty context used by X.509 / CMS /
+      LAMPS. Returns `Ok = 0` for a valid signature, `TagMismatch =
+      22` for any verification failure (decode-fail OR
+      signature-invalid — upstream collapses these into a single
+      `Err(InvalidInput)`; same shape as RSA verify and ML-DSA
+      verify). Forwards to `oxicrypt_slh_dsa::verify`.
+    signature: >-
+      int oxi_slh_dsa_sha2_256s_verify(const uint8_t *pk_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "64-byte SLH-DSA-256s public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (length given by ctx_len; ≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes (FIPS 205 §9.2 caps at 255)" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "29 792-byte signature" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

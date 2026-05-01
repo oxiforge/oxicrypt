@@ -1038,6 +1038,86 @@ int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
 int oxi_ml_kem_1024_decapsulate(const uint8_t *dk_ptr, const uint8_t *ct_ptr, uint8_t *ss_out);
 
 /*
+ Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
+ caller-supplied seed (FIPS 205 §9.1 Algorithm 17).
+
+ Reads exactly 96 bytes from `xi_ptr`, internally framed as
+ `SK.seed ‖ SK.prf ‖ PK.seed`. Writes the 64-byte public key
+ into `pk_out` and the 128-byte secret key into `sk_out`. The
+ caller MUST source the 96 bytes from an approved DRBG
+ (SP 800-90A); the FFI performs no entropy generation. The three
+ 32-byte components are NOT interchangeable — see the section
+ comment above for the semantic distinction.
+
+ Returns `OxiResult::Ok = 0` on success, or a module error
+ variant (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `pk_out` and `sk_out`
+ must each be non-NULL writable pointers to ≥64 and ≥128 bytes
+ respectively.
+ */
+int oxi_slh_dsa_sha2_256s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHA2-256s (FIPS 205 §9.2
+ Algorithm 22, external `slh_sign`).
+
+ Reads exactly 128 bytes from `sk_ptr`, `msg_len` bytes from
+ `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+ 29 792-byte signature into `sig_out`. Pass `ctx_len = 0` (with
+ any `ctx_ptr`) for the empty context used by X.509 / CMS /
+ LAMPS.
+
+ Signing is **deterministic** (opt_rand = PK.seed): bit-identical
+ signature across calls for the same `(sk, msg, ctx)` triple.
+ NO randomized-mode variant is exposed.
+
+ Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+ `ctx_len > 255` (FIPS 205 §9.2 limit), or a module error
+ variant (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must be a
+ non-NULL writable pointer to ≥29 792 bytes.
+ */
+int oxi_slh_dsa_sha2_256s_sign(const uint8_t *sk_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *ctx_ptr,
+                               uintptr_t ctx_len,
+                               uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHA2-256s signature (FIPS 205 §9.3
+ Algorithm 24, external `slh_verify`).
+
+ Reads exactly 64 bytes from `pk_ptr`, `msg_len` bytes from
+ `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 29 792 bytes
+ from `sig_ptr`. Pass `ctx_len = 0` for the empty context used
+ by X.509 / CMS / LAMPS.
+
+ Returns `OxiResult::Ok = 0` for a valid signature,
+ `OxiResult::TagMismatch = 22` for any verification failure
+ (decode-fail OR signature-invalid — upstream collapses these
+ into a single `Err(InvalidInput)`; same shape as RSA verify and
+ ML-DSA verify), or a module error variant (`NotOperational`,
+ `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_256s_verify(const uint8_t *pk_ptr,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 const uint8_t *ctx_ptr,
+                                 uintptr_t ctx_len,
+                                 const uint8_t *sig_ptr);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through

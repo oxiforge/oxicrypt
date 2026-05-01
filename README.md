@@ -402,10 +402,27 @@ The `oxicrypt-ffi` crate currently exposes:
   shared secret in constant time (deliberate FIPS 203 §6.3
   design). Single-variant for now; `oxi_ml_kem_512_*` and
   `oxi_ml_kem_768_*` ship later as additive function names.
+- SLH-DSA-SHA2-256s (FIPS 205): three stateless entry points —
+  `oxi_slh_dsa_sha2_256s_keygen`, `oxi_slh_dsa_sha2_256s_sign`,
+  and `oxi_slh_dsa_sha2_256s_verify`. `keygen` reads a 96-byte
+  caller-supplied seed (3 × 32: `SK.seed ‖ SK.prf ‖ PK.seed`,
+  caller-sourced from an SP 800-90A DRBG; the three components
+  are role-segregated and NOT interchangeable) and writes the
+  64-byte public key + 128-byte secret key. `sign` is
+  **deterministic** (FIPS 205 §9.2 with `opt_rand = PK.seed`)
+  and produces a fixed 29 792-byte signature; the `ctx`
+  parameter (≤ 255 bytes) is exposed for caller-controlled
+  domain separation, with `ctx_len = 0` for X.509 / CMS /
+  LAMPS-conformant callers. `verify` returns `TagMismatch = 22`
+  for any verification failure (decode-fail OR signature-
+  invalid — same `Result<()>`-collapse pattern as RSA verify
+  and ML-DSA verify; third PQ family with this mapping).
+  Single-variant for now; `oxi_slh_dsa_sha2_{128s,128f,192s,
+  192f,256f}_*` and `oxi_slh_dsa_shake_*` ship later as
+  additive function names (12 variants total per FIPS 205).
 
 Per-algorithm exposure of the remaining approved services
-(DRBG, SLH-DSA, LMS, XMSS) lands in subsequent algorithm
-chunks.
+(DRBG, LMS, XMSS) lands in subsequent algorithm chunks.
 
 ## `oxi` CLI
 
