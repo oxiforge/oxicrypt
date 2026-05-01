@@ -9,6 +9,14 @@
 //! - **MVT** (MAC Verification Test): compute the MAC, compare against
 //!   the supplied `mac` field, return `testPassed`.
 //!
+//! Each test group carries (group level):
+//!
+//! - `xof` (bool) — XOF variant flag (ACVP only; we dispatch by
+//!   algorithm string, so this is informational here)
+//! - `hexCustomization` (bool) — `true` if the per-test
+//!   `customization` field is hex-encoded, `false` if it is an
+//!   ASCII text string (taken byte-for-byte)
+//!
 //! Each test case carries:
 //!
 //! - `key` (hex) — KMAC key
@@ -16,7 +24,8 @@
 //! - `msg` (hex) — input message
 //! - `msgLen` (bits) — message length
 //! - `macLen` (bits) — requested tag length
-//! - `hexCustomization` (hex) — customization string S
+//! - `customization` (string) — customization string S, encoding
+//!   determined by the group-level `hexCustomization` flag
 //! - `mac` (hex, MVT only) — expected MAC to verify against
 //!
 //! AFT response field: `mac` (hex).
@@ -147,7 +156,13 @@ struct KmacTestInputs {
 }
 
 /// Parse key, msg, customization string, and mac length from a test case.
-fn parse_kmac_test(t: &JsonValue) -> Result<KmacTestInputs, DispatchError> {
+/// `hex_customization` comes from the group-level `hexCustomization`
+/// flag and determines whether the test's `customization` field is
+/// hex-decoded (true) or taken as ASCII bytes (false).
+fn parse_kmac_test(
+    t: &JsonValue,
+    hex_customization: bool,
+) -> Result<KmacTestInputs, DispatchError> {
     let key_len_bits = t
         .get("keyLen")
         .and_then(JsonValue::as_u64)
@@ -204,14 +219,16 @@ fn parse_kmac_test(t: &JsonValue) -> Result<KmacTestInputs, DispatchError> {
         msg_full[..msg_bytes].to_vec()
     };
 
-    let s_hex = t
-        .get("hexCustomization")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("");
-    let s = if s_hex.is_empty() {
-        Vec::new()
-    } else {
-        hex::decode(s_hex)?
+    // `customization` is the per-test S string. Encoding is governed
+    // by the group-level `hexCustomization` boolean — `true` means
+    // the field is hex; `false` means it is ASCII text taken
+    // byte-for-byte (per ACVP SP 800-185 KMAC capability spec).
+    // Treat a missing field as the empty customization (S = "").
+    let s_field = t.get("customization").and_then(JsonValue::as_str);
+    let s = match s_field {
+        None | Some("") => Vec::new(),
+        Some(raw) if hex_customization => hex::decode(raw)?,
+        Some(raw) => raw.as_bytes().to_vec(),
     };
 
     Ok(KmacTestInputs {
@@ -240,6 +257,15 @@ where
         "MVT" => KmacTestType::Mvt,
         other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
     };
+    // Group-level encoding flag for the per-test `customization`
+    // field. ACVP places this at the group, not the test, because
+    // every test in a group shares the encoding. Default to `false`
+    // (ASCII) when the field is absent so older offline fixtures
+    // without an explicit value still parse.
+    let hex_customization = group
+        .get("hexCustomization")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -250,7 +276,7 @@ where
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
-        let inp = parse_kmac_test(t)?;
+        let inp = parse_kmac_test(t, hex_customization)?;
 
         let mut out_buf = vec![0u8; inp.mac_bytes];
         compute(&inp.key, &inp.msg, &inp.s, &mut out_buf)?;

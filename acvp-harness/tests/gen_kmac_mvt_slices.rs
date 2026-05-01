@@ -120,7 +120,7 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "hexCustomization": "{}",
+          "customization": "{}",
           "mac": "{}",
           "testPassed": true
         }}"#,
@@ -148,7 +148,7 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "hexCustomization": "{}",
+          "customization": "{}",
           "mac": "{}",
           "testPassed": false
         }}"#,
@@ -171,6 +171,7 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
     {{
       "tgId": 1,
       "testType": "MVT",
+      "hexCustomization": true,
       "tests": [
 {}
       ]
@@ -178,6 +179,7 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
     {{
       "tgId": 2,
       "testType": "MVT",
+      "hexCustomization": true,
       "tests": [
 {}
       ]

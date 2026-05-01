@@ -130,7 +130,7 @@ fn gen_kmacxof_slice(
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "hexCustomization": "{}",
+          "customization": "{}",
           "mac": "{}"
         }}"#,
             i + 1,
@@ -152,6 +152,7 @@ fn gen_kmacxof_slice(
     {{
       "tgId": 1,
       "testType": "AFT",
+      "hexCustomization": true,
       "tests": [
 {}
       ]

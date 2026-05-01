@@ -222,7 +222,7 @@ fn gen_kmac_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: us
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "hexCustomization": "{}",
+          "customization": "{}",
           "mac": "{}"
         }}"#,
             i + 1,
@@ -244,6 +244,7 @@ fn gen_kmac_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: us
     {{
       "tgId": 1,
       "testType": "AFT",
+      "hexCustomization": true,
       "tests": [
 {}
       ]
