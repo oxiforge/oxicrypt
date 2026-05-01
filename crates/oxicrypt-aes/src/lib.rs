@@ -10,8 +10,8 @@
 //! | CTR mode                | SP 800-38A §6.5 | [`ctr_xor`] |
 //! | GCM authenticated encrypt/decrypt | SP 800-38D (96-bit IV, 128-bit tag) | [`gcm_encrypt`] / [`gcm_decrypt`] |
 //! | CCM authenticated encrypt/decrypt | SP 800-38C | [`ccm_encrypt`] / [`ccm_decrypt`] |
-//! | Key Wrap (KW)           | SP 800-38F §6.2 / RFC 3394 | [`kw_wrap`] / [`kw_unwrap`] |
-//! | Key Wrap with Padding (KWP) | SP 800-38F §6.3 / RFC 5649 | [`kwp_wrap`] / [`kwp_unwrap`] |
+//! | Key Wrap (KW)           | SP 800-38F §6.2 / RFC 3394 | [`kw_wrap`] / [`kw_unwrap`] (forward cipher), [`kw_wrap_inverse_cipher`] / [`kw_unwrap_inverse_cipher`] (inverse cipher) |
+//! | Key Wrap with Padding (KWP) | SP 800-38F §6.3 / RFC 5649 | [`kwp_wrap`] / [`kwp_unwrap`] (forward cipher), [`kwp_wrap_inverse_cipher`] / [`kwp_unwrap_inverse_cipher`] (inverse cipher) |
 //!
 //! ECB is exposed because it is required as a primitive by
 //! other approved services (CTR_DRBG, the KW/KWP construction,
@@ -73,7 +73,10 @@ pub mod modes;
 pub use block::{Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE};
 pub use ccm::{ccm_decrypt, ccm_encrypt};
 pub use kat::KATS;
-pub use kw::{kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap, KWP_IV_PREFIX, KW_DEFAULT_IV};
+pub use kw::{
+    kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher, kwp_unwrap,
+    kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher, KWP_IV_PREFIX, KW_DEFAULT_IV,
+};
 pub use modes::{
     cbc_decrypt, cbc_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt, gcm_decrypt, gcm_encrypt,
     BlockCipher, ModeError,

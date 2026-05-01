@@ -8,6 +8,7 @@
       "testType": "AFT",
       "direction": "encrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
         {
           "tcId": 1,
@@ -46,6 +47,7 @@
       "testType": "AFT",
       "direction": "decrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
         {
           "tcId": 6,
@@ -89,6 +91,7 @@
       "testType": "AFT",
       "direction": "decrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
         {
           "tcId": 11,

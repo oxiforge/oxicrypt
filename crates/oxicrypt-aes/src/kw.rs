@@ -17,6 +17,23 @@
 //!     input fits in 16 bytes) or feeds the result into the standard
 //!     KW wrapping function.
 //!
+//! Each mode is exposed in two cipher directions, both defined by
+//! SP 800-38F §5.1 / §6.2:
+//!
+//!   * **Forward cipher** (the default, ACVP `kwCipher = "cipher"`):
+//!     the W function uses the AES forward cipher (encrypt) for wrap
+//!     and the AES inverse cipher (decrypt) for unwrap. Exposed as
+//!     [`kw_wrap`] / [`kw_unwrap`] / [`kwp_wrap`] / [`kwp_unwrap`].
+//!   * **Inverse cipher** (ACVP `kwCipher = "inverse"`): the W
+//!     function uses the AES inverse cipher (decrypt) for wrap and
+//!     the AES forward cipher (encrypt) for unwrap. Exposed as
+//!     [`kw_wrap_inverse_cipher`] / [`kw_unwrap_inverse_cipher`] /
+//!     [`kwp_wrap_inverse_cipher`] / [`kwp_unwrap_inverse_cipher`].
+//!
+//! The two directions are distinct algorithms — a wrap produced in
+//! one direction will not unwrap correctly in the other, and the
+//! ICV check guarantees this in constant time.
+//!
 //! Both the wrap and unwrap directions verify the published ICV
 //! (either the default KW value or the RFC 5649 KWP alternative IV)
 //! in constant time on the 8 prefix bytes; any mismatch returns
@@ -283,10 +300,221 @@ pub fn kwp_unwrap<B: BlockCipher>(
     Ok(mli)
 }
 
+// ----------------------------------------------------------------------
+// Inverse-cipher direction (SP 800-38F §6.2 / ACVP kwCipher = "inverse")
+// ----------------------------------------------------------------------
+//
+// Mirrors the forward-cipher KW/KWP family above. The W function and
+// algorithmic structure are unchanged; only the underlying AES block
+// direction inverts:
+//
+//   * Wrap (KW-AE / KWP-AE) drives the W function with `decrypt_block`.
+//   * Unwrap (KW-AD / KWP-AD) drives the W^-1 function with
+//     `encrypt_block`.
+//
+// The ICV (`A6A6A6A6A6A6A6A6` for KW, `A65959A6 || [mli]_32` for KWP)
+// is unchanged and is checked in constant time exactly as in the
+// forward-cipher path. Cross-direction unwrap (forward-wrapped input
+// fed through inverse-unwrap, or vice versa) is rejected by the ICV
+// check with overwhelming probability.
+
+/// Inverse-cipher core "W" wrapping function. Identical to [`w_core`]
+/// but invokes `cipher.decrypt_block` as the underlying block primitive.
+fn w_core_inverse_cipher<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
+    let n = r_out.len() / SEMI;
+    for j in 0..6u64 {
+        for i in 1..=n {
+            let mut blk = [0u8; 16];
+            blk[..SEMI].copy_from_slice(a);
+            blk[SEMI..].copy_from_slice(&r_out[(i - 1) * SEMI..i * SEMI]);
+            cipher.decrypt_block(&mut blk);
+            a.copy_from_slice(&blk[..SEMI]);
+            let t: u64 = (n as u64) * j + (i as u64);
+            let tb = t.to_be_bytes();
+            for k in 0..SEMI {
+                a[k] ^= tb[k];
+            }
+            r_out[(i - 1) * SEMI..i * SEMI].copy_from_slice(&blk[SEMI..]);
+        }
+    }
+}
+
+/// Inverse-cipher core "W^-1" unwrapping function. Identical to
+/// [`w_core_inv`] but invokes `cipher.encrypt_block` as the
+/// underlying block primitive.
+fn w_core_inverse_cipher_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
+    let n = r_out.len() / SEMI;
+    for j in (0..6u64).rev() {
+        for i in (1..=n).rev() {
+            let t: u64 = (n as u64) * j + (i as u64);
+            let tb = t.to_be_bytes();
+            let mut blk = [0u8; 16];
+            for k in 0..SEMI {
+                blk[k] = a[k] ^ tb[k];
+            }
+            blk[SEMI..].copy_from_slice(&r_out[(i - 1) * SEMI..i * SEMI]);
+            cipher.encrypt_block(&mut blk);
+            a.copy_from_slice(&blk[..SEMI]);
+            r_out[(i - 1) * SEMI..i * SEMI].copy_from_slice(&blk[SEMI..]);
+        }
+    }
+}
+
+/// AES-KW wrap with the inverse cipher direction (SP 800-38F §6.2,
+/// ACVP `kwCipher = "inverse"`).
+///
+/// Same input/output contract as [`kw_wrap`].
+pub fn kw_wrap_inverse_cipher<B: BlockCipher>(
+    cipher: &B,
+    plaintext: &[u8],
+    ciphertext_out: &mut [u8],
+) -> Result<(), ModeError> {
+    if plaintext.len() < 2 * SEMI
+        || plaintext.len() % SEMI != 0
+        || ciphertext_out.len() != plaintext.len() + SEMI
+    {
+        return Err(ModeError::LengthMismatch);
+    }
+    let mut a = KW_DEFAULT_IV;
+    ciphertext_out[SEMI..].copy_from_slice(plaintext);
+    w_core_inverse_cipher(cipher, &mut a, &mut ciphertext_out[SEMI..]);
+    ciphertext_out[..SEMI].copy_from_slice(&a);
+    Ok(())
+}
+
+/// AES-KW unwrap with the inverse cipher direction (SP 800-38F §6.2,
+/// ACVP `kwCipher = "inverse"`).
+///
+/// Same input/output contract as [`kw_unwrap`]. Returns
+/// [`ModeError::TagMismatch`] on ICV mismatch — including the case
+/// where the input was wrapped with the forward cipher direction.
+pub fn kw_unwrap_inverse_cipher<B: BlockCipher>(
+    cipher: &B,
+    ciphertext: &[u8],
+    plaintext_out: &mut [u8],
+) -> Result<(), ModeError> {
+    if ciphertext.len() < 3 * SEMI
+        || ciphertext.len() % SEMI != 0
+        || plaintext_out.len() != ciphertext.len() - SEMI
+    {
+        return Err(ModeError::LengthMismatch);
+    }
+    let mut a = [0u8; SEMI];
+    a.copy_from_slice(&ciphertext[..SEMI]);
+    plaintext_out.copy_from_slice(&ciphertext[SEMI..]);
+    w_core_inverse_cipher_inv(cipher, &mut a, plaintext_out);
+    if !ct_eq8(&a, &KW_DEFAULT_IV) {
+        return Err(ModeError::TagMismatch);
+    }
+    Ok(())
+}
+
+/// AES-KWP wrap with the inverse cipher direction (SP 800-38F §6.3,
+/// ACVP `kwCipher = "inverse"`).
+///
+/// Same input/output contract as [`kwp_wrap`].
+pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(
+    cipher: &B,
+    plaintext: &[u8],
+    ciphertext_out: &mut [u8],
+) -> Result<(), ModeError> {
+    let mli = plaintext.len();
+    if mli == 0 || mli > u32::MAX as usize {
+        return Err(ModeError::LengthMismatch);
+    }
+    let padded_pt_len = mli.div_ceil(SEMI) * SEMI;
+    let total = padded_pt_len + SEMI;
+    if ciphertext_out.len() != total {
+        return Err(ModeError::LengthMismatch);
+    }
+
+    let mut aiv = [0u8; SEMI];
+    aiv[..4].copy_from_slice(&KWP_IV_PREFIX);
+    let mli_be = (mli as u32).to_be_bytes();
+    aiv[4..].copy_from_slice(&mli_be);
+
+    if padded_pt_len == SEMI {
+        // Single AES block direct path; inverse cipher uses
+        // `decrypt_block` as the wrapping primitive (SP 800-38F §6.3
+        // "if n == 1 then C = CIPH^-1_K(S)" under the inverse-cipher
+        // direction).
+        let mut blk = [0u8; 16];
+        blk[..SEMI].copy_from_slice(&aiv);
+        blk[SEMI..SEMI + mli].copy_from_slice(plaintext);
+        cipher.decrypt_block(&mut blk);
+        ciphertext_out.copy_from_slice(&blk);
+    } else {
+        let mut a = aiv;
+        ciphertext_out[SEMI..SEMI + mli].copy_from_slice(plaintext);
+        for b in &mut ciphertext_out[SEMI + mli..] {
+            *b = 0;
+        }
+        w_core_inverse_cipher(cipher, &mut a, &mut ciphertext_out[SEMI..]);
+        ciphertext_out[..SEMI].copy_from_slice(&a);
+    }
+    Ok(())
+}
+
+/// AES-KWP unwrap with the inverse cipher direction (SP 800-38F §6.3,
+/// ACVP `kwCipher = "inverse"`).
+///
+/// Same input/output contract as [`kwp_unwrap`]. Returns
+/// [`ModeError::TagMismatch`] on ICV-prefix mismatch, inconsistent
+/// declared `mli`, non-zero pad bytes, or input wrapped with the
+/// forward cipher direction.
+pub fn kwp_unwrap_inverse_cipher<B: BlockCipher>(
+    cipher: &B,
+    ciphertext: &[u8],
+    plaintext_out_scratch: &mut [u8],
+) -> Result<usize, ModeError> {
+    if ciphertext.len() < 2 * SEMI
+        || ciphertext.len() % SEMI != 0
+        || plaintext_out_scratch.len() != ciphertext.len() - SEMI
+    {
+        return Err(ModeError::LengthMismatch);
+    }
+    let mut aiv = [0u8; SEMI];
+    if ciphertext.len() == 2 * SEMI {
+        // Single AES block direct path; inverse-cipher unwrap drives
+        // the AES forward cipher.
+        let mut blk = [0u8; 16];
+        blk.copy_from_slice(ciphertext);
+        cipher.encrypt_block(&mut blk);
+        aiv.copy_from_slice(&blk[..SEMI]);
+        plaintext_out_scratch.copy_from_slice(&blk[SEMI..]);
+    } else {
+        aiv.copy_from_slice(&ciphertext[..SEMI]);
+        plaintext_out_scratch.copy_from_slice(&ciphertext[SEMI..]);
+        w_core_inverse_cipher_inv(cipher, &mut aiv, plaintext_out_scratch);
+    }
+
+    let mut diff: u8 = 0;
+    for k in 0..4 {
+        diff |= aiv[k] ^ KWP_IV_PREFIX[k];
+    }
+    let mli = u32::from_be_bytes([aiv[4], aiv[5], aiv[6], aiv[7]]) as usize;
+    let padded_pt_len = plaintext_out_scratch.len();
+    let in_range = mli <= padded_pt_len && (padded_pt_len - mli) < SEMI && mli > 0;
+    if diff != 0 || !in_range {
+        return Err(ModeError::TagMismatch);
+    }
+    let mut pad_diff: u8 = 0;
+    for k in mli..padded_pt_len {
+        pad_diff |= plaintext_out_scratch[k];
+    }
+    if pad_diff != 0 {
+        return Err(ModeError::TagMismatch);
+    }
+    Ok(mli)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap};
+    use super::{
+        kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher, kwp_unwrap,
+        kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher,
+    };
     use crate::block::{Aes128Key, Aes192Key, Aes256Key};
 
     // RFC 3394 §4.1 — AES-128 wrap of 128-bit key.
@@ -398,5 +626,144 @@ mod tests {
         ct[0] ^= 1;
         let mut back = [0u8; 16];
         assert!(kw_unwrap(&k, &ct, &mut back).is_err());
+    }
+
+    // ---- Inverse-cipher direction (SP 800-38F §6.2 / kwCipher = "inverse")
+
+    // Round-trip self-consistency over the three FIPS key sizes for KW
+    // and a representative payload length. Distinct from the forward
+    // direction — wrapped output is verified to differ.
+    #[test]
+    fn kw_inverse_cipher_round_trip_aes128() {
+        let kek = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+            0x0E, 0x0F,
+        ];
+        let pt = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+            0xEE, 0xFF,
+        ];
+        let k = Aes128Key::new_internal(&kek);
+        let mut ct_inv = [0u8; 24];
+        kw_wrap_inverse_cipher(&k, &pt, &mut ct_inv).unwrap();
+        let mut back = [0u8; 16];
+        kw_unwrap_inverse_cipher(&k, &ct_inv, &mut back).unwrap();
+        assert_eq!(back, pt);
+
+        // Forward-cipher wrap of the same input must produce a different
+        // ciphertext — the modes are distinct algorithms.
+        let mut ct_fwd = [0u8; 24];
+        kw_wrap(&k, &pt, &mut ct_fwd).unwrap();
+        assert_ne!(ct_inv, ct_fwd);
+    }
+
+    #[test]
+    fn kw_inverse_cipher_round_trip_aes192() {
+        let kek = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+            0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        ];
+        let pt = [0x5au8; 32];
+        let k = Aes192Key::new_internal(&kek);
+        let mut ct = [0u8; 40];
+        kw_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
+        let mut back = [0u8; 32];
+        kw_unwrap_inverse_cipher(&k, &ct, &mut back).unwrap();
+        assert_eq!(back, pt);
+    }
+
+    #[test]
+    fn kw_inverse_cipher_round_trip_aes256() {
+        let kek = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+            0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
+            0x1C, 0x1D, 0x1E, 0x1F,
+        ];
+        let pt = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+            0xEE, 0xFF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+            0x0C, 0x0D, 0x0E, 0x0F,
+        ];
+        let k = Aes256Key::new_internal(&kek);
+        let mut ct = [0u8; 40];
+        kw_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
+        let mut back = [0u8; 32];
+        kw_unwrap_inverse_cipher(&k, &ct, &mut back).unwrap();
+        assert_eq!(back, pt);
+    }
+
+    // Cross-direction unwrap must reject — a forward-wrapped input fed
+    // to inverse-unwrap fails the ICV check with overwhelming
+    // probability, and vice versa.
+    #[test]
+    fn kw_cross_direction_rejects() {
+        let kek = [0x42u8; 16];
+        let pt = [0xa5u8; 24];
+        let k = Aes128Key::new_internal(&kek);
+        let mut ct_fwd = [0u8; 32];
+        kw_wrap(&k, &pt, &mut ct_fwd).unwrap();
+        let mut back = [0u8; 24];
+        // Forward-wrapped ct fed through inverse-unwrap: ICV mismatch.
+        assert!(kw_unwrap_inverse_cipher(&k, &ct_fwd, &mut back).is_err());
+
+        let mut ct_inv = [0u8; 32];
+        kw_wrap_inverse_cipher(&k, &pt, &mut ct_inv).unwrap();
+        // Inverse-wrapped ct fed through forward-unwrap: ICV mismatch.
+        assert!(kw_unwrap(&k, &ct_inv, &mut back).is_err());
+    }
+
+    // KWP inverse-cipher: single-block path (padded length == 8 bytes,
+    // RFC 5649 §4.1 fast path) plus multi-semiblock path. Round-trip
+    // both and verify divergence from the forward direction.
+    #[test]
+    fn kwp_inverse_cipher_round_trip_single_block() {
+        let kek = [
+            0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1,
+            0x6e, 0xa1, 0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
+        ];
+        let pt = [0x46u8, 0x6f, 0x72, 0x50, 0x61, 0x73, 0x69]; // 7 bytes -> 1 block
+        let k = Aes192Key::new_internal(&kek);
+        let mut ct_inv = [0u8; 16];
+        kwp_wrap_inverse_cipher(&k, &pt, &mut ct_inv).unwrap();
+        let mut scratch = [0u8; 8];
+        let mli = kwp_unwrap_inverse_cipher(&k, &ct_inv, &mut scratch).unwrap();
+        assert_eq!(mli, pt.len());
+        assert_eq!(&scratch[..mli], &pt[..]);
+
+        // Forward-cipher KWP of the same input must differ.
+        let mut ct_fwd = [0u8; 16];
+        kwp_wrap(&k, &pt, &mut ct_fwd).unwrap();
+        assert_ne!(ct_inv, ct_fwd);
+    }
+
+    #[test]
+    fn kwp_inverse_cipher_round_trip_multi_block() {
+        let kek = [
+            0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1,
+            0x6e, 0xa1, 0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
+        ];
+        let pt = [
+            0xc3, 0x7b, 0x7e, 0x64, 0x92, 0x58, 0x43, 0x40, 0xbe, 0xd1, 0x22, 0x07, 0x80, 0x89,
+            0x41, 0x15, 0x50, 0x68, 0xf7, 0x38,
+        ]; // 20 bytes -> 24-byte padded
+        let k = Aes192Key::new_internal(&kek);
+        let mut ct = [0u8; 32];
+        kwp_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
+        let mut scratch = [0u8; 24];
+        let mli = kwp_unwrap_inverse_cipher(&k, &ct, &mut scratch).unwrap();
+        assert_eq!(mli, pt.len());
+        assert_eq!(&scratch[..mli], &pt[..]);
+    }
+
+    #[test]
+    fn kwp_inverse_cipher_rejects_tampered_icv() {
+        let kek = [0u8; 16];
+        let pt = [0xc3u8; 24];
+        let k = Aes128Key::new_internal(&kek);
+        let mut ct = [0u8; 32];
+        kwp_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
+        ct[0] ^= 1;
+        let mut scratch = [0u8; 24];
+        assert!(kwp_unwrap_inverse_cipher(&k, &ct, &mut scratch).is_err());
     }
 }

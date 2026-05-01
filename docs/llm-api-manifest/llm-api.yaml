@@ -1988,6 +1988,160 @@ functions:
           CTR ICB must be unique per (key, message) pair. Reusing an ICB
           XORs two plaintexts together, making both trivially recoverable.
 
+  # ── AES-KW / AES-KWP — inverse cipher direction ──────────────────
+  # (Forward-cipher kw_wrap / kw_unwrap / kwp_wrap / kwp_unwrap are
+  #  pre-existing public functions; manifest entries for those are
+  #  pending separate backfill.)
+
+  - name: kw_wrap_inverse_cipher
+    module: oxicrypt-aes
+    family: aes-mode-encrypt
+    description: >-
+      AES-KW wrap (RFC 3394 / SP 800-38F §6.2 "KW-AE") with the
+      inverse cipher direction (ACVP `kwCipher = "inverse"`). The W
+      function uses the AES inverse cipher (decrypt) as the
+      underlying block primitive instead of the forward cipher. The
+      ICV (`A6A6A6A6A6A6A6A6`) is unchanged; output ciphertext
+      differs from the forward-direction wrap of the same input
+      under the same key.
+    signature: >-
+      pub fn kw_wrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      plaintext: &[u8], ciphertext_out: &mut [u8])
+      -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: plaintext
+        type: "&[u8]"
+        direction: in
+        description: "Plaintext to wrap. Must be a positive multiple of 8 bytes, ≥ 16 bytes."
+      - name: ciphertext_out
+        type: "&mut [u8]"
+        direction: out
+        description: "Wrapped output. Must be exactly plaintext.len() + 8 bytes."
+    returns:
+      type: "Result<(), ModeError>"
+      description: "LengthMismatch if buffer sizes are wrong."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kw_unwrap_inverse_cipher
+    module: oxicrypt-aes
+    family: aes-mode-decrypt
+    description: >-
+      AES-KW unwrap (SP 800-38F §6.2 "KW-AD") with the inverse
+      cipher direction (ACVP `kwCipher = "inverse"`). The W^-1
+      function uses the AES forward cipher (encrypt) as the
+      underlying block primitive. Returns TagMismatch on ICV
+      verification failure — including the case where the input
+      was wrapped with the forward-cipher direction.
+    signature: >-
+      pub fn kw_unwrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      ciphertext: &[u8], plaintext_out: &mut [u8])
+      -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: ciphertext
+        type: "&[u8]"
+        direction: in
+        description: "Wrapped input. Must be a positive multiple of 8 bytes, ≥ 24 bytes."
+      - name: plaintext_out
+        type: "&mut [u8]"
+        direction: out
+        description: "Unwrapped output. Must be exactly ciphertext.len() - 8 bytes."
+    returns:
+      type: "Result<(), ModeError>"
+      description: "TagMismatch on ICV failure (constant-time check); LengthMismatch on size error."
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kwp_wrap_inverse_cipher
+    module: oxicrypt-aes
+    family: aes-mode-encrypt
+    description: >-
+      AES-KWP wrap (RFC 5649 / SP 800-38F §6.3 "KWP-AE") with the
+      inverse cipher direction (ACVP `kwCipher = "inverse"`). The W
+      function uses the AES inverse cipher; the alternative IV
+      (`A65959A6 || [mli]_32`) is unchanged. Single-block path
+      (RFC 5649 §4.1) drives `decrypt_block` directly.
+    signature: >-
+      pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      plaintext: &[u8], ciphertext_out: &mut [u8])
+      -> Result<(), ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: plaintext
+        type: "&[u8]"
+        direction: in
+        description: "Plaintext to wrap. Length 1..=2^32-1 bytes."
+      - name: ciphertext_out
+        type: "&mut [u8]"
+        direction: out
+        description: "Wrapped output. Length must be ((plaintext.len() + 7) / 8) * 8 + 8 bytes."
+    returns:
+      type: "Result<(), ModeError>"
+      description: "LengthMismatch on size error."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kwp_unwrap_inverse_cipher
+    module: oxicrypt-aes
+    family: aes-mode-decrypt
+    description: >-
+      AES-KWP unwrap (SP 800-38F §6.3 "KWP-AD") with the inverse
+      cipher direction (ACVP `kwCipher = "inverse"`). The W^-1
+      function uses the AES forward cipher; returns TagMismatch on
+      ICV-prefix mismatch, inconsistent declared `mli`, non-zero
+      pad bytes, or input wrapped with the forward-cipher direction.
+      Returns the recovered plaintext byte length on success so
+      callers can truncate the scratch buffer.
+    signature: >-
+      pub fn kwp_unwrap_inverse_cipher<B: BlockCipher>(cipher: &B,
+      ciphertext: &[u8], plaintext_out_scratch: &mut [u8])
+      -> Result<usize, ModeError>
+    parameters:
+      - name: cipher
+        type: "&impl BlockCipher"
+        direction: in
+        description: "AES key schedule."
+      - name: ciphertext
+        type: "&[u8]"
+        direction: in
+        description: "Wrapped input. Must be a positive multiple of 8 bytes, ≥ 16 bytes."
+      - name: plaintext_out_scratch
+        type: "&mut [u8]"
+        direction: out
+        description: "Padded plaintext scratch. Length must be ciphertext.len() - 8 bytes; first `mli` bytes are the recovered plaintext."
+    returns:
+      type: "Result<usize, ModeError>"
+      description: "Recovered `mli` (plaintext byte length) on success; TagMismatch on ICV/pad failure (constant-time check); LengthMismatch on size error."
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
   # ── DRBG ──────────────────────────────────────────────────────────
 
   - name: "CtrDrbgAes256::instantiate_df"

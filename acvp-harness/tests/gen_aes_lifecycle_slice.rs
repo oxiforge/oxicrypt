@@ -676,6 +676,7 @@ fn generate_aes_lifecycle_slices() {
       "testType": "AFT",
       "direction": "encrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
 {}
       ]
@@ -685,6 +686,7 @@ fn generate_aes_lifecycle_slices() {
       "testType": "AFT",
       "direction": "decrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
 {}
       ]
@@ -694,6 +696,7 @@ fn generate_aes_lifecycle_slices() {
       "testType": "AFT",
       "direction": "decrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
 {}
       ]
@@ -785,6 +788,7 @@ fn generate_aes_lifecycle_slices() {
       "testType": "AFT",
       "direction": "encrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
 {}
       ]
@@ -794,6 +798,7 @@ fn generate_aes_lifecycle_slices() {
       "testType": "AFT",
       "direction": "decrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
 {}
       ]
@@ -803,6 +808,7 @@ fn generate_aes_lifecycle_slices() {
       "testType": "AFT",
       "direction": "decrypt",
       "keyLen": 256,
+      "kwCipher": "cipher",
       "tests": [
 {}
       ]

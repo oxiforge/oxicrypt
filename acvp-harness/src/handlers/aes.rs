@@ -32,7 +32,8 @@ use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_aes::{
     cbc_decrypt, cbc_encrypt, ccm_decrypt, ccm_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt,
-    gcm_decrypt, gcm_encrypt, kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap, Aes128Key, Aes192Key,
+    gcm_decrypt, gcm_encrypt, kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher,
+    kwp_unwrap, kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher, Aes128Key, Aes192Key,
     Aes256Key, BlockCipher, ModeError, BLOCK_SIZE,
 };
 
@@ -181,6 +182,16 @@ enum Direction {
     Decrypt,
 }
 
+/// AES-KW / AES-KWP cipher direction, parsed from the group's
+/// `kwCipher` field (SP 800-38F §6.2 / ACVP).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KwCipher {
+    /// `kwCipher = "cipher"` — W function uses AES forward cipher.
+    Forward,
+    /// `kwCipher = "inverse"` — W function uses AES inverse cipher.
+    Inverse,
+}
+
 /// Walk an AES AFT group, dispatching each test to the mode-specific
 /// one-shot routine. MCT groups are rejected explicitly.
 fn handle_aes_group(group: &JsonValue, mode: AesMode) -> Result<JsonValue, DispatchError> {
@@ -242,6 +253,8 @@ struct GroupMeta {
     ccm_nonce: Option<usize>,
     /// CCM: tag size in bytes (4,6,8,10,12,14,16).
     ccm_tag: Option<usize>,
+    /// KW/KWP: which AES cipher direction drives the W function.
+    kw_cipher: Option<KwCipher>,
 }
 
 impl GroupMeta {
@@ -261,6 +274,7 @@ impl GroupMeta {
                     gcm_tag: Some((tag_bits / 8) as usize),
                     ccm_nonce: None,
                     ccm_tag: None,
+                    kw_cipher: None,
                 })
             }
             AesMode::Ccm => {
@@ -281,12 +295,35 @@ impl GroupMeta {
                     gcm_tag: None,
                     ccm_nonce: Some((iv_bits / 8) as usize),
                     ccm_tag: Some((tag_bits / 8) as usize),
+                    kw_cipher: None,
+                })
+            }
+            AesMode::Kw | AesMode::Kwp => {
+                let kw_cipher_str = group
+                    .get("kwCipher")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("kwCipher"))?;
+                let kw_cipher = match kw_cipher_str {
+                    "cipher" => KwCipher::Forward,
+                    "inverse" => KwCipher::Inverse,
+                    _ => {
+                        return Err(DispatchError::Crypto(
+                            "AES-KW/KWP: unrecognised `kwCipher` (expected \"cipher\" or \"inverse\")",
+                        ));
+                    }
+                };
+                Ok(Self {
+                    gcm_tag: None,
+                    ccm_nonce: None,
+                    ccm_tag: None,
+                    kw_cipher: Some(kw_cipher),
                 })
             }
             _ => Ok(Self {
                 gcm_tag: None,
                 ccm_nonce: None,
                 ccm_tag: None,
+                kw_cipher: None,
             }),
         }
     }
@@ -344,10 +381,32 @@ fn run_aes_test(
             return run_ccm_test(tc_id, &key_bytes, key_len_bits, direction, t, meta);
         }
         AesMode::Kw => {
-            return run_kw_test(tc_id, &key_bytes, key_len_bits, direction, t, false);
+            let kw_cipher = meta.kw_cipher.ok_or(DispatchError::Crypto(
+                "AES-KW: missing kwCipher group metadata",
+            ))?;
+            return run_kw_test(
+                tc_id,
+                &key_bytes,
+                key_len_bits,
+                direction,
+                t,
+                false,
+                kw_cipher,
+            );
         }
         AesMode::Kwp => {
-            return run_kw_test(tc_id, &key_bytes, key_len_bits, direction, t, true);
+            let kw_cipher = meta.kw_cipher.ok_or(DispatchError::Crypto(
+                "AES-KWP: missing kwCipher group metadata",
+            ))?;
+            return run_kw_test(
+                tc_id,
+                &key_bytes,
+                key_len_bits,
+                direction,
+                t,
+                true,
+                kw_cipher,
+            );
         }
         _ => {}
     }
@@ -783,11 +842,12 @@ fn run_kw_test(
     direction: Direction,
     t: &JsonValue,
     with_padding: bool,
+    kw_cipher: KwCipher,
 ) -> Result<JsonValue, DispatchError> {
     match direction {
         Direction::Encrypt => {
             let pt = decode_hex_field(t, "pt")?;
-            let ct = dispatch_kw_wrap(key_len_bits, key_bytes, &pt, with_padding)?;
+            let ct = dispatch_kw_wrap(key_len_bits, key_bytes, &pt, with_padding, kw_cipher)?;
             Ok(JsonValue::Object(vec![
                 ("tcId".to_string(), JsonValue::Number(tc_id)),
                 ("ct".to_string(), JsonValue::String(hex::encode_upper(&ct))),
@@ -795,7 +855,7 @@ fn run_kw_test(
         }
         Direction::Decrypt => {
             let ct = decode_hex_field(t, "ct")?;
-            match dispatch_kw_unwrap(key_len_bits, key_bytes, &ct, with_padding) {
+            match dispatch_kw_unwrap(key_len_bits, key_bytes, &ct, with_padding, kw_cipher) {
                 Ok(pt) => Ok(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(tc_id)),
                     ("testPassed".to_string(), JsonValue::Bool(true)),
@@ -811,11 +871,47 @@ fn run_kw_test(
     }
 }
 
+/// Pick the right oxicrypt-aes wrap function for (mode, kw_cipher).
+fn wrap_for<B: BlockCipher>(
+    cipher: &B,
+    pt: &[u8],
+    ct: &mut [u8],
+    with_padding: bool,
+    kw_cipher: KwCipher,
+) -> Result<(), ModeError> {
+    match (with_padding, kw_cipher) {
+        (false, KwCipher::Forward) => kw_wrap(cipher, pt, ct),
+        (false, KwCipher::Inverse) => kw_wrap_inverse_cipher(cipher, pt, ct),
+        (true, KwCipher::Forward) => kwp_wrap(cipher, pt, ct),
+        (true, KwCipher::Inverse) => kwp_wrap_inverse_cipher(cipher, pt, ct),
+    }
+}
+
+/// Pick the right oxicrypt-aes unwrap function for (mode, kw_cipher).
+/// Returns the recovered plaintext byte length for KWP (so callers
+/// can truncate the buffer); for KW, the length always matches the
+/// scratch length and the return is `pt.len()`.
+fn unwrap_for<B: BlockCipher>(
+    cipher: &B,
+    ct: &[u8],
+    pt: &mut [u8],
+    with_padding: bool,
+    kw_cipher: KwCipher,
+) -> Result<usize, ModeError> {
+    match (with_padding, kw_cipher) {
+        (false, KwCipher::Forward) => kw_unwrap(cipher, ct, pt).map(|()| pt.len()),
+        (false, KwCipher::Inverse) => kw_unwrap_inverse_cipher(cipher, ct, pt).map(|()| pt.len()),
+        (true, KwCipher::Forward) => kwp_unwrap(cipher, ct, pt),
+        (true, KwCipher::Inverse) => kwp_unwrap_inverse_cipher(cipher, ct, pt),
+    }
+}
+
 fn dispatch_kw_wrap(
     key_len_bits: u64,
     key_bytes: &[u8],
     pt: &[u8],
     with_padding: bool,
+    kw_cipher: KwCipher,
 ) -> Result<Vec<u8>, DispatchError> {
     let ct_len = if with_padding {
         pt.len().div_ceil(8) * 8 + 8
@@ -829,33 +925,21 @@ fn dispatch_kw_wrap(
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
             let c = Aes128Key::new_internal(&k);
-            if with_padding {
-                kwp_wrap(&c, pt, &mut ct)
-            } else {
-                kw_wrap(&c, pt, &mut ct)
-            }
+            wrap_for(&c, pt, &mut ct, with_padding, kw_cipher)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
             let c = Aes192Key::new_internal(&k);
-            if with_padding {
-                kwp_wrap(&c, pt, &mut ct)
-            } else {
-                kw_wrap(&c, pt, &mut ct)
-            }
+            wrap_for(&c, pt, &mut ct, with_padding, kw_cipher)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
             let c = Aes256Key::new_internal(&k);
-            if with_padding {
-                kwp_wrap(&c, pt, &mut ct)
-            } else {
-                kw_wrap(&c, pt, &mut ct)
-            }
+            wrap_for(&c, pt, &mut ct, with_padding, kw_cipher)
         }
         _ => return Err(DispatchError::Crypto("AES-KW: unsupported keyLen")),
     };
@@ -868,6 +952,7 @@ fn dispatch_kw_unwrap(
     key_bytes: &[u8],
     ct: &[u8],
     with_padding: bool,
+    kw_cipher: KwCipher,
 ) -> Result<Vec<u8>, DispatchError> {
     let pt_len = ct.len().saturating_sub(8);
     let mut pt = vec![0u8; pt_len];
@@ -877,38 +962,29 @@ fn dispatch_kw_unwrap(
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
             let c = Aes128Key::new_internal(&k);
-            if with_padding {
-                kwp_unwrap(&c, ct, &mut pt).map(|actual_len| pt.truncate(actual_len))
-            } else {
-                kw_unwrap(&c, ct, &mut pt)
-            }
+            unwrap_for(&c, ct, &mut pt, with_padding, kw_cipher)
         }
         192 => {
             let k: [u8; 24] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
             let c = Aes192Key::new_internal(&k);
-            if with_padding {
-                kwp_unwrap(&c, ct, &mut pt).map(|actual_len| pt.truncate(actual_len))
-            } else {
-                kw_unwrap(&c, ct, &mut pt)
-            }
+            unwrap_for(&c, ct, &mut pt, with_padding, kw_cipher)
         }
         256 => {
             let k: [u8; 32] = key_bytes
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("AES-KW: key length"))?;
             let c = Aes256Key::new_internal(&k);
-            if with_padding {
-                kwp_unwrap(&c, ct, &mut pt).map(|actual_len| pt.truncate(actual_len))
-            } else {
-                kw_unwrap(&c, ct, &mut pt)
-            }
+            unwrap_for(&c, ct, &mut pt, with_padding, kw_cipher)
         }
         _ => return Err(DispatchError::Crypto("AES-KW: unsupported keyLen")),
     };
     match result {
-        Ok(()) => Ok(pt),
+        Ok(actual_len) => {
+            pt.truncate(actual_len);
+            Ok(pt)
+        }
         Err(ModeError::TagMismatch) => Err(DispatchError::Crypto("tag mismatch")),
         Err(_) => Err(DispatchError::Crypto(
             "oxicrypt_aes::kw_unwrap returned Err",
