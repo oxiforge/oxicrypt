@@ -965,6 +965,79 @@ int oxi_ml_dsa_87_verify(const uint8_t *pk_ptr,
                          const uint8_t *sig_ptr);
 
 /*
+ Generate an ML-KEM-1024 key pair from two 32-byte caller-supplied
+ seeds (FIPS 203 §6.1 ML-KEM.KeyGen).
+
+ Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
+ exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
+ the 1568-byte encapsulation key into `ek_out` and the 3168-byte
+ decapsulation key into `dk_out`. Both seeds are caller-supplied;
+ the caller MUST source each independently from an approved DRBG
+ (SP 800-90A). `d` and `z` are NOT interchangeable — see the
+ section comment above for the semantic distinction.
+
+ Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
+ rare K-PKE NTT decode failure occurs during keygen, or a module
+ error variant (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `ek_out` and `dk_out`
+ must each be non-NULL writable pointers to ≥1568 and ≥3168 bytes
+ respectively.
+ */
+int oxi_ml_kem_1024_keygen(const uint8_t *d_ptr,
+                           const uint8_t *z_ptr,
+                           uint8_t *ek_out,
+                           uint8_t *dk_out);
+
+/*
+ Encapsulate a shared secret against an ML-KEM-1024 encapsulation
+ key (FIPS 203 §6.2 ML-KEM.Encaps).
+
+ Reads exactly 1568 bytes from `ek_ptr` and exactly 32 bytes from
+ `m_ptr` (encapsulation randomness, caller-supplied from an
+ SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
+ and the 1568-byte ciphertext into `ct_out`.
+
+ Returns `OxiResult::Ok = 0` on success, or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `ss_out` and `ct_out`
+ must each be non-NULL writable pointers to ≥32 and ≥1568 bytes
+ respectively.
+ */
+int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
+                                const uint8_t *m_ptr,
+                                uint8_t *ss_out,
+                                uint8_t *ct_out);
+
+/*
+ Decapsulate a shared secret from an ML-KEM-1024 ciphertext
+ (FIPS 203 §6.3 ML-KEM.Decaps).
+
+ Reads exactly 3168 bytes from `dk_ptr` and exactly 1568 bytes
+ from `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
+ **Fully deterministic** — no caller randomness, no `Ok(false)`
+ shape, no `TagMismatch = 22` mapping. The FO transform's
+ implicit-rejection branch absorbs tampered ciphertext into a
+ deterministic-but-pseudorandom shared secret in constant time;
+ tamper does NOT surface as a discriminant. See the
+ decapsulate-implicit-rejection paragraph in security-policy §4.9.
+
+ Returns `OxiResult::Ok = 0` on success, or a module error
+ variant (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `ss_out` must be a
+ non-NULL writable pointer to ≥32 bytes.
+ */
+int oxi_ml_kem_1024_decapsulate(const uint8_t *dk_ptr, const uint8_t *ct_ptr, uint8_t *ss_out);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through

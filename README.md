@@ -386,10 +386,26 @@ The `oxicrypt-ffi` crate currently exposes:
   `Result<()>` upstream collapse as RSA verify; same FFI
   mapping). Single-variant for now; `oxi_ml_dsa_44_*` and
   `oxi_ml_dsa_65_*` ship later as additive function names.
+- ML-KEM-1024 (FIPS 203): three stateless entry points —
+  `oxi_ml_kem_1024_keygen`, `oxi_ml_kem_1024_encapsulate`, and
+  `oxi_ml_kem_1024_decapsulate`. `keygen` takes TWO 32-byte
+  caller-supplied seeds (`d` for K-PKE keygen randomness, `z`
+  for the implicit-rejection seed embedded in `dk`; both seeds
+  caller-sourced from an SP 800-90A DRBG, NOT interchangeable)
+  and writes the 1568-byte encapsulation key + 3168-byte
+  decapsulation key. `encapsulate` reads `ek` plus 32-byte
+  caller-supplied randomness `m` and writes a 32-byte shared
+  secret + 1568-byte ciphertext. `decapsulate` is fully
+  deterministic — no caller randomness, NO `TagMismatch = 22`
+  mapping: tampered ciphertext is absorbed by the FO transform's
+  implicit-rejection branch into a deterministic-but-pseudorandom
+  shared secret in constant time (deliberate FIPS 203 §6.3
+  design). Single-variant for now; `oxi_ml_kem_512_*` and
+  `oxi_ml_kem_768_*` ship later as additive function names.
 
 Per-algorithm exposure of the remaining approved services
-(DRBG, ML-KEM, SLH-DSA, LMS, XMSS) lands in subsequent
-algorithm chunks.
+(DRBG, SLH-DSA, LMS, XMSS) lands in subsequent algorithm
+chunks.
 
 ## `oxi` CLI
 

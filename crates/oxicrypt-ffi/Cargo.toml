@@ -30,5 +30,6 @@ oxicrypt-ecdh = { path = "../oxicrypt-ecdh" }
 oxicrypt-dh = { path = "../oxicrypt-dh" }
 oxicrypt-rsa = { path = "../oxicrypt-rsa" }
 oxicrypt-ml-dsa = { path = "../oxicrypt-ml-dsa" }
+oxicrypt-ml-kem = { path = "../oxicrypt-ml-kem" }
 oxicrypt-kdf = { path = "../oxicrypt-kdf" }
 oxicrypt-tls-kdf = { path = "../oxicrypt-tls-kdf" }

@@ -5661,6 +5661,87 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  - name: oxi_ml_kem_1024_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an ML-KEM-1024 key pair from two 32-byte caller-supplied
+      seeds (FIPS 203 §6.1 ML-KEM.KeyGen). Reads exactly 32 bytes from
+      `d_ptr` (K-PKE keygen randomness) and exactly 32 bytes from
+      `z_ptr` (implicit-rejection seed embedded in dk). Writes the
+      1568-byte encapsulation key into `ek_out` and the 3168-byte
+      decapsulation key into `dk_out`. Both seeds caller-sourced from
+      an SP 800-90A DRBG. `d` and `z` are NOT interchangeable: `d`
+      drives the K-PKE matrix expansion and secret sampling; `z` is
+      written into `dk` for the FO transform's implicit-rejection
+      branch. Forwards to `oxicrypt_ml_kem::keygen`.
+    signature: >-
+      int oxi_ml_kem_1024_keygen(const uint8_t *d_ptr,
+      const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "32-byte K-PKE keygen randomness" }
+      - { name: z_ptr, type: "const uint8_t *", direction: in, description: "32-byte implicit-rejection seed (embedded in dk)" }
+      - { name: ek_out, type: "uint8_t *", direction: out, description: "1568-byte encapsulation key buffer" }
+      - { name: dk_out, type: "uint8_t *", direction: out, description: "3168-byte decapsulation key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on rare K-PKE NTT decode failure, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_1024_encapsulate
+    module: oxicrypt-ffi
+    description: >-
+      Encapsulate a shared secret against an ML-KEM-1024 encapsulation
+      key (FIPS 203 §6.2 ML-KEM.Encaps). Reads exactly 1568 bytes from
+      `ek_ptr` and exactly 32 bytes from `m_ptr` (encapsulation
+      randomness, caller-supplied from an SP 800-90A DRBG). Writes the
+      32-byte shared secret into `ss_out` and the 1568-byte ciphertext
+      into `ct_out`. Forwards to `oxicrypt_ml_kem::encapsulate`.
+    signature: >-
+      int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
+      const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
+    parameters:
+      - { name: ek_ptr, type: "const uint8_t *", direction: in, description: "1568-byte ML-KEM-1024 encapsulation key" }
+      - { name: m_ptr, type: "const uint8_t *", direction: in, description: "32-byte encapsulation randomness" }
+      - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: "1568-byte ciphertext buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_1024_decapsulate
+    module: oxicrypt-ffi
+    description: >-
+      Decapsulate a shared secret from an ML-KEM-1024 ciphertext
+      (FIPS 203 §6.3 ML-KEM.Decaps). Reads exactly 3168 bytes from
+      `dk_ptr` and exactly 1568 bytes from `ct_ptr`. Writes the
+      32-byte shared secret into `ss_out`. Fully deterministic;
+      tampered ciphertext is absorbed by the FO transform's
+      implicit-rejection branch into a deterministic-but-pseudorandom
+      shared secret in constant time — there is NO `TagMismatch = 22`
+      mapping (deliberate FIPS 203 §6.3 design property).
+      Forwards to `oxicrypt_ml_kem::decapsulate`.
+    signature: >-
+      int oxi_ml_kem_1024_decapsulate(const uint8_t *dk_ptr,
+      const uint8_t *ct_ptr, uint8_t *ss_out)
+    parameters:
+      - { name: dk_ptr, type: "const uint8_t *", direction: in, description: "3168-byte ML-KEM-1024 decapsulation key" }
+      - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "1568-byte ML-KEM-1024 ciphertext" }
+      - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer). Tampered ct does NOT surface as TagMismatch — see implicit-rejection paragraph in security-policy §4.9."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────
