@@ -709,7 +709,7 @@ pub fn ecdsa_sigver_capability() -> JsonValue {
             "capabilities",
             JsonValue::Array(vec![obj(vec![
                 ("curve", str_array(&["P-256", "P-384"])),
-                ("hashAlg", str_array(&["SHA2-256", "SHA-384"])),
+                ("hashAlg", str_array(&["SHA2-256", "SHA2-384"])),
             ])]),
         ),
     ])
@@ -735,7 +735,7 @@ pub fn ecdsa_siggen_capability() -> JsonValue {
             "capabilities",
             JsonValue::Array(vec![obj(vec![
                 ("curve", str_array(&["P-256", "P-384"])),
-                ("hashAlg", str_array(&["SHA2-256", "SHA-384"])),
+                ("hashAlg", str_array(&["SHA2-256", "SHA2-384"])),
             ])]),
         ),
         ("componentTest", JsonValue::Bool(false)),
