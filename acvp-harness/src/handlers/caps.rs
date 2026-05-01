@@ -700,6 +700,15 @@ pub fn rsa_sigprim_capability() -> JsonValue {
 // ── ECDSA family ─────────────────────────────────────────────────
 
 /// Build an ACVP registration block for ECDSA / sigVer.
+///
+/// Each capability block declares one strict (curve, hashAlg) pair
+/// matching the FIPS 186-5 §6.4.1 security-strength binding (P-256
+/// with SHA2-256, P-384 with SHA2-384). The earlier single-block
+/// form `curve: [P-256, P-384] × hashAlg: [SHA2-256, SHA2-384]`
+/// declared the cross product and prompted the demo server to
+/// generate test cases for all four combinations, including the
+/// cross-pairs (P-256, SHA2-384) and (P-384, SHA2-256) that
+/// `oxicrypt-ecdsa` does not implement.
 pub fn ecdsa_sigver_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ECDSA")),
@@ -707,10 +716,16 @@ pub fn ecdsa_sigver_capability() -> JsonValue {
         ("revision", str_val("FIPS186-5")),
         (
             "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                ("curve", str_array(&["P-256", "P-384"])),
-                ("hashAlg", str_array(&["SHA2-256", "SHA2-384"])),
-            ])]),
+            JsonValue::Array(vec![
+                obj(vec![
+                    ("curve", str_array(&["P-256"])),
+                    ("hashAlg", str_array(&["SHA2-256"])),
+                ]),
+                obj(vec![
+                    ("curve", str_array(&["P-384"])),
+                    ("hashAlg", str_array(&["SHA2-384"])),
+                ]),
+            ]),
         ),
     ])
 }
@@ -726,6 +741,11 @@ pub fn ecdsa_keyver_capability() -> JsonValue {
 }
 
 /// Build an ACVP registration block for ECDSA / sigGen.
+///
+/// Mirrors `ecdsa_sigver_capability`: one capability block per FIPS
+/// 186-5 strict (curve, hashAlg) pair to keep registration aligned
+/// with the (P-256, SHA2-256) and (P-384, SHA2-384) implementation
+/// surface in `oxicrypt-ecdsa`.
 pub fn ecdsa_siggen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ECDSA")),
@@ -733,10 +753,16 @@ pub fn ecdsa_siggen_capability() -> JsonValue {
         ("revision", str_val("FIPS186-5")),
         (
             "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                ("curve", str_array(&["P-256", "P-384"])),
-                ("hashAlg", str_array(&["SHA2-256", "SHA2-384"])),
-            ])]),
+            JsonValue::Array(vec![
+                obj(vec![
+                    ("curve", str_array(&["P-256"])),
+                    ("hashAlg", str_array(&["SHA2-256"])),
+                ]),
+                obj(vec![
+                    ("curve", str_array(&["P-384"])),
+                    ("hashAlg", str_array(&["SHA2-384"])),
+                ]),
+            ]),
         ),
         ("componentTest", JsonValue::Bool(false)),
     ])
