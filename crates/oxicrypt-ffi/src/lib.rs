@@ -2792,3 +2792,397 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
         Err(e) => R::from(e) as c_int,
     }
 }
+
+// ── LMS / XMSS — SP 800-208 stateful hash-based signatures ──────
+//
+// LMS (Leighton-Micali, RFC 8554) and XMSS (RFC 8391) are stateful
+// hash-based signature schemes approved by SP 800-208 for FIPS use,
+// and named in CNSA 2.0 for firmware signing. Both are wired to the
+// same parameter set per upstream:
+//
+//   LMS  — LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 (1024 sigs/key)
+//   XMSS — XMSS-SHA2_10_256, OID 0x00000001        (1024 sigs/key)
+//
+// Stateful means each leaf of the Merkle tree may sign exactly one
+// message; reusing a leaf is a catastrophic break of the scheme. The
+// caller is the SOLE custodian of the private-key state, and MUST
+// persist the updated `sk_out` after every sign before using the
+// signature. This C ABI surface encodes that obligation in its
+// signature shape: every sign call takes both an `sk_in` (pre-state)
+// and writes an `sk_out` (post-state, leaf index advanced by one).
+// There is no opaque handle, by design, so a caller cannot escape
+// the persistence contract by holding a long-lived in-memory state
+// and forgetting to write it down. See the FFI design note in the
+// PR body and `docs/security-policy/security-policy.md` §4 for the
+// rationale.
+//
+// Mapping of upstream `Result` shapes to `OxiResult`:
+//
+//   keygen → Result<(SK, [u8; PK_LEN]), Error>
+//     Ok                   → OxiResult::Ok = 0
+//     Err(NotOperational)  → OxiResult::NotOperational = 1
+//     Err(AlgorithmRestricted) → OxiResult::AlgorithmRestricted = 6
+//
+//   sign → Result<[u8; SIG_LEN], Error>
+//     Ok                   → OxiResult::Ok = 0; sk_out written
+//     Err(InvalidInput)    → OxiResult::InvalidInput = 5 (key
+//                            exhausted: leaf_index ≥ MAX_SIGNATURES)
+//     Err(NotOperational | AlgorithmRestricted) → as above
+//
+//   verify → Result<(), Error>
+//     Ok                   → OxiResult::Ok = 0
+//     Err(InvalidInput)    → OxiResult::TagMismatch = 22
+//                            (verify-fail collapses parse, structural,
+//                            and cryptographic mismatch into a single
+//                            discriminant — same upstream shape as
+//                            RSA verify, ML-DSA verify, SLH-DSA
+//                            verify; verify-mismatch convention
+//                            stabilized as arc pattern #7)
+//
+// Byte layouts:
+//
+//   LMS  pk = 56 bytes   (lms_type(4) || ots_type(4) || I(16) || root(32))
+//   LMS  sk = 52 bytes   (seed(32) || I(16) || leaf_index(4)) — opaque,
+//        treat as a binary blob; produced by upstream `to_bytes()`
+//   LMS  sig = 2508 bytes (q(4) || ots_sig(2180) || lms_type(4)
+//        || auth_path(10×32))
+//
+//   XMSS pk = 68 bytes   (OID(4) || root(32) || PUB_SEED(32))
+//   XMSS sk = 132 bytes  (sk_seed(32) || sk_prf(32) || pub_seed(32)
+//        || root(32) || idx(4)) — opaque, treat as a binary blob
+//   XMSS sig = 2500 bytes (idx(4) || r(32) || wots_sig(67×32)
+//        || auth_path(10×32))
+//
+// Per-variant naming: this is `lms` / `xmss` (not `lms_sha256_m32_h10`
+// or `xmss_sha2_10_256`) because each upstream crate currently exposes
+// exactly one parameter set. Future parameter sets, if added upstream,
+// will land as new functions under qualified names per stabilized arc
+// pattern #8 (per-variant naming, no enum dispatch). Existing C
+// callers do not recompile when new variants ship.
+
+/// Length of an LMS public key in bytes (56).
+pub const OXI_LMS_PUBLIC_KEY_LEN: usize = 56;
+
+/// Length of an LMS opaque private-key blob in bytes (52).
+///
+/// This matches the upstream `LmsPrivateKey::to_bytes()` /
+/// `from_bytes()` round-trip layout: `seed(32) || I(16) ||
+/// leaf_index(4)`. Treat the blob as opaque; the C ABI never
+/// reaches inside it.
+pub const OXI_LMS_PRIVATE_KEY_LEN: usize = 52;
+
+/// Length of an LMS signature in bytes (2508).
+pub const OXI_LMS_SIGNATURE_LEN: usize = 2508;
+
+/// Length of an XMSS public key in bytes (68).
+pub const OXI_XMSS_PUBLIC_KEY_LEN: usize = 68;
+
+/// Length of an XMSS opaque private-key blob in bytes (132).
+///
+/// Matches upstream `XmssPrivateKey::to_bytes()` / `from_bytes()`
+/// layout: `sk_seed(32) || sk_prf(32) || pub_seed(32) || root(32)
+/// || idx(4)`. Treat as opaque.
+pub const OXI_XMSS_PRIVATE_KEY_LEN: usize = 132;
+
+/// Length of an XMSS signature in bytes (2500).
+pub const OXI_XMSS_SIGNATURE_LEN: usize = 2500;
+
+/// Generate an LMS key pair from a 32-byte caller-supplied seed.
+///
+/// Reads exactly 32 bytes from `xi_ptr`, deterministically derives
+/// the tree seed and 16-byte identifier `I` via SHA-256, and writes
+/// the 52-byte opaque private-key blob into `sk_out` and the
+/// 56-byte public key into `pk_out`. The caller MUST source the 32
+/// seed bytes from an approved DRBG (SP 800-90A); the FFI performs
+/// no entropy generation.
+///
+/// `sk_out` is the persistence-of-record format. Treat it as an
+/// opaque blob and pass it back unchanged to [`oxi_lms_sign`].
+///
+/// Returns `OxiResult::Ok = 0` on success or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
+/// writable pointer to ≥52 bytes. `pk_out` must be a non-NULL
+/// writable pointer to ≥56 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_lms_keygen(
+    xi_ptr: *const u8,
+    sk_out: *mut u8,
+    pk_out: *mut u8,
+) -> c_int {
+    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sk_out.is_null() || pk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // Unreachable: slice_from_raw verified length == 32.
+    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
+        return R::Internal as c_int;
+    };
+    let (sk, pk) = match oxicrypt_lms::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    let sk_bytes = sk.to_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), sk_out, OXI_LMS_PRIVATE_KEY_LEN) };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, OXI_LMS_PUBLIC_KEY_LEN) };
+    R::Ok as c_int
+}
+
+/// Sign a message with an LMS private key.
+///
+/// Reads the 52-byte opaque private-key blob from `sk_in_ptr`,
+/// `msg_len` bytes from `msg_ptr`, signs the message, advances the
+/// internal leaf index by one, writes the **updated** 52-byte blob
+/// into `sk_out`, and writes the 2508-byte signature into `sig_out`.
+///
+/// **Persistence contract:** the caller MUST persist `sk_out` (the
+/// post-state) before using `sig_out`. Failure to persist before a
+/// crash, followed by a restart that re-signs from the pre-state,
+/// reuses the same one-time key — a catastrophic break of LMS.
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
+/// key is exhausted (1024 signatures already issued), or a module
+/// error variant.
+///
+/// # Safety
+///
+/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr` must be valid
+/// for `msg_len` bytes (NULL with len=0 is permitted). `sk_out`
+/// must be a non-NULL writable pointer to ≥52 bytes. `sig_out`
+/// must be a non-NULL writable pointer to ≥2508 bytes. `sk_in_ptr`
+/// and `sk_out` may alias (in-place advance is supported).
+#[no_mangle]
+pub unsafe extern "C" fn oxi_lms_sign(
+    sk_in_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sk_out: *mut u8,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk_in = match unsafe { slice_from_raw(sk_in_ptr, OXI_LMS_PRIVATE_KEY_LEN) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sk_out.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // Unreachable: slice_from_raw verified length == 52.
+    let Some(mut sk) = oxicrypt_lms::LmsPrivateKey::from_bytes(sk_in) else {
+        return R::InvalidInput as c_int;
+    };
+    let sig = match oxicrypt_lms::sign(&mut sk, msg) {
+        Ok(s) => s,
+        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
+        Err(e) => return R::from(e) as c_int,
+    };
+    let sk_bytes = sk.to_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), sk_out, OXI_LMS_PRIVATE_KEY_LEN) };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, OXI_LMS_SIGNATURE_LEN) };
+    R::Ok as c_int
+}
+
+/// Verify an LMS signature.
+///
+/// Reads the 56-byte public key from `pk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, and the 2508-byte signature from `sig_ptr`.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (parse, structural mismatch, or cryptographic mismatch — upstream
+/// collapses these into a single `Err(InvalidInput)`; same shape
+/// as RSA verify, ML-DSA verify, SLH-DSA verify), or a module error
+/// variant.
+///
+/// # Safety
+///
+/// `pk_ptr` must be valid for 56 bytes. `msg_ptr` must be valid for
+/// `msg_len` bytes (NULL with len=0 is permitted). `sig_ptr` must
+/// be valid for 2508 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_lms_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk_slice = match unsafe { slice_from_raw(pk_ptr, OXI_LMS_PUBLIC_KEY_LEN) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig_slice = match unsafe { slice_from_raw(sig_ptr, OXI_LMS_SIGNATURE_LEN) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    // Unreachable: slice_from_raw verified each input's length.
+    let Ok(pk) = <&[u8; OXI_LMS_PUBLIC_KEY_LEN]>::try_from(pk_slice) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig) = <&[u8; OXI_LMS_SIGNATURE_LEN]>::try_from(sig_slice) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_lms::verify(pk, msg, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an XMSS key pair from a 32-byte caller-supplied seed.
+///
+/// Reads exactly 32 bytes from `xi_ptr`, deterministically derives
+/// `SK_SEED`, `SK_PRF`, and `PUB_SEED` via SHA-256 over `(xi || tag)`
+/// for tags 0x00, 0x01, 0x02 respectively, computes the Merkle tree
+/// root, and writes the 132-byte opaque private-key blob into
+/// `sk_out` and the 68-byte public key into `pk_out`. The caller
+/// MUST source the 32 seed bytes from an approved DRBG.
+///
+/// `sk_out` is the persistence-of-record format. Treat it as opaque.
+///
+/// Returns `OxiResult::Ok = 0` on success or a module error variant.
+///
+/// # Safety
+///
+/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
+/// writable pointer to ≥132 bytes. `pk_out` must be a non-NULL
+/// writable pointer to ≥68 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_xmss_keygen(
+    xi_ptr: *const u8,
+    sk_out: *mut u8,
+    pk_out: *mut u8,
+) -> c_int {
+    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sk_out.is_null() || pk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // Unreachable: slice_from_raw verified length == 32.
+    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
+        return R::Internal as c_int;
+    };
+    let (sk, pk) = match oxicrypt_xmss::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    let sk_bytes = sk.to_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), sk_out, OXI_XMSS_PRIVATE_KEY_LEN) };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, OXI_XMSS_PUBLIC_KEY_LEN) };
+    R::Ok as c_int
+}
+
+/// Sign a message with an XMSS private key.
+///
+/// Reads the 132-byte opaque private-key blob from `sk_in_ptr`,
+/// `msg_len` bytes from `msg_ptr`, signs the message, advances the
+/// internal leaf index by one, writes the **updated** 132-byte blob
+/// into `sk_out`, and writes the 2500-byte signature into `sig_out`.
+///
+/// **Persistence contract:** identical to LMS — the caller MUST
+/// persist `sk_out` before using `sig_out`. See [`oxi_lms_sign`] for
+/// the rationale.
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
+/// key is exhausted (1024 signatures already issued), or a module
+/// error variant.
+///
+/// # Safety
+///
+/// `sk_in_ptr` must be valid for 132 bytes. `msg_ptr` must be valid
+/// for `msg_len` bytes. `sk_out` must be a non-NULL writable pointer
+/// to ≥132 bytes. `sig_out` must be a non-NULL writable pointer to
+/// ≥2500 bytes. `sk_in_ptr` and `sk_out` may alias.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_xmss_sign(
+    sk_in_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sk_out: *mut u8,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk_in = match unsafe { slice_from_raw(sk_in_ptr, OXI_XMSS_PRIVATE_KEY_LEN) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sk_out.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // Unreachable: slice_from_raw verified length == 132.
+    let Some(mut sk) = oxicrypt_xmss::XmssPrivateKey::from_bytes(sk_in) else {
+        return R::InvalidInput as c_int;
+    };
+    let sig = match oxicrypt_xmss::sign(&mut sk, msg) {
+        Ok(s) => s,
+        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
+        Err(e) => return R::from(e) as c_int,
+    };
+    let sk_bytes = sk.to_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), sk_out, OXI_XMSS_PRIVATE_KEY_LEN) };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, OXI_XMSS_SIGNATURE_LEN) };
+    R::Ok as c_int
+}
+
+/// Verify an XMSS signature.
+///
+/// Reads the 68-byte public key from `pk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, and the 2500-byte signature from `sig_ptr`.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (parse / structural / cryptographic), or a module error variant.
+///
+/// # Safety
+///
+/// `pk_ptr` must be valid for 68 bytes. `msg_ptr` must be valid for
+/// `msg_len` bytes. `sig_ptr` must be valid for 2500 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_xmss_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk_slice = match unsafe { slice_from_raw(pk_ptr, OXI_XMSS_PUBLIC_KEY_LEN) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig_slice = match unsafe { slice_from_raw(sig_ptr, OXI_XMSS_SIGNATURE_LEN) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    // Unreachable: slice_from_raw verified each input's length.
+    let Ok(pk) = <&[u8; OXI_XMSS_PUBLIC_KEY_LEN]>::try_from(pk_slice) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig) = <&[u8; OXI_XMSS_SIGNATURE_LEN]>::try_from(sig_slice) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_xmss::verify(pk, msg, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}

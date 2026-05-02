@@ -250,6 +250,46 @@ capabilities:
         let sig = sign(&sk, msg, ctx).unwrap();
         verify(&pk, msg, ctx, &sig).unwrap();
 
+  - category: "Post-quantum signatures (stateful hash-based)"
+    note: >
+      LMS and XMSS are stateful hash-based signature schemes approved
+      by SP 800-208 for FIPS use and named in CNSA 2.0 for firmware
+      signing. Each Merkle-tree leaf may sign exactly one message;
+      reusing a leaf is a catastrophic break. The caller is the SOLE
+      custodian of the private-key state and MUST persist the
+      updated private-key blob to durable storage after every sign
+      before using the signature. Each parameter set in this round
+      (LMS_SHA256_M32_H10 and XMSS-SHA2_10_256) supports 1024
+      signatures per key.
+    algorithms:
+      - "LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 (SP 800-208, RFC 8554)"
+      - "XMSS-SHA2_10_256 (SP 800-208, RFC 8391)"
+    operations:
+      - "keygen"
+      - "sign"
+      - "verify"
+    crates:
+      - "oxicrypt-lms"
+      - "oxicrypt-xmss"
+    standards:
+      - "SP 800-208"
+      - "RFC 8554"
+      - "RFC 8391"
+    quickstart:
+      language: "rust"
+      code: |
+        use oxicrypt_lms::{keygen, sign, verify};
+        use oxicrypt_drbg::HmacDrbgSha256;
+
+        let mut drbg = HmacDrbgSha256::new();
+        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
+        let mut xi = [0u8; 32];
+        drbg.generate(None, &mut xi).unwrap();
+        let (mut sk, pk) = keygen(&xi).unwrap();
+        let sig = sign(&mut sk, b"hello LMS").unwrap();
+        // sk is now advanced by one leaf — persist sk.to_bytes() before using sig.
+        verify(&pk, b"hello LMS", &sig).unwrap();
+
   - category: "Asymmetric encryption"
     algorithms:
       - "RSA-2048 OAEP"
@@ -367,6 +407,15 @@ capabilities:
       - "oxi_ml_kem_1024_keygen"
       - "oxi_ml_kem_1024_encapsulate"
       - "oxi_ml_kem_1024_decapsulate"
+      - "oxi_slh_dsa_sha2_256s_keygen"
+      - "oxi_slh_dsa_sha2_256s_sign"
+      - "oxi_slh_dsa_sha2_256s_verify"
+      - "oxi_lms_keygen"
+      - "oxi_lms_sign"
+      - "oxi_lms_verify"
+      - "oxi_xmss_keygen"
+      - "oxi_xmss_sign"
+      - "oxi_xmss_verify"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"

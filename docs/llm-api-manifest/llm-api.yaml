@@ -5990,6 +5990,191 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  - name: oxi_lms_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an LMS key pair (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4
+      parameter set per SP 800-208 / RFC 8554) from a 32-byte
+      caller-supplied seed. Reads exactly 32 bytes from `xi_ptr`,
+      deterministically derives the tree seed (`SHA-256(xi || 0x00)`)
+      and 16-byte tree identifier `I` (`SHA-256(xi || 0x01)[0..16]`),
+      computes the Merkle tree root (1024 leaves), and writes the
+      52-byte opaque private-key blob into `sk_out` and the 56-byte
+      public key into `pk_out`. The 32 seed bytes are caller-sourced
+      from an SP 800-90A DRBG. The private-key blob is the
+      persistence-of-record format produced by the upstream
+      `to_bytes()` round-trip; treat it as opaque. Forwards to
+      `oxicrypt_lms::keygen`.
+    signature: >-
+      int oxi_lms_keygen(const uint8_t *xi_ptr,
+      uint8_t *sk_out, uint8_t *pk_out)
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "32-byte caller-supplied seed" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "52-byte opaque LMS private-key blob" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "56-byte LMS public key" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_lms_sign
+    module: oxicrypt-ffi
+    description: >-
+      Sign a message with an LMS private key (SP 800-208 / RFC 8554).
+      Reads the 52-byte opaque private-key blob from `sk_in_ptr`,
+      `msg_len` bytes from `msg_ptr`, signs the message, advances the
+      internal leaf index by one, writes the **updated** 52-byte blob
+      into `sk_out`, and writes the 2508-byte signature into `sig_out`.
+      LMS is a stateful scheme: each leaf may sign exactly one
+      message. The caller MUST persist `sk_out` (the post-state) to
+      durable storage before using `sig_out`; failure to persist
+      before a crash, followed by a restart that re-signs from the
+      pre-state, reuses the same one-time key — a catastrophic break
+      of LMS. The byte-buffer pass-through API encodes the
+      persistence obligation in the function signature so a caller
+      cannot accidentally hold long-lived in-memory state and forget
+      to write it down. `sk_in_ptr` and `sk_out` may alias (in-place
+      advance). Forwards to `oxicrypt_lms::sign`.
+    signature: >-
+      int oxi_lms_sign(const uint8_t *sk_in_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *sk_out, uint8_t *sig_out)
+    parameters:
+      - { name: sk_in_ptr, type: "const uint8_t *", direction: in, description: "52-byte opaque LMS private-key blob (pre-state)" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "52-byte opaque LMS private-key blob (post-state, leaf index advanced; MUST be persisted before using sig_out)" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "2508-byte LMS signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput when key is exhausted (1024 signatures issued), 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_lms_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an LMS signature (SP 800-208 / RFC 8554). Reads the
+      56-byte public key from `pk_ptr`, `msg_len` bytes from
+      `msg_ptr`, and the 2508-byte signature from `sig_ptr`. Returns
+      `Ok = 0` for a valid signature, `TagMismatch = 22` for any
+      verification failure (parse / structural mismatch / cryptographic
+      mismatch — upstream collapses these into a single
+      `Err(InvalidInput)`; same convention as RSA verify, ML-DSA
+      verify, and SLH-DSA verify). Forwards to
+      `oxicrypt_lms::verify`.
+    signature: >-
+      int oxi_lms_verify(const uint8_t *pk_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "56-byte LMS public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "2508-byte LMS signature" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_xmss_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an XMSS key pair (XMSS-SHA2_10_256, OID 0x00000001 per
+      SP 800-208 / RFC 8391) from a 32-byte caller-supplied seed.
+      Reads exactly 32 bytes from `xi_ptr`, deterministically derives
+      `SK_SEED = SHA-256(xi || 0x00)`, `SK_PRF = SHA-256(xi || 0x01)`,
+      and `PUB_SEED = SHA-256(xi || 0x02)`, computes the Merkle tree
+      root (1024 leaves with WOTS+ and L-tree compression), and writes
+      the 132-byte opaque private-key blob into `sk_out` and the
+      68-byte public key into `pk_out`. The 32 seed bytes are
+      caller-sourced from an SP 800-90A DRBG. The private-key blob is
+      the persistence-of-record format produced by the upstream
+      `to_bytes()` round-trip; treat it as opaque. Forwards to
+      `oxicrypt_xmss::keygen`.
+    signature: >-
+      int oxi_xmss_keygen(const uint8_t *xi_ptr,
+      uint8_t *sk_out, uint8_t *pk_out)
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "32-byte caller-supplied seed" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "132-byte opaque XMSS private-key blob" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "68-byte XMSS public key" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_xmss_sign
+    module: oxicrypt-ffi
+    description: >-
+      Sign a message with an XMSS private key (SP 800-208 / RFC 8391).
+      Reads the 132-byte opaque private-key blob from `sk_in_ptr`,
+      `msg_len` bytes from `msg_ptr`, signs the message, advances the
+      internal leaf index by one, writes the **updated** 132-byte blob
+      into `sk_out`, and writes the 2500-byte signature into `sig_out`.
+      XMSS is stateful — same persistence contract as `oxi_lms_sign`:
+      caller MUST persist `sk_out` before using `sig_out`. The
+      byte-buffer pass-through API mirrors LMS so a caller learning
+      either API knows the other. `sk_in_ptr` and `sk_out` may alias
+      (in-place advance). Forwards to `oxicrypt_xmss::sign`.
+    signature: >-
+      int oxi_xmss_sign(const uint8_t *sk_in_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *sk_out, uint8_t *sig_out)
+    parameters:
+      - { name: sk_in_ptr, type: "const uint8_t *", direction: in, description: "132-byte opaque XMSS private-key blob (pre-state)" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "132-byte opaque XMSS private-key blob (post-state, leaf index advanced; MUST be persisted before using sig_out)" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "2500-byte XMSS signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput when key is exhausted (1024 signatures issued), 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_xmss_verify
+    module: oxicrypt-ffi
+    description: >-
+      Verify an XMSS signature (SP 800-208 / RFC 8391). Reads the
+      68-byte public key from `pk_ptr`, `msg_len` bytes from
+      `msg_ptr`, and the 2500-byte signature from `sig_ptr`. Returns
+      `Ok = 0` for a valid signature, `TagMismatch = 22` for any
+      verification failure (parse / structural mismatch / cryptographic
+      mismatch — upstream collapses these into a single
+      `Err(InvalidInput)`; same convention as RSA verify, ML-DSA
+      verify, SLH-DSA verify, and LMS verify). Forwards to
+      `oxicrypt_xmss::verify`.
+    signature: >-
+      int oxi_xmss_verify(const uint8_t *pk_ptr,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr)
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "68-byte XMSS public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "2500-byte XMSS signature" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

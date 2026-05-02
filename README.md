@@ -420,9 +420,32 @@ The `oxicrypt-ffi` crate currently exposes:
   Single-variant for now; `oxi_slh_dsa_sha2_{128s,128f,192s,
   192f,256f}_*` and `oxi_slh_dsa_shake_*` ship later as
   additive function names (12 variants total per FIPS 205).
+- LMS / XMSS (SP 800-208, RFC 8554 / RFC 8391) — stateful
+  hash-based signatures, six entry points across two families:
+  `oxi_lms_{keygen, sign, verify}` and
+  `oxi_xmss_{keygen, sign, verify}`. Both wired to the
+  SP 800-208-approved parameter sets `LMS_SHA256_M32_H10` /
+  `LMOTS_SHA256_N32_W4` and `XMSS-SHA2_10_256` (height-10 trees,
+  1024 signatures per key). `keygen` reads a 32-byte caller-
+  supplied seed `xi` (caller-sourced from an SP 800-90A DRBG)
+  and writes an opaque private-key blob (52 bytes for LMS, 132
+  for XMSS) plus the public key (56 / 68 bytes). `sign` takes
+  the pre-state blob and writes both an updated post-state blob
+  (leaf index advanced by one) AND the signature (2508 / 2500
+  bytes). The byte-buffer pass-through API is deliberate: it
+  encodes the state-persistence obligation at the function
+  signature so a caller cannot accidentally hold long-lived
+  in-memory state and forget to write it down — a footgun that
+  would catastrophically break any stateful HBS scheme. `sign`
+  returns `InvalidInput = 5` once the key is exhausted (1024
+  signatures issued); `verify` collapses parse / structural /
+  cryptographic mismatch into `TagMismatch = 22` (fourth and
+  fifth occurrences of the cross-family verify-mismatch
+  convention). `sk_in_ptr` and `sk_out` may alias for in-place
+  advance.
 
-Per-algorithm exposure of the remaining approved services
-(DRBG, LMS, XMSS) lands in subsequent algorithm chunks.
+Per-algorithm exposure of the remaining approved service (DRBG)
+lands in a subsequent algorithm chunk.
 
 ## `oxi` CLI
 

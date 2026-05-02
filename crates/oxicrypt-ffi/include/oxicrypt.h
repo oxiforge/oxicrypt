@@ -1118,6 +1118,156 @@ int oxi_slh_dsa_sha2_256s_verify(const uint8_t *pk_ptr,
                                  const uint8_t *sig_ptr);
 
 /*
+ Generate an LMS key pair from a 32-byte caller-supplied seed.
+
+ Reads exactly 32 bytes from `xi_ptr`, deterministically derives
+ the tree seed and 16-byte identifier `I` via SHA-256, and writes
+ the 52-byte opaque private-key blob into `sk_out` and the
+ 56-byte public key into `pk_out`. The caller MUST source the 32
+ seed bytes from an approved DRBG (SP 800-90A); the FFI performs
+ no entropy generation.
+
+ `sk_out` is the persistence-of-record format. Treat it as an
+ opaque blob and pass it back unchanged to [`oxi_lms_sign`].
+
+ Returns `OxiResult::Ok = 0` on success or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
+ writable pointer to ≥52 bytes. `pk_out` must be a non-NULL
+ writable pointer to ≥56 bytes.
+ */
+int oxi_lms_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
+
+/*
+ Sign a message with an LMS private key.
+
+ Reads the 52-byte opaque private-key blob from `sk_in_ptr`,
+ `msg_len` bytes from `msg_ptr`, signs the message, advances the
+ internal leaf index by one, writes the **updated** 52-byte blob
+ into `sk_out`, and writes the 2508-byte signature into `sig_out`.
+
+ **Persistence contract:** the caller MUST persist `sk_out` (the
+ post-state) before using `sig_out`. Failure to persist before a
+ crash, followed by a restart that re-signs from the pre-state,
+ reuses the same one-time key — a catastrophic break of LMS.
+
+ Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
+ key is exhausted (1024 signatures already issued), or a module
+ error variant.
+
+ # Safety
+
+ `sk_in_ptr` must be valid for 52 bytes. `msg_ptr` must be valid
+ for `msg_len` bytes (NULL with len=0 is permitted). `sk_out`
+ must be a non-NULL writable pointer to ≥52 bytes. `sig_out`
+ must be a non-NULL writable pointer to ≥2508 bytes. `sk_in_ptr`
+ and `sk_out` may alias (in-place advance is supported).
+ */
+int oxi_lms_sign(const uint8_t *sk_in_ptr,
+                 const uint8_t *msg_ptr,
+                 uintptr_t msg_len,
+                 uint8_t *sk_out,
+                 uint8_t *sig_out);
+
+/*
+ Verify an LMS signature.
+
+ Reads the 56-byte public key from `pk_ptr`, `msg_len` bytes from
+ `msg_ptr`, and the 2508-byte signature from `sig_ptr`.
+
+ Returns `OxiResult::Ok = 0` for a valid signature,
+ `OxiResult::TagMismatch = 22` for any verification failure
+ (parse, structural mismatch, or cryptographic mismatch — upstream
+ collapses these into a single `Err(InvalidInput)`; same shape
+ as RSA verify, ML-DSA verify, SLH-DSA verify), or a module error
+ variant.
+
+ # Safety
+
+ `pk_ptr` must be valid for 56 bytes. `msg_ptr` must be valid for
+ `msg_len` bytes (NULL with len=0 is permitted). `sig_ptr` must
+ be valid for 2508 bytes.
+ */
+int oxi_lms_verify(const uint8_t *pk_ptr,
+                   const uint8_t *msg_ptr,
+                   uintptr_t msg_len,
+                   const uint8_t *sig_ptr);
+
+/*
+ Generate an XMSS key pair from a 32-byte caller-supplied seed.
+
+ Reads exactly 32 bytes from `xi_ptr`, deterministically derives
+ `SK_SEED`, `SK_PRF`, and `PUB_SEED` via SHA-256 over `(xi || tag)`
+ for tags 0x00, 0x01, 0x02 respectively, computes the Merkle tree
+ root, and writes the 132-byte opaque private-key blob into
+ `sk_out` and the 68-byte public key into `pk_out`. The caller
+ MUST source the 32 seed bytes from an approved DRBG.
+
+ `sk_out` is the persistence-of-record format. Treat it as opaque.
+
+ Returns `OxiResult::Ok = 0` on success or a module error variant.
+
+ # Safety
+
+ `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
+ writable pointer to ≥132 bytes. `pk_out` must be a non-NULL
+ writable pointer to ≥68 bytes.
+ */
+int oxi_xmss_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
+
+/*
+ Sign a message with an XMSS private key.
+
+ Reads the 132-byte opaque private-key blob from `sk_in_ptr`,
+ `msg_len` bytes from `msg_ptr`, signs the message, advances the
+ internal leaf index by one, writes the **updated** 132-byte blob
+ into `sk_out`, and writes the 2500-byte signature into `sig_out`.
+
+ **Persistence contract:** identical to LMS — the caller MUST
+ persist `sk_out` before using `sig_out`. See [`oxi_lms_sign`] for
+ the rationale.
+
+ Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
+ key is exhausted (1024 signatures already issued), or a module
+ error variant.
+
+ # Safety
+
+ `sk_in_ptr` must be valid for 132 bytes. `msg_ptr` must be valid
+ for `msg_len` bytes. `sk_out` must be a non-NULL writable pointer
+ to ≥132 bytes. `sig_out` must be a non-NULL writable pointer to
+ ≥2500 bytes. `sk_in_ptr` and `sk_out` may alias.
+ */
+int oxi_xmss_sign(const uint8_t *sk_in_ptr,
+                  const uint8_t *msg_ptr,
+                  uintptr_t msg_len,
+                  uint8_t *sk_out,
+                  uint8_t *sig_out);
+
+/*
+ Verify an XMSS signature.
+
+ Reads the 68-byte public key from `pk_ptr`, `msg_len` bytes from
+ `msg_ptr`, and the 2500-byte signature from `sig_ptr`.
+
+ Returns `OxiResult::Ok = 0` for a valid signature,
+ `OxiResult::TagMismatch = 22` for any verification failure
+ (parse / structural / cryptographic), or a module error variant.
+
+ # Safety
+
+ `pk_ptr` must be valid for 68 bytes. `msg_ptr` must be valid for
+ `msg_len` bytes. `sig_ptr` must be valid for 2500 bytes.
+ */
+int oxi_xmss_verify(const uint8_t *pk_ptr,
+                    const uint8_t *msg_ptr,
+                    uintptr_t msg_len,
+                    const uint8_t *sig_ptr);
+
+/*
  Allocate a new AES-256 key handle from raw 32-byte key material.
 
  On success, writes a heap-allocated handle pointer through
