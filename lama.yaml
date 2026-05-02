@@ -395,6 +395,7 @@ capabilities:
       - "oxi_ecdh_p256_compute_shared_secret"
       - "oxi_ecdh_p384_compute_shared_secret"
       - "oxi_dh3072_compute_shared_secret"
+      - "oxi_dh3072_generate_keypair"
       - "oxi_rsa_pkcs1_v15_verify_2048_sha256"
       - "oxi_rsa_pss_verify_2048_sha256"
       - "oxi_rsa_pkcs1_v15_verify_3072_sha256"

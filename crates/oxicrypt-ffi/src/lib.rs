@@ -1910,6 +1910,67 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
     R::Ok as c_int
 }
 
+/// Generate a DH-3072 key pair `(private_key, public_key)` from the
+/// caller-supplied DRBG handle (RFC 3526 Group 15, SP 800-56Ar3
+/// §5.7.1.1).
+///
+/// The private key `x` is sampled from `[1, q − 1]` via HMAC-DRBG-
+/// SHA-256 rejection sampling. The public key is `y = 2^x mod p`. On
+/// success, writes the 384-byte big-endian `x` into `private_out` and
+/// the 384-byte big-endian `y` into `public_out`. The DRBG handle is
+/// advanced (its `(K, V, reseed_counter)` state mutates) by the
+/// rejection-sampling loop.
+///
+/// **First C ABI surface to consume an opaque DRBG handle.** The
+/// caller is responsible for: (a) allocating the handle via
+/// [`oxi_hmac_drbg_sha256_new`]; (b) instantiating it via
+/// [`oxi_hmac_drbg_sha256_instantiate`] with caller-sourced entropy
+/// before this call; (c) freeing it via [`oxi_hmac_drbg_sha256_free`]
+/// after use; and (d) serializing all calls on the same handle
+/// pointer per the per-call-mutating-handle thread-safety contract.
+///
+/// Returns `OxiResult::Ok = 0` on success; `OxiResult::InvalidInput
+/// = 5` if the DRBG is uninstantiated, exhausts its rejection-
+/// sampling attempts, or fails to produce output (the upstream
+/// `Option` is collapsed to `Err(InvalidInput)` by the gated public
+/// API); `OxiResult::NotOperational = 1` if the FIPS module is not
+/// operational; or `OxiResult::AlgorithmRestricted = 6` if the
+/// active profile blocks DH-3072.
+///
+/// # Safety
+///
+/// `drbg` must be a live handle from [`oxi_hmac_drbg_sha256_new`]
+/// that has been instantiated. `private_out` must be a non-NULL
+/// writable pointer to ≥384 bytes. `public_out` must be a non-NULL
+/// writable pointer to ≥384 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    private_out: *mut u8,
+    public_out: *mut u8,
+) -> c_int {
+    if drbg.is_null() || private_out.is_null() || public_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    // Project to `&mut HmacDrbgSha256` via the `inner_mut` accessor
+    // on `OxiHmacDrbgSha256` (added alongside this round). The
+    // `&mut self` borrow upholds Rust's exclusivity rule for the
+    // duration of this FFI call; C-side concurrent calls on the same
+    // handle pointer are a serialization-contract violation per the
+    // per-call-mutating-handle thread-safety contract documented in
+    // `drbg.rs` and security-policy.md.
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let (x, y) = match oxicrypt_dh::generate_keypair_3072(drbg_ref) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(x.as_ptr(), private_out, 384) };
+    unsafe { core::ptr::copy_nonoverlapping(y.as_ptr(), public_out, 384) };
+    R::Ok as c_int
+}
+
 // ── RSA verify (FIPS 186-5 §5.4, RFC 8017 §8) — stateless surface ─
 //
 // Six stateless entry points for RSA signature verification, mirroring

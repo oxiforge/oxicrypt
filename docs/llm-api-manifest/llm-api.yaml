@@ -5563,6 +5563,42 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  - name: oxi_dh3072_generate_keypair
+    module: oxicrypt-ffi
+    description: >-
+      Generate a DH-3072 key pair `(private_key, public_key)` from the
+      caller-supplied DRBG handle (RFC 3526 Group 15, SP 800-56Ar3
+      §5.7.1.1). The private key `x` is sampled from `[1, q − 1]` via
+      HMAC-DRBG-SHA-256 rejection sampling. The public key is
+      `y = 2^x mod p`. The DRBG handle's
+      internal `(K, V, reseed_counter)` state mutates during the
+      rejection-sampling loop. **First C ABI surface to consume an
+      opaque DRBG handle as a parameter** — establishes the pattern
+      that future DRBG-driven keygen surfaces (RSA keygen, ECDSA
+      generate, ECDH generate) will follow. Caller MUST instantiate
+      the DRBG via `oxi_hmac_drbg_sha256_instantiate` before this
+      call; an uninstantiated DRBG manifests as
+      `OxiResult::InvalidInput = 5` (the upstream `Option::None` from
+      DRBG generate failure collapses to `Err(InvalidInput)` in the
+      gated public API). Caller MUST also serialize all calls on the
+      same DRBG handle pointer per the per-call-mutating-handle
+      thread-safety contract. Forwards to
+      `oxicrypt_dh::generate_keypair_3072`.
+    signature: >-
+      int oxi_dh3072_generate_keypair(OxiHmacDrbgSha256 *drbg,
+      uint8_t *private_out, uint8_t *public_out)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated HMAC_DRBG-SHA-256 handle from oxi_hmac_drbg_sha256_new + oxi_hmac_drbg_sha256_instantiate" }
+      - { name: private_out, type: "uint8_t *", direction: out, description: "384-byte big-endian private key x" }
+      - { name: public_out, type: "uint8_t *", direction: out, description: "384-byte big-endian public key y = 2^x mod p" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG-uninstantiated or rejection-sampling exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
   # RSA verify (FIPS 186-5 §5.4 / RFC 8017 §8) — six stateless entry
   # points across {2048, 3072, 4096} × {PKCS#1 v1.5, PSS}, all hash-
   # locked to SHA-256 (the only hash the upstream RSA crate currently

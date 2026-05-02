@@ -355,13 +355,21 @@ The `oxicrypt-ffi` crate currently exposes:
   Rev. 2 extractor (HKDF, KBKDF) over `Z` before using it as
   keying material.
 - DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1):
-  `oxi_dh3072_compute_shared_secret`. Reads a 384-byte private
-  key `x` plus a 384-byte peer public key `y`, returns the raw
-  384-byte shared secret `Z = y^x mod p`. Peer key undergoes
-  SP 800-56Ar3 §5.6.2.3.1 partial validation (`2 ≤ y ≤ p − 2`) —
-  the safe-prime FFC group structure makes this sufficient,
-  unlike ECDH's full §5.6.2.3.3 validation. DRBG-driven keygen
-  defers to a post-DRBG follow-up.
+  `oxi_dh3072_compute_shared_secret` and
+  `oxi_dh3072_generate_keypair`. The compute entry point reads a
+  384-byte private key `x` plus a 384-byte peer public key `y`,
+  returns the raw 384-byte shared secret `Z = y^x mod p`. Peer
+  key undergoes SP 800-56Ar3 §5.6.2.3.1 partial validation
+  (`2 ≤ y ≤ p − 2`) — the safe-prime FFC group structure makes
+  this sufficient, unlike ECDH's full §5.6.2.3.3 validation.
+  `generate_keypair` is the **first C ABI surface to consume an
+  opaque DRBG handle as a parameter** (`OxiHmacDrbgSha256 *`):
+  caller passes a live, instantiated DRBG handle and receives
+  the 384-byte private key `x` (sampled via HMAC-DRBG-SHA-256
+  rejection sampling over `[1, q − 1]`) and 384-byte public key
+  `y = 2^x mod p`. This pattern will be reused for every
+  remaining DRBG-driven keygen surface (RSA keygen, ECDSA
+  generate, ECDH generate).
 - RSA verify (FIPS 186-5 §5.4 / RFC 8017 §8): six stateless
   entry points across `{2048, 3072, 4096} × {PKCS#1 v1.5, PSS}`,
   all SHA-256 — `oxi_rsa_pkcs1_v15_verify_{2048,3072,4096}_sha256`

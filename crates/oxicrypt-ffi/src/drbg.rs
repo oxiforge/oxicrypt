@@ -122,6 +122,22 @@ pub struct OxiHmacDrbgSha256 {
     inner: OxiHandle<HmacDrbgSha256>,
 }
 
+impl OxiHmacDrbgSha256 {
+    /// Crate-internal accessor for the underlying mutable
+    /// `HmacDrbgSha256`. Used by other FFI surfaces in this crate
+    /// that consume a DRBG handle as a parameter (e.g.
+    /// `oxi_dh3072_generate_keypair`). Keeps the `inner` field
+    /// private while exposing the projection needed for
+    /// DRBG-handle-as-parameter surfaces.
+    ///
+    /// Returns `None` if the handle has been finalized (today: never,
+    /// because DRBG handles do not have a finalize-bearing lifecycle —
+    /// the consumed-sentinel field is unused for DRBG, same as AES).
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut HmacDrbgSha256> {
+        self.inner.as_mut()
+    }
+}
+
 /// Allocate a new, **uninstantiated** HMAC_DRBG-SHA-256 handle.
 ///
 /// On success, writes a heap-allocated handle pointer through
