@@ -116,7 +116,7 @@ pub unsafe extern "C" fn oxi_aes256_free(handle: *mut OxiAes256Key) {
 /// - `tag` — exactly 16 writable bytes (128-bit authentication tag).
 ///
 /// Returns `OxiResult::Ok = 0` on success or a non-zero discriminant
-/// per the [`OxiResult`] mapping. `OxiResult::AlgorithmRestricted = 6`
+/// per the [`crate::OxiResult`] mapping. `OxiResult::AlgorithmRestricted = 6`
 /// is returned when AES-256-GCM is blocked by the active profile.
 ///
 /// # Safety

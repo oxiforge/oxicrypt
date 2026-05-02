@@ -212,7 +212,8 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
     /// A `None` salt is interpreted as `L` zero bytes, per RFC 5869
     /// §2.2. Enforces [`require_operational`] and algorithm-profile
     /// gating via [`require_allowed`]. For boot-time KATs,
-    /// use [`Hkdf::extract_internal`].
+    /// use `Hkdf::extract_internal` (gate-free counterpart, hidden
+    /// from public docs).
     pub fn extract(salt: Option<&[u8]>, ikm: &[u8]) -> Result<Self, KdfError> {
         require_operational()?;
         require_allowed(P::KDF_SERVICE)?;

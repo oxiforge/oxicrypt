@@ -18,8 +18,8 @@
 //!
 //! Every function returns a `c_int` whose value is an [`OxiResult`]
 //! discriminant. `OxiResult::Ok = 0` is success; non-zero values are
-//! distinct failure modes banded by source crate. See
-//! [`crate::error`] for the full mapping.
+//! distinct failure modes banded by source crate. See [`OxiResult`]
+//! for the full mapping.
 //!
 //! # Output buffers
 //!
