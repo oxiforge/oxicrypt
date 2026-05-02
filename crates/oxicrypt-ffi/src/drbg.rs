@@ -1,0 +1,332 @@
+//! C ABI for SP 800-90A DRBGs.
+//!
+//! This round wires the **HMAC-SHA-256** variant of HMAC_DRBG —
+//! the workhorse PRNG used to satisfy the deferred follow-ups
+//! across the C ABI backfill arc (ECDSA `generate` / `sign_sha*`,
+//! ECDH `generate`, RSA sign / OAEP / keygen, DH-3072 keygen),
+//! all of which need *some* DRBG. The other 8 variants
+//! (HMAC-SHA-384/512, Hash-SHA-256/384/512, CTR-AES-128/192/256
+//! with `_df` and `_no_df`) ship additively per stabilized arc
+//! pattern #8 (per-variant naming, no enum dispatch).
+//!
+//! # Lifecycle
+//!
+//! ```text
+//!   oxi_hmac_drbg_sha256_new(out_handle)
+//!     → returns OxiResult::Ok and *out_handle = <heap handle>
+//!
+//!   oxi_hmac_drbg_sha256_instantiate(handle, entropy, nonce, perso)
+//!     → seeds (K, V), sets reseed_counter = 1, transitions to instantiated
+//!
+//!   oxi_hmac_drbg_sha256_generate(handle, additional_input, out)
+//!     → produces bytes, advances (K, V), increments reseed_counter
+//!     → if reseed_counter > SP 800-90A Table 3 reseed_interval,
+//!       returns OxiResult::ReseedRequired = 9 (caller must reseed
+//!       and retry)
+//!
+//!   oxi_hmac_drbg_sha256_reseed(handle, entropy, additional_input)
+//!     → re-seeds (K, V), resets reseed_counter to 1
+//!
+//!   oxi_hmac_drbg_sha256_free(handle)
+//!     → NULL-safe; reclaims the heap handle. Drop fires Zeroize on
+//!       the upstream HmacDrbgSha256 so (K, V) are zeroed.
+//! ```
+//!
+//! # Entropy plumbing
+//!
+//! The module does NOT bundle an entropy source. Per
+//! `oxicrypt_drbg::lib.rs` upstream design: every entropy-consuming
+//! call (`instantiate`, `reseed`, `generate_pr`) takes the entropy
+//! input as a caller-supplied byte buffer; the C ABI faithfully
+//! mirrors this. Callers source entropy from an SP 800-90A-conformant
+//! source (`/dev/urandom` on Linux, BCryptGenRandom on Windows,
+//! `Security.framework` on macOS, or a hardware TRNG). This is the
+//! same convention as every other PQ / classical caller-seeded
+//! surface in the FFI (Ed25519, ML-DSA-87, ML-KEM-1024,
+//! SLH-DSA-256s, LMS, XMSS).
+//!
+//! Prediction-resistance (`generate_pr`) is NOT exposed this round
+//! because SP 800-90A §9.3.1 step 7 specifies it as
+//! `reseed(entropy, ai)` followed by `generate(None, out)` — callers
+//! can compose this trivially. Skipping reduces the surface from 5
+//! to 4 method types per variant.
+//!
+//! # Error codes
+//!
+//! Only `_instantiate` can surface module-level errors
+//! (`NotOperational`, `AlgorithmRestricted`); upstream gates only
+//! fire on instantiate. `_reseed` and `_generate` inherit
+//! operational state via the upstream `instantiated` flag and
+//! therefore return DRBG-specific errors only.
+//!
+//! | Upstream | OxiResult | Surfaceable from |
+//! |---|---|---|
+//! | `Err(Module(NotOperational))` | `NotOperational = 1` | `_instantiate` only |
+//! | `Err(Module(AlgorithmRestricted))` | `AlgorithmRestricted = 6` | `_instantiate` only |
+//! | `Err(Module(InvalidInput))` | `InvalidInput = 5` | `_instantiate` only (total seed > 768 bytes) |
+//! | `Err(DrbgError::Uninstantiated)` | `Uninstantiated = 8` | `_reseed`, `_generate` |
+//! | `Err(DrbgError::ReseedRequired)` | `ReseedRequired = 9` | `_generate` only |
+//! | `Err(DrbgError::InputTooLong)` | `InvalidInput = 5` | `_reseed`, `_generate` |
+//! | `Err(DrbgError::RequestTooLong)` | `OutputTooLong = 12` | `_generate` only (out_len > 2^19 bits) |
+//! | NULL handle / NULL output | `NullPointer = 10` | all three (FFI-layer guard) |
+//!
+//! Slots `8` and `9` are new this round; they were added to the
+//! `OxiResult` enum in `error.rs` because collapsing them to
+//! `InvalidInput = 5` would have prevented callers from
+//! distinguishing "I need to call instantiate" from "I need to
+//! reseed" from "my input is malformed" — three distinct recovery
+//! paths per SP 800-90A.
+//!
+//! # Thread-safety contract
+//!
+//! `OxiHmacDrbgSha256` is a per-call-mutating handle: every
+//! `_instantiate`, `_reseed`, and `_generate` call advances the
+//! internal `(K, V, reseed_counter)` state. Rust enforces
+//! exclusive access at the call site via the `&mut self`
+//! projection in `OxiHandle::as_mut`, but the C ABI cannot
+//! enforce this across threads: two C threads racing on the same
+//! `*mut OxiHmacDrbgSha256` pointer would create a data race and
+//! is undefined behaviour. **Caller MUST serialize all
+//! `oxi_hmac_drbg_sha256_*` calls on a given handle pointer
+//! externally** (mutex, single-threaded ownership, or equivalent
+//! discipline). This is the first per-call-mutating handle in the
+//! C ABI — AES handles are read-only-from-C and the HBS
+//! byte-buffer surface side-steps the issue by passing state
+//! through the function signature. The same serialization
+//! contract will apply to every future per-call-mutating handle
+//! (additional DRBG variants, future streaming SHA contexts,
+//! etc.).
+//!
+//! # Handle lifecycle invariant
+//!
+//! `OxiHmacDrbgSha256` follows the same opaque-handle pattern as
+//! `OxiAes256Key` (see `aes.rs`). The internal state lives on the
+//! heap; the caller holds a `*mut OxiHmacDrbgSha256` and MUST pair
+//! every `_new` with a `_free`. Distinct from the LMS / XMSS
+//! byte-buffer pass-through: DRBG state is process-local (not
+//! durably persisted across reboots), so the handle pattern is the
+//! right shape; HBS keys carried a different one-write-per-leaf
+//! invariant that the byte-buffer surface enforced structurally.
+
+use crate::error::{status_drbg, status_module, OxiResult as R};
+use crate::handle::OxiHandle;
+use core::ffi::c_int;
+use oxicrypt_drbg::HmacDrbgSha256;
+
+/// Opaque HMAC_DRBG-SHA-256 handle. The internal layout
+/// (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
+/// part of the C ABI; cbindgen renders this as an opaque struct.
+///
+/// cbindgen:opaque
+pub struct OxiHmacDrbgSha256 {
+    inner: OxiHandle<HmacDrbgSha256>,
+}
+
+/// Allocate a new, **uninstantiated** HMAC_DRBG-SHA-256 handle.
+///
+/// On success, writes a heap-allocated handle pointer through
+/// `out_handle` and returns `OxiResult::Ok = 0`. The caller owns
+/// the handle and MUST release it with [`oxi_hmac_drbg_sha256_free`].
+///
+/// The newly-allocated handle is uninstantiated — calling
+/// [`oxi_hmac_drbg_sha256_generate`] or
+/// [`oxi_hmac_drbg_sha256_reseed`] before
+/// [`oxi_hmac_drbg_sha256_instantiate`] returns
+/// `OxiResult::Uninstantiated = 8`.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiHmacDrbgSha256`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_new(
+    out_handle: *mut *mut OxiHmacDrbgSha256,
+) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiHmacDrbgSha256 {
+        inner: OxiHandle::new(HmacDrbgSha256::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an HMAC_DRBG-SHA-256 handle. NULL-safe.
+///
+/// After this call the caller's pointer is dangling; the caller
+/// SHOULD set their pointer to NULL to avoid use-after-free. A
+/// double-free of the same non-NULL pointer is undefined behaviour
+/// (matches malloc/free semantics — the shim cannot detect it).
+///
+/// Drop on the upstream `HmacDrbgSha256` zeroizes the internal
+/// `(K, V)` state via the workspace-wide `oxicrypt-zeroize`
+/// volatile-write convention; no caller-side scrubbing is required.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_hmac_drbg_sha256_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha256) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3).
+///
+/// Seeds the DRBG with caller-supplied entropy, nonce, and
+/// personalization. The combined length
+/// `entropy_len + nonce_len + perso_len` MUST NOT exceed
+/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes; over-length returns
+/// `OxiResult::InvalidInput = 5`.
+///
+/// Each input may be NULL when its corresponding length is 0.
+/// Personalization length 0 is the typical path for FIPS-conformant
+/// callers that don't have a personalization string; entropy and
+/// nonce SHOULD be sized per SP 800-90A Table 2 (security strength
+/// 256 → entropy ≥ 256 bits, nonce ≥ 128 bits).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hmac_drbg_sha256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_instantiate(
+    handle: *mut OxiHmacDrbgSha256,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    // SAFETY: per the handle lifecycle contract documented in security
+    // policy §4.8, the caller MUST not race `_free` against an in-flight
+    // call on the same handle. DRBG mutates per call, so we use `as_mut`
+    // (added to OxiHandle this round) — the `&mut self` projection
+    // upholds Rust's exclusivity rule for the duration of the call.
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4).
+///
+/// Re-seeds the DRBG with fresh entropy and (optionally) additional
+/// input. After successful reseed, `reseed_counter` is reset to 1
+/// and the handle is ready to serve new `generate` calls.
+///
+/// `additional_input` may be NULL when `additional_input_len` is 0.
+/// `entropy` MUST point to ≥ `entropy_len` readable bytes.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if the handle has not yet
+/// been instantiated. Returns `OxiResult::InvalidInput = 5` if the
+/// combined `entropy_len + additional_input_len` exceeds
+/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hmac_drbg_sha256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_reseed(
+    handle: *mut OxiHmacDrbgSha256,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed(entropy_slice, ai_slice))
+}
+
+/// HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5).
+///
+/// Produces `out_len` pseudorandom bytes into `out`, advancing the
+/// internal `(K, V)` state and incrementing `reseed_counter`.
+///
+/// `additional_input` may be NULL when `additional_input_len` is 0
+/// (mapped to upstream `additional_input = None`); a NULL with
+/// non-zero length returns `OxiResult::NullPointer = 10`.
+///
+/// Returns `OxiResult::Uninstantiated = 8` if `instantiate` has not
+/// yet succeeded on this handle. Returns `OxiResult::ReseedRequired = 9`
+/// if `reseed_counter` has reached the SP 800-90A Table 3 bound; the
+/// caller MUST call [`oxi_hmac_drbg_sha256_reseed`] before retrying.
+/// Returns `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
+/// SP 800-90A Table 3 `max_number_of_bits_per_request` ceiling
+/// (`2^19` bits = 65 536 bytes).
+///
+/// # Safety
+///
+/// `handle` must be a live handle from [`oxi_hmac_drbg_sha256_new`].
+/// `out` must point to ≥ `out_len` writable bytes (or `out_len == 0`,
+/// in which case the call is a no-op state advance — useful only as
+/// part of a `reseed`-then-`generate(None, [])` PR equivalence).
+/// `additional_input` must point to ≥ `additional_input_len`
+/// readable bytes when `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha256_generate(
+    handle: *mut OxiHmacDrbgSha256,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    // additional_input: NULL+0 → None; non-NULL+>0 → Some(slice).
+    // (NULL+>0 is rejected by slice_from_raw with NullPointer.)
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate(ai_opt, out_slice))
+}

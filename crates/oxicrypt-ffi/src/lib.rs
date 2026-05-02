@@ -60,6 +60,7 @@
 #![allow(unsafe_code, clippy::missing_safety_doc)]
 
 mod aes;
+mod drbg;
 mod error;
 mod handle;
 pub use aes::{
@@ -67,6 +68,10 @@ pub use aes::{
     oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free, oxi_aes256_gcm_decrypt,
     oxi_aes256_gcm_encrypt, oxi_aes256_kw_unwrap, oxi_aes256_kw_wrap, oxi_aes256_kwp_unwrap,
     oxi_aes256_kwp_wrap, oxi_aes256_new, OxiAes256Key,
+};
+pub use drbg::{
+    oxi_hmac_drbg_sha256_free, oxi_hmac_drbg_sha256_generate, oxi_hmac_drbg_sha256_instantiate,
+    oxi_hmac_drbg_sha256_new, oxi_hmac_drbg_sha256_reseed, OxiHmacDrbgSha256,
 };
 pub use error::OxiResult;
 

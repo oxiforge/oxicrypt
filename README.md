@@ -443,9 +443,30 @@ The `oxicrypt-ffi` crate currently exposes:
   fifth occurrences of the cross-family verify-mismatch
   convention). `sk_in_ptr` and `sk_out` may alias for in-place
   advance.
+- HMAC_DRBG-SHA-256 (SP 800-90A §10.1.2) — five entry points
+  forming the standard DRBG lifecycle:
+  `oxi_hmac_drbg_sha256_{new, free, instantiate, reseed,
+  generate}`. The handle is opaque (`OxiHmacDrbgSha256`) and
+  follows the same heap-allocated, NULL-safe-free, Drop-cascaded-
+  zeroize convention as `OxiAes256Key`. Every entropy-consuming
+  call takes caller-supplied bytes — the module does NOT bundle
+  an entropy source per SP 800-90A's upstream design. Two new
+  `OxiResult` discriminants land this round:
+  `Uninstantiated = 8` (generate / reseed before instantiate) and
+  `ReseedRequired = 9` (reseed_counter at the SP 800-90A Table 3
+  bound), distinct from `InvalidInput = 5` so callers can pick
+  the right recovery action without parsing strerror.
+  Prediction-resistance (`generate_pr`) is intentionally not
+  exposed — callers compose `reseed(entropy, ai)` +
+  `generate(None, out)` per SP 800-90A §9.3.1 step 7. Single-
+  variant for now; the other 8 DRBG variants
+  (HMAC-SHA-384/512, Hash-SHA-{256,384,512}, CTR-AES-{128,192,256}
+  with `_df` and `_no_df`) ship later as additive function names.
 
-Per-algorithm exposure of the remaining approved service (DRBG)
-lands in a subsequent algorithm chunk.
+This closes the 14-round C ABI family backfill arc. Subsequent
+rounds will be additive variant ships and the deferred DRBG-
+driven follow-ups (ECDSA `generate` / `sign_sha*`, ECDH
+`generate`, RSA sign / OAEP / keygen, DH-3072 keygen).
 
 ## `oxi` CLI
 

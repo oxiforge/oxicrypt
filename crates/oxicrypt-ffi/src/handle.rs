@@ -67,6 +67,17 @@ impl<T> OxiHandle<T> {
     pub(crate) fn as_ref(&self) -> Option<&T> {
         self.inner.as_ref()
     }
+
+    /// Mutably borrow the inner state, if not yet consumed.
+    ///
+    /// Required by handle types that mutate per-call state (e.g.
+    /// `OxiHmacDrbgSha256`, where `instantiate` / `reseed` / `generate`
+    /// each advance the DRBG's internal `(K, V, reseed_counter)`
+    /// tuple). AES handles use `as_ref` because their per-call mode
+    /// implementations are pure functions over `&Aes256Key`.
+    pub(crate) fn as_mut(&mut self) -> Option<&mut T> {
+        self.inner.as_mut()
+    }
 }
 
 #[cfg(test)]

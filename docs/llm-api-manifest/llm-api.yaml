@@ -6175,6 +6175,148 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  - name: oxi_hmac_drbg_sha256_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, **uninstantiated** HMAC_DRBG-SHA-256 handle
+      (SP 800-90A §10.1.2). Writes a heap-allocated handle pointer
+      through `out_handle`. The handle is uninstantiated until
+      `oxi_hmac_drbg_sha256_instantiate` succeeds; calling
+      `_generate` or `_reseed` before instantiate returns
+      `OxiResult::Uninstantiated = 8`. Caller MUST release the
+      handle with `oxi_hmac_drbg_sha256_free`. Forwards to
+      `oxicrypt_drbg::HmacDrbgSha256::new` (const fn). First DRBG
+      family wired to the C ABI; other variants (HMAC-SHA-384/512,
+      Hash-SHA-*, CTR-AES-*) ship additively in subsequent rounds.
+    signature: >-
+      int oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiHmacDrbgSha256 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer if out_handle is NULL)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha256_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an HMAC_DRBG-SHA-256 handle. NULL-safe. Drop on the
+      upstream `HmacDrbgSha256` zeroizes the internal `(K, V)` state
+      via the workspace-wide `oxicrypt-zeroize` volatile-write
+      convention; no caller-side scrubbing is required. After this
+      call the caller's pointer is dangling; double-free of the
+      same non-NULL pointer is undefined behaviour (matches
+      malloc/free semantics).
+    signature: >-
+      void oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *handle)
+    parameters:
+      - { name: handle, type: "OxiHmacDrbgSha256 *", direction: in, description: "Handle from oxi_hmac_drbg_sha256_new, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha256_instantiate
+    module: oxicrypt-ffi
+    description: >-
+      HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3). Seeds
+      the DRBG with caller-supplied entropy, nonce, and
+      personalization. Combined length `entropy_len + nonce_len +
+      perso_len` MUST NOT exceed `HMAC_DRBG_MAX_PROVIDED = 768`
+      bytes; over-length returns `InvalidInput = 5`. Each input
+      may be NULL when its length is 0. Entropy and nonce SHOULD
+      be sized per SP 800-90A Table 2 (security strength 256 →
+      entropy ≥ 256 bits, nonce ≥ 128 bits). Forwards to
+      `oxicrypt_drbg::HmacDrbgSha256::instantiate`, which itself
+      gates on `require_operational` and
+      `Service::HmacDrbgSha256` before mutating state.
+    signature: >-
+      int oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live handle from oxi_hmac_drbg_sha256_new" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Caller-sourced entropy bytes (SP 800-90A entropy_input)" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length in bytes" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Caller-sourced nonce bytes (SP 800-90A nonce)" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length in bytes" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization string (NULL with len=0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length in bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on length-bound, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha256_reseed
+    module: oxicrypt-ffi
+    description: >-
+      HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4). Re-seeds the
+      DRBG with fresh entropy and (optionally) additional input.
+      After successful reseed, `reseed_counter` resets to 1 and the
+      handle is ready to serve new generate calls. `additional_input`
+      may be NULL when `additional_input_len` is 0. Returns
+      `Uninstantiated = 8` if the handle has not yet been
+      instantiated.
+    signature: >-
+      int oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Caller-sourced fresh entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length in bytes" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input (NULL+0 = none)" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length in bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 5 = InvalidInput on length-bound, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hmac_drbg_sha256_generate
+    module: oxicrypt-ffi
+    description: >-
+      HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5). Produces
+      `out_len` pseudorandom bytes into `out`, advancing the internal
+      `(K, V)` state and incrementing `reseed_counter`.
+      `additional_input` may be NULL when `additional_input_len` is
+      0 (mapped to upstream `additional_input = None`). Returns
+      `Uninstantiated = 8` if instantiate has not yet succeeded.
+      Returns `ReseedRequired = 9` when `reseed_counter` reaches the
+      SP 800-90A Table 3 bound — caller MUST call reseed before
+      retrying. Returns `OutputTooLong = 12` if `out_len` exceeds
+      `2^19` bits (= 65 536 bytes), the SP 800-90A Table 3
+      max_number_of_bits_per_request ceiling.
+    signature: >-
+      int oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input (NULL+0 = upstream None)" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length in bytes" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer (≥ out_len writable bytes)" }
+      - { name: out_len, type: "size_t", direction: in, description: "Number of pseudorandom bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 9 = ReseedRequired, 12 = OutputTooLong, 5 = InvalidInput on additional_input length-bound, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

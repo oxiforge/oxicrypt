@@ -27,6 +27,14 @@
  */
 typedef struct OxiAes256Key OxiAes256Key;
 
+/*
+ Opaque HMAC_DRBG-SHA-256 handle. The internal layout
+ (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
+ part of the C ABI; cbindgen renders this as an opaque struct.
+
+ */
+typedef struct OxiHmacDrbgSha256 OxiHmacDrbgSha256;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -1567,6 +1575,132 @@ int oxi_aes256_kwp_unwrap(const OxiAes256Key *key,
                           uintptr_t ct_len,
                           uint8_t *out_scratch,
                           uintptr_t *out_len);
+
+/*
+ Allocate a new, **uninstantiated** HMAC_DRBG-SHA-256 handle.
+
+ On success, writes a heap-allocated handle pointer through
+ `out_handle` and returns `OxiResult::Ok = 0`. The caller owns
+ the handle and MUST release it with [`oxi_hmac_drbg_sha256_free`].
+
+ The newly-allocated handle is uninstantiated — calling
+ [`oxi_hmac_drbg_sha256_generate`] or
+ [`oxi_hmac_drbg_sha256_reseed`] before
+ [`oxi_hmac_drbg_sha256_instantiate`] returns
+ `OxiResult::Uninstantiated = 8`.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiHmacDrbgSha256`.
+ */
+int oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **out_handle);
+
+/*
+ Free an HMAC_DRBG-SHA-256 handle. NULL-safe.
+
+ After this call the caller's pointer is dangling; the caller
+ SHOULD set their pointer to NULL to avoid use-after-free. A
+ double-free of the same non-NULL pointer is undefined behaviour
+ (matches malloc/free semantics — the shim cannot detect it).
+
+ Drop on the upstream `HmacDrbgSha256` zeroizes the internal
+ `(K, V)` state via the workspace-wide `oxicrypt-zeroize`
+ volatile-write convention; no caller-side scrubbing is required.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_hmac_drbg_sha256_new`] that has not yet been freed.
+ */
+void oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *handle);
+
+/*
+ HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3).
+
+ Seeds the DRBG with caller-supplied entropy, nonce, and
+ personalization. The combined length
+ `entropy_len + nonce_len + perso_len` MUST NOT exceed
+ `HMAC_DRBG_MAX_PROVIDED = 768` bytes; over-length returns
+ `OxiResult::InvalidInput = 5`.
+
+ Each input may be NULL when its corresponding length is 0.
+ Personalization length 0 is the typical path for FIPS-conformant
+ callers that don't have a personalization string; entropy and
+ nonce SHOULD be sized per SP 800-90A Table 2 (security strength
+ 256 → entropy ≥ 256 bits, nonce ≥ 128 bits).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hmac_drbg_sha256_new`].
+ */
+int oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *handle,
+                                     const uint8_t *entropy,
+                                     uintptr_t entropy_len,
+                                     const uint8_t *nonce,
+                                     uintptr_t nonce_len,
+                                     const uint8_t *personalization,
+                                     uintptr_t personalization_len);
+
+/*
+ HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4).
+
+ Re-seeds the DRBG with fresh entropy and (optionally) additional
+ input. After successful reseed, `reseed_counter` is reset to 1
+ and the handle is ready to serve new `generate` calls.
+
+ `additional_input` may be NULL when `additional_input_len` is 0.
+ `entropy` MUST point to ≥ `entropy_len` readable bytes.
+
+ Returns `OxiResult::Uninstantiated = 8` if the handle has not yet
+ been instantiated. Returns `OxiResult::InvalidInput = 5` if the
+ combined `entropy_len + additional_input_len` exceeds
+ `HMAC_DRBG_MAX_PROVIDED = 768` bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hmac_drbg_sha256_new`].
+ */
+int oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *handle,
+                                const uint8_t *entropy,
+                                uintptr_t entropy_len,
+                                const uint8_t *additional_input,
+                                uintptr_t additional_input_len);
+
+/*
+ HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5).
+
+ Produces `out_len` pseudorandom bytes into `out`, advancing the
+ internal `(K, V)` state and incrementing `reseed_counter`.
+
+ `additional_input` may be NULL when `additional_input_len` is 0
+ (mapped to upstream `additional_input = None`); a NULL with
+ non-zero length returns `OxiResult::NullPointer = 10`.
+
+ Returns `OxiResult::Uninstantiated = 8` if `instantiate` has not
+ yet succeeded on this handle. Returns `OxiResult::ReseedRequired = 9`
+ if `reseed_counter` has reached the SP 800-90A Table 3 bound; the
+ caller MUST call [`oxi_hmac_drbg_sha256_reseed`] before retrying.
+ Returns `OxiResult::OutputTooLong = 12` if `out_len` exceeds the
+ SP 800-90A Table 3 `max_number_of_bits_per_request` ceiling
+ (`2^19` bits = 65 536 bytes).
+
+ # Safety
+
+ `handle` must be a live handle from [`oxi_hmac_drbg_sha256_new`].
+ `out` must point to ≥ `out_len` writable bytes (or `out_len == 0`,
+ in which case the call is a no-op state advance — useful only as
+ part of a `reseed`-then-`generate(None, [])` PR equivalence).
+ `additional_input` must point to ≥ `additional_input_len`
+ readable bytes when `additional_input_len > 0`.
+ */
+int oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *handle,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len,
+                                  uint8_t *out,
+                                  uintptr_t out_len);
 
 #ifdef __cplusplus
 }  // extern "C"

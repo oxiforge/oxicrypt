@@ -416,6 +416,11 @@ capabilities:
       - "oxi_xmss_keygen"
       - "oxi_xmss_sign"
       - "oxi_xmss_verify"
+      - "oxi_hmac_drbg_sha256_new"
+      - "oxi_hmac_drbg_sha256_free"
+      - "oxi_hmac_drbg_sha256_instantiate"
+      - "oxi_hmac_drbg_sha256_reseed"
+      - "oxi_hmac_drbg_sha256_generate"
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"

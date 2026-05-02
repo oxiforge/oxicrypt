@@ -10,11 +10,12 @@
 //!
 //! - 0:           Success
 //! - 1-7:         `oxicrypt_module::Error` variants
+//! - 8-9:         `oxicrypt_drbg::DrbgError` variants
 //! - 10-12:       FFI-layer errors (null pointer, buffer too small, output too long)
 //! - 20-27:       `oxicrypt_aes::ModeError` variants
 //! - 255:         Catch-all `Internal` (reserved)
 //!
-//! Future per-crate error types (sha, hmac, drbg, ecdsa, etc.) extend
+//! Future per-crate error types (sha, hmac, ecdsa, etc.) extend
 //! this banded space as their FFI wrappers land in subsequent chunks.
 
 use core::ffi::c_int;
@@ -46,12 +47,26 @@ pub enum OxiResult {
     /// Service exists in the `Service` enum but its implementation is not yet built (stub crate).
     NotImplemented = 7,
 
+    // DRBG errors (oxicrypt_drbg::DrbgError) — state-machine preconditions
+    // distinct from `InvalidInput = 5` (input bounds) so callers can
+    // structure error-handling correctly: Uninstantiated triggers an
+    // `instantiate` call; ReseedRequired triggers a `reseed` call.
+    /// `generate` (or `reseed`) called before `instantiate` succeeded on this DRBG handle.
+    Uninstantiated = 8,
+    /// `reseed_counter` reached the SP 800-90A Table 3 reseed-interval bound; caller MUST
+    /// call `reseed` with fresh entropy before `generate` will return more output.
+    ReseedRequired = 9,
+
     // FFI-layer errors
     /// Caller passed a NULL pointer where one is required.
     NullPointer = 10,
     /// Caller-allocated output buffer is smaller than the documented minimum.
     BufferTooSmall = 11,
-    /// HKDF-Expand requested more than `255 * HashLen` bytes (RFC 5869 §2.3).
+    /// Output bound exceeded. Reused across families: HKDF-Expand requested more than
+    /// `255 * HashLen` bytes (RFC 5869 §2.3); HMAC_DRBG `generate` requested more than
+    /// `2^19` bits (SP 800-90A Table 3 `max_number_of_bits_per_request`). Same
+    /// cross-family-discriminant-reuse pattern as `TagMismatch = 22`: one code, multiple
+    /// upstream sources, all sharing the same caller-recovery semantic ("ask for less").
     OutputTooLong = 12,
 
     // AES-mode errors (oxicrypt_aes::ModeError)
@@ -148,6 +163,36 @@ impl From<oxicrypt_kdf::KdfError> for OxiResult {
 
 /// Convert a `Result<(), oxicrypt_kdf::KdfError>` into the C `int` status code.
 pub(crate) fn status_kdf(r: Result<(), oxicrypt_kdf::KdfError>) -> c_int {
+    match r {
+        Ok(()) => OxiResult::Ok as c_int,
+        Err(e) => OxiResult::from(e) as c_int,
+    }
+}
+
+impl From<oxicrypt_drbg::DrbgError> for OxiResult {
+    fn from(e: oxicrypt_drbg::DrbgError) -> Self {
+        match e {
+            oxicrypt_drbg::DrbgError::Uninstantiated => OxiResult::Uninstantiated,
+            oxicrypt_drbg::DrbgError::ReseedRequired => OxiResult::ReseedRequired,
+            // SP 800-90A Table 3 max_personalization_string / max_additional_input
+            // are length bounds; collapse to InvalidInput=5 (input-bounds family)
+            // alongside `oxicrypt_module::Error::InvalidInput` rather than a
+            // dedicated discriminant — there is nothing the caller can do
+            // structurally different between the two. `InvalidSeedLength` is
+            // a CTR_DRBG-specific seed-length mismatch (not exercised by HMAC
+            // DRBG) but maps to the same family for the same reason.
+            oxicrypt_drbg::DrbgError::InputTooLong
+            | oxicrypt_drbg::DrbgError::InvalidSeedLength => OxiResult::InvalidInput,
+            // SP 800-90A Table 3 max_number_of_bits_per_request — output bound,
+            // semantically identical to KDF's HKDF-Expand 255*HashLen ceiling.
+            oxicrypt_drbg::DrbgError::RequestTooLong => OxiResult::OutputTooLong,
+        }
+    }
+}
+
+/// Convert a `Result<(), oxicrypt_drbg::DrbgError>` into the C `int` status code.
+#[allow(dead_code)] // call sites land in drbg.rs alongside this impl
+pub(crate) fn status_drbg(r: Result<(), oxicrypt_drbg::DrbgError>) -> c_int {
     match r {
         Ok(()) => OxiResult::Ok as c_int,
         Err(e) => OxiResult::from(e) as c_int,
