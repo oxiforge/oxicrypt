@@ -5364,6 +5364,249 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  # ECDSA DRBG-driven (FIPS 186-5 §A.2.2 + IG 10.3.A) — eight C ABI
+  # entry points + two opaque private-key handle types. Each handle
+  # carries both the private scalar `d` and the derived uncompressed
+  # SEC1 public key `Q`, and has passed an IG 10.3.A pairwise
+  # consistency test at construction. The `_new_generate` constructor
+  # consumes a DRBG handle to sample `d` via FIPS 186-5 §A.2.2
+  # rejection sampling, then re-borrows the same DRBG to draw the
+  # PCT nonce `k`. Per-call `_sign_sha{256,384}` re-borrows the DRBG
+  # for fresh `k` on every signature. Drop on the upstream
+  # `EcdsaP{256,384}PrivateKey` zeroises `d` via `oxicrypt-zeroize`.
+  # Stateless `from_bytes(d, drbg)` import constructor and
+  # `private_scalar(&self)` exfil accessor are deferred to additive
+  # follow-up rounds. See security-policy §4.8 PCT-at-construction
+  # handle invariant gem.
+
+  - name: OxiEcdsaP256PrivateKey
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque ECDSA P-256 private-key handle that has passed an
+      IG 10.3.A pairwise consistency test at construction time. The
+      internal layout (`OxiHandle<EcdsaP256PrivateKey>`) is
+      implementation detail and not part of the C ABI; cbindgen
+      renders this as an opaque struct. Carries both the private
+      scalar `d` (32 bytes) and the derived uncompressed SEC1 public
+      key `Q` (65 bytes). Drop chain calls upstream
+      `oxicrypt_zeroize::zeroize(&mut self.d)`. Allocate via
+      `oxi_ecdsa_p256_private_key_new_generate`; release via
+      `oxi_ecdsa_p256_private_key_free`.
+
+  - name: OxiEcdsaP384PrivateKey
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque ECDSA P-384 private-key handle that has passed an
+      IG 10.3.A pairwise consistency test at construction time.
+      Carries both the private scalar `d` (48 bytes) and the derived
+      uncompressed SEC1 public key `Q` (97 bytes). Drop chain
+      zeroises `d`. Allocate via
+      `oxi_ecdsa_p384_private_key_new_generate`; release via
+      `oxi_ecdsa_p384_private_key_free`.
+
+  - name: oxi_ecdsa_p256_private_key_new_generate
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new ECDSA P-256 private-key handle, generating its
+      private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
+      the caller-supplied DRBG handle, deriving its public key, and
+      running the IG 10.3.A pairwise consistency test against a fixed
+      probe message before returning. On success, writes a
+      heap-allocated handle pointer through `out_key`. PCT failure
+      (signalling a faulted sign or verify primitive) collapses to
+      `OxiResult::InvalidInput = 5`; no half-initialised pointer ever
+      reaches the caller. The DRBG handle's internal
+      `(K, V, reseed_counter)` state mutates during scalar and PCT
+      nonce sampling. Caller MUST instantiate the DRBG via
+      `oxi_hmac_drbg_sha256_instantiate` before this call and MUST
+      serialise concurrent calls on the same DRBG handle pointer per
+      the per-call-mutating-handle thread-safety contract. Forwards
+      to `oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::generate`.
+    signature: >-
+      int oxi_ecdsa_p256_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+      OxiEcdsaP256PrivateKey **out_key)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated HMAC_DRBG-SHA-256 handle" }
+      - { name: out_key, type: "OxiEcdsaP256PrivateKey **", direction: out, description: "Receives a heap-allocated handle on success; caller MUST free with oxi_ecdsa_p256_private_key_free" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or PCT fail, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p256_private_key_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an ECDSA P-256 private-key handle. NULL-safe. Drop on the
+      upstream `EcdsaP256PrivateKey` zeroises the private scalar `d`
+      via the workspace-wide `oxicrypt-zeroize` volatile-write
+      convention; no caller-side scrubbing is required. Double-free
+      of the same non-NULL pointer is undefined behaviour (matches
+      malloc/free semantics).
+    signature: >-
+      void oxi_ecdsa_p256_private_key_free(OxiEcdsaP256PrivateKey *key)
+    parameters:
+      - { name: key, type: "OxiEcdsaP256PrivateKey *", direction: in, description: "Handle to free, or NULL" }
+    returns:
+      type: void
+      description: "No return value."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p256_private_key_public_key
+    module: oxicrypt-ffi
+    description: >-
+      Copy the uncompressed SEC1 public key
+      (`0x04 || X(32) || Y(32)`, 65 bytes) from an ECDSA P-256
+      private-key handle into the caller buffer. The public key
+      returned is exactly the one the IG 10.3.A PCT verified against
+      at handle construction time, so any signature produced by
+      `oxi_ecdsa_p256_private_key_sign_sha256` on the same handle is
+      guaranteed to verify under this public key.
+    signature: >-
+      int oxi_ecdsa_p256_private_key_public_key(const OxiEcdsaP256PrivateKey *key,
+      uint8_t *public_key_out)
+    parameters:
+      - { name: key, type: "const OxiEcdsaP256PrivateKey *", direction: in, description: "Live handle" }
+      - { name: public_key_out, type: "uint8_t *", direction: out, description: "65-byte uncompressed SEC1 public key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_ecdsa_p256_private_key_sign_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with ECDSA P-256 + SHA-256 under the private-key
+      handle, sampling a fresh per-signature nonce `k` from the
+      caller-supplied DRBG handle via the FIPS 186-5 §A.2.2 rejection
+      sampler. If the sampled `k` produces `r == 0` or `s == 0`
+      (mathematically possible but astronomically unlikely; on the
+      order of `2^(-256)` per draw), the call retries with a fresh
+      draw up to 8 times before returning `OxiResult::InvalidInput
+      = 5`. On success, writes 64 bytes (`r(32) || s(32)`) into
+      `sig_out`. The DRBG handle's internal state mutates during
+      nonce sampling; caller MUST serialise concurrent calls on the
+      same DRBG pointer per the per-call-mutating-handle thread-safety
+      contract. Forwards to
+      `oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::sign_sha256`.
+    signature: >-
+      int oxi_ecdsa_p256_private_key_sign_sha256(const OxiEcdsaP256PrivateKey *key,
+      OxiHmacDrbgSha256 *drbg, const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiEcdsaP256PrivateKey *", direction: in, description: "Live private-key handle" }
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated DRBG handle" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "64-byte signature buffer (r || s)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or retry exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_private_key_new_generate
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new ECDSA P-384 private-key handle, generating its
+      private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
+      the caller-supplied DRBG handle, deriving its public key, and
+      running the IG 10.3.A pairwise consistency test before
+      returning. Mirrors `oxi_ecdsa_p256_private_key_new_generate`
+      with curve-specific lengths (48-byte `d`, 97-byte `Q`).
+      Forwards to
+      `oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::generate`.
+    signature: >-
+      int oxi_ecdsa_p384_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+      OxiEcdsaP384PrivateKey **out_key)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated HMAC_DRBG-SHA-256 handle" }
+      - { name: out_key, type: "OxiEcdsaP384PrivateKey **", direction: out, description: "Receives a heap-allocated handle on success; caller MUST free with oxi_ecdsa_p384_private_key_free" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or PCT fail, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_private_key_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an ECDSA P-384 private-key handle. NULL-safe. Drop
+      zeroises `d`. Mirrors `oxi_ecdsa_p256_private_key_free`.
+    signature: >-
+      void oxi_ecdsa_p384_private_key_free(OxiEcdsaP384PrivateKey *key)
+    parameters:
+      - { name: key, type: "OxiEcdsaP384PrivateKey *", direction: in, description: "Handle to free, or NULL" }
+    returns:
+      type: void
+      description: "No return value."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_private_key_public_key
+    module: oxicrypt-ffi
+    description: >-
+      Copy the uncompressed SEC1 public key
+      (`0x04 || X(48) || Y(48)`, 97 bytes) from an ECDSA P-384
+      private-key handle into the caller buffer. Mirrors the P-256
+      variant.
+    signature: >-
+      int oxi_ecdsa_p384_private_key_public_key(const OxiEcdsaP384PrivateKey *key,
+      uint8_t *public_key_out)
+    parameters:
+      - { name: key, type: "const OxiEcdsaP384PrivateKey *", direction: in, description: "Live handle" }
+      - { name: public_key_out, type: "uint8_t *", direction: out, description: "97-byte uncompressed SEC1 public key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_ecdsa_p384_private_key_sign_sha384
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with ECDSA P-384 + SHA-384 under the private-key
+      handle, sampling a fresh per-signature nonce `k` from the
+      caller-supplied DRBG handle via the FIPS 186-5 §A.2.2 rejection
+      sampler. Mirrors `oxi_ecdsa_p256_private_key_sign_sha256` with
+      a 96-byte signature output. Forwards to
+      `oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::sign_sha384`.
+    signature: >-
+      int oxi_ecdsa_p384_private_key_sign_sha384(const OxiEcdsaP384PrivateKey *key,
+      OxiHmacDrbgSha256 *drbg, const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiEcdsaP384PrivateKey *", direction: in, description: "Live private-key handle" }
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated DRBG handle" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in }
+      - { name: msg_len, type: size_t, direction: in }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "96-byte signature buffer (r || s)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or retry exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
   # EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8) — three pure-deterministic
   # entry points over byte arrays. Unlike ECDSA, every operation
   # (keygen, sign, verify) is deterministic by construction; there is

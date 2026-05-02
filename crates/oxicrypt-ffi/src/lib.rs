@@ -76,6 +76,7 @@ pub use drbg::{
 pub use error::OxiResult;
 
 use crate::error::{status_kdf, status_module, OxiResult as R};
+use crate::handle::OxiHandle;
 use core::ffi::c_int;
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -3251,4 +3252,378 @@ pub unsafe extern "C" fn oxi_xmss_verify(
         Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
         Err(e) => R::from(e) as c_int,
     }
+}
+
+// ── ECDSA DRBG-driven (FIPS 186-5 §A.2.2 + IG 10.3.A) — handle surface ───
+//
+// Eight C ABI entry points + two opaque types extending the existing
+// stateless ECDSA family (above, lib.rs §"ECDSA (FIPS 186-5) — stateless
+// surface") with the FIPS 186-5 §A.2.2 rejection-sampler-driven keygen
+// and SHA-{256,384}-based signing. DRBG-handle-as-parameter pattern,
+// extending the seam validated by `oxi_dh3072_generate_keypair`
+// (PR #30).
+//
+// Per-curve set:
+//   - OxiEcdsaP{256,384}PrivateKey — opaque handle that has passed an
+//     IG 10.3.A pairwise consistency test at construction time. Carries
+//     both the private scalar `d` and the derived uncompressed SEC1
+//     public key `Q`. Drop chain calls upstream
+//     `oxicrypt_zeroize::zeroize(&mut self.d)`.
+//
+//   - oxi_ecdsa_p{256,384}_private_key_new_generate(drbg, **out_key) —
+//     allocates a heap handle, generates `d` via FIPS 186-5 §A.2.2
+//     rejection sampling on `drbg`, derives `Q`, and runs the
+//     IG 10.3.A PCT before returning. Allocation succeeds only on PCT
+//     pass; PCT-fail collapses to `OxiResult::InvalidInput = 5`.
+//
+//   - oxi_ecdsa_p{256,384}_private_key_free(key) — NULL-safe; releases
+//     the heap handle and runs Drop, which zeroises `d`.
+//
+//   - oxi_ecdsa_p{256,384}_private_key_public_key(key, out_pk) — copies
+//     the SEC1 uncompressed public key (65 / 97 bytes) into the
+//     caller buffer.
+//
+//   - oxi_ecdsa_p{256,384}_private_key_sign_sha{256,384}(key, drbg,
+//     msg, msg_len, out_sig) — signs `msg`, sampling a fresh
+//     per-signature nonce `k` from `drbg` via FIPS 186-5 §A.2.2.
+//     Both handles must be live; `drbg` is borrowed mutably for the
+//     duration of the call (per-call-mutating-handle thread-safety
+//     contract — caller MUST serialise concurrent calls on the same
+//     `drbg` pointer). Returns `OxiResult::InvalidInput = 5` if the
+//     DRBG faults or the bounded retry chain (8 draws) fails to produce
+//     a non-zero `(r, s)` (astronomically improbable; signals a faulted
+//     primitive, not bad input).
+//
+// **PCT-at-construction handle invariant** (CMVP gem in security-policy
+// §4.8): the C ABI surface preserves the upstream IG 10.3.A invariant
+// that no `EcdsaP{256,384}PrivateKey` exists without having passed a
+// sign-and-verify PCT against a fixed probe message under a fresh
+// DRBG-sampled `k`. Because the handle wraps the upstream type
+// directly (via `OxiHandle<EcdsaP{256,384}PrivateKey>`) and only the
+// DRBG-driven `_new_generate` constructor exists this round, every
+// reachable `OxiEcdsaP{256,384}PrivateKey` pointer in C land
+// corresponds to a Rust-side handle whose construction succeeded —
+// PCT-fail aborts allocation, never produces a half-initialised
+// pointer. Stateless `from_bytes(d, drbg)` import constructor and
+// `private_scalar(&self)` exfil accessor are deliberately deferred to
+// future additive rounds (no API break to add either later).
+
+/// Opaque ECDSA P-256 private-key handle that has passed an IG 10.3.A
+/// pairwise consistency test at construction time.
+///
+/// The internal layout (`OxiHandle<EcdsaP256PrivateKey>`) is
+/// implementation detail and not part of the C ABI; cbindgen renders
+/// this as an opaque struct.
+///
+/// cbindgen:opaque
+pub struct OxiEcdsaP256PrivateKey {
+    inner: OxiHandle<oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey>,
+}
+
+impl OxiEcdsaP256PrivateKey {
+    /// Crate-internal accessor for the underlying read-only
+    /// `EcdsaP256PrivateKey`. Returns `None` if the handle has been
+    /// finalised (today: never — this handle has no `_finalize` entry
+    /// point, only `_free` via Drop).
+    pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey> {
+        self.inner.as_ref()
+    }
+}
+
+/// Opaque ECDSA P-384 private-key handle that has passed an IG 10.3.A
+/// pairwise consistency test at construction time.
+///
+/// cbindgen:opaque
+pub struct OxiEcdsaP384PrivateKey {
+    inner: OxiHandle<oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey>,
+}
+
+impl OxiEcdsaP384PrivateKey {
+    pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey> {
+        self.inner.as_ref()
+    }
+}
+
+// ── ECDSA P-256 — DRBG-driven keygen + sign ──────────────────────
+
+/// Allocate a new ECDSA P-256 private-key handle, generating its
+/// private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
+/// `drbg`, deriving its public key, and running the IG 10.3.A
+/// pairwise consistency test against a fixed probe message before
+/// returning.
+///
+/// On success, writes a heap-allocated handle pointer through
+/// `out_key` and returns `OxiResult::Ok = 0`. The caller owns the
+/// handle and MUST release it with
+/// [`oxi_ecdsa_p256_private_key_free`].
+///
+/// Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
+/// scalar / nonce sampling, or if the IG 10.3.A PCT sign-and-verify
+/// round-trip on the freshly-generated key fails (the latter would
+/// indicate a faulted sign or verify primitive). Returns
+/// `OxiResult::NotOperational = 1` if the FIPS module is not in the
+/// `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
+/// if the active algorithm profile blocks ECDSA-P256 keygen.
+///
+/// # Safety
+///
+/// `drbg` must be a live, instantiated handle from
+/// [`oxi_hmac_drbg_sha256_new`] +
+/// [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+/// writable pointer to a `*mut OxiEcdsaP256PrivateKey`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    out_key: *mut *mut OxiEcdsaP256PrivateKey,
+) -> c_int {
+    if drbg.is_null() || out_key.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let key = match oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::generate(drbg_ref) {
+        Ok(k) => k,
+        Err(e) => return R::from(e) as c_int,
+    };
+    let boxed = Box::new(OxiEcdsaP256PrivateKey {
+        inner: OxiHandle::new(key),
+    });
+    unsafe { *out_key = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an ECDSA P-256 private-key handle. NULL-safe.
+///
+/// After this call the caller's pointer is dangling; the caller
+/// SHOULD set their pointer to NULL to avoid use-after-free. Drop
+/// on the upstream `EcdsaP256PrivateKey` zeroises the private
+/// scalar `d` via the workspace-wide `oxicrypt-zeroize` volatile-
+/// write convention; no caller-side scrubbing is required.
+///
+/// # Safety
+///
+/// `key` must be either NULL or a pointer previously returned by
+/// [`oxi_ecdsa_p256_private_key_new_generate`] that has not yet
+/// been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_free(key: *mut OxiEcdsaP256PrivateKey) {
+    if key.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(key) });
+}
+
+/// Copy the uncompressed SEC1 public key (`0x04 || X(32) || Y(32)`,
+/// 65 bytes) from an ECDSA P-256 private-key handle into the caller
+/// buffer.
+///
+/// Returns `OxiResult::Ok = 0` on success;
+/// `OxiResult::NullPointer = 10` if either pointer is NULL;
+/// `OxiResult::NotOperational = 1` if the handle has been
+/// finalised (today: never — no `_finalize` exists for this handle).
+///
+/// # Safety
+///
+/// `key` must be a live handle from
+/// [`oxi_ecdsa_p256_private_key_new_generate`]. `public_key_out`
+/// must be a non-NULL writable pointer to ≥65 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
+    key: *const OxiEcdsaP256PrivateKey,
+    public_key_out: *mut u8,
+) -> c_int {
+    if key.is_null() || public_key_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let pk = key_ref.public_key();
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 65) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with ECDSA P-256 + SHA-256 under the private-key
+/// handle, sampling a fresh per-signature nonce `k` from `drbg` via
+/// the FIPS 186-5 §A.2.2 rejection sampler. If the sampled `k`
+/// produces `r == 0` or `s == 0` (mathematically possible but
+/// astronomically unlikely; on the order of `2^(-256)` per draw),
+/// the call retries with a fresh draw up to 8 times before returning
+/// `OxiResult::InvalidInput = 5`.
+///
+/// On success, writes 64 bytes (`r(32) || s(32)`) into `sig_out`.
+///
+/// Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
+/// nonce sampling or the bounded retry chain exhausts without a
+/// non-zero `(r, s)` (a faulted primitive, not bad input). Returns
+/// `OxiResult::NotOperational = 1` if the FIPS module is not in the
+/// `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
+/// if the active algorithm profile blocks ECDSA-P256 sign (a profile
+/// MAY allow `EcdsaP256Keygen` but block `EcdsaP256Sign`, in which
+/// case `_new_generate` succeeds but this fn returns 6).
+///
+/// # Safety
+///
+/// `key` must be a live handle from
+/// [`oxi_ecdsa_p256_private_key_new_generate`]. `drbg` must be a
+/// live, instantiated handle from [`oxi_hmac_drbg_sha256_new`] +
+/// [`oxi_hmac_drbg_sha256_instantiate`]; the caller MUST serialise
+/// concurrent calls on the same `drbg` pointer per the
+/// per-call-mutating-handle thread-safety contract documented in
+/// security-policy §4.8. `msg_ptr` must be valid for `msg_len` bytes.
+/// `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
+    key: *const OxiEcdsaP256PrivateKey,
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || drbg.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_sha256(drbg_ref, msg) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 64) };
+    R::Ok as c_int
+}
+
+// ── ECDSA P-384 — DRBG-driven keygen + sign ──────────────────────
+
+/// Allocate a new ECDSA P-384 private-key handle, generating its
+/// private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
+/// `drbg`, deriving its public key, and running the IG 10.3.A
+/// pairwise consistency test before returning. Mirrors
+/// [`oxi_ecdsa_p256_private_key_new_generate`].
+///
+/// # Safety
+///
+/// `drbg` must be a live, instantiated DRBG handle. `out_key` must
+/// be a non-NULL writable pointer to a `*mut OxiEcdsaP384PrivateKey`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_new_generate(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    out_key: *mut *mut OxiEcdsaP384PrivateKey,
+) -> c_int {
+    if drbg.is_null() || out_key.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let key = match oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::generate(drbg_ref) {
+        Ok(k) => k,
+        Err(e) => return R::from(e) as c_int,
+    };
+    let boxed = Box::new(OxiEcdsaP384PrivateKey {
+        inner: OxiHandle::new(key),
+    });
+    unsafe { *out_key = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an ECDSA P-384 private-key handle. NULL-safe. Mirrors
+/// [`oxi_ecdsa_p256_private_key_free`].
+///
+/// # Safety
+///
+/// `key` must be either NULL or a pointer previously returned by
+/// [`oxi_ecdsa_p384_private_key_new_generate`] that has not yet
+/// been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_free(key: *mut OxiEcdsaP384PrivateKey) {
+    if key.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(key) });
+}
+
+/// Copy the uncompressed SEC1 public key (`0x04 || X(48) || Y(48)`,
+/// 97 bytes) from an ECDSA P-384 private-key handle into the caller
+/// buffer.
+///
+/// # Safety
+///
+/// `key` must be a live handle from
+/// [`oxi_ecdsa_p384_private_key_new_generate`]. `public_key_out`
+/// must be a non-NULL writable pointer to ≥97 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
+    key: *const OxiEcdsaP384PrivateKey,
+    public_key_out: *mut u8,
+) -> c_int {
+    if key.is_null() || public_key_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let pk = key_ref.public_key();
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 97) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with ECDSA P-384 + SHA-384 under the private-key
+/// handle, sampling a fresh per-signature nonce `k` from `drbg` via
+/// the FIPS 186-5 §A.2.2 rejection sampler. Mirrors
+/// [`oxi_ecdsa_p256_private_key_sign_sha256`] with `[u8; 96]`
+/// signature output.
+///
+/// Returns `OxiResult::InvalidInput = 5` if the DRBG faults or the
+/// bounded retry chain exhausts. Returns `OxiResult::NotOperational
+/// = 1` if the FIPS module is not in the `Operational` state.
+/// Returns `OxiResult::AlgorithmRestricted = 6` if the active
+/// algorithm profile blocks ECDSA-P384 sign (a profile MAY allow
+/// `EcdsaP384Keygen` but block `EcdsaP384Sign`, in which case
+/// `_new_generate` succeeds but this fn returns 6).
+///
+/// # Safety
+///
+/// `key` must be a live handle from
+/// [`oxi_ecdsa_p384_private_key_new_generate`]. `drbg` must be a
+/// live, instantiated DRBG handle; serialise concurrent calls per
+/// the per-call-mutating-handle thread-safety contract.
+/// `msg_ptr` must be valid for `msg_len` bytes. `sig_out` must be a
+/// non-NULL writable pointer to ≥96 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
+    key: *const OxiEcdsaP384PrivateKey,
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || drbg.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_sha384(drbg_ref, msg) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 96) };
+    R::Ok as c_int
 }

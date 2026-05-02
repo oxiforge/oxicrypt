@@ -28,6 +28,24 @@
 typedef struct OxiAes256Key OxiAes256Key;
 
 /*
+ Opaque ECDSA P-256 private-key handle that has passed an IG 10.3.A
+ pairwise consistency test at construction time.
+
+ The internal layout (`OxiHandle<EcdsaP256PrivateKey>`) is
+ implementation detail and not part of the C ABI; cbindgen renders
+ this as an opaque struct.
+
+ */
+typedef struct OxiEcdsaP256PrivateKey OxiEcdsaP256PrivateKey;
+
+/*
+ Opaque ECDSA P-384 private-key handle that has passed an IG 10.3.A
+ pairwise consistency test at construction time.
+
+ */
+typedef struct OxiEcdsaP384PrivateKey OxiEcdsaP384PrivateKey;
+
+/*
  Opaque HMAC_DRBG-SHA-256 handle. The internal layout
  (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
  part of the C ABI; cbindgen renders this as an opaque struct.
@@ -1311,6 +1329,180 @@ int oxi_xmss_verify(const uint8_t *pk_ptr,
                     const uint8_t *msg_ptr,
                     uintptr_t msg_len,
                     const uint8_t *sig_ptr);
+
+/*
+ Allocate a new ECDSA P-256 private-key handle, generating its
+ private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
+ `drbg`, deriving its public key, and running the IG 10.3.A
+ pairwise consistency test against a fixed probe message before
+ returning.
+
+ On success, writes a heap-allocated handle pointer through
+ `out_key` and returns `OxiResult::Ok = 0`. The caller owns the
+ handle and MUST release it with
+ [`oxi_ecdsa_p256_private_key_free`].
+
+ Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
+ scalar / nonce sampling, or if the IG 10.3.A PCT sign-and-verify
+ round-trip on the freshly-generated key fails (the latter would
+ indicate a faulted sign or verify primitive). Returns
+ `OxiResult::NotOperational = 1` if the FIPS module is not in the
+ `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
+ if the active algorithm profile blocks ECDSA-P256 keygen.
+
+ # Safety
+
+ `drbg` must be a live, instantiated handle from
+ [`oxi_hmac_drbg_sha256_new`] +
+ [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+ writable pointer to a `*mut OxiEcdsaP256PrivateKey`.
+ */
+int oxi_ecdsa_p256_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+                                            OxiEcdsaP256PrivateKey **out_key);
+
+/*
+ Free an ECDSA P-256 private-key handle. NULL-safe.
+
+ After this call the caller's pointer is dangling; the caller
+ SHOULD set their pointer to NULL to avoid use-after-free. Drop
+ on the upstream `EcdsaP256PrivateKey` zeroises the private
+ scalar `d` via the workspace-wide `oxicrypt-zeroize` volatile-
+ write convention; no caller-side scrubbing is required.
+
+ # Safety
+
+ `key` must be either NULL or a pointer previously returned by
+ [`oxi_ecdsa_p256_private_key_new_generate`] that has not yet
+ been freed.
+ */
+void oxi_ecdsa_p256_private_key_free(OxiEcdsaP256PrivateKey *key);
+
+/*
+ Copy the uncompressed SEC1 public key (`0x04 || X(32) || Y(32)`,
+ 65 bytes) from an ECDSA P-256 private-key handle into the caller
+ buffer.
+
+ Returns `OxiResult::Ok = 0` on success;
+ `OxiResult::NullPointer = 10` if either pointer is NULL;
+ `OxiResult::NotOperational = 1` if the handle has been
+ finalised (today: never — no `_finalize` exists for this handle).
+
+ # Safety
+
+ `key` must be a live handle from
+ [`oxi_ecdsa_p256_private_key_new_generate`]. `public_key_out`
+ must be a non-NULL writable pointer to ≥65 bytes.
+ */
+int oxi_ecdsa_p256_private_key_public_key(const OxiEcdsaP256PrivateKey *key,
+                                          uint8_t *public_key_out);
+
+/*
+ Sign `msg` with ECDSA P-256 + SHA-256 under the private-key
+ handle, sampling a fresh per-signature nonce `k` from `drbg` via
+ the FIPS 186-5 §A.2.2 rejection sampler. If the sampled `k`
+ produces `r == 0` or `s == 0` (mathematically possible but
+ astronomically unlikely; on the order of `2^(-256)` per draw),
+ the call retries with a fresh draw up to 8 times before returning
+ `OxiResult::InvalidInput = 5`.
+
+ On success, writes 64 bytes (`r(32) || s(32)`) into `sig_out`.
+
+ Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
+ nonce sampling or the bounded retry chain exhausts without a
+ non-zero `(r, s)` (a faulted primitive, not bad input). Returns
+ `OxiResult::NotOperational = 1` if the FIPS module is not in the
+ `Operational` state. Returns `OxiResult::AlgorithmRestricted = 6`
+ if the active algorithm profile blocks ECDSA-P256 sign (a profile
+ MAY allow `EcdsaP256Keygen` but block `EcdsaP256Sign`, in which
+ case `_new_generate` succeeds but this fn returns 6).
+
+ # Safety
+
+ `key` must be a live handle from
+ [`oxi_ecdsa_p256_private_key_new_generate`]. `drbg` must be a
+ live, instantiated handle from [`oxi_hmac_drbg_sha256_new`] +
+ [`oxi_hmac_drbg_sha256_instantiate`]; the caller MUST serialise
+ concurrent calls on the same `drbg` pointer per the
+ per-call-mutating-handle thread-safety contract documented in
+ security-policy §4.8. `msg_ptr` must be valid for `msg_len` bytes.
+ `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
+ */
+int oxi_ecdsa_p256_private_key_sign_sha256(const OxiEcdsaP256PrivateKey *key,
+                                           OxiHmacDrbgSha256 *drbg,
+                                           const uint8_t *msg_ptr,
+                                           uintptr_t msg_len,
+                                           uint8_t *sig_out);
+
+/*
+ Allocate a new ECDSA P-384 private-key handle, generating its
+ private scalar via the FIPS 186-5 §A.2.2 rejection sampler on
+ `drbg`, deriving its public key, and running the IG 10.3.A
+ pairwise consistency test before returning. Mirrors
+ [`oxi_ecdsa_p256_private_key_new_generate`].
+
+ # Safety
+
+ `drbg` must be a live, instantiated DRBG handle. `out_key` must
+ be a non-NULL writable pointer to a `*mut OxiEcdsaP384PrivateKey`.
+ */
+int oxi_ecdsa_p384_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+                                            OxiEcdsaP384PrivateKey **out_key);
+
+/*
+ Free an ECDSA P-384 private-key handle. NULL-safe. Mirrors
+ [`oxi_ecdsa_p256_private_key_free`].
+
+ # Safety
+
+ `key` must be either NULL or a pointer previously returned by
+ [`oxi_ecdsa_p384_private_key_new_generate`] that has not yet
+ been freed.
+ */
+void oxi_ecdsa_p384_private_key_free(OxiEcdsaP384PrivateKey *key);
+
+/*
+ Copy the uncompressed SEC1 public key (`0x04 || X(48) || Y(48)`,
+ 97 bytes) from an ECDSA P-384 private-key handle into the caller
+ buffer.
+
+ # Safety
+
+ `key` must be a live handle from
+ [`oxi_ecdsa_p384_private_key_new_generate`]. `public_key_out`
+ must be a non-NULL writable pointer to ≥97 bytes.
+ */
+int oxi_ecdsa_p384_private_key_public_key(const OxiEcdsaP384PrivateKey *key,
+                                          uint8_t *public_key_out);
+
+/*
+ Sign `msg` with ECDSA P-384 + SHA-384 under the private-key
+ handle, sampling a fresh per-signature nonce `k` from `drbg` via
+ the FIPS 186-5 §A.2.2 rejection sampler. Mirrors
+ [`oxi_ecdsa_p256_private_key_sign_sha256`] with `[u8; 96]`
+ signature output.
+
+ Returns `OxiResult::InvalidInput = 5` if the DRBG faults or the
+ bounded retry chain exhausts. Returns `OxiResult::NotOperational
+ = 1` if the FIPS module is not in the `Operational` state.
+ Returns `OxiResult::AlgorithmRestricted = 6` if the active
+ algorithm profile blocks ECDSA-P384 sign (a profile MAY allow
+ `EcdsaP384Keygen` but block `EcdsaP384Sign`, in which case
+ `_new_generate` succeeds but this fn returns 6).
+
+ # Safety
+
+ `key` must be a live handle from
+ [`oxi_ecdsa_p384_private_key_new_generate`]. `drbg` must be a
+ live, instantiated DRBG handle; serialise concurrent calls per
+ the per-call-mutating-handle thread-safety contract.
+ `msg_ptr` must be valid for `msg_len` bytes. `sig_out` must be a
+ non-NULL writable pointer to ≥96 bytes.
+ */
+int oxi_ecdsa_p384_private_key_sign_sha384(const OxiEcdsaP384PrivateKey *key,
+                                           OxiHmacDrbgSha256 *drbg,
+                                           const uint8_t *msg_ptr,
+                                           uintptr_t msg_len,
+                                           uint8_t *sig_out);
 
 /*
  Allocate a new AES-256 key handle from raw 32-byte key material.

@@ -335,9 +335,18 @@ The `oxicrypt-ffi` crate currently exposes:
   `oxi_tls13_{hkdf_expand_label,derive_secret}_{sha256,sha384}`.
 - ECDSA P-256 / P-384 stateless surface (FIPS 186-5 §6.2/§6.4):
   `oxi_ecdsa_p{256,384}_{derive_public_key, sign_with_k, verify}`.
-  Caller supplies the per-message secret `k` for `sign_with_k`; the
-  DRBG-driven `generate` and `sign_sha*` surfaces land in a follow-up
-  PR after the DRBG family C ABI ships.
+  Caller supplies the per-message secret `k` for `sign_with_k`.
+- ECDSA P-256 / P-384 DRBG-driven handle surface (FIPS 186-5 §A.2.2 + IG 10.3.A):
+  opaque `OxiEcdsaP{256,384}PrivateKey` + four entry points per curve —
+  `oxi_ecdsa_p{256,384}_private_key_{new_generate, free, public_key, sign_sha{256,384}}`.
+  `_new_generate` consumes a live `OxiHmacDrbgSha256 *` to sample
+  the private scalar `d`, derive `Q`, and run the IG 10.3.A pairwise
+  consistency test before returning the handle. `_sign_sha{256,384}`
+  re-borrows the same DRBG to sample a fresh per-signature nonce
+  `k` per call. The PCT-at-construction handle invariant ensures no
+  `OxiEcdsaP{256,384}PrivateKey` pointer ever escapes construction
+  without having passed a sign-and-verify round-trip; see
+  security-policy §4.8 for the structural argument.
 - EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8): `oxi_ed25519_{keygen,
   sign, verify}`. Every operation is deterministic by construction —
   `keygen(seed)` returns the same public key for the same seed (no
@@ -471,10 +480,11 @@ The `oxicrypt-ffi` crate currently exposes:
   (HMAC-SHA-384/512, Hash-SHA-{256,384,512}, CTR-AES-{128,192,256}
   with `_df` and `_no_df`) ship later as additive function names.
 
-This closes the 14-round C ABI family backfill arc. Subsequent
-rounds will be additive variant ships and the deferred DRBG-
-driven follow-ups (ECDSA `generate` / `sign_sha*`, ECDH
-`generate`, RSA sign / OAEP / keygen, DH-3072 keygen).
+This closes the 14-round C ABI family backfill arc plus the DRBG
+MVP and its first two DRBG-driven follow-ups (DH-3072 keygen,
+ECDSA `generate` / `sign_sha*`). Subsequent rounds will be
+additive variant ships and the remaining DRBG-driven follow-ups
+(ECDH `generate`, RSA sign / OAEP / keygen).
 
 ## `oxi` CLI
 
