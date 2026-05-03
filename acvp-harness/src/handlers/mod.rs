@@ -415,6 +415,7 @@ pub mod kmac;
 pub mod lms;
 pub mod ml_dsa;
 pub mod ml_kem;
+pub mod os_entropy;
 pub mod parallelhash;
 pub mod pbkdf2;
 pub mod rsa;

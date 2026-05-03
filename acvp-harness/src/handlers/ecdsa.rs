@@ -376,7 +376,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             }
         }
     } else {
-        let mut drbg = build_seeded_drbg()?;
+        let mut drbg = super::os_entropy::build_seeded_drbg()?;
         match curve {
             "P-256" => sign_group_p256(&mut drbg, tests)?,
             "P-384" => sign_group_p384(&mut drbg, tests)?,
@@ -664,7 +664,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             }
         }
     } else {
-        let mut drbg = build_seeded_drbg()?;
+        let mut drbg = super::os_entropy::build_seeded_drbg()?;
         match curve {
             "P-256" => generate_keygen_p256(&mut drbg, tests, &mut results)?,
             "P-384" => generate_keygen_p384(&mut drbg, tests, &mut results)?,
@@ -820,30 +820,9 @@ fn generate_keygen_p384(
     Ok(())
 }
 
-// ── DRBG bootstrap from /dev/urandom ────────────────────────────────
-
-/// Build a freshly instantiated `HmacDrbgSha256` seeded from
-/// `/dev/urandom`. SP 800-90A §10.1 minimum is 256-bit entropy +
-/// 128-bit nonce for the SHA-256 instantiation; we read 32 + 16 = 48
-/// bytes. The harness is Linux-only (the `s_client` mTLS subprocess
-/// is the binding constraint), so `/dev/urandom` is sufficient.
-fn build_seeded_drbg() -> Result<oxicrypt_drbg::HmacDrbgSha256, DispatchError> {
-    let mut buf = [0u8; 48];
-    read_os_entropy(&mut buf)?;
-    let mut drbg = oxicrypt_drbg::HmacDrbgSha256::new();
-    drbg.instantiate(&buf[..32], &buf[32..], &[])
-        .map_err(|_| DispatchError::Crypto("ECDSA: HmacDrbgSha256::instantiate failed"))?;
-    Ok(drbg)
-}
-
-fn read_os_entropy(buf: &mut [u8]) -> Result<(), DispatchError> {
-    use std::io::Read;
-    let mut f = std::fs::File::open("/dev/urandom")
-        .map_err(|_| DispatchError::Crypto("ECDSA: open /dev/urandom failed"))?;
-    f.read_exact(buf)
-        .map_err(|_| DispatchError::Crypto("ECDSA: read /dev/urandom failed"))?;
-    Ok(())
-}
+// DRBG bootstrap moved to `super::os_entropy` once a second consumer
+// (KAS-ECC-SSC live AFT) appeared. See that module for the rationale
+// on `/dev/urandom` and the SP 800-90A §10.1 entropy/nonce split.
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 

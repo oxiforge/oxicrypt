@@ -500,10 +500,8 @@ mod tests {
         assert!(r.find("RSA", Some("signaturePrimitive"), "2.0").is_some());
         // R25 RSA SigGen
         assert!(r.find("RSA", Some("sigGen"), "FIPS186-5").is_some());
-        // R26 KAS-ECC-SSC
-        assert!(r
-            .find("KAS-ECC-SSC", Some("Component"), "Sp800-56Ar3")
-            .is_some());
+        // R26 KAS-ECC-SSC — registered with no mode (catalog row 114)
+        assert!(r.find("KAS-ECC-SSC", None, "Sp800-56Ar3").is_some());
         // R59 KAS-FFC-SSC
         assert!(r
             .find("KAS-FFC-SSC", Some("Component"), "Sp800-56Ar3")

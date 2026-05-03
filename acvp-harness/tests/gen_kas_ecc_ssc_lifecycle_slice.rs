@@ -123,7 +123,6 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
         r#"{{
   "_source": "oxicrypt self-generated KAS-ECC-SSC lifecycle vectors",
   "algorithm": "KAS-ECC-SSC",
-  "mode": "Component",
   "revision": "Sp800-56Ar3",
   "testGroups": [
     {{

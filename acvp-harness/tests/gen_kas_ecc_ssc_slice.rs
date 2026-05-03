@@ -93,7 +93,6 @@ fn generate_kas_ecc_ssc_slice() {
         r#"{{
   "vsId": 0,
   "algorithm": "KAS-ECC-SSC",
-  "mode": "Component",
   "revision": "Sp800-56Ar3",
   "isSample": true,
   "testGroups": [

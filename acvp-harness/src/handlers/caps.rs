@@ -860,11 +860,21 @@ pub fn eddsa_keygen_capability() -> JsonValue {
 
 // ── KAS-ECC-SSC ──────────────────────────────────────────────────
 
-/// Build an ACVP registration block for KAS-ECC-SSC / Component.
+/// Build an ACVP registration block for KAS-ECC-SSC.
+///
+/// The ACVTS demo algorithm catalog (`acvts-demo/algorithms-catalog-
+/// 2026-04-25.json` row 114) registers `KAS-ECC-SSC` with **no mode
+/// field** under revision `Sp800-56Ar3` — unlike `KAS-ECC` (catalog
+/// row 133) which carries `mode: "CDH-Component"`. The server
+/// constructs its lookup key by concatenating
+/// `algorithm-mode-revision`; sending `mode: "Component"` produced
+/// `KAS-ECC-SSC-Component-Sp800-56Ar3` which doesn't exist in the
+/// catalog and was rejected with HTTP 400 `Unable to map ... to an
+/// internal algorithm id`. The actual entry is
+/// `KAS-ECC-SSC-Sp800-56Ar3` (no mode segment).
 pub fn kas_ecc_ssc_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KAS-ECC-SSC")),
-        ("mode", str_val("Component")),
         ("revision", str_val("Sp800-56Ar3")),
         (
             "scheme",
