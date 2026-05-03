@@ -401,20 +401,35 @@ fn ctr_walk_other_input<D: CtrDrbgOps>(
                         drbg.do_generate_no_df(None, &mut output)?;
                     }
                 } else {
-                    // Non-PR generate: pass additionalInput.
-                    let addl_opt = if step_addl.is_empty() {
-                        None
-                    } else if use_df {
-                        Some(step_addl.as_slice())
-                    } else {
-                        // no-df generate: additional_input must be exactly seed_len.
-                        // ACVP vectors provide it at that length already.
-                        Some(step_addl.as_slice())
-                    };
+                    // Non-PR generate. The two cipher variants take
+                    // additional_input differently:
+                    //
+                    //   - df:    any length up to MAX_DF_INPUT (the
+                    //            algorithm itself runs the input
+                    //            through Block_Cipher_df).
+                    //   - no-df: SP 800-90A §10.2.1.5.1 step 2.1 says
+                    //            additional_input =
+                    //              leftmost(addl || 0^seedlen, seedlen).
+                    //            ACVP supplies arbitrary
+                    //            `additionalInputLen`, so the handler
+                    //            zero-pads (or truncates) to seed_len
+                    //            before calling upstream — which
+                    //            strictly enforces
+                    //            `additional_input.len() == F::SEED_LEN`.
                     if use_df {
+                        let addl_opt = if step_addl.is_empty() {
+                            None
+                        } else {
+                            Some(step_addl.as_slice())
+                        };
                         drbg.do_generate_df(addl_opt, &mut output)?;
+                    } else if step_addl.is_empty() {
+                        drbg.do_generate_no_df(None, &mut output)?;
                     } else {
-                        drbg.do_generate_no_df(addl_opt, &mut output)?;
+                        let mut padded = vec![0u8; seed_len];
+                        let n = step_addl.len().min(seed_len);
+                        padded[..n].copy_from_slice(&step_addl[..n]);
+                        drbg.do_generate_no_df(Some(&padded), &mut output)?;
                     }
                 }
             }

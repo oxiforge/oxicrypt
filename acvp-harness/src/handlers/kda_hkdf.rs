@@ -104,9 +104,11 @@ fn handle_kda_hkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> 
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
-        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
-    }
+    let kind = match test_type {
+        "AFT" => TestKind::Aft,
+        "VAL" => TestKind::Val,
+        other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
+    };
 
     let kdf_cfg = group
         .get("kdfConfiguration")
@@ -177,6 +179,7 @@ fn handle_kda_hkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> 
             variant,
             uses_hybrid,
             group_l_bits,
+            kind,
         )?);
     }
     Ok(JsonValue::Object(vec![
@@ -185,11 +188,23 @@ fn handle_kda_hkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> 
     ]))
 }
 
-/// Handle a single KDA-HKDF AFT test case.
+/// AFT vs VAL: AFT emits the computed `dkm`; VAL compares the
+/// computed `dkm` against the candidate the prompt ships and emits
+/// `testPassed`.
+#[derive(Debug, Clone, Copy)]
+enum TestKind {
+    Aft,
+    Val,
+}
+
+/// Handle a single KDA-HKDF AFT or VAL test case.
 ///
 /// Split out from [`handle_kda_hkdf_group`] so the group driver stays
 /// small; all per-test parsing, hybrid `Z || T` assembly, `l` override
 /// handling, fixedInfo encoding, and the HKDF derive call live here.
+/// The AFT and VAL paths share every step up to and including the
+/// `variant.derive(...)` call — they only diverge in how the result
+/// is reported.
 fn handle_kda_hkdf_test(
     test: &JsonValue,
     kdf_cfg: &JsonValue,
@@ -197,6 +212,7 @@ fn handle_kda_hkdf_test(
     variant: HkdfVariant,
     uses_hybrid: bool,
     group_l_bits: u64,
+    kind: TestKind,
 ) -> Result<JsonValue, DispatchError> {
     let tc_id = test
         .get("tcId")
@@ -242,13 +258,49 @@ fn handle_kda_hkdf_test(
     let fixed_info = encode_fixed_info(pattern, test, kdf_cfg, l_bits)?;
     let dkm = variant.derive(&salt, &ikm, &fixed_info, l_bytes)?;
 
-    Ok(JsonValue::Object(vec![
-        ("tcId".to_string(), JsonValue::Number(tc_id)),
-        (
-            "dkm".to_string(),
-            JsonValue::String(hex::encode_upper(&dkm)),
-        ),
-    ]))
+    match kind {
+        TestKind::Aft => Ok(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(tc_id)),
+            (
+                "dkm".to_string(),
+                JsonValue::String(hex::encode_upper(&dkm)),
+            ),
+        ])),
+        TestKind::Val => {
+            // VAL groups carry a candidate `dkm` per test; we compare
+            // our derived bytes against it and report `testPassed`. A
+            // length mismatch is not a panic — it simply fails the
+            // comparison. The compare itself is constant-time so a
+            // future caller running the harness as a service can't
+            // learn byte-by-byte alignment from response timing.
+            let candidate_hex = test
+                .get("dkm")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("dkm"))?;
+            let candidate = hex::decode(candidate_hex)?;
+            let passed = ct_eq_bytes(&dkm, &candidate);
+            Ok(JsonValue::Object(vec![
+                ("tcId".to_string(), JsonValue::Number(tc_id)),
+                ("testPassed".to_string(), JsonValue::Bool(passed)),
+            ]))
+        }
+    }
+}
+
+/// Equal-length constant-time byte-slice equality. A length mismatch
+/// is reported as `false` without entering the byte loop — lengths
+/// are public information in the harness context (carried in the test
+/// vector itself), so leaking them via early-return adds no
+/// confidentiality risk.
+fn ct_eq_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for i in 0..a.len() {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
 }
 
 // ----------------------------------------------------------------------
