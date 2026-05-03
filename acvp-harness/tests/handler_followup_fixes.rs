@@ -1,13 +1,19 @@
-//! Regression tests for two ACVP handler-layer follow-ups deferred from
-//! the 2026-04-28 caps.rs sweep:
+//! Regression tests for ACVP handler-layer follow-ups:
 //!
 //! 1. `ctrDRBG` no-df non-PR generate path must pad/truncate the
 //!    additional_input to seed_len per SP 800-90A §10.2.1.5.1 step 2.1
 //!    before calling upstream `oxicrypt_drbg::ctr::generate_no_df`,
 //!    which strictly requires `additional_input.len() == F::SEED_LEN`.
+//!    (PR #33, 2026-05-03)
 //! 2. `KDA-HKDF-Sp800-56Cr2` handler must accept `testType=VAL` groups
 //!    in addition to `AFT`. VAL groups carry a candidate `dkm` per test;
 //!    the response shape is `{tcId, testPassed: <bool>}`.
+//!    (PR #33, 2026-05-03)
+//! 3. `ECDSA` `sigGen` and `keyGen` handlers must NOT read field `d`
+//!    from the prompt — both modes are FIPS 186-5 §A.2.2 generative.
+//!    The IUT samples a fresh keypair via the module's DRBG-backed
+//!    keygen API and reports `d` (keyGen) or `qx`/`qy` at group level
+//!    plus per-test `r`/`s` (sigGen).
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -291,4 +297,190 @@ fn kda_hkdf_aft_response_shape_unchanged() {
     );
     let dkm = test.get("dkm").and_then(JsonValue::as_str).unwrap();
     assert_eq!(dkm, hex_upper(&expected_okm()));
+}
+
+// ── ECDSA sigGen + keyGen "missing field d" ─────────────────────────
+
+fn ecdsa_siggen_prompt(curve: &str, hash: &str) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "ECDSA",
+            "mode":      "sigGen",
+            "revision":  "FIPS186-5",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType":      "AFT",
+                "componentTest": false,
+                "curve":         "{curve}",
+                "hashAlg":       "{hash}",
+                "tests": [
+                    {{ "tcId": 1, "message": "DEADBEEFCAFE0001" }},
+                    {{ "tcId": 2, "message": "DEADBEEFCAFE0002" }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+fn ecdsa_keygen_prompt(curve: &str) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "ECDSA",
+            "mode":      "keyGen",
+            "revision":  "FIPS186-5",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType":             "AFT",
+                "curve":                "{curve}",
+                "secretGenerationMode": "testing candidates",
+                "tests": [
+                    {{ "tcId": 1 }},
+                    {{ "tcId": 2 }},
+                    {{ "tcId": 3 }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+#[test]
+fn ecdsa_siggen_p256_dispatches_without_d_or_k() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&ecdsa_siggen_prompt("P-256", "SHA2-256"));
+    let groups = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    assert_eq!(groups.len(), 1);
+    let g = &groups[0];
+
+    // Public key reported at group level (not per-test).
+    let qx = g.get("qx").and_then(JsonValue::as_str).unwrap();
+    let qy = g.get("qy").and_then(JsonValue::as_str).unwrap();
+    assert_eq!(qx.len(), 64); // P-256 X coord = 32 bytes = 64 hex chars
+    assert_eq!(qy.len(), 64);
+
+    let tests = g.get("tests").and_then(JsonValue::as_array).unwrap();
+    assert_eq!(tests.len(), 2);
+    for t in tests {
+        let r = t.get("r").and_then(JsonValue::as_str).unwrap();
+        let s = t.get("s").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(r.len(), 64);
+        assert_eq!(s.len(), 64);
+        assert!(t.get("qx").is_none(), "sigGen must not echo qx per-test");
+    }
+}
+
+#[test]
+fn ecdsa_siggen_p384_dispatches_without_d_or_k() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&ecdsa_siggen_prompt("P-384", "SHA2-384"));
+    let g = &response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0];
+    let qx = g.get("qx").and_then(JsonValue::as_str).unwrap();
+    let qy = g.get("qy").and_then(JsonValue::as_str).unwrap();
+    assert_eq!(qx.len(), 96); // P-384 X coord = 48 bytes = 96 hex chars
+    assert_eq!(qy.len(), 96);
+}
+
+#[test]
+fn ecdsa_siggen_p256_signature_self_verifies() {
+    ensure_initialized().unwrap();
+    let prompt = ecdsa_siggen_prompt("P-256", "SHA2-256");
+    let response = dispatch_ok(&prompt);
+    let g = &response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0];
+
+    let qx = hex::decode(g.get("qx").and_then(JsonValue::as_str).unwrap()).unwrap();
+    let qy = hex::decode(g.get("qy").and_then(JsonValue::as_str).unwrap()).unwrap();
+    let mut pk = [0u8; 65];
+    pk[0] = 0x04;
+    pk[1..33].copy_from_slice(&qx);
+    pk[33..65].copy_from_slice(&qy);
+
+    let prompt_groups = prompt
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let prompt_tests = prompt_groups[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let response_tests = g.get("tests").and_then(JsonValue::as_array).unwrap();
+
+    for (pt, rt) in prompt_tests.iter().zip(response_tests.iter()) {
+        let msg = hex::decode(pt.get("message").and_then(JsonValue::as_str).unwrap()).unwrap();
+        let r = hex::decode(rt.get("r").and_then(JsonValue::as_str).unwrap()).unwrap();
+        let s = hex::decode(rt.get("s").and_then(JsonValue::as_str).unwrap()).unwrap();
+        let mut sig = [0u8; 64];
+        sig[..32].copy_from_slice(&r);
+        sig[32..].copy_from_slice(&s);
+        assert!(
+            oxicrypt_ecdsa::p256_ecdsa::verify(&pk, &msg, &sig).unwrap(),
+            "sigGen-produced signature must verify against the reported public key"
+        );
+    }
+}
+
+#[test]
+fn ecdsa_keygen_p256_dispatches_without_d() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&ecdsa_keygen_prompt("P-256"));
+    let groups = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let tests = groups[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    assert_eq!(tests.len(), 3);
+    let mut seen_d = std::collections::HashSet::new();
+    for t in tests {
+        let d = t.get("d").and_then(JsonValue::as_str).unwrap();
+        let qx = t.get("qx").and_then(JsonValue::as_str).unwrap();
+        let qy = t.get("qy").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(d.len(), 64);
+        assert_eq!(qx.len(), 64);
+        assert_eq!(qy.len(), 64);
+        // Each test gets a distinct keypair (vanishing collision probability).
+        assert!(
+            seen_d.insert(d.to_string()),
+            "keyGen must produce distinct d per test"
+        );
+    }
+}
+
+#[test]
+fn ecdsa_keygen_p384_dispatches_without_d() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&ecdsa_keygen_prompt("P-384"));
+    let g = &response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0];
+    let tests = g.get("tests").and_then(JsonValue::as_array).unwrap();
+    for t in tests {
+        let d = t.get("d").and_then(JsonValue::as_str).unwrap();
+        let qx = t.get("qx").and_then(JsonValue::as_str).unwrap();
+        let qy = t.get("qy").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(d.len(), 96);
+        assert_eq!(qx.len(), 96);
+        assert_eq!(qy.len(), 96);
+    }
+}
+
+#[test]
+fn ecdsa_siggen_unsupported_curve_hash_pair_errors() {
+    ensure_initialized().unwrap();
+    let prompt = ecdsa_siggen_prompt("P-256", "SHA2-384");
+    let registry = dispatch::with_default_handlers();
+    let r = dispatch::process(&prompt, &registry);
+    assert!(r.is_err(), "(P-256, SHA2-384) must be rejected");
 }
