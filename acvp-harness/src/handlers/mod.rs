@@ -423,6 +423,7 @@ pub mod rsa_keygen;
 pub mod rsa_oaep;
 pub mod rsa_siggen;
 pub mod rsa_sigprim;
+pub mod sha2;
 pub mod sha3;
 pub mod sha3_256;
 pub mod shake;

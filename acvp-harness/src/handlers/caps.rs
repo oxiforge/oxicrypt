@@ -72,6 +72,30 @@ pub fn sha3_capability(algorithm: &str, _digest_bits: i64) -> JsonValue {
     ])
 }
 
+// ── SHA-1 / SHA-2 family ──────────────────────────────────────────
+
+/// Build an ACVP registration block for a SHA-1 or SHA-2 hash
+/// algorithm.
+///
+/// ```json
+/// {
+///   "algorithm": "SHA2-256",
+///   "revision": "1.0",
+///   "messageLength": [{"min": 0, "max": 65536, "increment": 8}]
+/// }
+/// ```
+///
+/// Mirrors [`sha3_capability`]'s message-length domain and shape; the
+/// only deltas vs SHA-3 are the algorithm name and the revision
+/// string (`"1.0"` for FIPS 180-4 vs `"2.0"` for FIPS 202).
+pub fn sha2_capability(algorithm: &str, _digest_bits: i64) -> JsonValue {
+    obj(vec![
+        ("algorithm", str_val(algorithm)),
+        ("revision", str_val("1.0")),
+        ("messageLength", range_domain(0, 65536, 8)),
+    ])
+}
+
 // ── SHAKE family ─────────────────────────────────────────────────
 
 /// Build an ACVP registration block for a SHAKE XOF algorithm.

@@ -255,6 +255,14 @@ impl Default for Registry {
 #[must_use]
 pub fn with_default_handlers() -> Registry {
     let mut r = Registry::new();
+    // SHA-1 + SHA-2 family (FIPS 180-4 hashing, revision 1.0)
+    r.register(Box::new(handlers::sha2::Sha1Handler));
+    r.register(Box::new(handlers::sha2::Sha2_224Handler));
+    r.register(Box::new(handlers::sha2::Sha2_256Handler));
+    r.register(Box::new(handlers::sha2::Sha2_384Handler));
+    r.register(Box::new(handlers::sha2::Sha2_512Handler));
+    r.register(Box::new(handlers::sha2::Sha2_512_224Handler));
+    r.register(Box::new(handlers::sha2::Sha2_512_256Handler));
     // SHA-3 family (fixed-output hashing, revision 2.0)
     r.register(Box::new(handlers::sha3::Sha3_224Handler));
     r.register(Box::new(handlers::sha3_256::Sha3_256Handler));
@@ -420,6 +428,14 @@ mod tests {
         // R10 handlers
         assert!(r.find("SHA3-256", None, "2.0").is_some());
         assert!(r.find("HMAC-SHA2-256", None, "1.0").is_some());
+        // SHA-1 + SHA-2 family (FIPS 180-4)
+        assert!(r.find("SHA-1", None, "1.0").is_some());
+        assert!(r.find("SHA2-224", None, "1.0").is_some());
+        assert!(r.find("SHA2-256", None, "1.0").is_some());
+        assert!(r.find("SHA2-384", None, "1.0").is_some());
+        assert!(r.find("SHA2-512", None, "1.0").is_some());
+        assert!(r.find("SHA2-512/224", None, "1.0").is_some());
+        assert!(r.find("SHA2-512/256", None, "1.0").is_some());
         // R12-A SHA-3 family
         assert!(r.find("SHA3-224", None, "2.0").is_some());
         assert!(r.find("SHA3-384", None, "2.0").is_some());
@@ -537,7 +553,7 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 79);
+        assert_eq!(r.len(), 86);
         assert!(!r.is_empty());
     }
 
