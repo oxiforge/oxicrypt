@@ -155,16 +155,25 @@ pub fn cmac_aes_capability() -> JsonValue {
 
 /// Build an ACVP registration block for a KMAC algorithm.
 ///
-/// `xof` selects whether this is KMAC (deterministic MAC output,
-/// `xof = false`) or KMACXOF (extendable output, `xof = true`).
-pub fn kmac_capability(algorithm: &str, xof: bool) -> JsonValue {
+/// ACVP models KMAC's XOF mode as a per-group `xof: bool` flag on the
+/// `KMAC-128` / `KMAC-256` algorithm IDs rather than as separate
+/// `KMACXOF-*` algorithm names; the demo server rejects the latter
+/// with HTTP 400 `Unable to map KMACXOF-*-1.0 to an internal algorithm
+/// id`. The capability advertises support for both modes
+/// (`xof: [false, true]`); the unified handler reads the per-group
+/// flag and dispatches to either the `Kmac{128,256}` or
+/// `KmacXof{128,256}` primitive accordingly.
+pub fn kmac_capability(algorithm: &str) -> JsonValue {
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
         ("msgLen", range_domain(0, 65536, 8)),
         ("keyLen", range_domain(128, 524_288, 8)),
         ("macLen", range_domain(32, 65536, 8)),
-        ("xof", JsonValue::Array(vec![JsonValue::Bool(xof)])),
+        (
+            "xof",
+            JsonValue::Array(vec![JsonValue::Bool(false), JsonValue::Bool(true)]),
+        ),
     ])
 }
 

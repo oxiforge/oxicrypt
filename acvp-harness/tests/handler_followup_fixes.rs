@@ -484,3 +484,144 @@ fn ecdsa_siggen_unsupported_curve_hash_pair_errors() {
     let r = dispatch::process(&prompt, &registry);
     assert!(r.is_err(), "(P-256, SHA2-384) must be rejected");
 }
+
+// ── KMAC unified XOF-flag dispatch ──────────────────────────────────
+
+use oxicrypt_xof::{Kmac128, KmacXof128};
+
+fn kmac128_prompt(xof: bool, key_hex: &str, msg_hex: &str, mac_len_bits: u64) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "KMAC-128",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType": "AFT",
+                "xof": {xof},
+                "hexCustomization": false,
+                "tests": [{{
+                    "tcId": 1,
+                    "key":            "{key_hex}",
+                    "keyLen":         {key_len},
+                    "msg":            "{msg_hex}",
+                    "msgLen":         {msg_len},
+                    "macLen":         {mac_len_bits},
+                    "customization":  ""
+                }}]
+            }}]
+        }}"#,
+        key_len = key_hex.len().saturating_mul(4),
+        msg_len = msg_hex.len().saturating_mul(4),
+    );
+    parse(&prompt_text)
+}
+
+#[test]
+fn kmac128_unified_handler_dispatches_xof_false() {
+    ensure_initialized().unwrap();
+    let key = "0102030405060708090A0B0C0D0E0F10";
+    let msg = "DEADBEEF";
+    let prompt = kmac128_prompt(false, key, msg, 256);
+    let response = dispatch_ok(&prompt);
+    let mac = first_test(
+        &response
+            .get("testGroups")
+            .and_then(JsonValue::as_array)
+            .unwrap()[0],
+    )
+    .get("mac")
+    .and_then(JsonValue::as_str)
+    .unwrap()
+    .to_string();
+
+    // Reference: compute via Kmac128 directly with no customization.
+    let key_bytes = hex::decode(key).unwrap();
+    let msg_bytes = hex::decode(msg).unwrap();
+    let mut expected = vec![0u8; 32];
+    let mut m = Kmac128::new(&key_bytes, &[]).unwrap();
+    m.update(&msg_bytes);
+    m.finalize_into(&mut expected);
+    assert_eq!(mac, hex::encode_upper(&expected));
+}
+
+#[test]
+fn kmac128_unified_handler_dispatches_xof_true() {
+    ensure_initialized().unwrap();
+    let key = "0102030405060708090A0B0C0D0E0F10";
+    let msg = "DEADBEEF";
+    // Pick an unusual mac length that only the XOF primitive can produce
+    // cleanly to make the test diagnostic if dispatch routes wrong.
+    let prompt = kmac128_prompt(true, key, msg, 320);
+    let response = dispatch_ok(&prompt);
+    let mac = first_test(
+        &response
+            .get("testGroups")
+            .and_then(JsonValue::as_array)
+            .unwrap()[0],
+    )
+    .get("mac")
+    .and_then(JsonValue::as_str)
+    .unwrap()
+    .to_string();
+
+    let key_bytes = hex::decode(key).unwrap();
+    let msg_bytes = hex::decode(msg).unwrap();
+    let mut expected = vec![0u8; 40];
+    let mut m = KmacXof128::new(&key_bytes, &[]).unwrap();
+    m.update(&msg_bytes);
+    m.finalize();
+    m.squeeze(&mut expected);
+    assert_eq!(mac, hex::encode_upper(&expected));
+}
+
+#[test]
+fn kmac128_unified_handler_defaults_to_non_xof_when_flag_absent() {
+    // Vendored offline kat-slice format: no group-level `xof` field.
+    // Handler must default to xof=false to preserve round-trip.
+    ensure_initialized().unwrap();
+    let key = "0102030405060708090A0B0C0D0E0F10";
+    let msg = "DEADBEEF";
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "KMAC-128",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType": "AFT",
+                "hexCustomization": false,
+                "tests": [{{
+                    "tcId": 1,
+                    "key":            "{key}",
+                    "keyLen":         {kl},
+                    "msg":            "{msg}",
+                    "msgLen":         {ml},
+                    "macLen":         256,
+                    "customization":  ""
+                }}]
+            }}]
+        }}"#,
+        kl = key.len().saturating_mul(4),
+        ml = msg.len().saturating_mul(4),
+    );
+    let prompt = parse(&prompt_text);
+    let response = dispatch_ok(&prompt);
+    let mac = first_test(
+        &response
+            .get("testGroups")
+            .and_then(JsonValue::as_array)
+            .unwrap()[0],
+    )
+    .get("mac")
+    .and_then(JsonValue::as_str)
+    .unwrap()
+    .to_string();
+
+    // Same as xof_false reference.
+    let key_bytes = hex::decode(key).unwrap();
+    let msg_bytes = hex::decode(msg).unwrap();
+    let mut expected = vec![0u8; 32];
+    let mut m = Kmac128::new(&key_bytes, &[]).unwrap();
+    m.update(&msg_bytes);
+    m.finalize_into(&mut expected);
+    assert_eq!(mac, hex::encode_upper(&expected));
+}

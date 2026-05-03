@@ -1,7 +1,20 @@
-//! KMAC-128 / KMAC-256 and KMACXOF-128 / KMACXOF-256 AFT + MVT handlers.
+//! KMAC-128 / KMAC-256 AFT + MVT handlers, with unified XOF dispatch.
 //!
-//! Targets self-generated ACVP slices with `algorithm = "KMAC-128"`,
-//! `"KMAC-256"`, `"KMACXOF-128"`, or `"KMACXOF-256"`, `revision = "1.0"`.
+//! Per ACVP, the demo server registers KMAC under two algorithm IDs
+//! (`KMAC-128` and `KMAC-256`) and signals XOF mode via a per-group
+//! `xof: bool` flag rather than as a separate algorithm name. The
+//! `Kmac128Handler` / `Kmac256Handler` capability builders advertise
+//! `xof: [false, true]`, and `handle_group` reads the per-group flag
+//! and dispatches to either the `Kmac{128,256}` (deterministic
+//! fixed-length MAC) or `KmacXof{128,256}` (extendable-output)
+//! primitive accordingly.
+//!
+//! `KmacXof128Handler` / `KmacXof256Handler` remain registered locally
+//! for offline kat-slice replay (the vendored
+//! `KMACXOF-128-1.0/kat-slice.json` etc. fixtures use the legacy
+//! algorithm names without a per-group `xof` field), but their
+//! `acvp_capabilities` returns `None` so the live demo server never
+//! sees the legacy names.
 //!
 //! Two test types are supported:
 //!
@@ -11,8 +24,10 @@
 //!
 //! Each test group carries (group level):
 //!
-//! - `xof` (bool) — XOF variant flag (ACVP only; we dispatch by
-//!   algorithm string, so this is informational here)
+//! - `xof` (bool, optional) — selects XOF vs deterministic-MAC output;
+//!   defaults to `false` when absent (preserves vendored
+//!   `KMAC-{128,256}-1.0/kat-slice.json` fixtures that pre-date the
+//!   per-group flag).
 //! - `hexCustomization` (bool) — `true` if the per-test
 //!   `customization` field is hex-encoded, `false` if it is an
 //!   ASCII text string (taken byte-for-byte)
@@ -56,14 +71,23 @@ impl AlgorithmHandler for Kmac128Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::kmac_capability("KMAC-128", false))
+        Some(super::caps::kmac_capability("KMAC-128"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        let xof = read_xof_flag(group);
         handle_kmac_group(group, |key, msg, s, out| {
-            let mut m = Kmac128::new(key, s)
-                .map_err(|_| DispatchError::Crypto("Kmac128::new returned Err"))?;
-            m.update(msg);
-            m.finalize_into(out);
+            if xof {
+                let mut m = KmacXof128::new(key, s)
+                    .map_err(|_| DispatchError::Crypto("KmacXof128::new returned Err"))?;
+                m.update(msg);
+                m.finalize();
+                m.squeeze(out);
+            } else {
+                let mut m = Kmac128::new(key, s)
+                    .map_err(|_| DispatchError::Crypto("Kmac128::new returned Err"))?;
+                m.update(msg);
+                m.finalize_into(out);
+            }
             Ok(())
         })
     }
@@ -77,23 +101,38 @@ impl AlgorithmHandler for Kmac256Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::kmac_capability("KMAC-256", false))
+        Some(super::caps::kmac_capability("KMAC-256"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        let xof = read_xof_flag(group);
         handle_kmac_group(group, |key, msg, s, out| {
-            let mut m = Kmac256::new(key, s)
-                .map_err(|_| DispatchError::Crypto("Kmac256::new returned Err"))?;
-            m.update(msg);
-            m.finalize_into(out);
+            if xof {
+                let mut m = KmacXof256::new(key, s)
+                    .map_err(|_| DispatchError::Crypto("KmacXof256::new returned Err"))?;
+                m.update(msg);
+                m.finalize();
+                m.squeeze(out);
+            } else {
+                let mut m = Kmac256::new(key, s)
+                    .map_err(|_| DispatchError::Crypto("Kmac256::new returned Err"))?;
+                m.update(msg);
+                m.finalize_into(out);
+            }
             Ok(())
         })
     }
 }
 
-/// KMACXOF-128 AFT handler.
+/// KMACXOF-128 AFT handler — kept for offline kat-slice replay only.
+///
+/// Returns `None` from `acvp_capabilities` so the legacy algorithm
+/// name is never registered with the live demo server (which rejects
+/// it with HTTP 400). Vendored `KMACXOF-128-1.0/*-slice.json` fixtures
+/// continue to dispatch through this handler.
 pub struct KmacXof128Handler;
 
-/// KMACXOF-256 AFT handler.
+/// KMACXOF-256 AFT handler — same offline-only role as
+/// [`KmacXof128Handler`].
 pub struct KmacXof256Handler;
 
 impl AlgorithmHandler for KmacXof128Handler {
@@ -104,7 +143,7 @@ impl AlgorithmHandler for KmacXof128Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::kmac_capability("KMACXOF-128", true))
+        None
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kmac_group(group, |key, msg, s, out| {
@@ -126,7 +165,7 @@ impl AlgorithmHandler for KmacXof256Handler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::kmac_capability("KMACXOF-256", true))
+        None
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_kmac_group(group, |key, msg, s, out| {
@@ -138,6 +177,18 @@ impl AlgorithmHandler for KmacXof256Handler {
             Ok(())
         })
     }
+}
+
+/// Read the per-group `xof: bool` flag, defaulting to `false` when
+/// absent. ACVP's KMAC capability sends this flag on every group; the
+/// vendored offline `KMAC-{128,256}-1.0/kat-slice.json` fixtures
+/// pre-date the flag and rely on the default to preserve their
+/// non-XOF behavior.
+fn read_xof_flag(group: &JsonValue) -> bool {
+    group
+        .get("xof")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false)
 }
 
 /// Whether the group is AFT (compute) or MVT (verify).
