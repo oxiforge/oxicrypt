@@ -463,26 +463,28 @@ pub fn kda_hkdf_capability() -> JsonValue {
 
 /// Build an ACVP registration block for SP 800-108r1 KBKDF.
 ///
-/// Advertises only `counter` mode for v0.1.0. The `feedback` and
-/// `double pipeline iteration` recurrences in
-/// `oxicrypt_kdf::Sp800_108Feedback` (lib.rs:962-974) and
-/// `Sp800_108DoublePipeline` (lib.rs:1266-1284) currently implement
-/// only the SP 800-108r1 `counterLocation = "none"` (h=0) variant —
-/// the per-iteration counter `[i]_h` is absent from the inner PRF
-/// call. ACVP-Server prompts feedback and DP groups with
-/// `counterLength=32, counterLocation="before fixed data"` (h=32),
-/// which our primitives can't match (verified against ACVTS demo
-/// session 727018: counter=430/430 passed, feedback=435/435 +
-/// DP=440/440 failed with `KeyOut does not match`). Re-advertising
-/// those modes is gated on extending the primitives to honour
-/// `counterLength` — tracked as a follow-up to PR #40.
+/// Advertises all three SP 800-108r1 modes — `counter`, `feedback`,
+/// and `double pipeline iteration` — at `counterLength = 32`,
+/// `fixedDataOrder = "before fixed data"`. Each mode's
+/// `counterLocation = "before fixed data"` placement is dispatched
+/// via the corresponding `Sp800_108*::derive_with_counter_internal`
+/// (counter mode uses the same shape via its built-in 32-bit
+/// counter). `counterLength` is intentionally narrowed to `[32]`
+/// even though the primitives accept SP 800-108r1 §5.1's full
+/// `{8, 16, 24, 32}` set — advertising 8/16/24 prompts the server
+/// to emit groups the handler doesn't currently dispatch, per
+/// `feedback_caps_match_handler_subset`.
 pub fn kbkdf_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KDF")),
         ("revision", str_val("1.0")),
         (
             "capabilities",
-            JsonValue::Array(vec![kbkdf_mode_entry("counter")]),
+            JsonValue::Array(vec![
+                kbkdf_mode_entry("counter"),
+                kbkdf_mode_entry("feedback"),
+                kbkdf_mode_entry("double pipeline iteration"),
+            ]),
         ),
     ])
 }
@@ -491,11 +493,11 @@ pub fn kbkdf_capability() -> JsonValue {
 ///
 /// `fixedDataOrder` is the ACVP capability field that maps to the
 /// per-prompt `counterLocation` — the position of the iterator
-/// within the data input. Our `kbkdf` handler only dispatches
-/// `counterLocation = "before fixed data"` (handlers/kbkdf.rs:127),
-/// so we advertise just that single ordering. Demo registration
-/// without this field returns HTTP 400
-/// `KDF-1.0: No Data Orders supplied.` per mode.
+/// within the data input. The handler only dispatches
+/// `counterLocation = "before fixed data"` for every mode, so we
+/// advertise just that single ordering. Demo registration without
+/// this field returns HTTP 400 `KDF-1.0: No Data Orders supplied.`
+/// per mode.
 fn kbkdf_mode_entry(kdf_mode: &str) -> JsonValue {
     obj(vec![
         ("kdfMode", str_val(kdf_mode)),
@@ -515,9 +517,10 @@ fn kbkdf_mode_entry(kdf_mode: &str) -> JsonValue {
                 "HMAC-SHA3-512",
             ]),
         ),
-        // Handler only dispatches `counterLength = 32`
-        // (handlers/kbkdf.rs:137); advertising 8/16/24 prompts the
-        // server to emit groups the handler immediately rejects.
+        // Handler dispatches `counterLength = 32` only — the
+        // primitives validate the full `{8, 16, 24, 32}` set per
+        // SP 800-108r1 §5.1, but caps narrow what the server prompts
+        // so the handler never sees groups it can't dispatch.
         ("counterLength", num_array(&[32])),
         ("supportedLengths", range_domain(8, 4096, 8)),
         ("fixedDataOrder", str_array(&["before fixed data"])),

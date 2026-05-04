@@ -661,21 +661,43 @@ fn kbkdf_feedback_generative_prompt(
     key_out_bits: u64,
     zero_length_iv: bool,
 ) -> JsonValue {
+    // Feedback groups carry `counterLength` and `counterLocation`
+    // exactly as ACVTS prompts them; the handler dispatches via
+    // `Sp800_108Feedback::derive_with_counter_internal` which honours
+    // `[i]_h`. When zeroLengthIv=false the per-test prompt MUST carry
+    // `iv` — the IUT never samples IVs because the server validates
+    // its expected keyOut against the IV it sent.
+    let tests = if zero_length_iv {
+        r#"[
+                    { "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF" },
+                    { "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100" }
+                ]"#
+    } else {
+        // PRF-output sized IVs vary per macMode, but a 64-byte hex
+        // string is the longest any of the handler's macModes asks
+        // for and shorter macModes truncate via the iv_len gate; the
+        // prompt-shape contract is just "iv is present and decodable".
+        r#"[
+                    { "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF",
+                      "iv": "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899" },
+                    { "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100",
+                      "iv": "9988776655443322110000FFEEDDCCBBAA99887766554433221100FFEEDDCCBB9988776655443322110000FFEEDDCCBBAA99887766554433221100FFEEDDCCBB" }
+                ]"#
+    };
     let prompt_text = format!(
         r#"{{
             "algorithm": "KDF",
             "revision":  "1.0",
             "testGroups": [{{
                 "tgId": 1,
-                "testType":     "AFT",
-                "kdfMode":      "feedback",
-                "macMode":      "{mac_mode}",
-                "keyOutLength": {key_out_bits},
-                "zeroLengthIv": {zero_length_iv},
-                "tests": [
-                    {{ "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF" }},
-                    {{ "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100" }}
-                ]
+                "testType":        "AFT",
+                "kdfMode":         "feedback",
+                "macMode":         "{mac_mode}",
+                "keyOutLength":    {key_out_bits},
+                "counterLocation": "before fixed data",
+                "counterLength":   32,
+                "zeroLengthIv":    {zero_length_iv},
+                "tests": {tests}
             }}]
         }}"#
     );
@@ -683,16 +705,23 @@ fn kbkdf_feedback_generative_prompt(
 }
 
 fn kbkdf_double_pipeline_generative_prompt(mac_mode: &str, key_out_bits: u64) -> JsonValue {
+    // DP groups carry `counterLength` and `counterLocation` exactly
+    // as ACVTS prompts them; the handler dispatches via
+    // `Sp800_108DoublePipeline::derive_with_counter_internal` whose
+    // inner A chain stays counter-free (counter enters only the
+    // output K PRF).
     let prompt_text = format!(
         r#"{{
             "algorithm": "KDF",
             "revision":  "1.0",
             "testGroups": [{{
                 "tgId": 1,
-                "testType":     "AFT",
-                "kdfMode":      "double pipeline iteration",
-                "macMode":      "{mac_mode}",
-                "keyOutLength": {key_out_bits},
+                "testType":        "AFT",
+                "kdfMode":         "double pipeline iteration",
+                "macMode":         "{mac_mode}",
+                "keyOutLength":    {key_out_bits},
+                "counterLocation": "before fixed data",
+                "counterLength":   32,
                 "tests": [
                     {{ "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF" }},
                     {{ "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100" }}
@@ -797,6 +826,10 @@ fn kbkdf_feedback_generative_aft_zero_length_iv_dispatches() {
 
 #[test]
 fn kbkdf_feedback_generative_aft_explicit_iv_dispatches() {
+    // Feedback w/ zeroLengthIv=false: the IUT must consume the
+    // prompt's `iv` field unconditionally (server validates its
+    // expected keyOut against the IV it sent) and must NOT echo
+    // `iv` in the response.
     ensure_initialized().unwrap();
     let response = dispatch_ok(&kbkdf_feedback_generative_prompt(
         "HMAC-SHA2-256",
@@ -810,19 +843,17 @@ fn kbkdf_feedback_generative_aft_explicit_iv_dispatches() {
         .get("tests")
         .and_then(JsonValue::as_array)
         .unwrap();
-    let mut seen_iv = std::collections::HashSet::new();
     for t in tests {
         let key_out = t.get("keyOut").and_then(JsonValue::as_str).unwrap();
         let fixed_data = t.get("fixedData").and_then(JsonValue::as_str).unwrap();
-        let iv = t.get("iv").and_then(JsonValue::as_str).unwrap();
         assert_eq!(key_out.len(), 64);
         assert!(!fixed_data.is_empty());
-        // IV is sampled per test — distinct values.
+        // Response must NOT echo iv — the server already has it.
+        let iv_field = t.get("iv").and_then(JsonValue::as_str);
         assert!(
-            seen_iv.insert(iv.to_string()),
-            "explicit-IV feedback must produce distinct IVs per test"
+            iv_field.is_none() || iv_field == Some(""),
+            "feedback response must not echo iv when server provided it"
         );
-        assert_eq!(iv.len(), 64); // HMAC-SHA-256 PRF output = 32 bytes = 64 hex
     }
 }
 

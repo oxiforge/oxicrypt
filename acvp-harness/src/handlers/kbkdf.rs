@@ -73,14 +73,50 @@ impl AlgorithmHandler for KbkdfHandler {
 }
 
 // ── Internal dispatch ───────────────────────────────────────────────
+//
+// Each iteration mode keeps two parallel selector sets so the handler
+// can dispatch both the SP 800-108r1 `counterLocation = "none"` (h=0)
+// shape — used by the vendored NIST kat-slice — and the
+// `counterLocation = "before fixed data"` (h>0) shape — used by the
+// ACVTS demo prompts. Caps narrow what the server prompts to the
+// h>0 shape; the kat-slice replay test exercises the h=0 shape
+// independently.
 
-/// Derive function pointer type for counter / double-pipeline modes
+/// Derive function pointer type for counter mode
 /// (key, fixed_data, out) → Result.
-type DeriveFn = fn(&[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
+///
+/// Counter mode's primitive has the per-iteration counter built in
+/// (always 32-bit), so the harness signature does not surface
+/// `counterLength` here — the caps gate `counterLength=32` upstream.
+type CounterDeriveFn = fn(&[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
 
-/// Derive function pointer type for feedback mode
-/// (key, iv, fixed_data, out) → Result.
-type DeriveFbFn = fn(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
+/// Derive function pointer for feedback mode at h=0
+/// (key, iv, fixed_data, out) → Result. Drives
+/// `Sp800_108Feedback::derive_with_fixed_data_internal` for groups
+/// whose `counterLocation = "none"`.
+type FeedbackDeriveH0Fn = fn(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
+
+/// Derive function pointer for feedback mode at h>0
+/// (key, iv, fixed_data, counter_length_bits, out) → Result. Drives
+/// `Sp800_108Feedback::derive_with_counter_internal`. The handler
+/// only dispatches `counterLength=32` at present (matching caps),
+/// but the primitive itself accepts the full SP 800-108r1 §5.1 set
+/// `{8, 16, 24, 32}`.
+type FeedbackDeriveCounterFn =
+    fn(&[u8], &[u8], &[u8], u32, &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
+
+/// Derive function pointer for double-pipeline mode at h=0
+/// (key, fixed_data, out) → Result. Drives
+/// `Sp800_108DoublePipeline::derive_with_fixed_data_internal` for
+/// groups whose `counterLocation = "none"`.
+type DpDeriveH0Fn = fn(&[u8], &[u8], &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
+
+/// Derive function pointer for double-pipeline mode at h>0
+/// (key, fixed_data, counter_length_bits, out) → Result. Drives
+/// `Sp800_108DoublePipeline::derive_with_counter_internal` —
+/// inner A chain stays counter-free, counter only enters the
+/// output K PRF.
+type DpDeriveCounterFn = fn(&[u8], &[u8], u32, &mut [u8]) -> Result<(), oxicrypt_kdf::KdfError>;
 
 /// Decode a hex-encoded string field from a JSON object.
 fn decode_hex_field(obj: &JsonValue, name: &'static str) -> Result<Vec<u8>, DispatchError> {
@@ -208,21 +244,18 @@ fn handle_kbkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
     match kdf_mode {
         "counter" => {
-            let counter_loc = group
-                .get("counterLocation")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("counterLocation"))?;
+            // Counter mode is fixed at counterLocation="before fixed
+            // data" + counterLength=32 — matches both caps and the
+            // Sp800_108Counter primitive's hardcoded 32-bit counter.
+            let counter_loc = require_counter_location(group)?;
             if counter_loc != "before fixed data" {
                 return Err(DispatchError::Unsupported(
                     "KDF counter: only counterLocation=\"before fixed data\" supported",
                 ));
             }
-            let counter_len: usize = group
-                .get("counterLength")
-                .and_then(JsonValue::as_u64)
-                .and_then(|v| usize::try_from(v).ok())
-                .ok_or(DispatchError::MissingField("counterLength"))?;
-            if counter_len != 32 {
+            let counter_len_u32 =
+                require_counter_length_u32(group, "KDF counter: counterLength exceeds u32")?;
+            if counter_len_u32 != 32 {
                 return Err(DispatchError::Unsupported(
                     "KDF counter: only counterLength=32 supported",
                 ));
@@ -230,7 +263,7 @@ fn handle_kbkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
             let derive_fn = counter_derive_fn(mac_mode)?;
             for tc in tests {
-                results.push(run_kdf_counter_or_dp_test(
+                results.push(run_kdf_counter_test(
                     tc,
                     key_out_len,
                     key_out_bits,
@@ -239,11 +272,16 @@ fn handle_kbkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             }
         }
         "feedback" => {
+            // counterLocation splits the dispatch: "none" → h=0
+            // primitive, "before fixed data" → counter-bearing
+            // primitive. Both are valid SP 800-108r1 forms; caps
+            // advertise only the h>0 shape, but the h=0 path is
+            // exercised by the vendored kat-slice round-trip test.
+            let counter_loc = require_counter_location(group)?;
             let zero_length_iv = group
                 .get("zeroLengthIv")
                 .and_then(JsonValue::as_bool)
                 .unwrap_or(true);
-            let derive_fn = feedback_derive_fn(mac_mode)?;
             let iv_len = if zero_length_iv {
                 0
             } else {
@@ -251,25 +289,82 @@ fn handle_kbkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     "KDF feedback: unsupported macMode for IV sizing",
                 ))?
             };
-            for tc in tests {
-                results.push(run_kdf_feedback_test(
-                    tc,
-                    key_out_len,
-                    key_out_bits,
-                    iv_len,
-                    derive_fn,
-                )?);
+            match counter_loc {
+                "none" => {
+                    let derive_fn = feedback_derive_h0_fn(mac_mode)?;
+                    for tc in tests {
+                        results.push(run_kdf_feedback_h0_test(
+                            tc,
+                            key_out_len,
+                            key_out_bits,
+                            iv_len,
+                            derive_fn,
+                        )?);
+                    }
+                }
+                "before fixed data" => {
+                    let counter_len_u32 = require_counter_length_u32(
+                        group,
+                        "KDF feedback: counterLength exceeds u32",
+                    )?;
+                    let derive_fn = feedback_derive_counter_fn(mac_mode)?;
+                    for tc in tests {
+                        results.push(run_kdf_feedback_counter_test(
+                            tc,
+                            key_out_len,
+                            key_out_bits,
+                            iv_len,
+                            counter_len_u32,
+                            derive_fn,
+                        )?);
+                    }
+                }
+                _ => {
+                    return Err(DispatchError::Unsupported(
+                        "KDF feedback: counterLocation must be \"none\" or \"before fixed data\"",
+                    ));
+                }
             }
         }
         "double pipeline iteration" => {
-            let derive_fn = double_pipeline_derive_fn(mac_mode)?;
-            for tc in tests {
-                results.push(run_kdf_counter_or_dp_test(
-                    tc,
-                    key_out_len,
-                    key_out_bits,
-                    derive_fn,
-                )?);
+            // Same counterLocation split as feedback. The h>0 path's
+            // distinguishing property: the inner A chain stays
+            // counter-free; counter only enters the output K PRF —
+            // see Sp800_108DoublePipeline::derive_with_counter_internal.
+            let counter_loc = require_counter_location(group)?;
+            match counter_loc {
+                "none" => {
+                    let derive_fn = double_pipeline_derive_h0_fn(mac_mode)?;
+                    for tc in tests {
+                        results.push(run_kdf_dp_h0_test(
+                            tc,
+                            key_out_len,
+                            key_out_bits,
+                            derive_fn,
+                        )?);
+                    }
+                }
+                "before fixed data" => {
+                    let counter_len_u32 = require_counter_length_u32(
+                        group,
+                        "KDF double pipeline: counterLength exceeds u32",
+                    )?;
+                    let derive_fn = double_pipeline_derive_counter_fn(mac_mode)?;
+                    for tc in tests {
+                        results.push(run_kdf_dp_counter_test(
+                            tc,
+                            key_out_len,
+                            key_out_bits,
+                            counter_len_u32,
+                            derive_fn,
+                        )?);
+                    }
+                }
+                _ => {
+                    return Err(DispatchError::Unsupported(
+                        "KDF double pipeline: counterLocation must be \"none\" or \"before fixed data\"",
+                    ));
+                }
             }
         }
         _ => {
@@ -283,14 +378,41 @@ fn handle_kbkdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     ]))
 }
 
-/// Run one counter-mode or double-pipeline test. Detects deterministic
-/// vs generative shape per test (not per group), so a group whose tests
-/// mix the two shapes still dispatches correctly.
-fn run_kdf_counter_or_dp_test(
+/// Read `counterLocation` as a borrowed string slice. Both the h=0
+/// (`"none"`) and h>0 (`"before fixed data"`) shapes are valid
+/// SP 800-108r1 forms; caps narrow what the server prompts but the
+/// handler stays capable of dispatching either.
+fn require_counter_location(group: &JsonValue) -> Result<&str, DispatchError> {
+    group
+        .get("counterLocation")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("counterLocation"))
+}
+
+/// Read `counterLength` as `u32`. The mode-specific error message is
+/// supplied by the caller so the invalid path stays attributable to
+/// the dispatch arm that read the field. The primitive itself only
+/// honours `{8, 16, 24, 32}`; the harness narrows further to `32`
+/// (per caps) and rejects mismatches at the dispatch arm.
+fn require_counter_length_u32(
+    group: &JsonValue,
+    overflow_msg: &'static str,
+) -> Result<u32, DispatchError> {
+    let raw = group
+        .get("counterLength")
+        .and_then(JsonValue::as_u64)
+        .ok_or(DispatchError::MissingField("counterLength"))?;
+    u32::try_from(raw).map_err(|_| DispatchError::Unsupported(overflow_msg))
+}
+
+/// Run one counter-mode test. Detects deterministic vs generative
+/// shape per test (not per group), so a group whose tests mix the
+/// two shapes still dispatches correctly.
+fn run_kdf_counter_test(
     tc: &JsonValue,
     key_out_len: usize,
     key_out_bits: u32,
-    derive: DeriveFn,
+    derive: CounterDeriveFn,
 ) -> Result<JsonValue, DispatchError> {
     let test_case_id = tc
         .get("tcId")
@@ -317,16 +439,14 @@ fn run_kdf_counter_or_dp_test(
     ))
 }
 
-/// Run one feedback-mode test. Detects deterministic vs generative
-/// shape per test. When generative AND `iv_len > 0` (i.e. the group's
-/// `zeroLengthIv = false`), the IV is sampled fresh and echoed in the
-/// response alongside `fixedData`.
-fn run_kdf_feedback_test(
+/// Run one double-pipeline-iteration test at h=0 (counterLocation=
+/// `"none"`). Same generative-vs-deterministic per-test shape
+/// detection as counter mode; no counterLength threading.
+fn run_kdf_dp_h0_test(
     tc: &JsonValue,
     key_out_len: usize,
     key_out_bits: u32,
-    iv_len: usize,
-    derive: DeriveFbFn,
+    derive: DpDeriveH0Fn,
 ) -> Result<JsonValue, DispatchError> {
     let test_case_id = tc
         .get("tcId")
@@ -341,18 +461,79 @@ fn run_kdf_feedback_test(
         decode_hex_field(tc, "fixedData")?
     };
 
-    // IV decision is anchored on shape first: deterministic prompts
-    // own the IV (per-test `iv` field, or empty when zeroLengthIv);
-    // generative prompts sample IV when the group requires one.
-    let iv = if generative {
-        if iv_len == 0 {
-            Vec::new()
-        } else {
-            let mut v = vec![0u8; iv_len];
-            read_os_entropy(&mut v)?;
-            v
-        }
-    } else if iv_len == 0 {
+    let mut key_out = vec![0u8; key_out_len];
+    derive(&key_in, &fixed_data, &mut key_out)
+        .map_err(|_| DispatchError::Crypto("KDF double pipeline h=0 derive failed"))?;
+
+    Ok(build_response_fields(
+        test_case_id,
+        &key_out,
+        generative.then_some(fixed_data.as_slice()),
+        None,
+    ))
+}
+
+/// Run one double-pipeline-iteration test at h>0 (counterLocation=
+/// `"before fixed data"`). Threads `counter_length_bits` into the
+/// primitive call.
+fn run_kdf_dp_counter_test(
+    tc: &JsonValue,
+    key_out_len: usize,
+    key_out_bits: u32,
+    counter_length_bits: u32,
+    derive: DpDeriveCounterFn,
+) -> Result<JsonValue, DispatchError> {
+    let test_case_id = tc
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+    let key_in = decode_hex_field(tc, "keyIn")?;
+
+    let generative = is_generative(tc);
+    let fixed_data = if generative {
+        sample_fixed_data(key_out_bits)?
+    } else {
+        decode_hex_field(tc, "fixedData")?
+    };
+
+    let mut key_out = vec![0u8; key_out_len];
+    derive(&key_in, &fixed_data, counter_length_bits, &mut key_out)
+        .map_err(|_| DispatchError::Crypto("KDF double pipeline derive failed"))?;
+
+    Ok(build_response_fields(
+        test_case_id,
+        &key_out,
+        generative.then_some(fixed_data.as_slice()),
+        None,
+    ))
+}
+
+/// Run one feedback-mode test at h=0 (counterLocation=`"none"`).
+/// Per-test generative-vs-deterministic detection only governs
+/// fixedData (sampled vs. decoded from the prompt); the IV comes
+/// from the server in every shape when zeroLengthIv=false — the
+/// IUT must never re-sample server-supplied IVs because the
+/// verifier computes its expected keyOut against the IV it sent.
+fn run_kdf_feedback_h0_test(
+    tc: &JsonValue,
+    key_out_len: usize,
+    key_out_bits: u32,
+    iv_len: usize,
+    derive: FeedbackDeriveH0Fn,
+) -> Result<JsonValue, DispatchError> {
+    let test_case_id = tc
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+    let key_in = decode_hex_field(tc, "keyIn")?;
+
+    let generative = is_generative(tc);
+    let fixed_data = if generative {
+        sample_fixed_data(key_out_bits)?
+    } else {
+        decode_hex_field(tc, "fixedData")?
+    };
+    let iv = if iv_len == 0 {
         Vec::new()
     } else {
         decode_hex_field(tc, "iv")?
@@ -360,24 +541,64 @@ fn run_kdf_feedback_test(
 
     let mut key_out = vec![0u8; key_out_len];
     derive(&key_in, &iv, &fixed_data, &mut key_out)
-        .map_err(|_| DispatchError::Crypto("KDF feedback derive failed"))?;
+        .map_err(|_| DispatchError::Crypto("KDF feedback h=0 derive failed"))?;
 
-    let echoed_iv = if generative && iv_len > 0 {
-        Some(iv.as_slice())
-    } else {
-        None
-    };
     Ok(build_response_fields(
         test_case_id,
         &key_out,
         generative.then_some(fixed_data.as_slice()),
-        echoed_iv,
+        None,
+    ))
+}
+
+/// Run one feedback-mode test at h>0 (counterLocation=`"before
+/// fixed data"`). Same generative-vs-deterministic shape detection
+/// and IV handling as the h=0 variant; `counter_length_bits` is
+/// threaded through to the primitive's `derive_with_counter_internal`.
+fn run_kdf_feedback_counter_test(
+    tc: &JsonValue,
+    key_out_len: usize,
+    key_out_bits: u32,
+    iv_len: usize,
+    counter_length_bits: u32,
+    derive: FeedbackDeriveCounterFn,
+) -> Result<JsonValue, DispatchError> {
+    let test_case_id = tc
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+    let key_in = decode_hex_field(tc, "keyIn")?;
+
+    let generative = is_generative(tc);
+    let fixed_data = if generative {
+        sample_fixed_data(key_out_bits)?
+    } else {
+        decode_hex_field(tc, "fixedData")?
+    };
+    // IV is server-provenance: read from prompt unconditionally when
+    // zeroLengthIv=false. Sampling on the IUT side would mismatch
+    // every PRF call against the verifier's expected keyOut.
+    let iv = if iv_len == 0 {
+        Vec::new()
+    } else {
+        decode_hex_field(tc, "iv")?
+    };
+
+    let mut key_out = vec![0u8; key_out_len];
+    derive(&key_in, &iv, &fixed_data, counter_length_bits, &mut key_out)
+        .map_err(|_| DispatchError::Crypto("KDF feedback derive failed"))?;
+
+    Ok(build_response_fields(
+        test_case_id,
+        &key_out,
+        generative.then_some(fixed_data.as_slice()),
+        None,
     ))
 }
 
 // ── MAC-mode → derive function selectors ────────────────────────────
 
-fn counter_derive_fn(mac_mode: &str) -> Result<DeriveFn, DispatchError> {
+fn counter_derive_fn(mac_mode: &str) -> Result<CounterDeriveFn, DispatchError> {
     match mac_mode {
         "HMAC-SHA-1" => Ok(Sp800_108CounterHmacSha1::derive_with_fixed_data_internal),
         "HMAC-SHA2-224" => Ok(Sp800_108CounterHmacSha224::derive_with_fixed_data_internal),
@@ -396,7 +617,7 @@ fn counter_derive_fn(mac_mode: &str) -> Result<DeriveFn, DispatchError> {
     }
 }
 
-fn feedback_derive_fn(mac_mode: &str) -> Result<DeriveFbFn, DispatchError> {
+fn feedback_derive_h0_fn(mac_mode: &str) -> Result<FeedbackDeriveH0Fn, DispatchError> {
     match mac_mode {
         "HMAC-SHA-1" => Ok(Sp800_108FeedbackHmacSha1::derive_with_fixed_data_internal),
         "HMAC-SHA2-224" => Ok(Sp800_108FeedbackHmacSha224::derive_with_fixed_data_internal),
@@ -415,7 +636,26 @@ fn feedback_derive_fn(mac_mode: &str) -> Result<DeriveFbFn, DispatchError> {
     }
 }
 
-fn double_pipeline_derive_fn(mac_mode: &str) -> Result<DeriveFn, DispatchError> {
+fn feedback_derive_counter_fn(mac_mode: &str) -> Result<FeedbackDeriveCounterFn, DispatchError> {
+    match mac_mode {
+        "HMAC-SHA-1" => Ok(Sp800_108FeedbackHmacSha1::derive_with_counter_internal),
+        "HMAC-SHA2-224" => Ok(Sp800_108FeedbackHmacSha224::derive_with_counter_internal),
+        "HMAC-SHA2-256" => Ok(Sp800_108FeedbackHmacSha256::derive_with_counter_internal),
+        "HMAC-SHA2-384" => Ok(Sp800_108FeedbackHmacSha384::derive_with_counter_internal),
+        "HMAC-SHA2-512" => Ok(Sp800_108FeedbackHmacSha512::derive_with_counter_internal),
+        "HMAC-SHA2-512/224" => Ok(Sp800_108FeedbackHmacSha512_224::derive_with_counter_internal),
+        "HMAC-SHA2-512/256" => Ok(Sp800_108FeedbackHmacSha512_256::derive_with_counter_internal),
+        "HMAC-SHA3-224" => Ok(Sp800_108FeedbackHmacSha3_224::derive_with_counter_internal),
+        "HMAC-SHA3-256" => Ok(Sp800_108FeedbackHmacSha3_256::derive_with_counter_internal),
+        "HMAC-SHA3-384" => Ok(Sp800_108FeedbackHmacSha3_384::derive_with_counter_internal),
+        "HMAC-SHA3-512" => Ok(Sp800_108FeedbackHmacSha3_512::derive_with_counter_internal),
+        _ => Err(DispatchError::Unsupported(
+            "KDF feedback: unsupported macMode",
+        )),
+    }
+}
+
+fn double_pipeline_derive_h0_fn(mac_mode: &str) -> Result<DpDeriveH0Fn, DispatchError> {
     match mac_mode {
         "HMAC-SHA-1" => Ok(Sp800_108DoublePipelineHmacSha1::derive_with_fixed_data_internal),
         "HMAC-SHA2-224" => Ok(Sp800_108DoublePipelineHmacSha224::derive_with_fixed_data_internal),
@@ -432,6 +672,29 @@ fn double_pipeline_derive_fn(mac_mode: &str) -> Result<DeriveFn, DispatchError> 
         "HMAC-SHA3-256" => Ok(Sp800_108DoublePipelineHmacSha3_256::derive_with_fixed_data_internal),
         "HMAC-SHA3-384" => Ok(Sp800_108DoublePipelineHmacSha3_384::derive_with_fixed_data_internal),
         "HMAC-SHA3-512" => Ok(Sp800_108DoublePipelineHmacSha3_512::derive_with_fixed_data_internal),
+        _ => Err(DispatchError::Unsupported(
+            "KDF double pipeline: unsupported macMode",
+        )),
+    }
+}
+
+fn double_pipeline_derive_counter_fn(mac_mode: &str) -> Result<DpDeriveCounterFn, DispatchError> {
+    match mac_mode {
+        "HMAC-SHA-1" => Ok(Sp800_108DoublePipelineHmacSha1::derive_with_counter_internal),
+        "HMAC-SHA2-224" => Ok(Sp800_108DoublePipelineHmacSha224::derive_with_counter_internal),
+        "HMAC-SHA2-256" => Ok(Sp800_108DoublePipelineHmacSha256::derive_with_counter_internal),
+        "HMAC-SHA2-384" => Ok(Sp800_108DoublePipelineHmacSha384::derive_with_counter_internal),
+        "HMAC-SHA2-512" => Ok(Sp800_108DoublePipelineHmacSha512::derive_with_counter_internal),
+        "HMAC-SHA2-512/224" => {
+            Ok(Sp800_108DoublePipelineHmacSha512_224::derive_with_counter_internal)
+        }
+        "HMAC-SHA2-512/256" => {
+            Ok(Sp800_108DoublePipelineHmacSha512_256::derive_with_counter_internal)
+        }
+        "HMAC-SHA3-224" => Ok(Sp800_108DoublePipelineHmacSha3_224::derive_with_counter_internal),
+        "HMAC-SHA3-256" => Ok(Sp800_108DoublePipelineHmacSha3_256::derive_with_counter_internal),
+        "HMAC-SHA3-384" => Ok(Sp800_108DoublePipelineHmacSha3_384::derive_with_counter_internal),
+        "HMAC-SHA3-512" => Ok(Sp800_108DoublePipelineHmacSha3_512::derive_with_counter_internal),
         _ => Err(DispatchError::Unsupported(
             "KDF double pipeline: unsupported macMode",
         )),

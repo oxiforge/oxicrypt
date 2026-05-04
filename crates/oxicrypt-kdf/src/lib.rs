@@ -831,6 +831,55 @@ kbkdf_kat_fn!(
     oxicrypt_test_vectors::HMAC_SHA3_512_KBKDF_KEY_OUT
 );
 
+/// Validate the per-iteration counter parameters shared by the
+/// SP 800-108r1 feedback and double-pipeline counter-bearing
+/// primitives, returning the byte offset at which the right-aligned
+/// big-endian counter slice begins inside `i.to_be_bytes()`.
+///
+/// `counter_length_bits` must be one of `{8, 16, 24, 32}` per
+/// SP 800-108r1 §5.1; any other value returns
+/// `KdfError::Module(Error::InvalidInput)`. The resulting iteration
+/// count `n = ceil(out_len / L)` must additionally fit in
+/// `2^counter_length_bits - 1` so no counter value exceeds its
+/// declared field width — otherwise `KdfError::OutputTooLong` is
+/// returned, matching the bound the counter-mode primitive enforces.
+///
+/// `L` is the underlying PRF's output length in bytes (carried as a
+/// const generic so the bound check is monomorphised per HMAC
+/// instantiation). Callers handle the `out.is_empty()` early-return
+/// before invoking this helper — the helper itself assumes a
+/// non-empty output.
+fn validate_counter_params_and_offset<const L: usize>(
+    counter_length_bits: u32,
+    out_len: usize,
+) -> Result<usize, KdfError> {
+    let h_bytes: usize = match counter_length_bits {
+        8 => 1,
+        16 => 2,
+        24 => 3,
+        32 => 4,
+        _ => return Err(KdfError::Module(Error::InvalidInput)),
+    };
+
+    // Output bit-length must fit in a u32 to match SP 800-108's
+    // `[L]_32` length encoding (the caller assembles `[L]_32` inside
+    // `fixed_data` per §5.3 / §5.4; this just bounds n).
+    let Some(bit_len) = out_len.checked_mul(8) else {
+        return Err(KdfError::OutputTooLong);
+    };
+    if u32::try_from(bit_len).is_err() {
+        return Err(KdfError::OutputTooLong);
+    }
+
+    let n = out_len.div_ceil(L) as u64;
+    let max_counter: u64 = (1u64 << counter_length_bits) - 1;
+    if n > max_counter {
+        return Err(KdfError::OutputTooLong);
+    }
+
+    Ok(4 - h_bytes)
+}
+
 // ======================================================================
 // SP 800-108 Rev. 1 Feedback Mode (§4.2, counterLocation="none")
 // ======================================================================
@@ -918,6 +967,79 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         out: &mut [u8],
     ) -> Result<(), KdfError> {
         Self::derive_with_fixed_data_pieces(key, iv, &[fixed_data], out)
+    }
+
+    /// Gateless feedback-mode variant with an explicit per-iteration
+    /// counter, exactly as SP 800-108r1 §4.2 specifies for
+    /// `counterLocation = "before fixed data"`. The recurrence is
+    ///
+    /// ```text
+    /// K(1) = PRF(K, IV || [1]_h || FixedData)
+    /// K(i) = PRF(K, K(i-1) || [i]_h || FixedData)   for i = 2..n
+    /// ```
+    ///
+    /// where `h = counter_length_bits` and `[i]_h` is the big-endian
+    /// encoding of the iteration counter into the rightmost `h / 8`
+    /// bytes of a 32-bit field. This is the wire shape ACVP-Server
+    /// `KDF-1.0` prompts feedback groups with on the demo path —
+    /// `derive_with_fixed_data_internal` (h=0) is the
+    /// `counterLocation = "none"` form.
+    ///
+    /// `counter_length_bits` must be one of `{8, 16, 24, 32}` per
+    /// SP 800-108r1 §5.1 — any other value returns
+    /// `KdfError::Module(Error::InvalidInput)`. The number of PRF
+    /// iterations `n = ceil(out.len() / L)` must additionally fit in
+    /// `2^h - 1` so that no counter value exceeds its declared field
+    /// width; otherwise `KdfError::OutputTooLong` is returned, matching
+    /// the bound the counter-mode primitive enforces.
+    #[doc(hidden)]
+    pub fn derive_with_counter_internal(
+        key: &[u8],
+        iv: &[u8],
+        fixed_data: &[u8],
+        counter_length_bits: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        let counter_offset =
+            validate_counter_params_and_offset::<L>(counter_length_bits, out.len())?;
+
+        // First iteration: K(1) = PRF(K, IV || [1]_h || FixedData).
+        let mut i: u32 = 1;
+        let mut prev: [u8; L] = {
+            let mut mac = P::prf_new(key);
+            mac.prf_update(iv);
+            let counter_be = i.to_be_bytes();
+            mac.prf_update(&counter_be[counter_offset..]);
+            mac.prf_update(fixed_data);
+            mac.prf_finalize()
+        };
+
+        let mut written = 0usize;
+        let take = if out.len() < L { out.len() } else { L };
+        out[..take].copy_from_slice(&prev[..take]);
+        written += take;
+
+        // K(i) = PRF(K, K(i-1) || [i]_h || FixedData) for i = 2..=n.
+        // The `n > max_counter` guard above ensures `i + 1` cannot
+        // exceed the counter's representable range.
+        while written < out.len() {
+            i += 1;
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&prev);
+            let counter_be = i.to_be_bytes();
+            mac.prf_update(&counter_be[counter_offset..]);
+            mac.prf_update(fixed_data);
+            prev = mac.prf_finalize();
+
+            let remaining = out.len() - written;
+            let take = if remaining < L { remaining } else { L };
+            out[written..written + take].copy_from_slice(&prev[..take]);
+            written += take;
+        }
+        Ok(())
     }
 
     /// Shared feedback-mode loop. `fixed_data_pieces` is the ordered
@@ -1219,6 +1341,96 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
         out: &mut [u8],
     ) -> Result<(), KdfError> {
         Self::derive_with_fixed_data_pieces(key, &[fixed_data], out)
+    }
+
+    /// Gateless double-pipeline-iteration variant with an explicit
+    /// per-iteration counter, exactly as SP 800-108r1 §4.3 specifies
+    /// for `counterLocation = "before fixed data"`. The recurrence is
+    ///
+    /// ```text
+    /// A(1) = PRF(K, FixedData)
+    /// A(i) = PRF(K, A(i-1))                         for i = 2..n
+    /// K(i) = PRF(K, A(i) || [i]_h || FixedData)     for i = 1..n
+    /// ```
+    ///
+    /// where `h = counter_length_bits` and `[i]_h` is the big-endian
+    /// encoding of the iteration counter into the rightmost `h / 8`
+    /// bytes of a 32-bit field. Note the asymmetry: the inner `A`
+    /// chain is counter-free (counter only enters the output `K`
+    /// PRF). This is the wire shape ACVP-Server `KDF-1.0` prompts
+    /// double-pipeline groups with on the demo path —
+    /// `derive_with_fixed_data_internal` (h=0) is the
+    /// `counterLocation = "none"` form.
+    ///
+    /// `counter_length_bits` must be one of `{8, 16, 24, 32}` per
+    /// SP 800-108r1 §5.1 — any other value returns
+    /// `KdfError::Module(Error::InvalidInput)`. The number of PRF
+    /// iterations `n = ceil(out.len() / L)` must additionally fit in
+    /// `2^h - 1` so that no counter value exceeds its declared field
+    /// width; otherwise `KdfError::OutputTooLong` is returned.
+    #[doc(hidden)]
+    pub fn derive_with_counter_internal(
+        key: &[u8],
+        fixed_data: &[u8],
+        counter_length_bits: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        let counter_offset =
+            validate_counter_params_and_offset::<L>(counter_length_bits, out.len())?;
+
+        // A(1) = PRF(K, FixedData).
+        let mut a: [u8; L] = {
+            let mut mac = P::prf_new(key);
+            mac.prf_update(fixed_data);
+            mac.prf_finalize()
+        };
+
+        // K(1) = PRF(K, A(1) || [1]_h || FixedData).
+        let mut i: u32 = 1;
+        let mut k: [u8; L] = {
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&a);
+            let counter_be = i.to_be_bytes();
+            mac.prf_update(&counter_be[counter_offset..]);
+            mac.prf_update(fixed_data);
+            mac.prf_finalize()
+        };
+
+        let mut written = 0usize;
+        let take = if out.len() < L { out.len() } else { L };
+        out[..take].copy_from_slice(&k[..take]);
+        written += take;
+
+        // For i = 2..=n: advance the inner A chain (counter-free) and
+        // emit K(i) with the counter inserted between A(i) and
+        // FixedData. Keeping the A advancement and the K emission as
+        // separate PRF calls is the structural marker that the
+        // counter never enters A — copy-pasting the K loop into A
+        // would recover the feedback recurrence by mistake.
+        while written < out.len() {
+            // A(i) = PRF(K, A(i-1)) — counter NOT involved.
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&a);
+            a = mac.prf_finalize();
+
+            // K(i) = PRF(K, A(i) || [i]_h || FixedData).
+            i += 1;
+            let mut mac = P::prf_new(key);
+            mac.prf_update(&a);
+            let counter_be = i.to_be_bytes();
+            mac.prf_update(&counter_be[counter_offset..]);
+            mac.prf_update(fixed_data);
+            k = mac.prf_finalize();
+
+            let remaining = out.len() - written;
+            let take = if remaining < L { remaining } else { L };
+            out[written..written + take].copy_from_slice(&k[..take]);
+            written += take;
+        }
+        Ok(())
     }
 
     /// Shared double-pipeline loop. `fixed_data_pieces` is the
@@ -2446,5 +2658,70 @@ mod tests {
         Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk1).unwrap();
         Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk2).unwrap();
         assert_ne!(dk1, dk2);
+    }
+
+    // ── Smoke tests for SP 800-108r1 counter-bearing primitives ─────
+    //
+    // Shape-correctness only: `derive_with_counter_internal` returns
+    // `Ok` for the dispatched `counter_length_bits` value (32) and
+    // rejects every value outside the SP 800-108r1 §5.1 set
+    // `{8, 16, 24, 32}`. Cryptographic correctness for h>0 is gated
+    // on the ACVP demo verdict, not these smoke tests — the vendored
+    // NIST kat-slice carries h=0 vectors only for FB/DP.
+
+    #[test]
+    fn kbkdf_feedback_counter_internal_smoke_h32() {
+        let key = [0x42u8; 32];
+        let iv = [0x11u8; 32];
+        // Arbitrary fixed-data blob; smoke test exercises the call
+        // path, not the value.
+        let fixed_data = b"label\x00context\x00\x00\x01\x00";
+        let mut out = [0u8; 32];
+        Sp800_108FeedbackHmacSha256::derive_with_counter_internal(
+            &key, &iv, fixed_data, 32, &mut out,
+        )
+        .unwrap();
+        assert_ne!(out, [0u8; 32]);
+    }
+
+    #[test]
+    fn kbkdf_dp_counter_internal_smoke_h32() {
+        let key = [0x42u8; 32];
+        let fixed_data = b"label\x00context\x00\x00\x01\x00";
+        let mut out = [0u8; 32];
+        Sp800_108DoublePipelineHmacSha256::derive_with_counter_internal(
+            &key, fixed_data, 32, &mut out,
+        )
+        .unwrap();
+        assert_ne!(out, [0u8; 32]);
+    }
+
+    #[test]
+    fn kbkdf_feedback_counter_rejects_invalid_h() {
+        let key = [0x42u8; 32];
+        let iv = [0x11u8; 32];
+        let fixed_data: &[u8] = b"x";
+        let mut out = [0u8; 16];
+        for h in [0u32, 1, 7, 9, 17, 31, 33, 64] {
+            let err = Sp800_108FeedbackHmacSha256::derive_with_counter_internal(
+                &key, &iv, fixed_data, h, &mut out,
+            )
+            .unwrap_err();
+            assert!(matches!(err, KdfError::Module(Error::InvalidInput)));
+        }
+    }
+
+    #[test]
+    fn kbkdf_dp_counter_rejects_invalid_h() {
+        let key = [0x42u8; 32];
+        let fixed_data: &[u8] = b"x";
+        let mut out = [0u8; 16];
+        for h in [0u32, 1, 7, 9, 17, 31, 33, 64] {
+            let err = Sp800_108DoublePipelineHmacSha256::derive_with_counter_internal(
+                &key, fixed_data, h, &mut out,
+            )
+            .unwrap_err();
+            assert!(matches!(err, KdfError::Module(Error::InvalidInput)));
+        }
     }
 }
