@@ -462,17 +462,27 @@ pub fn kda_hkdf_capability() -> JsonValue {
 }
 
 /// Build an ACVP registration block for SP 800-108r1 KBKDF.
+///
+/// Advertises only `counter` mode for v0.1.0. The `feedback` and
+/// `double pipeline iteration` recurrences in
+/// `oxicrypt_kdf::Sp800_108Feedback` (lib.rs:962-974) and
+/// `Sp800_108DoublePipeline` (lib.rs:1266-1284) currently implement
+/// only the SP 800-108r1 `counterLocation = "none"` (h=0) variant —
+/// the per-iteration counter `[i]_h` is absent from the inner PRF
+/// call. ACVP-Server prompts feedback and DP groups with
+/// `counterLength=32, counterLocation="before fixed data"` (h=32),
+/// which our primitives can't match (verified against ACVTS demo
+/// session 727018: counter=430/430 passed, feedback=435/435 +
+/// DP=440/440 failed with `KeyOut does not match`). Re-advertising
+/// those modes is gated on extending the primitives to honour
+/// `counterLength` — tracked as a follow-up to PR #40.
 pub fn kbkdf_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KDF")),
         ("revision", str_val("1.0")),
         (
             "capabilities",
-            JsonValue::Array(vec![
-                kbkdf_mode_entry("counter"),
-                kbkdf_mode_entry("feedback"),
-                kbkdf_mode_entry("double pipeline iteration"),
-            ]),
+            JsonValue::Array(vec![kbkdf_mode_entry("counter")]),
         ),
     ])
 }

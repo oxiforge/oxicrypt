@@ -625,3 +625,284 @@ fn kmac128_unified_handler_defaults_to_non_xof_when_flag_absent() {
     m.finalize_into(&mut expected);
     assert_eq!(mac, hex::encode_upper(&expected));
 }
+
+// ── KDF (SP 800-108r1) generative-AFT — handler must NOT read fixedData ──
+//
+// ACVP demo session 726988 returned DISPATCH_ERROR `missing field "fixedData"`
+// because the live AFT prompt only supplies `keyIn` per test. The IUT samples
+// its own Label + Context, assembles the fixed-input string per SP 800-108
+// §5.2, derives `keyOut`, and echoes `fixedData` back. (PR #40, 2026-05-04)
+
+fn kbkdf_counter_generative_prompt(mac_mode: &str, key_out_bits: u64) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "KDF",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType":        "AFT",
+                "kdfMode":         "counter",
+                "macMode":         "{mac_mode}",
+                "counterLocation": "before fixed data",
+                "counterLength":   32,
+                "keyOutLength":    {key_out_bits},
+                "tests": [
+                    {{ "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF" }},
+                    {{ "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100" }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+fn kbkdf_feedback_generative_prompt(
+    mac_mode: &str,
+    key_out_bits: u64,
+    zero_length_iv: bool,
+) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "KDF",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType":     "AFT",
+                "kdfMode":      "feedback",
+                "macMode":      "{mac_mode}",
+                "keyOutLength": {key_out_bits},
+                "zeroLengthIv": {zero_length_iv},
+                "tests": [
+                    {{ "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF" }},
+                    {{ "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100" }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+fn kbkdf_double_pipeline_generative_prompt(mac_mode: &str, key_out_bits: u64) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "KDF",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType":     "AFT",
+                "kdfMode":      "double pipeline iteration",
+                "macMode":      "{mac_mode}",
+                "keyOutLength": {key_out_bits},
+                "tests": [
+                    {{ "tcId": 1, "keyIn": "00112233445566778899AABBCCDDEEFF" }},
+                    {{ "tcId": 2, "keyIn": "FFEEDDCCBBAA99887766554433221100" }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+#[test]
+fn kbkdf_counter_generative_aft_dispatches_without_fixed_data() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&kbkdf_counter_generative_prompt("HMAC-SHA2-256", 256));
+    let g = &response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0];
+    let tests = g.get("tests").and_then(JsonValue::as_array).unwrap();
+    assert_eq!(tests.len(), 2);
+    let mut seen_fd = std::collections::HashSet::new();
+    for t in tests {
+        let key_out = t.get("keyOut").and_then(JsonValue::as_str).unwrap();
+        let fixed_data = t.get("fixedData").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(key_out.len(), 64); // 256 bits / 4 = 64 hex chars
+                                       // Each test gets distinct fixedData (Label + Context resampled).
+        assert!(
+            seen_fd.insert(fixed_data.to_string()),
+            "counter generative-AFT must produce distinct fixedData per test"
+        );
+    }
+}
+
+#[test]
+fn kbkdf_counter_generative_self_derives_to_same_key_out() {
+    ensure_initialized().unwrap();
+    let prompt = kbkdf_counter_generative_prompt("HMAC-SHA2-256", 256);
+    let response = dispatch_ok(&prompt);
+    let g = &response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0];
+    let prompt_groups = prompt
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let prompt_tests = prompt_groups[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let response_tests = g.get("tests").and_then(JsonValue::as_array).unwrap();
+
+    for (pt, rt) in prompt_tests.iter().zip(response_tests.iter()) {
+        let key_in = hex::decode(pt.get("keyIn").and_then(JsonValue::as_str).unwrap()).unwrap();
+        let fixed_data =
+            hex::decode(rt.get("fixedData").and_then(JsonValue::as_str).unwrap()).unwrap();
+        let reported_key_out =
+            hex::decode(rt.get("keyOut").and_then(JsonValue::as_str).unwrap()).unwrap();
+
+        let mut recomputed = vec![0u8; reported_key_out.len()];
+        oxicrypt_kdf::Sp800_108CounterHmacSha256::derive_with_fixed_data_internal(
+            &key_in,
+            &fixed_data,
+            &mut recomputed,
+        )
+        .unwrap();
+        assert_eq!(
+            reported_key_out, recomputed,
+            "reported keyOut must equal derive(keyIn, fixedData)"
+        );
+    }
+}
+
+#[test]
+fn kbkdf_feedback_generative_aft_zero_length_iv_dispatches() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&kbkdf_feedback_generative_prompt(
+        "HMAC-SHA2-256",
+        256,
+        true,
+    ));
+    let tests = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    for t in tests {
+        let key_out = t.get("keyOut").and_then(JsonValue::as_str).unwrap();
+        let fixed_data = t.get("fixedData").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(key_out.len(), 64);
+        assert!(!fixed_data.is_empty());
+        // Zero-length IV — the response must NOT echo a populated `iv`.
+        let iv_field = t.get("iv").and_then(JsonValue::as_str);
+        assert!(
+            iv_field.is_none() || iv_field == Some(""),
+            "zeroLengthIv=true must omit (or empty-string) iv in response"
+        );
+    }
+}
+
+#[test]
+fn kbkdf_feedback_generative_aft_explicit_iv_dispatches() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&kbkdf_feedback_generative_prompt(
+        "HMAC-SHA2-256",
+        256,
+        false,
+    ));
+    let tests = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let mut seen_iv = std::collections::HashSet::new();
+    for t in tests {
+        let key_out = t.get("keyOut").and_then(JsonValue::as_str).unwrap();
+        let fixed_data = t.get("fixedData").and_then(JsonValue::as_str).unwrap();
+        let iv = t.get("iv").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(key_out.len(), 64);
+        assert!(!fixed_data.is_empty());
+        // IV is sampled per test — distinct values.
+        assert!(
+            seen_iv.insert(iv.to_string()),
+            "explicit-IV feedback must produce distinct IVs per test"
+        );
+        assert_eq!(iv.len(), 64); // HMAC-SHA-256 PRF output = 32 bytes = 64 hex
+    }
+}
+
+#[test]
+fn kbkdf_double_pipeline_generative_aft_dispatches() {
+    ensure_initialized().unwrap();
+    let response = dispatch_ok(&kbkdf_double_pipeline_generative_prompt(
+        "HMAC-SHA2-256",
+        256,
+    ));
+    let tests = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    for t in tests {
+        let key_out = t.get("keyOut").and_then(JsonValue::as_str).unwrap();
+        let fixed_data = t.get("fixedData").and_then(JsonValue::as_str).unwrap();
+        assert_eq!(key_out.len(), 64);
+        assert!(!fixed_data.is_empty());
+        // Double-pipeline has no IV.
+        assert!(
+            t.get("iv").is_none(),
+            "double pipeline mode must not emit iv"
+        );
+    }
+}
+
+#[test]
+fn kbkdf_counter_deterministic_path_still_works() {
+    ensure_initialized().unwrap();
+    // Pre-built fixedData supplied at test level — handler must take the
+    // deterministic branch and NOT resample, returning keyOut from the
+    // exact `derive_with_fixed_data_internal(keyIn, fixedData, ...)` call.
+    let prompt_text = r#"{
+        "algorithm": "KDF",
+        "revision":  "1.0",
+        "testGroups": [{
+            "tgId": 1,
+            "testType":        "AFT",
+            "kdfMode":         "counter",
+            "macMode":         "HMAC-SHA2-256",
+            "counterLocation": "before fixed data",
+            "counterLength":   32,
+            "keyOutLength":    256,
+            "tests": [
+                {
+                    "tcId": 1,
+                    "keyIn":     "00112233445566778899AABBCCDDEEFF",
+                    "fixedData": "AABBCCDDEEFF00112233445566778899"
+                }
+            ]
+        }]
+    }"#;
+    let response = dispatch_ok(&parse(prompt_text));
+    let t = first_test(
+        &response
+            .get("testGroups")
+            .and_then(JsonValue::as_array)
+            .unwrap()[0],
+    );
+    let reported_key_out =
+        hex::decode(t.get("keyOut").and_then(JsonValue::as_str).unwrap()).unwrap();
+    // Deterministic path must not echo the optional generative-shape fields
+    // — the response shape mirrors what the handler emitted before the
+    // generative branch was added (just `tcId` + `keyOut`).
+    assert!(
+        t.get("fixedData").is_none(),
+        "deterministic path must not echo fixedData"
+    );
+    assert!(t.get("iv").is_none(), "deterministic path must not echo iv");
+    // Re-derive offline against the prompt's exact fixedData.
+    let mut expected = vec![0u8; 32];
+    oxicrypt_kdf::Sp800_108CounterHmacSha256::derive_with_fixed_data_internal(
+        &hex::decode("00112233445566778899AABBCCDDEEFF").unwrap(),
+        &hex::decode("AABBCCDDEEFF00112233445566778899").unwrap(),
+        &mut expected,
+    )
+    .unwrap();
+    assert_eq!(reported_key_out, expected);
+}
