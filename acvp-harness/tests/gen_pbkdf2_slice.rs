@@ -64,7 +64,10 @@ fn gen_cases() -> Vec<PbCase> {
             dk_len: 32,
         },
         PbCase {
-            password: vec![0xAA; 32],
+            // ACVP defines `password` as UTF-8 string; replace the
+            // pre-spec raw-byte test case with a printable ASCII
+            // pattern of the same length.
+            password: b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
             salt: vec![0xBB; 16],
             iterations: 10,
             dk_len: 64,
@@ -87,6 +90,12 @@ where
     for (i, c) in cases.iter().enumerate() {
         let mut dk = vec![0u8; c.dk_len];
         derive(&c.password, &c.salt, c.iterations, &mut dk);
+        // Per ACVP PBKDF spec the `password` field is a UTF-8 string
+        // (live demo confirmed at vsId 3839019, 2026-05-03 — see
+        // PR #37 commit body). All vendored test cases use printable
+        // ASCII so direct String::from_utf8 is infallible here.
+        let password_utf8 =
+            std::str::from_utf8(&c.password).expect("vendored PBKDF test passwords must be UTF-8");
         tests_json.push(format!(
             r#"        {{
           "tcId": {},
@@ -97,7 +106,7 @@ where
           "derivedKey": "{}"
         }}"#,
             i + 1,
-            hex(&c.password),
+            password_utf8,
             hex(&c.salt),
             c.iterations,
             c.dk_len * 8,

@@ -9,7 +9,7 @@
       "tests": [
         {
           "tcId": 1,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 160,
@@ -17,7 +17,7 @@
         },
         {
           "tcId": 2,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 2,
           "keyLen": 160,
@@ -25,7 +25,7 @@
         },
         {
           "tcId": 3,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 256,
@@ -33,15 +33,15 @@
         },
         {
           "tcId": 4,
-          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "password": "abcdefghijklmnopqrstuvwxyz012345",
           "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
           "iterationCount": 10,
           "keyLen": 512,
-          "derivedKey": "D3739DB0A2BC6048A1863E185181A7604411F9FDFE2B6D6347CED380109E40F8673908C0C14E307EFFEFFD60CF371B3712B7BD7F3762F5B9D6084277186A5D79"
+          "derivedKey": "6A278122615282F4814ABE4575ECDD218AF6913865E4AC01890DFD32654FEB41A8F1CF29A748A859555A9350780CF56D3B102DD69034D2E151F0E6EE63718E8B"
         },
         {
           "tcId": 5,
-          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "password": "longpasswordfortest",
           "salt": "73616C7479656E6F756768",
           "iterationCount": 4,
           "keyLen": 384,
@@ -56,7 +56,7 @@
       "tests": [
         {
           "tcId": 1,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 160,
@@ -64,7 +64,7 @@
         },
         {
           "tcId": 2,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 2,
           "keyLen": 160,
@@ -72,7 +72,7 @@
         },
         {
           "tcId": 3,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 256,
@@ -80,15 +80,15 @@
         },
         {
           "tcId": 4,
-          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "password": "abcdefghijklmnopqrstuvwxyz012345",
           "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
           "iterationCount": 10,
           "keyLen": 512,
-          "derivedKey": "B96A1A52919EF8593746E7BCA780DDBAD55F63D2E7638B0EB2E70DCAFBDB9A5F7B4BA37068201E805E981D4DF274772CB970A3EDE6757E5690EDDE8DCCD8AD6A"
+          "derivedKey": "A7891175FAC29C7173AB38D24D1156C10EDD075707B31D20DBBC83CA6F4DAB48F33D53A28BF54F6C87B08C7174456726DA69598596F47C44A3458ED2E7784651"
         },
         {
           "tcId": 5,
-          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "password": "longpasswordfortest",
           "salt": "73616C7479656E6F756768",
           "iterationCount": 4,
           "keyLen": 384,
@@ -103,7 +103,7 @@
       "tests": [
         {
           "tcId": 1,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 160,
@@ -111,7 +111,7 @@
         },
         {
           "tcId": 2,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 2,
           "keyLen": 160,
@@ -119,7 +119,7 @@
         },
         {
           "tcId": 3,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 256,
@@ -127,15 +127,15 @@
         },
         {
           "tcId": 4,
-          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "password": "abcdefghijklmnopqrstuvwxyz012345",
           "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
           "iterationCount": 10,
           "keyLen": 512,
-          "derivedKey": "DC5091E9179FCA9031F252B5DBDF995EBE2E75D8F756F7201815DC53EEB1D76F888BE1242219247E3B198A60070711D7843695C5A62ACF13B688D675E726DECA"
+          "derivedKey": "D7D2F8DFFDF5B959E553BF3FDC85D64777F686E79D80C5415C1E10EF75DE26664D12C76977CF61A69AF355255716D868254BD181FEA9DF094CABB12B7F302685"
         },
         {
           "tcId": 5,
-          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "password": "longpasswordfortest",
           "salt": "73616C7479656E6F756768",
           "iterationCount": 4,
           "keyLen": 384,
@@ -150,7 +150,7 @@
       "tests": [
         {
           "tcId": 1,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 160,
@@ -158,7 +158,7 @@
         },
         {
           "tcId": 2,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 2,
           "keyLen": 160,
@@ -166,7 +166,7 @@
         },
         {
           "tcId": 3,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 256,
@@ -174,15 +174,15 @@
         },
         {
           "tcId": 4,
-          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "password": "abcdefghijklmnopqrstuvwxyz012345",
           "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
           "iterationCount": 10,
           "keyLen": 512,
-          "derivedKey": "4F7AA1E3F01492B3ABCDCAFB50E23F1F69CF9C26429D4823B9AF917C4B40FB4ECD006F273937DA6693A835CF1D9CFFD128B34D6C190E6D577005FA79BBC020E4"
+          "derivedKey": "F8B412C41D765B792FFB3033A5D5621539AECF5E685E8954E3C69B0D9AE8A3CDA2518B2F458FB042A76D41AC220E7AB0EE5E007C5B9EE1AE5796C44370E8FADC"
         },
         {
           "tcId": 5,
-          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "password": "longpasswordfortest",
           "salt": "73616C7479656E6F756768",
           "iterationCount": 4,
           "keyLen": 384,
@@ -197,7 +197,7 @@
       "tests": [
         {
           "tcId": 1,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 160,
@@ -205,7 +205,7 @@
         },
         {
           "tcId": 2,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 2,
           "keyLen": 160,
@@ -213,7 +213,7 @@
         },
         {
           "tcId": 3,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 256,
@@ -221,15 +221,15 @@
         },
         {
           "tcId": 4,
-          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "password": "abcdefghijklmnopqrstuvwxyz012345",
           "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
           "iterationCount": 10,
           "keyLen": 512,
-          "derivedKey": "469C28DAD114A22DED118785AB08B77ABEED5858269824EF49B407822689D13CAF4B09F46BAECA118585227BDDA5FD97793CFA2F8FDA027C335D9E9EBC4FBA55"
+          "derivedKey": "5FBA83F72C86A8500B7F712B83393A46F52EEDBB0BC41F6C3EC67ED16C8EB7F33BEBEEE522612B625708B65C0D0BFA1D9B475A60309B0F48B9249D81FE2F8CC7"
         },
         {
           "tcId": 5,
-          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "password": "longpasswordfortest",
           "salt": "73616C7479656E6F756768",
           "iterationCount": 4,
           "keyLen": 384,
@@ -244,7 +244,7 @@
       "tests": [
         {
           "tcId": 1,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 160,
@@ -252,7 +252,7 @@
         },
         {
           "tcId": 2,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 2,
           "keyLen": 160,
@@ -260,7 +260,7 @@
         },
         {
           "tcId": 3,
-          "password": "70617373776F7264",
+          "password": "password",
           "salt": "73616C74",
           "iterationCount": 1,
           "keyLen": 256,
@@ -268,15 +268,15 @@
         },
         {
           "tcId": 4,
-          "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "password": "abcdefghijklmnopqrstuvwxyz012345",
           "salt": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
           "iterationCount": 10,
           "keyLen": 512,
-          "derivedKey": "3D58EE344B716F49E7081720CF73F8A5D5909B58D631A96965C49245AC823878E45C6BFB5ECD26F2B35624E2DA3A5E24475898DFDA3AC0F177551F96B903701D"
+          "derivedKey": "7EEDEAD57AED2BC85D5E8B0651CBF236D45A192CA6D48C89BAFEAE5DDEBABC49E7DC29AC78C24FDA3D7AB8EAE2176CAA7871FDB095455252F5A05E71B1149340"
         },
         {
           "tcId": 5,
-          "password": "6C6F6E6770617373776F7264666F7274657374",
+          "password": "longpasswordfortest",
           "salt": "73616C7479656E6F756768",
           "iterationCount": 4,
           "keyLen": 384,

@@ -546,30 +546,41 @@ pub fn tls13_kdf_capability() -> JsonValue {
 }
 
 /// Build an ACVP registration block for PBKDF (SP 800-132).
+///
+/// ACVP nests the per-instantiation parameter set under a
+/// `capabilities: [{...}]` array — same shape as KBKDF (see
+/// `kbkdf_capability` above). The top level only carries `algorithm`
+/// and `revision`; the demo server rejects a flat top-level shape
+/// with HTTP 400 `PBKDF-1.0: No Capabilities supplied.`
 pub fn pbkdf_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("PBKDF")),
         ("revision", str_val("1.0")),
         (
-            "hmacAlg",
-            str_array(&[
-                "SHA-1",
-                "SHA2-224",
-                "SHA2-256",
-                "SHA2-384",
-                "SHA2-512",
-                "SHA2-512/224",
-                "SHA2-512/256",
-                "SHA3-224",
-                "SHA3-256",
-                "SHA3-384",
-                "SHA3-512",
-            ]),
+            "capabilities",
+            JsonValue::Array(vec![obj(vec![
+                (
+                    "hmacAlg",
+                    str_array(&[
+                        "SHA-1",
+                        "SHA2-224",
+                        "SHA2-256",
+                        "SHA2-384",
+                        "SHA2-512",
+                        "SHA2-512/224",
+                        "SHA2-512/256",
+                        "SHA3-224",
+                        "SHA3-256",
+                        "SHA3-384",
+                        "SHA3-512",
+                    ]),
+                ),
+                ("iterationCount", range_domain(1, 10000, 1)),
+                ("keyLen", range_domain(112, 4096, 8)),
+                ("passwordLen", range_domain(8, 128, 1)),
+                ("saltLen", range_domain(128, 4096, 8)),
+            ])]),
         ),
-        ("iterationCount", range_domain(1, 10000, 1)),
-        ("keyLen", range_domain(112, 4096, 8)),
-        ("passwordLen", range_domain(8, 128, 1)),
-        ("saltLen", range_domain(128, 4096, 8)),
     ])
 }
 

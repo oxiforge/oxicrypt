@@ -122,15 +122,17 @@ fn handle_pbkdf2_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         let iterations = u32::try_from(iteration_count)
             .map_err(|_| DispatchError::Crypto("PBKDF2: iterationCount overflows u32"))?;
 
-        let password_hex = t
+        // ACVP delivers `password` as a UTF-8 string passed byte-for-
+        // byte to PBKDF2 (NOT hex-encoded — confirmed against live
+        // ACVTS demo prompt vsId 3839019, 2026-05-03). The vendored
+        // offline kat-slice generator was updated in this commit to
+        // match (previously emitted hex-encoded bytes).
+        let password = t
             .get("password")
             .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("password"))?;
-        let password = if password_hex.is_empty() {
-            Vec::new()
-        } else {
-            hex::decode(password_hex)?
-        };
+            .ok_or(DispatchError::MissingField("password"))?
+            .as_bytes()
+            .to_vec();
 
         let salt_hex = t
             .get("salt")
