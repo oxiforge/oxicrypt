@@ -478,6 +478,14 @@ pub fn kbkdf_capability() -> JsonValue {
 }
 
 /// Build one KBKDF iteration-mode capability entry.
+///
+/// `fixedDataOrder` is the ACVP capability field that maps to the
+/// per-prompt `counterLocation` — the position of the iterator
+/// within the data input. Our `kbkdf` handler only dispatches
+/// `counterLocation = "before fixed data"` (handlers/kbkdf.rs:127),
+/// so we advertise just that single ordering. Demo registration
+/// without this field returns HTTP 400
+/// `KDF-1.0: No Data Orders supplied.` per mode.
 fn kbkdf_mode_entry(kdf_mode: &str) -> JsonValue {
     obj(vec![
         ("kdfMode", str_val(kdf_mode)),
@@ -497,8 +505,12 @@ fn kbkdf_mode_entry(kdf_mode: &str) -> JsonValue {
                 "HMAC-SHA3-512",
             ]),
         ),
-        ("counterLength", num_array(&[8, 16, 24, 32])),
+        // Handler only dispatches `counterLength = 32`
+        // (handlers/kbkdf.rs:137); advertising 8/16/24 prompts the
+        // server to emit groups the handler immediately rejects.
+        ("counterLength", num_array(&[32])),
         ("supportedLengths", range_domain(8, 4096, 8)),
+        ("fixedDataOrder", str_array(&["before fixed data"])),
     ])
 }
 
