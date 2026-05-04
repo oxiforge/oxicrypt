@@ -365,29 +365,58 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
 
+    // Dual-mode: live ACVTS prompts are FIPS 186-5 §7.6 generative
+    // (test carries only `tcId`); the harness's vendored offline kat-
+    // slice supplies `d` per test for deterministic round-trip.
+    // Detect by `d` presence on the first test — if present we take
+    // the deterministic path; if absent we sample fresh seeds via the
+    // module's DRBG (`Ed25519PrivateKey::generate` mirrors the ECDSA
+    // keyGen DRBG-driven shape, IG 10.3.A PCT included).
+    let deterministic = tests.first().is_some_and(|t| t.get("d").is_some());
+
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
-    for t in tests {
-        let test_case_id = t
-            .get("tcId")
-            .and_then(JsonValue::as_i64)
-            .ok_or(DispatchError::MissingField("tcId"))?;
-
-        let d_bytes = hex::decode(
-            t.get("d")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("d"))?,
-        )?;
-        let seed: [u8; 32] = d_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("EdDSA KeyGen: d is not 32 bytes"))?;
-
-        let q = oxicrypt_eddsa::ed25519::keygen_internal(&seed);
-
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            ("q".to_string(), JsonValue::String(hex::encode_upper(&q))),
-        ]));
+    if deterministic {
+        for t in tests {
+            let test_case_id = t
+                .get("tcId")
+                .and_then(JsonValue::as_i64)
+                .ok_or(DispatchError::MissingField("tcId"))?;
+            let d_bytes = hex::decode(
+                t.get("d")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("d"))?,
+            )?;
+            let seed: [u8; 32] = d_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| DispatchError::Crypto("EdDSA KeyGen: d is not 32 bytes"))?;
+            let q = oxicrypt_eddsa::ed25519::keygen_internal(&seed);
+            results.push(JsonValue::Object(vec![
+                ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                ("q".to_string(), JsonValue::String(hex::encode_upper(&q))),
+            ]));
+        }
+    } else {
+        let mut drbg = super::os_entropy::build_seeded_drbg()?;
+        for t in tests {
+            let test_case_id = t
+                .get("tcId")
+                .and_then(JsonValue::as_i64)
+                .ok_or(DispatchError::MissingField("tcId"))?;
+            let sk = oxicrypt_eddsa::ed25519::Ed25519PrivateKey::generate(&mut drbg)
+                .map_err(|_| DispatchError::Crypto("EdDSA KeyGen: generate failed"))?;
+            results.push(JsonValue::Object(vec![
+                ("tcId".to_string(), JsonValue::Number(test_case_id)),
+                (
+                    "d".to_string(),
+                    JsonValue::String(hex::encode_upper(sk.seed())),
+                ),
+                (
+                    "q".to_string(),
+                    JsonValue::String(hex::encode_upper(&sk.public_key())),
+                ),
+            ]));
+        }
     }
 
     Ok(JsonValue::Object(vec![
