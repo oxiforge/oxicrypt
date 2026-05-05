@@ -7208,6 +7208,557 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  # ── CTR-DRBG-AES-128 / -192 / -256 — additive variants ──
+  #
+  # SP 800-90A §10.2 CTR_DRBG family. Distinct from HMAC-DRBG and
+  # Hash-DRBG in that BOTH `_no_df` and `_df` derivation modes are
+  # surfaced through DISTINCT entry points per lifecycle stage
+  # (rather than a runtime flag) — one-to-one with upstream methods.
+  # Per SP 800-90A Table 3, security strength matches block-cipher
+  # key length: AES-128 = 128, AES-192 = 192, AES-256 = 256 bits.
+  # `SEED_LEN` = `KEY_LEN + OUTLEN` = 32 / 40 / 48 bytes respectively.
+
+  - name: OxiCtrDrbgAes128
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque CTR_DRBG-AES-128 handle. Internal layout
+      (`OxiHandle<CtrDrbgAes128>`) is implementation detail; cbindgen
+      renders this as an opaque struct. Same per-call-mutating
+      thread-safety and Drop-zeroize contract as `OxiHmacDrbgSha256`;
+      Drop chain zeroizes the internal `(Key, V, reseed_counter)` via
+      `oxicrypt-zeroize`. Per SP 800-90A Table 3, security strength
+      is 128 bits; `SEED_LEN = 32`. Allocate via
+      `oxi_ctr_drbg_aes128_new`; release via
+      `oxi_ctr_drbg_aes128_free`.
+
+  - name: OxiCtrDrbgAes192
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque CTR_DRBG-AES-192 handle. Per SP 800-90A Table 3,
+      security strength is 192 bits; `SEED_LEN = 40`.
+
+  - name: OxiCtrDrbgAes256
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque CTR_DRBG-AES-256 handle. Per SP 800-90A Table 3,
+      security strength is 256 bits; `SEED_LEN = 48`.
+
+  - name: oxi_ctr_drbg_aes128_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, uninstantiated CTR_DRBG-AES-128 handle. Caller
+      MUST subsequently call exactly one of `_instantiate_no_df` or
+      `_instantiate_df` before generate/reseed becomes operational.
+      Forwards to `oxicrypt_drbg::CtrDrbgAes128::new`.
+    signature: >-
+      int oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiCtrDrbgAes128 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_free
+    module: oxicrypt-ffi
+    description: >-
+      Free a CTR_DRBG-AES-128 handle. NULL-safe. Drop on the upstream
+      `CtrDrbgAes128` zeroizes the internal `(Key, V)` state via
+      `oxicrypt-zeroize`.
+    signature: >-
+      void oxi_ctr_drbg_aes128_free(OxiCtrDrbgAes128 *handle)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Handle, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_instantiate_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-128 Instantiate, **no-df** variant (SP 800-90A
+      §10.2.1.3.1). `seed_material` MUST be exactly 32 bytes (=
+      AES-128 key + AES block); mismatch returns `InvalidInput = 5`.
+      Caller is responsible for sourcing the seed as a full-entropy
+      string per the no-df construction.
+    signature: >-
+      int oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *handle,
+      const uint8_t *seed_material, size_t seed_material_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Live handle" }
+      - { name: seed_material, type: "const uint8_t *", direction: in, description: "Caller-supplied seed (= entropy || personalization)" }
+      - { name: seed_material_len, type: "size_t", direction: in, description: "Must be exactly 32 bytes (SEED_LEN)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on length-mismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_instantiate_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-128 Instantiate, **df** variant (SP 800-90A
+      §10.2.1.3.2). Runs `Block_Cipher_df(entropy || nonce ||
+      personalization, seedlen)` to derive the seed. Combined-input
+      ceiling is the alg-independent `MAX_DF_INPUT`. Per SP 800-90A
+      Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
+      64 bits.
+    signature: >-
+      int oxi_ctr_drbg_aes128_instantiate_df(OxiCtrDrbgAes128 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Live handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Caller-sourced entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length in bytes" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Caller-sourced nonce bytes" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length in bytes" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization (NULL+0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length in bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on combined-length > MAX_DF_INPUT, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_reseed_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-128 Reseed, no-df (SP 800-90A §10.2.1.4.1).
+      `seed_material` MUST be exactly 32 bytes.
+    signature: >-
+      int oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *handle,
+      const uint8_t *seed_material, size_t seed_material_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Live, instantiated handle" }
+      - { name: seed_material, type: "const uint8_t *", direction: in, description: "Fresh seed (must be exactly SEED_LEN bytes)" }
+      - { name: seed_material_len, type: "size_t", direction: in, description: "Must be exactly 32 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 5 = InvalidInput on length-mismatch, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_reseed_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-128 Reseed, df (SP 800-90A §10.2.1.4.2). Runs
+      `Block_Cipher_df(entropy || additional_input, seedlen)`.
+    signature: >-
+      int oxi_ctr_drbg_aes128_reseed_df(OxiCtrDrbgAes128 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Fresh entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 5 = InvalidInput on combined-length overflow, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_generate_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-128 Generate, no-df (SP 800-90A §10.2.1.5.1).
+      When `additional_input` is supplied (non-NULL + non-zero len),
+      it MUST be exactly 32 bytes (SEED_LEN). `out_len` bounded by
+      `2^16` bytes per SP 800-90A §10.2.1.5.1 step 5.
+    signature: >-
+      int oxi_ctr_drbg_aes128_generate_no_df(OxiCtrDrbgAes128 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input (NULL+0 = upstream None)" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Must be 0 or exactly SEED_LEN bytes" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 9 = ReseedRequired, 12 = OutputTooLong, 5 = InvalidInput on AI length-mismatch, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes128_generate_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-128 Generate, df (SP 800-90A §10.2.1.5.2).
+      `additional_input` is variable length up to `MAX_DF_INPUT` and
+      passed through `Block_Cipher_df` before being mixed in.
+    signature: >-
+      int oxi_ctr_drbg_aes128_generate_df(OxiCtrDrbgAes128 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes128 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length (≤ MAX_DF_INPUT)" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 9 = ReseedRequired, 12 = OutputTooLong, 5 = InvalidInput on combined-length overflow, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, uninstantiated CTR_DRBG-AES-192 handle. Mirrors
+      `oxi_ctr_drbg_aes128_new`.
+    signature: >-
+      int oxi_ctr_drbg_aes192_new(OxiCtrDrbgAes192 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiCtrDrbgAes192 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_free
+    module: oxicrypt-ffi
+    description: >-
+      Free a CTR_DRBG-AES-192 handle. NULL-safe.
+    signature: >-
+      void oxi_ctr_drbg_aes192_free(OxiCtrDrbgAes192 *handle)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Handle, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_instantiate_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-192 Instantiate, no-df. `seed_material` MUST be
+      exactly 40 bytes (AES-192 key 24 + AES block 16).
+    signature: >-
+      int oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *handle,
+      const uint8_t *seed_material, size_t seed_material_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Live handle" }
+      - { name: seed_material, type: "const uint8_t *", direction: in, description: "Caller-supplied seed" }
+      - { name: seed_material_len, type: "size_t", direction: in, description: "Must be exactly 40 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_no_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_instantiate_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-192 Instantiate, df. Per SP 800-90A Table 3,
+      security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits.
+    signature: >-
+      int oxi_ctr_drbg_aes192_instantiate_df(OxiCtrDrbgAes192 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Live handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Nonce bytes" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization (NULL+0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_reseed_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-192 Reseed, no-df. `seed_material` must be
+      exactly 40 bytes.
+    signature: >-
+      int oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *handle,
+      const uint8_t *seed_material, size_t seed_material_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Live, instantiated handle" }
+      - { name: seed_material, type: "const uint8_t *", direction: in, description: "Fresh seed" }
+      - { name: seed_material_len, type: "size_t", direction: in, description: "Must be exactly 40 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_no_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_reseed_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-192 Reseed, df.
+    signature: >-
+      int oxi_ctr_drbg_aes192_reseed_df(OxiCtrDrbgAes192 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Fresh entropy" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_generate_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-192 Generate, no-df. When `additional_input` is
+      supplied it MUST be exactly 40 bytes.
+    signature: >-
+      int oxi_ctr_drbg_aes192_generate_no_df(OxiCtrDrbgAes192 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Must be 0 or exactly SEED_LEN bytes" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_no_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes192_generate_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-192 Generate, df.
+    signature: >-
+      int oxi_ctr_drbg_aes192_generate_df(OxiCtrDrbgAes192 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes192 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Variable length, ≤ MAX_DF_INPUT" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, uninstantiated CTR_DRBG-AES-256 handle.
+    signature: >-
+      int oxi_ctr_drbg_aes256_new(OxiCtrDrbgAes256 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiCtrDrbgAes256 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_free
+    module: oxicrypt-ffi
+    description: >-
+      Free a CTR_DRBG-AES-256 handle. NULL-safe.
+    signature: >-
+      void oxi_ctr_drbg_aes256_free(OxiCtrDrbgAes256 *handle)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Handle, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_instantiate_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-256 Instantiate, no-df. `seed_material` MUST be
+      exactly 48 bytes (AES-256 key 32 + AES block 16).
+    signature: >-
+      int oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *handle,
+      const uint8_t *seed_material, size_t seed_material_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Live handle" }
+      - { name: seed_material, type: "const uint8_t *", direction: in, description: "Caller-supplied seed" }
+      - { name: seed_material_len, type: "size_t", direction: in, description: "Must be exactly 48 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_no_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_instantiate_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
+      security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+    signature: >-
+      int oxi_ctr_drbg_aes256_instantiate_df(OxiCtrDrbgAes256 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Live handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Nonce bytes" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization (NULL+0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_reseed_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-256 Reseed, no-df. `seed_material` must be
+      exactly 48 bytes.
+    signature: >-
+      int oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *handle,
+      const uint8_t *seed_material, size_t seed_material_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: seed_material, type: "const uint8_t *", direction: in, description: "Fresh seed" }
+      - { name: seed_material_len, type: "size_t", direction: in, description: "Must be exactly 48 bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_no_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_reseed_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-256 Reseed, df.
+    signature: >-
+      int oxi_ctr_drbg_aes256_reseed_df(OxiCtrDrbgAes256 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Fresh entropy" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_generate_no_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-256 Generate, no-df. When `additional_input` is
+      supplied it MUST be exactly 48 bytes.
+    signature: >-
+      int oxi_ctr_drbg_aes256_generate_no_df(OxiCtrDrbgAes256 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Must be 0 or exactly SEED_LEN bytes" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_no_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ctr_drbg_aes256_generate_df
+    module: oxicrypt-ffi
+    description: >-
+      CTR_DRBG-AES-256 Generate, df.
+    signature: >-
+      int oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiCtrDrbgAes256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Variable length, ≤ MAX_DF_INPUT" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_df."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

@@ -347,6 +347,7 @@ The `oxicrypt-ffi` crate currently exposes:
 | LMS / XMSS (stateful) | LMS_SHA256_M32_H10, XMSS-SHA2_10_256 — byte-buffer pass-through with explicit pre/post-state encoding | SP 800-208, RFC 8554, RFC 8391 |
 | HMAC-DRBG (opaque handle) | SHA-256 / -384 / -512 — `new`, `instantiate`, `reseed`, `generate`, `free` | SP 800-90A §10.1.2 |
 | Hash-DRBG (opaque handle) | SHA-256 / -384 / -512 — same lifecycle | SP 800-90A §10.1.1 |
+| CTR-DRBG (opaque handle) | AES-128 / -192 / -256 — same lifecycle, with distinct `_no_df` and `_df` derivation entry points per stage | SP 800-90A §10.2 |
 
 Verify-style mismatches collapse to `OxiResult::TagMismatch = 22`
 across every signature family (RSA, ECDSA, EdDSA, ML-DSA, SLH-DSA,

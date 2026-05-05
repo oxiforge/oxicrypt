@@ -112,7 +112,8 @@ use crate::error::{status_drbg, status_module, OxiResult as R};
 use crate::handle::OxiHandle;
 use core::ffi::c_int;
 use oxicrypt_drbg::{
-    HashDrbgSha256, HashDrbgSha384, HashDrbgSha512, HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512,
+    CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512,
+    HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512,
 };
 
 /// Opaque HMAC_DRBG-SHA-256 handle. The internal layout
@@ -1188,4 +1189,820 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_generate(
         return R::NotOperational as c_int;
     };
     status_drbg(drbg.generate(ai_opt, out_slice))
+}
+
+// ── CTR-DRBG-AES-128 / -192 / -256 — additive variants ──────────
+//
+// SP 800-90A §10.2 CTR_DRBG family. Same opaque-handle / `OxiHandle<T>`
+// / Drop-zeroize / per-call-mutating contract as the HMAC-DRBG and
+// Hash-DRBG families above; differs in upstream construction (block
+// cipher CTR mode per §10.2 vs hash-based per §10.1.1/§10.1.2) AND
+// — uniquely among the three DRBG families — exposes BOTH `_no_df`
+// and `_df` derivation modes through DISTINCT entry points per
+// lifecycle stage rather than a runtime flag.
+//
+// **df vs no-df (SP 800-90A §10.2.1):** the `no_df` variant requires
+// the caller to supply seed material that is already a full-entropy
+// string of exactly `SEED_LEN` bytes (= `KEY_LEN + OUTLEN` per the
+// underlying block cipher). The `df` variant runs `Block_Cipher_df`
+// over arbitrary-length entropy + nonce + personalization input
+// (capped at `MAX_DF_INPUT`) to derive the seed. SP 800-90A allows
+// either; the choice is a deployment-environment decision (the no_df
+// path is for callers with a hardware RNG that outputs full-entropy
+// blocks; the df path is for callers with a non-full-entropy source
+// or who want personalization). We surface BOTH because lab-grade
+// callers exercise both — collapsing them into a runtime `use_df`
+// flag would force conditional FFI-side validation that obscures the
+// upstream's distinct preconditions (no_df: exact length; df:
+// variable length up to MAX_DF_INPUT). One-to-one upstream-to-FFI
+// mapping is the reviewer-legible default.
+//
+// Per SP 800-90A Table 3, security strength is 128 / 192 / 256 bits
+// for CTR-AES-128 / -192 / -256 (matches the underlying block-cipher
+// key length). `SEED_LEN` is `KEY_LEN + OUTLEN` = 32 / 40 / 48 bytes.
+// `RESEED_INTERVAL` is `2^48` per Table 3. `max_number_of_bits_per_request`
+// is `2^19` bits — alg-independent across all DRBG families. No new
+// `OxiResult` discriminants this round; the discriminant set is
+// already covered by `From<oxicrypt_module::Error>` +
+// `From<DrbgError>` (DrbgError::InvalidSeedLength → InvalidInput,
+// DrbgError::InputTooLong → InvalidInput, DrbgError::RequestTooLong
+// → OutputTooLong; verified at error.rs:185-188).
+
+/// Opaque CTR_DRBG-AES-128 handle. See `OxiHmacDrbgSha256` for the
+/// per-call-mutating thread-safety and Drop-zeroize contract.
+///
+/// cbindgen:opaque
+pub struct OxiCtrDrbgAes128 {
+    inner: OxiHandle<CtrDrbgAes128>,
+}
+
+impl OxiCtrDrbgAes128 {
+    #[allow(dead_code)] // first call site lands when a CTR-AES-128-DRBG-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut CtrDrbgAes128> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated CTR_DRBG-AES-128 handle. Caller
+/// must subsequently call exactly one of
+/// [`oxi_ctr_drbg_aes128_instantiate_no_df`] or
+/// [`oxi_ctr_drbg_aes128_instantiate_df`] before generate / reseed
+/// becomes operational.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiCtrDrbgAes128`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_new(out_handle: *mut *mut OxiCtrDrbgAes128) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiCtrDrbgAes128 {
+        inner: OxiHandle::new(CtrDrbgAes128::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free a CTR_DRBG-AES-128 handle. NULL-safe. Drop on the upstream
+/// `CtrDrbgAes128` zeroizes the internal `(Key, V, reseed_counter)`
+/// state via `oxicrypt-zeroize`.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_ctr_drbg_aes128_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_free(handle: *mut OxiCtrDrbgAes128) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// CTR_DRBG-AES-128 Instantiate, **no-df** variant (SP 800-90A
+/// §10.2.1.3.1). `seed_material` MUST be exactly `SEED_LEN` = 32
+/// bytes (= AES-128 key length 16 + AES block size 16) and MUST
+/// equal `entropy_input || personalization_string` per the spec's
+/// no-df construction. Seed-length mismatch returns
+/// `OxiResult::InvalidInput = 5` — there is no auto-extend or
+/// auto-truncate at the FFI boundary.
+///
+/// # Safety
+///
+/// `handle` must be a live handle from
+/// [`oxi_ctr_drbg_aes128_new`]. `seed_material` must point to ≥
+/// `seed_material_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_no_df(
+    handle: *mut OxiCtrDrbgAes128,
+    seed_material: *const u8,
+    seed_material_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate_no_df(seed_slice))
+}
+
+/// CTR_DRBG-AES-128 Instantiate, **df** variant (SP 800-90A
+/// §10.2.1.3.2). Runs `Block_Cipher_df(entropy || nonce ||
+/// personalization, seedlen)` to derive the initial seed material.
+/// Combined-length ceiling is `MAX_DF_INPUT` (alg-independent).
+/// Each input may be NULL when its length is 0. Per SP 800-90A
+/// Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
+/// 64 bits.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_ctr_drbg_aes128_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_df(
+    handle: *mut OxiCtrDrbgAes128,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate_df(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// CTR_DRBG-AES-128 Reseed, **no-df** variant (SP 800-90A
+/// §10.2.1.4.1). `seed_material` MUST be exactly `SEED_LEN` = 32
+/// bytes; mismatch returns `OxiResult::InvalidInput = 5`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live,
+/// instantiated handle from [`oxi_ctr_drbg_aes128_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_no_df(
+    handle: *mut OxiCtrDrbgAes128,
+    seed_material: *const u8,
+    seed_material_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed_no_df(seed_slice))
+}
+
+/// CTR_DRBG-AES-128 Reseed, **df** variant (SP 800-90A §10.2.1.4.2).
+/// Runs `Block_Cipher_df(entropy || additional_input, seedlen)` to
+/// derive the new seed. Combined-length ceiling is `MAX_DF_INPUT`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live,
+/// instantiated handle from [`oxi_ctr_drbg_aes128_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_df(
+    handle: *mut OxiCtrDrbgAes128,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed_df(entropy_slice, ai_slice))
+}
+
+/// CTR_DRBG-AES-128 Generate, **no-df** variant (SP 800-90A
+/// §10.2.1.5.1). When `additional_input` is supplied (non-NULL +
+/// non-zero len), it MUST be exactly `SEED_LEN` = 32 bytes — this
+/// constraint is what makes this the no-df path; `additional_input
+/// = NULL, len = 0` is the typical no-AI call. `out_len` is bounded
+/// by `2^16` bytes (SP 800-90A §10.2.1.5.1 step 5).
+///
+/// # Safety
+///
+/// `handle` must be a live, instantiated handle from
+/// [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
+/// writable bytes (or `out_len == 0`).
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_no_df(
+    handle: *mut OxiCtrDrbgAes128,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate_no_df(ai_opt, out_slice))
+}
+
+/// CTR_DRBG-AES-128 Generate, **df** variant (SP 800-90A
+/// §10.2.1.5.2). `additional_input` is variable length up to
+/// `MAX_DF_INPUT` and is passed through `Block_Cipher_df` before
+/// being mixed in. NULL+0 is the no-AI call; NULL with non-zero
+/// length returns `OxiResult::NullPointer = 10`. `out_len` is
+/// bounded by `2^16` bytes.
+///
+/// # Safety
+///
+/// `handle` must be a live, instantiated handle from
+/// [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
+/// writable bytes. `additional_input` must point to ≥
+/// `additional_input_len` readable bytes when
+/// `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_df(
+    handle: *mut OxiCtrDrbgAes128,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate_df(ai_opt, out_slice))
+}
+
+/// Opaque CTR_DRBG-AES-192 handle. See `OxiCtrDrbgAes128`.
+///
+/// cbindgen:opaque
+pub struct OxiCtrDrbgAes192 {
+    inner: OxiHandle<CtrDrbgAes192>,
+}
+
+impl OxiCtrDrbgAes192 {
+    #[allow(dead_code)] // first call site lands when a CTR-AES-192-DRBG-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut CtrDrbgAes192> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated CTR_DRBG-AES-192 handle. See
+/// [`oxi_ctr_drbg_aes128_new`].
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiCtrDrbgAes192`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_new(out_handle: *mut *mut OxiCtrDrbgAes192) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiCtrDrbgAes192 {
+        inner: OxiHandle::new(CtrDrbgAes192::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free a CTR_DRBG-AES-192 handle. NULL-safe.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_ctr_drbg_aes192_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_free(handle: *mut OxiCtrDrbgAes192) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// CTR_DRBG-AES-192 Instantiate, no-df variant. `seed_material` must
+/// be exactly `SEED_LEN` = 40 bytes (AES-192 key 24 + AES block 16).
+/// See [`oxi_ctr_drbg_aes128_instantiate_no_df`].
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_ctr_drbg_aes192_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_no_df(
+    handle: *mut OxiCtrDrbgAes192,
+    seed_material: *const u8,
+    seed_material_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate_no_df(seed_slice))
+}
+
+/// CTR_DRBG-AES-192 Instantiate, df variant. Per SP 800-90A Table 3,
+/// security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits. See
+/// [`oxi_ctr_drbg_aes128_instantiate_df`].
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_ctr_drbg_aes192_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_df(
+    handle: *mut OxiCtrDrbgAes192,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate_df(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// CTR_DRBG-AES-192 Reseed, no-df. `seed_material` must be exactly
+/// 40 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live,
+/// instantiated handle from [`oxi_ctr_drbg_aes192_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_no_df(
+    handle: *mut OxiCtrDrbgAes192,
+    seed_material: *const u8,
+    seed_material_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed_no_df(seed_slice))
+}
+
+/// CTR_DRBG-AES-192 Reseed, df.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live,
+/// instantiated handle from [`oxi_ctr_drbg_aes192_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_df(
+    handle: *mut OxiCtrDrbgAes192,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed_df(entropy_slice, ai_slice))
+}
+
+/// CTR_DRBG-AES-192 Generate, no-df. When `additional_input` is
+/// supplied it MUST be exactly 40 bytes.
+///
+/// # Safety
+///
+/// `handle` must be a live, instantiated handle from
+/// [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
+/// writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_no_df(
+    handle: *mut OxiCtrDrbgAes192,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate_no_df(ai_opt, out_slice))
+}
+
+/// CTR_DRBG-AES-192 Generate, df. `additional_input` is variable up
+/// to `MAX_DF_INPUT`.
+///
+/// # Safety
+///
+/// `handle` must be a live, instantiated handle from
+/// [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
+/// writable bytes. `additional_input` must point to ≥
+/// `additional_input_len` readable bytes when
+/// `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_df(
+    handle: *mut OxiCtrDrbgAes192,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate_df(ai_opt, out_slice))
+}
+
+/// Opaque CTR_DRBG-AES-256 handle. See `OxiCtrDrbgAes128`.
+///
+/// cbindgen:opaque
+pub struct OxiCtrDrbgAes256 {
+    inner: OxiHandle<CtrDrbgAes256>,
+}
+
+impl OxiCtrDrbgAes256 {
+    #[allow(dead_code)] // first call site lands when a CTR-AES-256-DRBG-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut CtrDrbgAes256> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated CTR_DRBG-AES-256 handle.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiCtrDrbgAes256`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_new(out_handle: *mut *mut OxiCtrDrbgAes256) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiCtrDrbgAes256 {
+        inner: OxiHandle::new(CtrDrbgAes256::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free a CTR_DRBG-AES-256 handle. NULL-safe.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_ctr_drbg_aes256_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_free(handle: *mut OxiCtrDrbgAes256) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// CTR_DRBG-AES-256 Instantiate, no-df. `seed_material` must be
+/// exactly `SEED_LEN` = 48 bytes (AES-256 key 32 + AES block 16).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_ctr_drbg_aes256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_no_df(
+    handle: *mut OxiCtrDrbgAes256,
+    seed_material: *const u8,
+    seed_material_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate_no_df(seed_slice))
+}
+
+/// CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
+/// security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_ctr_drbg_aes256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_df(
+    handle: *mut OxiCtrDrbgAes256,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate_df(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// CTR_DRBG-AES-256 Reseed, no-df. `seed_material` must be exactly
+/// 48 bytes.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live,
+/// instantiated handle from [`oxi_ctr_drbg_aes256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_no_df(
+    handle: *mut OxiCtrDrbgAes256,
+    seed_material: *const u8,
+    seed_material_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let seed_slice = match unsafe { crate::slice_from_raw(seed_material, seed_material_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed_no_df(seed_slice))
+}
+
+/// CTR_DRBG-AES-256 Reseed, df.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live,
+/// instantiated handle from [`oxi_ctr_drbg_aes256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_df(
+    handle: *mut OxiCtrDrbgAes256,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed_df(entropy_slice, ai_slice))
+}
+
+/// CTR_DRBG-AES-256 Generate, no-df. When `additional_input` is
+/// supplied it MUST be exactly 48 bytes.
+///
+/// # Safety
+///
+/// `handle` must be a live, instantiated handle from
+/// [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
+/// writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_no_df(
+    handle: *mut OxiCtrDrbgAes256,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate_no_df(ai_opt, out_slice))
+}
+
+/// CTR_DRBG-AES-256 Generate, df. `additional_input` is variable up
+/// to `MAX_DF_INPUT`.
+///
+/// # Safety
+///
+/// `handle` must be a live, instantiated handle from
+/// [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
+/// writable bytes. `additional_input` must point to ≥
+/// `additional_input_len` readable bytes when
+/// `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_df(
+    handle: *mut OxiCtrDrbgAes256,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate_df(ai_opt, out_slice))
 }

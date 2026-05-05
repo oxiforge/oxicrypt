@@ -28,6 +28,25 @@
 typedef struct OxiAes256Key OxiAes256Key;
 
 /*
+ Opaque CTR_DRBG-AES-128 handle. See `OxiHmacDrbgSha256` for the
+ per-call-mutating thread-safety and Drop-zeroize contract.
+
+ */
+typedef struct OxiCtrDrbgAes128 OxiCtrDrbgAes128;
+
+/*
+ Opaque CTR_DRBG-AES-192 handle. See `OxiCtrDrbgAes128`.
+
+ */
+typedef struct OxiCtrDrbgAes192 OxiCtrDrbgAes192;
+
+/*
+ Opaque CTR_DRBG-AES-256 handle. See `OxiCtrDrbgAes128`.
+
+ */
+typedef struct OxiCtrDrbgAes256 OxiCtrDrbgAes256;
+
+/*
  Opaque ECDSA P-256 private-key handle that has passed an IG 10.3.A
  pairwise consistency test at construction time.
 
@@ -2743,6 +2762,370 @@ int oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *handle,
                                   uintptr_t additional_input_len,
                                   uint8_t *out,
                                   uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated CTR_DRBG-AES-128 handle. Caller
+ must subsequently call exactly one of
+ [`oxi_ctr_drbg_aes128_instantiate_no_df`] or
+ [`oxi_ctr_drbg_aes128_instantiate_df`] before generate / reseed
+ becomes operational.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiCtrDrbgAes128`.
+ */
+int oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **out_handle);
+
+/*
+ Free a CTR_DRBG-AES-128 handle. NULL-safe. Drop on the upstream
+ `CtrDrbgAes128` zeroizes the internal `(Key, V, reseed_counter)`
+ state via `oxicrypt-zeroize`.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_ctr_drbg_aes128_new`] that has not yet been freed.
+ */
+void oxi_ctr_drbg_aes128_free(OxiCtrDrbgAes128 *handle);
+
+/*
+ CTR_DRBG-AES-128 Instantiate, **no-df** variant (SP 800-90A
+ §10.2.1.3.1). `seed_material` MUST be exactly `SEED_LEN` = 32
+ bytes (= AES-128 key length 16 + AES block size 16) and MUST
+ equal `entropy_input || personalization_string` per the spec's
+ no-df construction. Seed-length mismatch returns
+ `OxiResult::InvalidInput = 5` — there is no auto-extend or
+ auto-truncate at the FFI boundary.
+
+ # Safety
+
+ `handle` must be a live handle from
+ [`oxi_ctr_drbg_aes128_new`]. `seed_material` must point to ≥
+ `seed_material_len` readable bytes.
+ */
+int oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *handle,
+                                          const uint8_t *seed_material,
+                                          uintptr_t seed_material_len);
+
+/*
+ CTR_DRBG-AES-128 Instantiate, **df** variant (SP 800-90A
+ §10.2.1.3.2). Runs `Block_Cipher_df(entropy || nonce ||
+ personalization, seedlen)` to derive the initial seed material.
+ Combined-length ceiling is `MAX_DF_INPUT` (alg-independent).
+ Each input may be NULL when its length is 0. Per SP 800-90A
+ Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
+ 64 bits.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_ctr_drbg_aes128_new`].
+ */
+int oxi_ctr_drbg_aes128_instantiate_df(OxiCtrDrbgAes128 *handle,
+                                       const uint8_t *entropy,
+                                       uintptr_t entropy_len,
+                                       const uint8_t *nonce,
+                                       uintptr_t nonce_len,
+                                       const uint8_t *personalization,
+                                       uintptr_t personalization_len);
+
+/*
+ CTR_DRBG-AES-128 Reseed, **no-df** variant (SP 800-90A
+ §10.2.1.4.1). `seed_material` MUST be exactly `SEED_LEN` = 32
+ bytes; mismatch returns `OxiResult::InvalidInput = 5`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live,
+ instantiated handle from [`oxi_ctr_drbg_aes128_new`].
+ */
+int oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *handle,
+                                     const uint8_t *seed_material,
+                                     uintptr_t seed_material_len);
+
+/*
+ CTR_DRBG-AES-128 Reseed, **df** variant (SP 800-90A §10.2.1.4.2).
+ Runs `Block_Cipher_df(entropy || additional_input, seedlen)` to
+ derive the new seed. Combined-length ceiling is `MAX_DF_INPUT`.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live,
+ instantiated handle from [`oxi_ctr_drbg_aes128_new`].
+ */
+int oxi_ctr_drbg_aes128_reseed_df(OxiCtrDrbgAes128 *handle,
+                                  const uint8_t *entropy,
+                                  uintptr_t entropy_len,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len);
+
+/*
+ CTR_DRBG-AES-128 Generate, **no-df** variant (SP 800-90A
+ §10.2.1.5.1). When `additional_input` is supplied (non-NULL +
+ non-zero len), it MUST be exactly `SEED_LEN` = 32 bytes — this
+ constraint is what makes this the no-df path; `additional_input
+ = NULL, len = 0` is the typical no-AI call. `out_len` is bounded
+ by `2^16` bytes (SP 800-90A §10.2.1.5.1 step 5).
+
+ # Safety
+
+ `handle` must be a live, instantiated handle from
+ [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
+ writable bytes (or `out_len == 0`).
+ */
+int oxi_ctr_drbg_aes128_generate_no_df(OxiCtrDrbgAes128 *handle,
+                                       const uint8_t *additional_input,
+                                       uintptr_t additional_input_len,
+                                       uint8_t *out,
+                                       uintptr_t out_len);
+
+/*
+ CTR_DRBG-AES-128 Generate, **df** variant (SP 800-90A
+ §10.2.1.5.2). `additional_input` is variable length up to
+ `MAX_DF_INPUT` and is passed through `Block_Cipher_df` before
+ being mixed in. NULL+0 is the no-AI call; NULL with non-zero
+ length returns `OxiResult::NullPointer = 10`. `out_len` is
+ bounded by `2^16` bytes.
+
+ # Safety
+
+ `handle` must be a live, instantiated handle from
+ [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
+ writable bytes. `additional_input` must point to ≥
+ `additional_input_len` readable bytes when
+ `additional_input_len > 0`.
+ */
+int oxi_ctr_drbg_aes128_generate_df(OxiCtrDrbgAes128 *handle,
+                                    const uint8_t *additional_input,
+                                    uintptr_t additional_input_len,
+                                    uint8_t *out,
+                                    uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated CTR_DRBG-AES-192 handle. See
+ [`oxi_ctr_drbg_aes128_new`].
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiCtrDrbgAes192`.
+ */
+int oxi_ctr_drbg_aes192_new(OxiCtrDrbgAes192 **out_handle);
+
+/*
+ Free a CTR_DRBG-AES-192 handle. NULL-safe.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_ctr_drbg_aes192_new`] that has not yet been freed.
+ */
+void oxi_ctr_drbg_aes192_free(OxiCtrDrbgAes192 *handle);
+
+/*
+ CTR_DRBG-AES-192 Instantiate, no-df variant. `seed_material` must
+ be exactly `SEED_LEN` = 40 bytes (AES-192 key 24 + AES block 16).
+ See [`oxi_ctr_drbg_aes128_instantiate_no_df`].
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_ctr_drbg_aes192_new`].
+ */
+int oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *handle,
+                                          const uint8_t *seed_material,
+                                          uintptr_t seed_material_len);
+
+/*
+ CTR_DRBG-AES-192 Instantiate, df variant. Per SP 800-90A Table 3,
+ security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits. See
+ [`oxi_ctr_drbg_aes128_instantiate_df`].
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_ctr_drbg_aes192_new`].
+ */
+int oxi_ctr_drbg_aes192_instantiate_df(OxiCtrDrbgAes192 *handle,
+                                       const uint8_t *entropy,
+                                       uintptr_t entropy_len,
+                                       const uint8_t *nonce,
+                                       uintptr_t nonce_len,
+                                       const uint8_t *personalization,
+                                       uintptr_t personalization_len);
+
+/*
+ CTR_DRBG-AES-192 Reseed, no-df. `seed_material` must be exactly
+ 40 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live,
+ instantiated handle from [`oxi_ctr_drbg_aes192_new`].
+ */
+int oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *handle,
+                                     const uint8_t *seed_material,
+                                     uintptr_t seed_material_len);
+
+/*
+ CTR_DRBG-AES-192 Reseed, df.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live,
+ instantiated handle from [`oxi_ctr_drbg_aes192_new`].
+ */
+int oxi_ctr_drbg_aes192_reseed_df(OxiCtrDrbgAes192 *handle,
+                                  const uint8_t *entropy,
+                                  uintptr_t entropy_len,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len);
+
+/*
+ CTR_DRBG-AES-192 Generate, no-df. When `additional_input` is
+ supplied it MUST be exactly 40 bytes.
+
+ # Safety
+
+ `handle` must be a live, instantiated handle from
+ [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
+ writable bytes.
+ */
+int oxi_ctr_drbg_aes192_generate_no_df(OxiCtrDrbgAes192 *handle,
+                                       const uint8_t *additional_input,
+                                       uintptr_t additional_input_len,
+                                       uint8_t *out,
+                                       uintptr_t out_len);
+
+/*
+ CTR_DRBG-AES-192 Generate, df. `additional_input` is variable up
+ to `MAX_DF_INPUT`.
+
+ # Safety
+
+ `handle` must be a live, instantiated handle from
+ [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
+ writable bytes. `additional_input` must point to ≥
+ `additional_input_len` readable bytes when
+ `additional_input_len > 0`.
+ */
+int oxi_ctr_drbg_aes192_generate_df(OxiCtrDrbgAes192 *handle,
+                                    const uint8_t *additional_input,
+                                    uintptr_t additional_input_len,
+                                    uint8_t *out,
+                                    uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated CTR_DRBG-AES-256 handle.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiCtrDrbgAes256`.
+ */
+int oxi_ctr_drbg_aes256_new(OxiCtrDrbgAes256 **out_handle);
+
+/*
+ Free a CTR_DRBG-AES-256 handle. NULL-safe.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_ctr_drbg_aes256_new`] that has not yet been freed.
+ */
+void oxi_ctr_drbg_aes256_free(OxiCtrDrbgAes256 *handle);
+
+/*
+ CTR_DRBG-AES-256 Instantiate, no-df. `seed_material` must be
+ exactly `SEED_LEN` = 48 bytes (AES-256 key 32 + AES block 16).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_ctr_drbg_aes256_new`].
+ */
+int oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *handle,
+                                          const uint8_t *seed_material,
+                                          uintptr_t seed_material_len);
+
+/*
+ CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
+ security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_ctr_drbg_aes256_new`].
+ */
+int oxi_ctr_drbg_aes256_instantiate_df(OxiCtrDrbgAes256 *handle,
+                                       const uint8_t *entropy,
+                                       uintptr_t entropy_len,
+                                       const uint8_t *nonce,
+                                       uintptr_t nonce_len,
+                                       const uint8_t *personalization,
+                                       uintptr_t personalization_len);
+
+/*
+ CTR_DRBG-AES-256 Reseed, no-df. `seed_material` must be exactly
+ 48 bytes.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live,
+ instantiated handle from [`oxi_ctr_drbg_aes256_new`].
+ */
+int oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *handle,
+                                     const uint8_t *seed_material,
+                                     uintptr_t seed_material_len);
+
+/*
+ CTR_DRBG-AES-256 Reseed, df.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live,
+ instantiated handle from [`oxi_ctr_drbg_aes256_new`].
+ */
+int oxi_ctr_drbg_aes256_reseed_df(OxiCtrDrbgAes256 *handle,
+                                  const uint8_t *entropy,
+                                  uintptr_t entropy_len,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len);
+
+/*
+ CTR_DRBG-AES-256 Generate, no-df. When `additional_input` is
+ supplied it MUST be exactly 48 bytes.
+
+ # Safety
+
+ `handle` must be a live, instantiated handle from
+ [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
+ writable bytes.
+ */
+int oxi_ctr_drbg_aes256_generate_no_df(OxiCtrDrbgAes256 *handle,
+                                       const uint8_t *additional_input,
+                                       uintptr_t additional_input_len,
+                                       uint8_t *out,
+                                       uintptr_t out_len);
+
+/*
+ CTR_DRBG-AES-256 Generate, df. `additional_input` is variable up
+ to `MAX_DF_INPUT`.
+
+ # Safety
+
+ `handle` must be a live, instantiated handle from
+ [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
+ writable bytes. `additional_input` must point to ≥
+ `additional_input_len` readable bytes when
+ `additional_input_len > 0`.
+ */
+int oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *handle,
+                                    const uint8_t *additional_input,
+                                    uintptr_t additional_input_len,
+                                    uint8_t *out,
+                                    uintptr_t out_len);
 
 #ifdef __cplusplus
 }  // extern "C"
