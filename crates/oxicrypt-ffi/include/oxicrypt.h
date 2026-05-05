@@ -54,6 +54,18 @@ typedef struct OxiEcdsaP384PrivateKey OxiEcdsaP384PrivateKey;
 typedef struct OxiHmacDrbgSha256 OxiHmacDrbgSha256;
 
 /*
+ Opaque HMAC_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
+
+ */
+typedef struct OxiHmacDrbgSha384 OxiHmacDrbgSha384;
+
+/*
+ Opaque HMAC_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+
+ */
+typedef struct OxiHmacDrbgSha512 OxiHmacDrbgSha512;
+
+/*
  Opaque RSA-2048 private-key handle that has passed an IG 10.3.A
  pairwise consistency test at construction time. Mirrors the
  `OxiEcdsaP256PrivateKey` pattern and inherits the same PCT-at-
@@ -2352,6 +2364,156 @@ int oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *handle,
  readable bytes when `additional_input_len > 0`.
  */
 int oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *handle,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len,
+                                  uint8_t *out,
+                                  uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated HMAC_DRBG-SHA-384 handle. See
+ [`oxi_hmac_drbg_sha256_new`] for full contract.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiHmacDrbgSha384`.
+ */
+int oxi_hmac_drbg_sha384_new(OxiHmacDrbgSha384 **out_handle);
+
+/*
+ Free an HMAC_DRBG-SHA-384 handle. NULL-safe. See
+ [`oxi_hmac_drbg_sha256_free`] for zeroization semantics.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_hmac_drbg_sha384_new`] that has not yet been freed.
+ */
+void oxi_hmac_drbg_sha384_free(OxiHmacDrbgSha384 *handle);
+
+/*
+ HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3). See
+ [`oxi_hmac_drbg_sha256_instantiate`] for full contract; the
+ `entropy_len + nonce_len + perso_len` ceiling is the same upstream
+ `HMAC_DRBG_MAX_PROVIDED = 768` bytes (alg-independent constant).
+ Per SP 800-90A Table 2, security strength 192 → entropy ≥ 192
+ bits, nonce ≥ 96 bits.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hmac_drbg_sha384_new`].
+ */
+int oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *handle,
+                                     const uint8_t *entropy,
+                                     uintptr_t entropy_len,
+                                     const uint8_t *nonce,
+                                     uintptr_t nonce_len,
+                                     const uint8_t *personalization,
+                                     uintptr_t personalization_len);
+
+/*
+ HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4). See
+ [`oxi_hmac_drbg_sha256_reseed`] for full contract.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hmac_drbg_sha384_new`].
+ */
+int oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *handle,
+                                const uint8_t *entropy,
+                                uintptr_t entropy_len,
+                                const uint8_t *additional_input,
+                                uintptr_t additional_input_len);
+
+/*
+ HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5). See
+ [`oxi_hmac_drbg_sha256_generate`] for full contract; the
+ `out_len` ceiling is the alg-independent
+ `max_number_of_bits_per_request` = `2^19` bits = 65 536 bytes.
+
+ # Safety
+
+ `handle` must be a live handle from [`oxi_hmac_drbg_sha384_new`].
+ `out` must point to ≥ `out_len` writable bytes.
+ `additional_input` must point to ≥ `additional_input_len`
+ readable bytes when `additional_input_len > 0`.
+ */
+int oxi_hmac_drbg_sha384_generate(OxiHmacDrbgSha384 *handle,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len,
+                                  uint8_t *out,
+                                  uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated HMAC_DRBG-SHA-512 handle. See
+ [`oxi_hmac_drbg_sha256_new`] for full contract.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiHmacDrbgSha512`.
+ */
+int oxi_hmac_drbg_sha512_new(OxiHmacDrbgSha512 **out_handle);
+
+/*
+ Free an HMAC_DRBG-SHA-512 handle. NULL-safe.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_hmac_drbg_sha512_new`] that has not yet been freed.
+ */
+void oxi_hmac_drbg_sha512_free(OxiHmacDrbgSha512 *handle);
+
+/*
+ HMAC_DRBG-SHA-512 Instantiate (SP 800-90A §10.1.2.3). See
+ [`oxi_hmac_drbg_sha256_instantiate`] for full contract. Per
+ SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
+ nonce ≥ 128 bits — same as SHA-256 but with a wider internal
+ `(K, V)` of 64 bytes each.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hmac_drbg_sha512_new`].
+ */
+int oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *handle,
+                                     const uint8_t *entropy,
+                                     uintptr_t entropy_len,
+                                     const uint8_t *nonce,
+                                     uintptr_t nonce_len,
+                                     const uint8_t *personalization,
+                                     uintptr_t personalization_len);
+
+/*
+ HMAC_DRBG-SHA-512 Reseed (SP 800-90A §10.1.2.4). See
+ [`oxi_hmac_drbg_sha256_reseed`].
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hmac_drbg_sha512_new`].
+ */
+int oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *handle,
+                                const uint8_t *entropy,
+                                uintptr_t entropy_len,
+                                const uint8_t *additional_input,
+                                uintptr_t additional_input_len);
+
+/*
+ HMAC_DRBG-SHA-512 Generate (SP 800-90A §10.1.2.5). See
+ [`oxi_hmac_drbg_sha256_generate`].
+
+ # Safety
+
+ `handle` must be a live handle from [`oxi_hmac_drbg_sha512_new`].
+ `out` must point to ≥ `out_len` writable bytes.
+ `additional_input` must point to ≥ `additional_input_len`
+ readable bytes when `additional_input_len > 0`.
+ */
+int oxi_hmac_drbg_sha512_generate(OxiHmacDrbgSha512 *handle,
                                   const uint8_t *additional_input,
                                   uintptr_t additional_input_len,
                                   uint8_t *out,

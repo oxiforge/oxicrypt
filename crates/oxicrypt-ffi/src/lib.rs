@@ -71,7 +71,11 @@ pub use aes::{
 };
 pub use drbg::{
     oxi_hmac_drbg_sha256_free, oxi_hmac_drbg_sha256_generate, oxi_hmac_drbg_sha256_instantiate,
-    oxi_hmac_drbg_sha256_new, oxi_hmac_drbg_sha256_reseed, OxiHmacDrbgSha256,
+    oxi_hmac_drbg_sha256_new, oxi_hmac_drbg_sha256_reseed, oxi_hmac_drbg_sha384_free,
+    oxi_hmac_drbg_sha384_generate, oxi_hmac_drbg_sha384_instantiate, oxi_hmac_drbg_sha384_new,
+    oxi_hmac_drbg_sha384_reseed, oxi_hmac_drbg_sha512_free, oxi_hmac_drbg_sha512_generate,
+    oxi_hmac_drbg_sha512_instantiate, oxi_hmac_drbg_sha512_new, oxi_hmac_drbg_sha512_reseed,
+    OxiHmacDrbgSha256, OxiHmacDrbgSha384, OxiHmacDrbgSha512,
 };
 pub use error::OxiResult;
 

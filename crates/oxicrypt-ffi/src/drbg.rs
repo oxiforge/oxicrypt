@@ -111,7 +111,7 @@
 use crate::error::{status_drbg, status_module, OxiResult as R};
 use crate::handle::OxiHandle;
 use core::ffi::c_int;
-use oxicrypt_drbg::HmacDrbgSha256;
+use oxicrypt_drbg::{HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512};
 
 /// Opaque HMAC_DRBG-SHA-256 handle. The internal layout
 /// (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
@@ -329,6 +329,356 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_generate(
     }
     // additional_input: NULL+0 → None; non-NULL+>0 → Some(slice).
     // (NULL+>0 is rejected by slice_from_raw with NullPointer.)
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate(ai_opt, out_slice))
+}
+
+// ── HMAC-DRBG-SHA-384 / -SHA-512 — additive variants ─────────────
+//
+// Pure stencil mirror of `OxiHmacDrbgSha256` for the wider HMAC-DRBG
+// hashes (SP 800-90A §10.1.2). The upstream `HmacDrbg<H: HmacAlg>`
+// is parametric over the hash alg, with `HmacDrbgSha384` and
+// `HmacDrbgSha512` already shipped as type aliases at
+// `crates/oxicrypt-drbg/src/hmac.rs:122`/`:124` — wider security
+// strengths (256-bit vs SHA-384's instantiate-time 192-bit floor and
+// SHA-512's 256-bit; per SP 800-90A Table 2 / Table 3) but identical
+// `instantiate / reseed / generate` shape. Same per-call-mutating
+// thread-safety contract, same `(K, V, reseed_counter)` Drop-zeroize,
+// same `OxiResult` discriminant set (Ok / NotOperational /
+// InvalidInput / AlgorithmRestricted / Uninstantiated /
+// ReseedRequired / OutputTooLong / NullPointer); see the SHA-256
+// rustdocs above for the full contract — comments here cite only
+// hash-specific deltas.
+
+/// Opaque HMAC_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
+///
+/// cbindgen:opaque
+pub struct OxiHmacDrbgSha384 {
+    inner: OxiHandle<HmacDrbgSha384>,
+}
+
+impl OxiHmacDrbgSha384 {
+    /// Crate-internal mutable accessor; mirrors
+    /// `OxiHmacDrbgSha256::inner_mut`. Future DRBG-handle-as-parameter
+    /// surfaces wired to SHA-384 will use this projection.
+    #[allow(dead_code)] // first call site lands when a SHA-384-DRBG-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut HmacDrbgSha384> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated HMAC_DRBG-SHA-384 handle. See
+/// [`oxi_hmac_drbg_sha256_new`] for full contract.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiHmacDrbgSha384`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_new(
+    out_handle: *mut *mut OxiHmacDrbgSha384,
+) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiHmacDrbgSha384 {
+        inner: OxiHandle::new(HmacDrbgSha384::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an HMAC_DRBG-SHA-384 handle. NULL-safe. See
+/// [`oxi_hmac_drbg_sha256_free`] for zeroization semantics.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_hmac_drbg_sha384_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_free(handle: *mut OxiHmacDrbgSha384) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3). See
+/// [`oxi_hmac_drbg_sha256_instantiate`] for full contract; the
+/// `entropy_len + nonce_len + perso_len` ceiling is the same upstream
+/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes (alg-independent constant).
+/// Per SP 800-90A Table 2, security strength 192 → entropy ≥ 192
+/// bits, nonce ≥ 96 bits.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hmac_drbg_sha384_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_instantiate(
+    handle: *mut OxiHmacDrbgSha384,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4). See
+/// [`oxi_hmac_drbg_sha256_reseed`] for full contract.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hmac_drbg_sha384_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_reseed(
+    handle: *mut OxiHmacDrbgSha384,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed(entropy_slice, ai_slice))
+}
+
+/// HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5). See
+/// [`oxi_hmac_drbg_sha256_generate`] for full contract; the
+/// `out_len` ceiling is the alg-independent
+/// `max_number_of_bits_per_request` = `2^19` bits = 65 536 bytes.
+///
+/// # Safety
+///
+/// `handle` must be a live handle from [`oxi_hmac_drbg_sha384_new`].
+/// `out` must point to ≥ `out_len` writable bytes.
+/// `additional_input` must point to ≥ `additional_input_len`
+/// readable bytes when `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha384_generate(
+    handle: *mut OxiHmacDrbgSha384,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate(ai_opt, out_slice))
+}
+
+/// Opaque HMAC_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+///
+/// cbindgen:opaque
+pub struct OxiHmacDrbgSha512 {
+    inner: OxiHandle<HmacDrbgSha512>,
+}
+
+impl OxiHmacDrbgSha512 {
+    #[allow(dead_code)] // first call site lands when a SHA-512-DRBG-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut HmacDrbgSha512> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated HMAC_DRBG-SHA-512 handle. See
+/// [`oxi_hmac_drbg_sha256_new`] for full contract.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiHmacDrbgSha512`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_new(
+    out_handle: *mut *mut OxiHmacDrbgSha512,
+) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiHmacDrbgSha512 {
+        inner: OxiHandle::new(HmacDrbgSha512::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an HMAC_DRBG-SHA-512 handle. NULL-safe.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_hmac_drbg_sha512_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_free(handle: *mut OxiHmacDrbgSha512) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// HMAC_DRBG-SHA-512 Instantiate (SP 800-90A §10.1.2.3). See
+/// [`oxi_hmac_drbg_sha256_instantiate`] for full contract. Per
+/// SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
+/// nonce ≥ 128 bits — same as SHA-256 but with a wider internal
+/// `(K, V)` of 64 bytes each.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hmac_drbg_sha512_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_instantiate(
+    handle: *mut OxiHmacDrbgSha512,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// HMAC_DRBG-SHA-512 Reseed (SP 800-90A §10.1.2.4). See
+/// [`oxi_hmac_drbg_sha256_reseed`].
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hmac_drbg_sha512_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed(
+    handle: *mut OxiHmacDrbgSha512,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed(entropy_slice, ai_slice))
+}
+
+/// HMAC_DRBG-SHA-512 Generate (SP 800-90A §10.1.2.5). See
+/// [`oxi_hmac_drbg_sha256_generate`].
+///
+/// # Safety
+///
+/// `handle` must be a live handle from [`oxi_hmac_drbg_sha512_new`].
+/// `out` must point to ≥ `out_len` writable bytes.
+/// `additional_input` must point to ≥ `additional_input_len`
+/// readable bytes when `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hmac_drbg_sha512_generate(
+    handle: *mut OxiHmacDrbgSha512,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
     let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
         None
     } else {
