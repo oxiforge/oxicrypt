@@ -104,7 +104,7 @@ crates/
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
   oxicrypt-zeroize       Volatile zeroization for sensitive security parameters
 
-acvp-harness/           ACVP protocol handler with 78 registered algorithm handlers
+acvp-harness/           ACVP protocol handler with 86 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors
@@ -134,7 +134,7 @@ were discovered and fixed by this harness.
 ## ACVP harness
 
 The ACVP harness is a zero-dependency binary that processes NIST ACVP vector
-sets end-to-end. It currently has 78 registered algorithm handlers covering
+sets end-to-end. It currently has 86 registered algorithm handlers covering
 all test types the demo server is expected to send:
 
 | Test type | Algorithms |
@@ -167,23 +167,38 @@ reproduces the vendored answer fields byte-for-byte.
 ### ACVP demo-server session (end-to-end)
 
 ```bash
-# Full session against the NIST ACVP demo server
-./target/debug/acvp-harness demo-run \
-    --cert client.pem --key client.key --totp-secret <hex>
-
-# Single-algorithm dry run
+# Single-algorithm, single-mode session — the standard form
 ./target/debug/acvp-harness demo-run \
     --cert client.pem --key client.key --totp-secret <hex> \
-    --algorithm SHA3-256
+    --algorithm SHA3-256 --mode AFT
+
+# Hardware-key (PKCS#11 / YubiKey) session — adds --pkcs11-key
+./target/debug/acvp-harness demo-run \
+    --cert client.pem --pkcs11-key 'pkcs11:object=...' --totp-secret <hex> \
+    --algorithm ACVP-AES-CTR --mode AFT
 ```
 
 The `demo-run` subcommand implements the full ACVP REST protocol: login
-with TOTP-signed JWT, register capabilities, fetch/process/submit vector
-sets, and poll for verdicts.  All 78 handlers declare registration
-capabilities, so the demo server receives the complete algorithm suite
-in a single session.  Uses `curl(1)` for HTTPS with mutual TLS,
-keeping zero third-party deps. Session transcripts are written to
-`acvp-session.json` (configurable with `--log`).
+with TOTP-signed JWT, register a single algorithm/mode capability, fetch
+the resulting vector sets, dispatch them through the registered handler,
+submit answers, and poll for verdicts.
+
+`--algorithm` and `--mode` scope each invocation to a single algorithm
+and a single test type (AFT / VAL / GDT / MCT / CTR / VOT / LDT / MVT).
+This matches the demo server's per-session etiquette — the documented
+guidance from NIST is one vector set per session; back-to-back
+multi-algo sessions trip a `/login` rate-limit on the second-plus
+session, and the `--mode` filter exists to keep each session inside
+that envelope. Plan multi-algorithm campaigns as a sequence of separate
+`demo-run` invocations, one per algorithm/mode pair.
+
+HTTPS with mutual TLS is provided by `curl(1)` for file-based PEM keys
+(default) and OpenSSL `s_client` when a hardware key is supplied via
+`--pkcs11-key` (the NIST CDN filters curl's TLS fingerprint when curl
+signs CertVerify via PKCS#11; `s_client`'s handshake is accepted).
+Override with `--http-backend curl|s_client` if needed. Session
+transcripts stream to `acvp-session.json` (configurable with `--log`)
+with incremental flush at registration and submit boundaries.
 
 ### Constant-time validation
 
@@ -243,7 +258,7 @@ PSS, OAEP, keygen with CRT + Bellcore verify-after-sign per IG D.G),
 DH-3072 (RFC 3526 Group 15), ML-KEM-1024 (FIPS 203), ML-DSA-87
 (FIPS 204), SLH-DSA-SHA2-256s (FIPS 205), LMS (SP 800-208), and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
-across all algorithm crates and the C ABI (`oxicrypt-ffi`). 78 ACVP
+across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
 handlers, 183 power-up self-tests, 127 ACVP/CAVP round-trip tests — all
 green.
 
@@ -314,177 +329,38 @@ is verified against a value the Rust core's self-test trusts.
 
 The `oxicrypt-ffi` crate currently exposes:
 
-- Module lifecycle: `oxi_init`, `oxi_active_profile`, `oxi_is_operational`.
-- Hash one-shots: the full SHA-2 family
-  (`oxi_sha224`, `oxi_sha256`, `oxi_sha384`, `oxi_sha512`,
-  `oxi_sha512_224`, `oxi_sha512_256`) and the four SHA-3 variants
-  (`oxi_sha3_{224,256,384,512}`). SHA-512/224 and SHA-512/256 use
-  the FIPS 180-4 §5.3.6 distinct-IV construction — they are not
-  truncations of the SHA-512 output.
-- HMAC one-shots over all seven SHA-2/SHA-3 hashes:
-  `oxi_hmac_{sha256, sha384, sha512, sha3_224, sha3_256, sha3_384, sha3_512}`.
-- AES-256 with an opaque `OxiAes256Key` handle: GCM (encrypt/decrypt),
-  CBC (encrypt/decrypt), CTR (single symmetric entry point), CCM
-  (encrypt/decrypt), CMAC, KW (wrap/unwrap), KWP (wrap/unwrap).
-- HKDF (RFC 5869) two-step extract/expand for the CNSA-2.0 baseline
-  hashes: `oxi_hkdf_{sha256,sha384,sha512}_extract` and `_expand`.
-  PRK crosses the FFI boundary as raw bytes (`L` = 32/48/64); the
-  caller chooses storage between the two calls.
-- TLS 1.3 KDF (RFC 8446 §7.1) HKDF-Expand-Label and Derive-Secret
-  for the two ciphersuite hashes pinned by RFC 8446 §B.4:
-  `oxi_tls13_{hkdf_expand_label,derive_secret}_{sha256,sha384}`.
-- ECDSA P-256 / P-384 stateless surface (FIPS 186-5 §6.2/§6.4):
-  `oxi_ecdsa_p{256,384}_{derive_public_key, sign_with_k, verify}`.
-  Caller supplies the per-message secret `k` for `sign_with_k`.
-- ECDSA P-256 / P-384 DRBG-driven handle surface (FIPS 186-5 §A.2.2 + IG 10.3.A):
-  opaque `OxiEcdsaP{256,384}PrivateKey` + four entry points per curve —
-  `oxi_ecdsa_p{256,384}_private_key_{new_generate, free, public_key, sign_sha{256,384}}`.
-  `_new_generate` consumes a live `OxiHmacDrbgSha256 *` to sample
-  the private scalar `d`, derive `Q`, and run the IG 10.3.A pairwise
-  consistency test before returning the handle. `_sign_sha{256,384}`
-  re-borrows the same DRBG to sample a fresh per-signature nonce
-  `k` per call. The PCT-at-construction handle invariant ensures no
-  `OxiEcdsaP{256,384}PrivateKey` pointer ever escapes construction
-  without having passed a sign-and-verify round-trip; see
-  security-policy §4.8 for the structural argument.
-- EdDSA Ed25519 (RFC 8032, FIPS 186-5 §7.8): `oxi_ed25519_{keygen,
-  sign, verify}`. Every operation is deterministic by construction —
-  `keygen(seed)` returns the same public key for the same seed (no
-  DRBG consumed), and `sign(seed, msg)` produces bit-identical
-  signatures for the same input pair (per-message nonce derived
-  internally per RFC 8032 §5.1.6).
-- ECDH P-256 / P-384 (SP 800-56Ar3 §5.7.1.2):
-  `oxi_ecdh_p{256,384}_compute_shared_secret`. Reads a 32/48-byte
-  private scalar plus a 65/97-byte SEC1 uncompressed peer public
-  key, returns the raw 32/48-byte shared secret `Z`. No
-  `derive_public_key` in this round — callers reuse
-  `oxi_ecdsa_p{256,384}_derive_public_key` since the underlying
-  scalar-multiplication primitive is shared. `Z` is the **raw**
-  ECDH output per SP 800-56Ar3; callers MUST run an SP 800-56C
-  Rev. 2 extractor (HKDF, KBKDF) over `Z` before using it as
-  keying material.
-- DH-3072 (RFC 3526 Group 15, SP 800-56Ar3 §5.7.1.1):
-  `oxi_dh3072_compute_shared_secret` and
-  `oxi_dh3072_generate_keypair`. The compute entry point reads a
-  384-byte private key `x` plus a 384-byte peer public key `y`,
-  returns the raw 384-byte shared secret `Z = y^x mod p`. Peer
-  key undergoes SP 800-56Ar3 §5.6.2.3.1 partial validation
-  (`2 ≤ y ≤ p − 2`) — the safe-prime FFC group structure makes
-  this sufficient, unlike ECDH's full §5.6.2.3.3 validation.
-  `generate_keypair` is the **first C ABI surface to consume an
-  opaque DRBG handle as a parameter** (`OxiHmacDrbgSha256 *`):
-  caller passes a live, instantiated DRBG handle and receives
-  the 384-byte private key `x` (sampled via HMAC-DRBG-SHA-256
-  rejection sampling over `[1, q − 1]`) and 384-byte public key
-  `y = 2^x mod p`. This pattern will be reused for every
-  remaining DRBG-driven keygen surface (RSA keygen, ECDSA
-  generate, ECDH generate).
-- RSA verify (FIPS 186-5 §5.4 / RFC 8017 §8): six stateless
-  entry points across `{2048, 3072, 4096} × {PKCS#1 v1.5, PSS}`,
-  all SHA-256 — `oxi_rsa_pkcs1_v15_verify_{2048,3072,4096}_sha256`
-  and `oxi_rsa_pss_verify_{2048,3072,4096}_sha256`. Each takes
-  the public modulus `n`, the public exponent `e` (as
-  `uint64_t`), the message bytes, and the signature. Returns
-  `OxiResult::TagMismatch = 22` for any verify failure
-  (cross-family convention — the upstream RSA API collapses
-  signature-invalid and input-decode-fail into one Err variant;
-  the FFI maps both to TagMismatch). DRBG-driven sign + OAEP
-  encrypt + keygen defer to post-DRBG follow-ups.
-- ML-DSA-87 (FIPS 204): three stateless entry points —
-  `oxi_ml_dsa_87_keygen`, `oxi_ml_dsa_87_sign`, and
-  `oxi_ml_dsa_87_verify`. `keygen` reads a 32-byte caller-supplied
-  seed `xi` and writes the 2592-byte public key + 4896-byte
-  secret key (deterministic in `xi`; caller sources from an
-  SP 800-90A DRBG). `sign` is deterministic (FIPS 204 §5.2
-  Algorithm 2 in pure mode — bit-identical signatures for the
-  same `(sk, msg, ctx)` triple); pass `ctx_len = 0` for the
-  empty context used by X.509 / CMS / LAMPS. `verify` returns
-  `OxiResult::TagMismatch = 22` for any verify failure (same
-  `Result<()>` upstream collapse as RSA verify; same FFI
-  mapping). Single-variant for now; `oxi_ml_dsa_44_*` and
-  `oxi_ml_dsa_65_*` ship later as additive function names.
-- ML-KEM-1024 (FIPS 203): three stateless entry points —
-  `oxi_ml_kem_1024_keygen`, `oxi_ml_kem_1024_encapsulate`, and
-  `oxi_ml_kem_1024_decapsulate`. `keygen` takes TWO 32-byte
-  caller-supplied seeds (`d` for K-PKE keygen randomness, `z`
-  for the implicit-rejection seed embedded in `dk`; both seeds
-  caller-sourced from an SP 800-90A DRBG, NOT interchangeable)
-  and writes the 1568-byte encapsulation key + 3168-byte
-  decapsulation key. `encapsulate` reads `ek` plus 32-byte
-  caller-supplied randomness `m` and writes a 32-byte shared
-  secret + 1568-byte ciphertext. `decapsulate` is fully
-  deterministic — no caller randomness, NO `TagMismatch = 22`
-  mapping: tampered ciphertext is absorbed by the FO transform's
-  implicit-rejection branch into a deterministic-but-pseudorandom
-  shared secret in constant time (deliberate FIPS 203 §6.3
-  design). Single-variant for now; `oxi_ml_kem_512_*` and
-  `oxi_ml_kem_768_*` ship later as additive function names.
-- SLH-DSA-SHA2-256s (FIPS 205): three stateless entry points —
-  `oxi_slh_dsa_sha2_256s_keygen`, `oxi_slh_dsa_sha2_256s_sign`,
-  and `oxi_slh_dsa_sha2_256s_verify`. `keygen` reads a 96-byte
-  caller-supplied seed (3 × 32: `SK.seed ‖ SK.prf ‖ PK.seed`,
-  caller-sourced from an SP 800-90A DRBG; the three components
-  are role-segregated and NOT interchangeable) and writes the
-  64-byte public key + 128-byte secret key. `sign` is
-  **deterministic** (FIPS 205 §9.2 with `opt_rand = PK.seed`)
-  and produces a fixed 29 792-byte signature; the `ctx`
-  parameter (≤ 255 bytes) is exposed for caller-controlled
-  domain separation, with `ctx_len = 0` for X.509 / CMS /
-  LAMPS-conformant callers. `verify` returns `TagMismatch = 22`
-  for any verification failure (decode-fail OR signature-
-  invalid — same `Result<()>`-collapse pattern as RSA verify
-  and ML-DSA verify; third PQ family with this mapping).
-  Single-variant for now; `oxi_slh_dsa_sha2_{128s,128f,192s,
-  192f,256f}_*` and `oxi_slh_dsa_shake_*` ship later as
-  additive function names (12 variants total per FIPS 205).
-- LMS / XMSS (SP 800-208, RFC 8554 / RFC 8391) — stateful
-  hash-based signatures, six entry points across two families:
-  `oxi_lms_{keygen, sign, verify}` and
-  `oxi_xmss_{keygen, sign, verify}`. Both wired to the
-  SP 800-208-approved parameter sets `LMS_SHA256_M32_H10` /
-  `LMOTS_SHA256_N32_W4` and `XMSS-SHA2_10_256` (height-10 trees,
-  1024 signatures per key). `keygen` reads a 32-byte caller-
-  supplied seed `xi` (caller-sourced from an SP 800-90A DRBG)
-  and writes an opaque private-key blob (52 bytes for LMS, 132
-  for XMSS) plus the public key (56 / 68 bytes). `sign` takes
-  the pre-state blob and writes both an updated post-state blob
-  (leaf index advanced by one) AND the signature (2508 / 2500
-  bytes). The byte-buffer pass-through API is deliberate: it
-  encodes the state-persistence obligation at the function
-  signature so a caller cannot accidentally hold long-lived
-  in-memory state and forget to write it down — a footgun that
-  would catastrophically break any stateful HBS scheme. `sign`
-  returns `InvalidInput = 5` once the key is exhausted (1024
-  signatures issued); `verify` collapses parse / structural /
-  cryptographic mismatch into `TagMismatch = 22` (fourth and
-  fifth occurrences of the cross-family verify-mismatch
-  convention). `sk_in_ptr` and `sk_out` may alias for in-place
-  advance.
-- HMAC_DRBG-SHA-256 (SP 800-90A §10.1.2) — five entry points
-  forming the standard DRBG lifecycle:
-  `oxi_hmac_drbg_sha256_{new, free, instantiate, reseed,
-  generate}`. The handle is opaque (`OxiHmacDrbgSha256`) and
-  follows the same heap-allocated, NULL-safe-free, Drop-cascaded-
-  zeroize convention as `OxiAes256Key`. Every entropy-consuming
-  call takes caller-supplied bytes — the module does NOT bundle
-  an entropy source per SP 800-90A's upstream design. Two new
-  `OxiResult` discriminants land this round:
-  `Uninstantiated = 8` (generate / reseed before instantiate) and
-  `ReseedRequired = 9` (reseed_counter at the SP 800-90A Table 3
-  bound), distinct from `InvalidInput = 5` so callers can pick
-  the right recovery action without parsing strerror.
-  Prediction-resistance (`generate_pr`) is intentionally not
-  exposed — callers compose `reseed(entropy, ai)` +
-  `generate(None, out)` per SP 800-90A §9.3.1 step 7. Single-
-  variant for now; the other 8 DRBG variants
-  (HMAC-SHA-384/512, Hash-SHA-{256,384,512}, CTR-AES-{128,192,256}
-  with `_df` and `_no_df`) ship later as additive function names.
+| Family | Surface | Standard |
+|--------|---------|----------|
+| Module lifecycle | `oxi_init`, `oxi_active_profile`, `oxi_is_operational` | FIPS 140-3 |
+| Hash one-shots | SHA-2 family + SHA-3 family | FIPS 180-4, FIPS 202 |
+| HMAC one-shots | HMAC over 7 SHA-2/SHA-3 hashes | FIPS 198-1 |
+| AES-256 (opaque key handle) | GCM, CBC, CTR, CCM, CMAC, KW, KWP — one `OxiAes256Key` shared across modes | FIPS 197, SP 800-38A/B/C/D/F |
+| KDF | HKDF (extract/expand) + TLS 1.3 HKDF-Expand-Label / Derive-Secret | RFC 5869, RFC 8446 §7.1 |
+| ECDSA | P-256 / P-384 stateless (`derive_public_key`, `sign_with_k`, `verify`) + DRBG-driven handle (`new_generate`, `public_key`, `sign_sha*`, `free`) | FIPS 186-5, IG 10.3.A |
+| EdDSA | Ed25519 deterministic keygen / sign / verify | RFC 8032, FIPS 186-5 §7.8 |
+| ECDH | P-256 / P-384 raw shared secret | SP 800-56Ar3 |
+| DH | DH-3072 shared secret + DRBG-driven keygen | RFC 3526 Group 15, SP 800-56Ar3 |
+| RSA (opaque key handle) | 2048/3072/4096 verify (PKCS#1 v1.5, PSS) + DRBG-driven keygen + sign + OAEP encrypt/decrypt + `n`/`e` accessors | FIPS 186-5, RFC 8017, IG D.G |
+| ML-KEM | ML-KEM-1024 keygen / encaps / decaps | FIPS 203 |
+| ML-DSA | ML-DSA-87 keygen / sign / verify | FIPS 204 |
+| SLH-DSA | SLH-DSA-SHA2-256s keygen / sign / verify | FIPS 205 |
+| LMS / XMSS (stateful) | LMS_SHA256_M32_H10, XMSS-SHA2_10_256 — byte-buffer pass-through with explicit pre/post-state encoding | SP 800-208, RFC 8554, RFC 8391 |
+| HMAC-DRBG (opaque handle) | SHA-256 / -384 / -512 — `new`, `instantiate`, `reseed`, `generate`, `free` | SP 800-90A §10.1.2 |
+| Hash-DRBG (opaque handle) | SHA-256 / -384 / -512 — same lifecycle | SP 800-90A §10.1.1 |
 
-This closes the 14-round C ABI family backfill arc plus the DRBG
-MVP and its first two DRBG-driven follow-ups (DH-3072 keygen,
-ECDSA `generate` / `sign_sha*`). Subsequent rounds will be
-additive variant ships and the remaining DRBG-driven follow-ups
-(ECDH `generate`, RSA sign / OAEP / keygen).
+Verify-style mismatches collapse to `OxiResult::TagMismatch = 22`
+across every signature family (RSA, ECDSA, EdDSA, ML-DSA, SLH-DSA,
+LMS, XMSS, AEAD), so a single discriminant covers "well-formed-but-
+invalid signature/tag" everywhere a verify result is exposed.
+
+Per-function signatures, parameter constraints, buffer sizes, and
+the full `OxiResult` discriminant mapping live in
+[`docs/llm-api-manifest/llm-api.yaml`](docs/llm-api-manifest/llm-api.yaml)
+(full manifest) and the cbindgen-generated
+[`crates/oxicrypt-ffi/include/oxicrypt.h`](crates/oxicrypt-ffi/include/oxicrypt.h).
+The C ABI is hand-aligned with the Rust public API surface; for
+algorithmic specification consult the upstream crate's rustdoc and
+the security-policy `§4.8 C ABI` row.
 
 ## `oxi` CLI
 
