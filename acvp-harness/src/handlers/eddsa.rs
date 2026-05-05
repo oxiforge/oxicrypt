@@ -10,9 +10,16 @@
 //! - **KeyVer** (`EDDSA` / `keyVer` / `1.0`): Given a public key (`q`),
 //!   validate that it is a valid compressed Edwards point and return
 //!   `testPassed`.
-//! - **SigGen** (`EDDSA` / `sigGen` / `1.0`): Dual-mode. Live ACVTS
-//!   prompts are FIPS 186-5 §7.6 generative — group has no `d`; the
-//!   IUT samples a fresh keypair per group via
+//! - **SigGen** (`EDDSA` / `sigGen` / `1.0`): Dual-mode and dual-
+//!   testType. Per `draft-celi-acvp-eddsa.txt` §6.1 the catalog row
+//!   advertises two test types: **AFT** (Algorithm Functional Test —
+//!   sign ACVP-supplied messages) and **BFT** (Bit Flip Test — sign a
+//!   sequence of bit-flipped variants of one base message; the server
+//!   verifies the per-message signatures are distinct and individually
+//!   valid). Both testTypes share an identical per-group + per-test
+//!   schema, so the handler treats them the same once the gate accepts
+//!   them. Live ACVTS prompts are FIPS 186-5 §7.6 generative — group
+//!   has no `d`; the IUT samples a fresh keypair per group via
 //!   `Ed25519PrivateKey::generate` (with IG 10.3.A PCT) and signs each
 //!   per-test `message`. Response carries group-level `q` plus per-test
 //!   `signature`. Vendored offline kat-slice fixtures supply `d` at
@@ -80,7 +87,8 @@ impl AlgorithmHandler for EddsaKeyVerHandler {
 
 // ── SigGen handler ──────────────────────────────────────────────────
 
-/// EdDSA SigGen AFT dispatcher.
+/// EdDSA SigGen dispatcher (handles both AFT and BFT testTypes per
+/// `draft-celi-acvp-eddsa.txt` §6.1).
 ///
 /// Dual-mode:
 /// - **Live ACVTS** (FIPS 186-5 §7.6 generative): group has no `d`;
@@ -288,7 +296,21 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
+    // EDDSA / sigGen / 1.0 has two testTypes per `draft-celi-acvp-
+    // eddsa.txt` §6.1:
+    //   * AFT (Algorithm Functional Test) — the IUT signs ACVP-supplied
+    //     messages and the server validates each signature against the
+    //     IUT's communicated curve / public key / signature.
+    //   * BFT (Bit Flip Test) — the server produces a single base
+    //     message and emits a sequence of bit-flipped variants; the IUT
+    //     signs each one. The server validates that distinct messages
+    //     produce distinct (and individually valid) signatures.
+    // Both modes have structurally identical group + test schemas (per-
+    // group keypair, per-test `{tcId, message}`); the only divergence
+    // is in WHAT messages the server emits, which is invisible to the
+    // handler. So this dispatcher's per-group key sample + per-test
+    // sign loop covers both — we just need to allow BFT past the gate.
+    if test_type != "AFT" && test_type != "BFT" {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
