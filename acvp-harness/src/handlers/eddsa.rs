@@ -10,13 +10,20 @@
 //! - **KeyVer** (`EDDSA` / `keyVer` / `1.0`): Given a public key (`q`),
 //!   validate that it is a valid compressed Edwards point and return
 //!   `testPassed`.
-//! - **SigGen** (`EDDSA` / `sigGen` / `1.0`): Given a group-level
-//!   seed `d` and per-test `message`, sign and return `signature`.
-//!   Deterministic because Ed25519 is fully deterministic given the
-//!   seed.
-//! - **KeyGen** (`EDDSA` / `keyGen` / `1.0`): Given a per-test seed
-//!   `d`, derive the Ed25519 public key `q` via `keygen_internal`.
-//!   Deterministic.
+//! - **SigGen** (`EDDSA` / `sigGen` / `1.0`): Dual-mode. Live ACVTS
+//!   prompts are FIPS 186-5 §7.6 generative — group has no `d`; the
+//!   IUT samples a fresh keypair per group via
+//!   `Ed25519PrivateKey::generate` (with IG 10.3.A PCT) and signs each
+//!   per-test `message`. Response carries group-level `q` plus per-test
+//!   `signature`. Vendored offline kat-slice fixtures supply `d` at
+//!   group level for deterministic round-trip; the handler signs
+//!   directly with the supplied seed (Ed25519 is fully deterministic
+//!   given seed + message per RFC 8032 §5.1.6).
+//! - **KeyGen** (`EDDSA` / `keyGen` / `1.0`): Dual-mode. Live ACVTS
+//!   prompts carry no `d` — the IUT samples fresh per-test via
+//!   `Ed25519PrivateKey::generate`. Vendored offline fixtures supply
+//!   `d` per test for deterministic round-trip; the handler derives
+//!   `q` via `keygen_internal`.
 //!
 //! Only the `ED-25519` curve is supported. `ED-448` groups produce
 //! `DispatchError::Unsupported`.
@@ -74,6 +81,24 @@ impl AlgorithmHandler for EddsaKeyVerHandler {
 // ── SigGen handler ──────────────────────────────────────────────────
 
 /// EdDSA SigGen AFT dispatcher.
+///
+/// Dual-mode:
+/// - **Live ACVTS** (FIPS 186-5 §7.6 generative): group has no `d`;
+///   the handler samples a fresh keypair per group via the module's
+///   DRBG-backed `Ed25519PrivateKey::generate` (with IG 10.3.A PCT)
+///   and signs each test message with `oxicrypt_eddsa::ed25519::sign`
+///   (RFC 8032 §5.1.6 derives the per-message nonce internally, so no
+///   DRBG involvement at the sign step itself). Response carries the
+///   group-level `q` (so the server can verify) plus per-test
+///   `signature`.
+/// - **Vendored offline kat-slice** (deterministic round-trip): group
+///   carries `d` per FIPS 186-5 §7.6 deterministic shape; the handler
+///   signs each message with the supplied seed. Response carries
+///   per-test `signature` only — the offline fixture already knows
+///   `q` from `d`.
+///
+/// Same dual-mode pattern as PR #34 (ECDSA sigGen) and PR #38 (EdDSA
+/// keyGen).
 pub struct EddsaSigGenHandler;
 
 impl AlgorithmHandler for EddsaSigGenHandler {
@@ -287,22 +312,48 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         ));
     }
 
-    // Group-level seed.
-    let d_bytes = hex::decode(
-        group
-            .get("d")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("d"))?,
-    )?;
-    let seed: [u8; 32] = d_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("EdDSA SigGen: d is not 32 bytes"))?;
-
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
+
+    // Dual-mode: live ACVTS prompts are FIPS 186-5 §7.6 generative
+    // (group has no `d`); the IUT samples a fresh keypair per group
+    // via the module's DRBG-backed `Ed25519PrivateKey::generate` and
+    // signs each test message with it. Vendored offline kat-slice
+    // fixtures supply `d` at group level for deterministic round-trip
+    // assertions; the handler detects that shape via `group.d` presence
+    // and signs with the supplied seed directly. Same dual-mode pattern
+    // as PR #34 (ECDSA sigGen) and PR #38 (EdDSA keyGen).
+    let deterministic = group.get("d").is_some();
+
+    // `seed`: the signing seed (32 bytes). Sourced from the prompt in
+    // deterministic mode, sampled from DRBG in live mode.
+    // `q_hex_for_group`: the public key emitted at group level only in
+    // live mode — the ACVP server needs `q` to verify signatures on
+    // its side. Deterministic-mode prompts already know `q` so we
+    // omit it from the response (matches the ECDSA SigGen
+    // convention).
+    let (seed, q_hex_for_group): ([u8; 32], Option<String>) = if deterministic {
+        let d_bytes = hex::decode(
+            group
+                .get("d")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("d"))?,
+        )?;
+        let seed: [u8; 32] = d_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("EdDSA SigGen: d is not 32 bytes"))?;
+        (seed, None)
+    } else {
+        let mut drbg = super::os_entropy::build_seeded_drbg()?;
+        let sk = oxicrypt_eddsa::ed25519::Ed25519PrivateKey::generate(&mut drbg)
+            .map_err(|_| DispatchError::Crypto("EdDSA SigGen: generate failed"))?;
+        let seed_ref: &[u8; 32] = sk.seed();
+        let q = sk.public_key();
+        (*seed_ref, Some(hex::encode_upper(&q)))
+    };
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
     for t in tests {
@@ -329,10 +380,13 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         ]));
     }
 
-    Ok(JsonValue::Object(vec![
-        ("tgId".to_string(), JsonValue::Number(tg_id)),
-        ("tests".to_string(), JsonValue::Array(results)),
-    ]))
+    let mut group_response: Vec<(String, JsonValue)> =
+        vec![("tgId".to_string(), JsonValue::Number(tg_id))];
+    if let Some(q_hex) = q_hex_for_group {
+        group_response.push(("q".to_string(), JsonValue::String(q_hex)));
+    }
+    group_response.push(("tests".to_string(), JsonValue::Array(results)));
+    Ok(JsonValue::Object(group_response))
 }
 
 // ── KeyGen group driver ────────────────────────────────────────────
