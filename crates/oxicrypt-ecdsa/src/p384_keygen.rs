@@ -32,13 +32,20 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
     let mut buf = [0u8; PRIVATE_KEY_LEN];
     for _ in 0..MAX_SAMPLE_ATTEMPTS {
         if drbg.generate(None, &mut buf).is_err() {
+            buf.fill(0);
             return None;
         }
         if let Some(s) = Scalar384::from_bytes(&buf) {
             if s.is_zero() == 0 {
-                return Some(buf);
+                // See P-256 counterpart for the success-path
+                // copy-and-clear rationale; same pattern, 48-byte
+                // scalar instead of 32.
+                let result = buf;
+                buf.fill(0);
+                return Some(result);
             }
         }
+        buf.fill(0);
     }
     None
 }

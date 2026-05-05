@@ -71,6 +71,10 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
     let mut buf = [0u8; PRIVATE_KEY_LEN];
     for _ in 0..MAX_SAMPLE_ATTEMPTS {
         if drbg.generate(None, &mut buf).is_err() {
+            // CSP scrub: clear any partial DRBG output before
+            // returning. Mirrors the `oxicrypt-dh::generate_keypair_
+            // 3072_internal` keygen-scratch convention.
+            buf.fill(0);
             return None;
         }
         // `Scalar::from_bytes` returns `None` for bytes ≥ n and
@@ -78,9 +82,26 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
         // explicitly afterwards to land in `[1, n − 1]`.
         if let Some(s) = Scalar::from_bytes(&buf) {
             if s.is_zero() == 0 {
-                return Some(buf);
+                // Success path: copy the accepted bytes out, then
+                // clear the named local `buf` before returning.
+                // The returned `result` carries the bytes onward;
+                // the caller chain wraps it in `EcdsaP{256}PrivateKey`
+                // (or, for ECDH, the `oxicrypt-ecdh` keygen wrapper),
+                // both of which provide Drop-zeroize. Clearing the
+                // named source local here makes it auditable that
+                // the rejection-sampler buffer's stack location is
+                // wiped before frame teardown.
+                let result = buf;
+                buf.fill(0);
+                return Some(result);
             }
         }
+        // CSP scrub: rejected candidates linger in `buf` between
+        // iterations otherwise. Although a rejected scalar (≥ n or
+        // zero) is by definition not a valid private key, FIPS
+        // 140-3 §6.7 boundary discipline argues for wiping any
+        // DRBG-output bytes the moment they are no longer needed.
+        buf.fill(0);
     }
     None
 }

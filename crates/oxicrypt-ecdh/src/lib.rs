@@ -354,9 +354,18 @@ pub fn generate_keypair_p256_internal(
     // derived from public-key-validated inputs that already passed
     // the SP 800-56Ar3 §5.6.2.3.3 checks inside
     // `compute_shared_secret_p256_internal`.
-    let z_a = compute_shared_secret_p256_internal(&d, &KAT_Q_R)?;
-    let z_b = compute_shared_secret_p256_internal(&KAT_D_R, &q)?;
-    if z_a != z_b {
+    let mut z_a = compute_shared_secret_p256_internal(&d, &KAT_Q_R)?;
+    let mut z_b = compute_shared_secret_p256_internal(&KAT_D_R, &q)?;
+    let consistent = z_a == z_b;
+    // CSP scrub: `z_a` and `z_b` are 32-byte ECDH shared secrets
+    // (CSP per SP 800-56Ar3 §5.7.1.2) used only for the equality
+    // check. They never escape the function. Wipe their stack
+    // locations before frame teardown — extends the
+    // `oxicrypt-dh::generate_keypair_3072_internal` keygen-scratch
+    // convention to ECDH PCT scratch.
+    z_a.fill(0);
+    z_b.fill(0);
+    if !consistent {
         return None;
     }
     Some((d, q))
@@ -392,9 +401,14 @@ pub fn generate_keypair_p384_internal(
     drbg: &mut HmacDrbgSha256,
 ) -> Option<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN])> {
     let (d, q) = oxicrypt_ecdsa::p384_keygen::generate_p384_internal(drbg)?;
-    let z_a = compute_shared_secret_p384_internal(&d, &KAT_P384_Q_R)?;
-    let z_b = compute_shared_secret_p384_internal(&KAT_P384_D_R, &q)?;
-    if z_a != z_b {
+    // See P-256 counterpart for the IG 10.3.A PCT scratch-zeroize
+    // rationale; same pattern, 48-byte shared secrets.
+    let mut z_a = compute_shared_secret_p384_internal(&d, &KAT_P384_Q_R)?;
+    let mut z_b = compute_shared_secret_p384_internal(&KAT_P384_D_R, &q)?;
+    let consistent = z_a == z_b;
+    z_a.fill(0);
+    z_b.fill(0);
+    if !consistent {
         return None;
     }
     Some((d, q))
