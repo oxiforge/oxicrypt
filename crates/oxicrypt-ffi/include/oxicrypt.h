@@ -842,6 +842,74 @@ int oxi_ecdh_p384_compute_shared_secret(const uint8_t *d_ptr,
                                         uint8_t *shared_secret_out);
 
 /*
+ Generate a fresh ECDH P-256 key pair via the FIPS 186-5 §A.2.2
+ rejection sampler driven by `drbg`, run the IG 10.3.A pairwise
+ consistency test, and write the private/public key bytes to the
+ caller-provided buffers.
+
+ On success, writes 32 bytes (the private scalar `d` in canonical
+ big-endian encoding, in `[1, n − 1]`) into `private_out` and
+ 65 bytes (the SEC1 uncompressed public key `0x04 || X(32) || Y(32)`
+ of `Q = d · G`) into `public_out`. The IG 10.3.A PCT runs as an
+ ECDH roundtrip against the RFC 5903 §8.1 responder keypair: a
+ faulted scalar-mul during keygen produces a `Q` that fails the
+ roundtrip equality and the call returns
+ `OxiResult::InvalidInput = 5` without writing the buffers.
+
+ Applies the per-call-mutating-handle thread-safety contract:
+ callers MUST serialise concurrent calls on the same `drbg`
+ pointer (the FFI projects `*mut OxiHmacDrbgSha256` to
+ `&mut HmacDrbgSha256` for the duration of this call, which
+ Rust's exclusivity rule enforces internally but cannot enforce
+ across the C boundary). See the per-call-mutating-handle
+ paragraph in `docs/security-policy/security-policy.md` §4.8.
+
+ Returns `OxiResult::Ok = 0` on success;
+ `OxiResult::NullPointer = 10` if any pointer is NULL;
+ `OxiResult::NotOperational = 1` if the FIPS module is not in
+ the `Operational` state OR the DRBG handle has been finalised;
+ `OxiResult::AlgorithmRestricted = 6` if the active profile does
+ not allow ECDH-P-256;
+ `OxiResult::InvalidInput = 5` if the DRBG faults during sampling,
+ rejection-sampling exhausts without an in-range scalar (in
+ practice only a broken DRBG), or the IG 10.3.A PCT mismatches.
+
+ # Safety
+
+ `drbg` must be a live, instantiated handle from
+ [`oxi_hmac_drbg_sha256_new`] +
+ [`oxi_hmac_drbg_sha256_instantiate`]. `private_out` must be a
+ non-NULL writable pointer to ≥32 bytes. `public_out` must be a
+ non-NULL writable pointer to ≥65 bytes. The caller MUST
+ serialise concurrent calls on the same `drbg` pointer.
+ */
+int oxi_ecdh_p256_generate_keypair(OxiHmacDrbgSha256 *drbg,
+                                   uint8_t *private_out,
+                                   uint8_t *public_out);
+
+/*
+ Generate a fresh ECDH P-384 key pair via the FIPS 186-5 §A.2.2
+ rejection sampler driven by `drbg`, run the IG 10.3.A pairwise
+ consistency test, and write the private/public key bytes to the
+ caller-provided buffers.
+
+ Mirrors [`oxi_ecdh_p256_generate_keypair`] for the P-384 curve:
+ 48-byte private scalar, 97-byte SEC1 uncompressed public key,
+ RFC 5903 §8.2 responder keypair drives the IG 10.3.A PCT.
+ Same error mapping and thread-safety contract.
+
+ # Safety
+
+ `drbg` must be a live, instantiated handle. `private_out` must be
+ a non-NULL writable pointer to ≥48 bytes. `public_out` must be a
+ non-NULL writable pointer to ≥97 bytes. Callers MUST serialise
+ concurrent calls on the same `drbg` pointer.
+ */
+int oxi_ecdh_p384_generate_keypair(OxiHmacDrbgSha256 *drbg,
+                                   uint8_t *private_out,
+                                   uint8_t *public_out);
+
+/*
  Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
  over RFC 3526 Group 15 (3072-bit safe prime): `Z = y^x mod p`.
 

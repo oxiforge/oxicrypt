@@ -1710,14 +1710,19 @@ pub unsafe extern "C" fn oxi_ed25519_verify(
     }
 }
 
-// ── ECDH (SP 800-56Ar3 §5.7.1.2) — stateless surface ─────────────
+// ── ECDH (SP 800-56Ar3 §5.7.1.2) ─────────────────────────────────
 //
-// Two pure entry points, one per curve, computing the SP 800-56Ar3
-// §5.7.1.2 ECC CDH primitive `Z = x(d * Q)`. No `derive_public_key`
-// in this round — ECDH and ECDSA share the same scalar-multiplication
-// primitive on each curve, so callers needing the public key from a
-// stored private scalar should reuse `oxi_ecdsa_p{256,384}_derive_
-// public_key` from the ECDSA family.
+// Four entry points, two per curve. Per curve: one stateless
+// `compute_shared_secret` computing the SP 800-56Ar3 §5.7.1.2 ECC
+// CDH primitive `Z = x(d * Q)`, and one DRBG-driven
+// `generate_keypair` that samples a fresh `(d, Q)` pair via the
+// FIPS 186-5 §A.2.2 rejection sampler and runs the IG 10.3.A
+// pairwise consistency test before returning. No
+// `derive_public_key` entry point — ECDH and ECDSA share the same
+// scalar-multiplication primitive on each curve, so callers
+// needing the public key from a stored private scalar should
+// reuse `oxi_ecdsa_p{256,384}_derive_public_key` from the ECDSA
+// family.
 //
 // Byte layout: private scalar `d` = 32 bytes (P-256) or 48 bytes
 // (P-384); peer public key = 65 bytes (P-256) or 97 bytes (P-384),
@@ -1839,6 +1844,108 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
         Err(e) => return R::from(e) as c_int,
     };
     unsafe { core::ptr::copy_nonoverlapping(z.as_ptr(), shared_secret_out, 48) };
+    R::Ok as c_int
+}
+
+// ── ECDH P-256 — DRBG-driven keypair generation ──────────────────
+
+/// Generate a fresh ECDH P-256 key pair via the FIPS 186-5 §A.2.2
+/// rejection sampler driven by `drbg`, run the IG 10.3.A pairwise
+/// consistency test, and write the private/public key bytes to the
+/// caller-provided buffers.
+///
+/// On success, writes 32 bytes (the private scalar `d` in canonical
+/// big-endian encoding, in `[1, n − 1]`) into `private_out` and
+/// 65 bytes (the SEC1 uncompressed public key `0x04 || X(32) || Y(32)`
+/// of `Q = d · G`) into `public_out`. The IG 10.3.A PCT runs as an
+/// ECDH roundtrip against the RFC 5903 §8.1 responder keypair: a
+/// faulted scalar-mul during keygen produces a `Q` that fails the
+/// roundtrip equality and the call returns
+/// `OxiResult::InvalidInput = 5` without writing the buffers.
+///
+/// Applies the per-call-mutating-handle thread-safety contract:
+/// callers MUST serialise concurrent calls on the same `drbg`
+/// pointer (the FFI projects `*mut OxiHmacDrbgSha256` to
+/// `&mut HmacDrbgSha256` for the duration of this call, which
+/// Rust's exclusivity rule enforces internally but cannot enforce
+/// across the C boundary). See the per-call-mutating-handle
+/// paragraph in `docs/security-policy/security-policy.md` §4.8.
+///
+/// Returns `OxiResult::Ok = 0` on success;
+/// `OxiResult::NullPointer = 10` if any pointer is NULL;
+/// `OxiResult::NotOperational = 1` if the FIPS module is not in
+/// the `Operational` state OR the DRBG handle has been finalised;
+/// `OxiResult::AlgorithmRestricted = 6` if the active profile does
+/// not allow ECDH-P-256;
+/// `OxiResult::InvalidInput = 5` if the DRBG faults during sampling,
+/// rejection-sampling exhausts without an in-range scalar (in
+/// practice only a broken DRBG), or the IG 10.3.A PCT mismatches.
+///
+/// # Safety
+///
+/// `drbg` must be a live, instantiated handle from
+/// [`oxi_hmac_drbg_sha256_new`] +
+/// [`oxi_hmac_drbg_sha256_instantiate`]. `private_out` must be a
+/// non-NULL writable pointer to ≥32 bytes. `public_out` must be a
+/// non-NULL writable pointer to ≥65 bytes. The caller MUST
+/// serialise concurrent calls on the same `drbg` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    private_out: *mut u8,
+    public_out: *mut u8,
+) -> c_int {
+    if drbg.is_null() || private_out.is_null() || public_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let (d, q) = match oxicrypt_ecdh::generate_keypair_p256(drbg_ref) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(d.as_ptr(), private_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(q.as_ptr(), public_out, 65) };
+    R::Ok as c_int
+}
+
+// ── ECDH P-384 — DRBG-driven keypair generation ──────────────────
+
+/// Generate a fresh ECDH P-384 key pair via the FIPS 186-5 §A.2.2
+/// rejection sampler driven by `drbg`, run the IG 10.3.A pairwise
+/// consistency test, and write the private/public key bytes to the
+/// caller-provided buffers.
+///
+/// Mirrors [`oxi_ecdh_p256_generate_keypair`] for the P-384 curve:
+/// 48-byte private scalar, 97-byte SEC1 uncompressed public key,
+/// RFC 5903 §8.2 responder keypair drives the IG 10.3.A PCT.
+/// Same error mapping and thread-safety contract.
+///
+/// # Safety
+///
+/// `drbg` must be a live, instantiated handle. `private_out` must be
+/// a non-NULL writable pointer to ≥48 bytes. `public_out` must be a
+/// non-NULL writable pointer to ≥97 bytes. Callers MUST serialise
+/// concurrent calls on the same `drbg` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    private_out: *mut u8,
+    public_out: *mut u8,
+) -> c_int {
+    if drbg.is_null() || private_out.is_null() || public_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let (d, q) = match oxicrypt_ecdh::generate_keypair_p384(drbg_ref) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(d.as_ptr(), private_out, 48) };
+    unsafe { core::ptr::copy_nonoverlapping(q.as_ptr(), public_out, 97) };
     R::Ok as c_int
 }
 

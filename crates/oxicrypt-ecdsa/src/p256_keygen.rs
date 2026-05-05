@@ -53,12 +53,21 @@ const MAX_SAMPLE_ATTEMPTS: usize = 64;
 ///
 /// Returns `Some(d)` where `d` is a valid non-zero scalar byte
 /// representation, or `None` if the DRBG fails or refuses to produce
-/// an in-range value within [`MAX_SAMPLE_ATTEMPTS`] tries.
+/// an in-range value within `MAX_SAMPLE_ATTEMPTS` tries.
 ///
 /// This is the `*_internal` primitive — it does not gate on module
 /// state and is safe to call from KATs, PCTs, and from the
 /// module-state-checked wrappers above.
-pub(crate) fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_KEY_LEN]> {
+///
+/// Visibility is `pub` rather than `pub(crate)` because
+/// `oxicrypt-ecdh` reuses this primitive for ECDH P-256 keypair
+/// generation, so the same FIPS 186-5 §A.2.2 sampler serves both
+/// the ECDSA keygen path and the ECDH keygen path on this curve.
+/// Centralising the rejection-sampler here means a CST-lab reviewer
+/// audits one constant-time, range-checked sampler covering both
+/// families.
+#[doc(hidden)]
+pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_KEY_LEN]> {
     let mut buf = [0u8; PRIVATE_KEY_LEN];
     for _ in 0..MAX_SAMPLE_ATTEMPTS {
         if drbg.generate(None, &mut buf).is_err() {
@@ -81,14 +90,25 @@ pub(crate) fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; P
 /// Returns `(d_bytes, pk_bytes)` where `d_bytes` is a uniform
 /// scalar in `[1, n − 1]` and `pk_bytes` is the uncompressed SEC1
 /// encoding of `d · G`. Returns `None` iff the DRBG fails or fails
-/// to produce an in-range scalar within [`MAX_SAMPLE_ATTEMPTS`]
+/// to produce an in-range scalar within `MAX_SAMPLE_ATTEMPTS`
 /// attempts — in practice, only a broken DRBG.
 ///
 /// This primitive does not run the IG 10.3.A pairwise consistency
-/// test; the PCT is the job of the handle constructor
-/// [`crate::p256_ecdsa::EcdsaP256PrivateKey::generate`], which
-/// composes this primitive with a sign-and-verify probe.
-pub(crate) fn generate_p256_internal(
+/// test; the PCT is the job of the caller. For ECDSA the PCT lives
+/// inside [`crate::p256_ecdsa::EcdsaP256PrivateKey::generate`]
+/// (sign-and-verify probe). For ECDH the PCT lives inside
+/// `oxicrypt_ecdh::generate_keypair_p256_internal` (ECDH-roundtrip
+/// against the RFC 5903 §8.1 peer keypair).
+///
+/// Visibility is `pub` rather than `pub(crate)` because
+/// `oxicrypt-ecdh` reuses this primitive for ECDH P-256 keypair
+/// generation. ECDSA private keys and ECDH private keys on the same
+/// curve are uniform random scalars in the same `[1, n − 1]` range
+/// drawn from the same approved DRBG; centralising the keygen
+/// primitive here keeps a single FIPS 186-5 §A.2.2 implementation
+/// across both families.
+#[doc(hidden)]
+pub fn generate_p256_internal(
     drbg: &mut HmacDrbgSha256,
 ) -> Option<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN])> {
     let d = sample_scalar_internal(drbg)?;

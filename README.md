@@ -338,7 +338,7 @@ The `oxicrypt-ffi` crate currently exposes:
 | KDF | HKDF (extract/expand) + TLS 1.3 HKDF-Expand-Label / Derive-Secret | RFC 5869, RFC 8446 §7.1 |
 | ECDSA | P-256 / P-384 stateless (`derive_public_key`, `sign_with_k`, `verify`) + DRBG-driven handle (`new_generate`, `public_key`, `sign_sha*`, `free`) | FIPS 186-5, IG 10.3.A |
 | EdDSA | Ed25519 deterministic keygen / sign / verify | RFC 8032, FIPS 186-5 §7.8 |
-| ECDH | P-256 / P-384 raw shared secret | SP 800-56Ar3 |
+| ECDH | P-256 / P-384 raw shared secret + DRBG-driven keygen | SP 800-56Ar3, FIPS 186-5 §A.2.2, IG 10.3.A |
 | DH | DH-3072 shared secret + DRBG-driven keygen | RFC 3526 Group 15, SP 800-56Ar3 |
 | RSA (opaque key handle) | 2048/3072/4096 verify (PKCS#1 v1.5, PSS) + DRBG-driven keygen + sign + OAEP encrypt/decrypt + `n`/`e` accessors | FIPS 186-5, RFC 8017, IG D.G |
 | ML-KEM | ML-KEM-1024 keygen / encaps / decaps | FIPS 203 |

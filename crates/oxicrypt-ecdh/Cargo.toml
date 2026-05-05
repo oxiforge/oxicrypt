@@ -11,8 +11,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }
 oxicrypt-ecdsa = { path = "../oxicrypt-ecdsa" }
 oxicrypt-module = { path = "../oxicrypt-module" }
-
-[dev-dependencies]
-oxicrypt-drbg = { path = "../oxicrypt-drbg" }

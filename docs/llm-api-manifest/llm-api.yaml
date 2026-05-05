@@ -3203,6 +3203,146 @@ functions:
           hkdf_sha256(&salt, &z, &info, &mut okm)?;
           let aes_key = Aes256Key::new(&okm)?;
 
+  - name: compute_shared_secret_p384
+    module: oxicrypt-ecdh
+    description: >-
+      Compute ECDH P-384 shared secret (SP 800-56Ar3 CDH).
+      Returns x-coordinate of d * Q.
+    signature: >-
+      pub fn compute_shared_secret_p384(d: &[u8; 48], peer_pk: &[u8; 97])
+      -> Result<[u8; 48], Error>
+    parameters:
+      - name: d
+        type: "&[u8; 48]"
+        direction: in
+        description: Our private scalar (big-endian).
+        constraints:
+          size: 48
+          encoding: big-endian
+      - name: peer_pk
+        type: "&[u8; 97]"
+        direction: in
+        description: >-
+          Peer's uncompressed SEC1 public key (0x04 || X || Y).
+          Point validation performed internally.
+        constraints:
+          size: 97
+          encoding: "SEC1 uncompressed (first byte must be 0x04)"
+    returns:
+      type: "Result<[u8; 48], Error>"
+      description: >-
+        48-byte shared secret (x-coordinate). Feed this to a KDF
+        (e.g., HKDF) — do NOT use it directly as a key.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: InvalidInput
+          condition: Peer public key fails point validation.
+    preconditions:
+      - description: Module must be Operational.
+      - description: Peer public key must be a valid P-384 point.
+    postconditions:
+      - description: >-
+          Returns the x-coordinate of d * peer_pk. The caller MUST
+          pass this through a KDF before using it as keying material.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: generate_keypair_p256
+    module: oxicrypt-ecdh
+    description: >-
+      Generate a fresh ECDH P-256 key pair (d, Q) via the FIPS 186-5
+      §A.2.2 rejection sampler driven by the supplied DRBG, then run
+      the IG 10.3.A pairwise consistency test as an ECDH-roundtrip
+      against the RFC 5903 §8.1 responder keypair before returning.
+      Reuses oxicrypt-ecdsa's scalar generator so a single FIPS 186-5
+      §A.2.2 implementation serves both ECDH and ECDSA on this curve.
+    signature: >-
+      pub fn generate_keypair_p256(drbg: &mut HmacDrbgSha256)
+      -> Result<([u8; 32], [u8; 65]), Error>
+    parameters:
+      - name: drbg
+        type: "&mut HmacDrbgSha256"
+        direction: inout
+        description: >-
+          Live, instantiated HMAC-DRBG-SHA-256 the keygen consumes
+          for scalar sampling. Must be in the Operational state and
+          may be reused for subsequent calls.
+    returns:
+      type: "Result<([u8; 32], [u8; 65]), Error>"
+      description: >-
+        On success, returns (d, Q) where d is the 32-byte private
+        scalar in [1, n − 1] and Q is the 65-byte SEC1 uncompressed
+        public key 0x04 || X(32) || Y(32) of d · G.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ECDH-P-256 blocked by active profile.
+        - name: InvalidInput
+          condition: >-
+            DRBG fault, rejection-sampling exhaustion, or IG 10.3.A
+            PCT mismatch. In practice only a broken DRBG.
+    preconditions:
+      - description: Module must be Operational.
+      - description: DRBG handle must be live and instantiated.
+    postconditions:
+      - description: >-
+          Returns a freshly sampled (d, Q) pair that has passed the
+          IG 10.3.A pairwise consistency test. Q = d · G.
+    thread_safety: not-thread-safe-on-shared-drbg
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: generate_keypair_p384
+    module: oxicrypt-ecdh
+    description: >-
+      Generate a fresh ECDH P-384 key pair via the FIPS 186-5 §A.2.2
+      rejection sampler. Mirrors generate_keypair_p256 for the
+      P-384 curve, with the IG 10.3.A PCT running against the
+      RFC 5903 §8.2 responder keypair.
+    signature: >-
+      pub fn generate_keypair_p384(drbg: &mut HmacDrbgSha256)
+      -> Result<([u8; 48], [u8; 97]), Error>
+    parameters:
+      - name: drbg
+        type: "&mut HmacDrbgSha256"
+        direction: inout
+        description: Live, instantiated HMAC-DRBG-SHA-256.
+    returns:
+      type: "Result<([u8; 48], [u8; 97]), Error>"
+      description: >-
+        On success, returns (d, Q) where d is the 48-byte private
+        scalar in [1, n − 1] and Q is the 97-byte SEC1 uncompressed
+        public key of d · G.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ECDH-P-384 blocked by active profile.
+        - name: InvalidInput
+          condition: DRBG fault, sampling exhaustion, or PCT mismatch.
+    preconditions:
+      - description: Module must be Operational.
+      - description: DRBG handle must be live and instantiated.
+    postconditions:
+      - description: >-
+          Returns a freshly sampled (d, Q) pair that has passed
+          IG 10.3.A PCT. Q = d · G.
+    thread_safety: not-thread-safe-on-shared-drbg
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
   # ── DH ──────────────────────────────────────────────────────────
 
   - name: compute_shared_secret_3072
@@ -5755,6 +5895,60 @@ functions:
     returns:
       type: int
       description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical d or peer-key validation failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdh_p256_generate_keypair
+    module: oxicrypt-ffi
+    description: >-
+      Generate a fresh ECDH P-256 key pair via the FIPS 186-5 §A.2.2
+      rejection sampler driven by the supplied DRBG handle, run the
+      IG 10.3.A pairwise consistency test as an ECDH-roundtrip
+      against the RFC 5903 §8.1 responder keypair, and write the
+      private/public bytes to the caller-provided buffers. Mirrors
+      `oxi_dh3072_generate_keypair` shape and applies the same
+      per-call-mutating-handle thread-safety contract: callers MUST
+      serialise concurrent calls on the same DRBG pointer. Reuses
+      `oxicrypt_ecdsa::p256_keygen::generate_p256_internal` so the
+      same FIPS 186-5 §A.2.2 sampler serves both ECDH and ECDSA
+      keygen on this curve (security-policy §4.8 ECDH-ECDSA-shared-
+      keygen-primitive paragraph).
+    signature: >-
+      int oxi_ecdh_p256_generate_keypair(OxiHmacDrbgSha256 *drbg,
+      uint8_t *private_out, uint8_t *public_out)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated HMAC-DRBG-SHA-256 handle" }
+      - { name: private_out, type: "uint8_t *", direction: out, description: "32-byte big-endian private scalar d in [1, n-1]" }
+      - { name: public_out, type: "uint8_t *", direction: out, description: "65-byte SEC1 uncompressed public key 0x04 || X(32) || Y(32) of d * G" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / sampling exhaustion / IG 10.3.A PCT mismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ecdh_p384_generate_keypair
+    module: oxicrypt-ffi
+    description: >-
+      Generate a fresh ECDH P-384 key pair via the FIPS 186-5 §A.2.2
+      rejection sampler. Mirrors `oxi_ecdh_p256_generate_keypair`
+      for the P-384 curve: 48-byte private scalar, 97-byte SEC1
+      uncompressed public key, IG 10.3.A PCT against the RFC 5903
+      §8.2 responder keypair. Same DRBG-handle thread-safety
+      contract.
+    signature: >-
+      int oxi_ecdh_p384_generate_keypair(OxiHmacDrbgSha256 *drbg,
+      uint8_t *private_out, uint8_t *public_out)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated HMAC-DRBG-SHA-256 handle" }
+      - { name: private_out, type: "uint8_t *", direction: out, description: "48-byte big-endian private scalar d in [1, n-1]" }
+      - { name: public_out, type: "uint8_t *", direction: out, description: "97-byte SEC1 uncompressed public key 0x04 || X(48) || Y(48) of d * G" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (same as oxi_ecdh_p256_generate_keypair)."
     security:
       constant_time: true
       handles_secrets: true
