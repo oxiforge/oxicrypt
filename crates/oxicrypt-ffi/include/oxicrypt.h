@@ -53,6 +53,29 @@ typedef struct OxiEcdsaP384PrivateKey OxiEcdsaP384PrivateKey;
  */
 typedef struct OxiHmacDrbgSha256 OxiHmacDrbgSha256;
 
+/*
+ Opaque RSA-2048 private-key handle that has passed an IG 10.3.A
+ pairwise consistency test at construction time. Mirrors the
+ `OxiEcdsaP256PrivateKey` pattern and inherits the same PCT-at-
+ construction structural argument from security-policy §4.8.
+
+ */
+typedef struct OxiRsaPrivateKey2048 OxiRsaPrivateKey2048;
+
+/*
+ Opaque RSA-3072 private-key handle that has passed an IG 10.3.A
+ pairwise consistency test at construction time.
+
+ */
+typedef struct OxiRsaPrivateKey3072 OxiRsaPrivateKey3072;
+
+/*
+ Opaque RSA-4096 private-key handle that has passed an IG 10.3.A
+ pairwise consistency test at construction time.
+
+ */
+typedef struct OxiRsaPrivateKey4096 OxiRsaPrivateKey4096;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -1503,6 +1526,409 @@ int oxi_ecdsa_p384_private_key_sign_sha384(const OxiEcdsaP384PrivateKey *key,
                                            const uint8_t *msg_ptr,
                                            uintptr_t msg_len,
                                            uint8_t *sig_out);
+
+/*
+ Allocate a new RSA-2048 private-key handle, generating a fresh
+ keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling on `drbg`,
+ then running the IG 10.3.A pairwise consistency test on the CRT
+ path (sign a fixed probe, verify with the public exponent) before
+ returning. `e` must be an odd prime in `[65537, 2^64)` — in
+ practice, pass `65537` (F4).
+
+ On success, writes a heap-allocated handle pointer through
+ `out_key` and returns `OxiResult::Ok = 0`. The caller owns the
+ handle and MUST release it with [`oxi_rsa_2048_private_key_free`].
+
+ Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
+ prime sampling, the prime-candidate retry budget is exceeded,
+ `e` fails the structural check, or the resulting keypair fails
+ the pairwise consistency test (the latter would indicate internal
+ corruption). Returns `OxiResult::NotOperational = 1` if the FIPS
+ module is not in the `Operational` state. Returns
+ `OxiResult::AlgorithmRestricted = 6` if the active algorithm
+ profile blocks RSA-2048 keygen.
+
+ # Safety
+
+ `drbg` must be a live, instantiated handle from
+ [`oxi_hmac_drbg_sha256_new`] +
+ [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+ writable pointer to a `*mut OxiRsaPrivateKey2048`.
+ */
+int oxi_rsa_2048_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+                                          uint64_t e,
+                                          OxiRsaPrivateKey2048 **out_key);
+
+/*
+ Free an RSA-2048 private-key handle. NULL-safe.
+
+ After this call the caller's pointer is dangling. Drop on the
+ upstream `RsaPrivateKey2048` zeroises the private exponent `d`
+ and (when present) the CRT components `p, q, dP, dQ, qInv` via
+ the workspace-wide `oxicrypt-zeroize` volatile-write convention.
+
+ # Safety
+
+ `key` must be either NULL or a pointer previously returned by
+ [`oxi_rsa_2048_private_key_new_generate`] that has not yet been
+ freed.
+ */
+void oxi_rsa_2048_private_key_free(OxiRsaPrivateKey2048 *key);
+
+/*
+ Copy the public modulus `n` (256 bytes, big-endian) from an
+ RSA-2048 private-key handle into the caller buffer.
+
+ Returns `OxiResult::Ok = 0` on success;
+ `OxiResult::NullPointer = 10` if either pointer is NULL.
+
+ # Safety
+
+ `key` must be a live handle. `modulus_out` must be a non-NULL
+ writable pointer to ≥256 bytes.
+ */
+int oxi_rsa_2048_modulus(const OxiRsaPrivateKey2048 *key, uint8_t *modulus_out);
+
+/*
+ Copy the public exponent `e` from an RSA-2048 private-key handle
+ into the caller-supplied `uint64_t*`.
+
+ Returns `OxiResult::Ok = 0` on success;
+ `OxiResult::NullPointer = 10` if either pointer is NULL.
+
+ # Safety
+
+ `key` must be a live handle. `e_out` must be a non-NULL writable
+ pointer to a `uint64_t`.
+ */
+int oxi_rsa_2048_public_exponent(const OxiRsaPrivateKey2048 *key, uint64_t *e_out);
+
+/*
+ Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the RSA-2048
+ private-key handle (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+ Deterministic — signing the same `(key, msg)` twice produces
+ byte-identical signatures.
+
+ On success, writes 256 bytes into `sig_out` and returns `Ok = 0`.
+
+ # Safety
+
+ `key` must be a live handle. `msg_ptr` must be valid for
+ `msg_len` bytes. `sig_out` must be a non-NULL writable pointer
+ to ≥256 bytes.
+ */
+int oxi_rsa_2048_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey2048 *key,
+                                       const uint8_t *msg_ptr,
+                                       uintptr_t msg_len,
+                                       uint8_t *sig_out);
+
+/*
+ Sign `msg` with RSASSA-PSS SHA-256 under the RSA-2048 private-
+ key handle, sampling a fresh 32-byte salt from `drbg` per call
+ (FIPS 186-5 §5.4 / RFC 8017 §8.1). Signing the same `(key, msg)`
+ twice produces two distinct signatures.
+
+ On success, writes 256 bytes into `sig_out` and returns `Ok = 0`.
+
+ # Safety
+
+ `key` must be a live handle. `drbg` must be a live, instantiated
+ DRBG handle; the caller MUST serialise concurrent calls on the
+ same `drbg` pointer per the per-call-mutating-handle thread-
+ safety contract documented in security-policy.md. `msg_ptr` must
+ be valid for `msg_len` bytes. `sig_out` must be a non-NULL
+ writable pointer to ≥256 bytes.
+ */
+int oxi_rsa_2048_sign_pss_sha256(const OxiRsaPrivateKey2048 *key,
+                                 OxiHmacDrbgSha256 *drbg,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 uint8_t *sig_out);
+
+/*
+ Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-2048
+ public key `(n, e)`, sampling a fresh 32-byte seed from `drbg`
+ per call (RFC 8017 §7.1). The ciphertext is fixed at 256 bytes
+ regardless of message length. Maximum plaintext length is 190
+ bytes (`k − 2·hLen − 2` with `k = 256`, `hLen = 32`).
+
+ On success, writes 256 bytes into `ct_out` and returns `Ok = 0`.
+
+ # Safety
+
+ `drbg` must be a live, instantiated DRBG handle. `n_ptr` must
+ point to a 256-byte big-endian modulus. `label_ptr` must be valid
+ for `label_len` bytes (use `NULL`/`0` for the empty label).
+ `msg_ptr` must be valid for `msg_len` bytes; `msg_len` must be
+ ≤ 190. `ct_out` must be a non-NULL writable pointer to ≥256 bytes.
+ */
+int oxi_rsa_2048_oaep_encrypt_sha256(OxiHmacDrbgSha256 *drbg,
+                                     const uint8_t *n_ptr,
+                                     uint64_t e,
+                                     const uint8_t *label_ptr,
+                                     uintptr_t label_len,
+                                     const uint8_t *msg_ptr,
+                                     uintptr_t msg_len,
+                                     uint8_t *ct_out);
+
+/*
+ Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-2048
+ private-key handle (RFC 8017 §7.1). The ciphertext is fixed at
+ 256 bytes; the recovered plaintext length is variable in
+ `[0, 190]` and reported through `out_actual_len`.
+
+ `out_max_len` must be ≥ 190 (the maximum possible plaintext for
+ RSA-2048 OAEP-SHA-256). On success, the recovered plaintext is
+ written into `out_ptr[0..*out_actual_len]`.
+
+ All OAEP decode failures (bad `Y` byte, `lHash'` mismatch,
+ malformed `PS`, missing `0x01` delimiter, wrong label) collapse
+ to `OxiResult::InvalidInput = 5` without revealing which check
+ failed (Manger-resistance contract). When the handle was built
+ with CRT material (the only path exposed via `_new_generate`), a
+ single CRT-half fault is caught by the Bellcore verify-after-
+ decrypt step in the upstream primitive.
+
+ # Safety
+
+ `key` must be a live handle. `label_ptr` must be valid for
+ `label_len` bytes. `ct_ptr` must point to exactly 256 bytes.
+ `out_ptr` must be a non-NULL writable pointer to ≥`out_max_len`
+ bytes; `out_max_len` must be ≥ 190. `out_actual_len` must be a
+ non-NULL writable pointer to a `size_t`.
+ */
+int oxi_rsa_2048_oaep_decrypt_sha256(const OxiRsaPrivateKey2048 *key,
+                                     const uint8_t *label_ptr,
+                                     uintptr_t label_len,
+                                     const uint8_t *ct_ptr,
+                                     uint8_t *out_ptr,
+                                     uintptr_t out_max_len,
+                                     uintptr_t *out_actual_len);
+
+/*
+ Allocate a new RSA-3072 private-key handle. Mirrors
+ [`oxi_rsa_2048_private_key_new_generate`] for the 3072-bit
+ modulus; PCT-at-construction runs on the CRT path with Bellcore
+ verify-after-sign.
+
+ # Safety
+
+ See [`oxi_rsa_2048_private_key_new_generate`].
+ */
+int oxi_rsa_3072_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+                                          uint64_t e,
+                                          OxiRsaPrivateKey3072 **out_key);
+
+/*
+ Free an RSA-3072 private-key handle. NULL-safe. See
+ [`oxi_rsa_2048_private_key_free`] for zeroization semantics.
+
+ # Safety
+
+ See [`oxi_rsa_2048_private_key_free`].
+ */
+void oxi_rsa_3072_private_key_free(OxiRsaPrivateKey3072 *key);
+
+/*
+ Copy the 384-byte big-endian public modulus `n` from an RSA-3072
+ handle. See [`oxi_rsa_2048_modulus`].
+
+ # Safety
+
+ `key` must be a live handle. `modulus_out` must be a non-NULL
+ writable pointer to ≥384 bytes.
+ */
+int oxi_rsa_3072_modulus(const OxiRsaPrivateKey3072 *key, uint8_t *modulus_out);
+
+/*
+ Copy the public exponent `e` from an RSA-3072 handle. See
+ [`oxi_rsa_2048_public_exponent`].
+
+ # Safety
+
+ `key` must be a live handle. `e_out` must be a non-NULL writable
+ pointer to a `uint64_t`.
+ */
+int oxi_rsa_3072_public_exponent(const OxiRsaPrivateKey3072 *key, uint64_t *e_out);
+
+/*
+ Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the RSA-3072
+ handle. Deterministic; produces a 384-byte signature.
+
+ # Safety
+
+ See [`oxi_rsa_2048_sign_pkcs1_v15_sha256`]. `sig_out` must be a
+ non-NULL writable pointer to ≥384 bytes.
+ */
+int oxi_rsa_3072_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey3072 *key,
+                                       const uint8_t *msg_ptr,
+                                       uintptr_t msg_len,
+                                       uint8_t *sig_out);
+
+/*
+ Sign `msg` with RSASSA-PSS SHA-256 under the RSA-3072 handle,
+ DRBG-sampled salt. Produces a 384-byte signature.
+
+ # Safety
+
+ See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
+ non-NULL writable pointer to ≥384 bytes.
+ */
+int oxi_rsa_3072_sign_pss_sha256(const OxiRsaPrivateKey3072 *key,
+                                 OxiHmacDrbgSha256 *drbg,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 uint8_t *sig_out);
+
+/*
+ Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-3072
+ public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
+ is 318 bytes (`k − 2·hLen − 2` with `k = 384`, `hLen = 32`).
+ Ciphertext is fixed at 384 bytes.
+
+ # Safety
+
+ See [`oxi_rsa_2048_oaep_encrypt_sha256`]. `n_ptr` must point to
+ 384 bytes; `msg_len` must be ≤ 318; `ct_out` must be a non-NULL
+ writable pointer to ≥384 bytes.
+ */
+int oxi_rsa_3072_oaep_encrypt_sha256(OxiHmacDrbgSha256 *drbg,
+                                     const uint8_t *n_ptr,
+                                     uint64_t e,
+                                     const uint8_t *label_ptr,
+                                     uintptr_t label_len,
+                                     const uint8_t *msg_ptr,
+                                     uintptr_t msg_len,
+                                     uint8_t *ct_out);
+
+/*
+ Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-3072
+ handle. `out_max_len` must be ≥ 318. Mirrors the Manger-
+ resistance and Bellcore-on-CRT contracts of
+ [`oxi_rsa_2048_oaep_decrypt_sha256`].
+
+ # Safety
+
+ See [`oxi_rsa_2048_oaep_decrypt_sha256`]. `ct_ptr` must point to
+ exactly 384 bytes; `out_max_len` must be ≥ 318.
+ */
+int oxi_rsa_3072_oaep_decrypt_sha256(const OxiRsaPrivateKey3072 *key,
+                                     const uint8_t *label_ptr,
+                                     uintptr_t label_len,
+                                     const uint8_t *ct_ptr,
+                                     uint8_t *out_ptr,
+                                     uintptr_t out_max_len,
+                                     uintptr_t *out_actual_len);
+
+/*
+ Allocate a new RSA-4096 private-key handle. Mirrors
+ [`oxi_rsa_2048_private_key_new_generate`] for the 4096-bit
+ modulus.
+
+ # Safety
+
+ See [`oxi_rsa_2048_private_key_new_generate`].
+ */
+int oxi_rsa_4096_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+                                          uint64_t e,
+                                          OxiRsaPrivateKey4096 **out_key);
+
+/*
+ Free an RSA-4096 private-key handle. NULL-safe.
+
+ # Safety
+
+ See [`oxi_rsa_2048_private_key_free`].
+ */
+void oxi_rsa_4096_private_key_free(OxiRsaPrivateKey4096 *key);
+
+/*
+ Copy the 512-byte big-endian public modulus `n` from an RSA-4096
+ handle.
+
+ # Safety
+
+ `key` must be a live handle. `modulus_out` must be a non-NULL
+ writable pointer to ≥512 bytes.
+ */
+int oxi_rsa_4096_modulus(const OxiRsaPrivateKey4096 *key, uint8_t *modulus_out);
+
+/*
+ Copy the public exponent `e` from an RSA-4096 handle.
+
+ # Safety
+
+ `key` must be a live handle. `e_out` must be a non-NULL writable
+ pointer to a `uint64_t`.
+ */
+int oxi_rsa_4096_public_exponent(const OxiRsaPrivateKey4096 *key, uint64_t *e_out);
+
+/*
+ Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the RSA-4096
+ handle. Deterministic; produces a 512-byte signature.
+
+ # Safety
+
+ See [`oxi_rsa_2048_sign_pkcs1_v15_sha256`]. `sig_out` must be a
+ non-NULL writable pointer to ≥512 bytes.
+ */
+int oxi_rsa_4096_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey4096 *key,
+                                       const uint8_t *msg_ptr,
+                                       uintptr_t msg_len,
+                                       uint8_t *sig_out);
+
+/*
+ Sign `msg` with RSASSA-PSS SHA-256 under the RSA-4096 handle,
+ DRBG-sampled salt. Produces a 512-byte signature.
+
+ # Safety
+
+ See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
+ non-NULL writable pointer to ≥512 bytes.
+ */
+int oxi_rsa_4096_sign_pss_sha256(const OxiRsaPrivateKey4096 *key,
+                                 OxiHmacDrbgSha256 *drbg,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 uint8_t *sig_out);
+
+/*
+ Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-4096
+ public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
+ is 446 bytes; ciphertext is 512 bytes.
+
+ # Safety
+
+ See [`oxi_rsa_2048_oaep_encrypt_sha256`]. `n_ptr` must point to
+ 512 bytes; `msg_len` must be ≤ 446; `ct_out` must be a non-NULL
+ writable pointer to ≥512 bytes.
+ */
+int oxi_rsa_4096_oaep_encrypt_sha256(OxiHmacDrbgSha256 *drbg,
+                                     const uint8_t *n_ptr,
+                                     uint64_t e,
+                                     const uint8_t *label_ptr,
+                                     uintptr_t label_len,
+                                     const uint8_t *msg_ptr,
+                                     uintptr_t msg_len,
+                                     uint8_t *ct_out);
+
+/*
+ Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-4096
+ handle. `out_max_len` must be ≥ 446. Manger-resistant and
+ Bellcore-protected on the CRT path.
+
+ # Safety
+
+ See [`oxi_rsa_2048_oaep_decrypt_sha256`]. `ct_ptr` must point to
+ exactly 512 bytes; `out_max_len` must be ≥ 446.
+ */
+int oxi_rsa_4096_oaep_decrypt_sha256(const OxiRsaPrivateKey4096 *key,
+                                     const uint8_t *label_ptr,
+                                     uintptr_t label_len,
+                                     const uint8_t *ct_ptr,
+                                     uint8_t *out_ptr,
+                                     uintptr_t out_max_len,
+                                     uintptr_t *out_actual_len);
 
 /*
  Allocate a new AES-256 key handle from raw 32-byte key material.

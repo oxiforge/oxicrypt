@@ -6810,3 +6810,644 @@ constants:
     type: usize
     value: "29792"
     description: "SLH-DSA-SHA2-256s signature size: R (32) + FORS sig (10560) + HT sig (19200)."
+
+  # ── RSA DRBG-driven C ABI handle surface (FIPS 186-5 / RFC 8017 §8) ──
+  #
+  # Completes the RSA family C ABI. Verify-only stateless surface
+  # already exposed via `oxi_rsa_{pkcs1_v15,pss}_verify_{2048,3072,4096}_sha256`.
+  # This block adds: 3 opaque private-key handles (one per modulus
+  # size) plus 24 entry points covering DRBG-driven keygen,
+  # deterministic PKCS#1 v1.5 sign, DRBG-driven PSS sign, public-key
+  # OAEP encrypt, handle-mediated OAEP decrypt, and modulus + public-
+  # exponent accessors. PCT-at-construction handle invariant carries
+  # over from the ECDSA DRBG-driven surface.
+
+  - name: OxiRsaPrivateKey2048
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque RSA-2048 private-key handle that has passed an
+      IG 10.3.A pairwise consistency test on the CRT path at
+      construction time. Internal layout
+      (`OxiHandle<oxicrypt_rsa::RsaPrivateKey2048>`) is
+      implementation detail and not part of the C ABI; cbindgen
+      renders this as an opaque struct. Carries the public modulus
+      `n` (256 bytes), public exponent `e`, private exponent `d`
+      (256 bytes), and the CRT components `p`, `q`, `dP`, `dQ`,
+      `qInv` (128 bytes each). Drop chain zeroises `d` plus all
+      five CRT half-values. Allocate via
+      `oxi_rsa_2048_private_key_new_generate`; release via
+      `oxi_rsa_2048_private_key_free`. The CRT components remain
+      encapsulated — there is no FFI accessor to extract them — so
+      a C caller cannot exfiltrate the secret half-moduli.
+
+  - name: OxiRsaPrivateKey3072
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque RSA-3072 private-key handle. Mirrors
+      `OxiRsaPrivateKey2048` for the 3072-bit modulus; modulus is
+      384 bytes, CRT halves are 192 bytes each. Drop chain
+      zeroises `d` plus the five CRT half-values via the
+      `define_rsa_wide!`-generated `Drop` impls. Allocate via
+      `oxi_rsa_3072_private_key_new_generate`; release via
+      `oxi_rsa_3072_private_key_free`.
+
+  - name: OxiRsaPrivateKey4096
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque RSA-4096 private-key handle. Mirrors
+      `OxiRsaPrivateKey2048` for the 4096-bit modulus; modulus is
+      512 bytes, CRT halves are 256 bytes each. Drop chain
+      zeroises `d` plus the five CRT half-values. Allocate via
+      `oxi_rsa_4096_private_key_new_generate`; release via
+      `oxi_rsa_4096_private_key_free`.
+
+  - name: oxi_rsa_2048_private_key_new_generate
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new RSA-2048 private-key handle. Generates a
+      fresh keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling
+      on the caller-supplied DRBG, then runs the IG 10.3.A
+      pairwise consistency test on the CRT path (sign a fixed
+      probe with `_crt_internal`, verify with the public exponent)
+      before the handle is returned. `e` must be an odd prime in
+      `[65537, 2^64)` — in practice, pass `65537` (F4). On
+      success, writes a heap-allocated handle pointer through
+      `out_key`. PCT failure, structural `e` rejection, prime-
+      candidate retry exhaustion, and DRBG faults all collapse to
+      `OxiResult::InvalidInput = 5`; no half-initialised pointer
+      ever reaches the caller. Forwards to
+      `oxicrypt_rsa::RsaPrivateKey2048::generate`. Caller MUST
+      instantiate the DRBG before this call and MUST serialise
+      concurrent calls on the same DRBG pointer.
+    signature: >-
+      int oxi_rsa_2048_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+      uint64_t e, OxiRsaPrivateKey2048 **out_key)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated HMAC_DRBG-SHA-256 handle" }
+      - { name: e, type: "uint64_t", direction: in, description: "Public exponent; pass 65537 for F4" }
+      - { name: out_key, type: "OxiRsaPrivateKey2048 **", direction: out, description: "Receives handle on success; caller MUST free with oxi_rsa_2048_private_key_free" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / PCT fail / prime retry exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_2048_private_key_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an RSA-2048 private-key handle. NULL-safe. Drop on the
+      upstream `RsaPrivateKey2048` zeroises `d` and the five CRT
+      half-values via the workspace-wide `oxicrypt-zeroize`
+      volatile-write convention. Double-free is undefined
+      behaviour (matches malloc/free semantics).
+    signature: >-
+      void oxi_rsa_2048_private_key_free(OxiRsaPrivateKey2048 *key)
+    parameters:
+      - { name: key, type: "OxiRsaPrivateKey2048 *", direction: in, description: "Handle to free, or NULL" }
+    returns:
+      type: void
+      description: "No return value."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_2048_modulus
+    module: oxicrypt-ffi
+    description: >-
+      Copy the public modulus `n` (256 bytes, big-endian) from an
+      RSA-2048 private-key handle into the caller buffer. The
+      modulus is exactly the one the IG 10.3.A PCT verified
+      against at handle construction time, so any signature
+      produced by `oxi_rsa_2048_sign_pkcs1_v15_sha256` or
+      `oxi_rsa_2048_sign_pss_sha256` on the same handle is
+      guaranteed to verify under `(n, e)`.
+    signature: >-
+      int oxi_rsa_2048_modulus(const OxiRsaPrivateKey2048 *key,
+      uint8_t *modulus_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey2048 *", direction: in, description: "Live handle" }
+      - { name: modulus_out, type: "uint8_t *", direction: out, description: "256-byte big-endian modulus buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_2048_public_exponent
+    module: oxicrypt-ffi
+    description: >-
+      Copy the public exponent `e` from an RSA-2048 private-key
+      handle into the caller-supplied `uint64_t*`. Pairs with
+      `oxi_rsa_2048_modulus` to give a C caller the full public
+      key `(n, e)` extracted from a handle.
+    signature: >-
+      int oxi_rsa_2048_public_exponent(const OxiRsaPrivateKey2048 *key,
+      uint64_t *e_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey2048 *", direction: in, description: "Live handle" }
+      - { name: e_out, type: "uint64_t *", direction: out, description: "Receives the public exponent" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_2048_sign_pkcs1_v15_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the
+      RSA-2048 private-key handle (FIPS 186-5 §5.4 / RFC 8017
+      §8.2). Deterministic — signing the same `(key, msg)` twice
+      produces byte-identical 256-byte signatures. When the handle
+      was built via `_new_generate` (the only construction path
+      exposed via FFI), signing routes through the CRT path with
+      Bellcore verify-after-sign per FIPS 140-3 IG D.G — a single
+      fault on either CRT half is caught and collapsed to
+      `OxiResult::InvalidInput = 5` so a corrupted signature never
+      reaches the caller and never leaks `p` or `q`.
+    signature: >-
+      int oxi_rsa_2048_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey2048 *key,
+      const uint8_t *msg_ptr, size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey2048 *", direction: in, description: "Live handle" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "256-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on Bellcore fault / internal corruption, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_2048_sign_pss_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with RSASSA-PSS SHA-256 under the RSA-2048
+      private-key handle, sampling a fresh 32-byte salt from the
+      caller-supplied DRBG per call (FIPS 186-5 §5.4 / RFC 8017
+      §8.1). Signing the same `(key, msg)` twice produces two
+      distinct 256-byte signatures, defeating multi-target attacks
+      per FIPS 186-5 §5.4. Salt length is fixed at 32 bytes
+      (`hLen`); MGF1 hash is SHA-256. Bellcore protection on the
+      CRT path applies as in `_sign_pkcs1_v15_sha256`. The DRBG
+      handle's `(K, V, reseed_counter)` state advances by one
+      `generate` call (32 bytes) per invocation; long signing
+      campaigns should reseed per the caller's SP 800-90A reseed
+      policy.
+    signature: >-
+      int oxi_rsa_2048_sign_pss_sha256(const OxiRsaPrivateKey2048 *key,
+      OxiHmacDrbgSha256 *drbg, const uint8_t *msg_ptr,
+      size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey2048 *", direction: in, description: "Live handle" }
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated DRBG handle (caller serialises concurrent access)" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "256-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / Bellcore fault / internal corruption, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_2048_oaep_encrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-2048
+      public key `(n, e)`, sampling a fresh 32-byte seed from the
+      caller-supplied DRBG (RFC 8017 §7.1). Stateless on the
+      RSA-side — no private-key handle required, since OAEP encrypt
+      is a public-key operation. SHA-256 is used for both the
+      label hash and the MGF1 hash. Maximum plaintext length is
+      190 bytes (`k − 2·hLen − 2` with `k = 256`, `hLen = 32`);
+      ciphertext is fixed at 256 bytes regardless of message
+      length. Empty label is the conventional default for
+      KEM-style use; pass `NULL`/`0` for the label arguments.
+    signature: >-
+      int oxi_rsa_2048_oaep_encrypt_sha256(OxiHmacDrbgSha256 *drbg,
+      const uint8_t *n_ptr, uint64_t e, const uint8_t *label_ptr,
+      size_t label_len, const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *ct_out)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated DRBG handle" }
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "256-byte big-endian modulus" }
+      - { name: e, type: "uint64_t", direction: in, description: "Public exponent (typically 65537)" }
+      - { name: label_ptr, type: "const uint8_t *", direction: in, description: "OAEP label bytes (may be NULL if label_len = 0)" }
+      - { name: label_len, type: "size_t", direction: in, description: "Label length" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Plaintext message" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length; must be ≤ 190" }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: "256-byte ciphertext buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / oversized message / malformed modulus, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_2048_oaep_decrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-2048
+      private-key handle (RFC 8017 §7.1). Ciphertext is fixed at
+      256 bytes; recovered plaintext length is variable in
+      `[0, 190]` and reported through `out_actual_len`. All OAEP
+      decode failures (bad `Y` byte, `lHash'` mismatch, malformed
+      `PS`, missing `0x01` delimiter, wrong label) collapse to
+      `OxiResult::InvalidInput = 5` without revealing which check
+      failed (Manger-resistance contract — the decode routine runs
+      MGF1 unmask to completion regardless of where the first
+      failure occurred). When the handle was built via
+      `_new_generate`, decryption uses the CRT path with Bellcore
+      verify-after-decrypt — a single CRT-half fault is caught and
+      collapsed to `InvalidInput`. `out_max_len` must be ≥ 190.
+    signature: >-
+      int oxi_rsa_2048_oaep_decrypt_sha256(const OxiRsaPrivateKey2048 *key,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *ct_ptr, uint8_t *out_ptr,
+      size_t out_max_len, size_t *out_actual_len)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey2048 *", direction: in, description: "Live handle" }
+      - { name: label_ptr, type: "const uint8_t *", direction: in, description: "OAEP label bytes (must match encryption-time label)" }
+      - { name: label_len, type: "size_t", direction: in, description: "Label length" }
+      - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "256-byte ciphertext" }
+      - { name: out_ptr, type: "uint8_t *", direction: out, description: "Plaintext output buffer (≥ out_max_len bytes)" }
+      - { name: out_max_len, type: "size_t", direction: in, description: "Output buffer capacity; must be ≥ 190" }
+      - { name: out_actual_len, type: "size_t *", direction: out, description: "Receives recovered plaintext length on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on Manger-collapsed decode failure / Bellcore fault / out_max_len < 190, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_3072_private_key_new_generate
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new RSA-3072 private-key handle. Mirrors
+      `oxi_rsa_2048_private_key_new_generate` for the 3072-bit
+      modulus; PCT-at-construction runs on the CRT path. Forwards
+      to `oxicrypt_rsa::rsa3072::RsaPrivateKey3072::generate`.
+    signature: >-
+      int oxi_rsa_3072_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+      uint64_t e, OxiRsaPrivateKey3072 **out_key)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live, instantiated DRBG handle" }
+      - { name: e, type: "uint64_t", direction: in, description: "Public exponent (typically 65537)" }
+      - { name: out_key, type: "OxiRsaPrivateKey3072 **", direction: out, description: "Receives handle on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_private_key_new_generate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_3072_private_key_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an RSA-3072 private-key handle. NULL-safe. Drop chain
+      zeroises `d` plus the five CRT halves via the
+      `define_rsa_wide!`-generated `Drop` impl.
+    signature: >-
+      void oxi_rsa_3072_private_key_free(OxiRsaPrivateKey3072 *key)
+    parameters:
+      - { name: key, type: "OxiRsaPrivateKey3072 *", direction: in, description: "Handle to free, or NULL" }
+    returns:
+      type: void
+      description: "No return value."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_3072_modulus
+    module: oxicrypt-ffi
+    description: >-
+      Copy the 384-byte big-endian public modulus `n` from an
+      RSA-3072 handle. Mirrors `oxi_rsa_2048_modulus`.
+    signature: >-
+      int oxi_rsa_3072_modulus(const OxiRsaPrivateKey3072 *key,
+      uint8_t *modulus_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey3072 *", direction: in, description: "Live handle" }
+      - { name: modulus_out, type: "uint8_t *", direction: out, description: "384-byte big-endian modulus buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_3072_public_exponent
+    module: oxicrypt-ffi
+    description: >-
+      Copy the public exponent `e` from an RSA-3072 handle.
+      Mirrors `oxi_rsa_2048_public_exponent`.
+    signature: >-
+      int oxi_rsa_3072_public_exponent(const OxiRsaPrivateKey3072 *key,
+      uint64_t *e_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey3072 *", direction: in, description: "Live handle" }
+      - { name: e_out, type: "uint64_t *", direction: out, description: "Receives the public exponent" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer)."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_3072_sign_pkcs1_v15_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the
+      RSA-3072 handle. Deterministic; produces a 384-byte
+      signature. Bellcore-protected on the CRT path. Mirrors
+      `oxi_rsa_2048_sign_pkcs1_v15_sha256`.
+    signature: >-
+      int oxi_rsa_3072_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey3072 *key,
+      const uint8_t *msg_ptr, size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey3072 *", direction: in, description: "Live handle" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "384-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_sign_pkcs1_v15_sha256."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_3072_sign_pss_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with RSASSA-PSS SHA-256 under the RSA-3072
+      handle, DRBG-sampled 32-byte salt per call. Produces a
+      384-byte signature. Mirrors `oxi_rsa_2048_sign_pss_sha256`.
+    signature: >-
+      int oxi_rsa_3072_sign_pss_sha256(const OxiRsaPrivateKey3072 *key,
+      OxiHmacDrbgSha256 *drbg, const uint8_t *msg_ptr,
+      size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey3072 *", direction: in, description: "Live handle" }
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live DRBG (caller serialises)" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "384-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_sign_pss_sha256."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_3072_oaep_encrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-3072
+      public key, DRBG-sampled seed. Maximum plaintext length is
+      318 bytes; ciphertext is fixed at 384 bytes. Mirrors
+      `oxi_rsa_2048_oaep_encrypt_sha256`.
+    signature: >-
+      int oxi_rsa_3072_oaep_encrypt_sha256(OxiHmacDrbgSha256 *drbg,
+      const uint8_t *n_ptr, uint64_t e, const uint8_t *label_ptr,
+      size_t label_len, const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *ct_out)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live DRBG" }
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "384-byte modulus" }
+      - { name: e, type: "uint64_t", direction: in, description: "Public exponent" }
+      - { name: label_ptr, type: "const uint8_t *", direction: in, description: "Label bytes" }
+      - { name: label_len, type: "size_t", direction: in, description: "Label length" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Plaintext" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length; must be ≤ 318" }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: "384-byte ciphertext buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_oaep_encrypt_sha256."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_3072_oaep_decrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-3072
+      handle. `out_max_len` must be ≥ 318. Manger-resistant and
+      Bellcore-protected on CRT. Mirrors
+      `oxi_rsa_2048_oaep_decrypt_sha256`.
+    signature: >-
+      int oxi_rsa_3072_oaep_decrypt_sha256(const OxiRsaPrivateKey3072 *key,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *ct_ptr, uint8_t *out_ptr,
+      size_t out_max_len, size_t *out_actual_len)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey3072 *", direction: in, description: "Live handle" }
+      - { name: label_ptr, type: "const uint8_t *", direction: in, description: "Label bytes" }
+      - { name: label_len, type: "size_t", direction: in, description: "Label length" }
+      - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "384-byte ciphertext" }
+      - { name: out_ptr, type: "uint8_t *", direction: out, description: "Plaintext buffer" }
+      - { name: out_max_len, type: "size_t", direction: in, description: "Capacity ≥ 318" }
+      - { name: out_actual_len, type: "size_t *", direction: out, description: "Recovered plaintext length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_oaep_decrypt_sha256."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_4096_private_key_new_generate
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new RSA-4096 private-key handle. Mirrors
+      `oxi_rsa_2048_private_key_new_generate` for the 4096-bit
+      modulus. Forwards to
+      `oxicrypt_rsa::rsa4096::RsaPrivateKey4096::generate`.
+    signature: >-
+      int oxi_rsa_4096_private_key_new_generate(OxiHmacDrbgSha256 *drbg,
+      uint64_t e, OxiRsaPrivateKey4096 **out_key)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live DRBG" }
+      - { name: e, type: "uint64_t", direction: in, description: "Public exponent" }
+      - { name: out_key, type: "OxiRsaPrivateKey4096 **", direction: out, description: "Receives handle" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_private_key_new_generate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_4096_private_key_free
+    module: oxicrypt-ffi
+    description: >-
+      Free an RSA-4096 private-key handle. NULL-safe.
+    signature: >-
+      void oxi_rsa_4096_private_key_free(OxiRsaPrivateKey4096 *key)
+    parameters:
+      - { name: key, type: "OxiRsaPrivateKey4096 *", direction: in, description: "Handle to free, or NULL" }
+    returns:
+      type: void
+      description: "No return value."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_4096_modulus
+    module: oxicrypt-ffi
+    description: >-
+      Copy the 512-byte big-endian public modulus `n` from an
+      RSA-4096 handle.
+    signature: >-
+      int oxi_rsa_4096_modulus(const OxiRsaPrivateKey4096 *key,
+      uint8_t *modulus_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey4096 *", direction: in, description: "Live handle" }
+      - { name: modulus_out, type: "uint8_t *", direction: out, description: "512-byte buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_4096_public_exponent
+    module: oxicrypt-ffi
+    description: >-
+      Copy the public exponent `e` from an RSA-4096 handle.
+    signature: >-
+      int oxi_rsa_4096_public_exponent(const OxiRsaPrivateKey4096 *key,
+      uint64_t *e_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey4096 *", direction: in, description: "Live handle" }
+      - { name: e_out, type: "uint64_t *", direction: out, description: "Receives the exponent" }
+    returns:
+      type: int
+      description: "OxiResult discriminant."
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_4096_sign_pkcs1_v15_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the
+      RSA-4096 handle. Deterministic; 512-byte signature.
+    signature: >-
+      int oxi_rsa_4096_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey4096 *key,
+      const uint8_t *msg_ptr, size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey4096 *", direction: in, description: "Live handle" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "512-byte signature buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_4096_sign_pss_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Sign `msg` with RSASSA-PSS SHA-256 under the RSA-4096
+      handle, DRBG-sampled salt. 512-byte signature.
+    signature: >-
+      int oxi_rsa_4096_sign_pss_sha256(const OxiRsaPrivateKey4096 *key,
+      OxiHmacDrbgSha256 *drbg, const uint8_t *msg_ptr,
+      size_t msg_len, uint8_t *sig_out)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey4096 *", direction: in, description: "Live handle" }
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live DRBG" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "512-byte signature" }
+    returns:
+      type: int
+      description: "OxiResult discriminant."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_rsa_4096_oaep_encrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-4096
+      public key, DRBG-sampled seed. Maximum plaintext length is
+      446 bytes; ciphertext is 512 bytes.
+    signature: >-
+      int oxi_rsa_4096_oaep_encrypt_sha256(OxiHmacDrbgSha256 *drbg,
+      const uint8_t *n_ptr, uint64_t e, const uint8_t *label_ptr,
+      size_t label_len, const uint8_t *msg_ptr, size_t msg_len,
+      uint8_t *ct_out)
+    parameters:
+      - { name: drbg, type: "OxiHmacDrbgSha256 *", direction: in, description: "Live DRBG" }
+      - { name: n_ptr, type: "const uint8_t *", direction: in, description: "512-byte modulus" }
+      - { name: e, type: "uint64_t", direction: in, description: "Public exponent" }
+      - { name: label_ptr, type: "const uint8_t *", direction: in, description: "Label bytes" }
+      - { name: label_len, type: "size_t", direction: in, description: "Label length" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Plaintext" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length ≤ 446" }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: "512-byte ciphertext buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant."
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: oxi_rsa_4096_oaep_decrypt_sha256
+    module: oxicrypt-ffi
+    description: >-
+      Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-4096
+      handle. `out_max_len` must be ≥ 446. Manger-resistant and
+      Bellcore-protected on CRT.
+    signature: >-
+      int oxi_rsa_4096_oaep_decrypt_sha256(const OxiRsaPrivateKey4096 *key,
+      const uint8_t *label_ptr, size_t label_len,
+      const uint8_t *ct_ptr, uint8_t *out_ptr,
+      size_t out_max_len, size_t *out_actual_len)
+    parameters:
+      - { name: key, type: "const OxiRsaPrivateKey4096 *", direction: in, description: "Live handle" }
+      - { name: label_ptr, type: "const uint8_t *", direction: in, description: "Label" }
+      - { name: label_len, type: "size_t", direction: in, description: "Label length" }
+      - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "512-byte ciphertext" }
+      - { name: out_ptr, type: "uint8_t *", direction: out, description: "Plaintext buffer" }
+      - { name: out_max_len, type: "size_t", direction: in, description: "Capacity ≥ 446" }
+      - { name: out_actual_len, type: "size_t *", direction: out, description: "Recovered length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true

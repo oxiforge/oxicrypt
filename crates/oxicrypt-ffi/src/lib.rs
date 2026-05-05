@@ -3627,3 +3627,947 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
     unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 96) };
     R::Ok as c_int
 }
+
+// ── RSA DRBG-driven (FIPS 186-5 / RFC 8017 §8) — handle surface ──
+//
+// 24 entry points + 3 opaque types completing the RSA family. Verify-
+// only stateless surface shipped earlier (six fns: PKCS#1 v1.5 verify
+// and PSS verify across 2048/3072/4096); this round adds DRBG-driven
+// keygen with PCT-at-construction, deterministic PKCS#1 v1.5 sign,
+// DRBG-driven PSS sign, public-key DRBG-driven OAEP encrypt,
+// handle-mediated OAEP decrypt, plus modulus and public-exponent
+// accessors per size.
+//
+// Per-size pattern (×3: 2048, 3072, 4096):
+//
+//   1. _new_generate(drbg, e, **out_key)        DRBG-driven, PCT-at-construction
+//   2. _free(key)                               Opaque-handle cleanup
+//   3. _modulus(key, out)                       Public n accessor
+//   4. _public_exponent(key, *out_e)            Public e accessor
+//   5. _sign_pkcs1_v15_sha256(key, msg, sig)    Deterministic
+//   6. _sign_pss_sha256(key, drbg, msg, sig)    DRBG-driven re-borrow for fresh salt
+//   7. _oaep_encrypt_sha256(drbg, n, e, ...)    Stateless public-key, DRBG seed
+//   8. _oaep_decrypt_sha256(key, label, ct, ...)Handle-mediated, length-out-pointer
+//
+// **CRT-secret-exfil safe by API shape:** the handle exposes only `n`
+// (modulus) and `e` (public exponent) via accessors. The CRT
+// components — `p`, `q`, `dP`, `dQ`, `qInv` — remain encapsulated
+// inside the upstream `RsaPrivateKey{N}` struct and are zeroized by
+// its `Drop` impl on handle release. There is no FFI accessor that
+// can extract the secret half-moduli or private exponent: the C API
+// does not surface them and the underlying Rust struct's CRT field is
+// `pub(crate)`-private to `oxicrypt-rsa`.
+//
+// **PCT-at-construction handle invariant** (extends ECDSA gem from
+// security-policy §4.8): `_new_generate` is the sole construction
+// path exposed via FFI; it routes through `RsaPrivateKey{N}::generate`,
+// which runs the IG 10.3.A pairwise consistency test on the CRT path
+// (sign a fixed probe with `_crt_internal`, verify with the public
+// exponent) before returning the handle. Every handle a C caller can
+// observe has therefore already produced a valid sign/verify pair on
+// the same code path the caller will exercise.
+//
+// **DRBG-handle-as-parameter** (per `OxiHmacDrbgSha256::inner_mut`):
+// keygen takes the DRBG by mutable pointer; sign-PSS re-borrows the
+// same DRBG for per-signature salt sampling; OAEP encrypt borrows the
+// DRBG for seed sampling. Three sites per size = nine DRBG re-borrows
+// total for this round — single-threaded callers are unaffected;
+// concurrent C callers must serialize DRBG access per the per-call-
+// mutating-handle thread-safety contract documented in
+// security-policy.md.
+//
+// **TagMismatch=22 mapping (verify-only)** continues to apply to the
+// previously-shipped verify functions; sign / decrypt / keygen on
+// this surface use the generic `R::from(Error)` mapping (Error
+// coverage already complete; no new `OxiResult` discriminants).
+
+// ── Opaque RSA private-key handles ───────────────────────────────
+
+/// Opaque RSA-2048 private-key handle that has passed an IG 10.3.A
+/// pairwise consistency test at construction time. Mirrors the
+/// `OxiEcdsaP256PrivateKey` pattern and inherits the same PCT-at-
+/// construction structural argument from security-policy §4.8.
+///
+/// cbindgen:opaque
+pub struct OxiRsaPrivateKey2048 {
+    inner: OxiHandle<oxicrypt_rsa::RsaPrivateKey2048>,
+}
+
+impl OxiRsaPrivateKey2048 {
+    /// Crate-internal accessor for the underlying read-only
+    /// `RsaPrivateKey2048`. Returns `None` if the handle has been
+    /// finalised (today: never — this handle has no `_finalize`
+    /// entry point, only `_free` via Drop).
+    pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_rsa::RsaPrivateKey2048> {
+        self.inner.as_ref()
+    }
+}
+
+/// Opaque RSA-3072 private-key handle that has passed an IG 10.3.A
+/// pairwise consistency test at construction time.
+///
+/// cbindgen:opaque
+pub struct OxiRsaPrivateKey3072 {
+    inner: OxiHandle<oxicrypt_rsa::rsa3072::RsaPrivateKey3072>,
+}
+
+impl OxiRsaPrivateKey3072 {
+    pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_rsa::rsa3072::RsaPrivateKey3072> {
+        self.inner.as_ref()
+    }
+}
+
+/// Opaque RSA-4096 private-key handle that has passed an IG 10.3.A
+/// pairwise consistency test at construction time.
+///
+/// cbindgen:opaque
+pub struct OxiRsaPrivateKey4096 {
+    inner: OxiHandle<oxicrypt_rsa::rsa4096::RsaPrivateKey4096>,
+}
+
+impl OxiRsaPrivateKey4096 {
+    pub(crate) fn inner_ref(&self) -> Option<&oxicrypt_rsa::rsa4096::RsaPrivateKey4096> {
+        self.inner.as_ref()
+    }
+}
+
+// ── RSA-2048 — DRBG-driven keygen + sign + OAEP ──────────────────
+
+/// Allocate a new RSA-2048 private-key handle, generating a fresh
+/// keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling on `drbg`,
+/// then running the IG 10.3.A pairwise consistency test on the CRT
+/// path (sign a fixed probe, verify with the public exponent) before
+/// returning. `e` must be an odd prime in `[65537, 2^64)` — in
+/// practice, pass `65537` (F4).
+///
+/// On success, writes a heap-allocated handle pointer through
+/// `out_key` and returns `OxiResult::Ok = 0`. The caller owns the
+/// handle and MUST release it with [`oxi_rsa_2048_private_key_free`].
+///
+/// Returns `OxiResult::InvalidInput = 5` if the DRBG faults during
+/// prime sampling, the prime-candidate retry budget is exceeded,
+/// `e` fails the structural check, or the resulting keypair fails
+/// the pairwise consistency test (the latter would indicate internal
+/// corruption). Returns `OxiResult::NotOperational = 1` if the FIPS
+/// module is not in the `Operational` state. Returns
+/// `OxiResult::AlgorithmRestricted = 6` if the active algorithm
+/// profile blocks RSA-2048 keygen.
+///
+/// # Safety
+///
+/// `drbg` must be a live, instantiated handle from
+/// [`oxi_hmac_drbg_sha256_new`] +
+/// [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
+/// writable pointer to a `*mut OxiRsaPrivateKey2048`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    e: u64,
+    out_key: *mut *mut OxiRsaPrivateKey2048,
+) -> c_int {
+    if drbg.is_null() || out_key.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let key = match oxicrypt_rsa::RsaPrivateKey2048::generate(drbg_ref, e) {
+        Ok(k) => k,
+        Err(err) => return R::from(err) as c_int,
+    };
+    let boxed = Box::new(OxiRsaPrivateKey2048 {
+        inner: OxiHandle::new(key),
+    });
+    unsafe { *out_key = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an RSA-2048 private-key handle. NULL-safe.
+///
+/// After this call the caller's pointer is dangling. Drop on the
+/// upstream `RsaPrivateKey2048` zeroises the private exponent `d`
+/// and (when present) the CRT components `p, q, dP, dQ, qInv` via
+/// the workspace-wide `oxicrypt-zeroize` volatile-write convention.
+///
+/// # Safety
+///
+/// `key` must be either NULL or a pointer previously returned by
+/// [`oxi_rsa_2048_private_key_new_generate`] that has not yet been
+/// freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_private_key_free(key: *mut OxiRsaPrivateKey2048) {
+    if key.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(key) });
+}
+
+/// Copy the public modulus `n` (256 bytes, big-endian) from an
+/// RSA-2048 private-key handle into the caller buffer.
+///
+/// Returns `OxiResult::Ok = 0` on success;
+/// `OxiResult::NullPointer = 10` if either pointer is NULL.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `modulus_out` must be a non-NULL
+/// writable pointer to ≥256 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_modulus(
+    key: *const OxiRsaPrivateKey2048,
+    modulus_out: *mut u8,
+) -> c_int {
+    if key.is_null() || modulus_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let n = key_ref.modulus_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 256) };
+    R::Ok as c_int
+}
+
+/// Copy the public exponent `e` from an RSA-2048 private-key handle
+/// into the caller-supplied `uint64_t*`.
+///
+/// Returns `OxiResult::Ok = 0` on success;
+/// `OxiResult::NullPointer = 10` if either pointer is NULL.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `e_out` must be a non-NULL writable
+/// pointer to a `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_public_exponent(
+    key: *const OxiRsaPrivateKey2048,
+    e_out: *mut u64,
+) -> c_int {
+    if key.is_null() || e_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    unsafe { *e_out = key_ref.public_exponent() };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the RSA-2048
+/// private-key handle (FIPS 186-5 §5.4 / RFC 8017 §8.2).
+/// Deterministic — signing the same `(key, msg)` twice produces
+/// byte-identical signatures.
+///
+/// On success, writes 256 bytes into `sig_out` and returns `Ok = 0`.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `msg_ptr` must be valid for
+/// `msg_len` bytes. `sig_out` must be a non-NULL writable pointer
+/// to ≥256 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_sign_pkcs1_v15_sha256(
+    key: *const OxiRsaPrivateKey2048,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_pkcs1_v15_sha256(msg) {
+        Ok(s) => s,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 256) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with RSASSA-PSS SHA-256 under the RSA-2048 private-
+/// key handle, sampling a fresh 32-byte salt from `drbg` per call
+/// (FIPS 186-5 §5.4 / RFC 8017 §8.1). Signing the same `(key, msg)`
+/// twice produces two distinct signatures.
+///
+/// On success, writes 256 bytes into `sig_out` and returns `Ok = 0`.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `drbg` must be a live, instantiated
+/// DRBG handle; the caller MUST serialise concurrent calls on the
+/// same `drbg` pointer per the per-call-mutating-handle thread-
+/// safety contract documented in security-policy.md. `msg_ptr` must
+/// be valid for `msg_len` bytes. `sig_out` must be a non-NULL
+/// writable pointer to ≥256 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_sign_pss_sha256(
+    key: *const OxiRsaPrivateKey2048,
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || drbg.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_pss_sha256(drbg_ref, msg) {
+        Ok(s) => s,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 256) };
+    R::Ok as c_int
+}
+
+/// Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-2048
+/// public key `(n, e)`, sampling a fresh 32-byte seed from `drbg`
+/// per call (RFC 8017 §7.1). The ciphertext is fixed at 256 bytes
+/// regardless of message length. Maximum plaintext length is 190
+/// bytes (`k − 2·hLen − 2` with `k = 256`, `hLen = 32`).
+///
+/// On success, writes 256 bytes into `ct_out` and returns `Ok = 0`.
+///
+/// # Safety
+///
+/// `drbg` must be a live, instantiated DRBG handle. `n_ptr` must
+/// point to a 256-byte big-endian modulus. `label_ptr` must be valid
+/// for `label_len` bytes (use `NULL`/`0` for the empty label).
+/// `msg_ptr` must be valid for `msg_len` bytes; `msg_len` must be
+/// ≤ 190. `ct_out` must be a non-NULL writable pointer to ≥256 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_oaep_encrypt_sha256(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    n_ptr: *const u8,
+    e: u64,
+    label_ptr: *const u8,
+    label_len: usize,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ct_out: *mut u8,
+) -> c_int {
+    if drbg.is_null() || n_ptr.is_null() || ct_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let n = match unsafe { slice_from_raw(n_ptr, 256) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let Ok(n_arr) = <&[u8; 256]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let ct = match oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256(drbg_ref, n_arr, e, label, msg) {
+        Ok(c) => c,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 256) };
+    R::Ok as c_int
+}
+
+/// Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-2048
+/// private-key handle (RFC 8017 §7.1). The ciphertext is fixed at
+/// 256 bytes; the recovered plaintext length is variable in
+/// `[0, 190]` and reported through `out_actual_len`.
+///
+/// `out_max_len` must be ≥ 190 (the maximum possible plaintext for
+/// RSA-2048 OAEP-SHA-256). On success, the recovered plaintext is
+/// written into `out_ptr[0..*out_actual_len]`.
+///
+/// All OAEP decode failures (bad `Y` byte, `lHash'` mismatch,
+/// malformed `PS`, missing `0x01` delimiter, wrong label) collapse
+/// to `OxiResult::InvalidInput = 5` without revealing which check
+/// failed (Manger-resistance contract). When the handle was built
+/// with CRT material (the only path exposed via `_new_generate`), a
+/// single CRT-half fault is caught by the Bellcore verify-after-
+/// decrypt step in the upstream primitive.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `label_ptr` must be valid for
+/// `label_len` bytes. `ct_ptr` must point to exactly 256 bytes.
+/// `out_ptr` must be a non-NULL writable pointer to ≥`out_max_len`
+/// bytes; `out_max_len` must be ≥ 190. `out_actual_len` must be a
+/// non-NULL writable pointer to a `size_t`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_2048_oaep_decrypt_sha256(
+    key: *const OxiRsaPrivateKey2048,
+    label_ptr: *const u8,
+    label_len: usize,
+    ct_ptr: *const u8,
+    out_ptr: *mut u8,
+    out_max_len: usize,
+    out_actual_len: *mut usize,
+) -> c_int {
+    if key.is_null() || ct_ptr.is_null() || out_ptr.is_null() || out_actual_len.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out_max_len < oxicrypt_rsa::oaep::MAX_MSG_LEN {
+        return R::InvalidInput as c_int;
+    }
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let ct = match unsafe { slice_from_raw(ct_ptr, 256) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let Ok(ct_arr) = <&[u8; 256]>::try_from(ct) else {
+        return R::Internal as c_int;
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let mut buf = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
+    let actual = match key_ref.decrypt_oaep_sha256(label, ct_arr, &mut buf) {
+        Ok(n) => n,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), out_ptr, actual) };
+    unsafe { *out_actual_len = actual };
+    R::Ok as c_int
+}
+
+// ── RSA-3072 — DRBG-driven keygen + sign + OAEP ──────────────────
+
+/// Allocate a new RSA-3072 private-key handle. Mirrors
+/// [`oxi_rsa_2048_private_key_new_generate`] for the 3072-bit
+/// modulus; PCT-at-construction runs on the CRT path with Bellcore
+/// verify-after-sign.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_private_key_new_generate`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_private_key_new_generate(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    e: u64,
+    out_key: *mut *mut OxiRsaPrivateKey3072,
+) -> c_int {
+    if drbg.is_null() || out_key.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let key = match oxicrypt_rsa::rsa3072::RsaPrivateKey3072::generate(drbg_ref, e) {
+        Ok(k) => k,
+        Err(err) => return R::from(err) as c_int,
+    };
+    let boxed = Box::new(OxiRsaPrivateKey3072 {
+        inner: OxiHandle::new(key),
+    });
+    unsafe { *out_key = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an RSA-3072 private-key handle. NULL-safe. See
+/// [`oxi_rsa_2048_private_key_free`] for zeroization semantics.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_private_key_free`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_private_key_free(key: *mut OxiRsaPrivateKey3072) {
+    if key.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(key) });
+}
+
+/// Copy the 384-byte big-endian public modulus `n` from an RSA-3072
+/// handle. See [`oxi_rsa_2048_modulus`].
+///
+/// # Safety
+///
+/// `key` must be a live handle. `modulus_out` must be a non-NULL
+/// writable pointer to ≥384 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_modulus(
+    key: *const OxiRsaPrivateKey3072,
+    modulus_out: *mut u8,
+) -> c_int {
+    if key.is_null() || modulus_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let n = key_ref.modulus_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 384) };
+    R::Ok as c_int
+}
+
+/// Copy the public exponent `e` from an RSA-3072 handle. See
+/// [`oxi_rsa_2048_public_exponent`].
+///
+/// # Safety
+///
+/// `key` must be a live handle. `e_out` must be a non-NULL writable
+/// pointer to a `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_public_exponent(
+    key: *const OxiRsaPrivateKey3072,
+    e_out: *mut u64,
+) -> c_int {
+    if key.is_null() || e_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    unsafe { *e_out = key_ref.public_exponent() };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the RSA-3072
+/// handle. Deterministic; produces a 384-byte signature.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_sign_pkcs1_v15_sha256`]. `sig_out` must be a
+/// non-NULL writable pointer to ≥384 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_sign_pkcs1_v15_sha256(
+    key: *const OxiRsaPrivateKey3072,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_pkcs1_v15_sha256(msg) {
+        Ok(s) => s,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 384) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with RSASSA-PSS SHA-256 under the RSA-3072 handle,
+/// DRBG-sampled salt. Produces a 384-byte signature.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
+/// non-NULL writable pointer to ≥384 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_sign_pss_sha256(
+    key: *const OxiRsaPrivateKey3072,
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || drbg.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_pss_sha256(drbg_ref, msg) {
+        Ok(s) => s,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 384) };
+    R::Ok as c_int
+}
+
+/// Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-3072
+/// public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
+/// is 318 bytes (`k − 2·hLen − 2` with `k = 384`, `hLen = 32`).
+/// Ciphertext is fixed at 384 bytes.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_oaep_encrypt_sha256`]. `n_ptr` must point to
+/// 384 bytes; `msg_len` must be ≤ 318; `ct_out` must be a non-NULL
+/// writable pointer to ≥384 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_oaep_encrypt_sha256(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    n_ptr: *const u8,
+    e: u64,
+    label_ptr: *const u8,
+    label_len: usize,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ct_out: *mut u8,
+) -> c_int {
+    if drbg.is_null() || n_ptr.is_null() || ct_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let n = match unsafe { slice_from_raw(n_ptr, 384) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let Ok(n_arr) = <&[u8; 384]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let ct = match oxicrypt_rsa::rsa3072::oaep_encrypt(drbg_ref, n_arr, e, label, msg) {
+        Ok(c) => c,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 384) };
+    R::Ok as c_int
+}
+
+/// Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-3072
+/// handle. `out_max_len` must be ≥ 318. Mirrors the Manger-
+/// resistance and Bellcore-on-CRT contracts of
+/// [`oxi_rsa_2048_oaep_decrypt_sha256`].
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_oaep_decrypt_sha256`]. `ct_ptr` must point to
+/// exactly 384 bytes; `out_max_len` must be ≥ 318.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_3072_oaep_decrypt_sha256(
+    key: *const OxiRsaPrivateKey3072,
+    label_ptr: *const u8,
+    label_len: usize,
+    ct_ptr: *const u8,
+    out_ptr: *mut u8,
+    out_max_len: usize,
+    out_actual_len: *mut usize,
+) -> c_int {
+    if key.is_null() || ct_ptr.is_null() || out_ptr.is_null() || out_actual_len.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out_max_len < oxicrypt_rsa::rsa3072::OAEP_MAX_MSG_LEN {
+        return R::InvalidInput as c_int;
+    }
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let ct = match unsafe { slice_from_raw(ct_ptr, 384) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let Ok(ct_arr) = <&[u8; 384]>::try_from(ct) else {
+        return R::Internal as c_int;
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    // Pass the caller's buffer directly — upstream `decrypt_oaep_sha256`
+    // (macro-generated, `&mut [u8]` slice variant) writes to `out` only
+    // on the success path of `emsa_oaep_decode_n` (after the
+    // constant-time accumulator check passes); failure returns `None`
+    // before any write, so the caller's buffer is left untouched on
+    // error. No intermediate stack copy needed.
+    let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, out_max_len) };
+    let actual = match key_ref.decrypt_oaep_sha256(label, ct_arr, out_slice) {
+        Ok(n) => n,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { *out_actual_len = actual };
+    R::Ok as c_int
+}
+
+// ── RSA-4096 — DRBG-driven keygen + sign + OAEP ──────────────────
+
+/// Allocate a new RSA-4096 private-key handle. Mirrors
+/// [`oxi_rsa_2048_private_key_new_generate`] for the 4096-bit
+/// modulus.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_private_key_new_generate`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_private_key_new_generate(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    e: u64,
+    out_key: *mut *mut OxiRsaPrivateKey4096,
+) -> c_int {
+    if drbg.is_null() || out_key.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let key = match oxicrypt_rsa::rsa4096::RsaPrivateKey4096::generate(drbg_ref, e) {
+        Ok(k) => k,
+        Err(err) => return R::from(err) as c_int,
+    };
+    let boxed = Box::new(OxiRsaPrivateKey4096 {
+        inner: OxiHandle::new(key),
+    });
+    unsafe { *out_key = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free an RSA-4096 private-key handle. NULL-safe.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_private_key_free`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_private_key_free(key: *mut OxiRsaPrivateKey4096) {
+    if key.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(key) });
+}
+
+/// Copy the 512-byte big-endian public modulus `n` from an RSA-4096
+/// handle.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `modulus_out` must be a non-NULL
+/// writable pointer to ≥512 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_modulus(
+    key: *const OxiRsaPrivateKey4096,
+    modulus_out: *mut u8,
+) -> c_int {
+    if key.is_null() || modulus_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let n = key_ref.modulus_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 512) };
+    R::Ok as c_int
+}
+
+/// Copy the public exponent `e` from an RSA-4096 handle.
+///
+/// # Safety
+///
+/// `key` must be a live handle. `e_out` must be a non-NULL writable
+/// pointer to a `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_public_exponent(
+    key: *const OxiRsaPrivateKey4096,
+    e_out: *mut u64,
+) -> c_int {
+    if key.is_null() || e_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    unsafe { *e_out = key_ref.public_exponent() };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with RSASSA-PKCS#1-v1.5 SHA-256 under the RSA-4096
+/// handle. Deterministic; produces a 512-byte signature.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_sign_pkcs1_v15_sha256`]. `sig_out` must be a
+/// non-NULL writable pointer to ≥512 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_sign_pkcs1_v15_sha256(
+    key: *const OxiRsaPrivateKey4096,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_pkcs1_v15_sha256(msg) {
+        Ok(s) => s,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 512) };
+    R::Ok as c_int
+}
+
+/// Sign `msg` with RSASSA-PSS SHA-256 under the RSA-4096 handle,
+/// DRBG-sampled salt. Produces a 512-byte signature.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
+/// non-NULL writable pointer to ≥512 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_sign_pss_sha256(
+    key: *const OxiRsaPrivateKey4096,
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    if key.is_null() || drbg.is_null() || sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let sig = match key_ref.sign_pss_sha256(drbg_ref, msg) {
+        Ok(s) => s,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 512) };
+    R::Ok as c_int
+}
+
+/// Encrypt `msg` with RSAES-OAEP SHA-256 against the RSA-4096
+/// public key `(n, e)`, DRBG-sampled seed. Maximum plaintext length
+/// is 446 bytes; ciphertext is 512 bytes.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_oaep_encrypt_sha256`]. `n_ptr` must point to
+/// 512 bytes; `msg_len` must be ≤ 446; `ct_out` must be a non-NULL
+/// writable pointer to ≥512 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_oaep_encrypt_sha256(
+    drbg: *mut crate::drbg::OxiHmacDrbgSha256,
+    n_ptr: *const u8,
+    e: u64,
+    label_ptr: *const u8,
+    label_len: usize,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ct_out: *mut u8,
+) -> c_int {
+    if drbg.is_null() || n_ptr.is_null() || ct_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let n = match unsafe { slice_from_raw(n_ptr, 512) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let Ok(n_arr) = <&[u8; 512]>::try_from(n) else {
+        return R::Internal as c_int;
+    };
+    let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    let ct = match oxicrypt_rsa::rsa4096::oaep_encrypt(drbg_ref, n_arr, e, label, msg) {
+        Ok(c) => c,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 512) };
+    R::Ok as c_int
+}
+
+/// Decrypt an RSAES-OAEP SHA-256 ciphertext under the RSA-4096
+/// handle. `out_max_len` must be ≥ 446. Manger-resistant and
+/// Bellcore-protected on the CRT path.
+///
+/// # Safety
+///
+/// See [`oxi_rsa_2048_oaep_decrypt_sha256`]. `ct_ptr` must point to
+/// exactly 512 bytes; `out_max_len` must be ≥ 446.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_rsa_4096_oaep_decrypt_sha256(
+    key: *const OxiRsaPrivateKey4096,
+    label_ptr: *const u8,
+    label_len: usize,
+    ct_ptr: *const u8,
+    out_ptr: *mut u8,
+    out_max_len: usize,
+    out_actual_len: *mut usize,
+) -> c_int {
+    if key.is_null() || ct_ptr.is_null() || out_ptr.is_null() || out_actual_len.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out_max_len < oxicrypt_rsa::rsa4096::OAEP_MAX_MSG_LEN {
+        return R::InvalidInput as c_int;
+    }
+    let label = match unsafe { slice_from_raw(label_ptr, label_len) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let ct = match unsafe { slice_from_raw(ct_ptr, 512) } {
+        Ok(s) => s,
+        Err(err) => return err,
+    };
+    let Ok(ct_arr) = <&[u8; 512]>::try_from(ct) else {
+        return R::Internal as c_int;
+    };
+    let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
+        return R::NotOperational as c_int;
+    };
+    // Direct caller-buffer write — see `oxi_rsa_3072_oaep_decrypt_sha256`
+    // for the Manger-resistance + write-on-success-only argument.
+    let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, out_max_len) };
+    let actual = match key_ref.decrypt_oaep_sha256(label, ct_arr, out_slice) {
+        Ok(n) => n,
+        Err(err) => return R::from(err) as c_int,
+    };
+    unsafe { *out_actual_len = actual };
+    R::Ok as c_int
+}
