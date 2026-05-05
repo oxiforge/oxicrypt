@@ -70,12 +70,18 @@ pub use aes::{
     oxi_aes256_kwp_wrap, oxi_aes256_new, OxiAes256Key,
 };
 pub use drbg::{
+    oxi_hash_drbg_sha256_free, oxi_hash_drbg_sha256_generate, oxi_hash_drbg_sha256_instantiate,
+    oxi_hash_drbg_sha256_new, oxi_hash_drbg_sha256_reseed, oxi_hash_drbg_sha384_free,
+    oxi_hash_drbg_sha384_generate, oxi_hash_drbg_sha384_instantiate, oxi_hash_drbg_sha384_new,
+    oxi_hash_drbg_sha384_reseed, oxi_hash_drbg_sha512_free, oxi_hash_drbg_sha512_generate,
+    oxi_hash_drbg_sha512_instantiate, oxi_hash_drbg_sha512_new, oxi_hash_drbg_sha512_reseed,
     oxi_hmac_drbg_sha256_free, oxi_hmac_drbg_sha256_generate, oxi_hmac_drbg_sha256_instantiate,
     oxi_hmac_drbg_sha256_new, oxi_hmac_drbg_sha256_reseed, oxi_hmac_drbg_sha384_free,
     oxi_hmac_drbg_sha384_generate, oxi_hmac_drbg_sha384_instantiate, oxi_hmac_drbg_sha384_new,
     oxi_hmac_drbg_sha384_reseed, oxi_hmac_drbg_sha512_free, oxi_hmac_drbg_sha512_generate,
     oxi_hmac_drbg_sha512_instantiate, oxi_hmac_drbg_sha512_new, oxi_hmac_drbg_sha512_reseed,
-    OxiHmacDrbgSha256, OxiHmacDrbgSha384, OxiHmacDrbgSha512,
+    OxiHashDrbgSha256, OxiHashDrbgSha384, OxiHashDrbgSha512, OxiHmacDrbgSha256, OxiHmacDrbgSha384,
+    OxiHmacDrbgSha512,
 };
 pub use error::OxiResult;
 

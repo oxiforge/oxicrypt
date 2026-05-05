@@ -111,7 +111,9 @@
 use crate::error::{status_drbg, status_module, OxiResult as R};
 use crate::handle::OxiHandle;
 use core::ffi::c_int;
-use oxicrypt_drbg::{HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512};
+use oxicrypt_drbg::{
+    HashDrbgSha256, HashDrbgSha384, HashDrbgSha512, HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512,
+};
 
 /// Opaque HMAC_DRBG-SHA-256 handle. The internal layout
 /// (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
@@ -668,6 +670,497 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed(
 #[no_mangle]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha512_generate(
     handle: *mut OxiHmacDrbgSha512,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate(ai_opt, out_slice))
+}
+
+// ── Hash-DRBG-SHA-256 / -SHA-384 / -SHA-512 — additive variants ──
+//
+// SP 800-90A §10.1.1 Hash_DRBG family. Pure stencil mirror of
+// `OxiHmacDrbgSha{256,384,512}` above; upstream `HashDrbg<H: HashAlg>`
+// is parametric over the hash with `HashDrbgSha{256,384,512}` shipping
+// as type aliases at `crates/oxicrypt-drbg/src/hash.rs:139-143`. The
+// `instantiate / reseed / generate` signatures are byte-identical to
+// the HMAC-DRBG family (same `Result<(), Error>` for instantiate,
+// `Result<(), DrbgError>` for reseed and generate, same `Option<&[u8]>`
+// for generate's `additional_input`). Combined-input ceiling is
+// `HASH_DRBG_MAX_DF_INPUT` (alg-independent). Per SP 800-90A Table 2,
+// security strengths match HMAC: SHA-256 = 256, SHA-384 = 192,
+// SHA-512 = 256 bits. No new `OxiResult` discriminants.
+
+/// Opaque Hash_DRBG-SHA-256 handle. See `OxiHmacDrbgSha256`.
+///
+/// cbindgen:opaque
+pub struct OxiHashDrbgSha256 {
+    inner: OxiHandle<HashDrbgSha256>,
+}
+
+impl OxiHashDrbgSha256 {
+    #[allow(dead_code)] // first call site lands when a Hash-DRBG-SHA-256-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut HashDrbgSha256> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated Hash_DRBG-SHA-256 handle. See
+/// [`oxi_hmac_drbg_sha256_new`] for full contract.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiHashDrbgSha256`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_new(
+    out_handle: *mut *mut OxiHashDrbgSha256,
+) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiHashDrbgSha256 {
+        inner: OxiHandle::new(HashDrbgSha256::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free a Hash_DRBG-SHA-256 handle. NULL-safe.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_hash_drbg_sha256_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_free(handle: *mut OxiHashDrbgSha256) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2). See
+/// [`oxi_hmac_drbg_sha256_instantiate`] for full contract; per
+/// SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
+/// nonce ≥ 128 bits. Combined-input ceiling is the alg-independent
+/// `HASH_DRBG_MAX_DF_INPUT` upstream constant.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hash_drbg_sha256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_instantiate(
+    handle: *mut OxiHashDrbgSha256,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). See
+/// [`oxi_hmac_drbg_sha256_reseed`].
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hash_drbg_sha256_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_reseed(
+    handle: *mut OxiHashDrbgSha256,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed(entropy_slice, ai_slice))
+}
+
+/// Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4). See
+/// [`oxi_hmac_drbg_sha256_generate`].
+///
+/// # Safety
+///
+/// `handle` must be a live handle from [`oxi_hash_drbg_sha256_new`].
+/// `out` must point to ≥ `out_len` writable bytes.
+/// `additional_input` must point to ≥ `additional_input_len`
+/// readable bytes when `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha256_generate(
+    handle: *mut OxiHashDrbgSha256,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate(ai_opt, out_slice))
+}
+
+/// Opaque Hash_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
+///
+/// cbindgen:opaque
+pub struct OxiHashDrbgSha384 {
+    inner: OxiHandle<HashDrbgSha384>,
+}
+
+impl OxiHashDrbgSha384 {
+    #[allow(dead_code)] // first call site lands when a Hash-DRBG-SHA-384-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut HashDrbgSha384> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated Hash_DRBG-SHA-384 handle.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiHashDrbgSha384`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_new(
+    out_handle: *mut *mut OxiHashDrbgSha384,
+) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiHashDrbgSha384 {
+        inner: OxiHandle::new(HashDrbgSha384::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free a Hash_DRBG-SHA-384 handle. NULL-safe.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_hash_drbg_sha384_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_free(handle: *mut OxiHashDrbgSha384) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// Hash_DRBG-SHA-384 Instantiate. Per SP 800-90A Table 2, security
+/// strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hash_drbg_sha384_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_instantiate(
+    handle: *mut OxiHashDrbgSha384,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// Hash_DRBG-SHA-384 Reseed.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hash_drbg_sha384_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_reseed(
+    handle: *mut OxiHashDrbgSha384,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed(entropy_slice, ai_slice))
+}
+
+/// Hash_DRBG-SHA-384 Generate.
+///
+/// # Safety
+///
+/// `handle` must be a live handle from [`oxi_hash_drbg_sha384_new`].
+/// `out` must point to ≥ `out_len` writable bytes.
+/// `additional_input` must point to ≥ `additional_input_len`
+/// readable bytes when `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha384_generate(
+    handle: *mut OxiHashDrbgSha384,
+    additional_input: *const u8,
+    additional_input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out.is_null() && out_len > 0 {
+        return R::NullPointer as c_int;
+    }
+    let ai_opt: Option<&[u8]> = if additional_input.is_null() && additional_input_len == 0 {
+        None
+    } else {
+        match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let out_slice = match unsafe { crate::slice_from_raw_mut(out, out_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.generate(ai_opt, out_slice))
+}
+
+/// Opaque Hash_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+///
+/// cbindgen:opaque
+pub struct OxiHashDrbgSha512 {
+    inner: OxiHandle<HashDrbgSha512>,
+}
+
+impl OxiHashDrbgSha512 {
+    #[allow(dead_code)] // first call site lands when a Hash-DRBG-SHA-512-driven primitive surfaces
+    pub(crate) fn inner_mut(&mut self) -> Option<&mut HashDrbgSha512> {
+        self.inner.as_mut()
+    }
+}
+
+/// Allocate a new, uninstantiated Hash_DRBG-SHA-512 handle.
+///
+/// # Safety
+///
+/// `out_handle` must be a valid pointer to a writable
+/// `*mut OxiHashDrbgSha512`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_new(
+    out_handle: *mut *mut OxiHashDrbgSha512,
+) -> c_int {
+    if out_handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let boxed = Box::new(OxiHashDrbgSha512 {
+        inner: OxiHandle::new(HashDrbgSha512::new()),
+    });
+    unsafe { *out_handle = Box::into_raw(boxed) };
+    R::Ok as c_int
+}
+
+/// Free a Hash_DRBG-SHA-512 handle. NULL-safe.
+///
+/// # Safety
+///
+/// `handle` must be either NULL or a pointer previously returned by
+/// [`oxi_hash_drbg_sha512_new`] that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_free(handle: *mut OxiHashDrbgSha512) {
+    if handle.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
+/// strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hash_drbg_sha512_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_instantiate(
+    handle: *mut OxiHashDrbgSha512,
+    entropy: *const u8,
+    entropy_len: usize,
+    nonce: *const u8,
+    nonce_len: usize,
+    personalization: *const u8,
+    personalization_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let nonce_slice = match unsafe { crate::slice_from_raw(nonce, nonce_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let perso_slice = match unsafe { crate::slice_from_raw(personalization, personalization_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_module(drbg.instantiate(entropy_slice, nonce_slice, perso_slice))
+}
+
+/// Hash_DRBG-SHA-512 Reseed.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `handle` must be a live
+/// handle from [`oxi_hash_drbg_sha512_new`].
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_reseed(
+    handle: *mut OxiHashDrbgSha512,
+    entropy: *const u8,
+    entropy_len: usize,
+    additional_input: *const u8,
+    additional_input_len: usize,
+) -> c_int {
+    if handle.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let entropy_slice = match unsafe { crate::slice_from_raw(entropy, entropy_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ai_slice = match unsafe { crate::slice_from_raw(additional_input, additional_input_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(drbg) = (unsafe { (*handle).inner.as_mut() }) else {
+        return R::NotOperational as c_int;
+    };
+    status_drbg(drbg.reseed(entropy_slice, ai_slice))
+}
+
+/// Hash_DRBG-SHA-512 Generate.
+///
+/// # Safety
+///
+/// `handle` must be a live handle from [`oxi_hash_drbg_sha512_new`].
+/// `out` must point to ≥ `out_len` writable bytes.
+/// `additional_input` must point to ≥ `additional_input_len`
+/// readable bytes when `additional_input_len > 0`.
+#[no_mangle]
+pub unsafe extern "C" fn oxi_hash_drbg_sha512_generate(
+    handle: *mut OxiHashDrbgSha512,
     additional_input: *const u8,
     additional_input_len: usize,
     out: *mut u8,

@@ -6852,6 +6852,362 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  # ── Hash-DRBG-SHA-256 / -SHA-384 / -SHA-512 — additive variants ──
+  #
+  # Same lifecycle and contract as the HMAC-DRBG family above; differ
+  # only in upstream construction (Hash_DRBG per SP 800-90A §10.1.1
+  # vs HMAC_DRBG per §10.1.2). Hash strength per Table 2:
+  # SHA-256 = 256-bit, SHA-384 = 192-bit, SHA-512 = 256-bit.
+
+  - name: OxiHashDrbgSha256
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque Hash_DRBG-SHA-256 handle. Internal layout
+      (`OxiHandle<HashDrbgSha256>`) is implementation detail; cbindgen
+      renders this as an opaque struct. Same per-call-mutating
+      thread-safety and Drop-zeroize contract as `OxiHmacDrbgSha256`;
+      see security-policy §4.8 DRBG handle-surface row. Per SP 800-90A
+      Table 2, security strength is 256 bits. Allocate via
+      `oxi_hash_drbg_sha256_new`; release via
+      `oxi_hash_drbg_sha256_free`.
+
+  - name: OxiHashDrbgSha384
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque Hash_DRBG-SHA-384 handle. Per SP 800-90A Table 2,
+      security strength is 192 bits. Allocate via
+      `oxi_hash_drbg_sha384_new`; release via
+      `oxi_hash_drbg_sha384_free`.
+
+  - name: OxiHashDrbgSha512
+    kind: opaque_type
+    module: oxicrypt-ffi
+    description: >-
+      Opaque Hash_DRBG-SHA-512 handle. Per SP 800-90A Table 2,
+      security strength is 256 bits. Allocate via
+      `oxi_hash_drbg_sha512_new`; release via
+      `oxi_hash_drbg_sha512_free`.
+
+  - name: oxi_hash_drbg_sha256_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, uninstantiated Hash_DRBG-SHA-256 handle. Mirrors
+      `oxi_hmac_drbg_sha256_new`. Forwards to
+      `oxicrypt_drbg::HashDrbgSha256::new`.
+    signature: >-
+      int oxi_hash_drbg_sha256_new(OxiHashDrbgSha256 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiHashDrbgSha256 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer if out_handle is NULL)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha256_free
+    module: oxicrypt-ffi
+    description: >-
+      Free a Hash_DRBG-SHA-256 handle. NULL-safe. Drop on the upstream
+      `HashDrbgSha256` zeroizes the internal `(V, C, reseed_counter)`
+      state via `oxicrypt-zeroize`.
+    signature: >-
+      void oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *handle)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha256 *", direction: in, description: "Handle, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha256_instantiate
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2). Mirrors
+      `oxi_hmac_drbg_sha256_instantiate`. Per SP 800-90A Table 2,
+      security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+      Combined-input ceiling is the alg-independent
+      `HASH_DRBG_MAX_DF_INPUT` upstream constant.
+    signature: >-
+      int oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha256 *", direction: in, description: "Live handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Caller-sourced entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length in bytes" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Caller-sourced nonce bytes" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length in bytes" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization (NULL+0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length in bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_instantiate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha256_reseed
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). Mirrors
+      `oxi_hmac_drbg_sha256_reseed`.
+    signature: >-
+      int oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Fresh entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length in bytes" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input (NULL+0 = none)" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length in bytes" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_reseed."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha256_generate
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4). Mirrors
+      `oxi_hmac_drbg_sha256_generate`; same `2^19`-bit
+      max_number_of_bits_per_request ceiling.
+    signature: >-
+      int oxi_hash_drbg_sha256_generate(OxiHashDrbgSha256 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha256 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input (NULL+0 = upstream None)" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length in bytes" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_generate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, uninstantiated Hash_DRBG-SHA-384 handle.
+      Mirrors `oxi_hash_drbg_sha256_new`.
+    signature: >-
+      int oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiHashDrbgSha384 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_free
+    module: oxicrypt-ffi
+    description: >-
+      Free a Hash_DRBG-SHA-384 handle. NULL-safe.
+    signature: >-
+      void oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *handle)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha384 *", direction: in, description: "Handle, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_instantiate
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-384 Instantiate. Per SP 800-90A Table 2, security
+      strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits.
+    signature: >-
+      int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha384 *", direction: in, description: "Live handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Nonce bytes" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization (NULL+0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_instantiate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_reseed
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-384 Reseed. Mirrors `oxi_hash_drbg_sha256_reseed`.
+    signature: >-
+      int oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha384 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Fresh entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_reseed."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha384_generate
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-384 Generate. Mirrors
+      `oxi_hash_drbg_sha256_generate`.
+    signature: >-
+      int oxi_hash_drbg_sha384_generate(OxiHashDrbgSha384 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha384 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_generate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_new
+    module: oxicrypt-ffi
+    description: >-
+      Allocate a new, uninstantiated Hash_DRBG-SHA-512 handle.
+    signature: >-
+      int oxi_hash_drbg_sha512_new(OxiHashDrbgSha512 **out_handle)
+    parameters:
+      - { name: out_handle, type: "OxiHashDrbgSha512 **", direction: out, description: "Receives heap-allocated opaque handle pointer on success" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_free
+    module: oxicrypt-ffi
+    description: >-
+      Free a Hash_DRBG-SHA-512 handle. NULL-safe.
+    signature: >-
+      void oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *handle)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha512 *", direction: in, description: "Handle, or NULL" }
+    returns:
+      type: void
+      description: "No return value"
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_instantiate
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
+      strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+    signature: >-
+      int oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *nonce, size_t nonce_len,
+      const uint8_t *personalization, size_t personalization_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha512 *", direction: in, description: "Live handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: nonce, type: "const uint8_t *", direction: in, description: "Nonce bytes" }
+      - { name: nonce_len, type: "size_t", direction: in, description: "Nonce length" }
+      - { name: personalization, type: "const uint8_t *", direction: in, description: "Personalization (NULL+0 OK)" }
+      - { name: personalization_len, type: "size_t", direction: in, description: "Personalization length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_instantiate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_reseed
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-512 Reseed.
+    signature: >-
+      int oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *handle,
+      const uint8_t *entropy, size_t entropy_len,
+      const uint8_t *additional_input, size_t additional_input_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha512 *", direction: in, description: "Live, instantiated handle" }
+      - { name: entropy, type: "const uint8_t *", direction: in, description: "Fresh entropy bytes" }
+      - { name: entropy_len, type: "size_t", direction: in, description: "Entropy length" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_reseed."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_hash_drbg_sha512_generate
+    module: oxicrypt-ffi
+    description: >-
+      Hash_DRBG-SHA-512 Generate.
+    signature: >-
+      int oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *handle,
+      const uint8_t *additional_input, size_t additional_input_len,
+      uint8_t *out, size_t out_len)
+    parameters:
+      - { name: handle, type: "OxiHashDrbgSha512 *", direction: in, description: "Live, instantiated handle" }
+      - { name: additional_input, type: "const uint8_t *", direction: in, description: "Optional additional input" }
+      - { name: additional_input_len, type: "size_t", direction: in, description: "Additional input length" }
+      - { name: out, type: "uint8_t *", direction: out, description: "Output buffer" }
+      - { name: out_len, type: "size_t", direction: in, description: "Bytes to produce (≤ 65536)" }
+    returns:
+      type: int
+      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_generate."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────

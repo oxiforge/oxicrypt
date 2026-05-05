@@ -46,6 +46,24 @@ typedef struct OxiEcdsaP256PrivateKey OxiEcdsaP256PrivateKey;
 typedef struct OxiEcdsaP384PrivateKey OxiEcdsaP384PrivateKey;
 
 /*
+ Opaque Hash_DRBG-SHA-256 handle. See `OxiHmacDrbgSha256`.
+
+ */
+typedef struct OxiHashDrbgSha256 OxiHashDrbgSha256;
+
+/*
+ Opaque Hash_DRBG-SHA-384 handle. See `OxiHmacDrbgSha256`.
+
+ */
+typedef struct OxiHashDrbgSha384 OxiHashDrbgSha384;
+
+/*
+ Opaque Hash_DRBG-SHA-512 handle. See `OxiHmacDrbgSha256`.
+
+ */
+typedef struct OxiHashDrbgSha512 OxiHashDrbgSha512;
+
+/*
  Opaque HMAC_DRBG-SHA-256 handle. The internal layout
  (`OxiHandle<HmacDrbgSha256>`) is implementation detail and not
  part of the C ABI; cbindgen renders this as an opaque struct.
@@ -2514,6 +2532,213 @@ int oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *handle,
  readable bytes when `additional_input_len > 0`.
  */
 int oxi_hmac_drbg_sha512_generate(OxiHmacDrbgSha512 *handle,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len,
+                                  uint8_t *out,
+                                  uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated Hash_DRBG-SHA-256 handle. See
+ [`oxi_hmac_drbg_sha256_new`] for full contract.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiHashDrbgSha256`.
+ */
+int oxi_hash_drbg_sha256_new(OxiHashDrbgSha256 **out_handle);
+
+/*
+ Free a Hash_DRBG-SHA-256 handle. NULL-safe.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_hash_drbg_sha256_new`] that has not yet been freed.
+ */
+void oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *handle);
+
+/*
+ Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2). See
+ [`oxi_hmac_drbg_sha256_instantiate`] for full contract; per
+ SP 800-90A Table 2, security strength 256 → entropy ≥ 256 bits,
+ nonce ≥ 128 bits. Combined-input ceiling is the alg-independent
+ `HASH_DRBG_MAX_DF_INPUT` upstream constant.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hash_drbg_sha256_new`].
+ */
+int oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *handle,
+                                     const uint8_t *entropy,
+                                     uintptr_t entropy_len,
+                                     const uint8_t *nonce,
+                                     uintptr_t nonce_len,
+                                     const uint8_t *personalization,
+                                     uintptr_t personalization_len);
+
+/*
+ Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). See
+ [`oxi_hmac_drbg_sha256_reseed`].
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hash_drbg_sha256_new`].
+ */
+int oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *handle,
+                                const uint8_t *entropy,
+                                uintptr_t entropy_len,
+                                const uint8_t *additional_input,
+                                uintptr_t additional_input_len);
+
+/*
+ Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4). See
+ [`oxi_hmac_drbg_sha256_generate`].
+
+ # Safety
+
+ `handle` must be a live handle from [`oxi_hash_drbg_sha256_new`].
+ `out` must point to ≥ `out_len` writable bytes.
+ `additional_input` must point to ≥ `additional_input_len`
+ readable bytes when `additional_input_len > 0`.
+ */
+int oxi_hash_drbg_sha256_generate(OxiHashDrbgSha256 *handle,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len,
+                                  uint8_t *out,
+                                  uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated Hash_DRBG-SHA-384 handle.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiHashDrbgSha384`.
+ */
+int oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **out_handle);
+
+/*
+ Free a Hash_DRBG-SHA-384 handle. NULL-safe.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_hash_drbg_sha384_new`] that has not yet been freed.
+ */
+void oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *handle);
+
+/*
+ Hash_DRBG-SHA-384 Instantiate. Per SP 800-90A Table 2, security
+ strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hash_drbg_sha384_new`].
+ */
+int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
+                                     const uint8_t *entropy,
+                                     uintptr_t entropy_len,
+                                     const uint8_t *nonce,
+                                     uintptr_t nonce_len,
+                                     const uint8_t *personalization,
+                                     uintptr_t personalization_len);
+
+/*
+ Hash_DRBG-SHA-384 Reseed.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hash_drbg_sha384_new`].
+ */
+int oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *handle,
+                                const uint8_t *entropy,
+                                uintptr_t entropy_len,
+                                const uint8_t *additional_input,
+                                uintptr_t additional_input_len);
+
+/*
+ Hash_DRBG-SHA-384 Generate.
+
+ # Safety
+
+ `handle` must be a live handle from [`oxi_hash_drbg_sha384_new`].
+ `out` must point to ≥ `out_len` writable bytes.
+ `additional_input` must point to ≥ `additional_input_len`
+ readable bytes when `additional_input_len > 0`.
+ */
+int oxi_hash_drbg_sha384_generate(OxiHashDrbgSha384 *handle,
+                                  const uint8_t *additional_input,
+                                  uintptr_t additional_input_len,
+                                  uint8_t *out,
+                                  uintptr_t out_len);
+
+/*
+ Allocate a new, uninstantiated Hash_DRBG-SHA-512 handle.
+
+ # Safety
+
+ `out_handle` must be a valid pointer to a writable
+ `*mut OxiHashDrbgSha512`.
+ */
+int oxi_hash_drbg_sha512_new(OxiHashDrbgSha512 **out_handle);
+
+/*
+ Free a Hash_DRBG-SHA-512 handle. NULL-safe.
+
+ # Safety
+
+ `handle` must be either NULL or a pointer previously returned by
+ [`oxi_hash_drbg_sha512_new`] that has not yet been freed.
+ */
+void oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *handle);
+
+/*
+ Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
+ strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hash_drbg_sha512_new`].
+ */
+int oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *handle,
+                                     const uint8_t *entropy,
+                                     uintptr_t entropy_len,
+                                     const uint8_t *nonce,
+                                     uintptr_t nonce_len,
+                                     const uint8_t *personalization,
+                                     uintptr_t personalization_len);
+
+/*
+ Hash_DRBG-SHA-512 Reseed.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `handle` must be a live
+ handle from [`oxi_hash_drbg_sha512_new`].
+ */
+int oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *handle,
+                                const uint8_t *entropy,
+                                uintptr_t entropy_len,
+                                const uint8_t *additional_input,
+                                uintptr_t additional_input_len);
+
+/*
+ Hash_DRBG-SHA-512 Generate.
+
+ # Safety
+
+ `handle` must be a live handle from [`oxi_hash_drbg_sha512_new`].
+ `out` must point to ≥ `out_len` writable bytes.
+ `additional_input` must point to ≥ `additional_input_len`
+ readable bytes when `additional_input_len > 0`.
+ */
+int oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *handle,
                                   const uint8_t *additional_input,
                                   uintptr_t additional_input_len,
                                   uint8_t *out,
