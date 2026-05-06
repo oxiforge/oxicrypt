@@ -329,7 +329,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::rsa_siggen::RsaSigGenHandler));
     // KAS-ECC-SSC (R26: P-256 ECDH shared secret, Sp800-56Ar3; R59: add P-384)
     r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
-    // KAS-FFC-SSC (R59: DH-3072 shared secret computation, Sp800-56Ar3)
+    // KAS-FFC-SSC (R59: MODP-3072 shared secret computation, Sp800-56Ar3)
     r.register(Box::new(handlers::kas_ffc_ssc::KasFfcSscHandler));
     // RSA OAEP (R27: encrypt/decrypt, RFC8017, RSA-2048/SHA2-256)
     r.register(Box::new(handlers::rsa_oaep::RsaOaepHandler));

@@ -324,8 +324,8 @@
 //!   shared secret computation
 //! - [`rsa`] — `RSA` / `sigVer` extends to handle 3072- and 4096-bit
 //!   moduli in addition to 2048-bit, covering PKCS#1v1.5 and PSS
-//! - [`kas_ffc_ssc`] — new handler `KAS-FFC-SSC` / `Component` for
-//!   DH-3072 shared secret computation (3072-bit Diffie-Hellman)
+//! - [`kas_ffc_ssc`] — new handler `KAS-FFC-SSC` (no mode segment) for
+//!   MODP-3072 shared secret computation (RFC 3526 Group 15)
 //! - [`ml_kem`] — three new handlers for `ML-KEM-1024` (post-quantum):
 //!   `keyGen`, `encaps`, `decaps` per FIPS 203, implementing the full KEM
 //!   lifecycle with deterministic key generation and encapsulation

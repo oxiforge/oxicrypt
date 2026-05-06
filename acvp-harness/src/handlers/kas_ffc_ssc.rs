@@ -1,8 +1,9 @@
 //! KAS-FFC-SSC ACVP handler — revision `Sp800-56Ar3` (no mode).
 //!
 //! **KAS-FFC-SSC** (`KAS-FFC-SSC` / `Sp800-56Ar3`): Given a private
-//! key `x` and the peer's public key `y`, compute the Diffie-Hellman
-//! shared secret `Z = y^x mod p` per SP 800-56Ar3 §5.7.1.3.
+//! exponent `x` and the peer's public key `y`, compute the
+//! Diffie-Hellman shared secret `Z = y^x mod p` per SP 800-56Ar3
+//! §5.7.1.1 over RFC 3526 Group 15 (the MODP-3072 safe-prime group).
 //!
 //! Despite carrying a `mode: "Component"` field in earlier revisions
 //! of this handler, the ACVTS demo catalog registers this algorithm
@@ -11,12 +12,11 @@
 //! correction in PR #36. Both the registration capability and the
 //! dispatcher's lookup tuple drop the mode after the 2026-05-05 ACVP
 //! spec-vs-implementation review. See `caps::kas_ffc_ssc_capability`
-//! for the rationale, including the spec citations from
-//! `draft-hammett-acvp-kas-ssc-ffc` §7.3 Table 3 and §7.4
-//! Registration Example.
+//! for the rationale.
 //!
 //! Supported configurations:
-//! - `domainParameterGenerationMode = "DH-3072"` — 3072-bit modulus, 384-byte values
+//! - `domainParameterGenerationMode = "MODP-3072"` — RFC 3526 Group
+//!   15 safe-prime, 384-byte exponent and shared-secret values.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -43,6 +43,27 @@ impl AlgorithmHandler for KasFfcSscHandler {
     }
 }
 
+/// AFT vs VAL.
+///
+/// - **AFT** (algorithm functional test): for the live demo's
+///   `dhEphem` scheme the prompt only carries the server's
+///   ephemeral public key; the IUT samples its own ephemeral
+///   keypair via DRBG (SP 800-56Ar3 §5.6.1.1.4 rejection sampling
+///   in `oxicrypt_dh::generate_keypair_3072_internal`), reports the
+///   IUT public key and the computed `z`. Vendored offline kat-
+///   slice fixtures use a deterministic shape — `x` (IUT private)
+///   and `y` (peer public) per test, response just `z` — detected
+///   by `x` presence.
+/// - **VAL** (validation): IUT computes `z` from supplied
+///   `ephemeralPrivateIut` + server's `ephemeralPublicServer`,
+///   compares against the candidate `z` shipped with the test, and
+///   reports `testPassed`.
+#[derive(Debug, Clone, Copy)]
+enum TestKind {
+    Aft,
+    Val,
+}
+
 fn handle_kas_ffc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     let tg_id = group
         .get("tgId")
@@ -53,17 +74,19 @@ fn handle_kas_ffc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
-        return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
-    }
+    let kind = match test_type {
+        "AFT" => TestKind::Aft,
+        "VAL" => TestKind::Val,
+        other => return Err(DispatchError::UnsupportedTestType(other.to_string())),
+    };
 
     let domain = group
         .get("domainParameterGenerationMode")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("domainParameterGenerationMode"))?;
-    if domain != "DH-3072" {
+    if domain != "MODP-3072" {
         return Err(DispatchError::Unsupported(
-            "KAS-FFC-SSC: only DH-3072 is supported",
+            "KAS-FFC-SSC: only MODP-3072 is supported",
         ));
     }
 
@@ -75,44 +98,114 @@ fn handle_kas_ffc_ssc_group(group: &JsonValue) -> Result<JsonValue, DispatchErro
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
     for tc in tests {
-        let test_case_id = tc
-            .get("tcId")
-            .and_then(JsonValue::as_i64)
-            .ok_or(DispatchError::MissingField("tcId"))?;
-
-        // Private key x (384 bytes for 3072-bit DH).
-        let x_raw = hex::decode(
-            tc.get("x")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("x"))?,
-        )?;
-        let x: [u8; 384] = x_raw
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("KAS-FFC-SSC: x is not 384 bytes"))?;
-
-        // Peer public key y (384 bytes for 3072-bit DH).
-        let y_raw = hex::decode(
-            tc.get("y")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("y"))?,
-        )?;
-        let y: [u8; 384] = y_raw
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("KAS-FFC-SSC: y is not 384 bytes"))?;
-
-        let z = oxicrypt_dh::compute_shared_secret_3072_internal(&x, &y)
-            .ok_or(DispatchError::Crypto("KAS-FFC-SSC: DH computation failed"))?;
-
-        results.push(JsonValue::Object(vec![
-            ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
-        ]));
+        let resp = match kind {
+            TestKind::Aft => handle_aft(tc)?,
+            TestKind::Val => handle_val(tc)?,
+        };
+        results.push(resp);
     }
 
     Ok(JsonValue::Object(vec![
         ("tgId".to_string(), JsonValue::Number(tg_id)),
         ("tests".to_string(), JsonValue::Array(results)),
     ]))
+}
+
+// ── AFT ─────────────────────────────────────────────────────────────
+
+fn handle_aft(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
+    let tc_id = tc
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+
+    // Offline kat-slice fixtures carry `x` per test (deterministic
+    // round-trip); live ACVTS prompts carry only
+    // `ephemeralPublicServer` and expect the IUT to sample its own.
+    if tc.get("x").is_some() {
+        let x = decode_field_3072(tc, "x")?;
+        let y = decode_field_3072(tc, "y")?;
+        let z = oxicrypt_dh::compute_shared_secret_3072_internal(&x, &y)
+            .ok_or(DispatchError::Crypto("KAS-FFC-SSC: DH computation failed"))?;
+        Ok(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(tc_id)),
+            ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
+        ]))
+    } else {
+        let peer_y = decode_field_3072(tc, "ephemeralPublicServer")?;
+        let mut drbg = super::os_entropy::build_seeded_drbg()?;
+        let (x_iut, y_iut) = oxicrypt_dh::generate_keypair_3072_internal(&mut drbg).ok_or(
+            DispatchError::Crypto("KAS-FFC-SSC: ephemeral keygen failed"),
+        )?;
+        let z = oxicrypt_dh::compute_shared_secret_3072_internal(&x_iut, &peer_y)
+            .ok_or(DispatchError::Crypto("KAS-FFC-SSC: DH computation failed"))?;
+        Ok(JsonValue::Object(vec![
+            ("tcId".to_string(), JsonValue::Number(tc_id)),
+            (
+                "ephemeralPublicIut".to_string(),
+                JsonValue::String(hex::encode_upper(&y_iut)),
+            ),
+            ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
+        ]))
+    }
+}
+
+// ── VAL ─────────────────────────────────────────────────────────────
+
+fn handle_val(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
+    let tc_id = tc
+        .get("tcId")
+        .and_then(JsonValue::as_i64)
+        .ok_or(DispatchError::MissingField("tcId"))?;
+    let x_iut = decode_field_3072(tc, "ephemeralPrivateIut")?;
+    let peer_y = decode_field_3072(tc, "ephemeralPublicServer")?;
+    let computed = oxicrypt_dh::compute_shared_secret_3072_internal(&x_iut, &peer_y).ok_or(
+        DispatchError::Crypto("KAS-FFC-SSC: VAL DH computation failed"),
+    )?;
+    let candidate = hex::decode(
+        tc.get("z")
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField("z"))?,
+    )?;
+    let passed = ct_eq_bytes(&computed, &candidate);
+    Ok(JsonValue::Object(vec![
+        ("tcId".to_string(), JsonValue::Number(tc_id)),
+        ("testPassed".to_string(), JsonValue::Bool(passed)),
+    ]))
+}
+
+// ── decode helpers ──────────────────────────────────────────────────
+
+/// Decode a hex-string field at MODP-3072 width (384 bytes). The
+/// `ephemeralPrivateIut` field may be shorter than 384 bytes when
+/// the server uses a subgroup-sized exponent; left-pad with zeros
+/// so the primitive sees a 384-byte big-endian value.
+fn decode_field_3072(tc: &JsonValue, field: &'static str) -> Result<[u8; 384], DispatchError> {
+    let raw = hex::decode(
+        tc.get(field)
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField(field))?,
+    )?;
+    if raw.len() > 384 {
+        return Err(DispatchError::Crypto(
+            "KAS-FFC-SSC: MODP-3072 field exceeds 384 bytes",
+        ));
+    }
+    let mut out = [0u8; 384];
+    let pad = 384 - raw.len();
+    out[pad..].copy_from_slice(&raw);
+    Ok(out)
+}
+
+/// Equal-length constant-time byte-slice equality. A length mismatch
+/// is reported as `false` without entering the byte loop.
+fn ct_eq_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for i in 0..a.len() {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
 }

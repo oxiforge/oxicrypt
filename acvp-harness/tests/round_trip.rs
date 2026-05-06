@@ -2064,6 +2064,19 @@ fn kas_ecc_ssc_lifecycle_round_trip() {
 }
 
 // ----------------------------------------------------------------------
+// KAS-FFC-SSC (R59: MODP-3072 DH shared secret, answer field `z`)
+// ----------------------------------------------------------------------
+
+#[test]
+fn kas_ffc_ssc_round_trip() {
+    assert_round_trip(
+        "../vendor/nist/acvp-server/gen-val/json-files/KAS-FFC-SSC-Sp800-56Ar3/kat-slice.json",
+        "z",
+        "KAS-FFC-SSC",
+    );
+}
+
+// ----------------------------------------------------------------------
 // RSA OAEP encrypt/decrypt (R27: RSA-2048 / SHA2-256, RFC8017)
 // ----------------------------------------------------------------------
 

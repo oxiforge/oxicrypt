@@ -946,6 +946,16 @@ pub fn kas_ecc_ssc_capability() -> JsonValue {
 /// `prereqVals`, `scheme`, `domainParameterGenerationMethods`,
 /// `hashFunctionZ` — no `mode` property. The §7.4 Registration
 /// Example likewise omits any `mode` field.
+///
+/// `domainParameterGenerationMethods` advertises **`MODP-3072`**
+/// only. Per spec §7.3.2 the recognized identifiers are the fixed-
+/// prime groups (`MODP-2048..8192`, `ffdhe2048..8192`) and the
+/// per-group-supplied-primes methods (`FB`, `FC`). `oxicrypt-dh`
+/// implements RFC 3526 Group 15 (the canonical 3072-bit MODP
+/// safe-prime group), so only the matching `MODP-3072` identifier
+/// is honest. `FB`/`FC` would imply per-group `p`/`q`/`g` that the
+/// primitive cannot consume; advertising them would invite live
+/// prompts the IUT cannot satisfy.
 pub fn kas_ffc_ssc_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KAS-FFC-SSC")),
@@ -957,7 +967,10 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
                 obj(vec![("kasRole", str_array(&["initiator", "responder"]))]),
             )]),
         ),
-        ("domainParameterGenerationMethods", str_array(&["FB"])),
+        (
+            "domainParameterGenerationMethods",
+            str_array(&["MODP-3072"]),
+        ),
     ])
 }
 
