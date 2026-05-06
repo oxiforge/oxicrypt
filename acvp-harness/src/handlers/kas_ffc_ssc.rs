@@ -1,8 +1,19 @@
-//! KAS-FFC-SSC ACVP handler — `Component` mode, revision `Sp800-56Ar3`.
+//! KAS-FFC-SSC ACVP handler — revision `Sp800-56Ar3` (no mode).
 //!
-//! **KAS-FFC-SSC** (`KAS-FFC-SSC` / `Component` / `Sp800-56Ar3`):
-//! Given a private key `x` and the peer's public key `y`, compute the
-//! Diffie-Hellman shared secret `Z = y^x mod p` per SP 800-56Ar3 §5.7.1.3.
+//! **KAS-FFC-SSC** (`KAS-FFC-SSC` / `Sp800-56Ar3`): Given a private
+//! key `x` and the peer's public key `y`, compute the Diffie-Hellman
+//! shared secret `Z = y^x mod p` per SP 800-56Ar3 §5.7.1.3.
+//!
+//! Despite carrying a `mode: "Component"` field in earlier revisions
+//! of this handler, the ACVTS demo catalog registers this algorithm
+//! with no mode segment (catalog row 158, lookup key
+//! `KAS-FFC-SSC-Sp800-56Ar3`) — paralleling the KAS-ECC-SSC
+//! correction in PR #36. Both the registration capability and the
+//! dispatcher's lookup tuple drop the mode after the 2026-05-05 ACVP
+//! spec-vs-implementation review. See `caps::kas_ffc_ssc_capability`
+//! for the rationale, including the spec citations from
+//! `draft-hammett-acvp-kas-ssc-ffc` §7.3 Table 3 and §7.4
+//! Registration Example.
 //!
 //! Supported configurations:
 //! - `domainParameterGenerationMode = "DH-3072"` — 3072-bit modulus, 384-byte values
@@ -19,7 +30,7 @@ impl AlgorithmHandler for KasFfcSscHandler {
         "KAS-FFC-SSC"
     }
     fn mode(&self) -> Option<&'static str> {
-        Some("Component")
+        None
     }
     fn revision(&self) -> &'static str {
         "Sp800-56Ar3"

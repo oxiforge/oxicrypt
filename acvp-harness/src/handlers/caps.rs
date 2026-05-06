@@ -928,11 +928,27 @@ pub fn kas_ecc_ssc_capability() -> JsonValue {
 
 // ── KAS-FFC-SSC ──────────────────────────────────────────────────
 
-/// Build an ACVP registration block for KAS-FFC-SSC / Component.
+/// Build an ACVP registration block for KAS-FFC-SSC.
+///
+/// The ACVTS demo algorithm catalog (`acvts-demo/algorithms-catalog-
+/// 2026-04-25.json` row 158) registers `KAS-FFC-SSC` with **no mode
+/// field** under revision `Sp800-56Ar3` — paralleling the
+/// `KAS-ECC-SSC` entry at row 157 (no mode), and unlike `KAS-FFC`
+/// (catalog row 85) which carries `mode: "Component"`. The server
+/// constructs its lookup key by concatenating
+/// `algorithm-mode-revision`; sending `mode: "Component"` would
+/// produce `KAS-FFC-SSC-Component-Sp800-56Ar3` which doesn't exist
+/// in the catalog. The actual entry is `KAS-FFC-SSC-Sp800-56Ar3`
+/// (no mode segment).
+///
+/// Spec ground truth: `draft-hammett-acvp-kas-ssc-ffc` §7.3 Table 3
+/// (Registration Properties) lists `algorithm`, `revision`,
+/// `prereqVals`, `scheme`, `domainParameterGenerationMethods`,
+/// `hashFunctionZ` — no `mode` property. The §7.4 Registration
+/// Example likewise omits any `mode` field.
 pub fn kas_ffc_ssc_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KAS-FFC-SSC")),
-        ("mode", str_val("Component")),
         ("revision", str_val("Sp800-56Ar3")),
         (
             "scheme",

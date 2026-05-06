@@ -502,10 +502,8 @@ mod tests {
         assert!(r.find("RSA", Some("sigGen"), "FIPS186-5").is_some());
         // R26 KAS-ECC-SSC — registered with no mode (catalog row 114)
         assert!(r.find("KAS-ECC-SSC", None, "Sp800-56Ar3").is_some());
-        // R59 KAS-FFC-SSC
-        assert!(r
-            .find("KAS-FFC-SSC", Some("Component"), "Sp800-56Ar3")
-            .is_some());
+        // R59 KAS-FFC-SSC — registered with no mode (catalog row 158)
+        assert!(r.find("KAS-FFC-SSC", None, "Sp800-56Ar3").is_some());
         // R27 RSA OAEP
         assert!(r.find("RSA", Some("OAEP"), "RFC8017").is_some());
         // R55 SP 800-185 derived functions + PBKDF2
