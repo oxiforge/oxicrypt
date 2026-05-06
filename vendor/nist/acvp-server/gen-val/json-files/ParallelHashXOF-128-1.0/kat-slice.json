@@ -6,6 +6,7 @@
       "tgId": 1,
       "testType": "AFT",
       "blockSize": 8,
+      "hexCustomization": false,
       "tests": [
         {
           "tcId": 1,
@@ -13,7 +14,7 @@
           "outLen": 256,
           "blockSize": 8,
           "msg": "000102030405060710111213141516172021222324252627",
-          "hexCustomization": "",
+          "customization": "",
           "md": "FE47D661E49FFE5B7D999922C062356750CAF552985B8E8CE6667F2727C3C8D3"
         },
         {
@@ -22,7 +23,7 @@
           "outLen": 256,
           "blockSize": 8,
           "msg": "000102030405060710111213141516172021222324252627",
-          "hexCustomization": "506172616C6C656C2044617461",
+          "customization": "Parallel Data",
           "md": "EA2A793140820F7A128B8EB70A9439F93257C6E6E79B4A540D291D6DAE7098D7"
         },
         {
@@ -31,7 +32,7 @@
           "outLen": 256,
           "blockSize": 12,
           "msg": "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F4041424344454647",
-          "hexCustomization": "506172616C6C656C2044617461",
+          "customization": "Parallel Data",
           "md": "7783ECC7CF8DA1E5A7A1802A0D98BEFA15DE24E7171BC1BA8EDEA031BD0918AC"
         },
         {
@@ -40,7 +41,7 @@
           "outLen": 256,
           "blockSize": 8,
           "msg": "ABCD",
-          "hexCustomization": "",
+          "customization": "",
           "md": "7AB8A594C216FBA1BD994D97DB190AFA3DFB3CBE72EAB543C233ABA4922E836D"
         },
         {
@@ -49,7 +50,7 @@
           "outLen": 256,
           "blockSize": 32,
           "msg": "5555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555",
-          "hexCustomization": "42696720426C6F636B73",
+          "customization": "Big Blocks",
           "md": "AE8B603EF64402CAB6201C7283189CC10114910C41ABBCE068D69B7DE8659174"
         }
       ]

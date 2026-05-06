@@ -6,6 +6,7 @@
       "tgId": 1,
       "testType": "AFT",
       "blockSize": 8,
+      "hexCustomization": false,
       "tests": [
         {
           "tcId": 1,
@@ -13,7 +14,7 @@
           "outLen": 256,
           "blockSize": 8,
           "msg": "000102030405060710111213141516172021222324252627",
-          "hexCustomization": "",
+          "customization": "",
           "md": "BA8DC1D1D979331D3F813603C67F72609AB5E44B94A0B8F9AF46514454A2B4F5"
         },
         {
@@ -22,7 +23,7 @@
           "outLen": 256,
           "blockSize": 8,
           "msg": "000102030405060710111213141516172021222324252627",
-          "hexCustomization": "506172616C6C656C2044617461",
+          "customization": "Parallel Data",
           "md": "FC484DCB3F84DCEEDC353438151BEE58157D6EFED0445A81F165E495795B7206"
         },
         {
@@ -31,7 +32,7 @@
           "outLen": 256,
           "blockSize": 12,
           "msg": "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F4041424344454647",
-          "hexCustomization": "506172616C6C656C2044617461",
+          "customization": "Parallel Data",
           "md": "4DE72C2745F0CF5F887F9B23D51E3FB6CBD1D50FA850F7FDE96C60E60D8F96DA"
         },
         {
@@ -40,7 +41,7 @@
           "outLen": 256,
           "blockSize": 8,
           "msg": "ABCD",
-          "hexCustomization": "",
+          "customization": "",
           "md": "001DDE3F3967B116B936903B38BC21AFA387D83D8323C119E5564CF8AF87F174"
         },
         {
@@ -49,7 +50,7 @@
           "outLen": 256,
           "blockSize": 32,
           "msg": "5555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555",
-          "hexCustomization": "42696720426C6F636B73",
+          "customization": "Big Blocks",
           "md": "BB6FE4337CC2CB9E120AA8AE57CF4B8F99C3CFCA54BDFFE0DA5CE4C0D9F9E9BD"
         }
       ]

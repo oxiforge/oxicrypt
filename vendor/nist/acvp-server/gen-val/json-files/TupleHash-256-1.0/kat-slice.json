@@ -5,40 +5,41 @@
     {
       "tgId": 1,
       "testType": "AFT",
+      "hexCustomization": false,
       "tests": [
         {
           "tcId": 1,
           "outLen": 512,
           "tuple": ["000102", "101112131415"],
-          "hexCustomization": "",
+          "customization": "",
           "md": "CFB7058CACA5E668F81A12A20A2195CE97A925F1DBA3E7449A56F82201EC607311AC2696B1AB5EA2352DF1423BDE7BD4BB78C9AED1A853C78672F9EB23BBE194"
         },
         {
           "tcId": 2,
           "outLen": 512,
           "tuple": ["000102", "101112131415"],
-          "hexCustomization": "4D79205475706C6520417070",
+          "customization": "My Tuple App",
           "md": "147C2191D5ED7EFD98DBD96D7AB5A11692576F5FE2A5065F3E33DE6BBA9F3AA1C4E9A068A289C61C95AAB30AEE1E410B0B607DE3620E24A4E3BF9852A1D4367E"
         },
         {
           "tcId": 3,
           "outLen": 512,
           "tuple": ["ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"],
-          "hexCustomization": "",
+          "customization": "",
           "md": "64336E728DE2C6AD3E264C63985C119D974C5CC98217CD37A45CBF81FEBC8C5D7CC6578D5DC636A751B2A0776C70959E46929F7A4D4444339142C66EE87607BA"
         },
         {
           "tcId": 4,
           "outLen": 512,
           "tuple": ["01", "0203", "040506"],
-          "hexCustomization": "547269706C65",
+          "customization": "Triple",
           "md": "D420834E272935701551E1C2960AA1BCAB5228BDD777D0105DABCA7A2E413723F288E0AAC890DEA49247C4A9AEE9D7C1A990BD86DFDCA68A68E52D903F8DDD44"
         },
         {
           "tcId": 5,
           "outLen": 512,
           "tuple": ["", "FF"],
-          "hexCustomization": "",
+          "customization": "",
           "md": "A47FFBA52C346E62A9600A39ACE652092FC5CAAA953433389A3933A1F367A6C23BF5328354E813FEA19AF15F63628658B3E9A3DE997DEA61D01B2A83ABFA74D1"
         }
       ]

@@ -1,14 +1,21 @@
 //! cSHAKE-128 / cSHAKE-256 AFT handlers.
 //!
-//! Targets self-generated ACVP slices with `algorithm = "cSHAKE-128"` or
+//! Targets ACVP slices with `algorithm = "cSHAKE-128"` or
 //! `"cSHAKE-256"`, `revision = "1.0"`, `testType = "AFT"`.
 //!
-//! Each test case carries:
+//! Group-level fields (per `draft-celi-acvp-xof` §8.1 Table 5):
+//!
+//! - `hexCustomization` (boolean) — `true` if per-test customization
+//!   strings are hex-encoded, `false` if ASCII. Defaults to `false`
+//!   when absent (back-compat with offline fixtures).
+//!
+//! Per-test fields (per §8.2 Table 6):
 //!
 //! - `msg` (hex) — input message
 //! - `len` (bits) — message length
 //! - `outLen` (bits) — requested output length
-//! - `hexCustomization` (hex) — customization string S
+//! - `customization` (string) — customization string S, encoded per
+//!   the group-level `hexCustomization` boolean
 //!
 //! The function name N is always empty (the ACVP cSHAKE registration
 //! does not exercise non-empty N). Response field: `md` (hex).
@@ -16,6 +23,8 @@
 //! Since the NIST ACVP-Server at the pinned commit ships no cSHAKE
 //! vector directories, all vectors are self-generated and live in
 //! `vendor/nist/acvp-server/gen-val/json-files/cSHAKE-{128,256}-1.0/`.
+//! Self-generated fixtures emit the spec-conformant shape so the same
+//! handler serves both offline round-trip and live ACVTS prompts.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -88,6 +97,13 @@ where
     if test_type != "AFT" {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
+    // Group-level encoding flag for the per-test `customization`
+    // field (per `xof §8.1 Table 5`). Absent → false (ASCII), the
+    // family pattern observed across all live KMAC sessions.
+    let hex_customization = group
+        .get("hexCustomization")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -130,15 +146,14 @@ where
         }
         let used = &msg[..msg_bytes];
 
-        // Customization string S (hex-encoded).
-        let s_hex = t
-            .get("hexCustomization")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("");
-        let s = if s_hex.is_empty() {
-            Vec::new()
-        } else {
-            hex::decode(s_hex)?
+        // Customization string S. Per-test `customization` field is
+        // hex if the group-level boolean is true, ASCII otherwise.
+        // Treat a missing field as the empty customization (S = "").
+        let s_field = t.get("customization").and_then(JsonValue::as_str);
+        let s = match s_field {
+            None | Some("") => Vec::new(),
+            Some(raw) if hex_customization => hex::decode(raw)?,
+            Some(raw) => raw.as_bytes().to_vec(),
         };
 
         let mut out_buf = vec![0u8; out_bytes];

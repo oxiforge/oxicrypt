@@ -234,18 +234,19 @@ fn gen_tuplehashxof_slice(
         let mut out = vec![0u8; c.out_len];
         compute(&refs, &c.s, &mut out);
         let tuple_json: Vec<String> = c.elems.iter().map(|e| format!(r#""{}""#, hex(e))).collect();
+        let cust_ascii = std::str::from_utf8(&c.s).expect("customization is ASCII");
         tests_json.push(format!(
             r#"        {{
           "tcId": {},
           "outLen": {},
           "tuple": [{}],
-          "hexCustomization": "{}",
+          "customization": "{}",
           "md": "{}"
         }}"#,
             i + 1,
             c.out_len * 8,
             tuple_json.join(", "),
-            hex(&c.s),
+            cust_ascii,
             hex(&out)
         ));
     }
@@ -258,6 +259,7 @@ fn gen_tuplehashxof_slice(
     {{
       "tgId": 1,
       "testType": "AFT",
+      "hexCustomization": false,
       "tests": [
 {}
       ]
@@ -339,6 +341,7 @@ fn gen_parallelhashxof_slice(
     for (i, c) in cases.iter().enumerate() {
         let mut out = vec![0u8; c.out_len];
         compute(&c.msg, c.block_size, &c.s, &mut out);
+        let cust_ascii = std::str::from_utf8(&c.s).expect("customization is ASCII");
         tests_json.push(format!(
             r#"        {{
           "tcId": {},
@@ -346,7 +349,7 @@ fn gen_parallelhashxof_slice(
           "outLen": {},
           "blockSize": {},
           "msg": "{}",
-          "hexCustomization": "{}",
+          "customization": "{}",
           "md": "{}"
         }}"#,
             i + 1,
@@ -354,7 +357,7 @@ fn gen_parallelhashxof_slice(
             c.out_len * 8,
             c.block_size,
             hex(&c.msg),
-            hex(&c.s),
+            cust_ascii,
             hex(&out)
         ));
     }
@@ -368,6 +371,7 @@ fn gen_parallelhashxof_slice(
       "tgId": 1,
       "testType": "AFT",
       "blockSize": 8,
+      "hexCustomization": false,
       "tests": [
 {}
       ]

@@ -5,40 +5,41 @@
     {
       "tgId": 1,
       "testType": "AFT",
+      "hexCustomization": false,
       "tests": [
         {
           "tcId": 1,
           "outLen": 256,
           "tuple": ["000102", "101112131415"],
-          "hexCustomization": "",
+          "customization": "",
           "md": "2F103CD7C32320353495C68DE1A8129245C6325F6F2A3D608D92179C96E68488"
         },
         {
           "tcId": 2,
           "outLen": 256,
           "tuple": ["000102", "101112131415"],
-          "hexCustomization": "4D79205475706C6520417070",
+          "customization": "My Tuple App",
           "md": "3FC8AD69453128292859A18B6C67D7AD85F01B32815E22CE839C49EC374E9B9A"
         },
         {
           "tcId": 3,
           "outLen": 256,
           "tuple": ["ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"],
-          "hexCustomization": "",
+          "customization": "",
           "md": "445CB7CCAFFB80F572EA354E12185D25765CD222695D9C17F31B161F7D717289"
         },
         {
           "tcId": 4,
           "outLen": 256,
           "tuple": ["01", "0203", "040506"],
-          "hexCustomization": "547269706C65",
+          "customization": "Triple",
           "md": "AB00BC3D895738BE37EDFF5917B4453D3B85503BECA17EA5029CCA5A170BE63B"
         },
         {
           "tcId": 5,
           "outLen": 256,
           "tuple": ["", "FF"],
-          "hexCustomization": "",
+          "customization": "",
           "md": "771E1EDAC0B414CAE623E0614B784C534D5FCF88F2E6EEDD16AD48EA756FE280"
         }
       ]
