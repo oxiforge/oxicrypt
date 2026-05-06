@@ -10,6 +10,25 @@
 //! out of scope (MD5 is not FIPS-approved).
 //!
 //! Supported hash algorithms: SHA2-256, SHA2-384, SHA2-512.
+//!
+//! Source — prompt schema (per-test-case fields)
+//! ---------------------------------------------
+//! `draft-celi-acvp-kdf-tls` §8.2.1 Table 5 ("1.0 Test Case JSON
+//! Object") enumerates the 5 fields this handler consumes:
+//! `tcId`, `preMasterSecret`, `serverHelloRandom`, `clientHelloRandom`,
+//! `serverRandom`, `clientRandom`. Both pairs of randoms (the Hello-
+//! prefixed pair and the non-prefixed pair) are present in the spec
+//! prompt and in the live ACVTS prompt under
+//! `kdf-components / tls / 1.0`.
+//!
+//! Distinct from §8.2.2 Table 6 ("RFC7627 Test Case JSON Object"),
+//! which describes the EMS variant — only `serverRandom`,
+//! `clientRandom`, plus `sessionHash` (no Hello-prefixed pair). That
+//! variant is a separate ACVP algorithm (`TLS-v1.2 / KDF / RFC7627`)
+//! handled by `tls12_kdf.rs`, not by this file. The two tables sit in
+//! adjacent subsections of the same draft and look similar at a
+//! glance; the field-set distinction (4 randoms vs 2 randoms +
+//! sessionHash) is the unambiguous discriminator.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
