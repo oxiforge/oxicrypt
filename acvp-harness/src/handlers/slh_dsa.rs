@@ -110,16 +110,45 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // SLH-DSA-SHA2-256s keygen requires 96 bytes: SK.seed ‖ SK.prf ‖ PK.seed.
-        let seed_bytes = hex::decode(
-            t.get("seed")
+        // Per slh-dsa §8.1.2 Table 10, the keyGen test case carries three
+        // separate hex fields: skSeed, skPrf, pkSeed (each N = 32 B for
+        // SLH-DSA-SHA2-256s). The primitive consumes the 96-byte
+        // concatenation skSeed ‖ skPrf ‖ pkSeed; the handler assembles
+        // it locally from the per-field prompt values.
+        let sk_seed_bytes = hex::decode(
+            t.get("skSeed")
                 .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("seed"))?,
+                .ok_or(DispatchError::MissingField("skSeed"))?,
         )?;
-        let seed: [u8; 96] = seed_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("SLH-DSA KeyGen: seed is not 96 bytes"))?;
+        let sk_prf_bytes = hex::decode(
+            t.get("skPrf")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("skPrf"))?,
+        )?;
+        let pk_seed_bytes = hex::decode(
+            t.get("pkSeed")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("pkSeed"))?,
+        )?;
+        if sk_seed_bytes.len() != 32 {
+            return Err(DispatchError::Crypto(
+                "SLH-DSA KeyGen: skSeed is not 32 bytes",
+            ));
+        }
+        if sk_prf_bytes.len() != 32 {
+            return Err(DispatchError::Crypto(
+                "SLH-DSA KeyGen: skPrf is not 32 bytes",
+            ));
+        }
+        if pk_seed_bytes.len() != 32 {
+            return Err(DispatchError::Crypto(
+                "SLH-DSA KeyGen: pkSeed is not 32 bytes",
+            ));
+        }
+        let mut seed = [0u8; 96];
+        seed[..32].copy_from_slice(&sk_seed_bytes);
+        seed[32..64].copy_from_slice(&sk_prf_bytes);
+        seed[64..].copy_from_slice(&pk_seed_bytes);
 
         let (pk, sk) = oxicrypt_slh_dsa::keygen_internal(&seed);
 

@@ -114,6 +114,14 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
+        // Per lms §8.1.2 Table 8 (and RFC 8554 §5.3), the LMS keyGen
+        // test case carries both the OTS `seed` (32 B for SHA256
+        // variants) AND the public-key identifier `i` (16 B). The
+        // identifier is embedded in the resulting public key at bytes
+        // 8..24 and participates in the Merkle root computation, so
+        // the handler must call oxicrypt_lms::keygen_from_parts —
+        // which consumes both — rather than keygen_internal, which
+        // derives an identifier from the seed.
         let seed_bytes = hex::decode(
             t.get("seed")
                 .and_then(JsonValue::as_str)
@@ -124,7 +132,17 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("LMS KeyGen: seed is not 32 bytes"))?;
 
-        let (_sk, pk) = oxicrypt_lms::keygen_internal(&seed);
+        let i_bytes = hex::decode(
+            t.get("i")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("i"))?,
+        )?;
+        let identifier: [u8; 16] = i_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("LMS KeyGen: i is not 16 bytes"))?;
+
+        let (_sk, pk) = oxicrypt_lms::keygen_from_parts(&seed, &identifier);
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),

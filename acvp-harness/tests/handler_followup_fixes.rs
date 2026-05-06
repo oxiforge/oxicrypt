@@ -937,3 +937,163 @@ fn kbkdf_counter_deterministic_path_still_works() {
     .unwrap();
     assert_eq!(reported_key_out, expected);
 }
+
+// ── SLH-DSA keyGen: read skSeed/skPrf/pkSeed as 3 separate fields ──
+
+/// Per `slh-dsa §8.1.2 Table 10`, the SLH-DSA keyGen test case carries
+/// THREE separate hex fields: `skSeed`, `skPrf`, `pkSeed` — not a
+/// single pre-concatenated `seed`. Pre-fix, the handler at
+/// `slh_dsa.rs:113-122` read a single `seed` field expecting 96 B
+/// concat, which would fail with `MissingField("seed")` against any
+/// spec-conformant prompt.
+fn slh_dsa_keygen_3field_prompt(
+    sk_seed_hex: &str,
+    sk_prf_hex: &str,
+    pk_seed_hex: &str,
+) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "SLH-DSA-SHA2-256s",
+            "mode":      "keyGen",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType": "AFT",
+                "tests": [
+                    {{
+                        "tcId":   1,
+                        "skSeed": "{sk_seed_hex}",
+                        "skPrf":  "{sk_prf_hex}",
+                        "pkSeed": "{pk_seed_hex}"
+                    }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+#[test]
+fn slh_dsa_keygen_reads_separate_skseed_skprf_pkseed_fields() {
+    ensure_initialized().unwrap();
+
+    // SLH-DSA-SHA2-256s: N = 32, so each of skSeed/skPrf/pkSeed is 32 B.
+    let sk_seed = [0x01u8; 32];
+    let sk_prf = [0x02u8; 32];
+    let pk_seed = [0x03u8; 32];
+
+    // Reference pk: the primitive takes the 96-byte concat
+    // (skSeed ‖ skPrf ‖ pkSeed). The handler must assemble it.
+    let mut concat = [0u8; 96];
+    concat[..32].copy_from_slice(&sk_seed);
+    concat[32..64].copy_from_slice(&sk_prf);
+    concat[64..].copy_from_slice(&pk_seed);
+    let (expected_pk, _expected_sk) = oxicrypt_slh_dsa::keygen_internal(&concat);
+
+    let response = dispatch_ok(&slh_dsa_keygen_3field_prompt(
+        &hex::encode_upper(&sk_seed),
+        &hex::encode_upper(&sk_prf),
+        &hex::encode_upper(&pk_seed),
+    ));
+
+    let groups = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let tests = groups[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let pk_hex = tests[0].get("pk").and_then(JsonValue::as_str).unwrap();
+    let pk_bytes = hex::decode(pk_hex).unwrap();
+
+    assert_eq!(
+        pk_bytes,
+        expected_pk.to_vec(),
+        "handler must read skSeed/skPrf/pkSeed as 3 separate fields per \
+         slh-dsa §8.1.2 Table 10 and concat to 96 B before calling \
+         oxicrypt_slh_dsa::keygen_internal",
+    );
+}
+
+// ── LMS keyGen: consume the server-supplied identifier `i` ──────────
+
+/// Per `lms §8.1.2 Table 8` (and RFC 8554 §5.3), the LMS keyGen test
+/// case carries the public-key identifier `i` (16 B) alongside the OTS
+/// `seed` (32 B for SHA256 variants). Both feed the keygen — the
+/// resulting public key embeds `i` at bytes 8..24 and computes the
+/// Merkle root from `(seed, i)`. Pre-fix, the handler at
+/// `lms.rs:118-129` consumed only `seed`, calling
+/// `oxicrypt_lms::keygen_internal(&seed)` which derives an identifier
+/// internally — producing a public key that does not match what the
+/// server expects.
+fn lms_keygen_seed_and_id_prompt(seed_hex: &str, i_hex: &str) -> JsonValue {
+    let prompt_text = format!(
+        r#"{{
+            "algorithm": "LMS",
+            "mode":      "keyGen",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType": "AFT",
+                "lmsMode":   "LMS_SHA256_M32_H10",
+                "lmOtsMode": "LMOTS_SHA256_N32_W4",
+                "tests": [
+                    {{
+                        "tcId": 1,
+                        "seed": "{seed_hex}",
+                        "i":    "{i_hex}"
+                    }}
+                ]
+            }}]
+        }}"#
+    );
+    parse(&prompt_text)
+}
+
+#[test]
+fn lms_keygen_consumes_server_supplied_identifier() {
+    ensure_initialized().unwrap();
+
+    let seed = [0x04u8; 32];
+    let i = [0x05u8; 16];
+
+    // Reference pk: keygen_from_parts is the ACVP-shaped primitive
+    // (per its doc-comment), which takes seed AND identifier
+    // separately and embeds the supplied identifier in the public key.
+    let (_expected_sk, expected_pk) = oxicrypt_lms::keygen_from_parts(&seed, &i);
+
+    let response = dispatch_ok(&lms_keygen_seed_and_id_prompt(
+        &hex::encode_upper(&seed),
+        &hex::encode_upper(&i),
+    ));
+
+    let groups = response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let tests = groups[0]
+        .get("tests")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let pk_hex = tests[0].get("pk").and_then(JsonValue::as_str).unwrap();
+    let pk_bytes = hex::decode(pk_hex).unwrap();
+
+    // Bytes 8..24 of the LMS public key are the identifier `I` per RFC
+    // 8554 §5.3. If the handler ignored the supplied `i`, this slice
+    // would not equal the prompt's `i`.
+    assert_eq!(
+        &pk_bytes[8..24],
+        &i[..],
+        "handler must consume the server-supplied `i` field per lms \
+         §8.1.2 Table 8 / RFC 8554 §5.3 — bytes 8..24 of the public key \
+         must equal the prompt's `i`",
+    );
+    assert_eq!(
+        pk_bytes,
+        expected_pk.to_vec(),
+        "handler must call oxicrypt_lms::keygen_from_parts(seed, i) to \
+         produce a public key whose Merkle root depends on the supplied \
+         identifier",
+    );
+}
