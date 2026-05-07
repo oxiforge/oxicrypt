@@ -336,9 +336,9 @@
 //!
 //! R60 adds post-quantum digital signature handlers for ML-DSA-87 (FIPS 204):
 //!
-//! - [`ml_dsa`] — `ML-DSA-87` / `keyGen`, `sigGen`, `sigVer` revision `1.0`,
-//!   deterministic lattice-based signatures: keygen from 32-byte seed,
-//!   deterministic sign, and verify
+//! - [`ml_dsa`] — `ML-DSA` / `keyGen`, `sigGen`, `sigVer` revision `FIPS204`
+//!   (parameter set `ML-DSA-87`), deterministic lattice-based
+//!   signatures: keygen from 32-byte seed, deterministic sign, and verify
 //!
 //! R61 adds stateless hash-based signature handlers for SLH-DSA (FIPS 205):
 //!

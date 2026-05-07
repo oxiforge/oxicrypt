@@ -1,12 +1,20 @@
 //! ML-DSA-87 ACVP handlers — `keyGen`, `sigGen`, and `sigVer` modes.
 //!
-//! **ML-DSA-87** (`ML-DSA-87` / `keyGen`, `sigGen`, `sigVer` / revision `1.0`):
-//! Post-quantum digital signature algorithm per FIPS 204.
+//! **ML-DSA** (`ML-DSA` / `keyGen`, `sigGen`, `sigVer` / revision `FIPS204`,
+//! parameter set `ML-DSA-87`): post-quantum digital signature algorithm
+//! per FIPS 204.
+//!
+//! Cap and dispatch shapes follow `draft-celi-acvp-ml-dsa` (algorithm
+//! family name, `parameterSets` envelope, internal-interface-only
+//! subset). Per-test field placement (`sk` for sigGen, `pk` for sigVer)
+//! follows §8.2.2 Table 14 and §8.3.2 Table 16 of that draft.
 //!
 //! Three modes for the complete signature lifecycle:
 //! - **KeyGen**: Generate a (public key, secret key) pair from a 32-byte seed
 //! - **SigGen**: Sign a message deterministically with a secret key
+//!   (deterministic mode only; `externalMu: false`; internal interface)
 //! - **SigVer**: Verify a signature against a public key and message
+//!   (`externalMu: false`; internal interface)
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -19,16 +27,16 @@ pub struct MlDsa87KeyGenHandler;
 
 impl AlgorithmHandler for MlDsa87KeyGenHandler {
     fn algorithm(&self) -> &'static str {
-        "ML-DSA-87"
+        "ML-DSA"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("keyGen")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS204"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::ml_dsa_keygen_capability("ML-DSA-87"))
+        Some(super::caps::ml_dsa_keygen_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
@@ -42,16 +50,16 @@ pub struct MlDsa87SigGenHandler;
 
 impl AlgorithmHandler for MlDsa87SigGenHandler {
     fn algorithm(&self) -> &'static str {
-        "ML-DSA-87"
+        "ML-DSA"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("sigGen")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS204"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::ml_dsa_siggen_capability("ML-DSA-87"))
+        Some(super::caps::ml_dsa_siggen_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
@@ -65,16 +73,16 @@ pub struct MlDsa87SigVerHandler;
 
 impl AlgorithmHandler for MlDsa87SigVerHandler {
     fn algorithm(&self) -> &'static str {
-        "ML-DSA-87"
+        "ML-DSA"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("sigVer")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS204"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::ml_dsa_sigver_capability("ML-DSA-87"))
+        Some(super::caps::ml_dsa_sigver_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)
@@ -118,7 +126,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         let seed: [u8; 32] = seed_bytes
             .as_slice()
             .try_into()
-            .map_err(|_| DispatchError::Crypto("ML-DSA-87 KeyGen: seed is not 32 bytes"))?;
+            .map_err(|_| DispatchError::Crypto("ML-DSA KeyGen: seed is not 32 bytes"))?;
 
         let (pk, sk) = oxicrypt_ml_dsa::keygen_internal(&seed);
 
@@ -151,18 +159,6 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Group-level secret key.
-    let sk_bytes = hex::decode(
-        group
-            .get("sk")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("sk"))?,
-    )?;
-    let sk: [u8; oxicrypt_ml_dsa::SK_LEN] = sk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("ML-DSA-87 SigGen: sk has wrong length"))?;
-
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -170,11 +166,23 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
+    // `sk` is per-test per `draft-celi-acvp-ml-dsa §8.2.2` Table 14
+    // (key fields live in the test case object, not the test group).
     for t in tests {
         let test_case_id = t
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
+
+        let sk_bytes = hex::decode(
+            t.get("sk")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("sk"))?,
+        )?;
+        let sk: [u8; oxicrypt_ml_dsa::SK_LEN] = sk_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("ML-DSA SigGen: sk has wrong length"))?;
 
         let message = hex::decode(
             t.get("message")
@@ -183,7 +191,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         )?;
 
         let sig = oxicrypt_ml_dsa::sign_internal(&sk, &message)
-            .ok_or(DispatchError::Crypto("ML-DSA-87 SigGen: signing failed"))?;
+            .ok_or(DispatchError::Crypto("ML-DSA SigGen: signing failed"))?;
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -216,18 +224,6 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Group-level public key.
-    let pk_bytes = hex::decode(
-        group
-            .get("pk")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("pk"))?,
-    )?;
-    let pk: [u8; oxicrypt_ml_dsa::PK_LEN] = pk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("ML-DSA-87 SigVer: pk has wrong length"))?;
-
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -235,11 +231,26 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
+    // Per `draft-celi-acvp-ml-dsa §8.3.2` Table 16, `pk`, `message`,
+    // and `signature` are all per-test fields. Server mixes valid
+    // and tampered (key-flip) signatures within the same group; the
+    // IUT returns `testPassed: bool` per case and the server grades
+    // by exact-match against the expected valid/invalid disposition.
     for t in tests {
         let test_case_id = t
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
+
+        let pk_bytes = hex::decode(
+            t.get("pk")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("pk"))?,
+        )?;
+        let pk: [u8; oxicrypt_ml_dsa::PK_LEN] = pk_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("ML-DSA SigVer: pk has wrong length"))?;
 
         let message = hex::decode(
             t.get("message")

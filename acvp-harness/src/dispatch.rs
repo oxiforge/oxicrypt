@@ -528,10 +528,10 @@ mod tests {
         // R59 ML-KEM (FIPS 203, post-quantum; parameterSets advertise ML-KEM-1024 only)
         assert!(r.find("ML-KEM", Some("keyGen"), "FIPS203").is_some());
         assert!(r.find("ML-KEM", Some("encapDecap"), "FIPS203").is_some());
-        // R60 ML-DSA-87 (FIPS 204, post-quantum)
-        assert!(r.find("ML-DSA-87", Some("keyGen"), "1.0").is_some());
-        assert!(r.find("ML-DSA-87", Some("sigGen"), "1.0").is_some());
-        assert!(r.find("ML-DSA-87", Some("sigVer"), "1.0").is_some());
+        // R60 ML-DSA (FIPS 204, post-quantum; parameterSets advertise ML-DSA-87 only)
+        assert!(r.find("ML-DSA", Some("keyGen"), "FIPS204").is_some());
+        assert!(r.find("ML-DSA", Some("sigGen"), "FIPS204").is_some());
+        assert!(r.find("ML-DSA", Some("sigVer"), "FIPS204").is_some());
         // R61 SLH-DSA (FIPS 205, post-quantum; parameterSets advertise SLH-DSA-SHA2-256s only)
         assert!(r.find("SLH-DSA", Some("keyGen"), "FIPS205").is_some());
         assert!(r.find("SLH-DSA", Some("sigGen"), "FIPS205").is_some());

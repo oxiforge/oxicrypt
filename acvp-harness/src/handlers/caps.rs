@@ -1015,31 +1015,96 @@ pub fn ml_kem_encapdecap_capability() -> JsonValue {
 
 // ── Post-quantum: ML-DSA ─────────────────────────────────────────
 
-/// Build an ACVP registration block for ML-DSA / keyGen.
-pub fn ml_dsa_keygen_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for ML-DSA / keyGen / FIPS204.
+///
+/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.3.1`. Only
+/// `ML-DSA-87` (CNSA 2.0 baseline) is currently advertised; the
+/// other two FIPS 204 §4 Table 1 parameter sets are tracked under
+/// the PQ-expansion mandate (`algo-capability-matrix.md` rows
+/// 192–193) and will be added to `parameterSets` when their
+/// `*_internal` + public-API surfaces ship.
+pub fn ml_dsa_keygen_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("ML-DSA")),
         ("mode", str_val("keyGen")),
-        ("revision", str_val("1.0")),
+        ("revision", str_val("FIPS204")),
+        ("parameterSets", str_array(&["ML-DSA-87"])),
     ])
 }
 
-/// Build an ACVP registration block for ML-DSA / sigGen.
-pub fn ml_dsa_siggen_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for ML-DSA / sigGen / FIPS204.
+///
+/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.4.1`, constrained
+/// to oxicrypt-ml-dsa's actual handler subset:
+/// - `deterministic: [true]` — only deterministic-mode signing is
+///   exposed (FIPS 204 §6.2 Algorithm 7 with rho_prime derived
+///   from sk only); the randomized variant is intentionally not
+///   built (matrix row 194 — hedged mode is a separate post-launch
+///   consideration).
+/// - `signatureInterfaces: ["internal"]` — the harness invokes
+///   `sign_internal`, which does not consume context bytes; the
+///   external interface (`Sign(SK, M, ctx)`) is not advertised.
+/// - `externalMu: [false]` — `sign_internal(sk, message)` computes
+///   mu internally per FIPS 204 §6.2 step 6; the externalMu=true
+///   variant (caller pre-computes mu) is not exposed.
+/// - `capabilities[].messageLength: 8..=65536 step 8` — full byte-
+///   aligned arbitrary-length message range matching the spec
+///   example; oxicrypt-ml-dsa accepts arbitrary message lengths.
+/// - `preHash`, `hashAlgs`, `contextLength` deliberately omitted —
+///   they apply only to the external interface (which accepts a
+///   pre-hashed payload, a hash algorithm tag, and context bytes
+///   respectively). Per ACVP server validation observed during
+///   the SLH-DSA bring-up (PR #60), advertising
+///   `signatureInterfaces: ["internal"]` AND `preHash: [...]` is
+///   a registration error: *"Expected no pre-hash options with
+///   only internal interface"* (HTTP 400). The internal interface
+///   (FIPS 204 §6.2 `Sign_internal`) operates on raw messages;
+///   pre-hash modes are an external-interface concept by
+///   construction.
+pub fn ml_dsa_siggen_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("ML-DSA")),
         ("mode", str_val("sigGen")),
-        ("revision", str_val("1.0")),
-        ("deterministic", JsonValue::Bool(true)),
+        ("revision", str_val("FIPS204")),
+        (
+            "deterministic",
+            JsonValue::Array(vec![JsonValue::Bool(true)]),
+        ),
+        ("signatureInterfaces", str_array(&["internal"])),
+        ("externalMu", JsonValue::Array(vec![JsonValue::Bool(false)])),
+        (
+            "capabilities",
+            JsonValue::Array(vec![obj(vec![
+                ("parameterSets", str_array(&["ML-DSA-87"])),
+                ("messageLength", range_domain(8, 65536, 8)),
+            ])]),
+        ),
     ])
 }
 
-/// Build an ACVP registration block for ML-DSA / sigVer.
-pub fn ml_dsa_sigver_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for ML-DSA / sigVer / FIPS204.
+///
+/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.5.1`, constrained
+/// to the same subset rationale as [`ml_dsa_siggen_capability`]
+/// above (internal-interface only, single parameter set,
+/// `externalMu: [false]`, no pre-hash options per the
+/// internal-interface server-side constraint documented there).
+/// `deterministic` is not advertised on sigVer because verification
+/// is independent of the signer's randomness mode.
+pub fn ml_dsa_sigver_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("ML-DSA")),
         ("mode", str_val("sigVer")),
-        ("revision", str_val("1.0")),
+        ("revision", str_val("FIPS204")),
+        ("signatureInterfaces", str_array(&["internal"])),
+        ("externalMu", JsonValue::Array(vec![JsonValue::Bool(false)])),
+        (
+            "capabilities",
+            JsonValue::Array(vec![obj(vec![
+                ("parameterSets", str_array(&["ML-DSA-87"])),
+                ("messageLength", range_domain(8, 65536, 8)),
+            ])]),
+        ),
     ])
 }
 
