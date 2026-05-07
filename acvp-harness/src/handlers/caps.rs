@@ -1197,51 +1197,76 @@ pub fn slh_dsa_sigver_capability() -> JsonValue {
 
 // ── Stateful HBS: LMS ────────────────────────────────────────────
 
-/// Build an ACVP registration block for LMS / keyGen.
+/// Build the `specificCapabilities` array for the single
+/// LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 pair the harness
+/// implements.
+///
+/// Per `draft-celi-acvp-lms §7.3` Table 5, `specificCapabilities`
+/// is the explicit-pair form: an array of objects, each with
+/// scalar `lmsMode` + `lmOtsMode` strings. The alternative
+/// `capabilities` object form (Table 4 — `lmsModes` plural,
+/// `lmOtsModes` plural, both arrays) is preferred when the IUT
+/// supports a wide cartesian product; for a single registered
+/// pair, `specificCapabilities` is more explicit-intent and
+/// matches `feedback_caps_match_handler_subset` exactly. The two
+/// forms cannot be advertised together (spec note above Table 4).
+fn lms_specific_capabilities() -> JsonValue {
+    JsonValue::Array(vec![obj(vec![
+        ("lmsMode", str_val("LMS_SHA256_M32_H10")),
+        ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
+    ])])
+}
+
+/// Build an ACVP registration block for LMS / keyGen / 1.0.
+///
+/// Cap shape per `draft-celi-acvp-lms §7.3.3`. Subset note: only
+/// `LMS_SHA256_M32_H10` paired with `LMOTS_SHA256_N32_W4` (RFC 8554
+/// §A.1 typecode 0x00000003 / §A.2 typecode 0x00000003) is built
+/// in `oxicrypt-lms`; the 19 other LMS types and remaining LMOTS
+/// pairings are tracked under the PQ-expansion mandate
+/// (`algo-capability-matrix.md` rows 235–240) and will be added
+/// to `specificCapabilities` when their primitives ship.
 pub fn lms_keygen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("1.0")),
-        (
-            "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                ("lmsMode", str_array(&["LMS_SHA256_M32_H10"])),
-                ("lmOtsMode", str_array(&["LMOTS_SHA256_N32_W4"])),
-            ])]),
-        ),
+        ("specificCapabilities", lms_specific_capabilities()),
     ])
 }
 
-/// Build an ACVP registration block for LMS / sigGen.
+/// Build an ACVP registration block for LMS / sigGen / 1.0.
+///
+/// Cap shape per `draft-celi-acvp-lms §7.3.4`. Same subset
+/// rationale as [`lms_keygen_capability`].
+///
+/// LMS sigGen has an inverted ACVP protocol model vs ML-DSA /
+/// SLH-DSA: per `§9.2` Table 16 the IUT supplies its own
+/// `publicKey` at group level in the response (the server prompt
+/// has no key information per §8.2.1 Table 9 / §8.2.2 Table 10).
+/// This is structural for stateful HBS — the server can't dictate
+/// a key for a one-time-leaf scheme. The handler in `lms.rs`
+/// generates a deterministic per-group key from `tgId` so prompt
+/// replays produce identical responses.
 pub fn lms_siggen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
         ("mode", str_val("sigGen")),
         ("revision", str_val("1.0")),
-        (
-            "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                ("lmsMode", str_array(&["LMS_SHA256_M32_H10"])),
-                ("lmOtsMode", str_array(&["LMOTS_SHA256_N32_W4"])),
-            ])]),
-        ),
+        ("specificCapabilities", lms_specific_capabilities()),
     ])
 }
 
-/// Build an ACVP registration block for LMS / sigVer.
+/// Build an ACVP registration block for LMS / sigVer / 1.0.
+///
+/// Cap shape per `draft-celi-acvp-lms §7.3.5`. Same subset
+/// rationale as [`lms_keygen_capability`].
 pub fn lms_sigver_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
         ("mode", str_val("sigVer")),
         ("revision", str_val("1.0")),
-        (
-            "capabilities",
-            JsonValue::Array(vec![obj(vec![
-                ("lmsMode", str_array(&["LMS_SHA256_M32_H10"])),
-                ("lmOtsMode", str_array(&["LMOTS_SHA256_N32_W4"])),
-            ])]),
-        ),
+        ("specificCapabilities", lms_specific_capabilities()),
     ])
 }
 

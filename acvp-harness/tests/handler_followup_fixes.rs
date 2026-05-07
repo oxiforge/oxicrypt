@@ -1076,7 +1076,10 @@ fn lms_keygen_consumes_server_supplied_identifier() {
         .get("tests")
         .and_then(JsonValue::as_array)
         .unwrap();
-    let pk_hex = tests[0].get("pk").and_then(JsonValue::as_str).unwrap();
+    let pk_hex = tests[0]
+        .get("publicKey")
+        .and_then(JsonValue::as_str)
+        .unwrap();
     let pk_bytes = hex::decode(pk_hex).unwrap();
 
     // Bytes 8..24 of the LMS public key are the identifier `I` per RFC
