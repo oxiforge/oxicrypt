@@ -115,10 +115,36 @@ pub(crate) fn ct_bytes_eq(a: &[u8], b: &[u8]) -> u8 {
 
 /// Constant-time select: if `flag == 0` return `a`, else return `b`.
 ///
+/// Accepts any `u8` value for `flag` — not just `0` or `1`. Any
+/// non-zero input maps to the all-ones mask `0xFF`. This matters
+/// because callers invoke `ct_select_32` with the output of
+/// [`ct_bytes_eq`], which can return any non-zero `u8` for unequal
+/// inputs (it ORs all per-byte XORs together).
+///
 /// Timing is independent of `flag`.
 pub(crate) fn ct_select_32(a: &[u8; 32], b: &[u8; 32], flag: u8) -> [u8; 32] {
-    // Expand flag to a full mask: 0x00 or 0xFF
-    let mask = (-(flag.wrapping_shr(0) as i8 | -(flag as i8))) as u8;
+    // Expand `flag` to a full byte mask via bit-spread:
+    //   0x00 -> 0x00, any non-zero -> 0xFF.
+    //
+    // OR the high bits down so bit 0 is set iff any bit of `flag`
+    // was set, then negate the low bit to spread it across all 8
+    // bits (`0` stays `0`; `1` wraps to `0xFF`).
+    //
+    // The earlier `(-(flag as i8 | -(flag as i8))) as u8` form was
+    // incorrect at i8 width: for arbitrary non-zero `flag`, the
+    // expression collapsed to `flag` itself rather than the full
+    // mask.  E.g. `flag = 1` produced `0x01`, which silently broke
+    // the implicit-rejection branch of ML-KEM decapsulation —
+    // `out[i] = a[i] ^ (0x01 & (a[i] ^ b[i]))` only flips the LSB
+    // of each byte instead of selecting `b` whole.  Surfaced via
+    // ACVTS demo session 727778; valid-path decaps passed (mask =
+    // 0x00 worked), implicit-rejection decaps failed against the
+    // spec-defined `J(z || c)` byte-exact oracle.
+    let mut bit = flag;
+    bit |= bit >> 4;
+    bit |= bit >> 2;
+    bit |= bit >> 1;
+    let mask: u8 = (bit & 1).wrapping_neg();
     let mut out = [0u8; 32];
     for i in 0..32 {
         out[i] = a[i] ^ (mask & (a[i] ^ b[i]));
