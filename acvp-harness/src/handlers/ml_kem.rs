@@ -1,12 +1,24 @@
-//! ML-KEM-1024 ACVP handlers — `keyGen`, `encaps`, and `decaps` modes.
+//! ML-KEM ACVP handlers — `keyGen` and `encapDecap` modes per FIPS 203.
 //!
-//! **ML-KEM-1024** (`ML-KEM-1024` / `keyGen`, `encaps`, `decaps` / revision `1.0`):
-//! Post-quantum key encapsulation mechanism per FIPS 203.
+//! Two handlers, mirroring the catalog's two-mode shape
+//! (see `draft-celi-acvp-ml-kem §7.3.1` and `§7.3.2`):
 //!
-//! Three modes for the complete encapsulation lifecycle:
-//! - **KeyGen**: Generate a (public key, secret key) pair
-//! - **Encaps**: Encapsulate a shared secret with a public key
-//! - **Decaps**: Decapsulate a ciphertext with a secret key to recover the shared secret
+//! - **`MlKem1024KeyGenHandler`** — `ML-KEM` / `keyGen` / `FIPS203`,
+//!   advertising `parameterSets: ["ML-KEM-1024"]`. Generates a
+//!   (encapsulation key, decapsulation key) pair from server-supplied
+//!   `d` and `z` seeds.
+//! - **`MlKem1024EncapDecapHandler`** — `ML-KEM` / `encapDecap` /
+//!   `FIPS203`, advertising `functions: ["encapsulation",
+//!   "decapsulation"]`. Group-level `function` field selects which
+//!   sub-routine drives the per-test work.
+//!
+//! Only `ML-KEM-1024` (CNSA 2.0 baseline) is currently advertised;
+//! `ML-KEM-512` and `ML-KEM-768` are PQ-expansion-mandate items
+//! (`algo-capability-matrix.md` rows 223-225) and will be added to
+//! `parameterSets` when their `*_internal` + public-API surfaces ship.
+//! The `algorithm()` value is the family name `"ML-KEM"` (matching
+//! the live ACVP catalog) — not parameter-set-baked — so adding new
+//! parameter sets is a cap-only change with no handler-name churn.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -14,70 +26,67 @@ use crate::json::JsonValue;
 
 // ── KeyGen handler ──────────────────────────────────────────────────
 
-/// ML-KEM-1024 KeyGen dispatcher.
+/// ML-KEM keyGen dispatcher (`parameterSets: ["ML-KEM-1024"]`).
 pub struct MlKem1024KeyGenHandler;
 
 impl AlgorithmHandler for MlKem1024KeyGenHandler {
     fn algorithm(&self) -> &'static str {
-        "ML-KEM-1024"
+        "ML-KEM"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("keyGen")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS203"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::ml_kem_keygen_capability("ML-KEM-1024"))
+        Some(super::caps::ml_kem_keygen_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
     }
 }
 
-// ── Encaps handler ──────────────────────────────────────────────────
+// ── EncapDecap handler ──────────────────────────────────────────────
 
-/// ML-KEM-1024 Encaps dispatcher.
-pub struct MlKem1024EncapsHandler;
+/// ML-KEM encapDecap dispatcher (`parameterSets: ["ML-KEM-1024"]`,
+/// `functions: ["encapsulation", "decapsulation"]`).
+///
+/// Per `draft-celi-acvp-ml-kem §8.2.1`, each prompt group within an
+/// encapDecap vector set is tagged with a `function` field; this
+/// handler dispatches to the encapsulation or decapsulation group
+/// driver based on that tag. Key-check VAL functions
+/// (`encapsulationKeyCheck`/`decapsulationKeyCheck`) are not
+/// advertised and will be rejected with `Unsupported` if the server
+/// somehow sends them under the current cap.
+pub struct MlKem1024EncapDecapHandler;
 
-impl AlgorithmHandler for MlKem1024EncapsHandler {
+impl AlgorithmHandler for MlKem1024EncapDecapHandler {
     fn algorithm(&self) -> &'static str {
-        "ML-KEM-1024"
+        "ML-KEM"
     }
     fn mode(&self) -> Option<&'static str> {
-        Some("encaps")
+        Some("encapDecap")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS203"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::ml_kem_encaps_capability("ML-KEM-1024"))
+        Some(super::caps::ml_kem_encapdecap_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        handle_encaps_group(group)
-    }
-}
-
-// ── Decaps handler ──────────────────────────────────────────────────
-
-/// ML-KEM-1024 Decaps dispatcher.
-pub struct MlKem1024DecapsHandler;
-
-impl AlgorithmHandler for MlKem1024DecapsHandler {
-    fn algorithm(&self) -> &'static str {
-        "ML-KEM-1024"
-    }
-    fn mode(&self) -> Option<&'static str> {
-        Some("decaps")
-    }
-    fn revision(&self) -> &'static str {
-        "1.0"
-    }
-    fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::ml_kem_decaps_capability("ML-KEM-1024"))
-    }
-    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        handle_decaps_group(group)
+        let function = group
+            .get("function")
+            .and_then(JsonValue::as_str)
+            .ok_or(DispatchError::MissingField("function"))?;
+        match function {
+            "encapsulation" => handle_encaps_group(group),
+            "decapsulation" => handle_decaps_group(group),
+            _ => Err(DispatchError::Unsupported(
+                "ML-KEM encapDecap: function must be `encapsulation` or `decapsulation` \
+                 under current cap (key-check VAL functions not advertised)",
+            )),
+        }
     }
 }
 
@@ -155,6 +164,9 @@ fn handle_encaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tgId"))?;
 
+    // AFT is the only encaps test type the live demo server emits and
+    // the only one the cap advertises support for. Reject anything
+    // else explicitly.
     let test_type = group
         .get("testType")
         .and_then(JsonValue::as_str)
@@ -162,18 +174,6 @@ fn handle_encaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     if test_type != "AFT" {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
-
-    // Group-level public key (1568 bytes for ML-KEM-1024).
-    let ek_bytes = hex::decode(
-        group
-            .get("ek")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("ek"))?,
-    )?;
-    let ek: [u8; 1568] = ek_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Encaps: ek is not 1568 bytes"))?;
 
     let tests = group
         .get("tests")
@@ -188,7 +188,19 @@ fn handle_encaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // Message/randomness for encaps (32 bytes).
+        // Per `draft-celi-acvp-ml-kem §8.2.2`, both `ek` and `m` are
+        // per-test fields — different test cases can exercise different
+        // encapsulation keys + messages within the same group.
+        let ek_bytes = hex::decode(
+            t.get("ek")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("ek"))?,
+        )?;
+        let ek: [u8; 1568] = ek_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Encaps: ek is not 1568 bytes"))?;
+
         let m_bytes = hex::decode(
             t.get("m")
                 .and_then(JsonValue::as_str)
@@ -199,13 +211,12 @@ fn handle_encaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Encaps: m is not 32 bytes"))?;
 
-        // Encapsulate with the public key.
         let (ss, ct) = oxicrypt_ml_kem::encaps_internal(&ek, &m);
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            ("ct".to_string(), JsonValue::String(hex::encode_upper(&ct))),
-            ("ss".to_string(), JsonValue::String(hex::encode_upper(&ss))),
+            ("c".to_string(), JsonValue::String(hex::encode_upper(&ct))),
+            ("k".to_string(), JsonValue::String(hex::encode_upper(&ss))),
         ]));
     }
 
@@ -223,25 +234,18 @@ fn handle_decaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tgId"))?;
 
+    // VAL is the only decaps test type the live demo server emits
+    // under the current cap (key-check VAL functions are not
+    // advertised). AFT semantics don't apply to decapsulation in
+    // FIPS 203 — the IUT contributes nothing of its own; server
+    // supplies dk + c, IUT computes ss, server grades.
     let test_type = group
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
+    if test_type != "VAL" {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
-
-    // Group-level secret key (3168 bytes for ML-KEM-1024).
-    let dk_bytes = hex::decode(
-        group
-            .get("dk")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("dk"))?,
-    )?;
-    let dk: [u8; 3168] = dk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Decaps: dk is not 3168 bytes"))?;
 
     let tests = group
         .get("tests")
@@ -256,23 +260,34 @@ fn handle_decaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // Ciphertext to decapsulate (1568 bytes for ML-KEM-1024).
-        let ct_bytes = hex::decode(
-            t.get("ct")
+        // Per `draft-celi-acvp-ml-kem §8.2.2`, both `dk` and `c` are
+        // per-test fields. Live wire uses field name `c` for the
+        // ciphertext (not `ct` as offline kat-slice format used).
+        let dk_bytes = hex::decode(
+            t.get("dk")
                 .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("ct"))?,
+                .ok_or(DispatchError::MissingField("dk"))?,
         )?;
-        let ct: [u8; 1568] = ct_bytes
+        let dk: [u8; 3168] = dk_bytes
             .as_slice()
             .try_into()
-            .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Decaps: ct is not 1568 bytes"))?;
+            .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Decaps: dk is not 3168 bytes"))?;
 
-        // Decapsulate.
-        let ss = oxicrypt_ml_kem::decaps_internal(&dk, &ct);
+        let c_bytes = hex::decode(
+            t.get("c")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("c"))?,
+        )?;
+        let c: [u8; 1568] = c_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("ML-KEM-1024 Decaps: c is not 1568 bytes"))?;
+
+        let ss = oxicrypt_ml_kem::decaps_internal(&dk, &c);
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
-            ("ss".to_string(), JsonValue::String(hex::encode_upper(&ss))),
+            ("k".to_string(), JsonValue::String(hex::encode_upper(&ss))),
         ]));
     }
 

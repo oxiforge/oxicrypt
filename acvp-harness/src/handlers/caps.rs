@@ -976,30 +976,40 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
 
 // ── Post-quantum: ML-KEM ─────────────────────────────────────────
 
-/// Build an ACVP registration block for ML-KEM / keyGen.
-pub fn ml_kem_keygen_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for ML-KEM / keyGen / FIPS203.
+///
+/// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.1`. Only
+/// `ML-KEM-1024` is currently advertised — the CNSA 2.0 baseline
+/// parameter set. ML-KEM-512 and ML-KEM-768 are tracked under the
+/// PQ-expansion mandate (see `algo-capability-matrix.md` rows 223-225)
+/// and will be added to `parameterSets` when their `*_internal` +
+/// public-API surfaces ship.
+pub fn ml_kem_keygen_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("ML-KEM")),
         ("mode", str_val("keyGen")),
-        ("revision", str_val("1.0")),
+        ("revision", str_val("FIPS203")),
+        ("parameterSets", str_array(&["ML-KEM-1024"])),
     ])
 }
 
-/// Build an ACVP registration block for ML-KEM / encaps.
-pub fn ml_kem_encaps_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for ML-KEM / encapDecap / FIPS203.
+///
+/// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.2`. The catalog
+/// uses a single `encapDecap` mode for both encapsulation and
+/// decapsulation; the `functions` array selects which the IUT
+/// supports. Key-check VAL functions
+/// (`encapsulationKeyCheck`/`decapsulationKeyCheck`) are not yet
+/// advertised — handler currently rejects non-AFT testTypes; the
+/// VAL surface is a forward-looking item gated on FIPS 203 §7.2/§7.3
+/// key-validation routines being exposed via the public API.
+pub fn ml_kem_encapdecap_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
-        ("mode", str_val("encaps")),
-        ("revision", str_val("1.0")),
-    ])
-}
-
-/// Build an ACVP registration block for ML-KEM / decaps.
-pub fn ml_kem_decaps_capability(algorithm: &str) -> JsonValue {
-    obj(vec![
-        ("algorithm", str_val(algorithm)),
-        ("mode", str_val("decaps")),
-        ("revision", str_val("1.0")),
+        ("algorithm", str_val("ML-KEM")),
+        ("mode", str_val("encapDecap")),
+        ("revision", str_val("FIPS203")),
+        ("parameterSets", str_array(&["ML-KEM-1024"])),
+        ("functions", str_array(&["encapsulation", "decapsulation"])),
     ])
 }
 
