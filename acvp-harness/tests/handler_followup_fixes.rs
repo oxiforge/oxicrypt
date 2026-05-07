@@ -953,9 +953,9 @@ fn slh_dsa_keygen_3field_prompt(
 ) -> JsonValue {
     let prompt_text = format!(
         r#"{{
-            "algorithm": "SLH-DSA-SHA2-256s",
+            "algorithm": "SLH-DSA",
             "mode":      "keyGen",
-            "revision":  "1.0",
+            "revision":  "FIPS205",
             "testGroups": [{{
                 "tgId": 1,
                 "testType": "AFT",

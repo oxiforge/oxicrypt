@@ -1,12 +1,29 @@
-//! SLH-DSA-SHA2-256s ACVP handlers — `keyGen`, `sigGen`, and `sigVer` modes.
+//! SLH-DSA ACVP handlers — `keyGen`, `sigGen`, and `sigVer` modes per FIPS 205.
 //!
-//! **SLH-DSA-SHA2-256s** (`SLH-DSA-SHA2-256s` / `keyGen`, `sigGen`, `sigVer` /
-//! revision `1.0`): Stateless hash-based digital signature per FIPS 205.
+//! Three handlers, mirroring the catalog's three-mode shape (see
+//! `draft-livelsberger-acvp-slh-dsa §7.3` / `§7.4` / `§7.5`):
 //!
-//! Three modes for the complete signature lifecycle:
-//! - **KeyGen**: Generate a (public key, secret key) pair from a 96-byte seed
-//! - **SigGen**: Sign a message deterministically with a secret key
-//! - **SigVer**: Verify a signature against a public key and message
+//! - **`SlhDsaKeyGenHandler`** — `SLH-DSA` / `keyGen` / `FIPS205`,
+//!   advertising `parameterSets: ["SLH-DSA-SHA2-256s"]`. Generates a
+//!   (public key, secret key) pair from a 96-byte seed split into
+//!   three 32-byte components (`SK.seed ‖ SK.prf ‖ PK.seed`).
+//! - **`SlhDsaSigGenHandler`** — `SLH-DSA` / `sigGen` / `FIPS205`,
+//!   advertising `deterministic: [true]`,
+//!   `signatureInterfaces: ["internal"]`, `preHash: ["pure"]`. Signs
+//!   a message deterministically (FIPS 205 §10.2 Algorithm 22 with
+//!   `opt_rand = PK.seed`).
+//! - **`SlhDsaSigVerHandler`** — `SLH-DSA` / `sigVer` / `FIPS205`,
+//!   same interface/pre-hash advertisement as sigGen. Verifies a
+//!   signature against a public key and message.
+//!
+//! Only `SLH-DSA-SHA2-256s` (CNSA 2.0 baseline) is currently
+//! advertised; the 11 other FIPS 205 §11 Table 2 parameter sets are
+//! PQ-expansion-mandate items (`algo-capability-matrix.md` rows
+//! 202-213) and will be added to `parameterSets` when their
+//! `*_internal` + public-API surfaces ship. The `algorithm()` value
+//! is the family name `"SLH-DSA"` (matching the live ACVP catalog) —
+//! not parameter-set-baked — so adding new parameter sets is a
+//! cap-only change with no handler-name churn.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -14,21 +31,21 @@ use crate::json::JsonValue;
 
 // ── KeyGen handler ──────────────────────────────────────────────────
 
-/// SLH-DSA-SHA2-256s KeyGen dispatcher.
+/// SLH-DSA keyGen dispatcher (`parameterSets: ["SLH-DSA-SHA2-256s"]`).
 pub struct SlhDsaKeyGenHandler;
 
 impl AlgorithmHandler for SlhDsaKeyGenHandler {
     fn algorithm(&self) -> &'static str {
-        "SLH-DSA-SHA2-256s"
+        "SLH-DSA"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("keyGen")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS205"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::slh_dsa_keygen_capability("SLH-DSA-SHA2-256s"))
+        Some(super::caps::slh_dsa_keygen_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
@@ -37,21 +54,22 @@ impl AlgorithmHandler for SlhDsaKeyGenHandler {
 
 // ── SigGen handler ──────────────────────────────────────────────────
 
-/// SLH-DSA-SHA2-256s SigGen dispatcher.
+/// SLH-DSA sigGen dispatcher (deterministic, internal interface, pure
+/// mode; `parameterSets: ["SLH-DSA-SHA2-256s"]`).
 pub struct SlhDsaSigGenHandler;
 
 impl AlgorithmHandler for SlhDsaSigGenHandler {
     fn algorithm(&self) -> &'static str {
-        "SLH-DSA-SHA2-256s"
+        "SLH-DSA"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("sigGen")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS205"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::slh_dsa_siggen_capability("SLH-DSA-SHA2-256s"))
+        Some(super::caps::slh_dsa_siggen_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
@@ -60,21 +78,22 @@ impl AlgorithmHandler for SlhDsaSigGenHandler {
 
 // ── SigVer handler ──────────────────────────────────────────────────
 
-/// SLH-DSA-SHA2-256s SigVer dispatcher.
+/// SLH-DSA sigVer dispatcher (internal interface, pure mode;
+/// `parameterSets: ["SLH-DSA-SHA2-256s"]`).
 pub struct SlhDsaSigVerHandler;
 
 impl AlgorithmHandler for SlhDsaSigVerHandler {
     fn algorithm(&self) -> &'static str {
-        "SLH-DSA-SHA2-256s"
+        "SLH-DSA"
     }
     fn mode(&self) -> Option<&'static str> {
         Some("sigVer")
     }
     fn revision(&self) -> &'static str {
-        "1.0"
+        "FIPS205"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::slh_dsa_sigver_capability("SLH-DSA-SHA2-256s"))
+        Some(super::caps::slh_dsa_sigver_capability())
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)
@@ -181,18 +200,6 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Group-level secret key (128 bytes for SLH-DSA-SHA2-256s).
-    let sk_bytes = hex::decode(
-        group
-            .get("sk")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("sk"))?,
-    )?;
-    let sk: [u8; oxicrypt_slh_dsa::SK_LEN] = sk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("SLH-DSA SigGen: sk has wrong length"))?;
-
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -205,6 +212,20 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
+
+        // Per `draft-livelsberger-acvp-slh-dsa §8.2.2`, both `sk` and
+        // `message` are per-test fields — different test cases can
+        // exercise different secret keys + messages within the same
+        // group.
+        let sk_bytes = hex::decode(
+            t.get("sk")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("sk"))?,
+        )?;
+        let sk: [u8; oxicrypt_slh_dsa::SK_LEN] = sk_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("SLH-DSA SigGen: sk has wrong length"))?;
 
         let message = hex::decode(
             t.get("message")
@@ -245,18 +266,6 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Group-level public key (64 bytes for SLH-DSA-SHA2-256s).
-    let pk_bytes = hex::decode(
-        group
-            .get("pk")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("pk"))?,
-    )?;
-    let pk: [u8; oxicrypt_slh_dsa::PK_LEN] = pk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("SLH-DSA SigVer: pk has wrong length"))?;
-
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -269,6 +278,22 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
+
+        // Per `draft-livelsberger-acvp-slh-dsa §8.3.2`, `pk`,
+        // `message`, and `signature` are all per-test fields. Server
+        // mixes valid and tampered (key-flip) signatures within the
+        // same group; the IUT returns `testPassed: bool` per case
+        // and the server grades by exact-match against the expected
+        // valid/invalid disposition.
+        let pk_bytes = hex::decode(
+            t.get("pk")
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::MissingField("pk"))?,
+        )?;
+        let pk: [u8; oxicrypt_slh_dsa::PK_LEN] = pk_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| DispatchError::Crypto("SLH-DSA SigVer: pk has wrong length"))?;
 
         let message = hex::decode(
             t.get("message")

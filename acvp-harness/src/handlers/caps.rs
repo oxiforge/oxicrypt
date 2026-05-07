@@ -1045,31 +1045,88 @@ pub fn ml_dsa_sigver_capability(algorithm: &str) -> JsonValue {
 
 // ── Post-quantum: SLH-DSA ────────────────────────────────────────
 
-/// Build an ACVP registration block for SLH-DSA / keyGen.
-pub fn slh_dsa_keygen_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for SLH-DSA / keyGen / FIPS205.
+///
+/// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.3.1`. Only
+/// `SLH-DSA-SHA2-256s` (CNSA 2.0 baseline) is currently advertised;
+/// the 11 other FIPS 205 §11 Table 2 parameter sets are tracked
+/// under the PQ-expansion mandate (`algo-capability-matrix.md` rows
+/// 202-213) and will be added to `parameterSets` when their
+/// `*_internal` + public-API surfaces ship.
+pub fn slh_dsa_keygen_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("SLH-DSA")),
         ("mode", str_val("keyGen")),
-        ("revision", str_val("1.0")),
+        ("revision", str_val("FIPS205")),
+        ("parameterSets", str_array(&["SLH-DSA-SHA2-256s"])),
     ])
 }
 
-/// Build an ACVP registration block for SLH-DSA / sigGen.
-pub fn slh_dsa_siggen_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for SLH-DSA / sigGen / FIPS205.
+///
+/// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.4.1`,
+/// constrained to oxicrypt-slh-dsa's actual handler subset:
+/// - `deterministic: [true]` — only deterministic-mode signing is
+///   exposed (FIPS 205 §10.2 Algorithm 22 with `opt_rand = PK.seed`),
+///   matching the upstream `sign_internal` API; the FIPS 205 §10.2
+///   randomized-mode variant is intentionally not built.
+/// - `signatureInterfaces: ["internal"]` — the harness invokes
+///   `sign_internal`, which does not consume context bytes; the
+///   external interface (`Sign(SK, M, ctx)`) is not advertised.
+/// - `capabilities[].messageLength: 8..=65536 step 8` — full byte-
+///   aligned arbitrary-length message range matching the spec
+///   example; oxicrypt-slh-dsa accepts arbitrary message lengths.
+/// - `preHash`, `hashAlgs`, `contextLength` deliberately omitted —
+///   they apply only to the external interface (which accepts a
+///   pre-hashed payload, a hash algorithm tag, and context bytes
+///   respectively). Per ACVP server validation, advertising
+///   `signatureInterfaces: ["internal"]` AND `preHash: [...]` is
+///   a registration error: *"Expected no pre-hash options with only
+///   internal interface"* (HTTP 400). The internal interface
+///   (FIPS 205 §10.2 `Sign_internal`) operates on raw messages; pre-
+///   hash modes are an external-interface concept by construction.
+pub fn slh_dsa_siggen_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("SLH-DSA")),
         ("mode", str_val("sigGen")),
-        ("revision", str_val("1.0")),
-        ("deterministic", JsonValue::Bool(true)),
+        ("revision", str_val("FIPS205")),
+        (
+            "deterministic",
+            JsonValue::Array(vec![JsonValue::Bool(true)]),
+        ),
+        ("signatureInterfaces", str_array(&["internal"])),
+        (
+            "capabilities",
+            JsonValue::Array(vec![obj(vec![
+                ("parameterSets", str_array(&["SLH-DSA-SHA2-256s"])),
+                ("messageLength", range_domain(8, 65536, 8)),
+            ])]),
+        ),
     ])
 }
 
-/// Build an ACVP registration block for SLH-DSA / sigVer.
-pub fn slh_dsa_sigver_capability(algorithm: &str) -> JsonValue {
+/// Build an ACVP registration block for SLH-DSA / sigVer / FIPS205.
+///
+/// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.5.2`,
+/// constrained to the same subset rationale as
+/// [`slh_dsa_siggen_capability`] above (internal-interface only,
+/// single parameter set, no pre-hash options per the
+/// internal-interface server-side constraint documented there).
+/// `deterministic` is not advertised on sigVer because verification
+/// is independent of the signer's randomness mode.
+pub fn slh_dsa_sigver_capability() -> JsonValue {
     obj(vec![
-        ("algorithm", str_val(algorithm)),
+        ("algorithm", str_val("SLH-DSA")),
         ("mode", str_val("sigVer")),
-        ("revision", str_val("1.0")),
+        ("revision", str_val("FIPS205")),
+        ("signatureInterfaces", str_array(&["internal"])),
+        (
+            "capabilities",
+            JsonValue::Array(vec![obj(vec![
+                ("parameterSets", str_array(&["SLH-DSA-SHA2-256s"])),
+                ("messageLength", range_domain(8, 65536, 8)),
+            ])]),
+        ),
     ])
 }
 

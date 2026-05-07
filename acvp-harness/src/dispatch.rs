@@ -361,7 +361,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::ml_dsa::MlDsa87KeyGenHandler));
     r.register(Box::new(handlers::ml_dsa::MlDsa87SigGenHandler));
     r.register(Box::new(handlers::ml_dsa::MlDsa87SigVerHandler));
-    // SLH-DSA-SHA2-256s (R61: keyGen / sigGen / sigVer, FIPS 205, post-quantum)
+    // SLH-DSA (R61: keyGen / sigGen / sigVer, FIPS 205, post-quantum;
+    //          parameterSets advertise SLH-DSA-SHA2-256s only)
     r.register(Box::new(handlers::slh_dsa::SlhDsaKeyGenHandler));
     r.register(Box::new(handlers::slh_dsa::SlhDsaSigGenHandler));
     r.register(Box::new(handlers::slh_dsa::SlhDsaSigVerHandler));
@@ -531,10 +532,10 @@ mod tests {
         assert!(r.find("ML-DSA-87", Some("keyGen"), "1.0").is_some());
         assert!(r.find("ML-DSA-87", Some("sigGen"), "1.0").is_some());
         assert!(r.find("ML-DSA-87", Some("sigVer"), "1.0").is_some());
-        // R61 SLH-DSA-SHA2-256s (FIPS 205, post-quantum)
-        assert!(r.find("SLH-DSA-SHA2-256s", Some("keyGen"), "1.0").is_some());
-        assert!(r.find("SLH-DSA-SHA2-256s", Some("sigGen"), "1.0").is_some());
-        assert!(r.find("SLH-DSA-SHA2-256s", Some("sigVer"), "1.0").is_some());
+        // R61 SLH-DSA (FIPS 205, post-quantum; parameterSets advertise SLH-DSA-SHA2-256s only)
+        assert!(r.find("SLH-DSA", Some("keyGen"), "FIPS205").is_some());
+        assert!(r.find("SLH-DSA", Some("sigGen"), "FIPS205").is_some());
+        assert!(r.find("SLH-DSA", Some("sigVer"), "FIPS205").is_some());
         // R62 LMS (SP 800-208)
         assert!(r.find("LMS", Some("keyGen"), "1.0").is_some());
         assert!(r.find("LMS", Some("sigGen"), "1.0").is_some());
