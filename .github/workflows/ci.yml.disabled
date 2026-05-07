@@ -1,3 +1,21 @@
+# NOTE — workflow paused 2026-05-07.
+#
+# Disabled by renaming `ci.yml` -> `ci.yml.disabled` while the
+# repository's GitHub Actions Free-tier minutes (2000/month for
+# private repos) are exhausted. GitHub auto-suspends Actions on
+# private repos that exceed quota, but the queued-but-failed runs
+# render PRs as red until renamed; renaming the workflow file
+# suppresses that.
+#
+# Local CI parity is preserved by `scripts/git-hooks/pre-push`,
+# which runs the same four jobs (fmt, clippy, test, build) on
+# every push. The hook activates via the existing
+# `git config core.hooksPath scripts/git-hooks` setting that the
+# pre-commit hook already relies on.
+#
+# To re-enable cloud CI: rename this file back to `ci.yml`. The
+# pre-push hook should stay as defense-in-depth.
+
 name: ci
 
 on:

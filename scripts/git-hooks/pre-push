@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Pre-push hook: local mirror of `.github/workflows/ci.yml`.
+#
+# Runs the same four gates the GitHub Actions workflow runs, in
+# the same order, with the same flags. While the workflow is
+# paused (Free-tier quota cap), this hook is the only gate. When
+# the workflow comes back online, this hook stays as defense in
+# depth — failing locally before push is faster and cheaper than
+# failing in cloud CI.
+#
+# Gates (matching ci.yml):
+#   1. cargo fmt --all -- --check
+#   2. cargo clippy --workspace --all-targets -- -D warnings
+#   3. cargo test --workspace -- --test-threads=1
+#   4. cargo build --workspace --release
+#
+# `--test-threads=1` is required because fips-module's unit tests
+# mutate a single global state. The same comment lives in ci.yml.
+#
+# Bypass:
+#   git push --no-verify
+#   Use sparingly. Document the reason in the commit body or PR
+#   description so reviewers see the rationale (matching the
+#   pre-commit hook's bypass convention).
+#
+# Activation:
+#   git config core.hooksPath scripts/git-hooks
+#   (Same setting the pre-commit hook uses; if pre-commit is
+#   already firing for you, this hook is already active.)
+
+set -euo pipefail
+
+export RUSTFLAGS="-D warnings"
+
+echo "pre-push [1/4]: cargo fmt --all -- --check"
+cargo fmt --all -- --check
+
+echo "pre-push [2/4]: cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "pre-push [3/4]: cargo test --workspace -- --test-threads=1"
+cargo test --workspace -- --test-threads=1
+
+echo "pre-push [4/4]: cargo build --workspace --release"
+cargo build --workspace --release
+
+echo "pre-push: all four gates passed."
