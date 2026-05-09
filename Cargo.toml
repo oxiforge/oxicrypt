@@ -37,12 +37,7 @@ exclude = [
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.94"
-# PolyForm Noncommercial 1.0.0 is not in the SPDX license list, so we
-# cannot use a bare `license = "..."` identifier. `license-file` points
-# at the LICENSE at the workspace root and Cargo treats the crate as
-# appropriately licensed. All member crates still set `publish = false`
-# so we never actually hit crates.io's SPDX requirement either.
-license-file = "LICENSE"
+license = "Apache-2.0 OR MIT"
 repository = "https://github.com/oxiforge/oxicrypt"
 homepage = "https://oxicrypt.dev"
 keywords = ["cryptography", "fips", "fips-140-3", "no-std", "nist"]

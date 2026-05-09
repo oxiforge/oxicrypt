@@ -4,6 +4,7 @@ description = "SHA-1, SHA-2, SHA-3 hash functions per FIPS 180-4 / FIPS 202"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

@@ -4,6 +4,7 @@ description = "SLH-DSA (FIPS 205) — stateless hash-based digital signature"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

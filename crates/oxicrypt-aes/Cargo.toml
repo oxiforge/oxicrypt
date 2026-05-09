@@ -4,6 +4,7 @@ description = "AES block cipher and modes (ECB, CBC, CTR, GCM, CCM, KW, KWP) per
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

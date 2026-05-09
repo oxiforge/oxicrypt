@@ -4,6 +4,7 @@ description = "ECDH per SP 800-56Ar3"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

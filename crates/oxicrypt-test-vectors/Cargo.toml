@@ -3,6 +3,7 @@ name = "oxicrypt-test-vectors"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 description = "NIST-derived KAT constants for oxicrypt power-up self-tests (generated)"

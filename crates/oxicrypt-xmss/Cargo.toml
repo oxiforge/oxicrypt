@@ -4,6 +4,7 @@ description = "XMSS hash-based signatures (SP 800-208) for CNSA 2.0 firmware sig
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

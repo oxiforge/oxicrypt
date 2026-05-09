@@ -4,6 +4,7 @@ description = "ML-DSA-87 (FIPS 204) — lattice-based digital signatures"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

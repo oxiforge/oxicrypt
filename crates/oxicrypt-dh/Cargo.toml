@@ -4,6 +4,7 @@ description = "Finite-field Diffie-Hellman key agreement — RFC 3526 Group 15 (
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
