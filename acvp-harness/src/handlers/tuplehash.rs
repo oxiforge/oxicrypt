@@ -31,7 +31,9 @@
 //! # Per-test fields (per §8.2 Table 6)
 //!
 //! - `tuple` (array of hex strings, AFT) — input tuple elements
-//! - `msg` (hex, MCT) — initial single-element tuple seed
+//! - `tuple` (array of hex, MCT) — initial single-element tuple seed
+//!   (`T[0][0] = tuple[0]`; TupleHash never uses the scalar `msg`
+//!   field that the other XOF families do)
 //! - `outLen` (bits, AFT only) — requested output length
 //! - `customization` (string, AFT only) — customization string S
 //!
@@ -292,7 +294,7 @@ where
 /// Pseudocode (paraphrased):
 ///
 /// ```text
-/// T[0][0] = Tuple  (the initial single-element tuple from `msg`)
+/// T[0][0] = tuple[0]  (the initial single-element tuple from `tuple`)
 /// OutputLen = MaxOutLen
 /// Customization = ""
 /// for j in 0..100:
@@ -378,11 +380,28 @@ where
             .get("tcId")
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
-        let msg_hex = t
-            .get("msg")
-            .and_then(JsonValue::as_str)
-            .ok_or(DispatchError::MissingField("msg"))?;
-        let initial_tuple_elem = hex::decode(msg_hex)?;
+        // TupleHash MCT input is delivered in the `tuple` array (per
+        // `draft-celi-acvp-xof` §8.2 Table 6 — TupleHash never uses
+        // the scalar `msg` field used by cSHAKE/KMAC/ParallelHash).
+        // Per §6.2.3 the initial input is a "Single-Tuple"; the JSON
+        // shape is a one-element array, and `T[0][0] = Tuple` reads
+        // as `t_zero = tuple[0]`.
+        let tuple_arr = t
+            .get("tuple")
+            .and_then(JsonValue::as_array)
+            .ok_or(DispatchError::MissingField("tuple"))?;
+        let first_elem_hex =
+            tuple_arr
+                .first()
+                .and_then(JsonValue::as_str)
+                .ok_or(DispatchError::Crypto(
+                    "TupleHash MCT: `tuple` is empty or not an array of strings",
+                ))?;
+        let initial_tuple_elem = if first_elem_hex.is_empty() {
+            Vec::new()
+        } else {
+            hex::decode(first_elem_hex)?
+        };
 
         // Spec §6.2.3 pre-loop initial state.
         // T[0][0] is the initial single-element tuple's first element.
@@ -402,10 +421,14 @@ where
                 // workingBits = Left(T[i-1][0] || ZeroBits(288), 288) — 36 bytes
                 let working_bits = left(&t_zero, 288);
 
-                // tupleSize = (top 3 bits of workingBits) % 4 + 1, in 1..=4.
-                // The 3-bit value is the MSB-aligned top of byte 0; per spec
-                // NOTE it is interpreted as a little-endian-encoded number,
-                // which for a 3-bit value collapses to the raw value.
+                // tupleSize = (Left(workingBits, 3) as integer) % 4 + 1,
+                // in 1..=4. The §6.2.3 NOTE calls this a "little-endian-
+                // encoded number"; the NIST ACVP-Server reference impl
+                // implements it as `GetMostSignificantBits(3).Bits.ToInt()`,
+                // which combines an MSB-aligned slice with an LSB-indexed
+                // BitArray sum and produces the same value as treating
+                // the leftmost bit as the MSB. For a top byte of `b`,
+                // that's `b >> 5` (BE byte-top extraction).
                 let top_3_bits = usize::from(working_bits[0] >> 5);
                 let tuple_size = (top_3_bits % 4) + 1;
 
@@ -425,9 +448,6 @@ where
                 let mut new_output = vec![0u8; out_bytes];
                 compute(&elements, &customization, &mut new_output)?;
 
-                // Carry T[i][0] forward as next iter's T[i-1][0].
-                t_zero.clone_from(&elements[0]);
-
                 // Rightmost_Output_bits = Right(Output[i], 16) — 2 bytes
                 let rightmost = right(&new_output, 16);
                 let rightmost_num = usize::from(be_u16_from_2_bytes(&rightmost));
@@ -437,11 +457,29 @@ where
                 output_len_bits = min_out_len + (modded / out_len_increment) * out_len_increment;
 
                 // Customization = BitsToString(T[i][0] || Rightmost_Output_bits)
-                // Uses the just-updated T[i][0] (= elements[0] = current t_zero).
-                let mut combo = Vec::with_capacity(t_zero.len() + rightmost.len());
-                combo.extend_from_slice(&t_zero);
+                // T[i][0] is the partitioned tuple's first element
+                // (= `elements[0]`), NOT the digest.
+                let mut combo = Vec::with_capacity(elements[0].len() + rightmost.len());
+                combo.extend_from_slice(&elements[0]);
                 combo.extend_from_slice(&rightmost);
                 customization = bits_to_string(&combo);
+
+                // Carry the digest forward as the seed for the next
+                // iter's workingBits. The §6.2.3 spec text says
+                // `workingBits = Left(T[i-1][0] || ZeroBits(288), 288)`
+                // — which would suggest carrying `elements[0]` (this
+                // iter's `T[i][0]`) forward — but the NIST ACVP-Server
+                // reference impl (`TupleHash_MCT.cs`) replaces the
+                // inner tuple with `[innerDigest]` after each iter, so
+                // operationally `T[i-1][0]` in the next iter is the
+                // PREVIOUS DIGEST. This matches the cSHAKE and
+                // ParallelHash MCT carry-forward conventions and is
+                // what NIST grades against. Surfaced 2026-05-11 by
+                // session 729018 / vsId 3852233 (all 100 MCT
+                // iterations mismatched while all 400 AFT cases
+                // passed); fixed by cross-checking the NIST C#
+                // reference implementation directly.
+                t_zero.clone_from(&new_output);
 
                 if i == 1000 {
                     // Capture Output[1000] for OutputJ[j].
