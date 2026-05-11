@@ -264,14 +264,11 @@ where
             }
         }
 
-        // Customization string S. Per-test `customization` field is
-        // hex if the group-level boolean is true, ASCII otherwise.
-        let s_field = t.get("customization").and_then(JsonValue::as_str);
-        let s = match s_field {
-            None | Some("") => Vec::new(),
-            Some(raw) if hex_customization => hex::decode(raw)?,
-            Some(raw) => raw.as_bytes().to_vec(),
-        };
+        // Customization string S. Read whichever JSON field the
+        // group-level `hexCustomization` flag declares (per
+        // `draft-celi-acvp-xof` §8.2 Table 6): `customizationHex`
+        // when true, `customization` when false.
+        let s = super::xof_common::read_customization_field(t, hex_customization)?;
 
         let mut out_buf = vec![0u8; out_bytes];
         compute(&elements, &s, &mut out_buf)?;

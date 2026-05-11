@@ -222,6 +222,11 @@ fn gen_kmac_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: us
     for (i, c) in cases.iter().enumerate() {
         let mut out = vec![0u8; c.mac_len];
         compute(&c.key, &c.msg, &c.s, &mut out);
+        // `hexCustomization: true` is paired with the `customizationHex`
+        // per-test field name (per `draft-celi-acvp-xof` §8.2 Table 6).
+        // The live ACVTS demo server uses the field-name pattern; the
+        // offline-fixture generator must match so round-trip tests
+        // exercise the same path live grading does.
         tests_json.push(format!(
             r#"        {{
           "tcId": {},
@@ -230,7 +235,7 @@ fn gen_kmac_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: us
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "customization": "{}",
+          "customizationHex": "{}",
           "mac": "{}"
         }}"#,
             i + 1,

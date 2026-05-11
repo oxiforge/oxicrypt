@@ -120,7 +120,7 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "customization": "{}",
+          "customizationHex": "{}",
           "mac": "{}",
           "testPassed": true
         }}"#,
@@ -148,7 +148,7 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "customization": "{}",
+          "customizationHex": "{}",
           "mac": "{}",
           "testPassed": false
         }}"#,

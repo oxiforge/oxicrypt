@@ -122,6 +122,11 @@ fn gen_kmacxof_slice(
     for (i, c) in cases.iter().enumerate() {
         let mut out = vec![0u8; c.mac_len];
         compute(&c.key, &c.msg, &c.s, &mut out);
+        // `hexCustomization: true` is paired with the per-test
+        // `customizationHex` field name (per `draft-celi-acvp-xof`
+        // §8.2 Table 6) so offline fixtures match the live ACVTS
+        // shape that the shared `read_customization_field` helper
+        // expects.
         tests_json.push(format!(
             r#"        {{
           "tcId": {},
@@ -130,7 +135,7 @@ fn gen_kmacxof_slice(
           "macLen": {},
           "key": "{}",
           "msg": "{}",
-          "customization": "{}",
+          "customizationHex": "{}",
           "mac": "{}"
         }}"#,
             i + 1,

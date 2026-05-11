@@ -33,6 +33,7 @@
 //! handler serves both offline round-trip and live ACVTS prompts. The
 //! MCT path is exercised only against live ACVTS.
 
+use super::xof_common::read_customization_field;
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
@@ -56,8 +57,8 @@ impl AlgorithmHandler for CShake128Handler {
         Some(super::caps::cshake_capability("cSHAKE-128"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        dispatch_cshake_group(group, |msg, s, out| {
-            let mut x = CShake128::new(b"", s)
+        dispatch_cshake_group(group, |msg, n, s, out| {
+            let mut x = CShake128::new(n, s)
                 .map_err(|_| DispatchError::Crypto("CShake128::new returned Err"))?;
             x.update(msg);
             x.finalize();
@@ -78,8 +79,8 @@ impl AlgorithmHandler for CShake256Handler {
         Some(super::caps::cshake_capability("cSHAKE-256"))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
-        dispatch_cshake_group(group, |msg, s, out| {
-            let mut x = CShake256::new(b"", s)
+        dispatch_cshake_group(group, |msg, n, s, out| {
+            let mut x = CShake256::new(n, s)
                 .map_err(|_| DispatchError::Crypto("CShake256::new returned Err"))?;
             x.update(msg);
             x.finalize();
@@ -91,13 +92,16 @@ impl AlgorithmHandler for CShake256Handler {
 
 /// Top-level cSHAKE group dispatch — routes by `testType` to the AFT
 /// or MCT driver. The `cshake_call` closure is the cSHAKE primitive
-/// for the active key size, invoked with `(msg, customization, out)`.
+/// for the active key size, invoked with `(msg, N, customization, out)`
+/// where `N` is the cSHAKE function-name input. The AFT path reads
+/// `N` from each test's `functionName` field; the MCT path hard-codes
+/// `N = ""` per `draft-celi-acvp-xof` §6.2.1.
 fn dispatch_cshake_group<F>(
     group: &JsonValue,
     mut cshake_call: F,
 ) -> Result<JsonValue, DispatchError>
 where
-    F: FnMut(&[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
+    F: FnMut(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
 {
     let test_type = group
         .get("testType")
@@ -111,21 +115,25 @@ where
 }
 
 /// AFT driver — one cSHAKE call per test case, fixed `outLen` from
-/// the prompt.
+/// the prompt. Reads `functionName` (N) and per-spec customization
+/// field from each test case.
 fn handle_cshake_aft_group<F>(
     group: &JsonValue,
     cshake_call: &mut F,
 ) -> Result<JsonValue, DispatchError>
 where
-    F: FnMut(&[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
+    F: FnMut(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
 {
     let group_id = group
         .get("tgId")
         .and_then(JsonValue::as_i64)
         .ok_or(DispatchError::MissingField("tgId"))?;
-    // Group-level encoding flag for the per-test `customization`
-    // field (per `xof §8.1 Table 5`). Absent → false (ASCII), the
-    // family pattern observed across all live KMAC sessions.
+    // Group-level encoding flag selects WHICH customization field is
+    // present per test case (per `draft-celi-acvp-xof` §8.2 Table 6):
+    //   hexCustomization = false → `customization` field, ASCII bytes
+    //   hexCustomization = true  → `customizationHex` field, hex bytes
+    // Defaults to `false` when absent (back-compat with offline
+    // fixtures that pre-date the live ACVTS divergence).
     let hex_customization = group
         .get("hexCustomization")
         .and_then(JsonValue::as_bool)
@@ -172,18 +180,25 @@ where
         }
         let used = &msg[..msg_bytes];
 
-        // Customization string S. Per-test `customization` field is
-        // hex if the group-level boolean is true, ASCII otherwise.
-        // Treat a missing field as the empty customization (S = "").
-        let s_field = t.get("customization").and_then(JsonValue::as_str);
-        let s = match s_field {
-            None | Some("") => Vec::new(),
-            Some(raw) if hex_customization => hex::decode(raw)?,
-            Some(raw) => raw.as_bytes().to_vec(),
-        };
+        // Function name N (per-test). The cSHAKE handler comment
+        // historically claimed N was always empty for ACVP; the live
+        // demo server exercises non-empty N — values like `"KMAC"`,
+        // `"TupleHash"`, `"ParallelHash"` matching the SP 800-185
+        // derived-function names. Default to empty when the field is
+        // absent (back-compat with offline fixtures).
+        let n = t
+            .get("functionName")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("")
+            .as_bytes()
+            .to_vec();
+
+        // Customization string S. Read whichever field the group's
+        // `hexCustomization` flag declares.
+        let s = read_customization_field(t, hex_customization)?;
 
         let mut out_buf = vec![0u8; out_bytes];
-        cshake_call(used, &s, &mut out_buf)?;
+        cshake_call(used, &n, &s, &mut out_buf)?;
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             (
@@ -230,7 +245,7 @@ fn handle_cshake_mct_group<F>(
     cshake_call: &mut F,
 ) -> Result<JsonValue, DispatchError>
 where
-    F: FnMut(&[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
+    F: FnMut(&[u8], &[u8], &[u8], &mut [u8]) -> Result<(), DispatchError>,
 {
     let group_id = group
         .get("tgId")
@@ -314,7 +329,8 @@ where
                 // Output[i] = cSHAKE(InnerMsg, OutputLen, "", Customization)
                 let out_bytes = output_len_bits / 8;
                 let mut new_output = vec![0u8; out_bytes];
-                cshake_call(&inner_msg, &customization, &mut new_output)?;
+                // §6.2.1 hard-codes FunctionName = "" for cSHAKE MCT.
+                cshake_call(&inner_msg, b"", &customization, &mut new_output)?;
                 output = new_output;
 
                 // Rightmost_Output_bits = Right(Output[i], 16) — 2 bytes

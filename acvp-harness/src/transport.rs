@@ -1500,6 +1500,13 @@ fn poll_verdict(
         // server is still grading it returns either {"retry": N} or a
         // similar holding response — handle both by looping.
         if let Some(disposition) = body.get("disposition").and_then(JsonValue::as_str) {
+            // Persist the full /results body in the transcript so an
+            // operator can recover the per-tcId pass/fail cluster for a
+            // failed vector set without re-fetching against ACVTS (which
+            // would burn another login slot). Per
+            // `project_acvts_verdict_fetch_url_pattern`, /results is the
+            // only endpoint that carries the per-tcId verdict array.
+            log.log("verdict_body", &resp.body);
             return Ok(disposition.to_string());
         }
         if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64) {

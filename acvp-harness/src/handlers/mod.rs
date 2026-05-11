@@ -434,3 +434,4 @@ pub mod tls12_kdf;
 pub mod tls13_kdf;
 pub mod tuplehash;
 pub mod xmss;
+pub mod xof_common;

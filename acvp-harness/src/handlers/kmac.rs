@@ -270,17 +270,15 @@ fn parse_kmac_test(
         msg_full[..msg_bytes].to_vec()
     };
 
-    // `customization` is the per-test S string. Encoding is governed
-    // by the group-level `hexCustomization` boolean — `true` means
-    // the field is hex; `false` means it is ASCII text taken
-    // byte-for-byte (per ACVP SP 800-185 KMAC capability spec).
-    // Treat a missing field as the empty customization (S = "").
-    let s_field = t.get("customization").and_then(JsonValue::as_str);
-    let s = match s_field {
-        None | Some("") => Vec::new(),
-        Some(raw) if hex_customization => hex::decode(raw)?,
-        Some(raw) => raw.as_bytes().to_vec(),
-    };
+    // Customization string S. Read whichever JSON field the
+    // group-level `hexCustomization` flag declares (per
+    // `draft-celi-acvp-xof` §8.2 Table 6): `customizationHex` when
+    // true, `customization` when false. KMAC's 2026-05-01 live pass
+    // happened to exercise only `hexCustomization: false` groups, so
+    // the field-name divergence was latent until cSHAKE surfaced it
+    // on 2026-05-11; fixing the helper centrally closes the latent
+    // bug for KMAC alongside cSHAKE's active fix.
+    let s = super::xof_common::read_customization_field(t, hex_customization)?;
 
     Ok(KmacTestInputs {
         key,
