@@ -200,14 +200,23 @@ pub fn cshake_capability(algorithm: &str) -> JsonValue {
 /// per-group `xof` boolean. There is no `TupleHashXOF-*` algorithm
 /// name in the spec.
 pub fn tuplehash_capability(algorithm: &str) -> JsonValue {
+    // Required fields per `draft-celi-acvp-xof` §7.2 Table 3 and the
+    // Appendix A registration example (page 22): `msgLen` and
+    // `hexCustomization` are both required for TupleHash; advertising
+    // `hexCustomization: true` exercises both ASCII and hex decode
+    // paths (the server picks per-group). Pre-fix cap omitted both
+    // fields and the server rejected the registration with HTTP 400
+    // `General exception` (no specific complaint surfaced).
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
+        ("msgLen", range_domain(0, 65536, 8)),
         ("outputLen", range_domain(16, 65536, 8)),
         (
             "xof",
             JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Bool(false)]),
         ),
+        ("hexCustomization", JsonValue::Bool(true)),
     ])
 }
 
@@ -221,9 +230,16 @@ pub fn tuplehash_capability(algorithm: &str) -> JsonValue {
 /// and per-group `xof` boolean. There is no `ParallelHashXOF-*`
 /// algorithm name in the spec.
 pub fn parallelhash_capability(algorithm: &str) -> JsonValue {
+    // Required fields per `draft-celi-acvp-xof` §7.2 Table 3 and the
+    // Appendix A registration example (page 21): `msgLen` and
+    // `hexCustomization` are both required (in addition to
+    // ParallelHash's `blockSize`). Pre-fix cap omitted msgLen and
+    // hexCustomization; the server rejects such registrations with
+    // HTTP 400. Same shape as `tuplehash_capability`, plus blockSize.
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
+        ("msgLen", range_domain(0, 65536, 8)),
         ("outputLen", range_domain(16, 65536, 8)),
         (
             "blockSize",
@@ -237,6 +253,7 @@ pub fn parallelhash_capability(algorithm: &str) -> JsonValue {
             "xof",
             JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Bool(false)]),
         ),
+        ("hexCustomization", JsonValue::Bool(true)),
     ])
 }
 
