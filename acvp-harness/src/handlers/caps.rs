@@ -192,20 +192,35 @@ pub fn cshake_capability(algorithm: &str) -> JsonValue {
 
 // ── TupleHash family ─────────────────────────────────────────────
 
-/// Build an ACVP registration block for TupleHash or TupleHashXOF.
-pub fn tuplehash_capability(algorithm: &str, xof: bool) -> JsonValue {
+/// Build an ACVP registration block for TupleHash.
+///
+/// Per `draft-celi-acvp-xof` §5 + §7.2 Table 3, ACVP recognises only
+/// `TupleHash-128` and `TupleHash-256` as algorithm names — the XOF
+/// mode is selected via the `xof: [true, false]` capability flag and
+/// per-group `xof` boolean. There is no `TupleHashXOF-*` algorithm
+/// name in the spec.
+pub fn tuplehash_capability(algorithm: &str) -> JsonValue {
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
         ("outputLen", range_domain(16, 65536, 8)),
-        ("xof", JsonValue::Array(vec![JsonValue::Bool(xof)])),
+        (
+            "xof",
+            JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Bool(false)]),
+        ),
     ])
 }
 
 // ── ParallelHash family ──────────────────────────────────────────
 
-/// Build an ACVP registration block for ParallelHash or ParallelHashXOF.
-pub fn parallelhash_capability(algorithm: &str, xof: bool) -> JsonValue {
+/// Build an ACVP registration block for ParallelHash.
+///
+/// Per `draft-celi-acvp-xof` §5 + §7.2 Table 3, ACVP recognises only
+/// `ParallelHash-128` and `ParallelHash-256` as algorithm names — the
+/// XOF mode is selected via the `xof: [true, false]` capability flag
+/// and per-group `xof` boolean. There is no `ParallelHashXOF-*`
+/// algorithm name in the spec.
+pub fn parallelhash_capability(algorithm: &str) -> JsonValue {
     obj(vec![
         ("algorithm", str_val(algorithm)),
         ("revision", str_val("1.0")),
@@ -218,7 +233,10 @@ pub fn parallelhash_capability(algorithm: &str, xof: bool) -> JsonValue {
                 ("increment", num(1)),
             ])]),
         ),
-        ("xof", JsonValue::Array(vec![JsonValue::Bool(xof)])),
+        (
+            "xof",
+            JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Bool(false)]),
+        ),
     ])
 }
 

@@ -140,14 +140,14 @@ all test types the demo server is expected to send:
 | Test type | Algorithms |
 |-----------|-----------|
 | AFT | All registered algorithms |
-| MCT | SHA-3 family, AES-ECB, AES-CBC |
+| MCT | SHA-3 family, AES-ECB, AES-CBC, cSHAKE-128/256, TupleHash-128/256, ParallelHash-128/256 |
 | MVT | All 11 HMAC variants, KMAC-128/256, KMACXOF-128/256 |
 | CTR | AES-CTR (counter-overflow/uniqueness) |
 | VOT | SHAKE-128, SHAKE-256 |
 | LDT | SHA-3 family, SHAKE family |
 | GDT | RSA SigVer, RSA SigGen |
 
-120 ACVP round-trip tests plus 7 CAVP SHS tests verify every handler
+121 ACVP round-trip tests plus 7 CAVP SHS tests verify every handler
 reproduces the vendored answer fields byte-for-byte.
 
 ### Dispatching vectors

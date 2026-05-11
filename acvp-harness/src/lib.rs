@@ -86,6 +86,7 @@ pub mod envelope;
 pub mod handlers;
 pub mod hex;
 pub mod json;
+pub mod mct_helpers;
 pub mod rsp;
 pub mod shs;
 pub mod transport;
