@@ -281,10 +281,10 @@ pub(crate) fn unpack_hint(buf: &[u8], h: &mut PolyVecK) -> bool {
             if idx as usize >= N {
                 return false;
             }
-            if let Some(p) = prev_idx {
-                if idx <= p {
-                    return false;
-                }
+            if let Some(p) = prev_idx
+                && idx <= p
+            {
+                return false;
             }
             h.polys[i].coeffs[idx as usize] = 1;
             prev_idx = Some(idx);

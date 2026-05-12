@@ -41,7 +41,7 @@
     clippy::unnecessary_wraps
 )]
 
-use oxicrypt_module::{initialize_with_tests, state, Error, KatEntry};
+use oxicrypt_module::{Error, KatEntry, initialize_with_tests, state};
 
 /// The full power-up KAT set for this binary.
 ///

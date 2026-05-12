@@ -13,7 +13,7 @@
 //! a fresh 256-byte exponent per call, and we measure the cycle
 //! count of one `pow_secret` invocation.
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_rsa::bigint2048::U2048;
 use oxicrypt_rsa::mont2048::MontCtx2048;

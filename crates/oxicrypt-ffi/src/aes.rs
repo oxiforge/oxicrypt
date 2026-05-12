@@ -33,16 +33,16 @@
 //!   `slice_from_raw` helper, which returns an empty slice for the
 //!   `(null, 0)` case.
 
-use crate::error::{status_aes, OxiResult as R};
+use crate::error::{OxiResult as R, status_aes};
 use crate::handle::OxiHandle;
 use crate::{slice_from_raw, slice_from_raw_mut};
 use core::ffi::c_int;
 use oxicrypt_aes::{
-    cbc_decrypt, cbc_encrypt, ccm_decrypt, ccm_encrypt, ctr_xor, gcm_decrypt, gcm_encrypt,
-    kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap, Aes256Key,
+    Aes256Key, cbc_decrypt, cbc_encrypt, ccm_decrypt, ccm_encrypt, ctr_xor, gcm_decrypt,
+    gcm_encrypt, kw_unwrap, kw_wrap, kwp_unwrap, kwp_wrap,
 };
 use oxicrypt_cmac::cmac_tag;
-use oxicrypt_module::{require_allowed, Service};
+use oxicrypt_module::{Service, require_allowed};
 
 /// Opaque AES-256 key handle. The internal layout
 /// (`OxiHandle<Aes256Key>`) is implementation detail and not part
@@ -64,7 +64,7 @@ pub struct OxiAes256Key {
 /// - `out_handle` must be a valid pointer to a writable
 ///   `*mut OxiAes256Key`.
 /// - `key` must point to at least 32 readable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_new(
     out_handle: *mut *mut OxiAes256Key,
     key: *const u8,
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn oxi_aes256_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_aes256_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_free(handle: *mut OxiAes256Key) {
     if handle.is_null() {
         return;
@@ -123,7 +123,7 @@ pub unsafe extern "C" fn oxi_aes256_free(handle: *mut OxiAes256Key) {
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_gcm_encrypt(
     key: *const OxiAes256Key,
     iv: *const u8,
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn oxi_aes256_gcm_encrypt(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_gcm_decrypt(
     key: *const OxiAes256Key,
     iv: *const u8,
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn oxi_aes256_gcm_decrypt(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_cbc_encrypt(
     key: *const OxiAes256Key,
     iv: *const u8,
@@ -284,7 +284,7 @@ pub unsafe extern "C" fn oxi_aes256_cbc_encrypt(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_cbc_decrypt(
     key: *const OxiAes256Key,
     iv: *const u8,
@@ -338,7 +338,7 @@ pub unsafe extern "C" fn oxi_aes256_cbc_decrypt(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_ctr(
     key: *const OxiAes256Key,
     icb: *const u8,
@@ -389,7 +389,7 @@ pub unsafe extern "C" fn oxi_aes256_ctr(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_ccm_encrypt(
     key: *const OxiAes256Key,
     nonce: *const u8,
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn oxi_aes256_ccm_encrypt(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_ccm_decrypt(
     key: *const OxiAes256Key,
     nonce: *const u8,
@@ -525,7 +525,7 @@ pub unsafe extern "C" fn oxi_aes256_ccm_decrypt(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_cmac(
     key: *const OxiAes256Key,
     msg: *const u8,
@@ -570,7 +570,7 @@ pub unsafe extern "C" fn oxi_aes256_cmac(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_kw_wrap(
     key: *const OxiAes256Key,
     plaintext: *const u8,
@@ -614,7 +614,7 @@ pub unsafe extern "C" fn oxi_aes256_kw_wrap(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_kw_unwrap(
     key: *const OxiAes256Key,
     ciphertext: *const u8,
@@ -659,7 +659,7 @@ pub unsafe extern "C" fn oxi_aes256_kw_unwrap(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_kwp_wrap(
     key: *const OxiAes256Key,
     plaintext: *const u8,
@@ -713,7 +713,7 @@ pub unsafe extern "C" fn oxi_aes256_kwp_wrap(
 ///
 /// All pointer/length pairs must be valid as documented above.
 /// `key` must be a live handle from [`oxi_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_aes256_kwp_unwrap(
     key: *const OxiAes256Key,
     ciphertext: *const u8,

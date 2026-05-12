@@ -37,7 +37,7 @@
 
 use core::marker::PhantomData;
 
-use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 use oxicrypt_sha::sha256::Sha256;
 use oxicrypt_sha::sha384::Sha384;
 use oxicrypt_sha::sha512::Sha512;

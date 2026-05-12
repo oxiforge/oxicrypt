@@ -19,8 +19,8 @@
     dead_code
 )]
 
-use crate::bigint3072::{LIMBS as LIMBS3072, U3072};
 use crate::bigint_impl::define_bigint_type;
+use crate::bigint3072::{LIMBS as LIMBS3072, U3072};
 
 define_bigint_type! {
     /// A 1536-bit unsigned integer (CRT half for RSA-3072).

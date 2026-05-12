@@ -747,7 +747,7 @@ fn kbkdf_counter_generative_aft_dispatches_without_fixed_data() {
         let key_out = t.get("keyOut").and_then(JsonValue::as_str).unwrap();
         let fixed_data = t.get("fixedData").and_then(JsonValue::as_str).unwrap();
         assert_eq!(key_out.len(), 64); // 256 bits / 4 = 64 hex chars
-                                       // Each test gets distinct fixedData (Label + Context resampled).
+        // Each test gets distinct fixedData (Label + Context resampled).
         assert!(
             seen_fd.insert(fixed_data.to_string()),
             "counter generative-AFT must produce distinct fixedData per test"

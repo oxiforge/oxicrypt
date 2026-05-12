@@ -27,7 +27,7 @@
     clippy::needless_range_loop
 )]
 
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 /// Output length of SHA-1 in bytes.
 pub const DIGEST_SIZE: usize = 20;
@@ -292,8 +292,8 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{self_test, sha1, Sha1, DIGEST_SIZE, KAT_ABC_DIGEST};
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use super::{DIGEST_SIZE, KAT_ABC_DIGEST, Sha1, self_test, sha1};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn hex(s: &str) -> [u8; DIGEST_SIZE] {
         assert_eq!(s.len(), DIGEST_SIZE * 2);

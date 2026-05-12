@@ -15,7 +15,7 @@
 use crate::field::{ct_bytes_eq, ct_select_32};
 use crate::kpke::{kpke_decrypt, kpke_encrypt, kpke_keygen};
 use crate::params::{CT_LEN, DK_LEN, EK_LEN, K, SEED_LEN, SHARED_SECRET_LEN};
-use oxicrypt_sha::sha3::{Sha3_256, Sha3_512, SHA3_256_DIGEST_SIZE, SHA3_512_DIGEST_SIZE};
+use oxicrypt_sha::sha3::{SHA3_256_DIGEST_SIZE, SHA3_512_DIGEST_SIZE, Sha3_256, Sha3_512};
 use oxicrypt_xof::Shake256;
 
 /// ML-KEM.KeyGen (FIPS 203 Algorithm 15).

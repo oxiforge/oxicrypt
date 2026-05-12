@@ -13,8 +13,8 @@
 //! algorithm-family KAT over SHA-256 or SHA-512 does not cover them).
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use crate::sha512::{Sha512State, BLOCK_SIZE as SHA512_BLOCK};
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use crate::sha512::{BLOCK_SIZE as SHA512_BLOCK, Sha512State};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 // ========================================================================
 // SHA-512/224
@@ -225,10 +225,10 @@ pub fn self_test_256() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
-        self_test_224, self_test_256, sha512_224, sha512_256, Sha512_224, Sha512_256,
-        DIGEST_SIZE_224, DIGEST_SIZE_256, KAT_ABC_DIGEST_224, KAT_ABC_DIGEST_256,
+        DIGEST_SIZE_224, DIGEST_SIZE_256, KAT_ABC_DIGEST_224, KAT_ABC_DIGEST_256, Sha512_224,
+        Sha512_256, self_test_224, self_test_256, sha512_224, sha512_256,
     };
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn nibble(c: u8) -> u8 {
         match c {

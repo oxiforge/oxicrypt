@@ -67,7 +67,7 @@ mod tests {
     use super::*;
 
     fn make_drbg(seed: &[u8]) -> HmacDrbgSha256 {
-        use oxicrypt_module::{initialize_with_tests, KatEntry};
+        use oxicrypt_module::{KatEntry, initialize_with_tests};
         let _ = initialize_with_tests(&[KatEntry {
             name: "rsa-3072-keygen-test-noop",
             run: || Ok(()),
@@ -115,7 +115,7 @@ mod tests {
     /// primes) but exercises the complete pipeline.
     #[test]
     fn generate_3072_smoke() {
-        use oxicrypt_module::{initialize_with_tests, KatEntry};
+        use oxicrypt_module::{KatEntry, initialize_with_tests};
         let _ = initialize_with_tests(&[KatEntry {
             name: "rsa-3072-keygen-smoke",
             run: crate::self_test,

@@ -55,7 +55,7 @@ pub mod cmac;
 pub mod kat;
 
 pub use cmac::{
-    cmac_aes128, cmac_aes128_internal, cmac_aes192, cmac_aes192_internal, cmac_aes256,
-    cmac_aes256_internal, cmac_tag, BLOCK_SIZE,
+    BLOCK_SIZE, cmac_aes128, cmac_aes128_internal, cmac_aes192, cmac_aes192_internal, cmac_aes256,
+    cmac_aes256_internal, cmac_tag,
 };
 pub use kat::KATS;

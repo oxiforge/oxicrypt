@@ -68,11 +68,11 @@ pub use ctr::{
     CtrDrbgAes192, CtrDrbgAes256, DrbgError, MAX_DF_INPUT,
 };
 pub use hash::{
-    HashAlg, HashDrbg, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512, Sha256Alg, Sha384Alg,
-    Sha512Alg, HASH_DRBG_MAX_DF_INPUT,
+    HASH_DRBG_MAX_DF_INPUT, HashAlg, HashDrbg, HashDrbgSha256, HashDrbgSha384, HashDrbgSha512,
+    Sha256Alg, Sha384Alg, Sha512Alg,
 };
 pub use hmac::{
-    HmacAlg, HmacDrbg, HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512, HmacSha256Alg,
-    HmacSha384Alg, HmacSha512Alg, HMAC_DRBG_MAX_PROVIDED,
+    HMAC_DRBG_MAX_PROVIDED, HmacAlg, HmacDrbg, HmacDrbgSha256, HmacDrbgSha384, HmacDrbgSha512,
+    HmacSha256Alg, HmacSha384Alg, HmacSha512Alg,
 };
 pub use kat::KATS;

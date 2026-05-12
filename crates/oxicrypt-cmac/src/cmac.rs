@@ -33,7 +33,7 @@
 )]
 
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key, BlockCipher};
-use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 
 /// AES block size in bytes. Always 16 for AES.
 pub const BLOCK_SIZE: usize = 16;

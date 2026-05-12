@@ -272,7 +272,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         _ => {
             return Err(DispatchError::Unsupported(
                 "RSA SigVer: only modulo 2048, 3072, and 4096 are supported",
-            ))
+            ));
         }
     }
 

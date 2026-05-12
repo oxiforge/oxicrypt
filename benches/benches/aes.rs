@@ -5,8 +5,8 @@
     missing_docs
 )]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use oxicrypt_aes::{gcm_encrypt, Aes256Key};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use oxicrypt_aes::{Aes256Key, gcm_encrypt};
 
 fn bench_aes256_gcm_encrypt(c: &mut Criterion) {
     oxicrypt_bench::init_module();

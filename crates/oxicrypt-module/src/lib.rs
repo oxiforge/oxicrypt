@@ -1072,10 +1072,10 @@ extern crate alloc;
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
+        AlgorithmProfile, Error, KatEntry, SelfTest, SelfTestFailure, Service, State,
         active_profile, enter_error_state, initialize, initialize_with_profile,
         initialize_with_tests, is_allowed, is_operational, require_allowed, require_operational,
-        reset_for_test, state, AlgorithmProfile, Error, KatEntry, SelfTest, SelfTestFailure,
-        Service, State,
+        reset_for_test, state,
     };
     use alloc::string::ToString;
 

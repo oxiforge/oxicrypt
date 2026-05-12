@@ -129,8 +129,8 @@ pub mod p384_stub;
 // `use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify}` works.
 
 pub use p256_ecdsa::{
-    derive_public_key, sign_with_k, verify, EcdsaP256PrivateKey, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN,
-    SIGNATURE_LEN,
+    EcdsaP256PrivateKey, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN, SIGNATURE_LEN, derive_public_key,
+    sign_with_k, verify,
 };
 
 /// Power-up KATs exported by this crate.

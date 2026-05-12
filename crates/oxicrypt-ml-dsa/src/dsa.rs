@@ -18,7 +18,7 @@
 
 use crate::encode;
 use crate::params::{BETA, CTILDE_LEN, D, GAMMA1, GAMMA2, K, L, OMEGA, PK_LEN, SIG_LEN, SK_LEN};
-use crate::poly::{matrix_pointwise_mul, poly_pointwise, PolyVecK, PolyVecL};
+use crate::poly::{PolyVecK, PolyVecL, matrix_pointwise_mul, poly_pointwise};
 use crate::rounding;
 use crate::sample;
 use oxicrypt_xof::Shake256;

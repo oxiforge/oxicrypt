@@ -9,7 +9,7 @@
 //! Fixed class = one fixed scalar, same every call.
 //! Random class = fresh 48-byte scalar per call.
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_ecdsa::p384_point::Point384;
 use oxicrypt_ecdsa::p384_scalar::Scalar384;

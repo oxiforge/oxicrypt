@@ -5,7 +5,7 @@
     missing_docs
 )]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_ecdh::compute_shared_secret_p256;
 use oxicrypt_ecdsa::EcdsaP256PrivateKey;

@@ -5,9 +5,9 @@
     missing_docs
 )]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_ecdsa::{verify, EcdsaP256PrivateKey};
+use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify};
 
 fn make_drbg() -> HmacDrbgSha256 {
     let mut drbg = HmacDrbgSha256::new();

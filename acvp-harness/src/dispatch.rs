@@ -488,9 +488,10 @@ mod tests {
         // R20 KBKDF (SP 800-108r1)
         assert!(r.find("KDF", None, "1.0").is_some());
         // R21 RSA DecryptionPrimitive (SP 800-56Br2)
-        assert!(r
-            .find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2")
-            .is_some());
+        assert!(
+            r.find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2")
+                .is_some()
+        );
         // R22 TLS v1.2 KDF (RFC 7627)
         assert!(r.find("TLS-v1.2", Some("KDF"), "RFC7627").is_some());
         // TLS v1.3 KDF (RFC 8446 §7.1)

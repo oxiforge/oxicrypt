@@ -5,7 +5,7 @@
     missing_docs
 )]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use oxicrypt_hmac::HmacSha256;
 
 fn bench_hmac_sha256(c: &mut Criterion) {

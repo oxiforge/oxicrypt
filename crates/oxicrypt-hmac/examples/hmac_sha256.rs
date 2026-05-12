@@ -3,8 +3,8 @@
 //! Run: `cargo run -p oxicrypt-hmac --example hmac_sha256`
 #![allow(clippy::expect_used, clippy::print_stdout)]
 
-use oxicrypt_sha::sha256::{BLOCK_SIZE, DIGEST_SIZE};
 use oxicrypt_sha::Sha256;
+use oxicrypt_sha::sha256::{BLOCK_SIZE, DIGEST_SIZE};
 
 fn main() {
     oxicrypt_module::initialize().expect("module init");

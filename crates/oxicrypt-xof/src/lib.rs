@@ -84,7 +84,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 use oxicrypt_sha::keccak::Sponge;
 
@@ -1720,15 +1720,15 @@ pub const KATS: &[KatEntry] = &[
 #[allow(clippy::unwrap_used, clippy::panic, clippy::cast_possible_truncation)]
 mod tests {
     use super::{
-        self_test_128, self_test_256, self_test_cshake128, self_test_cshake256, self_test_kmac128,
-        self_test_kmac256, self_test_kmacxof128, self_test_kmacxof256, self_test_parallelhash128,
-        self_test_parallelhash256, self_test_tuplehash128, self_test_tuplehash256, shake128,
-        shake256, CShake128, CShake256, Kmac128, Kmac256, KmacXof128, KmacXof256, ParallelHash128,
-        ParallelHash256, ParallelHashXof128, ParallelHashXof256, Shake128, Shake256, TupleHash128,
-        TupleHash256, TupleHashXof128, TupleHashXof256, KAT_SHAKE128_EMPTY_32,
-        KAT_SHAKE256_EMPTY_64,
+        CShake128, CShake256, KAT_SHAKE128_EMPTY_32, KAT_SHAKE256_EMPTY_64, Kmac128, Kmac256,
+        KmacXof128, KmacXof256, ParallelHash128, ParallelHash256, ParallelHashXof128,
+        ParallelHashXof256, Shake128, Shake256, TupleHash128, TupleHash256, TupleHashXof128,
+        TupleHashXof256, self_test_128, self_test_256, self_test_cshake128, self_test_cshake256,
+        self_test_kmac128, self_test_kmac256, self_test_kmacxof128, self_test_kmacxof256,
+        self_test_parallelhash128, self_test_parallelhash256, self_test_tuplehash128,
+        self_test_tuplehash256, shake128, shake256,
     };
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn nibble(c: u8) -> u8 {
         match c {

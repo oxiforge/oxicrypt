@@ -29,7 +29,7 @@ cargo test --workspace
 
 ### Requirements
 
-- **Rust 1.94+** (MSRV enforced in `Cargo.toml`)
+- **Rust 1.95+** (MSRV enforced in `Cargo.toml`; toolchain pinned via `rust-toolchain.toml`; workspace targets edition 2024)
 - No third-party dependencies — all cryptography is pure Rust, written in-tree
 - Builds on Linux, macOS, and Windows; `no_std` core crates work on any target
 

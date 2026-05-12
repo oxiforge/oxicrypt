@@ -95,7 +95,7 @@
 
 use oxicrypt_drbg::hmac::HmacDrbgSha256;
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 use oxicrypt_rsa::bigint3072::U3072;
 use oxicrypt_rsa::mont3072::MontCtx3072;
@@ -573,7 +573,7 @@ pub const KATS: &[KatEntry] = &[KatEntry {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     #[test]
     fn kat_alice_to_bob_matches() {

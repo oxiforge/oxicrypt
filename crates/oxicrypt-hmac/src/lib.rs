@@ -92,7 +92,7 @@
 )]
 
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 
 // ----------------------------------------------------------------------
@@ -470,12 +470,12 @@ pub const KATS: &[KatEntry] = &[
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
-        self_test_sha1, self_test_sha224, self_test_sha256, self_test_sha384, self_test_sha3_224,
-        self_test_sha3_256, self_test_sha3_384, self_test_sha3_512, self_test_sha512,
-        self_test_sha512_224, self_test_sha512_256, HmacSha1, HmacSha224, HmacSha256, HmacSha384,
-        HmacSha3_256, HmacSha512, HmacSha512_224, HmacSha512_256,
+        HmacSha1, HmacSha3_256, HmacSha224, HmacSha256, HmacSha384, HmacSha512, HmacSha512_224,
+        HmacSha512_256, self_test_sha1, self_test_sha3_224, self_test_sha3_256, self_test_sha3_384,
+        self_test_sha3_512, self_test_sha224, self_test_sha256, self_test_sha384, self_test_sha512,
+        self_test_sha512_224, self_test_sha512_256,
     };
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     // Bring all the power-up KATs through the same boot the harness
     // uses. A single successful initialize flips the module into

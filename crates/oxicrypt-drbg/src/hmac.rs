@@ -29,7 +29,7 @@
 use core::marker::PhantomData;
 
 use oxicrypt_hmac::{HmacSha256, HmacSha384, HmacSha512};
-use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 
 use crate::ctr::DrbgError;
 

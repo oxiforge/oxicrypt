@@ -31,7 +31,7 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 use oxicrypt_sha::sha256::Sha256;
 
 use crate::p256_keygen::{generate_p256_internal, sample_scalar_internal};
@@ -534,7 +534,7 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     #[test]
     fn kat_public_key_matches_rfc6979() {

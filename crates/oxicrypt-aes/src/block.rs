@@ -31,7 +31,7 @@
     clippy::many_single_char_names
 )]
 
-use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 
 /// AES block size in bytes. Rijndael allows other sizes; AES fixes
 /// `Nb = 4` (128-bit block).

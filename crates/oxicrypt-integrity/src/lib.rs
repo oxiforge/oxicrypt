@@ -484,9 +484,9 @@ pub const KATS: &[KatEntry] = &[KatEntry {
 )]
 mod tests {
     use super::{
-        constant_time_eq, encode_hmac_hex, find_slot_offset, hmac_with_slot_zeroed, sign_exe,
-        verify_exe, IntegrityError, FIPS_INTEGRITY_KEY, MAC_SIZE, SLOT_FOOTER_MAGIC,
-        SLOT_HEADER_MAGIC, SLOT_SIZE,
+        FIPS_INTEGRITY_KEY, IntegrityError, MAC_SIZE, SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC,
+        SLOT_SIZE, constant_time_eq, encode_hmac_hex, find_slot_offset, hmac_with_slot_zeroed,
+        sign_exe, verify_exe,
     };
     use std::fs;
     use std::io::Write;

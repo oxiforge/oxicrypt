@@ -66,7 +66,7 @@ use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_kdf::{
-    HkdfSha224, HkdfSha256, HkdfSha384, HkdfSha3_224, HkdfSha3_256, HkdfSha3_384, HkdfSha3_512,
+    HkdfSha3_224, HkdfSha3_256, HkdfSha3_384, HkdfSha3_512, HkdfSha224, HkdfSha256, HkdfSha384,
     HkdfSha512, HkdfSha512_224, HkdfSha512_256,
 };
 
@@ -373,10 +373,10 @@ fn encode_party_info(party: &JsonValue, out: &mut Vec<u8>) -> Result<(), Dispatc
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("fixedInfoPartyX.partyId"))?;
     out.extend_from_slice(&hex::decode(party_id_hex)?);
-    if let Some(eph) = party.get("ephemeralData").and_then(JsonValue::as_str) {
-        if !eph.is_empty() {
-            out.extend_from_slice(&hex::decode(eph)?);
-        }
+    if let Some(eph) = party.get("ephemeralData").and_then(JsonValue::as_str)
+        && !eph.is_empty()
+    {
+        out.extend_from_slice(&hex::decode(eph)?);
     }
     Ok(())
 }

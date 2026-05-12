@@ -162,7 +162,9 @@ fn cmd_hmac(args: &[String]) -> ExitCode {
         "sha384" => hmac_oneshot::<oxicrypt_sha::Sha384, 128, 48>(&key, &input),
         "sha512" => hmac_oneshot::<oxicrypt_sha::Sha512, 128, 64>(&key, &input),
         _ => {
-            eprintln!("oxi hmac: unknown algorithm '{alg}' (supported: sha1, sha224, sha256, sha384, sha512)");
+            eprintln!(
+                "oxi hmac: unknown algorithm '{alg}' (supported: sha1, sha224, sha256, sha384, sha512)"
+            );
             return ExitCode::from(2);
         }
     };

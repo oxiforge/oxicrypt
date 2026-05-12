@@ -19,7 +19,7 @@ use crate::params::{
 };
 use crate::poly::{Poly, PolyVec};
 use crate::sample::{expand_a, sample_noise, sample_noise_vec};
-use oxicrypt_sha::sha3::{Sha3_512, SHA3_512_DIGEST_SIZE};
+use oxicrypt_sha::sha3::{SHA3_512_DIGEST_SIZE, Sha3_512};
 
 /// K-PKE key pair: (ek_PKE, dk_PKE).
 ///

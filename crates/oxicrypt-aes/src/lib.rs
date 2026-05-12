@@ -74,10 +74,11 @@ pub use block::{Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE};
 pub use ccm::{ccm_decrypt, ccm_encrypt};
 pub use kat::KATS;
 pub use kw::{
-    kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher, kwp_unwrap,
-    kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher, KWP_IV_PREFIX, KW_DEFAULT_IV,
+    KW_DEFAULT_IV, KWP_IV_PREFIX, kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap,
+    kw_wrap_inverse_cipher, kwp_unwrap, kwp_unwrap_inverse_cipher, kwp_wrap,
+    kwp_wrap_inverse_cipher,
 };
 pub use modes::{
-    cbc_decrypt, cbc_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt, gcm_decrypt, gcm_encrypt,
-    BlockCipher, ModeError,
+    BlockCipher, ModeError, cbc_decrypt, cbc_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt,
+    gcm_decrypt, gcm_encrypt,
 };

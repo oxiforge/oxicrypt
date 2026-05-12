@@ -30,7 +30,7 @@
     clippy::needless_range_loop
 )]
 
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 /// Output length of SHA-256 in bytes.
 pub const DIGEST_SIZE: usize = 32;
@@ -351,8 +351,8 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{self_test, sha256, Sha256, DIGEST_SIZE};
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use super::{DIGEST_SIZE, Sha256, self_test, sha256};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     /// FIPS 180-4 Appendix B.1 one-block example: SHA-256("abc").
     /// Retained for the cross-check tests below (streaming, empty

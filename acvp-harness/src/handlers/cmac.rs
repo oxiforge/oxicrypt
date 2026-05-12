@@ -68,7 +68,7 @@ fn handle_cmac_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 } else {
                     "CMAC: unknown direction"
                 },
-            ))
+            ));
         }
     };
     let key_len_bits = group

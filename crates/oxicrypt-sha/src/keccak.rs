@@ -260,7 +260,7 @@ impl<const RATE_BYTES: usize> Drop for Sponge<RATE_BYTES> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{keccak_f1600, Sponge, LANES};
+    use super::{LANES, Sponge, keccak_f1600};
 
     #[test]
     fn permutation_all_zero_after_one_round_matches_known_lane0() {

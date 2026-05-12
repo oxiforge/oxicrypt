@@ -638,7 +638,7 @@ mod tests {
         // Bring the module to Operational so the gated
         // `instantiate()` (and any gated key construction it
         // triggers) succeeds.
-        use oxicrypt_module::{initialize_with_tests, KatEntry};
+        use oxicrypt_module::{KatEntry, initialize_with_tests};
         let _ = initialize_with_tests(&[KatEntry {
             name: "rsa-keygen-test-noop",
             run: || Ok(()),
@@ -692,7 +692,7 @@ mod tests {
         // PCT inside from_components gates on the module being
         // operational, so bring the module up via the standard
         // initialization path first.
-        use oxicrypt_module::{initialize_with_tests, KatEntry};
+        use oxicrypt_module::{KatEntry, initialize_with_tests};
         let _ = initialize_with_tests(&[KatEntry {
             name: "rsa-2048-keygen-smoke",
             run: crate::self_test,
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     #[allow(clippy::items_after_statements)]
     fn generate_2048_pinned_kat() {
-        use oxicrypt_module::{initialize_with_tests, KatEntry};
+        use oxicrypt_module::{KatEntry, initialize_with_tests};
         let _ = initialize_with_tests(&[KatEntry {
             name: "rsa-2048-keygen-pinned-kat",
             run: crate::self_test,

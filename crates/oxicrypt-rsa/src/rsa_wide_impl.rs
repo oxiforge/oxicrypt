@@ -63,7 +63,7 @@ macro_rules! define_rsa_wide {
         svc_pss_verify = $svc_pss_verify:expr;
         svc_oaep = $svc_oaep:expr;
     ) => {
-        use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+        use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 
         /// Fixed modulus byte length.
         pub const MODULUS_BYTES: usize = $fbytes;

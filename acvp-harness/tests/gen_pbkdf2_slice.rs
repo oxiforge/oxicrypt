@@ -27,7 +27,7 @@
 
 use acvp_harness::ensure_initialized;
 use oxicrypt_kdf::{
-    Pbkdf2HmacSha1, Pbkdf2HmacSha224, Pbkdf2HmacSha256, Pbkdf2HmacSha384, Pbkdf2HmacSha3_256,
+    Pbkdf2HmacSha1, Pbkdf2HmacSha3_256, Pbkdf2HmacSha224, Pbkdf2HmacSha256, Pbkdf2HmacSha384,
     Pbkdf2HmacSha512,
 };
 use std::io::Write;

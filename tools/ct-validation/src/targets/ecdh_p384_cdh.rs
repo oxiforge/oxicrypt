@@ -10,10 +10,10 @@
 //! through the same success path; only the private scalar `d`
 //! changes between fixed and random classes.
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_ecdh::{
-    compute_shared_secret_p384_internal, P384_PRIVATE_KEY_LEN, P384_PUBLIC_KEY_LEN,
+    P384_PRIVATE_KEY_LEN, P384_PUBLIC_KEY_LEN, compute_shared_secret_p384_internal,
 };
 
 /// RFC 5903 §8.2 responder public key `Q_r`.

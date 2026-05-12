@@ -12,7 +12,7 @@
 )]
 
 use crate::field::{barrett_reduce, reduce_full, to_mont};
-use crate::ntt::{self, basemul, ZETAS};
+use crate::ntt::{self, ZETAS, basemul};
 use crate::params::{K, N};
 
 /// A polynomial with `N` = 256 coefficients in Z_q.

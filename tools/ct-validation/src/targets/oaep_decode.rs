@@ -35,9 +35,9 @@
 
 #![allow(clippy::panic)]
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
-use oxicrypt_rsa::oaep::{emsa_oaep_decode, emsa_oaep_encode, HLEN, K, MAX_MSG_LEN};
+use oxicrypt_rsa::oaep::{HLEN, K, MAX_MSG_LEN, emsa_oaep_decode, emsa_oaep_encode};
 
 /// Number of plaintext bytes carried by each probe encoding. Pinning
 /// this to a single value keeps the success-path copy length constant

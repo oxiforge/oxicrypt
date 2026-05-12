@@ -9,7 +9,7 @@
 //! scalar multiplications doesn't depend on the limbs of the
 //! operand being inverted.
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_ecdsa::p256_scalar::Scalar;
 

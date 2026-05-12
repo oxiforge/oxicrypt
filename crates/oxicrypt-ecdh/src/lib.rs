@@ -85,7 +85,7 @@ use oxicrypt_ecdsa::p256_scalar::Scalar;
 use oxicrypt_ecdsa::p384_point::Point384;
 use oxicrypt_ecdsa::p384_scalar::Scalar384;
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 
 /// Length of a P-256 private-key scalar in bytes.
@@ -508,7 +508,7 @@ pub const KATS: &[KatEntry] = &[
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     #[test]
     fn kat_initiator_to_responder_matches_rfc5903() {

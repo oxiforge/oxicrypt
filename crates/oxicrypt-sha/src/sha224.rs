@@ -10,8 +10,8 @@
 //! The KAT is the FIPS 180-4 Appendix A example, SHA-224("abc").
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use crate::sha256::{compress256, BLOCK_SIZE as SHA256_BLOCK};
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use crate::sha256::{BLOCK_SIZE as SHA256_BLOCK, compress256};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 /// Output length of SHA-224 in bytes (28 = 224/8).
 pub const DIGEST_SIZE: usize = 28;
@@ -181,8 +181,8 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{self_test, sha224, Sha224, DIGEST_SIZE, KAT_ABC_DIGEST};
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use super::{DIGEST_SIZE, KAT_ABC_DIGEST, Sha224, self_test, sha224};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn hex(s: &str) -> [u8; DIGEST_SIZE] {
         assert_eq!(s.len(), DIGEST_SIZE * 2);

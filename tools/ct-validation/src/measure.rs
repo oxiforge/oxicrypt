@@ -22,7 +22,7 @@
 //! same interleaved loop, so frequency drift affects both classes
 //! symmetrically and washes out.
 
-use crate::stats::{cropped_report, VerdictReport};
+use crate::stats::{VerdictReport, cropped_report};
 
 /// Target primitive wrapper. The harness calls this once per
 /// measurement, passing whichever secret the class dictates.

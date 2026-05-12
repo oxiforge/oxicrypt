@@ -174,7 +174,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         _ => {
             return Err(DispatchError::Unsupported(
                 "ECDSA SigVer: only (P-256, SHA2-256) and (P-384, SHA2-384) are supported",
-            ))
+            ));
         }
     }
 
@@ -336,7 +336,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         _ => {
             return Err(DispatchError::Unsupported(
                 "ECDSA SigGen: only (P-256, SHA2-256) and (P-384, SHA2-384) are supported",
-            ))
+            ));
         }
     }
 
@@ -372,7 +372,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             _ => {
                 return Err(DispatchError::Unsupported(
                     "ECDSA SigGen: unsupported curve",
-                ))
+                ));
             }
         }
     } else {
@@ -383,7 +383,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             _ => {
                 return Err(DispatchError::Unsupported(
                     "ECDSA SigGen: unsupported curve",
-                ))
+                ));
             }
         }
     };
@@ -632,12 +632,11 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     if let Some(mode) = group
         .get("secretGenerationMode")
         .and_then(JsonValue::as_str)
+        && mode != "testing candidates"
     {
-        if mode != "testing candidates" {
-            return Err(DispatchError::Unsupported(
-                "ECDSA KeyGen: secretGenerationMode must be \"testing candidates\"",
-            ));
-        }
+        return Err(DispatchError::Unsupported(
+            "ECDSA KeyGen: secretGenerationMode must be \"testing candidates\"",
+        ));
     }
 
     let tests = group
@@ -660,7 +659,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             _ => {
                 return Err(DispatchError::Unsupported(
                     "ECDSA KeyGen: unsupported curve",
-                ))
+                ));
             }
         }
     } else {
@@ -671,7 +670,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             _ => {
                 return Err(DispatchError::Unsupported(
                     "ECDSA KeyGen: unsupported curve",
-                ))
+                ));
             }
         }
     }

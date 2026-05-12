@@ -38,7 +38,7 @@ use core::marker::PhantomData;
 
 use oxicrypt_aes::modes::BlockCipher;
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
-use oxicrypt_module::{require_allowed, require_operational, Error, Service};
+use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 
 /// AES block size in bytes (`outlen` in SP 800-90A terminology).
 const OUTLEN: usize = 16;

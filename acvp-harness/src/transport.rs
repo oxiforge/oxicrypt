@@ -422,10 +422,10 @@ impl SClientConnection {
         let mut is_chunked = false;
         for line in headers_text.split("\r\n") {
             let lower = line.to_ascii_lowercase();
-            if let Some(rest) = lower.strip_prefix("content-length:") {
-                if let Ok(n) = rest.trim().parse::<usize>() {
-                    content_length = Some(n);
-                }
+            if let Some(rest) = lower.strip_prefix("content-length:")
+                && let Ok(n) = rest.trim().parse::<usize>()
+            {
+                content_length = Some(n);
             }
             if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
                 is_chunked = true;
@@ -752,15 +752,15 @@ fn build_capabilities(
 ) -> Vec<JsonValue> {
     let mut caps = Vec::new();
     registry.for_each_handler(|h: &dyn AlgorithmHandler| {
-        if let Some(name) = filter_alg {
-            if h.algorithm() != name {
-                return;
-            }
+        if let Some(name) = filter_alg
+            && h.algorithm() != name
+        {
+            return;
         }
-        if let Some(mode_name) = filter_mode {
-            if h.mode() != Some(mode_name) {
-                return;
-            }
+        if let Some(mode_name) = filter_mode
+            && h.mode() != Some(mode_name)
+        {
+            return;
         }
         if let Some(cap) = h.acvp_capabilities() {
             caps.push(cap);
@@ -1108,16 +1108,16 @@ fn process_one_vector_set(
         // seconds are routed through `clamp_retry_hint` for the same
         // defense-in-depth bound applied in `poll_verdict`.
         let body = unwrap_acvp_array(&parsed);
-        if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64) {
-            if let Some(secs) = clamp_retry_hint(retry_secs) {
-                eprintln!(
-                    "  [transport] vector set not ready; server says retry in {retry_secs}s, \
+        if let Some(retry_secs) = body.get("retry").and_then(JsonValue::as_i64)
+            && let Some(secs) = clamp_retry_hint(retry_secs)
+        {
+            eprintln!(
+                "  [transport] vector set not ready; server says retry in {retry_secs}s, \
                      sleeping {secs}s (poll {poll}/{max_polls})"
-                );
-                log.log("vector_set_retry", &format!("{secs}s, poll {poll}"));
-                std::thread::sleep(std::time::Duration::from_secs(secs));
-                continue;
-            }
+            );
+            log.log("vector_set_retry", &format!("{secs}s, poll {poll}"));
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            continue;
         }
         break parsed;
     };
@@ -1370,10 +1370,10 @@ fn build_acvp_response_body(response: &JsonValue) -> String {
 /// element (the actual vector set). If the input is not a two-element
 /// array, return it as-is.
 fn unwrap_acvp_array(val: &JsonValue) -> &JsonValue {
-    if let Some(arr) = val.as_array() {
-        if arr.len() == 2 {
-            return arr.get(1).unwrap_or(val);
-        }
+    if let Some(arr) = val.as_array()
+        && arr.len() == 2
+    {
+        return arr.get(1).unwrap_or(val);
     }
     val
 }

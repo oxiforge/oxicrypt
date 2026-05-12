@@ -149,7 +149,7 @@ use bigint2048::{BYTES as U2048_BYTES, LIMBS as LIMBS2048, U2048};
 use mont1024::MontCtx1024;
 use mont2048::MontCtx2048;
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 use oxicrypt_sha::sha256::DIGEST_SIZE as SHA256_DIGEST_SIZE;
 
@@ -1575,7 +1575,7 @@ pub const __SHA256_DIGEST_SIZE: usize = SHA256_DIGEST_SIZE;
 )]
 mod tests {
     use super::*;
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     #[test]
     fn kat_positive_verifies() {

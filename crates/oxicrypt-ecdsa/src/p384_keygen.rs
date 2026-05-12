@@ -9,7 +9,7 @@
 
 use oxicrypt_drbg::HmacDrbgSha256;
 
-use crate::p384_ecdsa::{derive_public_key_internal, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN};
+use crate::p384_ecdsa::{PRIVATE_KEY_LEN, PUBLIC_KEY_LEN, derive_public_key_internal};
 use crate::p384_scalar::Scalar384;
 
 /// Maximum number of rejection-sampling attempts.
@@ -35,15 +35,15 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
             buf.fill(0);
             return None;
         }
-        if let Some(s) = Scalar384::from_bytes(&buf) {
-            if s.is_zero() == 0 {
-                // See P-256 counterpart for the success-path
-                // copy-and-clear rationale; same pattern, 48-byte
-                // scalar instead of 32.
-                let result = buf;
-                buf.fill(0);
-                return Some(result);
-            }
+        if let Some(s) = Scalar384::from_bytes(&buf)
+            && s.is_zero() == 0
+        {
+            // See P-256 counterpart for the success-path
+            // copy-and-clear rationale; same pattern, 48-byte
+            // scalar instead of 32.
+            let result = buf;
+            buf.fill(0);
+            return Some(result);
         }
         buf.fill(0);
     }

@@ -10,7 +10,7 @@
 //!   - sigVer  tgId=27, tcId=107: (public_key, message, signature) → pass
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use oxicrypt_lms::{keygen_from_parts, verify_internal, PUBLIC_KEY_LEN, SIGNATURE_LEN};
+use oxicrypt_lms::{PUBLIC_KEY_LEN, SIGNATURE_LEN, keygen_from_parts, verify_internal};
 
 // ── Vector helpers ──────────────────────────────────────────────────────────
 

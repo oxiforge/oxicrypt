@@ -29,7 +29,7 @@
 
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use oxicrypt_sha::sha256::{Sha256, DIGEST_SIZE as SHA256_DIGEST_SIZE};
+use oxicrypt_sha::sha256::{DIGEST_SIZE as SHA256_DIGEST_SIZE, Sha256};
 
 /// One-shot `SHA-256` that bypasses the module operational gate.
 ///

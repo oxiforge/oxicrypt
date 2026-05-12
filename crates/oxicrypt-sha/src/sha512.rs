@@ -22,7 +22,7 @@
     clippy::needless_range_loop
 )]
 
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 /// Output length of SHA-512 in bytes.
 pub const DIGEST_SIZE: usize = 64;
@@ -357,8 +357,8 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{self_test, sha512, Sha512, DIGEST_SIZE, KAT_ABC_DIGEST};
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use super::{DIGEST_SIZE, KAT_ABC_DIGEST, Sha512, self_test, sha512};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn hex64(s: &str) -> [u8; DIGEST_SIZE] {
         assert_eq!(s.len(), DIGEST_SIZE * 2);

@@ -160,5 +160,5 @@ pub mod measure;
 pub mod stats;
 pub mod targets;
 
-pub use measure::{run_target, Measurement, RunConfig, TargetFn};
-pub use stats::{welch_t, Verdict, VerdictReport};
+pub use measure::{Measurement, RunConfig, TargetFn, run_target};
+pub use stats::{Verdict, VerdictReport, welch_t};

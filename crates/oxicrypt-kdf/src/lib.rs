@@ -91,7 +91,7 @@
 use core::marker::PhantomData;
 
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 
 // ----------------------------------------------------------------------
@@ -1988,13 +1988,11 @@ pub const KATS: &[KatEntry] = &[
         run: kbkdf_dp_self_test_sha512,
     },
     KatEntry {
-        name:
-            "SP 800-108 Double-Pipeline HMAC-SHA-512/224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-512/224 KAT (NIST ACVP-Server KDF-1.0, truncated)",
         run: kbkdf_dp_self_test_sha512_224,
     },
     KatEntry {
-        name:
-            "SP 800-108 Double-Pipeline HMAC-SHA-512/256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
+        name: "SP 800-108 Double-Pipeline HMAC-SHA-512/256 KAT (NIST ACVP-Server KDF-1.0, truncated)",
         run: kbkdf_dp_self_test_sha512_256,
     },
     KatEntry {
@@ -2032,28 +2030,28 @@ pub const KATS: &[KatEntry] = &[
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{
-        hkdf_self_test_sha1, hkdf_self_test_sha224, hkdf_self_test_sha256, hkdf_self_test_sha384,
+        HkdfSha1, HkdfSha3_256, HkdfSha256, HkdfSha512, KdfError, Pbkdf2HmacSha1, Pbkdf2HmacSha256,
+        Pbkdf2HmacSha512, Sp800_108CounterHmacSha3_256, Sp800_108CounterHmacSha256,
+        Sp800_108DoublePipelineHmacSha3_256, Sp800_108DoublePipelineHmacSha256,
+        Sp800_108FeedbackHmacSha3_256, Sp800_108FeedbackHmacSha256, hkdf_self_test_sha1,
         hkdf_self_test_sha3_224, hkdf_self_test_sha3_256, hkdf_self_test_sha3_384,
-        hkdf_self_test_sha3_512, hkdf_self_test_sha512, hkdf_self_test_sha512_224,
-        hkdf_self_test_sha512_256, kbkdf_counter_self_test_sha1, kbkdf_counter_self_test_sha224,
+        hkdf_self_test_sha3_512, hkdf_self_test_sha224, hkdf_self_test_sha256,
+        hkdf_self_test_sha384, hkdf_self_test_sha512, hkdf_self_test_sha512_224,
+        hkdf_self_test_sha512_256, kbkdf_counter_self_test_sha1, kbkdf_counter_self_test_sha3_224,
+        kbkdf_counter_self_test_sha3_256, kbkdf_counter_self_test_sha3_384,
+        kbkdf_counter_self_test_sha3_512, kbkdf_counter_self_test_sha224,
         kbkdf_counter_self_test_sha256, kbkdf_counter_self_test_sha384,
-        kbkdf_counter_self_test_sha3_224, kbkdf_counter_self_test_sha3_256,
-        kbkdf_counter_self_test_sha3_384, kbkdf_counter_self_test_sha3_512,
         kbkdf_counter_self_test_sha512, kbkdf_counter_self_test_sha512_224,
-        kbkdf_counter_self_test_sha512_256, kbkdf_dp_self_test_sha1, kbkdf_dp_self_test_sha224,
-        kbkdf_dp_self_test_sha256, kbkdf_dp_self_test_sha384, kbkdf_dp_self_test_sha3_224,
+        kbkdf_counter_self_test_sha512_256, kbkdf_dp_self_test_sha1, kbkdf_dp_self_test_sha3_224,
         kbkdf_dp_self_test_sha3_256, kbkdf_dp_self_test_sha3_384, kbkdf_dp_self_test_sha3_512,
+        kbkdf_dp_self_test_sha224, kbkdf_dp_self_test_sha256, kbkdf_dp_self_test_sha384,
         kbkdf_dp_self_test_sha512, kbkdf_dp_self_test_sha512_224, kbkdf_dp_self_test_sha512_256,
-        kbkdf_feedback_self_test_sha1, kbkdf_feedback_self_test_sha224,
+        kbkdf_feedback_self_test_sha1, kbkdf_feedback_self_test_sha3_224,
+        kbkdf_feedback_self_test_sha3_256, kbkdf_feedback_self_test_sha3_384,
+        kbkdf_feedback_self_test_sha3_512, kbkdf_feedback_self_test_sha224,
         kbkdf_feedback_self_test_sha256, kbkdf_feedback_self_test_sha384,
-        kbkdf_feedback_self_test_sha3_224, kbkdf_feedback_self_test_sha3_256,
-        kbkdf_feedback_self_test_sha3_384, kbkdf_feedback_self_test_sha3_512,
         kbkdf_feedback_self_test_sha512, kbkdf_feedback_self_test_sha512_224,
         kbkdf_feedback_self_test_sha512_256, pbkdf2_self_test_sha1, pbkdf2_self_test_sha256,
-        HkdfSha1, HkdfSha256, HkdfSha3_256, HkdfSha512, KdfError, Pbkdf2HmacSha1, Pbkdf2HmacSha256,
-        Pbkdf2HmacSha512, Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha3_256,
-        Sp800_108DoublePipelineHmacSha256, Sp800_108DoublePipelineHmacSha3_256,
-        Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha3_256,
     };
 
     // Local fixed inputs for the RFC 5869 §A.1 Test Case 1 cross-check
@@ -2087,7 +2085,7 @@ mod tests {
     const KBKDF_KAT_KEY: [u8; 20] = [0x0b; 20];
     const KBKDF_KAT_LABEL: &[u8] = b"pqclib KBKDF counter";
     const KBKDF_KAT_CONTEXT: &[u8] = b"fips-kdf self test";
-    use oxicrypt_module::{initialize_with_tests, Error, KatEntry, State};
+    use oxicrypt_module::{Error, KatEntry, State, initialize_with_tests};
 
     fn ensure_initialized() {
         const ALL: &[KatEntry] = super::KATS;

@@ -36,19 +36,20 @@ use crate::handlers::os_entropy::read_os_entropy;
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_kdf::{
-    Sp800_108CounterHmacSha1, Sp800_108CounterHmacSha224, Sp800_108CounterHmacSha256,
-    Sp800_108CounterHmacSha384, Sp800_108CounterHmacSha3_224, Sp800_108CounterHmacSha3_256,
-    Sp800_108CounterHmacSha3_384, Sp800_108CounterHmacSha3_512, Sp800_108CounterHmacSha512,
+    Sp800_108CounterHmacSha1, Sp800_108CounterHmacSha3_224, Sp800_108CounterHmacSha3_256,
+    Sp800_108CounterHmacSha3_384, Sp800_108CounterHmacSha3_512, Sp800_108CounterHmacSha224,
+    Sp800_108CounterHmacSha256, Sp800_108CounterHmacSha384, Sp800_108CounterHmacSha512,
     Sp800_108CounterHmacSha512_224, Sp800_108CounterHmacSha512_256,
-    Sp800_108DoublePipelineHmacSha1, Sp800_108DoublePipelineHmacSha224,
+    Sp800_108DoublePipelineHmacSha1, Sp800_108DoublePipelineHmacSha3_224,
+    Sp800_108DoublePipelineHmacSha3_256, Sp800_108DoublePipelineHmacSha3_384,
+    Sp800_108DoublePipelineHmacSha3_512, Sp800_108DoublePipelineHmacSha224,
     Sp800_108DoublePipelineHmacSha256, Sp800_108DoublePipelineHmacSha384,
-    Sp800_108DoublePipelineHmacSha3_224, Sp800_108DoublePipelineHmacSha3_256,
-    Sp800_108DoublePipelineHmacSha3_384, Sp800_108DoublePipelineHmacSha3_512,
     Sp800_108DoublePipelineHmacSha512, Sp800_108DoublePipelineHmacSha512_224,
-    Sp800_108DoublePipelineHmacSha512_256, Sp800_108FeedbackHmacSha1, Sp800_108FeedbackHmacSha224,
-    Sp800_108FeedbackHmacSha256, Sp800_108FeedbackHmacSha384, Sp800_108FeedbackHmacSha3_224,
-    Sp800_108FeedbackHmacSha3_256, Sp800_108FeedbackHmacSha3_384, Sp800_108FeedbackHmacSha3_512,
-    Sp800_108FeedbackHmacSha512, Sp800_108FeedbackHmacSha512_224, Sp800_108FeedbackHmacSha512_256,
+    Sp800_108DoublePipelineHmacSha512_256, Sp800_108FeedbackHmacSha1,
+    Sp800_108FeedbackHmacSha3_224, Sp800_108FeedbackHmacSha3_256, Sp800_108FeedbackHmacSha3_384,
+    Sp800_108FeedbackHmacSha3_512, Sp800_108FeedbackHmacSha224, Sp800_108FeedbackHmacSha256,
+    Sp800_108FeedbackHmacSha384, Sp800_108FeedbackHmacSha512, Sp800_108FeedbackHmacSha512_224,
+    Sp800_108FeedbackHmacSha512_256,
 };
 
 // ── Handler struct ──────────────────────────────────────────────────

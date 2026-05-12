@@ -23,7 +23,7 @@
 
 use oxicrypt_kdf::PrfHmac;
 use oxicrypt_module::{
-    require_allowed, require_operational, Error, KatEntry, SelfTestFailure, Service,
+    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
 };
 
 // ── Core PRF ──────────────────────────────────────────────────────
@@ -571,8 +571,7 @@ pub const KATS: &[KatEntry] = &[
         run: self_test,
     },
     KatEntry {
-        name:
-            "TLS 1.3 KDF KAT (HKDF-Expand-Label + Derive-Secret, RFC 8446 §7.1; RFC 8448 §3 vector)",
+        name: "TLS 1.3 KDF KAT (HKDF-Expand-Label + Derive-Secret, RFC 8446 §7.1; RFC 8448 §3 vector)",
         run: tls13_self_test,
     },
 ];

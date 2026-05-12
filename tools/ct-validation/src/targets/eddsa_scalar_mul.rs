@@ -24,7 +24,7 @@
 //!
 //! [`EdwardsPoint::mul`]: oxicrypt_eddsa::edwards::EdwardsPoint::mul
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_eddsa::edwards::EdwardsPoint;
 use oxicrypt_eddsa::scalar::Scalar;

@@ -39,7 +39,7 @@
     clippy::cast_possible_truncation
 )]
 
-use oxicrypt_sha::sha256::{Sha256, DIGEST_SIZE as SHA256_DIGEST_SIZE};
+use oxicrypt_sha::sha256::{DIGEST_SIZE as SHA256_DIGEST_SIZE, Sha256};
 
 use crate::pkcs1_v15::sha256_internal;
 

@@ -5,7 +5,7 @@
     missing_docs
 )]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 fn bench_sha256_oneshot(c: &mut Criterion) {
     oxicrypt_bench::init_module();

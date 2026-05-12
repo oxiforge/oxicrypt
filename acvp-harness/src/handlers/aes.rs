@@ -31,10 +31,10 @@ use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_aes::{
-    cbc_decrypt, cbc_encrypt, ccm_decrypt, ccm_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt,
-    gcm_decrypt, gcm_encrypt, kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher,
-    kwp_unwrap, kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher, Aes128Key, Aes192Key,
-    Aes256Key, BlockCipher, ModeError, BLOCK_SIZE,
+    Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE, BlockCipher, ModeError, cbc_decrypt, cbc_encrypt,
+    ccm_decrypt, ccm_encrypt, ctr_xor, ecb_decrypt, ecb_encrypt, gcm_decrypt, gcm_encrypt,
+    kw_unwrap, kw_unwrap_inverse_cipher, kw_wrap, kw_wrap_inverse_cipher, kwp_unwrap,
+    kwp_unwrap_inverse_cipher, kwp_wrap, kwp_wrap_inverse_cipher,
 };
 
 /// AES block-cipher mode tag for dispatch.

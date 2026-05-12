@@ -814,8 +814,8 @@ mod tests {
         let k = {
             let mut b = [0u8; 32];
             b[0] = 0x82; // 121666 = 0x1DB42 -> low byte 0x42? actually
-                         // 121666 = 0x1DB42, bytes little endian:
-                         // 0x42, 0xDB, 0x01
+            // 121666 = 0x1DB42, bytes little endian:
+            // 0x42, 0xDB, 0x01
             b[0] = 0x42;
             b[1] = 0xDB;
             b[2] = 0x01;

@@ -11,7 +11,7 @@
 //! deterministic tweak so the timed call itself always succeeds and
 //! the per-call work is constant regardless of reject-probability.
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_ecdsa::p256_point::Point;
 use oxicrypt_ecdsa::p256_scalar::Scalar;

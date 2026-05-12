@@ -130,13 +130,15 @@ mod tests {
         let key = RsaPrivateKey4096::generate(&mut drbg, 65537).unwrap();
         let salt = [0x44u8; 32];
         let sig = key.sign_pss_sha256_with_salt(b"original", &salt).unwrap();
-        assert!(pss_verify(
-            key.modulus_bytes(),
-            key.public_exponent(),
-            b"different",
-            &sig
-        )
-        .is_err());
+        assert!(
+            pss_verify(
+                key.modulus_bytes(),
+                key.public_exponent(),
+                b"different",
+                &sig
+            )
+            .is_err()
+        );
     }
 
     #[test]

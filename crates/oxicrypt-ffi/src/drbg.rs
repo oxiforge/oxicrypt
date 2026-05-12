@@ -108,7 +108,7 @@
 //! right shape; HBS keys carried a different one-write-per-leaf
 //! invariant that the byte-buffer surface enforced structurally.
 
-use crate::error::{status_drbg, status_module, OxiResult as R};
+use crate::error::{OxiResult as R, status_drbg, status_module};
 use crate::handle::OxiHandle;
 use core::ffi::c_int;
 use oxicrypt_drbg::{
@@ -157,7 +157,7 @@ impl OxiHmacDrbgSha256 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiHmacDrbgSha256`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha256_new(
     out_handle: *mut *mut OxiHmacDrbgSha256,
 ) -> c_int {
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_hmac_drbg_sha256_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha256) {
     if handle.is_null() {
         return;
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha25
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hmac_drbg_sha256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha256_instantiate(
     handle: *mut OxiHmacDrbgSha256,
     entropy: *const u8,
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_instantiate(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hmac_drbg_sha256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha256_reseed(
     handle: *mut OxiHmacDrbgSha256,
     entropy: *const u8,
@@ -316,7 +316,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_reseed(
 /// part of a `reseed`-then-`generate(None, [])` PR equivalence).
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha256_generate(
     handle: *mut OxiHmacDrbgSha256,
     additional_input: *const u8,
@@ -391,7 +391,7 @@ impl OxiHmacDrbgSha384 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiHmacDrbgSha384`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha384_new(
     out_handle: *mut *mut OxiHmacDrbgSha384,
 ) -> c_int {
@@ -412,7 +412,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_hmac_drbg_sha384_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha384_free(handle: *mut OxiHmacDrbgSha384) {
     if handle.is_null() {
         return;
@@ -431,7 +431,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_free(handle: *mut OxiHmacDrbgSha38
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hmac_drbg_sha384_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha384_instantiate(
     handle: *mut OxiHmacDrbgSha384,
     entropy: *const u8,
@@ -469,7 +469,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_instantiate(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hmac_drbg_sha384_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha384_reseed(
     handle: *mut OxiHmacDrbgSha384,
     entropy: *const u8,
@@ -505,7 +505,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_reseed(
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha384_generate(
     handle: *mut OxiHmacDrbgSha384,
     additional_input: *const u8,
@@ -558,7 +558,7 @@ impl OxiHmacDrbgSha512 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiHmacDrbgSha512`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha512_new(
     out_handle: *mut *mut OxiHmacDrbgSha512,
 ) -> c_int {
@@ -578,7 +578,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_hmac_drbg_sha512_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha512_free(handle: *mut OxiHmacDrbgSha512) {
     if handle.is_null() {
         return;
@@ -596,7 +596,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_free(handle: *mut OxiHmacDrbgSha51
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hmac_drbg_sha512_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha512_instantiate(
     handle: *mut OxiHmacDrbgSha512,
     entropy: *const u8,
@@ -634,7 +634,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_instantiate(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hmac_drbg_sha512_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed(
     handle: *mut OxiHmacDrbgSha512,
     entropy: *const u8,
@@ -668,7 +668,7 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_reseed(
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_drbg_sha512_generate(
     handle: *mut OxiHmacDrbgSha512,
     additional_input: *const u8,
@@ -735,7 +735,7 @@ impl OxiHashDrbgSha256 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiHashDrbgSha256`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha256_new(
     out_handle: *mut *mut OxiHashDrbgSha256,
 ) -> c_int {
@@ -755,7 +755,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_hash_drbg_sha256_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha256_free(handle: *mut OxiHashDrbgSha256) {
     if handle.is_null() {
         return;
@@ -773,7 +773,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_free(handle: *mut OxiHashDrbgSha25
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hash_drbg_sha256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha256_instantiate(
     handle: *mut OxiHashDrbgSha256,
     entropy: *const u8,
@@ -811,7 +811,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_instantiate(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hash_drbg_sha256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha256_reseed(
     handle: *mut OxiHashDrbgSha256,
     entropy: *const u8,
@@ -845,7 +845,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_reseed(
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha256_generate(
     handle: *mut OxiHashDrbgSha256,
     additional_input: *const u8,
@@ -897,7 +897,7 @@ impl OxiHashDrbgSha384 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiHashDrbgSha384`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha384_new(
     out_handle: *mut *mut OxiHashDrbgSha384,
 ) -> c_int {
@@ -917,7 +917,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_hash_drbg_sha384_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha384_free(handle: *mut OxiHashDrbgSha384) {
     if handle.is_null() {
         return;
@@ -932,7 +932,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_free(handle: *mut OxiHashDrbgSha38
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hash_drbg_sha384_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha384_instantiate(
     handle: *mut OxiHashDrbgSha384,
     entropy: *const u8,
@@ -969,7 +969,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_instantiate(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hash_drbg_sha384_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha384_reseed(
     handle: *mut OxiHashDrbgSha384,
     entropy: *const u8,
@@ -1002,7 +1002,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_reseed(
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha384_generate(
     handle: *mut OxiHashDrbgSha384,
     additional_input: *const u8,
@@ -1054,7 +1054,7 @@ impl OxiHashDrbgSha512 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiHashDrbgSha512`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha512_new(
     out_handle: *mut *mut OxiHashDrbgSha512,
 ) -> c_int {
@@ -1074,7 +1074,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_new(
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_hash_drbg_sha512_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha512_free(handle: *mut OxiHashDrbgSha512) {
     if handle.is_null() {
         return;
@@ -1089,7 +1089,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_free(handle: *mut OxiHashDrbgSha51
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hash_drbg_sha512_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha512_instantiate(
     handle: *mut OxiHashDrbgSha512,
     entropy: *const u8,
@@ -1126,7 +1126,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_instantiate(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_hash_drbg_sha512_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha512_reseed(
     handle: *mut OxiHashDrbgSha512,
     entropy: *const u8,
@@ -1159,7 +1159,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_reseed(
 /// `out` must point to ≥ `out_len` writable bytes.
 /// `additional_input` must point to ≥ `additional_input_len`
 /// readable bytes when `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hash_drbg_sha512_generate(
     handle: *mut OxiHashDrbgSha512,
     additional_input: *const u8,
@@ -1253,7 +1253,7 @@ impl OxiCtrDrbgAes128 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiCtrDrbgAes128`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_new(out_handle: *mut *mut OxiCtrDrbgAes128) -> c_int {
     if out_handle.is_null() {
         return R::NullPointer as c_int;
@@ -1273,7 +1273,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_new(out_handle: *mut *mut OxiCtrDrb
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_ctr_drbg_aes128_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_free(handle: *mut OxiCtrDrbgAes128) {
     if handle.is_null() {
         return;
@@ -1294,7 +1294,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_free(handle: *mut OxiCtrDrbgAes128)
 /// `handle` must be a live handle from
 /// [`oxi_ctr_drbg_aes128_new`]. `seed_material` must point to ≥
 /// `seed_material_len` readable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_no_df(
     handle: *mut OxiCtrDrbgAes128,
     seed_material: *const u8,
@@ -1325,7 +1325,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_no_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_ctr_drbg_aes128_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_df(
     handle: *mut OxiCtrDrbgAes128,
     entropy: *const u8,
@@ -1364,7 +1364,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live,
 /// instantiated handle from [`oxi_ctr_drbg_aes128_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_no_df(
     handle: *mut OxiCtrDrbgAes128,
     seed_material: *const u8,
@@ -1391,7 +1391,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_no_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live,
 /// instantiated handle from [`oxi_ctr_drbg_aes128_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_df(
     handle: *mut OxiCtrDrbgAes128,
     entropy: *const u8,
@@ -1428,7 +1428,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_df(
 /// `handle` must be a live, instantiated handle from
 /// [`oxi_ctr_drbg_aes128_new`]. `out` must point to ≥ `out_len`
 /// writable bytes (or `out_len == 0`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_no_df(
     handle: *mut OxiCtrDrbgAes128,
     additional_input: *const u8,
@@ -1474,7 +1474,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_no_df(
 /// writable bytes. `additional_input` must point to ≥
 /// `additional_input_len` readable bytes when
 /// `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes128_generate_df(
     handle: *mut OxiCtrDrbgAes128,
     additional_input: *const u8,
@@ -1527,7 +1527,7 @@ impl OxiCtrDrbgAes192 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiCtrDrbgAes192`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_new(out_handle: *mut *mut OxiCtrDrbgAes192) -> c_int {
     if out_handle.is_null() {
         return R::NullPointer as c_int;
@@ -1545,7 +1545,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_new(out_handle: *mut *mut OxiCtrDrb
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_ctr_drbg_aes192_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_free(handle: *mut OxiCtrDrbgAes192) {
     if handle.is_null() {
         return;
@@ -1561,7 +1561,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_free(handle: *mut OxiCtrDrbgAes192)
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_ctr_drbg_aes192_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_no_df(
     handle: *mut OxiCtrDrbgAes192,
     seed_material: *const u8,
@@ -1588,7 +1588,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_no_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_ctr_drbg_aes192_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_df(
     handle: *mut OxiCtrDrbgAes192,
     entropy: *const u8,
@@ -1626,7 +1626,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live,
 /// instantiated handle from [`oxi_ctr_drbg_aes192_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_no_df(
     handle: *mut OxiCtrDrbgAes192,
     seed_material: *const u8,
@@ -1651,7 +1651,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_no_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live,
 /// instantiated handle from [`oxi_ctr_drbg_aes192_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_df(
     handle: *mut OxiCtrDrbgAes192,
     entropy: *const u8,
@@ -1684,7 +1684,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_df(
 /// `handle` must be a live, instantiated handle from
 /// [`oxi_ctr_drbg_aes192_new`]. `out` must point to ≥ `out_len`
 /// writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_no_df(
     handle: *mut OxiCtrDrbgAes192,
     additional_input: *const u8,
@@ -1726,7 +1726,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_no_df(
 /// writable bytes. `additional_input` must point to ≥
 /// `additional_input_len` readable bytes when
 /// `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes192_generate_df(
     handle: *mut OxiCtrDrbgAes192,
     additional_input: *const u8,
@@ -1778,7 +1778,7 @@ impl OxiCtrDrbgAes256 {
 ///
 /// `out_handle` must be a valid pointer to a writable
 /// `*mut OxiCtrDrbgAes256`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_new(out_handle: *mut *mut OxiCtrDrbgAes256) -> c_int {
     if out_handle.is_null() {
         return R::NullPointer as c_int;
@@ -1796,7 +1796,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_new(out_handle: *mut *mut OxiCtrDrb
 ///
 /// `handle` must be either NULL or a pointer previously returned by
 /// [`oxi_ctr_drbg_aes256_new`] that has not yet been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_free(handle: *mut OxiCtrDrbgAes256) {
     if handle.is_null() {
         return;
@@ -1811,7 +1811,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_free(handle: *mut OxiCtrDrbgAes256)
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_ctr_drbg_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_no_df(
     handle: *mut OxiCtrDrbgAes256,
     seed_material: *const u8,
@@ -1837,7 +1837,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_no_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
 /// handle from [`oxi_ctr_drbg_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_df(
     handle: *mut OxiCtrDrbgAes256,
     entropy: *const u8,
@@ -1875,7 +1875,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live,
 /// instantiated handle from [`oxi_ctr_drbg_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_no_df(
     handle: *mut OxiCtrDrbgAes256,
     seed_material: *const u8,
@@ -1900,7 +1900,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_no_df(
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live,
 /// instantiated handle from [`oxi_ctr_drbg_aes256_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_df(
     handle: *mut OxiCtrDrbgAes256,
     entropy: *const u8,
@@ -1933,7 +1933,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_df(
 /// `handle` must be a live, instantiated handle from
 /// [`oxi_ctr_drbg_aes256_new`]. `out` must point to ≥ `out_len`
 /// writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_no_df(
     handle: *mut OxiCtrDrbgAes256,
     additional_input: *const u8,
@@ -1975,7 +1975,7 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_no_df(
 /// writable bytes. `additional_input` must point to ≥
 /// `additional_input_len` readable bytes when
 /// `additional_input_len > 0`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_df(
     handle: *mut OxiCtrDrbgAes256,
     additional_input: *const u8,

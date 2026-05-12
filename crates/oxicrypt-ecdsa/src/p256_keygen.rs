@@ -40,7 +40,7 @@
 
 use oxicrypt_drbg::HmacDrbgSha256;
 
-use crate::p256_ecdsa::{derive_public_key_internal, PRIVATE_KEY_LEN, PUBLIC_KEY_LEN};
+use crate::p256_ecdsa::{PRIVATE_KEY_LEN, PUBLIC_KEY_LEN, derive_public_key_internal};
 use crate::p256_scalar::Scalar;
 
 /// Maximum number of rejection-sampling attempts before we declare
@@ -80,21 +80,21 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
         // `Scalar::from_bytes` returns `None` for bytes ≥ n and
         // also silently accepts the zero encoding; we reject zero
         // explicitly afterwards to land in `[1, n − 1]`.
-        if let Some(s) = Scalar::from_bytes(&buf) {
-            if s.is_zero() == 0 {
-                // Success path: copy the accepted bytes out, then
-                // clear the named local `buf` before returning.
-                // The returned `result` carries the bytes onward;
-                // the caller chain wraps it in `EcdsaP{256}PrivateKey`
-                // (or, for ECDH, the `oxicrypt-ecdh` keygen wrapper),
-                // both of which provide Drop-zeroize. Clearing the
-                // named source local here makes it auditable that
-                // the rejection-sampler buffer's stack location is
-                // wiped before frame teardown.
-                let result = buf;
-                buf.fill(0);
-                return Some(result);
-            }
+        if let Some(s) = Scalar::from_bytes(&buf)
+            && s.is_zero() == 0
+        {
+            // Success path: copy the accepted bytes out, then
+            // clear the named local `buf` before returning.
+            // The returned `result` carries the bytes onward;
+            // the caller chain wraps it in `EcdsaP{256}PrivateKey`
+            // (or, for ECDH, the `oxicrypt-ecdh` keygen wrapper),
+            // both of which provide Drop-zeroize. Clearing the
+            // named source local here makes it auditable that
+            // the rejection-sampler buffer's stack location is
+            // wiped before frame teardown.
+            let result = buf;
+            buf.fill(0);
+            return Some(result);
         }
         // CSP scrub: rejected candidates linger in `buf` between
         // iterations otherwise. Although a rejected scalar (≥ n or

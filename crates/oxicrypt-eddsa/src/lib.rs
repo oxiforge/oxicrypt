@@ -86,7 +86,7 @@ pub mod scalar;
 // without navigating into the `ed25519` submodule.
 
 pub use ed25519::{
-    keygen, sign, verify, Ed25519PrivateKey, PUBLIC_KEY_LEN, SEED_LEN, SIGNATURE_LEN,
+    Ed25519PrivateKey, PUBLIC_KEY_LEN, SEED_LEN, SIGNATURE_LEN, keygen, sign, verify,
 };
 
 /// Power-up KATs exported by this crate.

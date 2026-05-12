@@ -25,11 +25,11 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 use oxicrypt_sha::sha512::Sha512;
 
 use crate::edwards::EdwardsPoint;
-use crate::scalar::{is_canonical_encoding, muladd, reduce_wide, Scalar};
+use crate::scalar::{Scalar, is_canonical_encoding, muladd, reduce_wide};
 
 /// Length of an Ed25519 seed / "secret key" in bytes (RFC 8032 §5.1.5).
 pub const SEED_LEN: usize = 32;
@@ -417,7 +417,7 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     // RFC 8032 §7.1 test vectors (pure Ed25519).
     //

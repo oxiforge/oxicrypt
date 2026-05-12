@@ -4,7 +4,7 @@
 //! half-ladder width. This is called twice per RSA-2048 sign (once
 //! under `dP`, once under `dQ`) and twice per RSA-2048 OAEP decrypt.
 
-use crate::measure::{run_target, RunConfig};
+use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;
 use oxicrypt_rsa::bigint1024::U1024;
 use oxicrypt_rsa::mont1024::MontCtx1024;

@@ -5,8 +5,8 @@
 //! bits (48 bytes / 6 64-bit words).
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use crate::sha512::{Sha512State, BLOCK_SIZE as SHA512_BLOCK};
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use crate::sha512::{BLOCK_SIZE as SHA512_BLOCK, Sha512State};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 /// Output length of SHA-384 in bytes.
 pub const DIGEST_SIZE: usize = 48;
@@ -106,8 +106,8 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{self_test, sha384, Sha384, DIGEST_SIZE, KAT_ABC_DIGEST};
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use super::{DIGEST_SIZE, KAT_ABC_DIGEST, Sha384, self_test, sha384};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn hex(s: &str) -> [u8; DIGEST_SIZE] {
         assert_eq!(s.len(), DIGEST_SIZE * 2);

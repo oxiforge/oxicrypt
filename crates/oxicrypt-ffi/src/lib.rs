@@ -64,12 +64,14 @@ mod drbg;
 mod error;
 mod handle;
 pub use aes::{
-    oxi_aes256_cbc_decrypt, oxi_aes256_cbc_encrypt, oxi_aes256_ccm_decrypt, oxi_aes256_ccm_encrypt,
-    oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free, oxi_aes256_gcm_decrypt,
-    oxi_aes256_gcm_encrypt, oxi_aes256_kw_unwrap, oxi_aes256_kw_wrap, oxi_aes256_kwp_unwrap,
-    oxi_aes256_kwp_wrap, oxi_aes256_new, OxiAes256Key,
+    OxiAes256Key, oxi_aes256_cbc_decrypt, oxi_aes256_cbc_encrypt, oxi_aes256_ccm_decrypt,
+    oxi_aes256_ccm_encrypt, oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free,
+    oxi_aes256_gcm_decrypt, oxi_aes256_gcm_encrypt, oxi_aes256_kw_unwrap, oxi_aes256_kw_wrap,
+    oxi_aes256_kwp_unwrap, oxi_aes256_kwp_wrap, oxi_aes256_new,
 };
 pub use drbg::{
+    OxiCtrDrbgAes128, OxiCtrDrbgAes192, OxiCtrDrbgAes256, OxiHashDrbgSha256, OxiHashDrbgSha384,
+    OxiHashDrbgSha512, OxiHmacDrbgSha256, OxiHmacDrbgSha384, OxiHmacDrbgSha512,
     oxi_ctr_drbg_aes128_free, oxi_ctr_drbg_aes128_generate_df, oxi_ctr_drbg_aes128_generate_no_df,
     oxi_ctr_drbg_aes128_instantiate_df, oxi_ctr_drbg_aes128_instantiate_no_df,
     oxi_ctr_drbg_aes128_new, oxi_ctr_drbg_aes128_reseed_df, oxi_ctr_drbg_aes128_reseed_no_df,
@@ -89,12 +91,10 @@ pub use drbg::{
     oxi_hmac_drbg_sha384_generate, oxi_hmac_drbg_sha384_instantiate, oxi_hmac_drbg_sha384_new,
     oxi_hmac_drbg_sha384_reseed, oxi_hmac_drbg_sha512_free, oxi_hmac_drbg_sha512_generate,
     oxi_hmac_drbg_sha512_instantiate, oxi_hmac_drbg_sha512_new, oxi_hmac_drbg_sha512_reseed,
-    OxiCtrDrbgAes128, OxiCtrDrbgAes192, OxiCtrDrbgAes256, OxiHashDrbgSha256, OxiHashDrbgSha384,
-    OxiHashDrbgSha512, OxiHmacDrbgSha256, OxiHmacDrbgSha384, OxiHmacDrbgSha512,
 };
 pub use error::OxiResult;
 
-use crate::error::{status_kdf, status_module, OxiResult as R};
+use crate::error::{OxiResult as R, status_kdf, status_module};
 use crate::handle::OxiHandle;
 use core::ffi::c_int;
 
@@ -224,7 +224,7 @@ static _SLOT_REF: &oxicrypt_integrity::IntegritySlot = &oxicrypt_integrity::FIPS
 /// # Safety
 ///
 /// No pointers; always safe to call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oxi_init(profile: c_int) -> c_int {
     let p = match profile {
         0 => oxicrypt_module::AlgorithmProfile::Unrestricted,
@@ -257,7 +257,7 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
 /// # Safety
 ///
 /// No pointers; always safe to call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oxi_active_profile() -> c_int {
     match oxicrypt_module::active_profile() {
         oxicrypt_module::AlgorithmProfile::Unrestricted => 0,
@@ -283,7 +283,7 @@ pub extern "C" fn oxi_active_profile() -> c_int {
 /// # Safety
 ///
 /// No pointers; always safe to call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oxi_is_operational() -> c_int {
     c_int::from(oxicrypt_module::is_operational())
 }
@@ -298,7 +298,7 @@ pub extern "C" fn oxi_is_operational() -> c_int {
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha256(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -326,7 +326,7 @@ pub unsafe extern "C" fn oxi_sha256(data_ptr: *const u8, data_len: usize, out: *
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 64 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha512(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -354,7 +354,7 @@ pub unsafe extern "C" fn oxi_sha512(data_ptr: *const u8, data_len: usize, out: *
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 28 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha224(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -382,7 +382,7 @@ pub unsafe extern "C" fn oxi_sha224(data_ptr: *const u8, data_len: usize, out: *
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 48 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha384(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -415,7 +415,7 @@ pub unsafe extern "C" fn oxi_sha384(data_ptr: *const u8, data_len: usize, out: *
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 28 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha512_224(
     data_ptr: *const u8,
     data_len: usize,
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn oxi_sha512_224(
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha512_256(
     data_ptr: *const u8,
     data_len: usize,
@@ -491,7 +491,7 @@ pub unsafe extern "C" fn oxi_sha512_256(
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 28 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha3_224(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -517,7 +517,7 @@ pub unsafe extern "C" fn oxi_sha3_224(data_ptr: *const u8, data_len: usize, out:
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha3_256(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -543,7 +543,7 @@ pub unsafe extern "C" fn oxi_sha3_256(data_ptr: *const u8, data_len: usize, out:
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 48 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha3_384(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -569,7 +569,7 @@ pub unsafe extern "C" fn oxi_sha3_384(data_ptr: *const u8, data_len: usize, out:
 ///
 /// Caller must ensure `data_ptr` is valid for `data_len` bytes
 /// and `out` is valid for 64 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_sha3_512(data_ptr: *const u8, data_len: usize, out: *mut u8) -> c_int {
     let data = match unsafe { slice_from_raw(data_ptr, data_len) } {
         Ok(s) => s,
@@ -596,7 +596,7 @@ pub unsafe extern "C" fn oxi_sha3_512(data_ptr: *const u8, data_len: usize, out:
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha256(
     key_ptr: *const u8,
     key_len: usize,
@@ -634,7 +634,7 @@ pub unsafe extern "C" fn oxi_hmac_sha256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha384(
     key_ptr: *const u8,
     key_len: usize,
@@ -672,7 +672,7 @@ pub unsafe extern "C" fn oxi_hmac_sha384(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha512(
     key_ptr: *const u8,
     key_len: usize,
@@ -710,7 +710,7 @@ pub unsafe extern "C" fn oxi_hmac_sha512(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha3_224(
     key_ptr: *const u8,
     key_len: usize,
@@ -748,7 +748,7 @@ pub unsafe extern "C" fn oxi_hmac_sha3_224(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha3_256(
     key_ptr: *const u8,
     key_len: usize,
@@ -786,7 +786,7 @@ pub unsafe extern "C" fn oxi_hmac_sha3_256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha3_384(
     key_ptr: *const u8,
     key_len: usize,
@@ -824,7 +824,7 @@ pub unsafe extern "C" fn oxi_hmac_sha3_384(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hmac_sha3_512(
     key_ptr: *const u8,
     key_len: usize,
@@ -882,7 +882,7 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
 ///
 /// All pointer/length pairs must be valid. `public_key_out` must be a
 /// non-NULL writable pointer to ≥65 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_derive_public_key(
     d_ptr: *const u8,
     public_key_out: *mut u8,
@@ -917,7 +917,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_derive_public_key(
 ///
 /// All pointer/length pairs must be valid. `sig_out` must be a
 /// non-NULL writable pointer to ≥64 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_sign_with_k(
     d_ptr: *const u8,
     msg_ptr: *const u8,
@@ -967,7 +967,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_sign_with_k(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_verify(
     public_key_ptr: *const u8,
     msg_ptr: *const u8,
@@ -1011,7 +1011,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_verify(
 ///
 /// All pointer/length pairs must be valid. `public_key_out` must be a
 /// non-NULL writable pointer to ≥97 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_derive_public_key(
     d_ptr: *const u8,
     public_key_out: *mut u8,
@@ -1045,7 +1045,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_derive_public_key(
 ///
 /// All pointer/length pairs must be valid. `sig_out` must be a
 /// non-NULL writable pointer to ≥96 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_sign_with_k(
     d_ptr: *const u8,
     msg_ptr: *const u8,
@@ -1094,7 +1094,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_sign_with_k(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_verify(
     public_key_ptr: *const u8,
     msg_ptr: *const u8,
@@ -1151,7 +1151,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_verify(
 ///
 /// All pointer/length pairs must be valid. `prk_out` must be a
 /// non-NULL writable pointer to ≥32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hkdf_sha256_extract(
     salt_ptr: *const u8,
     salt_len: usize,
@@ -1191,7 +1191,7 @@ pub unsafe extern "C" fn oxi_hkdf_sha256_extract(
 ///
 /// All pointer/length pairs must be valid. `okm_out` must be a
 /// writable pointer to at least `okm_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hkdf_sha256_expand(
     prk_ptr: *const u8,
     info_ptr: *const u8,
@@ -1232,7 +1232,7 @@ pub unsafe extern "C" fn oxi_hkdf_sha256_expand(
 ///
 /// All pointer/length pairs must be valid. `prk_out` must be a
 /// non-NULL writable pointer to ≥48 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hkdf_sha384_extract(
     salt_ptr: *const u8,
     salt_len: usize,
@@ -1272,7 +1272,7 @@ pub unsafe extern "C" fn oxi_hkdf_sha384_extract(
 ///
 /// All pointer/length pairs must be valid. `okm_out` must be a
 /// writable pointer to at least `okm_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hkdf_sha384_expand(
     prk_ptr: *const u8,
     info_ptr: *const u8,
@@ -1313,7 +1313,7 @@ pub unsafe extern "C" fn oxi_hkdf_sha384_expand(
 ///
 /// All pointer/length pairs must be valid. `prk_out` must be a
 /// non-NULL writable pointer to ≥64 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hkdf_sha512_extract(
     salt_ptr: *const u8,
     salt_len: usize,
@@ -1353,7 +1353,7 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_extract(
 ///
 /// All pointer/length pairs must be valid. `okm_out` must be a
 /// writable pointer to at least `okm_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
     prk_ptr: *const u8,
     info_ptr: *const u8,
@@ -1402,7 +1402,7 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
 ///
 /// All pointer/length pairs must be valid. `out` must be a writable
 /// pointer to at least `out_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha256(
     secret_ptr: *const u8,
     secret_len: usize,
@@ -1445,7 +1445,7 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha256(
 ///
 /// All pointer/length pairs must be valid. `out` must be a writable
 /// pointer to at least `out_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha384(
     secret_ptr: *const u8,
     secret_len: usize,
@@ -1490,7 +1490,7 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha384(
 ///
 /// All pointer/length pairs must be valid. `out` must be a writable
 /// pointer to at least `out_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_tls13_derive_secret_sha256(
     secret_ptr: *const u8,
     secret_len: usize,
@@ -1534,7 +1534,7 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha256(
 ///
 /// All pointer/length pairs must be valid. `out` must be a writable
 /// pointer to at least `out_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
     secret_ptr: *const u8,
     secret_len: usize,
@@ -1604,7 +1604,7 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
 ///
 /// All pointer/length pairs must be valid. `public_key_out` must be a
 /// non-NULL writable pointer to ≥32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ed25519_keygen(seed_ptr: *const u8, public_key_out: *mut u8) -> c_int {
     let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
         Ok(s) => s,
@@ -1637,7 +1637,7 @@ pub unsafe extern "C" fn oxi_ed25519_keygen(seed_ptr: *const u8, public_key_out:
 ///
 /// All pointer/length pairs must be valid. `sig_out` must be a
 /// non-NULL writable pointer to ≥64 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ed25519_sign(
     seed_ptr: *const u8,
     msg_ptr: *const u8,
@@ -1678,7 +1678,7 @@ pub unsafe extern "C" fn oxi_ed25519_sign(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ed25519_verify(
     public_key_ptr: *const u8,
     msg_ptr: *const u8,
@@ -1766,7 +1766,7 @@ pub unsafe extern "C" fn oxi_ed25519_verify(
 ///
 /// All pointer/length pairs must be valid. `shared_secret_out` must
 /// be a non-NULL writable pointer to ≥32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdh_p256_compute_shared_secret(
     d_ptr: *const u8,
     peer_public_key_ptr: *const u8,
@@ -1816,7 +1816,7 @@ pub unsafe extern "C" fn oxi_ecdh_p256_compute_shared_secret(
 ///
 /// All pointer/length pairs must be valid. `shared_secret_out` must
 /// be a non-NULL writable pointer to ≥48 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
     d_ptr: *const u8,
     peer_public_key_ptr: *const u8,
@@ -1889,7 +1889,7 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
 /// non-NULL writable pointer to ≥32 bytes. `public_out` must be a
 /// non-NULL writable pointer to ≥65 bytes. The caller MUST
 /// serialise concurrent calls on the same `drbg` pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     private_out: *mut u8,
@@ -1928,7 +1928,7 @@ pub unsafe extern "C" fn oxi_ecdh_p256_generate_keypair(
 /// a non-NULL writable pointer to ≥48 bytes. `public_out` must be a
 /// non-NULL writable pointer to ≥97 bytes. Callers MUST serialise
 /// concurrent calls on the same `drbg` pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     private_out: *mut u8,
@@ -2006,7 +2006,7 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 ///
 /// All pointer/length pairs must be valid. `shared_secret_out` must
 /// be a non-NULL writable pointer to ≥384 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
     x_ptr: *const u8,
     peer_public_key_ptr: *const u8,
@@ -2070,7 +2070,7 @@ pub unsafe extern "C" fn oxi_dh3072_compute_shared_secret(
 /// that has been instantiated. `private_out` must be a non-NULL
 /// writable pointer to ≥384 bytes. `public_out` must be a non-NULL
 /// writable pointer to ≥384 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     private_out: *mut u8,
@@ -2146,7 +2146,7 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_2048_sha256(
     n_ptr: *const u8,
     e: u64,
@@ -2195,7 +2195,7 @@ pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_2048_sha256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_pss_verify_2048_sha256(
     n_ptr: *const u8,
     e: u64,
@@ -2240,7 +2240,7 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_2048_sha256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_3072_sha256(
     n_ptr: *const u8,
     e: u64,
@@ -2286,7 +2286,7 @@ pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_3072_sha256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_pss_verify_3072_sha256(
     n_ptr: *const u8,
     e: u64,
@@ -2329,7 +2329,7 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_3072_sha256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_4096_sha256(
     n_ptr: *const u8,
     e: u64,
@@ -2373,7 +2373,7 @@ pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_4096_sha256(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
     n_ptr: *const u8,
     e: u64,
@@ -2459,7 +2459,7 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
 /// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
 /// each be non-NULL writable pointers to ≥2592 and ≥4896 bytes
 /// respectively.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
     seed_ptr: *const u8,
     pk_out: *mut u8,
@@ -2504,7 +2504,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_keygen(
 ///
 /// All pointer/length pairs must be valid. `sig_out` must be a
 /// non-NULL writable pointer to ≥4627 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_dsa_87_sign(
     sk_ptr: *const u8,
     msg_ptr: *const u8,
@@ -2555,7 +2555,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_sign(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
     pk_ptr: *const u8,
     msg_ptr: *const u8,
@@ -2657,7 +2657,7 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
 /// All pointer/length pairs must be valid. `ek_out` and `dk_out`
 /// must each be non-NULL writable pointers to ≥1568 and ≥3168 bytes
 /// respectively.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
     d_ptr: *const u8,
     z_ptr: *const u8,
@@ -2706,7 +2706,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_keygen(
 /// All pointer/length pairs must be valid. `ss_out` and `ct_out`
 /// must each be non-NULL writable pointers to ≥32 and ≥1568 bytes
 /// respectively.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
     ek_ptr: *const u8,
     m_ptr: *const u8,
@@ -2758,7 +2758,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
 ///
 /// All pointer/length pairs must be valid. `ss_out` must be a
 /// non-NULL writable pointer to ≥32 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
     dk_ptr: *const u8,
     ct_ptr: *const u8,
@@ -2861,7 +2861,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
 /// All pointer/length pairs must be valid. `pk_out` and `sk_out`
 /// must each be non-NULL writable pointers to ≥64 and ≥128 bytes
 /// respectively.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
     xi_ptr: *const u8,
     pk_out: *mut u8,
@@ -2904,7 +2904,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
 ///
 /// All pointer/length pairs must be valid. `sig_out` must be a
 /// non-NULL writable pointer to ≥29 792 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_sign(
     sk_ptr: *const u8,
     msg_ptr: *const u8,
@@ -2954,7 +2954,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_sign(
 /// # Safety
 ///
 /// All pointer/length pairs must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
     pk_ptr: *const u8,
     msg_ptr: *const u8,
@@ -3100,7 +3100,7 @@ pub const OXI_XMSS_SIGNATURE_LEN: usize = 2500;
 /// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
 /// writable pointer to ≥52 bytes. `pk_out` must be a non-NULL
 /// writable pointer to ≥56 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_lms_keygen(
     xi_ptr: *const u8,
     sk_out: *mut u8,
@@ -3150,7 +3150,7 @@ pub unsafe extern "C" fn oxi_lms_keygen(
 /// must be a non-NULL writable pointer to ≥52 bytes. `sig_out`
 /// must be a non-NULL writable pointer to ≥2508 bytes. `sk_in_ptr`
 /// and `sk_out` may alias (in-place advance is supported).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_lms_sign(
     sk_in_ptr: *const u8,
     msg_ptr: *const u8,
@@ -3201,7 +3201,7 @@ pub unsafe extern "C" fn oxi_lms_sign(
 /// `pk_ptr` must be valid for 56 bytes. `msg_ptr` must be valid for
 /// `msg_len` bytes (NULL with len=0 is permitted). `sig_ptr` must
 /// be valid for 2508 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_lms_verify(
     pk_ptr: *const u8,
     msg_ptr: *const u8,
@@ -3252,7 +3252,7 @@ pub unsafe extern "C" fn oxi_lms_verify(
 /// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
 /// writable pointer to ≥132 bytes. `pk_out` must be a non-NULL
 /// writable pointer to ≥68 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_xmss_keygen(
     xi_ptr: *const u8,
     sk_out: *mut u8,
@@ -3300,7 +3300,7 @@ pub unsafe extern "C" fn oxi_xmss_keygen(
 /// for `msg_len` bytes. `sk_out` must be a non-NULL writable pointer
 /// to ≥132 bytes. `sig_out` must be a non-NULL writable pointer to
 /// ≥2500 bytes. `sk_in_ptr` and `sk_out` may alias.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_xmss_sign(
     sk_in_ptr: *const u8,
     msg_ptr: *const u8,
@@ -3347,7 +3347,7 @@ pub unsafe extern "C" fn oxi_xmss_sign(
 ///
 /// `pk_ptr` must be valid for 68 bytes. `msg_ptr` must be valid for
 /// `msg_len` bytes. `sig_ptr` must be valid for 2500 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_xmss_verify(
     pk_ptr: *const u8,
     msg_ptr: *const u8,
@@ -3497,7 +3497,7 @@ impl OxiEcdsaP384PrivateKey {
 /// [`oxi_hmac_drbg_sha256_new`] +
 /// [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
 /// writable pointer to a `*mut OxiEcdsaP256PrivateKey`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     out_key: *mut *mut OxiEcdsaP256PrivateKey,
@@ -3532,7 +3532,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_new_generate(
 /// `key` must be either NULL or a pointer previously returned by
 /// [`oxi_ecdsa_p256_private_key_new_generate`] that has not yet
 /// been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_free(key: *mut OxiEcdsaP256PrivateKey) {
     if key.is_null() {
         return;
@@ -3554,7 +3554,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_free(key: *mut OxiEcdsaP256P
 /// `key` must be a live handle from
 /// [`oxi_ecdsa_p256_private_key_new_generate`]. `public_key_out`
 /// must be a non-NULL writable pointer to ≥65 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
     key: *const OxiEcdsaP256PrivateKey,
     public_key_out: *mut u8,
@@ -3599,7 +3599,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
 /// per-call-mutating-handle thread-safety contract documented in
 /// security-policy §4.8. `msg_ptr` must be valid for `msg_len` bytes.
 /// `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
     key: *const OxiEcdsaP256PrivateKey,
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
@@ -3640,7 +3640,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
 ///
 /// `drbg` must be a live, instantiated DRBG handle. `out_key` must
 /// be a non-NULL writable pointer to a `*mut OxiEcdsaP384PrivateKey`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_new_generate(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     out_key: *mut *mut OxiEcdsaP384PrivateKey,
@@ -3670,7 +3670,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_new_generate(
 /// `key` must be either NULL or a pointer previously returned by
 /// [`oxi_ecdsa_p384_private_key_new_generate`] that has not yet
 /// been freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_free(key: *mut OxiEcdsaP384PrivateKey) {
     if key.is_null() {
         return;
@@ -3687,7 +3687,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_free(key: *mut OxiEcdsaP384P
 /// `key` must be a live handle from
 /// [`oxi_ecdsa_p384_private_key_new_generate`]. `public_key_out`
 /// must be a non-NULL writable pointer to ≥97 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
     key: *const OxiEcdsaP384PrivateKey,
     public_key_out: *mut u8,
@@ -3725,7 +3725,7 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
 /// the per-call-mutating-handle thread-safety contract.
 /// `msg_ptr` must be valid for `msg_len` bytes. `sig_out` must be a
 /// non-NULL writable pointer to ≥96 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
     key: *const OxiEcdsaP384PrivateKey,
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
@@ -3885,7 +3885,7 @@ impl OxiRsaPrivateKey4096 {
 /// [`oxi_hmac_drbg_sha256_new`] +
 /// [`oxi_hmac_drbg_sha256_instantiate`]. `out_key` must be a non-NULL
 /// writable pointer to a `*mut OxiRsaPrivateKey2048`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     e: u64,
@@ -3920,7 +3920,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_private_key_new_generate(
 /// `key` must be either NULL or a pointer previously returned by
 /// [`oxi_rsa_2048_private_key_new_generate`] that has not yet been
 /// freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_private_key_free(key: *mut OxiRsaPrivateKey2048) {
     if key.is_null() {
         return;
@@ -3938,7 +3938,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_private_key_free(key: *mut OxiRsaPrivateKe
 ///
 /// `key` must be a live handle. `modulus_out` must be a non-NULL
 /// writable pointer to ≥256 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_modulus(
     key: *const OxiRsaPrivateKey2048,
     modulus_out: *mut u8,
@@ -3964,7 +3964,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_modulus(
 ///
 /// `key` must be a live handle. `e_out` must be a non-NULL writable
 /// pointer to a `uint64_t`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_public_exponent(
     key: *const OxiRsaPrivateKey2048,
     e_out: *mut u64,
@@ -3991,7 +3991,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_public_exponent(
 /// `key` must be a live handle. `msg_ptr` must be valid for
 /// `msg_len` bytes. `sig_out` must be a non-NULL writable pointer
 /// to ≥256 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_sign_pkcs1_v15_sha256(
     key: *const OxiRsaPrivateKey2048,
     msg_ptr: *const u8,
@@ -4031,7 +4031,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pkcs1_v15_sha256(
 /// safety contract documented in security-policy.md. `msg_ptr` must
 /// be valid for `msg_len` bytes. `sig_out` must be a non-NULL
 /// writable pointer to ≥256 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_sign_pss_sha256(
     key: *const OxiRsaPrivateKey2048,
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
@@ -4075,7 +4075,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pss_sha256(
 /// for `label_len` bytes (use `NULL`/`0` for the empty label).
 /// `msg_ptr` must be valid for `msg_len` bytes; `msg_len` must be
 /// ≤ 190. `ct_out` must be a non-NULL writable pointer to ≥256 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_oaep_encrypt_sha256(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     n_ptr: *const u8,
@@ -4139,7 +4139,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_encrypt_sha256(
 /// `out_ptr` must be a non-NULL writable pointer to ≥`out_max_len`
 /// bytes; `out_max_len` must be ≥ 190. `out_actual_len` must be a
 /// non-NULL writable pointer to a `size_t`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_2048_oaep_decrypt_sha256(
     key: *const OxiRsaPrivateKey2048,
     label_ptr: *const u8,
@@ -4189,7 +4189,7 @@ pub unsafe extern "C" fn oxi_rsa_2048_oaep_decrypt_sha256(
 /// # Safety
 ///
 /// See [`oxi_rsa_2048_private_key_new_generate`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_private_key_new_generate(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     e: u64,
@@ -4218,7 +4218,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_private_key_new_generate(
 /// # Safety
 ///
 /// See [`oxi_rsa_2048_private_key_free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_private_key_free(key: *mut OxiRsaPrivateKey3072) {
     if key.is_null() {
         return;
@@ -4233,7 +4233,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_private_key_free(key: *mut OxiRsaPrivateKe
 ///
 /// `key` must be a live handle. `modulus_out` must be a non-NULL
 /// writable pointer to ≥384 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_modulus(
     key: *const OxiRsaPrivateKey3072,
     modulus_out: *mut u8,
@@ -4256,7 +4256,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_modulus(
 ///
 /// `key` must be a live handle. `e_out` must be a non-NULL writable
 /// pointer to a `uint64_t`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_public_exponent(
     key: *const OxiRsaPrivateKey3072,
     e_out: *mut u64,
@@ -4278,7 +4278,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_public_exponent(
 ///
 /// See [`oxi_rsa_2048_sign_pkcs1_v15_sha256`]. `sig_out` must be a
 /// non-NULL writable pointer to ≥384 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_sign_pkcs1_v15_sha256(
     key: *const OxiRsaPrivateKey3072,
     msg_ptr: *const u8,
@@ -4310,7 +4310,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pkcs1_v15_sha256(
 ///
 /// See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
 /// non-NULL writable pointer to ≥384 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_sign_pss_sha256(
     key: *const OxiRsaPrivateKey3072,
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
@@ -4349,7 +4349,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_sign_pss_sha256(
 /// See [`oxi_rsa_2048_oaep_encrypt_sha256`]. `n_ptr` must point to
 /// 384 bytes; `msg_len` must be ≤ 318; `ct_out` must be a non-NULL
 /// writable pointer to ≥384 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_oaep_encrypt_sha256(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     n_ptr: *const u8,
@@ -4398,7 +4398,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_encrypt_sha256(
 ///
 /// See [`oxi_rsa_2048_oaep_decrypt_sha256`]. `ct_ptr` must point to
 /// exactly 384 bytes; `out_max_len` must be ≥ 318.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_3072_oaep_decrypt_sha256(
     key: *const OxiRsaPrivateKey3072,
     label_ptr: *const u8,
@@ -4452,7 +4452,7 @@ pub unsafe extern "C" fn oxi_rsa_3072_oaep_decrypt_sha256(
 /// # Safety
 ///
 /// See [`oxi_rsa_2048_private_key_new_generate`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_private_key_new_generate(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     e: u64,
@@ -4480,7 +4480,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_private_key_new_generate(
 /// # Safety
 ///
 /// See [`oxi_rsa_2048_private_key_free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_private_key_free(key: *mut OxiRsaPrivateKey4096) {
     if key.is_null() {
         return;
@@ -4495,7 +4495,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_private_key_free(key: *mut OxiRsaPrivateKe
 ///
 /// `key` must be a live handle. `modulus_out` must be a non-NULL
 /// writable pointer to ≥512 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_modulus(
     key: *const OxiRsaPrivateKey4096,
     modulus_out: *mut u8,
@@ -4517,7 +4517,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_modulus(
 ///
 /// `key` must be a live handle. `e_out` must be a non-NULL writable
 /// pointer to a `uint64_t`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_public_exponent(
     key: *const OxiRsaPrivateKey4096,
     e_out: *mut u64,
@@ -4539,7 +4539,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_public_exponent(
 ///
 /// See [`oxi_rsa_2048_sign_pkcs1_v15_sha256`]. `sig_out` must be a
 /// non-NULL writable pointer to ≥512 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_sign_pkcs1_v15_sha256(
     key: *const OxiRsaPrivateKey4096,
     msg_ptr: *const u8,
@@ -4571,7 +4571,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pkcs1_v15_sha256(
 ///
 /// See [`oxi_rsa_2048_sign_pss_sha256`]. `sig_out` must be a
 /// non-NULL writable pointer to ≥512 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_sign_pss_sha256(
     key: *const OxiRsaPrivateKey4096,
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
@@ -4609,7 +4609,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_sign_pss_sha256(
 /// See [`oxi_rsa_2048_oaep_encrypt_sha256`]. `n_ptr` must point to
 /// 512 bytes; `msg_len` must be ≤ 446; `ct_out` must be a non-NULL
 /// writable pointer to ≥512 bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_oaep_encrypt_sha256(
     drbg: *mut crate::drbg::OxiHmacDrbgSha256,
     n_ptr: *const u8,
@@ -4657,7 +4657,7 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_encrypt_sha256(
 ///
 /// See [`oxi_rsa_2048_oaep_decrypt_sha256`]. `ct_ptr` must point to
 /// exactly 512 bytes; `out_max_len` must be ≥ 446.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_rsa_4096_oaep_decrypt_sha256(
     key: *const OxiRsaPrivateKey4096,
     label_ptr: *const u8,

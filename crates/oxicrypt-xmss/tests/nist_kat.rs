@@ -14,7 +14,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::similar_names)]
 
 use oxicrypt_xmss::{
-    keygen_internal, sign_internal, verify_internal, PUBLIC_KEY_LEN, SIGNATURE_LEN,
+    PUBLIC_KEY_LEN, SIGNATURE_LEN, keygen_internal, sign_internal, verify_internal,
 };
 
 // ── Vector helpers ──────────────────────────────────────────────────────────

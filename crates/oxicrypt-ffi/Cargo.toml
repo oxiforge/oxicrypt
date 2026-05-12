@@ -15,7 +15,7 @@ crate-type = ["cdylib", "staticlib"]
 workspace = true
 
 [build-dependencies]
-cbindgen = "0.27"
+cbindgen = "0.29"
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }

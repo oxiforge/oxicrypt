@@ -16,7 +16,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::keccak::Sponge;
-use oxicrypt_module::{require_allowed, require_operational, Error, SelfTestFailure, Service};
+use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
 
 /// Domain-separation byte for SHA-3 fixed-length variants.
 const SHA3_DOMAIN: u8 = 0x06;
@@ -297,12 +297,12 @@ pub fn self_test_512() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::cast_possible_truncation)]
 mod tests {
     use super::{
-        self_test_224, self_test_256, self_test_384, self_test_512, sha3_256, sha3_512, Sha3_224,
-        Sha3_256, Sha3_384, Sha3_512, KAT_SHA3_224_ABC, KAT_SHA3_256_ABC, KAT_SHA3_384_ABC,
-        KAT_SHA3_512_ABC, SHA3_224_DIGEST_SIZE, SHA3_256_DIGEST_SIZE, SHA3_384_DIGEST_SIZE,
-        SHA3_512_DIGEST_SIZE,
+        KAT_SHA3_224_ABC, KAT_SHA3_256_ABC, KAT_SHA3_384_ABC, KAT_SHA3_512_ABC,
+        SHA3_224_DIGEST_SIZE, SHA3_256_DIGEST_SIZE, SHA3_384_DIGEST_SIZE, SHA3_512_DIGEST_SIZE,
+        Sha3_224, Sha3_256, Sha3_384, Sha3_512, self_test_224, self_test_256, self_test_384,
+        self_test_512, sha3_256, sha3_512,
     };
-    use oxicrypt_module::{initialize_with_tests, KatEntry};
+    use oxicrypt_module::{KatEntry, initialize_with_tests};
 
     fn nibble(c: u8) -> u8 {
         match c {

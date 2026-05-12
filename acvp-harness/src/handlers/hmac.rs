@@ -39,7 +39,7 @@ use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_hmac::{
-    HmacSha1, HmacSha224, HmacSha384, HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512,
+    HmacSha1, HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512, HmacSha224, HmacSha384,
     HmacSha512, HmacSha512_224, HmacSha512_256,
 };
 
