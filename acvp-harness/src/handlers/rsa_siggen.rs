@@ -133,7 +133,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             _ => "standard",
         });
 
-    let results = match modulo {
+    let (n_hex, e_hex, results) = match modulo {
         2048 => handle_siggen_2048(group, tests, sig_type, key_mode)?,
         3072 => handle_siggen_3072(group, tests, sig_type, key_mode)?,
         4096 => handle_siggen_4096(group, tests, sig_type, key_mode)?,
@@ -144,8 +144,14 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         }
     };
 
+    // Echo group-level n + e in the response (live GDT requires it
+    // because the server has no prior knowledge of the IUT's keypair;
+    // offline shape echoes the values from the prompt for consistency
+    // — mirrors the ECDSA sigGen pattern PR #34 stabilised).
     Ok(JsonValue::Object(vec![
         ("tgId".to_string(), JsonValue::Number(tg_id)),
+        ("n".to_string(), JsonValue::String(n_hex)),
+        ("e".to_string(), JsonValue::String(e_hex)),
         ("tests".to_string(), JsonValue::Array(results)),
     ]))
 }
@@ -153,15 +159,30 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 // ── Per-modulus signing ─────────────────────────────────────────────
 
 /// Sign with RSA-2048 keys.
+///
+/// Dual-mode per `draft-celi-acvp-rsa §6.2`:
+/// - **Offline (vendored kat-slice)**: group carries `n`/`e`/`p`/`q`/
+///   `dmp1`/`dmq1`/`iqmp` (CRT) or `n`/`d` (standard); signature is
+///   deterministic against the supplied keypair and salt (for PSS).
+/// - **Live GDT**: group carries only `modulo`/`hashAlg`/`sigType`;
+///   IUT generates its own CRT keypair via `os_entropy`-seeded DRBG
+///   and signs every test with it (and a fresh per-test salt for PSS).
+///   Server validates each signature with the IUT-emitted `n` + `e`.
+///   Mirrors the ECDSA sigGen + KAS-FFC-SSC live-generative pattern
+///   PR #34 / #36 stabilised.
 #[allow(clippy::too_many_lines)]
 fn handle_siggen_2048(
     group: &JsonValue,
     tests: &[JsonValue],
     sig_type: &str,
     key_mode: &str,
-) -> Result<Vec<JsonValue>, DispatchError> {
+) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     const N: usize = oxicrypt_rsa::RSA_2048_MODULUS_BYTES;
     const H: usize = oxicrypt_rsa::RSA_2048_CRT_HALF_BYTES;
+
+    if group.get("n").is_none() {
+        return live_siggen_2048(tests, sig_type);
+    }
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
@@ -252,7 +273,90 @@ fn handle_siggen_2048(
             ));
         }
     }
-    Ok(results)
+    // Offline shape: echo n + e from the prompt (e defaults to 010001
+    // when the prompt omits it — standard-keyMode pkcs1v1.5 carries
+    // only n + d but the cap advertises `fixedPubExp = "010001"`).
+    let n_bytes: [u8; N] = decode_fixed(group, "n")?;
+    let n_hex = hex::encode_upper(&n_bytes);
+    let e_hex = group
+        .get("e")
+        .and_then(JsonValue::as_str)
+        .map_or_else(|| "010001".to_string(), str::to_uppercase);
+    Ok((n_hex, e_hex, results))
+}
+
+/// Live GDT sign with an IUT-generated RSA-2048 keypair.
+///
+/// Per `draft-celi-acvp-rsa §6.2`: the server emits only
+/// `(message, tcId, deferred)` per test and validates the resulting
+/// signature against the IUT-emitted group-level `n` + `e`. The IUT
+/// samples its own keypair (CRT internal API; same primitive the
+/// FIPS power-up KAT exercises) and — for PSS — its own fresh salt
+/// per signature via `os_entropy::read_os_entropy`.
+#[allow(clippy::similar_names)]
+fn live_siggen_2048(
+    tests: &[JsonValue],
+    sig_type: &str,
+) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
+    const N: usize = oxicrypt_rsa::RSA_2048_MODULUS_BYTES;
+    let mut drbg = super::os_entropy::build_seeded_drbg()?;
+    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
+        .map_err(|_| DispatchError::Crypto("RSA SigGen: 2048 key generation failed"))?;
+    let n_bytes: [u8; N] = km.n.to_be_bytes();
+    let p_bytes = km.p.to_be_bytes();
+    let q_bytes = km.q.to_be_bytes();
+    let dp_bytes = km.dp.to_be_bytes();
+    let dq_bytes = km.dq.to_be_bytes();
+    let qinv_bytes = km.qinv.to_be_bytes();
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for tc in tests {
+        let tc_id = tc
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+        let message = decode_hex_field(tc, "message")?;
+        let sig = match sig_type {
+            "pkcs1v1.5" => oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
+                &n_bytes,
+                65537,
+                &p_bytes,
+                &q_bytes,
+                &dp_bytes,
+                &dq_bytes,
+                &qinv_bytes,
+                &message,
+            )
+            .ok_or(DispatchError::Crypto(
+                "RSA SigGen: live PKCS#1v1.5 2048 sign failed",
+            ))?,
+            "pss" => {
+                let mut salt = [0u8; 32];
+                super::os_entropy::read_os_entropy(&mut salt)?;
+                oxicrypt_rsa::rsa_pss_sign_2048_sha256_crt_internal(
+                    &n_bytes,
+                    65537,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
+                    &message,
+                    &salt,
+                )
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: live PSS 2048 sign failed",
+                ))?
+            }
+            _ => {
+                return Err(DispatchError::Unsupported(
+                    "RSA SigGen: only pkcs1v1.5 and pss sigTypes are supported",
+                ));
+            }
+        };
+        results.push(sig_result(tc_id, &sig));
+    }
+    Ok((hex::encode_upper(&n_bytes), "010001".to_string(), results))
 }
 
 /// Sign with RSA-3072 keys.
@@ -261,9 +365,13 @@ fn handle_siggen_3072(
     tests: &[JsonValue],
     sig_type: &str,
     key_mode: &str,
-) -> Result<Vec<JsonValue>, DispatchError> {
+) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     const N: usize = 384;
     const H: usize = 192;
+
+    if group.get("n").is_none() {
+        return live_siggen_3072(tests, sig_type);
+    }
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
@@ -357,7 +465,81 @@ fn handle_siggen_3072(
             ));
         }
     }
-    Ok(results)
+    let n_bytes: [u8; N] = decode_fixed(group, "n")?;
+    let n_hex = hex::encode_upper(&n_bytes);
+    let e_hex = group
+        .get("e")
+        .and_then(JsonValue::as_str)
+        .map_or_else(|| "010001".to_string(), str::to_uppercase);
+    Ok((n_hex, e_hex, results))
+}
+
+/// Live GDT sign with an IUT-generated RSA-3072 keypair. See
+/// [`live_siggen_2048`] for the dual-mode rationale.
+#[allow(clippy::similar_names)]
+fn live_siggen_3072(
+    tests: &[JsonValue],
+    sig_type: &str,
+) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
+    const N: usize = 384;
+    let mut drbg = super::os_entropy::build_seeded_drbg()?;
+    let km = oxicrypt_rsa::keygen3072::generate_3072(&mut drbg, 65537)
+        .map_err(|_| DispatchError::Crypto("RSA SigGen: 3072 key generation failed"))?;
+    let n_bytes: [u8; N] = km.n.to_be_bytes();
+    let p_bytes = km.p.to_be_bytes();
+    let q_bytes = km.q.to_be_bytes();
+    let dp_bytes = km.dp.to_be_bytes();
+    let dq_bytes = km.dq.to_be_bytes();
+    let qinv_bytes = km.qinv.to_be_bytes();
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for tc in tests {
+        let tc_id = tc
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+        let message = decode_hex_field(tc, "message")?;
+        let sig = match sig_type {
+            "pkcs1v1.5" => oxicrypt_rsa::rsa3072::pkcs1_v15_sign_crt_internal(
+                &n_bytes,
+                65537,
+                &p_bytes,
+                &q_bytes,
+                &dp_bytes,
+                &dq_bytes,
+                &qinv_bytes,
+                &message,
+            )
+            .ok_or(DispatchError::Crypto(
+                "RSA SigGen: live PKCS#1v1.5 3072 sign failed",
+            ))?,
+            "pss" => {
+                let mut salt = [0u8; 32];
+                super::os_entropy::read_os_entropy(&mut salt)?;
+                oxicrypt_rsa::rsa3072::pss_sign_crt_internal(
+                    &n_bytes,
+                    65537,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
+                    &message,
+                    &salt,
+                )
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: live PSS 3072 sign failed",
+                ))?
+            }
+            _ => {
+                return Err(DispatchError::Unsupported(
+                    "RSA SigGen: only pkcs1v1.5 and pss sigTypes are supported",
+                ));
+            }
+        };
+        results.push(sig_result(tc_id, &sig));
+    }
+    Ok((hex::encode_upper(&n_bytes), "010001".to_string(), results))
 }
 
 /// Sign with RSA-4096 keys.
@@ -366,9 +548,13 @@ fn handle_siggen_4096(
     tests: &[JsonValue],
     sig_type: &str,
     key_mode: &str,
-) -> Result<Vec<JsonValue>, DispatchError> {
+) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     const N: usize = 512;
     const H: usize = 256;
+
+    if group.get("n").is_none() {
+        return live_siggen_4096(tests, sig_type);
+    }
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
@@ -462,7 +648,81 @@ fn handle_siggen_4096(
             ));
         }
     }
-    Ok(results)
+    let n_bytes: [u8; N] = decode_fixed(group, "n")?;
+    let n_hex = hex::encode_upper(&n_bytes);
+    let e_hex = group
+        .get("e")
+        .and_then(JsonValue::as_str)
+        .map_or_else(|| "010001".to_string(), str::to_uppercase);
+    Ok((n_hex, e_hex, results))
+}
+
+/// Live GDT sign with an IUT-generated RSA-4096 keypair. See
+/// [`live_siggen_2048`] for the dual-mode rationale.
+#[allow(clippy::similar_names)]
+fn live_siggen_4096(
+    tests: &[JsonValue],
+    sig_type: &str,
+) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
+    const N: usize = 512;
+    let mut drbg = super::os_entropy::build_seeded_drbg()?;
+    let km = oxicrypt_rsa::keygen4096::generate_4096(&mut drbg, 65537)
+        .map_err(|_| DispatchError::Crypto("RSA SigGen: 4096 key generation failed"))?;
+    let n_bytes: [u8; N] = km.n.to_be_bytes();
+    let p_bytes = km.p.to_be_bytes();
+    let q_bytes = km.q.to_be_bytes();
+    let dp_bytes = km.dp.to_be_bytes();
+    let dq_bytes = km.dq.to_be_bytes();
+    let qinv_bytes = km.qinv.to_be_bytes();
+
+    let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
+    for tc in tests {
+        let tc_id = tc
+            .get("tcId")
+            .and_then(JsonValue::as_i64)
+            .ok_or(DispatchError::MissingField("tcId"))?;
+        let message = decode_hex_field(tc, "message")?;
+        let sig = match sig_type {
+            "pkcs1v1.5" => oxicrypt_rsa::rsa4096::pkcs1_v15_sign_crt_internal(
+                &n_bytes,
+                65537,
+                &p_bytes,
+                &q_bytes,
+                &dp_bytes,
+                &dq_bytes,
+                &qinv_bytes,
+                &message,
+            )
+            .ok_or(DispatchError::Crypto(
+                "RSA SigGen: live PKCS#1v1.5 4096 sign failed",
+            ))?,
+            "pss" => {
+                let mut salt = [0u8; 32];
+                super::os_entropy::read_os_entropy(&mut salt)?;
+                oxicrypt_rsa::rsa4096::pss_sign_crt_internal(
+                    &n_bytes,
+                    65537,
+                    &p_bytes,
+                    &q_bytes,
+                    &dp_bytes,
+                    &dq_bytes,
+                    &qinv_bytes,
+                    &message,
+                    &salt,
+                )
+                .ok_or(DispatchError::Crypto(
+                    "RSA SigGen: live PSS 4096 sign failed",
+                ))?
+            }
+            _ => {
+                return Err(DispatchError::Unsupported(
+                    "RSA SigGen: only pkcs1v1.5 and pss sigTypes are supported",
+                ));
+            }
+        };
+        results.push(sig_result(tc_id, &sig));
+    }
+    Ok((hex::encode_upper(&n_bytes), "010001".to_string(), results))
 }
 
 // ── Result helper ──────────────────────────────────────────────────

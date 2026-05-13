@@ -1,11 +1,24 @@
 //! RSA key generation ACVP handler — `keyGen` mode, revision
 //! `FIPS186-5`.
 //!
-//! **RSA keyGen** (`RSA` / `keyGen` / `FIPS186-5`, `testType = "AFT"`):
+//! **RSA keyGen** (`RSA` / `keyGen` / `FIPS186-5`, `testType ∈ {"AFT", "GDT"}`):
 //! Given per-test DRBG seed material (`entropy`, `nonce`, `perso`),
 //! instantiate an HMAC_DRBG-SHA256 and generate an RSA key pair
 //! with `e = 65537` per FIPS 186-5 §A.1.1 / §B.3.1. Return
 //! `(n, d, p, q, dP, dQ, qInv)`.
+//!
+//! Per `draft-celi-acvp-rsa §6.2` (page 6): ACVP servers that
+//! support RSA keyGen may emit AFTs, GDTs, and KATs. AFTs and GDTs
+//! both REQUIRE the client to generate RSA key pairs and share the
+//! same per-test prompt shape (server-supplied DRBG seed material →
+//! IUT-generated keypair); only the server-side validation strategy
+//! differs (AFT validates structural correctness; GDT validates
+//! that the generated keypair matches what the server's matching
+//! DRBG would have produced from the same seed). KATs (known-answer
+//! tests) are out of scope here — those would supply pinned
+//! `(p, q, e)` and ask the IUT to derive only the public/private
+//! exponent pair, which `oxicrypt-rsa::keygen` does not currently
+//! expose as a separate entry point.
 //!
 //! Supported configurations:
 //! - `modulo = 2048`, `fixedPubExp = "010001"` (65537)
@@ -50,7 +63,10 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         .get("testType")
         .and_then(JsonValue::as_str)
         .ok_or(DispatchError::MissingField("testType"))?;
-    if test_type != "AFT" {
+    // Both AFT and GDT share the per-test DRBG-seed shape per
+    // `draft-celi-acvp-rsa §6.2`. KATs (pinned p/q/e) are a distinct
+    // shape and out of scope for this handler.
+    if test_type != "AFT" && test_type != "GDT" {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
@@ -85,27 +101,39 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // Each test supplies DRBG seed material.
-        let entropy = hex::decode(
-            tc.get("entropy")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("entropy"))?,
-        )?;
-        let nonce = hex::decode(
-            tc.get("nonce")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("nonce"))?,
-        )?;
-        let perso = hex::decode(
-            tc.get("perso")
-                .and_then(JsonValue::as_str)
-                .ok_or(DispatchError::MissingField("perso"))?,
-        )?;
-
-        // Instantiate DRBG from seed material.
-        let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(&entropy, &nonce, &perso)
-            .map_err(|_| DispatchError::Crypto("RSA keyGen: DRBG instantiate failed"))?;
+        // Two prompt shapes share this handler per `draft-celi-acvp-rsa §6.2`:
+        // - AFT (offline kat-slice + some live cases): server supplies
+        //   `entropy`/`nonce`/`perso` so the keypair is deterministic and
+        //   the server can byte-match the expected output.
+        // - GDT (live, server-side deferred validation): per-test prompt
+        //   carries only `tcId` + `deferred`; the IUT samples its own
+        //   entropy from `/dev/urandom` and the server validates the
+        //   keypair structurally (n composite of two distinct primes,
+        //   d·e ≡ 1 mod λ(n), etc.). Same generative-AFT pattern PR #34
+        //   ECDSA, PR #36 KAS-ECC-SSC, and PR #40 KBKDF established.
+        let mut drbg = if tc.get("entropy").is_some() {
+            let entropy = hex::decode(
+                tc.get("entropy")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("entropy"))?,
+            )?;
+            let nonce = hex::decode(
+                tc.get("nonce")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("nonce"))?,
+            )?;
+            let perso = hex::decode(
+                tc.get("perso")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(DispatchError::MissingField("perso"))?,
+            )?;
+            let mut d = oxicrypt_drbg::HmacDrbgSha256::default();
+            d.instantiate(&entropy, &nonce, &perso)
+                .map_err(|_| DispatchError::Crypto("RSA keyGen: DRBG instantiate failed"))?;
+            d
+        } else {
+            super::os_entropy::build_seeded_drbg()?
+        };
 
         match modulo {
             2048 => {

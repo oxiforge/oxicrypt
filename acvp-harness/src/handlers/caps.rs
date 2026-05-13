@@ -665,25 +665,47 @@ pub fn rsa_sigver_capability() -> JsonValue {
 }
 
 /// Build one RSA sigVer sigType capability entry.
+///
+/// Two shape rules differ by sigType per `draft-celi-acvp-rsa §7.7.3`
+/// Table 11 + the §7.7.3 NOTE block:
+///
+/// - `saltLen` SHALL only appear inside a `hashPair` entry when
+///   `sigType == "pss"`. PKCS#1 v1.5 (RFC 8017 §8.2 / §9.2) is
+///   deterministic padding with no salt; the ACVP server rejects
+///   registrations carrying `saltLen` on a pkcs1v1.5 sigType with
+///   HTTP 400 `SaltLen may not be included within a HashPair for
+///   the Pkcs1v15 signature type`.
+/// - `maskFunction` is REQUIRED for PSS (RFC 8017 §8.1 / §9.1
+///   mandates MGF; FIPS 186-5 §B.7 narrows to MGF1) and SHALL NOT
+///   be present for PKCS#1 v1.5. ACVP advertises it as a per-modulo
+///   property field alongside `modulo` + `hashPair` (per the §7.7.3
+///   example registration on page 33). Valid values are a non-empty
+///   subset of `{"mgf1", "shake-128", "shake-256"}` per Table 11;
+///   `oxicrypt-rsa` implements MGF1 only.
 fn rsa_sigver_sigtype(sig_type: &str) -> JsonValue {
-    let hash_pairs = JsonValue::Array(vec![obj(vec![
-        ("hashAlg", str_val("SHA2-256")),
-        ("saltLen", num(32)),
-    ])]);
+    let is_pss = sig_type == "pss";
+    let hash_pair = if is_pss {
+        obj(vec![("hashAlg", str_val("SHA2-256")), ("saltLen", num(32))])
+    } else {
+        obj(vec![("hashAlg", str_val("SHA2-256"))])
+    };
+    let hash_pairs = JsonValue::Array(vec![hash_pair]);
+    let property_for = |modulo_bits: i64| -> JsonValue {
+        let mut fields: Vec<(&str, JsonValue)> = vec![("modulo", num(modulo_bits))];
+        if is_pss {
+            fields.push(("maskFunction", str_array(&["mgf1"])));
+        }
+        fields.push(("hashPair", hash_pairs.clone()));
+        obj(fields)
+    };
     obj(vec![
         ("sigType", str_val(sig_type)),
         (
             "properties",
             JsonValue::Array(vec![
-                obj(vec![
-                    ("modulo", num(2048)),
-                    ("hashPair", hash_pairs.clone()),
-                ]),
-                obj(vec![
-                    ("modulo", num(3072)),
-                    ("hashPair", hash_pairs.clone()),
-                ]),
-                obj(vec![("modulo", num(4096)), ("hashPair", hash_pairs)]),
+                property_for(2048),
+                property_for(3072),
+                property_for(4096),
             ]),
         ),
     ])
@@ -706,31 +728,75 @@ pub fn rsa_siggen_capability() -> JsonValue {
 }
 
 /// Build one RSA sigGen sigType capability entry.
+///
+/// Same sigType-conditional shape as `rsa_sigver_sigtype` — sigGen
+/// Table 8 (page 22) mirrors sigVer Table 11 (page 31) per
+/// `draft-celi-acvp-rsa §7.6.2` / `§7.7.3`:
+/// - `saltLen` PSS-only (Table 8 NOTE: "SHALL only be present if the
+///   'sigType' is 'pss'")
+/// - `maskFunction` PSS-only, valid values `{"mgf1", "shake-128",
+///   "shake-256"}`; `oxicrypt-rsa` implements MGF1 only
+/// - Per-modulo properties carry the maskFunction sibling field, not
+///   the sigType-level entry (per the §7.6.2 example on page 24).
 fn rsa_siggen_sigtype(sig_type: &str) -> JsonValue {
-    let hash_pairs = JsonValue::Array(vec![obj(vec![
-        ("hashAlg", str_val("SHA2-256")),
-        ("saltLen", num(32)),
-    ])]);
+    let is_pss = sig_type == "pss";
+    let hash_pair = if is_pss {
+        obj(vec![("hashAlg", str_val("SHA2-256")), ("saltLen", num(32))])
+    } else {
+        obj(vec![("hashAlg", str_val("SHA2-256"))])
+    };
+    let hash_pairs = JsonValue::Array(vec![hash_pair]);
+    let property_for = |modulo_bits: i64| -> JsonValue {
+        let mut fields: Vec<(&str, JsonValue)> = vec![("modulo", num(modulo_bits))];
+        if is_pss {
+            fields.push(("maskFunction", str_array(&["mgf1"])));
+        }
+        fields.push(("hashPair", hash_pairs.clone()));
+        obj(fields)
+    };
     obj(vec![
         ("sigType", str_val(sig_type)),
         (
             "properties",
             JsonValue::Array(vec![
-                obj(vec![
-                    ("modulo", num(2048)),
-                    ("hashPair", hash_pairs.clone()),
-                ]),
-                obj(vec![
-                    ("modulo", num(3072)),
-                    ("hashPair", hash_pairs.clone()),
-                ]),
-                obj(vec![("modulo", num(4096)), ("hashPair", hash_pairs)]),
+                property_for(2048),
+                property_for(3072),
+                property_for(4096),
             ]),
         ),
     ])
 }
 
-/// Build an ACVP registration block for RSA / keyGen.
+/// Build an ACVP registration block for RSA / keyGen / FIPS186-5.
+///
+/// Shape per `draft-celi-acvp-rsa §7.5.1` Table 6 and the §7.5
+/// example registration (page 17):
+///
+/// - **`randPQ`** is a per-capability required field; oxicrypt-rsa
+///   generates **probable** primes via FIPS 186-5 §A.1.4 / §B.3.1
+///   (random candidate + 5-round Miller-Rabin per Table B.1) — see
+///   `crates/oxicrypt-rsa/src/keygen.rs` `gen_probable_prime_1024`
+///   plus the keypair driver. The other randPQ modes (provable,
+///   *WithProvableAux, *WithProbableAux) are not implemented; we
+///   advertise `"probable"` only per the
+///   `feedback_caps_match_handler_subset` rule.
+/// - **`primeTest`** valid values per Table 6 are
+///   `{"2pow100", "2powSecStr"}` (the FIPS186-4 legacy
+///   `"tblC2"`/`"tblC3"` naming is NOT valid for FIPS186-5 and the
+///   server rejects it). 5 Miller-Rabin rounds yields error ≤ 2^-112
+///   per FIPS186-5 Table B.1 — sufficient to claim `"2pow100"` at
+///   all advertised moduli; insufficient for `"2powSecStr"` at
+///   3072+ where securityStrength=128 would require more rounds.
+///   Advertise `"2pow100"` honestly.
+/// - **`capabilities`** array wraps each `(randPQ, properties)` group;
+///   the pre-fix shape inlined `properties` at the top level (no
+///   `capabilities` wrapper, no `randPQ`), so the server emitted no
+///   prompts and registration silently produced an empty vector set.
+/// - **`keyFormat = "crt"`** — handler returns `(n, d, p, q, dP, dQ, qInv)`
+///   per the §A.1.1 / §B.3.1 reference output (see
+///   `handlers::rsa_keygen::handle_keygen_group`); the non-CRT
+///   "standard" form is reachable via the same keypair but the
+///   handler ships the CRT tuple, so advertise CRT only.
 pub fn rsa_keygen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -739,27 +805,42 @@ pub fn rsa_keygen_capability() -> JsonValue {
         ("infoGeneratedByServer", JsonValue::Bool(false)),
         ("pubExpMode", str_val("fixed")),
         ("fixedPubExp", str_val("010001")),
+        ("keyFormat", str_val("crt")),
         (
-            "properties",
-            JsonValue::Array(vec![
-                obj(vec![
-                    ("modulo", num(2048)),
-                    ("primeTest", str_array(&["tblC2"])),
-                ]),
-                obj(vec![
-                    ("modulo", num(3072)),
-                    ("primeTest", str_array(&["tblC2"])),
-                ]),
-                obj(vec![
-                    ("modulo", num(4096)),
-                    ("primeTest", str_array(&["tblC2"])),
-                ]),
-            ]),
+            "capabilities",
+            JsonValue::Array(vec![obj(vec![
+                ("randPQ", str_val("probable")),
+                (
+                    "properties",
+                    JsonValue::Array(vec![
+                        obj(vec![
+                            ("modulo", num(2048)),
+                            ("primeTest", str_array(&["2pow100"])),
+                        ]),
+                        obj(vec![
+                            ("modulo", num(3072)),
+                            ("primeTest", str_array(&["2pow100"])),
+                        ]),
+                        obj(vec![
+                            ("modulo", num(4096)),
+                            ("primeTest", str_array(&["2pow100"])),
+                        ]),
+                    ]),
+                ),
+            ])]),
         ),
     ])
 }
 
-/// Build an ACVP registration block for RSA / OAEP.
+/// Build an ACVP registration block for RSA / OAEP / RFC8017.
+///
+/// **Not currently called by `RsaOaepHandler::acvp_capabilities`** —
+/// the catalog does not register `RSA / OAEP / RFC8017` as a
+/// standalone service; OAEP testing is filed under
+/// `KTS-IFC / — / Sp800-56Br2` (see `RsaOaepHandler`'s
+/// `acvp_capabilities` for the catalog citation). Preserved here as
+/// the RFC 8017 cap-shape reference for the future `KtsIfcHandler`
+/// migration arc that closes Section 12 RSA at 6/6.
 pub fn rsa_oaep_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -777,7 +858,17 @@ pub fn rsa_oaep_capability() -> JsonValue {
     ])
 }
 
-/// Build an ACVP registration block for RSA / decryptionPrimitive.
+/// Build an ACVP registration block for RSA / decryptionPrimitive / Sp800-56Br2.
+///
+/// Per `draft-celi-acvp-rsa §7.10` (page 38): `modulo` is a REQUIRED
+/// top-level array advertising supported moduli (subset of
+/// `{2048, 3072, 4096}`). The pre-fix cap omitted it and the server
+/// rejects registration with HTTP 400 `No modulo supplied` (same
+/// failure mode the `signaturePrimitive` 2.0 cap had).
+/// `oxicrypt-rsa` implements only the 2048-bit primitive
+/// (`rsa_decryption_primitive_2048_internal` + CRT variant), so we
+/// advertise `[2048]` alone per the `feedback_caps_match_handler_subset`
+/// rule.
 pub fn rsa_decprim_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -786,10 +877,19 @@ pub fn rsa_decprim_capability() -> JsonValue {
         ("pubExpMode", str_val("fixed")),
         ("fixedPubExp", str_val("010001")),
         ("keyFormat", str_array(&["standard", "crt"])),
+        ("modulo", num_array(&[2048])),
     ])
 }
 
-/// Build an ACVP registration block for RSA / signaturePrimitive.
+/// Build an ACVP registration block for RSA / signaturePrimitive / 2.0.
+///
+/// Per `draft-celi-acvp-rsa §7.8` Table 13 (page 36): `modulo` is a
+/// REQUIRED top-level array advertising supported moduli (subset of
+/// `{2048, 3072, 4096}`). The pre-fix cap omitted it and the server
+/// rejected registration with HTTP 400 `No modulo supplied`.
+/// `oxicrypt-rsa` implements only the 2048-bit primitive
+/// (`rsa_signature_primitive_2048_internal` + CRT), so we advertise
+/// `[2048]` alone per the `feedback_caps_match_handler_subset` rule.
 pub fn rsa_sigprim_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -798,6 +898,7 @@ pub fn rsa_sigprim_capability() -> JsonValue {
         ("pubExpMode", str_val("fixed")),
         ("fixedPubExp", str_val("010001")),
         ("keyFormat", str_array(&["standard", "crt"])),
+        ("modulo", num_array(&[2048])),
     ])
 }
 
