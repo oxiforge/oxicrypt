@@ -412,6 +412,7 @@ pub mod kbkdf;
 pub mod kda_hkdf;
 pub mod kdf_comp_tls;
 pub mod kmac;
+pub mod kts_ifc;
 pub mod lms;
 pub mod ml_dsa;
 pub mod ml_kem;

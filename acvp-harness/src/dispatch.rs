@@ -331,6 +331,9 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
     // KAS-FFC-SSC (R59: MODP-3072 shared secret computation, Sp800-56Ar3)
     r.register(Box::new(handlers::kas_ffc_ssc::KasFfcSscHandler));
+    // KTS-IFC (R66: RSAES-OAEP key transport KTS-OAEP-basic, Sp800-56Br2;
+    // full FIPS-approved modulus grid 2048/3072/4096; closes Section 12)
+    r.register(Box::new(handlers::kts_ifc::KtsIfcHandler));
     // RSA OAEP (R27: encrypt/decrypt, RFC8017, RSA-2048/SHA2-256)
     r.register(Box::new(handlers::rsa_oaep::RsaOaepHandler));
     // RSA KeyGen (R32: FIPS186-5, RSA-2048, e=65537, DRBG-seeded)
@@ -506,6 +509,9 @@ mod tests {
         assert!(r.find("KAS-ECC-SSC", None, "Sp800-56Ar3").is_some());
         // R59 KAS-FFC-SSC — registered with no mode (catalog row 158)
         assert!(r.find("KAS-FFC-SSC", None, "Sp800-56Ar3").is_some());
+        // R66 KTS-IFC — registered with no mode (catalog row 152) for
+        // RSAES-OAEP key transport under SP 800-56Br2 §7.2.2.2.
+        assert!(r.find("KTS-IFC", None, "Sp800-56Br2").is_some());
         // R27 RSA OAEP
         assert!(r.find("RSA", Some("OAEP"), "RFC8017").is_some());
         // R55 SP 800-185 derived functions + PBKDF2
@@ -550,7 +556,7 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 85);
+        assert_eq!(r.len(), 86);
         assert!(!r.is_empty());
     }
 

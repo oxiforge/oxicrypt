@@ -1121,6 +1121,84 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
     ])
 }
 
+// ── KTS-IFC ──────────────────────────────────────────────────────
+
+/// Build an ACVP registration block for KTS-IFC (RSAES-OAEP key
+/// transport under SP 800-56Br2 §7.2.2.2 / KTS-OAEP-basic scheme).
+///
+/// The ACVTS demo algorithm catalog (`acvts-demo/algorithms-catalog-
+/// 2026-04-25.json` row id 152) registers `KTS-IFC` with **no mode
+/// field** under revision `Sp800-56Br2`, paralleling the
+/// `KAS-{ECC,FFC}-SSC` entries. The server's lookup key is
+/// `KTS-IFC-Sp800-56Br2`; sending a mode segment would mis-key.
+/// This is the same catalog-mapping correction pattern resolved in
+/// PR #35 (KMACXOF unification) and PR #36 (KAS-ECC-SSC mode-drop).
+///
+/// Spec ground truth: `draft-hammett-acvp-kas-ifc` §7.3 Table 3
+/// (Capabilities JSON Values) — required values are `algorithm`,
+/// `revision`, `keyGenerationMethods`, `modulo`, `scheme`;
+/// `fixedPubExp` REQUIRED when any `rsakpg1-*` method is advertised.
+/// §7.7.1.2 ktsMethod properties (Table 19 at §9.1.2) — `hashAlgs`
+/// REQUIRED, `associatedDataPattern` and `encoding` optional;
+/// `supportsNullAssociatedData` signals empty-AD support. §7.9
+/// carries the canonical KTS-IFC registration example.
+///
+/// Scope locked to **`KTS-OAEP-basic` only** (the simpler form
+/// without Party_V-confirmation MAC) across the full FIPS-approved
+/// modulus grid 2048/3072/4096 with SHA-256 hash and empty
+/// associated data. `oxicrypt-rsa` exposes seed-deterministic OAEP
+/// at all three widths: bespoke
+/// `rsa_oaep_{encrypt,decrypt_{crt,nocrt}}_2048_sha256_internal`
+/// (lib.rs) and macro-generated
+/// `rsa{3072,4096}::oaep_{encrypt,decrypt_{nocrt,crt}}_internal`
+/// (`rsa_wide_impl.rs`). Empty label maps to
+/// `supportsNullAssociatedData: true` with empty
+/// `associatedDataPattern`.
+///
+/// `l = 256` bits = 32 bytes — comfortably within OAEP-SHA256
+/// capacity (k - 2*hLen - 2 = 190 bytes at 2048-bit RSA) and
+/// satisfies the §7.7.1 Table 4 minimum of 128 bits without key
+/// confirmation. The MAC-confirmation variant
+/// (`KTS-OAEP-Party_V-confirmation`) and additional `l` widths /
+/// hash algorithms are deferred to follow-up arcs per the
+/// scoping in [`prd_rsa_oaep_kts_ifc.md`] §8 non-goals.
+///
+/// `prereqVals` is omitted to match the surrounding handler
+/// convention (KAS-ECC-SSC, KAS-FFC-SSC, every other cap in this
+/// module). The ACVTS demo server has tolerated prereqVals
+/// omission across all live-graded sessions to date; if a future
+/// 400-at-registration surfaces a prereqVals requirement, it is a
+/// scoped follow-up that applies uniformly across the cap module.
+pub fn kts_ifc_capability() -> JsonValue {
+    obj(vec![
+        ("algorithm", str_val("KTS-IFC")),
+        ("revision", str_val("Sp800-56Br2")),
+        ("iutId", str_val("CAFECAFE")),
+        ("keyGenerationMethods", str_array(&["rsakpg1-basic"])),
+        ("modulo", num_array(&[2048, 3072, 4096])),
+        ("fixedPubExp", str_val("010001")),
+        (
+            "scheme",
+            obj(vec![(
+                "KTS-OAEP-basic",
+                obj(vec![
+                    ("kasRole", str_array(&["initiator", "responder"])),
+                    (
+                        "ktsMethod",
+                        obj(vec![
+                            ("hashAlgs", str_array(&["SHA2-256"])),
+                            ("supportsNullAssociatedData", JsonValue::Bool(true)),
+                            ("associatedDataPattern", str_val("")),
+                            ("encoding", str_array(&["concatenation"])),
+                        ]),
+                    ),
+                    ("l", num(256)),
+                ]),
+            )]),
+        ),
+    ])
+}
+
 // ── Post-quantum: ML-KEM ─────────────────────────────────────────
 
 /// Build an ACVP registration block for ML-KEM / keyGen / FIPS203.
