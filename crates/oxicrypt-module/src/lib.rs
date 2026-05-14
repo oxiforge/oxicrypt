@@ -674,10 +674,16 @@ pub enum Service {
     Tls12Kdf = 240,
     Tls13Kdf = 241,
 
-    // ----- oxicrypt-ml-kem: FIPS 203 (stub) -----
+    // ----- oxicrypt-ml-kem: FIPS 203 -----
     MlKem1024Encaps = 300,
     MlKem1024Decaps = 301,
     MlKem1024Keygen = 302,
+    MlKem512Encaps = 303,
+    MlKem512Decaps = 304,
+    MlKem512Keygen = 305,
+    MlKem768Encaps = 306,
+    MlKem768Decaps = 307,
+    MlKem768Keygen = 308,
 
     // ----- oxicrypt-ml-dsa: FIPS 204 (stub) -----
     MlDsa87Sign = 310,
@@ -831,6 +837,12 @@ impl fmt::Display for Service {
             Self::MlKem1024Encaps => "ML-KEM-1024 encaps",
             Self::MlKem1024Decaps => "ML-KEM-1024 decaps",
             Self::MlKem1024Keygen => "ML-KEM-1024 keygen",
+            Self::MlKem512Encaps => "ML-KEM-512 encaps",
+            Self::MlKem512Decaps => "ML-KEM-512 decaps",
+            Self::MlKem512Keygen => "ML-KEM-512 keygen",
+            Self::MlKem768Encaps => "ML-KEM-768 encaps",
+            Self::MlKem768Decaps => "ML-KEM-768 decaps",
+            Self::MlKem768Keygen => "ML-KEM-768 keygen",
             Self::MlDsa87Sign => "ML-DSA-87 sign",
             Self::MlDsa87Verify => "ML-DSA-87 verify",
             Self::MlDsa87Keygen => "ML-DSA-87 keygen",

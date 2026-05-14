@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.7.0"
+  version: "0.8.0"
   description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
   repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
@@ -197,6 +197,8 @@ capabilities:
 
   - category: "Key encapsulation"
     algorithms:
+      - "ML-KEM-512 (FIPS 203)"
+      - "ML-KEM-768 (FIPS 203)"
       - "ML-KEM-1024 (FIPS 203)"
     operations:
       - "keygen"
@@ -442,6 +444,12 @@ capabilities:
       - "oxi_ml_kem_1024_keygen"
       - "oxi_ml_kem_1024_encapsulate"
       - "oxi_ml_kem_1024_decapsulate"
+      - "oxi_ml_kem_512_keygen"
+      - "oxi_ml_kem_512_encapsulate"
+      - "oxi_ml_kem_512_decapsulate"
+      - "oxi_ml_kem_768_keygen"
+      - "oxi_ml_kem_768_encapsulate"
+      - "oxi_ml_kem_768_decapsulate"
       - "oxi_slh_dsa_sha2_256s_keygen"
       - "oxi_slh_dsa_sha2_256s_sign"
       - "oxi_slh_dsa_sha2_256s_verify"

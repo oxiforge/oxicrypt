@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.7.0"
+  version: "0.8.0"
   description: >-
     Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
     NIST-approved classical algorithms with a formal module boundary,
@@ -3577,6 +3577,212 @@ functions:
       fips_gate: Operational
     profiles: [Unrestricted, Cnsa2]
 
+  # ── ML-KEM-512 (FIPS 203, k=2) ────────────────────────────────────
+
+  - name: "ml_kem_512::keygen"
+    module: oxicrypt-ml-kem
+    signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 800], [u8; 1632]), Error>"
+    description: >-
+      Generate an ML-KEM-512 key pair (FIPS 203 §6.1, k=2). Both d
+      and z are 32-byte caller-supplied randomness; d drives K-PKE
+      key generation, z is the implicit-rejection seed embedded in
+      dk. d and z are NOT interchangeable (see security policy
+      ML-KEM-keygen-two-seed gem). ML-KEM-512 is permitted only
+      under the Unrestricted profile.
+    parameters:
+      - name: d
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for K-PKE key generation."
+      - name: z
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for implicit-rejection seed."
+    returns:
+      type: "Result<([u8; 800], [u8; 1632]), Error>"
+      description: "(encapsulation_key, decapsulation_key)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-512 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+      - name: InvalidInput
+        condition: Invalid or insufficient randomness.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_512::encapsulate"
+    module: oxicrypt-ml-kem
+    signature: "pub fn encapsulate(ek: &[u8; 800], m: &[u8; 32]) -> Result<([u8; 32], [u8; 768]), Error>"
+    description: >-
+      Encapsulate a shared secret against an ML-KEM-512 encapsulation
+      key (FIPS 203 §6.2, k=2). m is 32-byte caller-supplied
+      randomness from an approved DRBG.
+    parameters:
+      - name: ek
+        type: "&[u8; 800]"
+        direction: in
+        description: "Encapsulation key (from ml_kem_512::keygen)."
+      - name: m
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for encapsulation."
+    returns:
+      type: "Result<([u8; 32], [u8; 768]), Error>"
+      description: "(shared_secret, ciphertext)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-512 blocked by active profile.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_512::decapsulate"
+    module: oxicrypt-ml-kem
+    signature: "pub fn decapsulate(dk: &[u8; 1632], ct: &[u8; 768]) -> Result<[u8; 32], Error>"
+    description: >-
+      Decapsulate a shared secret from an ML-KEM-512 ciphertext
+      (FIPS 203 §6.3, k=2). Uses implicit rejection — constant-time
+      pseudorandom output on malformed ciphertext (see security
+      policy ML-KEM-decaps-implicit-rejection gem).
+    parameters:
+      - name: dk
+        type: "&[u8; 1632]"
+        direction: in
+        description: "Decapsulation key (from ml_kem_512::keygen)."
+      - name: ct
+        type: "&[u8; 768]"
+        direction: in
+        description: "Ciphertext (from ml_kem_512::encapsulate)."
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: "32-byte shared secret (valid or pseudorandom by design)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-512 blocked by active profile.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  # ── ML-KEM-768 (FIPS 203, k=3) ────────────────────────────────────
+
+  - name: "ml_kem_768::keygen"
+    module: oxicrypt-ml-kem
+    signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1184], [u8; 2400]), Error>"
+    description: >-
+      Generate an ML-KEM-768 key pair (FIPS 203 §6.1, k=3). Both d
+      and z are 32-byte caller-supplied randomness; d drives K-PKE
+      key generation, z is the implicit-rejection seed embedded in
+      dk. d and z are NOT interchangeable. ML-KEM-768 is permitted
+      only under the Unrestricted profile.
+    parameters:
+      - name: d
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for K-PKE key generation."
+      - name: z
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for implicit-rejection seed."
+    returns:
+      type: "Result<([u8; 1184], [u8; 2400]), Error>"
+      description: "(encapsulation_key, decapsulation_key)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-768 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+      - name: InvalidInput
+        condition: Invalid or insufficient randomness.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_768::encapsulate"
+    module: oxicrypt-ml-kem
+    signature: "pub fn encapsulate(ek: &[u8; 1184], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1088]), Error>"
+    description: >-
+      Encapsulate a shared secret against an ML-KEM-768 encapsulation
+      key (FIPS 203 §6.2, k=3). m is 32-byte caller-supplied
+      randomness from an approved DRBG.
+    parameters:
+      - name: ek
+        type: "&[u8; 1184]"
+        direction: in
+        description: "Encapsulation key (from ml_kem_768::keygen)."
+      - name: m
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte randomness for encapsulation."
+    returns:
+      type: "Result<([u8; 32], [u8; 1088]), Error>"
+      description: "(shared_secret, ciphertext)"
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-768 blocked by active profile.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
+  - name: "ml_kem_768::decapsulate"
+    module: oxicrypt-ml-kem
+    signature: "pub fn decapsulate(dk: &[u8; 2400], ct: &[u8; 1088]) -> Result<[u8; 32], Error>"
+    description: >-
+      Decapsulate a shared secret from an ML-KEM-768 ciphertext
+      (FIPS 203 §6.3, k=3). Uses implicit rejection — constant-time
+      pseudorandom output on malformed ciphertext.
+    parameters:
+      - name: dk
+        type: "&[u8; 2400]"
+        direction: in
+        description: "Decapsulation key (from ml_kem_768::keygen)."
+      - name: ct
+        type: "&[u8; 1088]"
+        direction: in
+        description: "Ciphertext (from ml_kem_768::encapsulate)."
+    returns:
+      type: "Result<[u8; 32], Error>"
+      description: "32-byte shared secret (valid or pseudorandom by design)."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: ML-KEM-768 blocked by active profile.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted]
+
   # ── ML-DSA-87 ──────────────────────────────────────────────────────
 
   - name: keygen
@@ -6360,6 +6566,174 @@ functions:
     parameters:
       - { name: dk_ptr, type: "const uint8_t *", direction: in, description: "3168-byte ML-KEM-1024 decapsulation key" }
       - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "1568-byte ML-KEM-1024 ciphertext" }
+      - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer). Tampered ct does NOT surface as TagMismatch — see implicit-rejection paragraph in security-policy §4.9."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_512_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an ML-KEM-512 key pair from two 32-byte caller-supplied
+      seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=2 parameter set). Reads
+      exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
+      exactly 32 bytes from `z_ptr` (implicit-rejection seed embedded
+      in dk). Writes the 800-byte encapsulation key into `ek_out`
+      and the 1632-byte decapsulation key into `dk_out`. Both seeds
+      caller-sourced from an SP 800-90A DRBG; `d` and `z` are NOT
+      interchangeable (same semantic distinction as ML-KEM-1024).
+      ML-KEM-512 is NOT in CNSA 1.0 or CNSA 2.0 allow-lists; gated
+      to `AlgorithmProfile::Unrestricted`. Forwards to
+      `oxicrypt_ml_kem::ml_kem_512::keygen`.
+    signature: >-
+      int oxi_ml_kem_512_keygen(const uint8_t *d_ptr,
+      const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "32-byte K-PKE keygen randomness" }
+      - { name: z_ptr, type: "const uint8_t *", direction: in, description: "32-byte implicit-rejection seed (embedded in dk)" }
+      - { name: ek_out, type: "uint8_t *", direction: out, description: "800-byte encapsulation key buffer" }
+      - { name: dk_out, type: "uint8_t *", direction: out, description: "1632-byte decapsulation key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on rare K-PKE NTT decode failure, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_512_encapsulate
+    module: oxicrypt-ffi
+    description: >-
+      Encapsulate a shared secret against an ML-KEM-512 encapsulation
+      key (FIPS 203 §6.2 ML-KEM.Encaps, k=2 parameter set). Reads
+      exactly 800 bytes from `ek_ptr` and exactly 32 bytes from
+      `m_ptr` (encapsulation randomness, caller-supplied from an
+      SP 800-90A DRBG). Writes the 32-byte shared secret into
+      `ss_out` and the 768-byte ciphertext into `ct_out`. Forwards
+      to `oxicrypt_ml_kem::ml_kem_512::encapsulate`.
+    signature: >-
+      int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
+      const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
+    parameters:
+      - { name: ek_ptr, type: "const uint8_t *", direction: in, description: "800-byte ML-KEM-512 encapsulation key" }
+      - { name: m_ptr, type: "const uint8_t *", direction: in, description: "32-byte encapsulation randomness" }
+      - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: "768-byte ciphertext buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_512_decapsulate
+    module: oxicrypt-ffi
+    description: >-
+      Decapsulate a shared secret from an ML-KEM-512 ciphertext
+      (FIPS 203 §6.3 ML-KEM.Decaps, k=2 parameter set). Reads
+      exactly 1632 bytes from `dk_ptr` and exactly 768 bytes from
+      `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
+      Fully deterministic; tampered ciphertext is absorbed by the
+      FO transform's implicit-rejection branch into a deterministic-
+      but-pseudorandom shared secret in constant time — there is NO
+      `TagMismatch = 22` mapping (deliberate FIPS 203 §6.3 design
+      property; identical to ML-KEM-1024). Forwards to
+      `oxicrypt_ml_kem::ml_kem_512::decapsulate`.
+    signature: >-
+      int oxi_ml_kem_512_decapsulate(const uint8_t *dk_ptr,
+      const uint8_t *ct_ptr, uint8_t *ss_out)
+    parameters:
+      - { name: dk_ptr, type: "const uint8_t *", direction: in, description: "1632-byte ML-KEM-512 decapsulation key" }
+      - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "768-byte ML-KEM-512 ciphertext" }
+      - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer). Tampered ct does NOT surface as TagMismatch — see implicit-rejection paragraph in security-policy §4.9."
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_768_keygen
+    module: oxicrypt-ffi
+    description: >-
+      Generate an ML-KEM-768 key pair from two 32-byte caller-supplied
+      seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=3 parameter set). Reads
+      exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
+      exactly 32 bytes from `z_ptr` (implicit-rejection seed embedded
+      in dk). Writes the 1184-byte encapsulation key into `ek_out`
+      and the 2400-byte decapsulation key into `dk_out`. Both seeds
+      caller-sourced from an SP 800-90A DRBG; `d` and `z` are NOT
+      interchangeable (same semantic distinction as ML-KEM-1024).
+      ML-KEM-768 is NOT in CNSA 1.0 or CNSA 2.0 allow-lists; gated
+      to `AlgorithmProfile::Unrestricted`. Forwards to
+      `oxicrypt_ml_kem::ml_kem_768::keygen`.
+    signature: >-
+      int oxi_ml_kem_768_keygen(const uint8_t *d_ptr,
+      const uint8_t *z_ptr, uint8_t *ek_out, uint8_t *dk_out)
+    parameters:
+      - { name: d_ptr, type: "const uint8_t *", direction: in, description: "32-byte K-PKE keygen randomness" }
+      - { name: z_ptr, type: "const uint8_t *", direction: in, description: "32-byte implicit-rejection seed (embedded in dk)" }
+      - { name: ek_out, type: "uint8_t *", direction: out, description: "1184-byte encapsulation key buffer" }
+      - { name: dk_out, type: "uint8_t *", direction: out, description: "2400-byte decapsulation key buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on rare K-PKE NTT decode failure, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_768_encapsulate
+    module: oxicrypt-ffi
+    description: >-
+      Encapsulate a shared secret against an ML-KEM-768 encapsulation
+      key (FIPS 203 §6.2 ML-KEM.Encaps, k=3 parameter set). Reads
+      exactly 1184 bytes from `ek_ptr` and exactly 32 bytes from
+      `m_ptr` (encapsulation randomness, caller-supplied from an
+      SP 800-90A DRBG). Writes the 32-byte shared secret into
+      `ss_out` and the 1088-byte ciphertext into `ct_out`. Forwards
+      to `oxicrypt_ml_kem::ml_kem_768::encapsulate`.
+    signature: >-
+      int oxi_ml_kem_768_encapsulate(const uint8_t *ek_ptr,
+      const uint8_t *m_ptr, uint8_t *ss_out, uint8_t *ct_out)
+    parameters:
+      - { name: ek_ptr, type: "const uint8_t *", direction: in, description: "1184-byte ML-KEM-768 encapsulation key" }
+      - { name: m_ptr, type: "const uint8_t *", direction: in, description: "32-byte encapsulation randomness" }
+      - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
+      - { name: ct_out, type: "uint8_t *", direction: out, description: "1088-byte ciphertext buffer" }
+    returns:
+      type: int
+      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
+
+  - name: oxi_ml_kem_768_decapsulate
+    module: oxicrypt-ffi
+    description: >-
+      Decapsulate a shared secret from an ML-KEM-768 ciphertext
+      (FIPS 203 §6.3 ML-KEM.Decaps, k=3 parameter set). Reads
+      exactly 2400 bytes from `dk_ptr` and exactly 1088 bytes from
+      `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
+      Fully deterministic; tampered ciphertext is absorbed by the
+      FO transform's implicit-rejection branch into a deterministic-
+      but-pseudorandom shared secret in constant time — there is NO
+      `TagMismatch = 22` mapping (deliberate FIPS 203 §6.3 design
+      property; identical to ML-KEM-1024). Forwards to
+      `oxicrypt_ml_kem::ml_kem_768::decapsulate`.
+    signature: >-
+      int oxi_ml_kem_768_decapsulate(const uint8_t *dk_ptr,
+      const uint8_t *ct_ptr, uint8_t *ss_out)
+    parameters:
+      - { name: dk_ptr, type: "const uint8_t *", direction: in, description: "2400-byte ML-KEM-768 decapsulation key" }
+      - { name: ct_ptr, type: "const uint8_t *", direction: in, description: "1088-byte ML-KEM-768 ciphertext" }
       - { name: ss_out, type: "uint8_t *", direction: out, description: "32-byte shared secret buffer" }
     returns:
       type: int

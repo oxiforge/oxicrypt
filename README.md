@@ -60,7 +60,7 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | ECDSA | P-256 and P-384 sign/verify/keygen with DRBG-backed rejection sampling | FIPS 186-5 |
 | ECDH | P-256 and P-384 CDH shared secret computation | SP 800-56Ar3 |
 | EdDSA | Ed25519 deterministic sign/verify/keygen | RFC 8032, FIPS 186-5 §7.8 |
-| ML-KEM | ML-KEM-1024 keygen/encaps/decaps | FIPS 203 |
+| ML-KEM | ML-KEM-512/-768/-1024 keygen/encaps/decaps | FIPS 203 |
 | ML-DSA | ML-DSA-87 sign/verify/keygen | FIPS 204 |
 | SLH-DSA | SLH-DSA-SHA2-256s sign/verify/keygen | FIPS 205 |
 | LMS | LMS sign/verify (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) | SP 800-208 (RFC 8554) |
@@ -94,7 +94,7 @@ crates/
   oxicrypt-ecdsa         ECDSA P-256 + P-384 (FIPS 186-5)
   oxicrypt-ecdh          ECDH P-256 + P-384 (SP 800-56Ar3)
   oxicrypt-eddsa         Ed25519 (RFC 8032)
-  oxicrypt-ml-kem        ML-KEM-1024 (FIPS 203)
+  oxicrypt-ml-kem        ML-KEM-512/-768/-1024 (FIPS 203)
   oxicrypt-ml-dsa        ML-DSA-87 (FIPS 204)
   oxicrypt-slh-dsa       SLH-DSA-SHA2-256s (FIPS 205)
   oxicrypt-lms           LMS hash-based signatures (SP 800-208)
@@ -255,7 +255,7 @@ integrity check, constant-time validation tooling.
 **Phase 2 (complete)** — Full algorithm coverage. All 18 algorithm crates
 are fully implemented: P-384 ECDSA/ECDH, RSA-3072/4096 (PKCS#1 v1.5,
 PSS, OAEP, keygen with CRT + Bellcore verify-after-sign per IG D.G),
-DH-3072 (RFC 3526 Group 15), ML-KEM-1024 (FIPS 203), ML-DSA-87
+DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203), ML-DSA-87
 (FIPS 204), SLH-DSA-SHA2-256s (FIPS 205), LMS (SP 800-208), and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
 across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
@@ -341,7 +341,7 @@ The `oxicrypt-ffi` crate currently exposes:
 | ECDH | P-256 / P-384 raw shared secret + DRBG-driven keygen | SP 800-56Ar3, FIPS 186-5 §A.2.2, IG 10.3.A |
 | DH | DH-3072 shared secret + DRBG-driven keygen | RFC 3526 Group 15, SP 800-56Ar3 |
 | RSA (opaque key handle) | 2048/3072/4096 verify (PKCS#1 v1.5, PSS) + DRBG-driven keygen + sign + OAEP encrypt/decrypt + `n`/`e` accessors | FIPS 186-5, RFC 8017, IG D.G |
-| ML-KEM | ML-KEM-1024 keygen / encaps / decaps | FIPS 203 |
+| ML-KEM | ML-KEM-512/-768/-1024 keygen / encaps / decaps | FIPS 203 |
 | ML-DSA | ML-DSA-87 keygen / sign / verify | FIPS 204 |
 | SLH-DSA | SLH-DSA-SHA2-256s keygen / sign / verify | FIPS 205 |
 | LMS / XMSS (stateful) | LMS_SHA256_M32_H10, XMSS-SHA2_10_256 — byte-buffer pass-through with explicit pre/post-state encoding | SP 800-208, RFC 8554, RFC 8391 |

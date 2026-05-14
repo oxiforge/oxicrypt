@@ -1,8 +1,13 @@
-//! Polynomial and polynomial-vector types for ML-KEM.
+//! Single-polynomial type for ML-KEM.
 //!
 //! A `Poly` is a degree-255 polynomial with i16 coefficients mod q.
-//! A `PolyVec` is a length-k vector of polynomials (k = 4 for
-//! ML-KEM-1024).
+//! This type is **K-independent**: it has no dependency on the
+//! module rank, so it is shared verbatim across ML-KEM-512,
+//! ML-KEM-768, and ML-KEM-1024.
+//!
+//! The K-dependent companion types `PolyVec` (`[Poly; K]`) and
+//! `PolyMatrix` (`[[Poly; K]; K]`) are emitted per-variant by
+//! [`crate::ml_kem_impl::ml_kem_impl!`].
 //!
 //! All indices are bounded by compile-time constants.
 #![allow(
@@ -13,7 +18,7 @@
 
 use crate::field::{barrett_reduce, reduce_full, to_mont};
 use crate::ntt::{self, ZETAS, basemul};
-use crate::params::{K, N};
+use crate::params::N;
 
 /// A polynomial with `N` = 256 coefficients in Z_q.
 #[derive(Clone)]
@@ -105,84 +110,5 @@ impl Poly {
             self.coeffs[4 * i + 2] += r0;
             self.coeffs[4 * i + 3] += r1;
         }
-    }
-}
-
-/// A vector of `K` polynomials.
-#[derive(Clone)]
-pub(crate) struct PolyVec {
-    /// The k polynomial components.
-    pub(crate) polys: [Poly; K],
-}
-
-impl PolyVec {
-    /// Zero vector.
-    pub(crate) fn zero() -> Self {
-        Self {
-            polys: [Poly::zero(), Poly::zero(), Poly::zero(), Poly::zero()],
-        }
-    }
-
-    /// Forward NTT on every component.
-    pub(crate) fn ntt(&mut self) {
-        for i in 0..K {
-            self.polys[i].ntt();
-        }
-    }
-
-    /// Inverse NTT on every component.
-    pub(crate) fn inv_ntt(&mut self) {
-        for i in 0..K {
-            self.polys[i].inv_ntt();
-        }
-    }
-
-    /// Add `other` to `self` component-wise.
-    pub(crate) fn add_assign(&mut self, other: &Self) {
-        for i in 0..K {
-            self.polys[i].add_assign(&other.polys[i]);
-        }
-    }
-
-    /// Inner product in NTT domain: ⟨a, b⟩ = Σᵢ aᵢ ◦ bᵢ.
-    pub(crate) fn inner_product_ntt(a: &Self, b: &Self) -> Poly {
-        let mut r = Poly::zero();
-        for i in 0..K {
-            r.pointwise_acc(&a.polys[i], &b.polys[i]);
-        }
-        r.reduce();
-        r
-    }
-}
-
-/// A k × k matrix of polynomials (in NTT domain).
-pub(crate) struct PolyMatrix {
-    /// Row-major: `rows[i][j]` is Â[i][j].
-    pub(crate) rows: [[Poly; K]; K],
-}
-
-impl PolyMatrix {
-    /// Multiply matrix by column vector: t̂ = Â · ŝ.
-    pub(crate) fn mul_vec(&self, s: &PolyVec) -> PolyVec {
-        let mut t = PolyVec::zero();
-        for i in 0..K {
-            for j in 0..K {
-                t.polys[i].pointwise_acc(&self.rows[i][j], &s.polys[j]);
-            }
-            t.polys[i].reduce();
-        }
-        t
-    }
-
-    /// Multiply transpose of matrix by column vector: û = Âᵀ · r̂.
-    pub(crate) fn transpose_mul_vec(&self, r: &PolyVec) -> PolyVec {
-        let mut u = PolyVec::zero();
-        for i in 0..K {
-            for j in 0..K {
-                u.polys[i].pointwise_acc(&self.rows[j][i], &r.polys[j]);
-            }
-            u.polys[i].reduce();
-        }
-        u
     }
 }

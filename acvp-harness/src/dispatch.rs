@@ -358,8 +358,8 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::pbkdf2::Pbkdf2Handler));
     // ML-KEM (R59: keyGen / encapDecap, FIPS 203, post-quantum;
     //         parameterSets advertise ML-KEM-1024 only)
-    r.register(Box::new(handlers::ml_kem::MlKem1024KeyGenHandler));
-    r.register(Box::new(handlers::ml_kem::MlKem1024EncapDecapHandler));
+    r.register(Box::new(handlers::ml_kem::MlKemKeyGenHandler));
+    r.register(Box::new(handlers::ml_kem::MlKemEncapDecapHandler));
     // ML-DSA-87 (R60: keyGen / sigGen / sigVer, FIPS 204, post-quantum)
     r.register(Box::new(handlers::ml_dsa::MlDsa87KeyGenHandler));
     r.register(Box::new(handlers::ml_dsa::MlDsa87SigGenHandler));

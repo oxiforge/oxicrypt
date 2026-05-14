@@ -2789,6 +2789,350 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_decapsulate(
     R::Ok as c_int
 }
 
+// ── ML-KEM-512 (FIPS 203) — stateless surface ────────────────────
+//
+// Per-variant additive expansion of the ML-KEM-1024 surface above.
+// Same three-entry-point shape (keygen, encapsulate, decapsulate),
+// same caller-seeded `(d, z)` + `m` randomness contracts, same
+// implicit-rejection semantics on decapsulate — only the byte
+// counts differ per FIPS 203 Table 2 (k=2 parameter set): ek = 800
+// bytes, dk = 1632 bytes, ct = 768 bytes. The 32-byte seeds and
+// the 32-byte shared secret are parameter-set-invariant per
+// FIPS 203 §6.1–§6.3.
+//
+// CNSA gating: ML-KEM-512 is **not** part of CNSA 2.0 (which
+// mandates ML-KEM-1024) and is **not** in the CNSA 1.0 transition
+// allow-list either. The underlying `Service::MlKem512Keygen /
+// Encaps / Decaps` variants are permitted only under
+// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
+// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// `require_allowed` gate in `oxicrypt_module`.
+
+/// Generate an ML-KEM-512 key pair from two 32-byte caller-supplied
+/// seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=2 parameter set).
+///
+/// Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
+/// exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
+/// the 800-byte encapsulation key into `ek_out` and the 1632-byte
+/// decapsulation key into `dk_out`. Both seeds are caller-supplied;
+/// the caller MUST source each independently from an approved DRBG
+/// (SP 800-90A). `d` and `z` are NOT interchangeable — see the
+/// ML-KEM-1024 section comment above for the semantic distinction
+/// (identical across all three parameter sets).
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
+/// rare K-PKE NTT decode failure occurs during keygen, or a module
+/// error variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `ek_out` and `dk_out`
+/// must each be non-NULL writable pointers to ≥800 and ≥1632 bytes
+/// respectively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_512_keygen(
+    d_ptr: *const u8,
+    z_ptr: *const u8,
+    ek_out: *mut u8,
+    dk_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let z = match unsafe { slice_from_raw(z_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if ek_out.is_null() || dk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
+        return R::Internal as c_int;
+    };
+    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_512::keygen(d_arr, z_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ek.as_ptr(), ek_out, 800) };
+    unsafe { core::ptr::copy_nonoverlapping(dk.as_ptr(), dk_out, 1632) };
+    R::Ok as c_int
+}
+
+/// Encapsulate a shared secret against an ML-KEM-512 encapsulation
+/// key (FIPS 203 §6.2 ML-KEM.Encaps, k=2 parameter set).
+///
+/// Reads exactly 800 bytes from `ek_ptr` and exactly 32 bytes from
+/// `m_ptr` (encapsulation randomness, caller-supplied from an
+/// SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
+/// and the 768-byte ciphertext into `ct_out`.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `ss_out` and `ct_out`
+/// must each be non-NULL writable pointers to ≥32 and ≥768 bytes
+/// respectively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
+    ek_ptr: *const u8,
+    m_ptr: *const u8,
+    ss_out: *mut u8,
+    ct_out: *mut u8,
+) -> c_int {
+    let ek = match unsafe { slice_from_raw(ek_ptr, 800) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let m = match unsafe { slice_from_raw(m_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if ss_out.is_null() || ct_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(ek_arr) = <&[u8; 800]>::try_from(ek) else {
+        return R::Internal as c_int;
+    };
+    let Ok(m_arr) = <&[u8; 32]>::try_from(m) else {
+        return R::Internal as c_int;
+    };
+    let (ss, ct) = match oxicrypt_ml_kem::ml_kem_512::encapsulate(ek_arr, m_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 768) };
+    R::Ok as c_int
+}
+
+/// Decapsulate a shared secret from an ML-KEM-512 ciphertext
+/// (FIPS 203 §6.3 ML-KEM.Decaps, k=2 parameter set).
+///
+/// Reads exactly 1632 bytes from `dk_ptr` and exactly 768 bytes
+/// from `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
+/// **Fully deterministic** — no caller randomness, no `Ok(false)`
+/// shape, no `TagMismatch = 22` mapping. The FO transform's
+/// implicit-rejection branch absorbs tampered ciphertext into a
+/// deterministic-but-pseudorandom shared secret in constant time;
+/// tamper does NOT surface as a discriminant. See the
+/// decapsulate-implicit-rejection paragraph in security-policy §4.9.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error
+/// variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `ss_out` must be a
+/// non-NULL writable pointer to ≥32 bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_512_decapsulate(
+    dk_ptr: *const u8,
+    ct_ptr: *const u8,
+    ss_out: *mut u8,
+) -> c_int {
+    let dk = match unsafe { slice_from_raw(dk_ptr, 1632) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ct = match unsafe { slice_from_raw(ct_ptr, 768) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if ss_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(dk_arr) = <&[u8; 1632]>::try_from(dk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(ct_arr) = <&[u8; 768]>::try_from(ct) else {
+        return R::Internal as c_int;
+    };
+    let ss = match oxicrypt_ml_kem::ml_kem_512::decapsulate(dk_arr, ct_arr) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    R::Ok as c_int
+}
+
+// ── ML-KEM-768 (FIPS 203) — stateless surface ────────────────────
+//
+// Per-variant additive expansion of the ML-KEM-1024 surface above.
+// Same three-entry-point shape (keygen, encapsulate, decapsulate),
+// same caller-seeded `(d, z)` + `m` randomness contracts, same
+// implicit-rejection semantics on decapsulate — only the byte
+// counts differ per FIPS 203 Table 2 (k=3 parameter set): ek = 1184
+// bytes, dk = 2400 bytes, ct = 1088 bytes. The 32-byte seeds and
+// the 32-byte shared secret are parameter-set-invariant per
+// FIPS 203 §6.1–§6.3.
+//
+// CNSA gating: ML-KEM-768 is **not** part of CNSA 2.0 (which
+// mandates ML-KEM-1024) and is **not** in the CNSA 1.0 transition
+// allow-list either. The underlying `Service::MlKem768Keygen /
+// Encaps / Decaps` variants are permitted only under
+// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
+// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// `require_allowed` gate in `oxicrypt_module`.
+
+/// Generate an ML-KEM-768 key pair from two 32-byte caller-supplied
+/// seeds (FIPS 203 §6.1 ML-KEM.KeyGen, k=3 parameter set).
+///
+/// Reads exactly 32 bytes from `d_ptr` (K-PKE keygen randomness) and
+/// exactly 32 bytes from `z_ptr` (implicit-rejection seed). Writes
+/// the 1184-byte encapsulation key into `ek_out` and the 2400-byte
+/// decapsulation key into `dk_out`. Both seeds are caller-supplied;
+/// the caller MUST source each independently from an approved DRBG
+/// (SP 800-90A). `d` and `z` are NOT interchangeable — see the
+/// ML-KEM-1024 section comment above for the semantic distinction
+/// (identical across all three parameter sets).
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if a
+/// rare K-PKE NTT decode failure occurs during keygen, or a module
+/// error variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `ek_out` and `dk_out`
+/// must each be non-NULL writable pointers to ≥1184 and ≥2400 bytes
+/// respectively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_768_keygen(
+    d_ptr: *const u8,
+    z_ptr: *const u8,
+    ek_out: *mut u8,
+    dk_out: *mut u8,
+) -> c_int {
+    let d = match unsafe { slice_from_raw(d_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let z = match unsafe { slice_from_raw(z_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if ek_out.is_null() || dk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(d_arr) = <&[u8; 32]>::try_from(d) else {
+        return R::Internal as c_int;
+    };
+    let Ok(z_arr) = <&[u8; 32]>::try_from(z) else {
+        return R::Internal as c_int;
+    };
+    let (ek, dk) = match oxicrypt_ml_kem::ml_kem_768::keygen(d_arr, z_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ek.as_ptr(), ek_out, 1184) };
+    unsafe { core::ptr::copy_nonoverlapping(dk.as_ptr(), dk_out, 2400) };
+    R::Ok as c_int
+}
+
+/// Encapsulate a shared secret against an ML-KEM-768 encapsulation
+/// key (FIPS 203 §6.2 ML-KEM.Encaps, k=3 parameter set).
+///
+/// Reads exactly 1184 bytes from `ek_ptr` and exactly 32 bytes from
+/// `m_ptr` (encapsulation randomness, caller-supplied from an
+/// SP 800-90A DRBG). Writes the 32-byte shared secret into `ss_out`
+/// and the 1088-byte ciphertext into `ct_out`.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `ss_out` and `ct_out`
+/// must each be non-NULL writable pointers to ≥32 and ≥1088 bytes
+/// respectively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
+    ek_ptr: *const u8,
+    m_ptr: *const u8,
+    ss_out: *mut u8,
+    ct_out: *mut u8,
+) -> c_int {
+    let ek = match unsafe { slice_from_raw(ek_ptr, 1184) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let m = match unsafe { slice_from_raw(m_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if ss_out.is_null() || ct_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(ek_arr) = <&[u8; 1184]>::try_from(ek) else {
+        return R::Internal as c_int;
+    };
+    let Ok(m_arr) = <&[u8; 32]>::try_from(m) else {
+        return R::Internal as c_int;
+    };
+    let (ss, ct) = match oxicrypt_ml_kem::ml_kem_768::encapsulate(ek_arr, m_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(ct.as_ptr(), ct_out, 1088) };
+    R::Ok as c_int
+}
+
+/// Decapsulate a shared secret from an ML-KEM-768 ciphertext
+/// (FIPS 203 §6.3 ML-KEM.Decaps, k=3 parameter set).
+///
+/// Reads exactly 2400 bytes from `dk_ptr` and exactly 1088 bytes
+/// from `ct_ptr`. Writes the 32-byte shared secret into `ss_out`.
+/// **Fully deterministic** — no caller randomness, no `Ok(false)`
+/// shape, no `TagMismatch = 22` mapping. The FO transform's
+/// implicit-rejection branch absorbs tampered ciphertext into a
+/// deterministic-but-pseudorandom shared secret in constant time;
+/// tamper does NOT surface as a discriminant. See the
+/// decapsulate-implicit-rejection paragraph in security-policy §4.9.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error
+/// variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `ss_out` must be a
+/// non-NULL writable pointer to ≥32 bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
+    dk_ptr: *const u8,
+    ct_ptr: *const u8,
+    ss_out: *mut u8,
+) -> c_int {
+    let dk = match unsafe { slice_from_raw(dk_ptr, 2400) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ct = match unsafe { slice_from_raw(ct_ptr, 1088) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if ss_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(dk_arr) = <&[u8; 2400]>::try_from(dk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(ct_arr) = <&[u8; 1088]>::try_from(ct) else {
+        return R::Internal as c_int;
+    };
+    let ss = match oxicrypt_ml_kem::ml_kem_768::decapsulate(dk_arr, ct_arr) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(ss.as_ptr(), ss_out, 32) };
+    R::Ok as c_int
+}
+
 // ── SLH-DSA-SHA2-256s (FIPS 205) — stateless surface ─────────────
 //
 // Three pure entry points: keygen, sign, verify. SLH-DSA is the

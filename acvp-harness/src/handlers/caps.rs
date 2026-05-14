@@ -1203,37 +1203,42 @@ pub fn kts_ifc_capability() -> JsonValue {
 
 /// Build an ACVP registration block for ML-KEM / keyGen / FIPS203.
 ///
-/// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.1`. Only
-/// `ML-KEM-1024` is currently advertised — the CNSA 2.0 baseline
-/// parameter set. ML-KEM-512 and ML-KEM-768 are tracked under the
-/// PQ-expansion mandate (see `algo-capability-matrix.md` rows 223-225)
-/// and will be added to `parameterSets` when their `*_internal` +
-/// public-API surfaces ship.
+/// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.1`. Advertises all
+/// three FIPS 203 parameter sets — ML-KEM-512 (k=2), ML-KEM-768 (k=3),
+/// and ML-KEM-1024 (k=4). Server tests all advertised parameter sets
+/// in a single session; per-group `parameterSet` field selects which
+/// variant a test group exercises (see handler dispatch).
 pub fn ml_kem_keygen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-KEM")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("FIPS203")),
-        ("parameterSets", str_array(&["ML-KEM-1024"])),
+        (
+            "parameterSets",
+            str_array(&["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"]),
+        ),
     ])
 }
 
 /// Build an ACVP registration block for ML-KEM / encapDecap / FIPS203.
 ///
-/// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.2`. The catalog
-/// uses a single `encapDecap` mode for both encapsulation and
-/// decapsulation; the `functions` array selects which the IUT
-/// supports. Key-check VAL functions
-/// (`encapsulationKeyCheck`/`decapsulationKeyCheck`) are not yet
-/// advertised — handler currently rejects non-AFT testTypes; the
-/// VAL surface is a forward-looking item gated on FIPS 203 §7.2/§7.3
-/// key-validation routines being exposed via the public API.
+/// Cap shape mirrors `draft-celi-acvp-ml-kem §7.3.2`. Advertises all
+/// three FIPS 203 parameter sets. The catalog uses a single
+/// `encapDecap` mode for both encapsulation and decapsulation; the
+/// `functions` array selects which the IUT supports. Key-check VAL
+/// functions (`encapsulationKeyCheck`/`decapsulationKeyCheck`) are
+/// not yet advertised — handler rejects non-AFT/VAL testTypes; the
+/// VAL key-check surface is a forward-looking item gated on FIPS 203
+/// §7.2/§7.3 key-validation routines being exposed via the public API.
 pub fn ml_kem_encapdecap_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-KEM")),
         ("mode", str_val("encapDecap")),
         ("revision", str_val("FIPS203")),
-        ("parameterSets", str_array(&["ML-KEM-1024"])),
+        (
+            "parameterSets",
+            str_array(&["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"]),
+        ),
         ("functions", str_array(&["encapsulation", "decapsulation"])),
     ])
 }
