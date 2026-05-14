@@ -412,9 +412,12 @@ pub fn hash_drbg_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![
-                hash_drbg_mode_entry("SHA2-256", 256, 128),
-                hash_drbg_mode_entry("SHA2-384", 256, 128),
-                hash_drbg_mode_entry("SHA2-512", 256, 128),
+                // Per-mode `returnedBitsLen` equals the hash outlen
+                // (= per-mode minimum) per draft-vassilev-acvp-drbg
+                // Table 4: SHA2-256 → 256, SHA2-384 → 384, SHA2-512 → 512.
+                hash_drbg_mode_entry("SHA2-256", 256, 128, 256),
+                hash_drbg_mode_entry("SHA2-384", 256, 128, 384),
+                hash_drbg_mode_entry("SHA2-512", 256, 128, 512),
             ]),
         ),
     ])
@@ -423,14 +426,19 @@ pub fn hash_drbg_capability() -> JsonValue {
 /// Build a single hashDRBG / hmacDRBG mode entry with per-mode domain
 /// fields. Hash/HMAC DRBGs do not have a derFunc concept — entropy
 /// compression is intrinsic to the algorithm.
-fn hash_drbg_mode_entry(mode: &str, entropy_len: i64, nonce_len: i64) -> JsonValue {
+fn hash_drbg_mode_entry(
+    mode: &str,
+    entropy_len: i64,
+    nonce_len: i64,
+    returned_bits_len: i64,
+) -> JsonValue {
     obj(vec![
         ("mode", str_val(mode)),
         ("entropyInputLen", num_array(&[entropy_len])),
         ("nonceLen", num_array(&[nonce_len])),
         ("persoStringLen", range_domain(0, 256, 8)),
         ("additionalInputLen", range_domain(0, 256, 8)),
-        ("returnedBitsLen", num(256)),
+        ("returnedBitsLen", num(returned_bits_len)),
     ])
 }
 
@@ -449,9 +457,12 @@ pub fn hmac_drbg_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![
-                hash_drbg_mode_entry("SHA2-256", 256, 128),
-                hash_drbg_mode_entry("SHA2-384", 256, 128),
-                hash_drbg_mode_entry("SHA2-512", 256, 128),
+                // Per-mode `returnedBitsLen` equals the hash outlen
+                // (= per-mode minimum) per draft-vassilev-acvp-drbg
+                // Table 4: SHA2-256 → 256, SHA2-384 → 384, SHA2-512 → 512.
+                hash_drbg_mode_entry("SHA2-256", 256, 128, 256),
+                hash_drbg_mode_entry("SHA2-384", 256, 128, 384),
+                hash_drbg_mode_entry("SHA2-512", 256, 128, 512),
             ]),
         ),
     ])

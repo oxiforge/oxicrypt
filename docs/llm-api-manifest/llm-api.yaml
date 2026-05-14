@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.5.0"
+  version: "0.6.0"
   description: >-
     Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
     NIST-approved classical algorithms with a formal module boundary,
