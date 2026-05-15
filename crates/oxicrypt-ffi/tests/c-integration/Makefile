@@ -25,7 +25,8 @@ CC := cc
 CFLAGS := -I$(INCLUDE_DIR) -Wall -Wextra -O2
 
 TESTS := test_init test_aes_gcm test_aes_modes test_handles \
-         test_ml_kem_512_smoke test_ml_kem_768_smoke test_ml_kem_1024_smoke
+         test_ml_kem_512_smoke test_ml_kem_768_smoke test_ml_kem_1024_smoke \
+         test_ml_dsa_44_smoke test_ml_dsa_65_smoke test_ml_dsa_87_smoke
 
 .PHONY: all test-cdylib test-staticlib clean help
 

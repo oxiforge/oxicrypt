@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.8.0"
+  version: "0.9.0"
   description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
   repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
@@ -161,6 +161,8 @@ capabilities:
       - "RSA-2048 PKCS#1 v1.5"
       - "RSA-2048 PSS"
       - "RSA-3072/4096 PKCS#1 v1.5 / PSS sign/verify, keygen with CRT + Bellcore"
+      - "ML-DSA-44 keygen/sign/verify (Unrestricted only)"
+      - "ML-DSA-65 keygen/sign/verify (Unrestricted only)"
       - "ML-DSA-87 keygen/sign/verify"
       - "SLH-DSA-SHA2-256s keygen/sign/verify (stateless, FIPS 205)"
       - "LMS LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 sign/verify/keygen (stateful)"

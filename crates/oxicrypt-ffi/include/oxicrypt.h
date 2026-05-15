@@ -1168,6 +1168,154 @@ int oxi_ml_dsa_87_verify(const uint8_t *pk_ptr,
                          const uint8_t *sig_ptr);
 
 /*
+ Generate an ML-DSA-44 key pair from a 32-byte seed (FIPS 204 §6.1).
+
+ Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
+ `xi`). Writes the 1312-byte public key into `pk_out` and the
+ 2560-byte secret key into `sk_out`. The caller is responsible for
+ sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
+ performs no entropy generation.
+
+ Returns `OxiResult::Ok = 0` on success, or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `pk_out` and `sk_out` must
+ each be non-NULL writable pointers to ≥1312 and ≥2560 bytes
+ respectively.
+ */
+int oxi_ml_dsa_44_keygen(const uint8_t *seed_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with ML-DSA-44 (FIPS 204 §5.2 Algorithm 2).
+
+ Reads exactly 2560 bytes from `sk_ptr`, `msg_len` bytes from
+ `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+ 2420-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
+ `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
+
+ Signing is deterministic: bit-identical signature across calls
+ for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
+ is exposed.
+
+ Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+ `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
+ after the upstream bound, or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must be a
+ non-NULL writable pointer to ≥2420 bytes.
+ */
+int oxi_ml_dsa_44_sign(const uint8_t *sk_ptr,
+                       const uint8_t *msg_ptr,
+                       uintptr_t msg_len,
+                       const uint8_t *ctx_ptr,
+                       uintptr_t ctx_len,
+                       uint8_t *sig_out);
+
+/*
+ Verify an ML-DSA-44 signature (FIPS 204 §5.2 Algorithm 3).
+
+ Reads exactly 1312 bytes from `pk_ptr`, `msg_len` bytes from
+ `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 2420 bytes from
+ `sig_ptr`. Pass `ctx_len = 0` for the empty context used by
+ X.509 / CMS / LAMPS.
+
+ Returns `OxiResult::Ok = 0` for a valid signature,
+ `OxiResult::TagMismatch = 22` for any verification failure
+ (decode-fail OR signature-invalid — upstream collapses these into
+ a single `Err(InvalidInput)`; same shape as RSA verify), or a
+ module error variant (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_ml_dsa_44_verify(const uint8_t *pk_ptr,
+                         const uint8_t *msg_ptr,
+                         uintptr_t msg_len,
+                         const uint8_t *ctx_ptr,
+                         uintptr_t ctx_len,
+                         const uint8_t *sig_ptr);
+
+/*
+ Generate an ML-DSA-65 key pair from a 32-byte seed (FIPS 204 §6.1).
+
+ Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
+ `xi`). Writes the 1952-byte public key into `pk_out` and the
+ 4032-byte secret key into `sk_out`. The caller is responsible for
+ sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
+ performs no entropy generation.
+
+ Returns `OxiResult::Ok = 0` on success, or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `pk_out` and `sk_out` must
+ each be non-NULL writable pointers to ≥1952 and ≥4032 bytes
+ respectively.
+ */
+int oxi_ml_dsa_65_keygen(const uint8_t *seed_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with ML-DSA-65 (FIPS 204 §5.2 Algorithm 2).
+
+ Reads exactly 4032 bytes from `sk_ptr`, `msg_len` bytes from
+ `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+ 3309-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
+ `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
+
+ Signing is deterministic: bit-identical signature across calls
+ for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
+ is exposed.
+
+ Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+ `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
+ after the upstream bound, or a module error variant
+ (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must be a
+ non-NULL writable pointer to ≥3309 bytes.
+ */
+int oxi_ml_dsa_65_sign(const uint8_t *sk_ptr,
+                       const uint8_t *msg_ptr,
+                       uintptr_t msg_len,
+                       const uint8_t *ctx_ptr,
+                       uintptr_t ctx_len,
+                       uint8_t *sig_out);
+
+/*
+ Verify an ML-DSA-65 signature (FIPS 204 §5.2 Algorithm 3).
+
+ Reads exactly 1952 bytes from `pk_ptr`, `msg_len` bytes from
+ `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 3309 bytes from
+ `sig_ptr`. Pass `ctx_len = 0` for the empty context used by
+ X.509 / CMS / LAMPS.
+
+ Returns `OxiResult::Ok = 0` for a valid signature,
+ `OxiResult::TagMismatch = 22` for any verification failure
+ (decode-fail OR signature-invalid — upstream collapses these into
+ a single `Err(InvalidInput)`; same shape as RSA verify), or a
+ module error variant (`NotOperational`, `AlgorithmRestricted`).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_ml_dsa_65_verify(const uint8_t *pk_ptr,
+                         const uint8_t *msg_ptr,
+                         uintptr_t msg_len,
+                         const uint8_t *ctx_ptr,
+                         uintptr_t ctx_len,
+                         const uint8_t *sig_ptr);
+
+/*
  Generate an ML-KEM-1024 key pair from two 32-byte caller-supplied
  seeds (FIPS 203 §6.1 ML-KEM.KeyGen).
 

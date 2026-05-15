@@ -1247,18 +1247,21 @@ pub fn ml_kem_encapdecap_capability() -> JsonValue {
 
 /// Build an ACVP registration block for ML-DSA / keyGen / FIPS204.
 ///
-/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.3.1`. Only
-/// `ML-DSA-87` (CNSA 2.0 baseline) is currently advertised; the
-/// other two FIPS 204 §4 Table 1 parameter sets are tracked under
-/// the PQ-expansion mandate (`algo-capability-matrix.md` rows
-/// 192–193) and will be added to `parameterSets` when their
-/// `*_internal` + public-API surfaces ship.
+/// Cap shape mirrors `draft-celi-acvp-ml-dsa §7.3.1`. All three
+/// FIPS 204 §4 Table 1 parameter sets (`ML-DSA-44`, `ML-DSA-65`,
+/// `ML-DSA-87`) are now advertised; `ML-DSA-87` is the CNSA 2.0
+/// digital-signature mandate, the other two ship under
+/// `AlgorithmProfile::Unrestricted` per the PQ-expansion mandate
+/// (`algo-capability-matrix.md` rows 192–194).
 pub fn ml_dsa_keygen_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("ML-DSA")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("FIPS204")),
-        ("parameterSets", str_array(&["ML-DSA-87"])),
+        (
+            "parameterSets",
+            str_array(&["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]),
+        ),
     ])
 }
 
@@ -1305,7 +1308,10 @@ pub fn ml_dsa_siggen_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                ("parameterSets", str_array(&["ML-DSA-87"])),
+                (
+                    "parameterSets",
+                    str_array(&["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]),
+                ),
                 ("messageLength", range_domain(8, 65536, 8)),
             ])]),
         ),
@@ -1331,7 +1337,10 @@ pub fn ml_dsa_sigver_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                ("parameterSets", str_array(&["ML-DSA-87"])),
+                (
+                    "parameterSets",
+                    str_array(&["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]),
+                ),
                 ("messageLength", range_domain(8, 65536, 8)),
             ])]),
         ),

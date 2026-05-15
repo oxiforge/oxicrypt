@@ -2593,6 +2593,344 @@ pub unsafe extern "C" fn oxi_ml_dsa_87_verify(
     }
 }
 
+// ── ML-DSA-44 (FIPS 204) — stateless surface ─────────────────────
+//
+// Per-variant additive expansion of the ML-DSA-87 surface above.
+// Same three-entry-point shape (keygen, sign, verify), same
+// deterministic-signing semantics, same `Err(InvalidInput)` →
+// `TagMismatch = 22` collapse on verify — only the byte counts
+// differ per FIPS 204 §4 Table 1 (k=4, ℓ=4 parameter set): pk = 1312
+// bytes, sk = 2560 bytes, sig = 2420 bytes. The 32-byte seed `xi`
+// and the 0..=255-byte ctx are parameter-set-invariant per
+// FIPS 204 §5.2 / §6.1.
+//
+// CNSA gating: ML-DSA-44 is **not** part of CNSA 2.0 (which
+// mandates ML-DSA-87) and is **not** in the CNSA 1.0 transition
+// allow-list either. The underlying `Service::MlDsa44Keygen /
+// Sign / Verify` variants are permitted only under
+// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
+// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// `require_allowed` gate in `oxicrypt_module`.
+
+/// Generate an ML-DSA-44 key pair from a 32-byte seed (FIPS 204 §6.1).
+///
+/// Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
+/// `xi`). Writes the 1312-byte public key into `pk_out` and the
+/// 2560-byte secret key into `sk_out`. The caller is responsible for
+/// sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
+/// performs no entropy generation.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
+/// each be non-NULL writable pointers to ≥1312 and ≥2560 bytes
+/// respectively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_44_keygen(
+    seed_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
+        return R::Internal as c_int;
+    };
+    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_44::keygen(seed_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 1312) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 2560) };
+    R::Ok as c_int
+}
+
+/// Sign a message with ML-DSA-44 (FIPS 204 §5.2 Algorithm 2).
+///
+/// Reads exactly 2560 bytes from `sk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+/// 2420-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
+/// `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
+///
+/// Signing is deterministic: bit-identical signature across calls
+/// for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
+/// is exposed.
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+/// `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
+/// after the upstream bound, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥2420 bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_44_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 2560) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(sk_arr) = <&[u8; 2560]>::try_from(sk) else {
+        return R::Internal as c_int;
+    };
+    let sig = match oxicrypt_ml_dsa::ml_dsa_44::sign(sk_arr, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 2420) };
+    R::Ok as c_int
+}
+
+/// Verify an ML-DSA-44 signature (FIPS 204 §5.2 Algorithm 3).
+///
+/// Reads exactly 1312 bytes from `pk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 2420 bytes from
+/// `sig_ptr`. Pass `ctx_len = 0` for the empty context used by
+/// X.509 / CMS / LAMPS.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (decode-fail OR signature-invalid — upstream collapses these into
+/// a single `Err(InvalidInput)`; same shape as RSA verify), or a
+/// module error variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_44_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 1312) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 2420) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(pk_arr) = <&[u8; 1312]>::try_from(pk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 2420]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_ml_dsa::ml_dsa_44::verify(pk_arr, msg, ctx, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── ML-DSA-65 (FIPS 204) — stateless surface ─────────────────────
+//
+// Per-variant additive expansion of the ML-DSA-87 surface above.
+// Same three-entry-point shape (keygen, sign, verify), same
+// deterministic-signing semantics, same `Err(InvalidInput)` →
+// `TagMismatch = 22` collapse on verify — only the byte counts
+// differ per FIPS 204 §4 Table 1 (k=6, ℓ=5 parameter set): pk = 1952
+// bytes, sk = 4032 bytes, sig = 3309 bytes. The 32-byte seed `xi`
+// and the 0..=255-byte ctx are parameter-set-invariant per
+// FIPS 204 §5.2 / §6.1.
+//
+// CNSA gating: ML-DSA-65 is **not** part of CNSA 2.0 (which
+// mandates ML-DSA-87) and is **not** in the CNSA 1.0 transition
+// allow-list either. The underlying `Service::MlDsa65Keygen /
+// Sign / Verify` variants are permitted only under
+// `AlgorithmProfile::Unrestricted`; calls under either CNSA profile
+// return `OxiResult::AlgorithmRestricted = 6` via the existing
+// `require_allowed` gate in `oxicrypt_module`.
+
+/// Generate an ML-DSA-65 key pair from a 32-byte seed (FIPS 204 §6.1).
+///
+/// Reads exactly 32 bytes from `seed_ptr` (the keygen randomness
+/// `xi`). Writes the 1952-byte public key into `pk_out` and the
+/// 4032-byte secret key into `sk_out`. The caller is responsible for
+/// sourcing `seed_ptr` from an approved DRBG (SP 800-90A); the FFI
+/// performs no entropy generation.
+///
+/// Returns `OxiResult::Ok = 0` on success, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `pk_out` and `sk_out` must
+/// each be non-NULL writable pointers to ≥1952 and ≥4032 bytes
+/// respectively.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_65_keygen(
+    seed_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let seed = match unsafe { slice_from_raw(seed_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(seed_arr) = <&[u8; 32]>::try_from(seed) else {
+        return R::Internal as c_int;
+    };
+    let (pk, sk) = match oxicrypt_ml_dsa::ml_dsa_65::keygen(seed_arr) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 1952) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 4032) };
+    R::Ok as c_int
+}
+
+/// Sign a message with ML-DSA-65 (FIPS 204 §5.2 Algorithm 2).
+///
+/// Reads exactly 4032 bytes from `sk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, and `ctx_len` bytes from `ctx_ptr`. Writes the
+/// 3309-byte signature into `sig_out`. Pass `ctx_len = 0` (with any
+/// `ctx_ptr`) for the empty context used by X.509 / CMS / LAMPS.
+///
+/// Signing is deterministic: bit-identical signature across calls
+/// for the same `(sk, msg, ctx)` triple. NO randomized-mode variant
+/// is exposed.
+///
+/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if
+/// `ctx_len > 255` (FIPS 204 §5.2 limit) or rejection sampling fails
+/// after the upstream bound, or a module error variant
+/// (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must be a
+/// non-NULL writable pointer to ≥3309 bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_65_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 4032) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Ok(sk_arr) = <&[u8; 4032]>::try_from(sk) else {
+        return R::Internal as c_int;
+    };
+    let sig = match oxicrypt_ml_dsa::ml_dsa_65::sign(sk_arr, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 3309) };
+    R::Ok as c_int
+}
+
+/// Verify an ML-DSA-65 signature (FIPS 204 §5.2 Algorithm 3).
+///
+/// Reads exactly 1952 bytes from `pk_ptr`, `msg_len` bytes from
+/// `msg_ptr`, `ctx_len` bytes from `ctx_ptr`, and 3309 bytes from
+/// `sig_ptr`. Pass `ctx_len = 0` for the empty context used by
+/// X.509 / CMS / LAMPS.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::TagMismatch = 22` for any verification failure
+/// (decode-fail OR signature-invalid — upstream collapses these into
+/// a single `Err(InvalidInput)`; same shape as RSA verify), or a
+/// module error variant (`NotOperational`, `AlgorithmRestricted`).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 1952) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 3309) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Ok(pk_arr) = <&[u8; 1952]>::try_from(pk) else {
+        return R::Internal as c_int;
+    };
+    let Ok(sig_arr) = <&[u8; 3309]>::try_from(sig) else {
+        return R::Internal as c_int;
+    };
+    match oxicrypt_ml_dsa::ml_dsa_65::verify(pk_arr, msg, ctx, sig_arr) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
 // ── ML-KEM-1024 (FIPS 203) — stateless surface ───────────────────
 //
 // Three pure entry points: keygen, encapsulate, decapsulate.

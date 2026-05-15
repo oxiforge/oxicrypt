@@ -360,10 +360,11 @@ pub fn with_default_handlers() -> Registry {
     //         parameterSets advertise ML-KEM-1024 only)
     r.register(Box::new(handlers::ml_kem::MlKemKeyGenHandler));
     r.register(Box::new(handlers::ml_kem::MlKemEncapDecapHandler));
-    // ML-DSA-87 (R60: keyGen / sigGen / sigVer, FIPS 204, post-quantum)
-    r.register(Box::new(handlers::ml_dsa::MlDsa87KeyGenHandler));
-    r.register(Box::new(handlers::ml_dsa::MlDsa87SigGenHandler));
-    r.register(Box::new(handlers::ml_dsa::MlDsa87SigVerHandler));
+    // ML-DSA (R60: keyGen / sigGen / sigVer, FIPS 204, post-quantum;
+    //         parameterSets advertise ML-DSA-44 / ML-DSA-65 / ML-DSA-87)
+    r.register(Box::new(handlers::ml_dsa::MlDsaKeyGenHandler));
+    r.register(Box::new(handlers::ml_dsa::MlDsaSigGenHandler));
+    r.register(Box::new(handlers::ml_dsa::MlDsaSigVerHandler));
     // SLH-DSA (R61: keyGen / sigGen / sigVer, FIPS 205, post-quantum;
     //          parameterSets advertise SLH-DSA-SHA2-256s only)
     r.register(Box::new(handlers::slh_dsa::SlhDsaKeyGenHandler));

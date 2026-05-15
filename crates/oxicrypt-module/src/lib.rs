@@ -685,10 +685,16 @@ pub enum Service {
     MlKem768Decaps = 307,
     MlKem768Keygen = 308,
 
-    // ----- oxicrypt-ml-dsa: FIPS 204 (stub) -----
+    // ----- oxicrypt-ml-dsa: FIPS 204 -----
     MlDsa87Sign = 310,
     MlDsa87Verify = 311,
     MlDsa87Keygen = 312,
+    MlDsa44Sign = 313,
+    MlDsa44Verify = 314,
+    MlDsa44Keygen = 315,
+    MlDsa65Sign = 316,
+    MlDsa65Verify = 317,
+    MlDsa65Keygen = 318,
 
     // ----- oxicrypt-slh-dsa: FIPS 205 (stub) -----
     SlhDsaSign = 320,
@@ -846,6 +852,12 @@ impl fmt::Display for Service {
             Self::MlDsa87Sign => "ML-DSA-87 sign",
             Self::MlDsa87Verify => "ML-DSA-87 verify",
             Self::MlDsa87Keygen => "ML-DSA-87 keygen",
+            Self::MlDsa44Sign => "ML-DSA-44 sign",
+            Self::MlDsa44Verify => "ML-DSA-44 verify",
+            Self::MlDsa44Keygen => "ML-DSA-44 keygen",
+            Self::MlDsa65Sign => "ML-DSA-65 sign",
+            Self::MlDsa65Verify => "ML-DSA-65 verify",
+            Self::MlDsa65Keygen => "ML-DSA-65 keygen",
             Self::SlhDsaSign => "SLH-DSA sign",
             Self::SlhDsaVerify => "SLH-DSA verify",
             Self::SlhDsaKeygen => "SLH-DSA keygen",
@@ -1354,6 +1366,12 @@ mod tests {
             Service::RsaOaep2048,
             Service::Tls12Kdf,
             Service::SlhDsaSign, // not in CNSA 2.0
+            Service::MlDsa44Sign,
+            Service::MlDsa44Verify,
+            Service::MlDsa44Keygen,
+            Service::MlDsa65Sign,
+            Service::MlDsa65Verify,
+            Service::MlDsa65Keygen,
         ];
         for svc in blocked {
             assert!(
