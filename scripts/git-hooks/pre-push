@@ -17,6 +17,14 @@
 # `--test-threads=1` is required because fips-module's unit tests
 # mutate a single global state. The same comment lives in ci.yml.
 #
+# Tag-only pushes skip the four gates:
+#   ci.yml triggers on `push: branches: [main]` and pull-request
+#   only — tag pushes never run cloud CI. This hook mirrors that:
+#   when every pushed ref is under refs/tags/, we exit clean
+#   without re-running the gate cycle (which has nothing to
+#   validate on a tag push — the underlying commits already
+#   passed when they landed on a branch).
+#
 # Bypass:
 #   git push --no-verify
 #   Use sparingly. Document the reason in the commit body or PR
@@ -31,6 +39,28 @@
 set -euo pipefail
 
 export RUSTFLAGS="-D warnings"
+
+# Tag-only push short-circuit. Git pipes one line per pushed ref to
+# the pre-push hook on stdin, formatted as:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# We exit clean if every pushed ref is under refs/tags/. Empty
+# stdin (no refs read) falls through to running the gates — the
+# safe default for any edge case where git invokes the hook with
+# nothing to enumerate.
+tag_only=true
+saw_ref=false
+while IFS=' ' read -r _local_ref _local_sha remote_ref _remote_sha; do
+    saw_ref=true
+    if [[ "$remote_ref" != refs/tags/* ]]; then
+        tag_only=false
+        break
+    fi
+done
+
+if [[ "$saw_ref" == "true" && "$tag_only" == "true" ]]; then
+    echo "pre-push: tag-only push detected — skipping four-gate cycle."
+    exit 0
+fi
 
 echo "pre-push [1/4]: cargo fmt --all -- --check"
 cargo fmt --all -- --check
