@@ -13,11 +13,12 @@
     clippy::cast_possible_wrap,
     clippy::similar_names,
     clippy::many_single_char_names,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::integer_division
 )]
 
 use crate::encode;
-use crate::params::{BETA, CTILDE_LEN, D, GAMMA1, GAMMA2, K, L, OMEGA, PK_LEN, SIG_LEN, SK_LEN};
+use crate::params::{BETA, CTILDE_LEN, D, GAMMA1, GAMMA2, K, L, OMEGA, PK_LEN, Q, SIG_LEN, SK_LEN};
 use crate::poly::{PolyVecK, PolyVecL, matrix_pointwise_mul, poly_pointwise};
 use crate::rounding;
 use crate::sample;
@@ -240,28 +241,31 @@ pub(crate) fn ml_dsa_sign(
             continue;
         }
 
-        // 4j. Compute hint h
-        // h = MakeHint(−ct₀, w − cs₂ + ct₀)
-        // Which simplifies to: MakeHint(ct₀, w₀ − cs₂ + ct₀)
-        // Actually per FIPS 204: h = MakeHint(−ct₀, w − c·s₂ + ct₀)
-        // w − c·s₂ + ct₀ = w₀ + w₁·2γ₂ − c·s₂ + ct₀ = ...
-        // Let's use the standard formulation:
-        // r = w₀ − c·s₂ + ct₀ (the "recovery" value)
-        // z_arg = −ct₀  (negated)
-        let mut hint_z = ct0.clone();
-        for p in &mut hint_z.polys {
+        // 4j. Compute hint h per FIPS 204 §6.2 Algorithm 7 step 32:
+        //   h = MakeHint(−c·t₀, w − c·s₂ + c·t₀)
+        //
+        // Use pq-crystals/dilithium's centered shortcut form so the
+        // `a0 == −γ₂ && w₁ ≠ 0` fence case is handled explicitly.
+        // The spec-form `HighBits(r) ≠ HighBits(r + z)` aliases this
+        // fence onto `r₁ = 0 = v₁` via the Decompose top-bin wrap
+        // (`r⁺ = q − γ₂ → r₁ = 0, r₀ = −γ₂`), silently flipping the
+        // hint at rare inputs.  See [[acvts_730469_tc8_siggen_…]].
+        //
+        // a0 = centered(LowBits(w) − c·s₂ + c·t₀)
+        let mut a0 = r0.clone();
+        a0.add_assign(&ct0);
+        rounding::reduce_polyveck(&mut a0);
+        for p in &mut a0.polys {
             for c_val in &mut p.coeffs {
-                *c_val = -*c_val;
+                if *c_val > (Q - 1) / 2 {
+                    *c_val -= Q;
+                }
             }
         }
 
-        // r = w₀ − cs₂ + ct₀ = r0 + ct₀
-        let mut hint_r = r0.clone();
-        hint_r.add_assign(&ct0);
-        rounding::reduce_polyveck(&mut hint_r);
-
+        // a1 = w₁ (high-bits of the original w, recorded above)
         let mut h = PolyVecK::zero();
-        let hint_count = rounding::polyveck_make_hint(&mut h, &hint_z, &hint_r);
+        let hint_count = rounding::polyveck_make_hint(&mut h, &a0, &w1);
 
         if hint_count > OMEGA {
             kappa += 1;

@@ -137,15 +137,28 @@ pub(crate) fn polyveck_decompose(w: &PolyVecK, w1: &mut PolyVecK, w0: &mut PolyV
 // MakeHint / UseHint — FIPS 204 Algorithms 27–28
 // ========================================================================
 
-/// `MakeHint(z, r)`: returns 1 if `HighBits(r) ≠ HighBits(r + z)`,
-/// 0 otherwise.
+/// `MakeHint` per FIPS 204 Algorithm 27, expressed in pq-crystals's
+/// shortcut form on centered low-bits `a0` and the corresponding
+/// high-bits `a1`.
 ///
-/// FIPS 204 Algorithm 27.
+/// `a0` is the centered representative of `LowBits(w) − c·s₂ + c·t₀`,
+/// bounded by `(−2γ₂, 2γ₂)` after the c·t₀ norm check.
+/// `a1` is `w₁ = HighBits(w)` at the same coefficient position.
+///
+/// Returns 1 iff applying the perturbation `c·t₀` would flip the
+/// high-bits bin — equivalent to `HighBits(r) ≠ HighBits(r + z)` in
+/// Algorithm 27, but with the `−γ₂` fence case made explicit so the
+/// `Decompose` top-bin wrap (where `r⁺ = q − γ₂` maps to `r₁ = 0,
+/// r₀ = −γ₂`) is still classified as a bin flip when `w₁ ≠ 0`.
+/// The spec-form `HighBits(r) ≠ HighBits(r + z)` aliases this fence
+/// onto `r₁ = 0`, hiding the flip.  Matches pq-crystals/dilithium's
+/// `make_hint` in `rounding.c` so ACVP-grading produces byte-identical
+/// signatures across the centered/unsigned representation boundary.
 #[inline]
-pub(crate) fn make_hint(z: i32, r: i32) -> i32 {
-    let r1 = high_bits(r);
-    let v1 = high_bits(crate::field::reduce32(r + z));
-    i32::from(r1 != v1)
+pub(crate) fn make_hint(a0: i32, a1: i32) -> i32 {
+    let outside = !(-GAMMA2..=GAMMA2).contains(&a0);
+    let fence = a0 == -GAMMA2 && a1 != 0;
+    i32::from(outside || fence)
 }
 
 /// `UseHint(h, r)`: if h = 0, return `HighBits(r)`. If h = 1,
@@ -173,16 +186,20 @@ pub(crate) fn use_hint(h: i32, r: i32) -> i32 {
     }
 }
 
-/// Compute the hint vector h from (w₀ − cs₂) and (ct₀), and count
-/// the number of nonzero entries.
+/// Compute the hint vector h coefficient-wise from `(a0, a1)` and
+/// count the number of set bits.
 ///
-/// Returns the count of 1-bits across all k polynomials. If the count
-/// exceeds ω, the caller should reject.
-pub(crate) fn polyveck_make_hint(h: &mut PolyVecK, z: &PolyVecK, r: &PolyVecK) -> usize {
+/// `a0` is the polynomial-vector of centered low-bits values
+/// `LowBits(w) − c·s₂ + c·t₀` (each coefficient bounded by `2γ₂`).
+/// `a1` is the polynomial-vector of high-bits values `w₁`.
+///
+/// Returns the count of 1-bits across all k polynomials.  If the
+/// count exceeds ω, the caller should reject.
+pub(crate) fn polyveck_make_hint(h: &mut PolyVecK, a0: &PolyVecK, a1: &PolyVecK) -> usize {
     let mut count = 0;
     for i in 0..K {
         for j in 0..N {
-            h.polys[i].coeffs[j] = make_hint(z.polys[i].coeffs[j], r.polys[i].coeffs[j]);
+            h.polys[i].coeffs[j] = make_hint(a0.polys[i].coeffs[j], a1.polys[i].coeffs[j]);
             count += h.polys[i].coeffs[j] as usize;
         }
     }
