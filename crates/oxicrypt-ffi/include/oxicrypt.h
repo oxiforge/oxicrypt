@@ -1617,6 +1617,467 @@ int oxi_slh_dsa_sha2_256s_verify(const uint8_t *pk_ptr,
                                  const uint8_t *sig_ptr);
 
 /*
+ Generate an SLH-DSA-SHA2-128s key pair from a 48-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=16; xi=48, pk=32, sk=64).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_128s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHA2-128s (FIPS 205 §9.2 Algorithm
+ 22). Deterministic. Reads 64-byte sk, writes 7 856-byte
+ signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_128s_sign(const uint8_t *sk_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *ctx_ptr,
+                               uintptr_t ctx_len,
+                               uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHA2-128s signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 32-byte pk + 7 856-byte sig. `Err(InvalidInput) →
+ TagMismatch = 22` collapse.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_128s_verify(const uint8_t *pk_ptr,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 const uint8_t *ctx_ptr,
+                                 uintptr_t ctx_len,
+                                 const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHA2-128f key pair from a 48-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=16, fast variant; xi=48, pk=32,
+ sk=64).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_128f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHA2-128f (FIPS 205 §9.2 Algorithm
+ 22). Deterministic. Reads 64-byte sk, writes 17 088-byte
+ signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_128f_sign(const uint8_t *sk_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *ctx_ptr,
+                               uintptr_t ctx_len,
+                               uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHA2-128f signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 32-byte pk + 17 088-byte sig. `Err(InvalidInput) →
+ TagMismatch = 22` collapse.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_128f_verify(const uint8_t *pk_ptr,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 const uint8_t *ctx_ptr,
+                                 uintptr_t ctx_len,
+                                 const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHA2-192s key pair from a 72-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=24).
+
+ Reads 72 bytes from `xi_ptr` (`SK.seed ‖ SK.prf ‖ PK.seed`,
+ 3 × 24 bytes). Writes the 48-byte pk into `pk_out` and the
+ 96-byte sk into `sk_out`.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_192s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHA2-192s (FIPS 205 §9.2 Algorithm
+ 22). Reads 96-byte sk, writes 16 224-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must point to
+ ≥16 224 writable bytes.
+ */
+int oxi_slh_dsa_sha2_192s_sign(const uint8_t *sk_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *ctx_ptr,
+                               uintptr_t ctx_len,
+                               uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHA2-192s signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 48-byte pk, 16 224-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_192s_verify(const uint8_t *pk_ptr,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 const uint8_t *ctx_ptr,
+                                 uintptr_t ctx_len,
+                                 const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHA2-192f key pair from a 72-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=24, fast variant).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_192f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHA2-192f (FIPS 205 §9.2 Algorithm
+ 22). Reads 96-byte sk, writes 35 664-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must point to
+ ≥35 664 writable bytes.
+ */
+int oxi_slh_dsa_sha2_192f_sign(const uint8_t *sk_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *ctx_ptr,
+                               uintptr_t ctx_len,
+                               uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHA2-192f signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 48-byte pk, 35 664-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_192f_verify(const uint8_t *pk_ptr,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 const uint8_t *ctx_ptr,
+                                 uintptr_t ctx_len,
+                                 const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHA2-256f key pair from a 96-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=32, fast variant).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_256f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHA2-256f (FIPS 205 §9.2 Algorithm
+ 22). Reads 128-byte sk, writes 49 856-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid. `sig_out` must point to
+ ≥49 856 writable bytes.
+ */
+int oxi_slh_dsa_sha2_256f_sign(const uint8_t *sk_ptr,
+                               const uint8_t *msg_ptr,
+                               uintptr_t msg_len,
+                               const uint8_t *ctx_ptr,
+                               uintptr_t ctx_len,
+                               uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHA2-256f signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 64-byte pk, 49 856-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_sha2_256f_verify(const uint8_t *pk_ptr,
+                                 const uint8_t *msg_ptr,
+                                 uintptr_t msg_len,
+                                 const uint8_t *ctx_ptr,
+                                 uintptr_t ctx_len,
+                                 const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHAKE-128s key pair from a 48-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=16).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_128s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHAKE-128s (FIPS 205 §9.2 Algorithm
+ 22). Reads 64-byte sk, writes 7 856-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_128s_sign(const uint8_t *sk_ptr,
+                                const uint8_t *msg_ptr,
+                                uintptr_t msg_len,
+                                const uint8_t *ctx_ptr,
+                                uintptr_t ctx_len,
+                                uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHAKE-128s signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 32-byte pk, 7 856-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_128s_verify(const uint8_t *pk_ptr,
+                                  const uint8_t *msg_ptr,
+                                  uintptr_t msg_len,
+                                  const uint8_t *ctx_ptr,
+                                  uintptr_t ctx_len,
+                                  const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHAKE-128f key pair from a 48-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=16, fast variant).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_128f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHAKE-128f (FIPS 205 §9.2 Algorithm
+ 22). Reads 64-byte sk, writes 17 088-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_128f_sign(const uint8_t *sk_ptr,
+                                const uint8_t *msg_ptr,
+                                uintptr_t msg_len,
+                                const uint8_t *ctx_ptr,
+                                uintptr_t ctx_len,
+                                uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHAKE-128f signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 32-byte pk, 17 088-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_128f_verify(const uint8_t *pk_ptr,
+                                  const uint8_t *msg_ptr,
+                                  uintptr_t msg_len,
+                                  const uint8_t *ctx_ptr,
+                                  uintptr_t ctx_len,
+                                  const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHAKE-192s key pair from a 72-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=24).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_192s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHAKE-192s (FIPS 205 §9.2 Algorithm
+ 22). Reads 96-byte sk, writes 16 224-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_192s_sign(const uint8_t *sk_ptr,
+                                const uint8_t *msg_ptr,
+                                uintptr_t msg_len,
+                                const uint8_t *ctx_ptr,
+                                uintptr_t ctx_len,
+                                uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHAKE-192s signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 48-byte pk, 16 224-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_192s_verify(const uint8_t *pk_ptr,
+                                  const uint8_t *msg_ptr,
+                                  uintptr_t msg_len,
+                                  const uint8_t *ctx_ptr,
+                                  uintptr_t ctx_len,
+                                  const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHAKE-192f key pair from a 72-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=24, fast variant).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_192f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHAKE-192f (FIPS 205 §9.2 Algorithm
+ 22). Reads 96-byte sk, writes 35 664-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_192f_sign(const uint8_t *sk_ptr,
+                                const uint8_t *msg_ptr,
+                                uintptr_t msg_len,
+                                const uint8_t *ctx_ptr,
+                                uintptr_t ctx_len,
+                                uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHAKE-192f signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 48-byte pk, 35 664-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_192f_verify(const uint8_t *pk_ptr,
+                                  const uint8_t *msg_ptr,
+                                  uintptr_t msg_len,
+                                  const uint8_t *ctx_ptr,
+                                  uintptr_t ctx_len,
+                                  const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHAKE-256s key pair from a 96-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=32).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_256s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHAKE-256s (FIPS 205 §9.2 Algorithm
+ 22). Reads 128-byte sk, writes 29 792-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_256s_sign(const uint8_t *sk_ptr,
+                                const uint8_t *msg_ptr,
+                                uintptr_t msg_len,
+                                const uint8_t *ctx_ptr,
+                                uintptr_t ctx_len,
+                                uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHAKE-256s signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 64-byte pk, 29 792-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_256s_verify(const uint8_t *pk_ptr,
+                                  const uint8_t *msg_ptr,
+                                  uintptr_t msg_len,
+                                  const uint8_t *ctx_ptr,
+                                  uintptr_t ctx_len,
+                                  const uint8_t *sig_ptr);
+
+/*
+ Generate an SLH-DSA-SHAKE-256f key pair from a 96-byte seed
+ (FIPS 205 §9.1 Algorithm 17; n=32, fast variant).
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_256f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out);
+
+/*
+ Sign a message with SLH-DSA-SHAKE-256f (FIPS 205 §9.2 Algorithm
+ 22). Reads 128-byte sk, writes 49 856-byte signature.
+ Deterministic.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_256f_sign(const uint8_t *sk_ptr,
+                                const uint8_t *msg_ptr,
+                                uintptr_t msg_len,
+                                const uint8_t *ctx_ptr,
+                                uintptr_t ctx_len,
+                                uint8_t *sig_out);
+
+/*
+ Verify an SLH-DSA-SHAKE-256f signature (FIPS 205 §9.3 Algorithm
+ 24). Reads 64-byte pk, 49 856-byte signature.
+
+ # Safety
+
+ All pointer/length pairs must be valid.
+ */
+int oxi_slh_dsa_shake_256f_verify(const uint8_t *pk_ptr,
+                                  const uint8_t *msg_ptr,
+                                  uintptr_t msg_len,
+                                  const uint8_t *ctx_ptr,
+                                  uintptr_t ctx_len,
+                                  const uint8_t *sig_ptr);
+
+/*
  Generate an LMS key pair from a 32-byte caller-supplied seed.
 
  Reads exactly 32 bytes from `xi_ptr`, deterministically derives

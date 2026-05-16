@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.9.0"
+  version: "0.10.0"
   description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
   repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
@@ -164,7 +164,7 @@ capabilities:
       - "ML-DSA-44 keygen/sign/verify (Unrestricted only)"
       - "ML-DSA-65 keygen/sign/verify (Unrestricted only)"
       - "ML-DSA-87 keygen/sign/verify"
-      - "SLH-DSA-SHA2-256s keygen/sign/verify (stateless, FIPS 205)"
+      - "SLH-DSA full family (SHA2-128s/f, SHA2-192s/f, SHA2-256s/f, SHAKE-128s/f, SHAKE-192s/f, SHAKE-256s/f) keygen/sign/verify (stateless, FIPS 205)"
       - "LMS LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 sign/verify/keygen (stateful)"
       - "XMSS XMSS-SHA2_10_256 sign/verify/keygen (stateful)"
     standards:
@@ -230,12 +230,31 @@ capabilities:
 
   - category: "Post-quantum signatures (hash-based)"
     algorithms:
+      - "SLH-DSA-SHA2-128s (FIPS 205)"
+      - "SLH-DSA-SHA2-128f (FIPS 205)"
+      - "SLH-DSA-SHA2-192s (FIPS 205)"
+      - "SLH-DSA-SHA2-192f (FIPS 205)"
       - "SLH-DSA-SHA2-256s (FIPS 205)"
+      - "SLH-DSA-SHA2-256f (FIPS 205)"
+      - "SLH-DSA-SHAKE-128s (FIPS 205)"
+      - "SLH-DSA-SHAKE-128f (FIPS 205)"
+      - "SLH-DSA-SHAKE-192s (FIPS 205)"
+      - "SLH-DSA-SHAKE-192f (FIPS 205)"
+      - "SLH-DSA-SHAKE-256s (FIPS 205)"
+      - "SLH-DSA-SHAKE-256f (FIPS 205)"
     operations:
       - "keygen"
       - "sign"
       - "verify"
     crate: "oxicrypt-slh-dsa"
+    note: >
+      Each variant lives in its own submodule
+      (`oxicrypt_slh_dsa::slh_dsa_<sha2|shake>_<level><s|f>`); the crate
+      root re-exports the SHA2-256s surface for backward compatibility.
+      All 12 FIPS 205 §11 parameter sets are emitted from a single
+      declarative macro (`slh_dsa_impl!`) with hash-family dispatch via
+      `__hash_family_setup!` and seven per-construct sub-macros — each
+      variant monomorphises to one path at macro-expansion time.
     standards:
       - "FIPS 205"
     quickstart:
@@ -253,6 +272,9 @@ capabilities:
         let ctx = b"";
         let sig = sign(&sk, msg, ctx).unwrap();
         verify(&pk, msg, ctx, &sig).unwrap();
+
+        // Other variants accessible directly:
+        // use oxicrypt_slh_dsa::slh_dsa_sha2_128s::{keygen, sign, verify};
 
   - category: "Post-quantum signatures (stateful hash-based)"
     note: >
@@ -452,9 +474,42 @@ capabilities:
       - "oxi_ml_kem_768_keygen"
       - "oxi_ml_kem_768_encapsulate"
       - "oxi_ml_kem_768_decapsulate"
+      - "oxi_slh_dsa_sha2_128s_keygen"
+      - "oxi_slh_dsa_sha2_128s_sign"
+      - "oxi_slh_dsa_sha2_128s_verify"
+      - "oxi_slh_dsa_sha2_128f_keygen"
+      - "oxi_slh_dsa_sha2_128f_sign"
+      - "oxi_slh_dsa_sha2_128f_verify"
+      - "oxi_slh_dsa_sha2_192s_keygen"
+      - "oxi_slh_dsa_sha2_192s_sign"
+      - "oxi_slh_dsa_sha2_192s_verify"
+      - "oxi_slh_dsa_sha2_192f_keygen"
+      - "oxi_slh_dsa_sha2_192f_sign"
+      - "oxi_slh_dsa_sha2_192f_verify"
       - "oxi_slh_dsa_sha2_256s_keygen"
       - "oxi_slh_dsa_sha2_256s_sign"
       - "oxi_slh_dsa_sha2_256s_verify"
+      - "oxi_slh_dsa_sha2_256f_keygen"
+      - "oxi_slh_dsa_sha2_256f_sign"
+      - "oxi_slh_dsa_sha2_256f_verify"
+      - "oxi_slh_dsa_shake_128s_keygen"
+      - "oxi_slh_dsa_shake_128s_sign"
+      - "oxi_slh_dsa_shake_128s_verify"
+      - "oxi_slh_dsa_shake_128f_keygen"
+      - "oxi_slh_dsa_shake_128f_sign"
+      - "oxi_slh_dsa_shake_128f_verify"
+      - "oxi_slh_dsa_shake_192s_keygen"
+      - "oxi_slh_dsa_shake_192s_sign"
+      - "oxi_slh_dsa_shake_192s_verify"
+      - "oxi_slh_dsa_shake_192f_keygen"
+      - "oxi_slh_dsa_shake_192f_sign"
+      - "oxi_slh_dsa_shake_192f_verify"
+      - "oxi_slh_dsa_shake_256s_keygen"
+      - "oxi_slh_dsa_shake_256s_sign"
+      - "oxi_slh_dsa_shake_256s_verify"
+      - "oxi_slh_dsa_shake_256f_keygen"
+      - "oxi_slh_dsa_shake_256f_sign"
+      - "oxi_slh_dsa_shake_256f_verify"
       - "oxi_lms_keygen"
       - "oxi_lms_sign"
       - "oxi_lms_verify"

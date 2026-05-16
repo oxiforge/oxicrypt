@@ -102,6 +102,16 @@ pub struct AcvpConfig {
     /// algorithm name has multiple mode-specific handlers and ACVTS
     /// demo etiquette requires one vector set per session.
     pub filter_mode: Option<String>,
+    /// Optional: when set, restrict an `acvp_capabilities_filtered`-
+    /// aware handler (currently only the SLH-DSA family) to a single
+    /// parameter set, producing one vector set per session per
+    /// `feedback_single_algo_per_acvts_session`. Other handlers
+    /// (whose default `acvp_capabilities_filtered` delegates to
+    /// `acvp_capabilities`) ignore the filter and advertise their
+    /// usual cap. The CLI parser validates this against the
+    /// `--algorithm` it accompanies so unknown paramSet names are
+    /// rejected before the session opens.
+    pub filter_paramset: Option<String>,
     /// Optional: instead of registering a new test session, just GET
     /// the supplied URL (relative or absolute) and print the response.
     /// Use to fetch verdict status of an existing session that was
@@ -740,15 +750,21 @@ fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
 // ── Capabilities builder ──────────────────────────────────────────
 
 /// Build the ACVP registration capabilities array from handler
-/// `acvp_capabilities()` methods. When `filter_mode` is supplied it
-/// is matched against `h.mode()` — handlers whose `mode()` does not
-/// equal `Some(filter_mode)` are skipped, narrowing the registration
-/// to a single (algorithm, mode) tuple as ACVTS demo etiquette
-/// requires (one vector set per session).
+/// `acvp_capabilities_filtered()` methods. When `filter_mode` is
+/// supplied it is matched against `h.mode()` — handlers whose
+/// `mode()` does not equal `Some(filter_mode)` are skipped, narrowing
+/// the registration to a single (algorithm, mode) tuple as ACVTS
+/// demo etiquette requires (one vector set per session).
+///
+/// `filter_paramset` is plumbed through to
+/// `acvp_capabilities_filtered`; the default trait impl ignores the
+/// filter, so non-SLH-DSA handlers behave identically whether or not
+/// `--paramset` was supplied.
 fn build_capabilities(
     registry: &Registry,
     filter_alg: Option<&str>,
     filter_mode: Option<&str>,
+    filter_paramset: Option<&str>,
 ) -> Vec<JsonValue> {
     let mut caps = Vec::new();
     registry.for_each_handler(|h: &dyn AlgorithmHandler| {
@@ -762,7 +778,7 @@ fn build_capabilities(
         {
             return;
         }
-        if let Some(cap) = h.acvp_capabilities() {
+        if let Some(cap) = h.acvp_capabilities_filtered(filter_paramset) {
             caps.push(cap);
         }
     });
@@ -851,6 +867,7 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
             &registry,
             config.filter_algorithm.as_deref(),
             config.filter_mode.as_deref(),
+            config.filter_paramset.as_deref(),
         );
         if caps.is_empty() {
             return Err("no handlers returned ACVP capabilities".to_string());

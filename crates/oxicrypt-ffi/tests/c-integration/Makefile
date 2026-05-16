@@ -26,7 +26,8 @@ CFLAGS := -I$(INCLUDE_DIR) -Wall -Wextra -O2
 
 TESTS := test_init test_aes_gcm test_aes_modes test_handles \
          test_ml_kem_512_smoke test_ml_kem_768_smoke test_ml_kem_1024_smoke \
-         test_ml_dsa_44_smoke test_ml_dsa_65_smoke test_ml_dsa_87_smoke
+         test_ml_dsa_44_smoke test_ml_dsa_65_smoke test_ml_dsa_87_smoke \
+         test_slh_dsa_sha2_256s_smoke test_slh_dsa_shake_128f_smoke
 
 .PHONY: all test-cdylib test-staticlib clean help
 
@@ -35,7 +36,7 @@ help:
 	@echo ""
 	@echo "  make test-cdylib    — link tests against liboxicrypt_ffi.so + run"
 	@echo "  make test-staticlib — link tests against liboxicrypt_ffi.a + run"
-	@echo "  make all            — both target sets (8 test runs)"
+	@echo "  make all            — both target sets (12 test runs × 2 link modes)"
 	@echo "  make clean          — remove built test binaries"
 	@echo ""
 	@echo "  CARGO_TARGET_DIR ?= $(CARGO_TARGET_DIR)"

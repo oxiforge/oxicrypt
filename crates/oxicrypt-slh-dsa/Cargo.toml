@@ -14,3 +14,4 @@ workspace = true
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-xof = { path = "../oxicrypt-xof" }

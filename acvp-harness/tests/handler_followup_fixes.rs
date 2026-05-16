@@ -959,6 +959,7 @@ fn slh_dsa_keygen_3field_prompt(
             "testGroups": [{{
                 "tgId": 1,
                 "testType": "AFT",
+                "parameterSet": "SLH-DSA-SHA2-256s",
                 "tests": [
                     {{
                         "tcId":   1,

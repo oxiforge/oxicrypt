@@ -696,21 +696,59 @@ pub enum Service {
     MlDsa65Verify = 317,
     MlDsa65Keygen = 318,
 
-    // ----- oxicrypt-slh-dsa: FIPS 205 (stub) -----
-    SlhDsaSign = 320,
-    SlhDsaVerify = 321,
-    SlhDsaKeygen = 322,
+    // ----- oxicrypt-slh-dsa: FIPS 205 (12 parameter sets × 3 ops = 36 variants) -----
+    // CNSA 2.0 baseline first: SHA-2 256s (CNSSP-15 mandate) claims 320-322,
+    // then the rest of the SHA-2 family (128s/f, 192s/f, 256f), then SHAKE family.
+    SlhDsaSha2256sKeygen = 320,
+    SlhDsaSha2256sSign = 321,
+    SlhDsaSha2256sVerify = 322,
+    SlhDsaSha2128sKeygen = 323,
+    SlhDsaSha2128sSign = 324,
+    SlhDsaSha2128sVerify = 325,
+    SlhDsaSha2128fKeygen = 326,
+    SlhDsaSha2128fSign = 327,
+    SlhDsaSha2128fVerify = 328,
+    SlhDsaSha2192sKeygen = 329,
+    SlhDsaSha2192sSign = 330,
+    SlhDsaSha2192sVerify = 331,
+    SlhDsaSha2192fKeygen = 332,
+    SlhDsaSha2192fSign = 333,
+    SlhDsaSha2192fVerify = 334,
+    SlhDsaSha2256fKeygen = 335,
+    SlhDsaSha2256fSign = 336,
+    SlhDsaSha2256fVerify = 337,
+    SlhDsaShake128sKeygen = 338,
+    SlhDsaShake128sSign = 339,
+    SlhDsaShake128sVerify = 340,
+    SlhDsaShake128fKeygen = 341,
+    SlhDsaShake128fSign = 342,
+    SlhDsaShake128fVerify = 343,
+    SlhDsaShake192sKeygen = 344,
+    SlhDsaShake192sSign = 345,
+    SlhDsaShake192sVerify = 346,
+    SlhDsaShake192fKeygen = 347,
+    SlhDsaShake192fSign = 348,
+    SlhDsaShake192fVerify = 349,
+    SlhDsaShake256sKeygen = 350,
+    SlhDsaShake256sSign = 351,
+    SlhDsaShake256sVerify = 352,
+    SlhDsaShake256fKeygen = 353,
+    SlhDsaShake256fSign = 354,
+    SlhDsaShake256fVerify = 355,
 
     // ----- oxicrypt-lms: SP 800-208 (stub) -----
-    LmsSign = 330,
-    LmsVerify = 331,
+    // Renumbered 330/331 → 360/361 in Batch 4 to make room for the SLH-DSA block.
+    LmsSign = 360,
+    LmsVerify = 361,
 
     // ----- oxicrypt-xmss: SP 800-208 (stub) -----
-    XmssSign = 340,
-    XmssVerify = 341,
+    // Renumbered 340/341 → 370/371 in Batch 4 to make room for the SLH-DSA block.
+    XmssSign = 370,
+    XmssVerify = 371,
 
     // ----- oxicrypt-dh: RFC 3526 (stub) -----
-    Dh3072 = 350,
+    // Renumbered 350 → 380 in Batch 4 to make room for the SLH-DSA block.
+    Dh3072 = 380,
 }
 
 impl fmt::Display for Service {
@@ -858,9 +896,42 @@ impl fmt::Display for Service {
             Self::MlDsa65Sign => "ML-DSA-65 sign",
             Self::MlDsa65Verify => "ML-DSA-65 verify",
             Self::MlDsa65Keygen => "ML-DSA-65 keygen",
-            Self::SlhDsaSign => "SLH-DSA sign",
-            Self::SlhDsaVerify => "SLH-DSA verify",
-            Self::SlhDsaKeygen => "SLH-DSA keygen",
+            Self::SlhDsaSha2256sKeygen => "SLH-DSA-SHA2-256s keygen",
+            Self::SlhDsaSha2256sSign => "SLH-DSA-SHA2-256s sign",
+            Self::SlhDsaSha2256sVerify => "SLH-DSA-SHA2-256s verify",
+            Self::SlhDsaSha2128sKeygen => "SLH-DSA-SHA2-128s keygen",
+            Self::SlhDsaSha2128sSign => "SLH-DSA-SHA2-128s sign",
+            Self::SlhDsaSha2128sVerify => "SLH-DSA-SHA2-128s verify",
+            Self::SlhDsaSha2128fKeygen => "SLH-DSA-SHA2-128f keygen",
+            Self::SlhDsaSha2128fSign => "SLH-DSA-SHA2-128f sign",
+            Self::SlhDsaSha2128fVerify => "SLH-DSA-SHA2-128f verify",
+            Self::SlhDsaSha2192sKeygen => "SLH-DSA-SHA2-192s keygen",
+            Self::SlhDsaSha2192sSign => "SLH-DSA-SHA2-192s sign",
+            Self::SlhDsaSha2192sVerify => "SLH-DSA-SHA2-192s verify",
+            Self::SlhDsaSha2192fKeygen => "SLH-DSA-SHA2-192f keygen",
+            Self::SlhDsaSha2192fSign => "SLH-DSA-SHA2-192f sign",
+            Self::SlhDsaSha2192fVerify => "SLH-DSA-SHA2-192f verify",
+            Self::SlhDsaSha2256fKeygen => "SLH-DSA-SHA2-256f keygen",
+            Self::SlhDsaSha2256fSign => "SLH-DSA-SHA2-256f sign",
+            Self::SlhDsaSha2256fVerify => "SLH-DSA-SHA2-256f verify",
+            Self::SlhDsaShake128sKeygen => "SLH-DSA-SHAKE-128s keygen",
+            Self::SlhDsaShake128sSign => "SLH-DSA-SHAKE-128s sign",
+            Self::SlhDsaShake128sVerify => "SLH-DSA-SHAKE-128s verify",
+            Self::SlhDsaShake128fKeygen => "SLH-DSA-SHAKE-128f keygen",
+            Self::SlhDsaShake128fSign => "SLH-DSA-SHAKE-128f sign",
+            Self::SlhDsaShake128fVerify => "SLH-DSA-SHAKE-128f verify",
+            Self::SlhDsaShake192sKeygen => "SLH-DSA-SHAKE-192s keygen",
+            Self::SlhDsaShake192sSign => "SLH-DSA-SHAKE-192s sign",
+            Self::SlhDsaShake192sVerify => "SLH-DSA-SHAKE-192s verify",
+            Self::SlhDsaShake192fKeygen => "SLH-DSA-SHAKE-192f keygen",
+            Self::SlhDsaShake192fSign => "SLH-DSA-SHAKE-192f sign",
+            Self::SlhDsaShake192fVerify => "SLH-DSA-SHAKE-192f verify",
+            Self::SlhDsaShake256sKeygen => "SLH-DSA-SHAKE-256s keygen",
+            Self::SlhDsaShake256sSign => "SLH-DSA-SHAKE-256s sign",
+            Self::SlhDsaShake256sVerify => "SLH-DSA-SHAKE-256s verify",
+            Self::SlhDsaShake256fKeygen => "SLH-DSA-SHAKE-256f keygen",
+            Self::SlhDsaShake256fSign => "SLH-DSA-SHAKE-256f sign",
+            Self::SlhDsaShake256fVerify => "SLH-DSA-SHAKE-256f verify",
             Self::LmsSign => "LMS sign",
             Self::LmsVerify => "LMS verify",
             Self::XmssSign => "XMSS sign",
@@ -965,6 +1036,13 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::MlDsa87Sign
             | Service::MlDsa87Verify
             | Service::MlDsa87Keygen
+            // SLH-DSA-SHA2-256s — CNSSP-15 CNSA 2.0 mandate (only SLH-DSA
+            // parameter set permitted under CNSA 2.0; the other 11 parameter
+            // sets are intentionally excluded and fall through to the
+            // fail-safe default-block).
+            | Service::SlhDsaSha2256sKeygen
+            | Service::SlhDsaSha2256sSign
+            | Service::SlhDsaSha2256sVerify
             | Service::LmsSign
             | Service::LmsVerify
             | Service::XmssSign
@@ -1286,7 +1364,7 @@ mod tests {
             Service::MlKem1024Encaps,
             Service::LmsSign,
             Service::Dh3072,
-            Service::SlhDsaSign,
+            Service::SlhDsaSha2256sSign,
             Service::Tls12Kdf,
             Service::Tls13Kdf,
         ];
@@ -1365,7 +1443,9 @@ mod tests {
             Service::RsaPssSign2048,
             Service::RsaOaep2048,
             Service::Tls12Kdf,
-            Service::SlhDsaSign, // not in CNSA 2.0
+            // SLH-DSA-SHA2-128s is not in CNSA 2.0 (only SHA-2 256s is the
+            // CNSSP-15 mandate; the other 11 parameter sets are excluded).
+            Service::SlhDsaSha2128sSign,
             Service::MlDsa44Sign,
             Service::MlDsa44Verify,
             Service::MlDsa44Keygen,
@@ -1427,6 +1507,88 @@ mod tests {
             assert!(
                 !is_allowed(AlgorithmProfile::Cnsa1, svc),
                 "{svc} should be BLOCKED in CNSA 1.0"
+            );
+        }
+    }
+
+    #[test]
+    fn slh_dsa_gating_is_exhaustive_across_all_36_variants() {
+        // Enumerates every SLH-DSA Service variant (12 parameter sets ×
+        // {Keygen, Sign, Verify} = 36 entries) and verifies the
+        // fail-safe gating: only the CNSSP-15 mandate
+        // (SLH-DSA-SHA2-256s) is allowed under CNSA 2.0; all 36 are
+        // blocked under CNSA 1.0; all 36 are permitted under
+        // Unrestricted.  If a new SLH-DSA variant is added without a
+        // matching entry in this array, the assertion at the end
+        // catches the gap.
+        let all_36 = [
+            // SHA-2 family (18 entries).
+            Service::SlhDsaSha2256sKeygen,
+            Service::SlhDsaSha2256sSign,
+            Service::SlhDsaSha2256sVerify,
+            Service::SlhDsaSha2128sKeygen,
+            Service::SlhDsaSha2128sSign,
+            Service::SlhDsaSha2128sVerify,
+            Service::SlhDsaSha2128fKeygen,
+            Service::SlhDsaSha2128fSign,
+            Service::SlhDsaSha2128fVerify,
+            Service::SlhDsaSha2192sKeygen,
+            Service::SlhDsaSha2192sSign,
+            Service::SlhDsaSha2192sVerify,
+            Service::SlhDsaSha2192fKeygen,
+            Service::SlhDsaSha2192fSign,
+            Service::SlhDsaSha2192fVerify,
+            Service::SlhDsaSha2256fKeygen,
+            Service::SlhDsaSha2256fSign,
+            Service::SlhDsaSha2256fVerify,
+            // SHAKE family (18 entries).
+            Service::SlhDsaShake128sKeygen,
+            Service::SlhDsaShake128sSign,
+            Service::SlhDsaShake128sVerify,
+            Service::SlhDsaShake128fKeygen,
+            Service::SlhDsaShake128fSign,
+            Service::SlhDsaShake128fVerify,
+            Service::SlhDsaShake192sKeygen,
+            Service::SlhDsaShake192sSign,
+            Service::SlhDsaShake192sVerify,
+            Service::SlhDsaShake192fKeygen,
+            Service::SlhDsaShake192fSign,
+            Service::SlhDsaShake192fVerify,
+            Service::SlhDsaShake256sKeygen,
+            Service::SlhDsaShake256sSign,
+            Service::SlhDsaShake256sVerify,
+            Service::SlhDsaShake256fKeygen,
+            Service::SlhDsaShake256fSign,
+            Service::SlhDsaShake256fVerify,
+        ];
+        assert_eq!(all_36.len(), 36, "SLH-DSA enumeration drift");
+
+        let cnsa2_allowed_set = [
+            Service::SlhDsaSha2256sKeygen,
+            Service::SlhDsaSha2256sSign,
+            Service::SlhDsaSha2256sVerify,
+        ];
+
+        for svc in all_36 {
+            // Unrestricted: every SLH-DSA variant is permitted.
+            assert!(
+                is_allowed(AlgorithmProfile::Unrestricted, svc),
+                "{svc} must be allowed in Unrestricted"
+            );
+
+            // CNSA 1.0: no SLH-DSA variant is permitted.
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} must be BLOCKED in CNSA 1.0"
+            );
+
+            // CNSA 2.0: only the three CNSSP-15-mandated entries pass;
+            // all 33 others are blocked.
+            let expected_cnsa2 = cnsa2_allowed_set.contains(&svc);
+            let actual_cnsa2 = is_allowed(AlgorithmProfile::Cnsa2, svc);
+            assert_eq!(
+                actual_cnsa2, expected_cnsa2,
+                "{svc} CNSA 2.0 gating mismatch (expected={expected_cnsa2}, actual={actual_cnsa2})"
             );
         }
     }

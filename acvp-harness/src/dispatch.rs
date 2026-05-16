@@ -128,6 +128,20 @@ pub trait AlgorithmHandler: Send + Sync {
     fn acvp_capabilities(&self) -> Option<JsonValue> {
         None
     }
+
+    /// Filtered variant of [`Self::acvp_capabilities`] for multi-
+    /// variant PQ families that advertise a `parameterSets` array.
+    ///
+    /// Default impl ignores the filter and delegates to
+    /// [`Self::acvp_capabilities`]. Override only when the
+    /// underlying cap-builder supports per-paramSet filtering — at
+    /// time of writing, only the SLH-DSA family does, per
+    /// `feedback_single_algo_per_acvts_session`'s
+    /// one-vector-set-per-session rule for new multi-variant PQ
+    /// families.
+    fn acvp_capabilities_filtered(&self, _paramset_filter: Option<&str>) -> Option<JsonValue> {
+        self.acvp_capabilities()
+    }
 }
 
 /// Mutable handler registry. Constructed with

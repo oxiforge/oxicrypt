@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.9.0"
+  version: "0.10.0"
   description: >-
     Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
     NIST-approved classical algorithms with a formal module boundary,
@@ -225,14 +225,31 @@ modules:
 
   - name: oxicrypt-slh-dsa
     description: >-
-      SLH-DSA-SHA2-256s stateless hash-based digital signatures (FIPS 205).
-      Parameter set SHA2-256s: n=32, h=64, d=8, a=14, k=22, w=16. Public
-      key 64 bytes, secret key 128 bytes, signature 29792 bytes. Stateless
-      — no per-signature state management required. Allowed in Unrestricted
-      profile only. Signing is computationally expensive (many SHA-256
-      evaluations) but security rests entirely on hash function properties.
+      SLH-DSA stateless hash-based digital signatures (FIPS 205), full
+      family — all 12 FIPS 205 §11 parameter sets shipped: SHA-2
+      (128s, 128f, 192s, 192f, 256s, 256f) and SHAKE (128s, 128f, 192s,
+      192f, 256s, 256f). Each variant lives in its own submodule
+      (`slh_dsa_<sha2|shake>_<level><s|f>`); the crate root re-exports
+      the SHA2-256s surface (CNSA 2.0 mandate, CNSSP 15) for
+      backward-compat — `oxicrypt_slh_dsa::keygen` resolves to SHA2-256s.
+      Variant sizes: PK in {32, 48, 64}, SK in {64, 96, 128}, signatures
+      from 7856 (128s) to 49856 bytes (256f) — identical across the
+      SHA-2 and SHAKE families for the same (n, h, d, a, k, lg_w) tuple.
+      All variants stateless — no per-signature state management required.
+      Only SHA2-256s is approved under the CNSA 2.0 profile (CNSSP 15
+      mandate); the other 11 variants are Unrestricted-only. Each of
+      the 12 parameter sets has its own per-operation Service-enum
+      entries (SlhDsa{Family}{Level}{SF}{Op}) at discriminants
+      320-355, gated individually via require_allowed(). Signing is
+      computationally expensive (many hash evaluations) but security
+      rests entirely on hash function properties. Every parameter-set
+      divergence — including the SHA-2 (§10.1) vs SHAKE (§10.2)
+      tweakable-hash families — is emitted from a single declarative
+      macro (`slh_dsa_impl!`) via per-construct sub-macros with `(sha2)`
+      and `(shake)` arms; each variant monomorphises to one path with
+      no runtime dispatch.
     no_std: true
-    depends_on: [oxicrypt-module, oxicrypt-sha]
+    depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-xof]
 
   - name: oxicrypt-eddsa
     description: >-
@@ -415,8 +432,11 @@ types:
     kind: enum
     description: >
       Per-algorithm-and-parameter enumeration of every approved service.
-      Approximately 90 variants. Used with require_allowed() to enforce
-      profile restrictions. See the crate source for the full list.
+      179 variants as of Batch 4 (SLH-DSA expansion), including 36
+      per-parameter-set entries for SLH-DSA's 12 FIPS 205 parameter
+      sets × {Keygen, Sign, Verify}. Used with require_allowed() to
+      enforce profile restrictions. See the crate source for the full
+      list.
 
   - name: KatEntry
     module: oxicrypt-module
@@ -4338,6 +4358,34 @@ functions:
     profiles: [Unrestricted, Cnsa2]
 
   # ── SLH-DSA (FIPS 205) ───────────────────────────────────────────
+  #
+  # All SLH-DSA functions are emitted from the slh_dsa_impl! macro in
+  # `crates/oxicrypt-slh-dsa/src/slh_dsa_impl.rs` and instantiated per
+  # variant in `crates/oxicrypt-slh-dsa/src/slh_dsa_<sha2|shake>_<level><s|f>.rs`.
+  # All 12 FIPS 205 §11 parameter sets ship: the SHA-2 family (SHA2-128s,
+  # SHA2-128f, SHA2-192s, SHA2-192f, SHA2-256s, SHA2-256f) and the SHAKE
+  # family (SHAKE-128s, SHAKE-128f, SHAKE-192s, SHAKE-192f, SHAKE-256s,
+  # SHAKE-256f). The crate root re-exports the SHA2-256s surface
+  # (`pub use slh_dsa_sha2_256s::*;` for `keygen`, `sign`, `verify`,
+  # `keygen_internal`, `sign_internal`, `verify_internal`, `PK_LEN`,
+  # `SK_LEN`, `SIG_LEN`, `KATS`) for backward-compat —
+  # `oxicrypt_slh_dsa::keygen` continues to resolve to SHA2-256s. New
+  # callers reach for variant submodules explicitly:
+  # `oxicrypt_slh_dsa::slh_dsa_sha2_128s::{keygen, sign, verify}` or
+  # `oxicrypt_slh_dsa::slh_dsa_shake_256f::{keygen, sign, verify}` etc.
+  # Hash-family dispatch (sha2 vs shake) is realised via
+  # `__hash_family_setup!` plus seven per-construct sub-macros
+  # (`__emit_adrs_compress!`, `__emit_f!`, `__emit_h!`, `__emit_t!`,
+  # `__emit_prf!`, `__emit_prf_msg!`, `__emit_h_msg!`), each with
+  # `(sha2)` and `(shake)` arms. The `n`-keyed sub-macro
+  # `__sha2_long_setup!($n)` selects SHA-256 vs SHA-512 for the SHA-2
+  # family's long tweakable hashes at macro-expansion time. All dispatch
+  # is at macro-expansion time, so each variant monomorphises to one
+  # path with no runtime dispatch. Per-variant sizes follow FIPS 205
+  # §11 Table 2: at n=16 PK=32/SK=64/xi=48; at n=24 PK=48/SK=96/xi=72;
+  # at n=32 PK=64/SK=128/xi=96. Signatures: 128s=7856, 128f=17088,
+  # 192s=16224, 192f=35664, 256s=29792, 256f=49856 bytes (identical
+  # across SHA-2 and SHAKE for the same (n, h, d, a, k, lg_w) tuple).
 
   - name: keygen
     module: oxicrypt-slh-dsa
@@ -4468,6 +4516,561 @@ functions:
       handles_secrets: false
       fips_approved: true
       fips_gate: Operational
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHA2-128s (FIPS 205 §11; n=16, h=63, d=7, a=12, k=14) ──
+
+  - name: "slh_dsa_sha2_128s::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
+    description: >
+      Generate an SLH-DSA-SHA2-128s key pair. xi must be 48 bytes
+      (SK.seed || SK.prf || PK.seed). Returns (pk: 32 B, sk: 64 B).
+      Stateless; permitted under the Unrestricted profile only.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "48 bytes of fresh randomness." }
+    returns:
+      type: "Result<([u8; 32], [u8; 64]), Error>"
+      description: "Public key (32 B) and secret key (64 B)."
+    error_variants:
+      - { name: NotOperational, condition: Module not initialized. }
+      - { name: AlgorithmRestricted, condition: SLH-DSA blocked by active profile. }
+      - { name: InvalidInput, condition: xi is not 48 bytes. }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_128s::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 7856], Error>"
+    description: >
+      External slh_sign (FIPS 205 §9.2 Algorithm 22) for SLH-DSA-SHA2-128s
+      in deterministic mode. Returns a 7856-byte signature.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "64-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string, at most 255 bytes." }
+    returns: { type: "Result<[u8; 7856], Error>", description: "7856-byte SLH-DSA-SHA2-128s signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_128s::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify (FIPS 205 §9.3 Algorithm 24) for SLH-DSA-SHA2-128s.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "32-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string, must match sign time." }
+      - { name: signature, type: "&[u8]", direction: in, description: "7856-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHA2-128f (FIPS 205 §11; n=16, h=66, d=22, a=6, k=33) ──
+
+  - name: "slh_dsa_sha2_128f::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
+    description: >
+      Generate an SLH-DSA-SHA2-128f key pair. xi must be 48 bytes
+      (SK.seed || SK.prf || PK.seed). Returns (pk: 32 B, sk: 64 B).
+      Fast sibling of 128s — shorter tree depth, much larger signatures.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "48 bytes of fresh randomness." }
+    returns:
+      type: "Result<([u8; 32], [u8; 64]), Error>"
+      description: "Public key (32 B) and secret key (64 B)."
+    error_variants:
+      - { name: NotOperational, condition: Module not initialized. }
+      - { name: AlgorithmRestricted, condition: SLH-DSA blocked by active profile. }
+      - { name: InvalidInput, condition: xi is not 48 bytes. }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_128f::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 17088], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHA2-128f. Returns 17088-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "64-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 17088], Error>", description: "17088-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_128f::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHA2-128f.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "32-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "17088-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHA2-192s (FIPS 205 §11; n=24, h=63, d=7, a=14, k=17) ──
+
+  - name: "slh_dsa_sha2_192s::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
+    description: >
+      Generate an SLH-DSA-SHA2-192s key pair. xi must be 72 bytes.
+      Returns (pk: 48 B, sk: 96 B). Slow sibling at 192-bit security.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "72 bytes of fresh randomness." }
+    returns:
+      type: "Result<([u8; 48], [u8; 96]), Error>"
+      description: "Public key (48 B) and secret key (96 B)."
+    error_variants:
+      - { name: NotOperational, condition: Module not initialized. }
+      - { name: AlgorithmRestricted, condition: SLH-DSA blocked by active profile. }
+      - { name: InvalidInput, condition: xi is not 72 bytes. }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_192s::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 16224], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHA2-192s. Returns 16224-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "96-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 16224], Error>", description: "16224-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_192s::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHA2-192s.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "48-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "16224-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHA2-192f (FIPS 205 §11; n=24, h=66, d=22, a=8, k=33) ──
+
+  - name: "slh_dsa_sha2_192f::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
+    description: >
+      Generate an SLH-DSA-SHA2-192f key pair. xi must be 72 bytes.
+      Returns (pk: 48 B, sk: 96 B). Fast sibling of 192s.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "72 bytes of fresh randomness." }
+    returns:
+      type: "Result<([u8; 48], [u8; 96]), Error>"
+      description: "Public key (48 B) and secret key (96 B)."
+    error_variants:
+      - { name: NotOperational, condition: Module not initialized. }
+      - { name: AlgorithmRestricted, condition: SLH-DSA blocked by active profile. }
+      - { name: InvalidInput, condition: xi is not 72 bytes. }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_192f::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 35664], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHA2-192f. Returns 35664-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "96-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 35664], Error>", description: "35664-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_192f::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHA2-192f.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "48-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "35664-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHA2-256f (FIPS 205 §11; n=32, h=68, d=17, a=9, k=35) ──
+
+  - name: "slh_dsa_sha2_256f::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
+    description: >
+      Generate an SLH-DSA-SHA2-256f key pair. xi must be 96 bytes.
+      Returns (pk: 64 B, sk: 128 B). Fast sibling of the CNSA 2.0-
+      mandated 256s — same security level, larger and faster signatures.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "96 bytes of fresh randomness." }
+    returns:
+      type: "Result<([u8; 64], [u8; 128]), Error>"
+      description: "Public key (64 B) and secret key (128 B)."
+    error_variants:
+      - { name: NotOperational, condition: Module not initialized. }
+      - { name: AlgorithmRestricted, condition: SLH-DSA blocked by active profile. }
+      - { name: InvalidInput, condition: xi is not 96 bytes. }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_256f::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 49856], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHA2-256f. Returns 49856-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "128-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 49856], Error>", description: "49856-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_sha2_256f::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHA2-256f.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "64-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "49856-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHAKE-128s (FIPS 205 §11; n=16, h=63, d=7, a=12, k=14) ──
+
+  - name: "slh_dsa_shake_128s::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
+    description: >
+      Generate an SLH-DSA-SHAKE-128s key pair. xi must be 48 bytes
+      (SK.seed || SK.prf || PK.seed). Returns (pk: 32 B, sk: 64 B).
+      Small variant — 7856-byte signatures, slowest sign of the 12.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "48 bytes of fresh randomness." }
+    returns: { type: "Result<([u8; 32], [u8; 64]), Error>", description: "Public key (32 B) and secret key (64 B)." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_128s::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 7856], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHAKE-128s. Returns 7856-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "64-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 7856], Error>", description: "7856-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_128s::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHAKE-128s.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "32-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "7856-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHAKE-128f (FIPS 205 §11; n=16, h=66, d=22, a=6, k=33) ──
+
+  - name: "slh_dsa_shake_128f::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
+    description: >
+      Generate an SLH-DSA-SHAKE-128f key pair. xi must be 48 bytes.
+      Fast 128-bit-security variant — 17088-byte signatures, faster
+      sign than 128s at the cost of signature size.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "48 bytes of fresh randomness." }
+    returns: { type: "Result<([u8; 32], [u8; 64]), Error>", description: "Public key (32 B) and secret key (64 B)." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_128f::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 17088], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHAKE-128f. Returns 17088-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "64-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 17088], Error>", description: "17088-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_128f::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHAKE-128f.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "32-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "17088-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHAKE-192s (FIPS 205 §11; n=24, h=63, d=7, a=14, k=17) ──
+
+  - name: "slh_dsa_shake_192s::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
+    description: >
+      Generate an SLH-DSA-SHAKE-192s key pair. xi must be 72 bytes.
+      Small 192-bit-security variant — 16224-byte signatures.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "72 bytes of fresh randomness." }
+    returns: { type: "Result<([u8; 48], [u8; 96]), Error>", description: "Public key (48 B) and secret key (96 B)." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_192s::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 16224], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHAKE-192s. Returns 16224-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "96-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 16224], Error>", description: "16224-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_192s::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHAKE-192s.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "48-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "16224-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHAKE-192f (FIPS 205 §11; n=24, h=66, d=22, a=8, k=33) ──
+
+  - name: "slh_dsa_shake_192f::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
+    description: >
+      Generate an SLH-DSA-SHAKE-192f key pair. xi must be 72 bytes.
+      Fast 192-bit-security variant — 35664-byte signatures.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "72 bytes of fresh randomness." }
+    returns: { type: "Result<([u8; 48], [u8; 96]), Error>", description: "Public key (48 B) and secret key (96 B)." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_192f::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 35664], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHAKE-192f. Returns 35664-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "96-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 35664], Error>", description: "35664-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_192f::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHAKE-192f.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "48-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "35664-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHAKE-256s (FIPS 205 §11; n=32, h=64, d=8, a=14, k=22) ──
+
+  - name: "slh_dsa_shake_256s::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
+    description: >
+      Generate an SLH-DSA-SHAKE-256s key pair. xi must be 96 bytes.
+      Small 256-bit-security variant — 29792-byte signatures. SHAKE
+      sibling of the CNSA 2.0-mandated SHA2-256s.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "96 bytes of fresh randomness." }
+    returns: { type: "Result<([u8; 64], [u8; 128]), Error>", description: "Public key (64 B) and secret key (128 B)." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_256s::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 29792], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHAKE-256s. Returns 29792-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "128-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 29792], Error>", description: "29792-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_256s::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHAKE-256s.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "64-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "29792-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  # ── SLH-DSA-SHAKE-256f (FIPS 205 §11; n=32, h=68, d=17, a=9, k=35) ──
+
+  - name: "slh_dsa_shake_256f::keygen"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
+    description: >
+      Generate an SLH-DSA-SHAKE-256f key pair. xi must be 96 bytes.
+      Fast 256-bit-security variant — 49856-byte signatures, largest
+      of the 12.
+    parameters:
+      - { name: xi, type: "&[u8]", direction: in, description: "96 bytes of fresh randomness." }
+    returns: { type: "Result<([u8; 64], [u8; 128]), Error>", description: "Public key (64 B) and secret key (128 B)." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_256f::sign"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 49856], Error>"
+    description: >
+      External slh_sign for SLH-DSA-SHAKE-256f. Returns 49856-byte sig.
+    parameters:
+      - { name: sk, type: "&[u8]", direction: in, description: "128-byte secret key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Message to sign." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+    returns: { type: "Result<[u8; 49856], Error>", description: "49856-byte signature." }
+    thread_safety: thread-safe
+    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    profiles: [Unrestricted]
+
+  - name: "slh_dsa_shake_256f::verify"
+    module: oxicrypt-slh-dsa
+    kind: function
+    signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
+    description: >
+      External slh_verify for SLH-DSA-SHAKE-256f.
+    parameters:
+      - { name: pk, type: "&[u8]", direction: in, description: "64-byte public key." }
+      - { name: message, type: "&[u8]", direction: in, description: "Signed message." }
+      - { name: ctx, type: "&[u8]", direction: in, description: "Context string." }
+      - { name: signature, type: "&[u8]", direction: in, description: "49856-byte signature." }
+    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    thread_safety: thread-safe
+    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
 
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
@@ -7151,7 +7754,8 @@ functions:
       22` for any verification failure (decode-fail OR
       signature-invalid — upstream collapses these into a single
       `Err(InvalidInput)`; same shape as RSA verify and ML-DSA
-      verify). Forwards to `oxicrypt_slh_dsa::verify`.
+      verify). Forwards to
+      `oxicrypt_slh_dsa::slh_dsa_sha2_256s::verify`.
     signature: >-
       int oxi_slh_dsa_sha2_256s_verify(const uint8_t *pk_ptr,
       const uint8_t *msg_ptr, size_t msg_len,
@@ -7170,6 +7774,453 @@ functions:
       constant_time: false
       handles_secrets: false
       fips_approved: true
+
+  # ── SLH-DSA — 11 additional FIPS 205 §11 variants ─────────────
+  #
+  # Per-variant additive expansion of the SHA2-256s surface above.
+  # Same three-entry-point shape (keygen, sign, verify), same
+  # deterministic-signing semantics, same `Err(InvalidInput)` →
+  # `TagMismatch = 22` collapse on verify — only the byte counts
+  # differ per FIPS 205 §11 Table 2. SHA-2 and SHAKE share byte
+  # counts at the same (n, level, s/f) tuple — only the internal
+  # hash family differs (SHAKE-256 one-shot XOF in place of every
+  # SHA-256/512 tweakable-hash call; PRF_msg becomes plain
+  # concatenation; H_msg becomes a single-shot squeeze with no
+  # MGF1 loop). xi is always SK.seed || SK.prf || PK.seed (3 ×
+  # n bytes, role-segregated and NOT interchangeable). Only
+  # SHA2-256s is on the CNSA 2.0 mandate list; the other 11 are
+  # `AlgorithmProfile::Unrestricted` only.
+
+  - name: oxi_slh_dsa_sha2_128s_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHA2-128s key pair (FIPS 205 §11 Table 2: n=16; xi=48, pk=32, sk=64). Forwards to `oxicrypt_slh_dsa::slh_dsa_sha2_128s::keygen`. See `oxi_slh_dsa_sha2_256s_keygen` for the xi role-segregation invariant."
+    signature: "int oxi_slh_dsa_sha2_128s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "48-byte caller-supplied seed (SK.seed ‖ SK.prf ‖ PK.seed)" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "32-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "64-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_128s_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHA2-128s (FIPS 205 §9.2 Algorithm 22). Deterministic. Reads 64-byte sk, writes 7 856-byte signature. ctx ≤ 255."
+    signature: "int oxi_slh_dsa_sha2_128s_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "64-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes (length given by msg_len)" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (length given by ctx_len; ≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "7 856-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_128s_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHA2-128s signature (FIPS 205 §9.3 Algorithm 24). Reads 32-byte pk + 7 856-byte sig. `Err(InvalidInput) → TagMismatch = 22` collapse."
+    signature: "int oxi_slh_dsa_sha2_128s_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "32-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "7 856-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_128f_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHA2-128f key pair (n=16, fast variant; xi=48, pk=32, sk=64). Forwards to `oxicrypt_slh_dsa::slh_dsa_sha2_128f::keygen`."
+    signature: "int oxi_slh_dsa_sha2_128f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "48-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "32-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "64-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_128f_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHA2-128f (FIPS 205 §9.2 Algorithm 22). Deterministic. Reads 64-byte sk, writes 17 088-byte signature."
+    signature: "int oxi_slh_dsa_sha2_128f_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "64-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "17 088-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_128f_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHA2-128f signature (FIPS 205 §9.3 Algorithm 24). Reads 32-byte pk + 17 088-byte sig. `Err(InvalidInput) → TagMismatch = 22` collapse."
+    signature: "int oxi_slh_dsa_sha2_128f_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "32-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "17 088-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_192s_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHA2-192s key pair (n=24; xi=72, pk=48, sk=96). Forwards to `oxicrypt_slh_dsa::slh_dsa_sha2_192s::keygen`."
+    signature: "int oxi_slh_dsa_sha2_192s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "72-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "48-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "96-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_192s_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHA2-192s. Deterministic. Reads 96-byte sk, writes 16 224-byte signature."
+    signature: "int oxi_slh_dsa_sha2_192s_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "96-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "16 224-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_192s_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHA2-192s signature. Reads 48-byte pk + 16 224-byte sig."
+    signature: "int oxi_slh_dsa_sha2_192s_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "48-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "16 224-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_192f_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHA2-192f key pair (n=24, fast variant; xi=72, pk=48, sk=96). Forwards to `oxicrypt_slh_dsa::slh_dsa_sha2_192f::keygen`."
+    signature: "int oxi_slh_dsa_sha2_192f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "72-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "48-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "96-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_192f_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHA2-192f. Deterministic. Reads 96-byte sk, writes 35 664-byte signature."
+    signature: "int oxi_slh_dsa_sha2_192f_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "96-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "35 664-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_192f_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHA2-192f signature. Reads 48-byte pk + 35 664-byte sig."
+    signature: "int oxi_slh_dsa_sha2_192f_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "48-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "35 664-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_256f_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHA2-256f key pair (n=32, fast variant; xi=96, pk=64, sk=128). Forwards to `oxicrypt_slh_dsa::slh_dsa_sha2_256f::keygen`."
+    signature: "int oxi_slh_dsa_sha2_256f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "96-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "64-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "128-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_256f_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHA2-256f. Deterministic. Reads 128-byte sk, writes 49 856-byte signature."
+    signature: "int oxi_slh_dsa_sha2_256f_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "128-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "49 856-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_sha2_256f_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHA2-256f signature. Reads 64-byte pk + 49 856-byte sig."
+    signature: "int oxi_slh_dsa_sha2_256f_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "64-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "49 856-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  # ── SHAKE family — byte counts identical to SHA-2 at same (n, level, s/f); internal hash family differs.
+
+  - name: oxi_slh_dsa_shake_128s_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHAKE-128s key pair (n=16; xi=48, pk=32, sk=64). Forwards to `oxicrypt_slh_dsa::slh_dsa_shake_128s::keygen`. SHAKE family uses SHAKE-256 one-shot XOF in place of SHA-256/512 tweakable hashes."
+    signature: "int oxi_slh_dsa_shake_128s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "48-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "32-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "64-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_128s_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHAKE-128s. Deterministic. Reads 64-byte sk, writes 7 856-byte signature."
+    signature: "int oxi_slh_dsa_shake_128s_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "64-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "7 856-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_128s_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHAKE-128s signature. Reads 32-byte pk + 7 856-byte sig."
+    signature: "int oxi_slh_dsa_shake_128s_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "32-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "7 856-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_128f_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHAKE-128f key pair (n=16, fast variant; xi=48, pk=32, sk=64). Forwards to `oxicrypt_slh_dsa::slh_dsa_shake_128f::keygen`."
+    signature: "int oxi_slh_dsa_shake_128f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "48-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "32-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "64-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_128f_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHAKE-128f. Deterministic. Reads 64-byte sk, writes 17 088-byte signature."
+    signature: "int oxi_slh_dsa_shake_128f_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "64-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "17 088-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_128f_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHAKE-128f signature. Reads 32-byte pk + 17 088-byte sig."
+    signature: "int oxi_slh_dsa_shake_128f_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "32-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "17 088-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_192s_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHAKE-192s key pair (n=24; xi=72, pk=48, sk=96). Forwards to `oxicrypt_slh_dsa::slh_dsa_shake_192s::keygen`."
+    signature: "int oxi_slh_dsa_shake_192s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "72-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "48-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "96-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_192s_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHAKE-192s. Deterministic. Reads 96-byte sk, writes 16 224-byte signature."
+    signature: "int oxi_slh_dsa_shake_192s_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "96-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "16 224-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_192s_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHAKE-192s signature. Reads 48-byte pk + 16 224-byte sig."
+    signature: "int oxi_slh_dsa_shake_192s_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "48-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "16 224-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_192f_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHAKE-192f key pair (n=24, fast variant; xi=72, pk=48, sk=96). Forwards to `oxicrypt_slh_dsa::slh_dsa_shake_192f::keygen`."
+    signature: "int oxi_slh_dsa_shake_192f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "72-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "48-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "96-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_192f_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHAKE-192f. Deterministic. Reads 96-byte sk, writes 35 664-byte signature."
+    signature: "int oxi_slh_dsa_shake_192f_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "96-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "35 664-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_192f_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHAKE-192f signature. Reads 48-byte pk + 35 664-byte sig."
+    signature: "int oxi_slh_dsa_shake_192f_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "48-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "35 664-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_256s_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHAKE-256s key pair (n=32; xi=96, pk=64, sk=128). Forwards to `oxicrypt_slh_dsa::slh_dsa_shake_256s::keygen`."
+    signature: "int oxi_slh_dsa_shake_256s_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "96-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "64-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "128-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_256s_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHAKE-256s. Deterministic. Reads 128-byte sk, writes 29 792-byte signature."
+    signature: "int oxi_slh_dsa_shake_256s_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "128-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "29 792-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_256s_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHAKE-256s signature. Reads 64-byte pk + 29 792-byte sig."
+    signature: "int oxi_slh_dsa_shake_256s_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "64-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "29 792-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_256f_keygen
+    module: oxicrypt-ffi
+    description: "Generate an SLH-DSA-SHAKE-256f key pair (n=32, fast variant; xi=96, pk=64, sk=128). Forwards to `oxicrypt_slh_dsa::slh_dsa_shake_256f::keygen`."
+    signature: "int oxi_slh_dsa_shake_256f_keygen(const uint8_t *xi_ptr, uint8_t *pk_out, uint8_t *sk_out)"
+    parameters:
+      - { name: xi_ptr, type: "const uint8_t *", direction: in, description: "96-byte caller-supplied seed" }
+      - { name: pk_out, type: "uint8_t *", direction: out, description: "64-byte public key buffer" }
+      - { name: sk_out, type: "uint8_t *", direction: out, description: "128-byte secret key buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_256f_sign
+    module: oxicrypt-ffi
+    description: "Sign with SLH-DSA-SHAKE-256f. Deterministic. Reads 128-byte sk, writes 49 856-byte signature."
+    signature: "int oxi_slh_dsa_shake_256f_sign(const uint8_t *sk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, uint8_t *sig_out)"
+    parameters:
+      - { name: sk_ptr, type: "const uint8_t *", direction: in, description: "128-byte secret key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_out, type: "uint8_t *", direction: out, description: "49 856-byte signature buffer" }
+    returns: { type: int, description: "OxiResult discriminant." }
+    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+
+  - name: oxi_slh_dsa_shake_256f_verify
+    module: oxicrypt-ffi
+    description: "Verify an SLH-DSA-SHAKE-256f signature. Reads 64-byte pk + 49 856-byte sig."
+    signature: "int oxi_slh_dsa_shake_256f_verify(const uint8_t *pk_ptr, const uint8_t *msg_ptr, size_t msg_len, const uint8_t *ctx_ptr, size_t ctx_len, const uint8_t *sig_ptr)"
+    parameters:
+      - { name: pk_ptr, type: "const uint8_t *", direction: in, description: "64-byte public key" }
+      - { name: msg_ptr, type: "const uint8_t *", direction: in, description: "Message bytes" }
+      - { name: msg_len, type: "size_t", direction: in, description: "Message length in bytes" }
+      - { name: ctx_ptr, type: "const uint8_t *", direction: in, description: "Application context bytes (≤ 255)" }
+      - { name: ctx_len, type: "size_t", direction: in, description: "Context length in bytes" }
+      - { name: sig_ptr, type: "const uint8_t *", direction: in, description: "49 856-byte signature" }
+    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
+    security: { constant_time: false, handles_secrets: false, fips_approved: true }
 
   - name: oxi_lms_keygen
     module: oxicrypt-ffi

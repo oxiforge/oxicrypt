@@ -3518,11 +3518,15 @@ pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
 //
 // Per-variant naming: this is `slh_dsa_sha2_256s` (not
 // `slh_dsa(param_set: int)` and not `slh_dsa_256s` collapsing the
-// hash family) per stabilized arc pattern #8. Future variants
-// (SHA2-128s/f, 192s/f, 256f, SHAKE-128s/f / 192s/f / 256s/f —
-// twelve total per FIPS 205) will be added as new fns rather than
-// as enum-dispatched parameters on these. Existing C callers do not
-// recompile when new variants ship.
+// hash family) per stabilized arc pattern #8. The other 11 FIPS 205
+// §11 parameter sets — SHA2-{128s,128f,192s,192f,256f} and
+// SHAKE-{128s,128f,192s,192f,256s,256f} — are exposed as additive
+// per-variant fns below; existing C callers do not recompile when
+// new variants ship. Each fn forwards to its variant-specific
+// `oxicrypt_slh_dsa::slh_dsa_<family>_<level><sf>::{keygen,sign,
+// verify}` submodule (Batch 3 expansion); the crate-root re-export
+// of `oxicrypt_slh_dsa::keygen` continues to resolve to SHA2-256s
+// for backwards-compat with non-FFI callers.
 
 /// Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
 /// caller-supplied seed (FIPS 205 §9.1 Algorithm 17).
@@ -3556,7 +3560,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_keygen(
     if pk_out.is_null() || sk_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let (pk, sk) = match oxicrypt_slh_dsa::keygen(xi) {
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_sha2_256s::keygen(xi) {
         Ok(pair) => pair,
         Err(e) => return R::from(e) as c_int,
     };
@@ -3610,7 +3614,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_sign(
     if sig_out.is_null() {
         return R::NullPointer as c_int;
     }
-    let sig = match oxicrypt_slh_dsa::sign(sk, msg, ctx) {
+    let sig = match oxicrypt_slh_dsa::slh_dsa_sha2_256s::sign(sk, msg, ctx) {
         Ok(s) => s,
         Err(e) => return R::from(e) as c_int,
     };
@@ -3661,7 +3665,1220 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
         Ok(s) => s,
         Err(e) => return e,
     };
-    match oxicrypt_slh_dsa::verify(pk, msg, ctx, sig) {
+    match oxicrypt_slh_dsa::slh_dsa_sha2_256s::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── SLH-DSA — SHA-2 family, 5 additional variants ───────────────
+//
+// Per-variant additive expansion of the SHA2-256s surface above.
+// Same three-entry-point shape (keygen, sign, verify), same
+// deterministic-signing semantics, same `Err(InvalidInput)` →
+// `TagMismatch = 22` collapse on verify — only the byte counts
+// differ per FIPS 205 §11 Table 2:
+//
+//   n=16 (128-bit category): xi=48, pk=32, sk=64, sig-s=7 856,
+//                            sig-f=17 088
+//   n=24 (192-bit category): xi=72, pk=48, sk=96, sig-s=16 224,
+//                            sig-f=35 664
+//   n=32 (256-bit category): xi=96, pk=64, sk=128, sig-s=29 792,
+//                            sig-f=49 856
+//
+// xi continues to frame as `SK.seed ‖ SK.prf ‖ PK.seed` (three
+// `n`-byte components, role-segregated and NOT interchangeable —
+// SK.seed drives WOTS+/FORS secret derivation, SK.prf is the PRF
+// key for deterministic message randomness, PK.seed is the
+// domain-separation tweak baked into every hash call; mixing them
+// would put PRF key material into the secret-derivation slot or
+// vice-versa, breaking the FIPS 205 §10 security argument).
+//
+// CNSA gating: only SLH-DSA-SHA2-256s is on the CNSA 2.0 mandate
+// list (CNSSP-15 for stateless hash-based signatures). The other
+// 11 variants — every entry in this block plus the SHAKE block
+// below — are permitted only under
+// `AlgorithmProfile::Unrestricted`; calls under either CNSA
+// profile return `OxiResult::AlgorithmRestricted = 6` via the
+// existing `require_allowed` gate in `oxicrypt_module` against
+// the per-parameter-set `Service::SlhDsa<Family><Level><SF><Op>`
+// discriminants (320-355, contiguous block; Batch 4).
+
+/// Generate an SLH-DSA-SHA2-128s key pair from a 48-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=16; xi=48, pk=32, sk=64).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_128s_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_sha2_128s::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHA2-128s (FIPS 205 §9.2 Algorithm
+/// 22). Deterministic. Reads 64-byte sk, writes 7 856-byte
+/// signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_128s_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_sha2_128s::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 7_856) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHA2-128s signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 32-byte pk + 7 856-byte sig. `Err(InvalidInput) →
+/// TagMismatch = 22` collapse.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_128s_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 7_856) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_sha2_128s::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHA2-128f key pair from a 48-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=16, fast variant; xi=48, pk=32,
+/// sk=64).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_128f_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_sha2_128f::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHA2-128f (FIPS 205 §9.2 Algorithm
+/// 22). Deterministic. Reads 64-byte sk, writes 17 088-byte
+/// signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_128f_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_sha2_128f::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 17_088) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHA2-128f signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 32-byte pk + 17 088-byte sig. `Err(InvalidInput) →
+/// TagMismatch = 22` collapse.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_128f_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 17_088) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_sha2_128f::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHA2-192s key pair from a 72-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=24).
+///
+/// Reads 72 bytes from `xi_ptr` (`SK.seed ‖ SK.prf ‖ PK.seed`,
+/// 3 × 24 bytes). Writes the 48-byte pk into `pk_out` and the
+/// 96-byte sk into `sk_out`.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_192s_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 72) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_sha2_192s::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHA2-192s (FIPS 205 §9.2 Algorithm
+/// 22). Reads 96-byte sk, writes 16 224-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must point to
+/// ≥16 224 writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_192s_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_sha2_192s::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 16_224) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHA2-192s signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 48-byte pk, 16 224-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_192s_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 16_224) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_sha2_192s::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHA2-192f key pair from a 72-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=24, fast variant).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_192f_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 72) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_sha2_192f::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHA2-192f (FIPS 205 §9.2 Algorithm
+/// 22). Reads 96-byte sk, writes 35 664-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must point to
+/// ≥35 664 writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_192f_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_sha2_192f::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 35_664) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHA2-192f signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 48-byte pk, 35 664-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_192f_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 35_664) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_sha2_192f::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHA2-256f key pair from a 96-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=32, fast variant).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_sha2_256f::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHA2-256f (FIPS 205 §9.2 Algorithm
+/// 22). Reads 128-byte sk, writes 49 856-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid. `sig_out` must point to
+/// ≥49 856 writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 128) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_sha2_256f::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 49_856) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHA2-256f signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 64-byte pk, 49 856-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 49_856) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_sha2_256f::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+// ── SLH-DSA — SHAKE family, all 6 variants ──────────────────────
+//
+// FIPS 205 §10.2 SHAKE family. Parameter (n, h, d, a, k, w) tuples
+// match the SHA-2 family per FIPS 205 §11 Table 2 — so byte counts
+// (xi / pk / sk / sig) are identical across SHA-2 and SHAKE at the
+// same level + s/f. The functions below mirror their SHA-2
+// counterparts byte-for-byte at the FFI boundary; the only
+// difference is internal: SHAKE-256 (one-shot XOF) replaces every
+// SHA-256 / SHA-512 tweakable-hash call, PRF_msg is plain
+// concatenation (SHAKE provides native domain separation, no HMAC
+// needed), and H_msg is a single-shot squeeze (no MGF1 loop). All
+// 6 SHAKE variants share `AlgorithmProfile::Unrestricted` gating —
+// none of them are on the CNSA 2.0 mandate list (CNSSP-15 pins
+// SHA2-256s only).
+
+/// Generate an SLH-DSA-SHAKE-128s key pair from a 48-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=16).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_128s_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_shake_128s::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHAKE-128s (FIPS 205 §9.2 Algorithm
+/// 22). Reads 64-byte sk, writes 7 856-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_128s_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_shake_128s::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 7_856) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHAKE-128s signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 32-byte pk, 7 856-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_128s_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 7_856) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_shake_128s::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHAKE-128f key pair from a 48-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=16, fast variant).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_128f_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_shake_128f::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 32) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 64) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHAKE-128f (FIPS 205 §9.2 Algorithm
+/// 22). Reads 64-byte sk, writes 17 088-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_128f_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_shake_128f::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 17_088) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHAKE-128f signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 32-byte pk, 17 088-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_128f_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 32) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 17_088) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_shake_128f::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHAKE-192s key pair from a 72-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=24).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_192s_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 72) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_shake_192s::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHAKE-192s (FIPS 205 §9.2 Algorithm
+/// 22). Reads 96-byte sk, writes 16 224-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_192s_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_shake_192s::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 16_224) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHAKE-192s signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 48-byte pk, 16 224-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_192s_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 16_224) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_shake_192s::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHAKE-192f key pair from a 72-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=24, fast variant).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_192f_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 72) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_shake_192f::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 48) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 96) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHAKE-192f (FIPS 205 §9.2 Algorithm
+/// 22). Reads 96-byte sk, writes 35 664-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_192f_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_shake_192f::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 35_664) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHAKE-192f signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 48-byte pk, 35 664-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_192f_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 48) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 35_664) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_shake_192f::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHAKE-256s key pair from a 96-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=32).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_256s_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_shake_256s::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHAKE-256s (FIPS 205 §9.2 Algorithm
+/// 22). Reads 128-byte sk, writes 29 792-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_256s_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 128) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_shake_256s::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 29_792) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHAKE-256s signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 64-byte pk, 29 792-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_256s_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 29_792) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_shake_256s::verify(pk, msg, ctx, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
+        Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Generate an SLH-DSA-SHAKE-256f key pair from a 96-byte seed
+/// (FIPS 205 §9.1 Algorithm 17; n=32, fast variant).
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_keygen(
+    xi_ptr: *const u8,
+    pk_out: *mut u8,
+    sk_out: *mut u8,
+) -> c_int {
+    let xi = match unsafe { slice_from_raw(xi_ptr, 96) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pk_out.is_null() || sk_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let (pk, sk) = match oxicrypt_slh_dsa::slh_dsa_shake_256f::keygen(xi) {
+        Ok(pair) => pair,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, 64) };
+    unsafe { core::ptr::copy_nonoverlapping(sk.as_ptr(), sk_out, 128) };
+    R::Ok as c_int
+}
+
+/// Sign a message with SLH-DSA-SHAKE-256f (FIPS 205 §9.2 Algorithm
+/// 22). Reads 128-byte sk, writes 49 856-byte signature.
+/// Deterministic.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_sign(
+    sk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_out: *mut u8,
+) -> c_int {
+    let sk = match unsafe { slice_from_raw(sk_ptr, 128) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if sig_out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let sig = match oxicrypt_slh_dsa::slh_dsa_shake_256f::sign(sk, msg, ctx) {
+        Ok(s) => s,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, 49_856) };
+    R::Ok as c_int
+}
+
+/// Verify an SLH-DSA-SHAKE-256f signature (FIPS 205 §9.3 Algorithm
+/// 24). Reads 64-byte pk, 49 856-byte signature.
+///
+/// # Safety
+///
+/// All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_verify(
+    pk_ptr: *const u8,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    sig_ptr: *const u8,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, 64) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let ctx = match unsafe { slice_from_raw(ctx_ptr, ctx_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, 49_856) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_slh_dsa::slh_dsa_shake_256f::verify(pk, msg, ctx, sig) {
         Ok(()) => R::Ok as c_int,
         Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
         Err(e) => R::from(e) as c_int,

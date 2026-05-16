@@ -204,6 +204,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     let mut totp_secret = String::new();
     let mut algorithm: Option<String> = None;
     let mut mode: Option<String> = None;
+    let mut paramset: Option<String> = None;
     let mut query_session: Option<String> = None;
     let mut refresh_with: Option<String> = None;
     let mut server = "https://demo.acvts.nist.gov".to_string();
@@ -273,6 +274,12 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
                 i += 1;
                 if i < args.len() {
                     mode = Some(args[i].clone());
+                }
+            }
+            "--paramset" => {
+                i += 1;
+                if i < args.len() {
+                    paramset = Some(args[i].clone());
                 }
             }
             "--query-session" => {
@@ -350,6 +357,39 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         _ => {}
     }
 
+    // Validate --paramset against the algorithm it accompanies.
+    // Currently only SLH-DSA supports per-paramSet filtering; the trait
+    // default in `acvp_capabilities_filtered` ignores the flag for
+    // other handlers, but accepting it silently would invite confusion.
+    // Future multi-variant families that adopt the filter extend this
+    // match arm.
+    if let Some(name) = paramset.as_deref() {
+        match algorithm.as_deref() {
+            Some("SLH-DSA") => {
+                if !acvp_harness::handlers::caps::is_slh_dsa_paramset(name) {
+                    eprintln!(
+                        "oxicrypt acvp-harness demo-run: --paramset {name:?} is not a known \
+                         SLH-DSA parameter set (FIPS 205 §11 Table 2 names only)"
+                    );
+                    return std::process::ExitCode::from(2);
+                }
+            }
+            Some(other) => {
+                eprintln!(
+                    "oxicrypt acvp-harness demo-run: --paramset is only supported for \
+                     --algorithm SLH-DSA (got --algorithm {other:?})"
+                );
+                return std::process::ExitCode::from(2);
+            }
+            None => {
+                eprintln!(
+                    "oxicrypt acvp-harness demo-run: --paramset requires --algorithm SLH-DSA"
+                );
+                return std::process::ExitCode::from(2);
+            }
+        }
+    }
+
     // Default backend: curl for software keys, s_client for hardware keys.
     // (The NIST ACVTS demo CDN filters curl's TLS fingerprint when curl
     // signs CertVerify via PKCS#11 — observed 2026-04-26. s_client's
@@ -394,6 +434,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         totp_secret,
         filter_algorithm: algorithm,
         filter_mode: mode,
+        filter_paramset: paramset,
         query_session_url: query_session,
         refresh_with_token: refresh_with,
         log_path,
@@ -411,7 +452,7 @@ fn print_demo_run_usage() {
     eprintln!("               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')");
     eprintln!("               [--pkcs11-module <path>] [--pkcs11-pin-source <path>]");
     eprintln!("               [--http-backend curl|s_client] [--algorithm <name>] [--mode <mode>]");
-    eprintln!("               [--server <url>] [--log <path>]");
+    eprintln!("               [--paramset <NAME>] [--server <url>] [--log <path>]");
     eprintln!();
     eprintln!("  --key                 file-based PEM key (default backend: curl)");
     eprintln!("  --pkcs11-key          PKCS#11 URI for hardware key (default backend: s_client)");
@@ -424,6 +465,11 @@ fn print_demo_run_usage() {
         "  --mode <mode>         narrow to one mode for multi-mode algorithms (e.g. sigVer);"
     );
     eprintln!("                        produces exactly one vector set per session");
+    eprintln!("  --paramset <NAME>     for --algorithm SLH-DSA only: restrict to one of the 12");
+    eprintln!("                        FIPS 205 §11 Table 2 paramSets (e.g. SLH-DSA-SHA2-128s);");
+    eprintln!(
+        "                        produces one vector set per session for multi-variant families"
+    );
     eprintln!(
         "  --query-session <url> fetch verdict for an existing session (skip register+submit);"
     );

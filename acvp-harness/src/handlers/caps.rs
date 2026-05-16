@@ -1349,20 +1349,85 @@ pub fn ml_dsa_sigver_capability() -> JsonValue {
 
 // ── Post-quantum: SLH-DSA ────────────────────────────────────────
 
+/// FIPS 205 §11 Table 2 — canonical names for the 12 SLH-DSA parameter
+/// sets oxicrypt-slh-dsa builds. SHA-2 family (128/192/256, s/f
+/// variants) then SHAKE family. Order matches `oxicrypt-slh-dsa`'s
+/// per-variant module layout.
+pub(crate) const SLH_DSA_PARAMSETS: &[&str] = &[
+    "SLH-DSA-SHA2-128s",
+    "SLH-DSA-SHA2-128f",
+    "SLH-DSA-SHA2-192s",
+    "SLH-DSA-SHA2-192f",
+    "SLH-DSA-SHA2-256s",
+    "SLH-DSA-SHA2-256f",
+    "SLH-DSA-SHAKE-128s",
+    "SLH-DSA-SHAKE-128f",
+    "SLH-DSA-SHAKE-192s",
+    "SLH-DSA-SHAKE-192f",
+    "SLH-DSA-SHAKE-256s",
+    "SLH-DSA-SHAKE-256f",
+];
+
+/// Returns `true` iff `name` is one of the 12 FIPS 205 §11 Table 2
+/// SLH-DSA parameter sets the harness builds. Case-sensitive (per
+/// ACVP spec — paramSet names are exact strings).
+///
+/// Used by `main.rs` to validate `--paramset` arguments before
+/// constructing a session, so unknown names produce a clean CLI
+/// error rather than a malformed registration.
+#[must_use]
+pub fn is_slh_dsa_paramset(name: &str) -> bool {
+    SLH_DSA_PARAMSETS.contains(&name)
+}
+
+/// Build the `parameterSets` JSON array for an SLH-DSA cap.
+///
+/// `filter` semantics:
+/// - `None` → all 12 names (used by tests and the unfiltered
+///   `acvp_capabilities()` trait fallback; back-compat with the
+///   bundled-cap shape that shipped for ML-DSA before
+///   `feedback_single_algo_per_acvts_session` retired that pattern
+///   for new multi-variant PQ families).
+/// - `Some(name)` where `name` is in [`SLH_DSA_PARAMSETS`] → a
+///   single-element array containing just that name. This is the
+///   one-vector-set-per-session shape required by the retired-
+///   pattern memory.
+/// - `Some(name)` where `name` is unknown → panics. Callers must
+///   validate via [`is_slh_dsa_paramset`] before reaching here;
+///   panicking is the correct response to a programmer error.
+fn slh_dsa_paramsets_array(filter: Option<&str>) -> JsonValue {
+    match filter {
+        None => str_array(SLH_DSA_PARAMSETS),
+        Some(name) => {
+            assert!(
+                is_slh_dsa_paramset(name),
+                "unknown SLH-DSA paramset {name:?} (must be one of {SLH_DSA_PARAMSETS:?})"
+            );
+            str_array(&[name])
+        }
+    }
+}
+
 /// Build an ACVP registration block for SLH-DSA / keyGen / FIPS205.
 ///
-/// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.3.1`. Only
-/// `SLH-DSA-SHA2-256s` (CNSA 2.0 baseline) is currently advertised;
-/// the 11 other FIPS 205 §11 Table 2 parameter sets are tracked
-/// under the PQ-expansion mandate (`algo-capability-matrix.md` rows
-/// 202-213) and will be added to `parameterSets` when their
-/// `*_internal` + public-API surfaces ship.
-pub fn slh_dsa_keygen_capability() -> JsonValue {
+/// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.3.1`.
+/// `paramset_filter`:
+/// - `None` → bundled 12-paramSet advertisement (back-compat).
+/// - `Some(name)` → single-paramSet advertisement, the one-vector-
+///   set-per-session shape per
+///   `feedback_single_algo_per_acvts_session` (must be validated
+///   via [`is_slh_dsa_paramset`] at the CLI layer first).
+///
+/// The handler in `super::super::slh_dsa::SlhDsaKeyGenHandler`
+/// dispatches each test group to the corresponding
+/// `oxicrypt_slh_dsa::slh_dsa_*` per-variant module regardless of
+/// which subset of paramSets the cap advertises.
+pub fn slh_dsa_keygen_capability(paramset_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("SLH-DSA")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("FIPS205")),
-        ("parameterSets", str_array(&["SLH-DSA-SHA2-256s"])),
+        ("parameterSets", slh_dsa_paramsets_array(paramset_filter)),
     ])
 }
 
@@ -1389,7 +1454,7 @@ pub fn slh_dsa_keygen_capability() -> JsonValue {
 ///   internal interface"* (HTTP 400). The internal interface
 ///   (FIPS 205 §10.2 `Sign_internal`) operates on raw messages; pre-
 ///   hash modes are an external-interface concept by construction.
-pub fn slh_dsa_siggen_capability() -> JsonValue {
+pub fn slh_dsa_siggen_capability(paramset_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("SLH-DSA")),
         ("mode", str_val("sigGen")),
@@ -1402,7 +1467,7 @@ pub fn slh_dsa_siggen_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                ("parameterSets", str_array(&["SLH-DSA-SHA2-256s"])),
+                ("parameterSets", slh_dsa_paramsets_array(paramset_filter)),
                 ("messageLength", range_domain(8, 65536, 8)),
             ])]),
         ),
@@ -1418,7 +1483,7 @@ pub fn slh_dsa_siggen_capability() -> JsonValue {
 /// internal-interface server-side constraint documented there).
 /// `deterministic` is not advertised on sigVer because verification
 /// is independent of the signer's randomness mode.
-pub fn slh_dsa_sigver_capability() -> JsonValue {
+pub fn slh_dsa_sigver_capability(paramset_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("SLH-DSA")),
         ("mode", str_val("sigVer")),
@@ -1427,7 +1492,7 @@ pub fn slh_dsa_sigver_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![obj(vec![
-                ("parameterSets", str_array(&["SLH-DSA-SHA2-256s"])),
+                ("parameterSets", slh_dsa_paramsets_array(paramset_filter)),
                 ("messageLength", range_domain(8, 65536, 8)),
             ])]),
         ),
@@ -1539,4 +1604,131 @@ pub fn xmss_sigver_capability() -> JsonValue {
         ("revision", str_val("1.0")),
         ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
     ])
+}
+
+// ── Tests: SLH-DSA paramset filter (B7 precursor) ───────────────
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic, clippy::uninlined_format_args)]
+mod tests {
+    use super::*;
+
+    /// Helper: find `parameterSets` array on a keyGen-shaped cap
+    /// (top-level field).
+    fn keygen_paramsets(cap: &JsonValue) -> Vec<&str> {
+        let pairs = cap.as_object().unwrap();
+        let v = pairs
+            .iter()
+            .find(|(k, _)| k == "parameterSets")
+            .map(|(_, v)| v)
+            .unwrap();
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap())
+            .collect()
+    }
+
+    /// Helper: find `parameterSets` array on a sigGen/sigVer-shaped
+    /// cap (nested under `capabilities[0].parameterSets`).
+    fn nested_paramsets(cap: &JsonValue) -> Vec<&str> {
+        let pairs = cap.as_object().unwrap();
+        let caps_arr = pairs
+            .iter()
+            .find(|(k, _)| k == "capabilities")
+            .map(|(_, v)| v)
+            .unwrap()
+            .as_array()
+            .unwrap();
+        let first = caps_arr.first().unwrap();
+        let inner = first.as_object().unwrap();
+        let ps = inner
+            .iter()
+            .find(|(k, _)| k == "parameterSets")
+            .map(|(_, v)| v)
+            .unwrap();
+        ps.as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn slh_dsa_keygen_unfiltered_advertises_all_12_paramsets() {
+        let cap = slh_dsa_keygen_capability(None);
+        let sets = keygen_paramsets(&cap);
+        assert_eq!(sets.len(), 12, "expected 12 paramSets, got {sets:?}");
+        assert!(sets.contains(&"SLH-DSA-SHA2-128s"));
+        assert!(sets.contains(&"SLH-DSA-SHAKE-256f"));
+    }
+
+    #[test]
+    fn slh_dsa_keygen_filtered_emits_exactly_one_paramset() {
+        let cap = slh_dsa_keygen_capability(Some("SLH-DSA-SHA2-128s"));
+        let sets = keygen_paramsets(&cap);
+        assert_eq!(sets, vec!["SLH-DSA-SHA2-128s"]);
+    }
+
+    #[test]
+    fn slh_dsa_siggen_filtered_emits_exactly_one_paramset_nested() {
+        let cap = slh_dsa_siggen_capability(Some("SLH-DSA-SHAKE-192f"));
+        let sets = nested_paramsets(&cap);
+        assert_eq!(sets, vec!["SLH-DSA-SHAKE-192f"]);
+    }
+
+    #[test]
+    fn slh_dsa_sigver_filtered_emits_exactly_one_paramset_nested() {
+        let cap = slh_dsa_sigver_capability(Some("SLH-DSA-SHA2-256f"));
+        let sets = nested_paramsets(&cap);
+        assert_eq!(sets, vec!["SLH-DSA-SHA2-256f"]);
+    }
+
+    #[test]
+    fn slh_dsa_siggen_unfiltered_still_bundles_all_12() {
+        let cap = slh_dsa_siggen_capability(None);
+        let sets = nested_paramsets(&cap);
+        assert_eq!(sets.len(), 12);
+    }
+
+    #[test]
+    fn slh_dsa_sigver_unfiltered_still_bundles_all_12() {
+        let cap = slh_dsa_sigver_capability(None);
+        let sets = nested_paramsets(&cap);
+        assert_eq!(sets.len(), 12);
+    }
+
+    #[test]
+    fn is_slh_dsa_paramset_accepts_each_of_12() {
+        for name in [
+            "SLH-DSA-SHA2-128s",
+            "SLH-DSA-SHA2-128f",
+            "SLH-DSA-SHA2-192s",
+            "SLH-DSA-SHA2-192f",
+            "SLH-DSA-SHA2-256s",
+            "SLH-DSA-SHA2-256f",
+            "SLH-DSA-SHAKE-128s",
+            "SLH-DSA-SHAKE-128f",
+            "SLH-DSA-SHAKE-192s",
+            "SLH-DSA-SHAKE-192f",
+            "SLH-DSA-SHAKE-256s",
+            "SLH-DSA-SHAKE-256f",
+        ] {
+            assert!(is_slh_dsa_paramset(name), "expected {name} to be valid");
+        }
+    }
+
+    #[test]
+    fn is_slh_dsa_paramset_rejects_unknown_names() {
+        assert!(!is_slh_dsa_paramset("SLH-DSA-NOT-A-THING"));
+        assert!(!is_slh_dsa_paramset("slh-dsa-sha2-128s")); // case-sensitive
+        assert!(!is_slh_dsa_paramset(""));
+        assert!(!is_slh_dsa_paramset("SLH-DSA-SHA2-128")); // missing s/f suffix
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown SLH-DSA paramset")]
+    fn slh_dsa_keygen_panics_on_unknown_paramset() {
+        let _ = slh_dsa_keygen_capability(Some("not-a-real-name"));
+    }
 }
