@@ -1,12 +1,11 @@
 //! LMS ACVP handlers — `keyGen`, `sigGen`, and `sigVer` modes.
 //!
 //! **LMS** (`LMS` / `keyGen`, `sigGen`, `sigVer` / revision `1.0`):
-//! Stateful hash-based signature scheme per SP 800-208 (RFC 8554).
-//!
-//! Parameter set: `LMS_SHA256_M32_H10` / `LMOTS_SHA256_N32_W4`.
-//!
-//! Cap and dispatch shapes follow `draft-celi-acvp-lms` (single-pair
-//! `specificCapabilities` form — see `caps::lms_specific_capabilities`).
+//! Stateful hash-based signature scheme per SP 800-208 (RFC 8554 +
+//! RFC 8708). The full 80-pair grid is now dispatchable — 4 hash
+//! families × 5 tree heights × 4 Winternitz parameters. Each group's
+//! `(lmsMode, lmOtsMode)` strings route to the per-pair `oxicrypt_lms`
+//! module via a closed-form match (no runtime trait dispatch).
 //!
 //! Three modes for the complete signature lifecycle:
 //! - **KeyGen**: Generate a key pair from a server-supplied 32-byte
@@ -23,6 +22,11 @@
 //! - **SigVer**: Verify a signature against a server-supplied
 //!   `publicKey` (group-level per spec §8.3.1 Table 11) and per-test
 //!   `message` + `signature` per spec §8.3.2 Table 12.
+//!
+//! ACVTS time budget note: keyGen and sigGen at H = 25 require a full
+//! Merkle-tree walk (2^25 = 33M leaves) per call — minutes per case
+//! in debug, ~30 s in release. Run the harness in release mode for
+//! ACVTS sessions exercising H ≥ 20 variants.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -97,6 +101,2148 @@ impl AlgorithmHandler for LmsSigVerHandler {
     }
 }
 
+// ── Per-pair dispatch helpers ───────────────────────────────────────
+//
+// Each helper takes the group's `(lmsMode, lmOtsMode)` strings and
+// routes to the per-pair module's typed functions. Different pairs
+// have different `PUBLIC_KEY_LEN` / `SIGNATURE_LEN` array sizes; the
+// helpers normalize to `Vec<u8>` at the response boundary.
+
+#[allow(clippy::too_many_lines)]
+fn dispatch_keygen(
+    lms_mode: &str,
+    lmots_mode: &str,
+    seed_bytes: &[u8],
+    identifier: &[u8; 16],
+) -> Result<Vec<u8>, DispatchError> {
+    let pk: Vec<u8> = match (lms_mode, lmots_mode) {
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W1") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W2") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W4") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W8") => {
+            let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 32)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W1") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w1::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W2") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w2::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W4") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w4::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W8") => {
+            let seed: [u8; 24] = seed_bytes.try_into().map_err(|_| {
+                DispatchError::Crypto("LMS KeyGen: seed length mismatch (expected 24)")
+            })?;
+            let (_sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w8::keygen_from_parts(&seed, identifier);
+            pk.to_vec()
+        }
+        _ => {
+            return Err(DispatchError::Crypto(
+                "LMS KeyGen: unsupported (lmsMode, lmOtsMode) pair",
+            ));
+        }
+    };
+    Ok(pk)
+}
+
+/// SigGen dispatcher — returns `(pk_vec, signer)` where `signer` is a
+/// closure that consumes one message and produces its signature bytes.
+/// The closure owns the mutable per-pair `LmsPrivateKey` (which has
+/// type-distinct `seed` / `identifier` array sizes per pair), so the
+/// caller never needs to name the per-pair type at the call site.
+type LmsSigner = Box<dyn FnMut(&[u8]) -> Option<Vec<u8>>>;
+
+#[allow(clippy::too_many_lines)]
+fn dispatch_siggen(
+    lms_mode: &str,
+    lmots_mode: &str,
+    seed: &[u8; 32],
+) -> Result<(Vec<u8>, LmsSigner), DispatchError> {
+    let out: (Vec<u8>, LmsSigner) = match (lms_mode, lmots_mode) {
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m32_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_sha256_m24_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m32_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W1") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w1::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W2") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w2::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W4") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w4::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W8") => {
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w8::keygen_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| {
+                oxicrypt_lms::lms_shake_m24_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
+            });
+            (pk.to_vec(), signer)
+        }
+        _ => {
+            return Err(DispatchError::Crypto(
+                "LMS SigGen: unsupported (lmsMode, lmOtsMode) pair",
+            ));
+        }
+    };
+    Ok(out)
+}
+
+/// SigVer dispatcher — returns a closure that verifies one signature
+/// against the (already-parsed) per-pair public key. The closure
+/// captures a typed `[u8; PUBLIC_KEY_LEN]` per pair, so the caller's
+/// per-test loop stays uniform.
+type LmsVerifier = Box<dyn Fn(&[u8], &[u8]) -> bool>;
+
+#[allow(clippy::too_many_lines)]
+fn dispatch_sigver(
+    lms_mode: &str,
+    lmots_mode: &str,
+    pk_bytes: &[u8],
+) -> Result<LmsVerifier, DispatchError> {
+    let verifier: LmsVerifier =
+        match (lms_mode, lmots_mode) {
+            ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h5_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h5_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h5_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h5_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h5_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h5_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h5_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h5_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h5_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h5_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h5_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h5_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h10_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h10_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h10_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h10_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h10_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h10_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h10_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h10_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h10_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h10_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h10_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h10_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h15_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h15_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h15_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h15_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h15_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h15_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h15_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h15_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h15_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h15_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h15_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h15_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h20_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h20_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h20_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h20_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h20_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h20_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h20_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h20_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h20_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h20_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h20_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h20_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h25_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h25_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h25_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h25_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h25_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h25_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h25_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h25_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h25_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m32_h25_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m32_h25_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m32_h25_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h5_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h5_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h5_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h5_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h5_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h5_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h5_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h5_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h5_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h5_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h5_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h5_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h10_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h10_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h10_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h10_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h10_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h10_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h10_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h10_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h10_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h10_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h10_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h10_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h15_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h15_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h15_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h15_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h15_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h15_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h15_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h15_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h15_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h15_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h15_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h15_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h20_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h20_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h20_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h20_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h20_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h20_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h20_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h20_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h20_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h20_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h20_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h20_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h25_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h25_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h25_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h25_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h25_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h25_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h25_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h25_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h25_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_sha256_m24_h25_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_sha256_m24_h25_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_sha256_m24_h25_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h5_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h5_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h5_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h5_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h5_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h5_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h5_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h5_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h5_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h5_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h5_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h5_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h10_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h10_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h10_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h10_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h10_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h10_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h10_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h10_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h10_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h10_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h10_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h10_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h15_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h15_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h15_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h15_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h15_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h15_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h15_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h15_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h15_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h15_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h15_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h15_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h20_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h20_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h20_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h20_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h20_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h20_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h20_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h20_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h20_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h20_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h20_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h20_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h25_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h25_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h25_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h25_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h25_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h25_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h25_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h25_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h25_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m32_h25_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m32_h25_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m32_h25_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h5_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h5_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h5_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h5_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h5_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h5_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h5_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h5_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h5_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h5_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h5_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h5_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h10_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h10_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h10_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h10_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h10_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h10_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h10_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h10_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h10_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h10_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h10_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h10_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h15_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h15_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h15_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h15_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h15_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h15_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h15_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h15_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h15_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h15_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h15_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h15_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h20_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h20_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h20_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h20_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h20_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h20_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h20_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h20_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h20_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h20_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h20_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h20_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W1") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h25_w1::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h25_w1::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h25_w1::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W2") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h25_w2::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h25_w2::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h25_w2::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W4") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h25_w4::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h25_w4::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h25_w4::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W8") => {
+                let pk: [u8; oxicrypt_lms::lms_shake_m24_h25_w8::PUBLIC_KEY_LEN] = pk_bytes
+                    .try_into()
+                    .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+                Box::new(move |msg: &[u8], sig_bytes: &[u8]| {
+                    <[u8; oxicrypt_lms::lms_shake_m24_h25_w8::SIGNATURE_LEN]>::try_from(sig_bytes)
+                        .is_ok_and(|sig| {
+                            oxicrypt_lms::lms_shake_m24_h25_w8::verify_internal(&pk, msg, &sig)
+                        })
+                })
+            }
+            _ => {
+                return Err(DispatchError::Crypto(
+                    "LMS SigVer: unsupported (lmsMode, lmOtsMode) pair",
+                ));
+            }
+        };
+    Ok(verifier)
+}
+
 // ── KeyGen group driver ─────────────────────────────────────────────
 
 fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
@@ -113,6 +2259,15 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
+    let lms_mode = group
+        .get("lmsMode")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("lmsMode"))?;
+    let lmots_mode = group
+        .get("lmOtsMode")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("lmOtsMode"))?;
+
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
@@ -126,23 +2281,16 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .and_then(JsonValue::as_i64)
             .ok_or(DispatchError::MissingField("tcId"))?;
 
-        // Per lms §8.1.2 Table 8 (and RFC 8554 §5.3), the LMS keyGen
-        // test case carries both the OTS `seed` (32 B for SHA256
-        // variants) AND the public-key identifier `i` (16 B). The
-        // identifier is embedded in the resulting public key at bytes
-        // 8..24 and participates in the Merkle root computation, so
-        // the handler must call oxicrypt_lms::keygen_from_parts —
-        // which consumes both — rather than keygen_internal, which
-        // derives an identifier from the seed.
+        // Per draft-celi-acvp-lms §8.1.2 Table 8 the LMS keyGen test
+        // case carries both the OTS `seed` and the public-key
+        // identifier `i`. Their lengths are family-and-N-specific;
+        // the dispatcher validates them against the per-pair sizes
+        // at the typed match arm boundary.
         let seed_bytes = hex::decode(
             t.get("seed")
                 .and_then(JsonValue::as_str)
                 .ok_or(DispatchError::MissingField("seed"))?,
         )?;
-        let seed: [u8; 32] = seed_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| DispatchError::Crypto("LMS KeyGen: seed is not 32 bytes"))?;
 
         let i_bytes = hex::decode(
             t.get("i")
@@ -154,11 +2302,8 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .try_into()
             .map_err(|_| DispatchError::Crypto("LMS KeyGen: i is not 16 bytes"))?;
 
-        let (_sk, pk) = oxicrypt_lms::keygen_from_parts(&seed, &identifier);
+        let pk = dispatch_keygen(lms_mode, lmots_mode, &seed_bytes, &identifier)?;
 
-        // Response field name is `publicKey` per spec §9.1 Table 15 —
-        // NOT `pk` (ML-DSA / SLH-DSA precedent). LMS uses `publicKey`
-        // consistently across all three modes' input/output.
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
             (
@@ -177,21 +2322,6 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 // ── SigGen group driver ─────────────────────────────────────────────
 
 /// Derive a deterministic 32-byte seed from a test group's `tgId`.
-///
-/// The 28-byte ASCII prefix `b"oxicrypt-lms-acvp-handler-tg"` is a
-/// self-describing marker that names the producer; the trailing 4
-/// bytes carry `tgId` in big-endian. Each group gets a distinct
-/// key (avoiding leaf-state collision across groups in the same
-/// prompt), and identical prompts produce identical responses —
-/// the harness never depends on entropy for sigGen, so a replay of
-/// the same prompt JSON yields the same publicKey + signatures.
-///
-/// `tgId` is a positive integer in ACVP and fits comfortably in
-/// `u32` (vector sets carry tens-to-hundreds of groups, far below
-/// `u32::MAX`). Out-of-range inputs are a protocol violation; the
-/// `Result` return surfaces them as a structured dispatch error
-/// rather than silently colliding distinct invalid tgIds onto a
-/// shared seed value.
 fn lms_siggen_seed_from_tg_id(tg_id: i64) -> Result<[u8; 32], DispatchError> {
     const PREFIX: &[u8; 28] = b"oxicrypt-lms-acvp-handler-tg";
     let tg_u32 = u32::try_from(tg_id).map_err(|_| {
@@ -217,19 +2347,22 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
+    let lms_mode = group
+        .get("lmsMode")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("lmsMode"))?;
+    let lmots_mode = group
+        .get("lmOtsMode")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("lmOtsMode"))?;
+
     let tests = group
         .get("tests")
         .and_then(JsonValue::as_array)
         .ok_or(DispatchError::MissingField("tests"))?;
 
-    // Per `draft-celi-acvp-lms §8.2.1` Table 9, the sigGen prompt
-    // carries no key information at the group or test-case level —
-    // only `lmsMode`, `lmOtsMode`, and per-test `message`. The IUT
-    // must generate its own key and supply it back in the response
-    // at group level (§9.2 Table 16). The seed is derived from
-    // `tgId` for replay-stable determinism.
     let seed = lms_siggen_seed_from_tg_id(tg_id)?;
-    let (mut sk, pk) = oxicrypt_lms::keygen_internal(&seed);
+    let (pk, mut signer) = dispatch_siggen(lms_mode, lmots_mode, &seed)?;
 
     let mut results: Vec<JsonValue> = Vec::with_capacity(tests.len());
 
@@ -245,7 +2378,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("message"))?,
         )?;
 
-        let sig = oxicrypt_lms::sign_internal(&mut sk, &message).ok_or(DispatchError::Crypto(
+        let sig = signer(&message).ok_or(DispatchError::Crypto(
             "LMS SigGen: signing failed (key exhausted?)",
         ))?;
 
@@ -258,9 +2391,6 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         ]));
     }
 
-    // Group-level `publicKey` per spec §9.2 Table 16 — the IUT-
-    // generated public key whose tree the server uses to verify
-    // the per-test signatures.
     Ok(JsonValue::Object(vec![
         ("tgId".to_string(), JsonValue::Number(tg_id)),
         (
@@ -287,19 +2417,23 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         return Err(DispatchError::UnsupportedTestType(test_type.to_string()));
     }
 
-    // Group-level `publicKey` per spec §8.3.1 Table 11. (Field
-    // name is `publicKey`, not `pk` — different from ML-DSA / SLH-DSA
-    // sigVer which use `pk`.)
+    let lms_mode = group
+        .get("lmsMode")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("lmsMode"))?;
+    let lmots_mode = group
+        .get("lmOtsMode")
+        .and_then(JsonValue::as_str)
+        .ok_or(DispatchError::MissingField("lmOtsMode"))?;
+
     let pk_bytes = hex::decode(
         group
             .get("publicKey")
             .and_then(JsonValue::as_str)
             .ok_or(DispatchError::MissingField("publicKey"))?,
     )?;
-    let pk: [u8; oxicrypt_lms::PUBLIC_KEY_LEN] = pk_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| DispatchError::Crypto("LMS SigVer: publicKey has wrong length"))?;
+
+    let verifier = dispatch_sigver(lms_mode, lmots_mode, &pk_bytes)?;
 
     let tests = group
         .get("tests")
@@ -326,12 +2460,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("signature"))?,
         )?;
 
-        let passed =
-            if let Ok(sig) = <[u8; oxicrypt_lms::SIGNATURE_LEN]>::try_from(sig_bytes.as_slice()) {
-                oxicrypt_lms::verify_internal(&pk, &message, &sig)
-            } else {
-                false
-            };
+        let passed = verifier(&message, &sig_bytes);
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),

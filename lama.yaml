@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.10.0"
+  version: "0.11.0"
   description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
   repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
@@ -165,7 +165,7 @@ capabilities:
       - "ML-DSA-65 keygen/sign/verify (Unrestricted only)"
       - "ML-DSA-87 keygen/sign/verify"
       - "SLH-DSA full family (SHA2-128s/f, SHA2-192s/f, SHA2-256s/f, SHAKE-128s/f, SHAKE-192s/f, SHAKE-256s/f) keygen/sign/verify (stateless, FIPS 205)"
-      - "LMS LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 sign/verify/keygen (stateful)"
+      - "LMS — complete SP 800-208 §A.3 grid: 80 (LMS, LM-OTS) pairs sign/verify/keygen (stateful); 4 hash families × 5 tree heights × 4 Winternitz parameters; CNSA 2.0 / CNSA 1.0 restrict to 8 pairs (SHA-256/M=32 × H{10,15,20,25} × W{4,8})"
       - "XMSS XMSS-SHA2_10_256 sign/verify/keygen (stateful)"
     standards:
       - "FIPS 186-5"
@@ -284,11 +284,15 @@ capabilities:
       reusing a leaf is a catastrophic break. The caller is the SOLE
       custodian of the private-key state and MUST persist the
       updated private-key blob to durable storage after every sign
-      before using the signature. Each parameter set in this round
-      (LMS_SHA256_M32_H10 and XMSS-SHA2_10_256) supports 1024
-      signatures per key.
+      before using the signature. LMS ships the complete SP 800-208
+      §A.3 grid (80 pairs from 4 hash families × 5 tree heights × 4
+      Winternitz parameters; signatures-per-key ranges from 32 at H=5
+      to 33,554,432 at H=25). Profile gating restricts CNSA 2.0 and
+      CNSA 1.0 to the 8-pair subset SHA-256/M=32 × H{10,15,20,25} ×
+      W{4,8}; all 80 pairs remain available under Unrestricted. XMSS
+      ships XMSS-SHA2_10_256 (1024 signatures per key).
     algorithms:
-      - "LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 (SP 800-208, RFC 8554)"
+      - "LMS — SP 800-208 §A.3 grid, 80 (LMS, LM-OTS) pairs (RFC 8554, RFC 8708): 4 hash families × 5 tree heights × 4 Winternitz parameters"
       - "XMSS-SHA2_10_256 (SP 800-208, RFC 8391)"
     operations:
       - "keygen"

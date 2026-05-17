@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.10.0"
+  version: "0.11.0"
   description: >-
     Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
     NIST-approved classical algorithms with a formal module boundary,
@@ -204,8 +204,12 @@ modules:
 
   - name: oxicrypt-lms
     description: >-
-      LMS hash-based stateful signatures (SP 800-208 / RFC 8554).
-      Parameter set LMS_SHA256_M32_H10 with LMOTS_SHA256_N32_W4.
+      LMS hash-based stateful signatures (SP 800-208, RFC 8554, RFC 8708).
+      Complete §A.3 grid: 80 (LMS, LM-OTS) pairs across 4 hash families
+      × 5 tree heights × 4 Winternitz parameters. The H10/W4 baseline
+      (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) is the LmsPrivateKey
+      type listed below; the other 79 pairs each carry their own
+      per-pair LmsPrivateKey type — macro-uniform shape, distinct types.
       Stateful key management: each key can sign at most 1024 messages.
       Caller is responsible for persisting private-key state between
       sign calls to prevent one-time key reuse.
@@ -432,11 +436,17 @@ types:
     kind: enum
     description: >
       Per-algorithm-and-parameter enumeration of every approved service.
-      179 variants as of Batch 4 (SLH-DSA expansion), including 36
-      per-parameter-set entries for SLH-DSA's 12 FIPS 205 parameter
-      sets × {Keygen, Sign, Verify}. Used with require_allowed() to
-      enforce profile restrictions. See the crate source for the full
-      list.
+      337 variants after the LMS expansion: includes 36 per-parameter-set
+      entries for SLH-DSA's 12 FIPS 205 parameter sets × {Keygen, Sign,
+      Verify} at discriminants 320-355, and 160 per-pair entries for
+      LMS's 80 SP 800-208 §A.3 (LMS, LM-OTS) pairs × {Sign, Verify} at
+      discriminants 500-659 (one Sign + one Verify per pair, alternating;
+      4 hash families × 5 tree heights × 4 Winternitz parameters; the 8
+      CNSA-2-permitted pairs land at SHA-256/M=32 × H{10,15,20,25} ×
+      W{4,8}). Used with require_allowed() to enforce profile
+      restrictions. See the crate source for the full list and
+      `lms_gating_is_exhaustive_across_all_160_variants` for the
+      audit-grade enumeration test.
 
   - name: KatEntry
     module: oxicrypt-module
@@ -8222,12 +8232,33 @@ functions:
     returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
     security: { constant_time: false, handles_secrets: false, fips_approved: true }
 
+  # ── LMS per-pair family ─────────────────────────────────────────
+  # The 3 generic `oxi_lms_*` fns below are baseline back-compat
+  # symbols dispatching to LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4.
+  # In addition the C ABI ships 240 per-pair fns covering the full
+  # SP 800-208 §A.3 grid: 80 pairs × {keygen, sign, verify}, named
+  # `oxi_lms_<family>_m<N>_h<H>_w<W>_<op>` where:
+  #   - family ∈ {sha256, shake}
+  #   - N ∈ {24, 32}  (hash output bytes)
+  #   - H ∈ {5, 10, 15, 20, 25}  (tree height; 2^H signatures per key)
+  #   - W ∈ {1, 2, 4, 8}  (Winternitz parameter)
+  # Each per-pair fn shares the semantic invariants of the generic
+  # baseline below — only the byte counts differ per pair. Refer to
+  # `crates/oxicrypt-ffi/include/oxicrypt.h` for the full set of 240
+  # per-pair signatures; per-pair rustdoc in
+  # `crates/oxicrypt-ffi/src/lib.rs` carries explicit byte counts.
+  # CNSA 2.0 / CNSA 1.0 restricts to `SHA-256/M=32 × H∈{10,15,20,25}
+  # × W∈{4,8}`; other pairs are Unrestricted-only and the gate
+  # surfaces as `AlgorithmRestricted = 6` on the C return code.
+
   - name: oxi_lms_keygen
     module: oxicrypt-ffi
     description: >-
       Generate an LMS key pair (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4
       parameter set per SP 800-208 / RFC 8554) from a 32-byte
-      caller-supplied seed. Reads exactly 32 bytes from `xi_ptr`,
+      caller-supplied seed. Back-compat baseline entry — dispatches
+      to `oxicrypt_lms::lms_sha256_m32_h10_w4::keygen`. For other
+      pairs in the 80-pair grid see the per-pair section above. Reads exactly 32 bytes from `xi_ptr`,
       deterministically derives the tree seed (`SHA-256(xi || 0x00)`)
       and 16-byte tree identifier `I` (`SHA-256(xi || 0x01)[0..16]`),
       computes the Merkle tree root (1024 leaves), and writes the

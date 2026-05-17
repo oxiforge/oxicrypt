@@ -1514,11 +1514,330 @@ pub fn slh_dsa_sigver_capability(paramset_filter: Option<&str>) -> JsonValue {
 /// pair, `specificCapabilities` is more explicit-intent and
 /// matches `feedback_caps_match_handler_subset` exactly. The two
 /// forms cannot be advertised together (spec note above Table 4).
+#[allow(clippy::too_many_lines)]
 fn lms_specific_capabilities() -> JsonValue {
-    JsonValue::Array(vec![obj(vec![
-        ("lmsMode", str_val("LMS_SHA256_M32_H10")),
-        ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
-    ])])
+    JsonValue::Array(vec![
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHA256_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHA256_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M32_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N32_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H5")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H10")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H15")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H20")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W8")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W1")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W2")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W4")),
+        ]),
+        obj(vec![
+            ("lmsMode", str_val("LMS_SHAKE_M24_H25")),
+            ("lmOtsMode", str_val("LMOTS_SHAKE_N24_W8")),
+        ]),
+    ])
 }
 
 /// Build an ACVP registration block for LMS / keyGen / 1.0.
