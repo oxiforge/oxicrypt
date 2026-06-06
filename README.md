@@ -23,7 +23,7 @@ cargo build -p oxicrypt-integrity
 # Run all 183 power-up self-tests + software integrity check
 ./target/debug/acvp-harness
 
-# Run the full test suite (120 ACVP round-trip + 7 CAVP SHS + unit tests)
+# Run the full test suite (121 ACVP round-trip + 7 CAVP SHS + unit tests)
 cargo test --workspace
 ```
 
@@ -122,8 +122,8 @@ adoption.
 
 **`no_std` by default.** The core algorithm crates use `#![no_std]` with
 `alloc` where necessary, making them suitable for embedded and `wasm32` targets.
-The module crate and integrity crate use `std` for file I/O and self-test
-orchestration.
+The integrity crate uses `std` for file I/O and self-test
+orchestration; the module crate is `#![no_std]`.
 
 **Constant-time discipline.** At Level 1, FIPS 140-3 does not require
 side-channel resistance, but oxicrypt discloses its posture and actively
@@ -259,7 +259,7 @@ DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — complete SP 800-208 §A.3 grid (80 pairs) — and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
 across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
-handlers, 183 power-up self-tests, 127 ACVP/CAVP round-trip tests — all
+handlers, 183 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
 green.
 
 **Phase 3 (current)** — ACVP validation. Demo-server dry run, gap

@@ -1,9 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────
 # oxicrypt — LAMA discovery file
 #
-# This is the repository-root entry point for AI coding agents.
-# It provides a quick-evaluation summary of what oxicrypt does and
-# where to find the full API manifest.
+# Repository-root entry point for AI coding agents: a concise, 10-second
+# evaluation of what oxicrypt does and where to find the full API manifest.
+# Per the LAMA spec this file is a SUMMARY + POINTER — every function
+# signature, parameter constraint, error type, precondition, state machine,
+# and pitfall lives in the full manifest referenced at the bottom.
 #
 # Specification: https://github.com/lamaspec/lama
 # ─────────────────────────────────────────────────────────────────────
@@ -25,561 +27,68 @@ library:
 
 capabilities:
   - category: "Hashing"
-    algorithms:
-      - "SHA-1"
-      - "SHA-224"
-      - "SHA-256"
-      - "SHA-384"
-      - "SHA-512"
-      - "SHA-512/224"
-      - "SHA-512/256"
-      - "SHA3-224"
-      - "SHA3-256"
-      - "SHA3-384"
-      - "SHA3-512"
-      - "SHAKE128"
-      - "SHAKE256"
-    standards:
-      - "FIPS 180-4"
-      - "FIPS 202"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_sha::sha256;
-        use oxicrypt_module::initialize_with_tests;
-
-        initialize_with_tests(oxicrypt_sha::KATS).unwrap();
-        let digest = sha256(b"hello world").unwrap();
-        assert_eq!(digest.len(), 32);
+    algorithms: ["SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512", "SHA-512/224", "SHA-512/256", "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512", "SHAKE128", "SHAKE256"]
+    standards: ["FIPS 180-4", "FIPS 202"]
 
   - category: "Extendable-output functions (XOF)"
-    algorithms:
-      - "cSHAKE128"
-      - "cSHAKE256"
-      - "KMAC128"
-      - "KMAC256"
-      - "TupleHash128"
-      - "TupleHash256"
-      - "ParallelHash128"
-      - "ParallelHash256"
-    standards:
-      - "SP 800-185"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_xof::{shake256, kmac256};
-        use oxicrypt_module::initialize_with_tests;
-
-        initialize_with_tests(oxicrypt_xof::KATS).unwrap();
-        let hash: [u8; 32] = shake256(b"input data").unwrap();
-        let tag: [u8; 32] = kmac256(b"my-key", b"input", b"").unwrap();
+    algorithms: ["cSHAKE128", "cSHAKE256", "KMAC128", "KMAC256", "TupleHash128", "TupleHash256", "ParallelHash128", "ParallelHash256"]
+    standards: ["SP 800-185"]
 
   - category: "Message authentication"
-    algorithms:
-      - "HMAC (all 11 approved hashes)"
-      - "AES-CMAC (128/192/256)"
-    standards:
-      - "FIPS 198-1"
-      - "SP 800-38B"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_hmac::HmacSha256;
-        use oxicrypt_module::initialize_with_tests;
-
-        initialize_with_tests(oxicrypt_hmac::KATS).unwrap();
-        let mut mac = HmacSha256::new(b"secret-key").unwrap();
-        mac.update(b"message to authenticate");
-        let tag = mac.finalize();
+    algorithms: ["HMAC (all approved hashes)", "AES-CMAC (128/192/256)"]
+    standards: ["FIPS 198-1", "SP 800-38B"]
 
   - category: "Symmetric encryption"
-    algorithms:
-      - "AES-128/192/256-ECB"
-      - "AES-128/192/256-CBC"
-      - "AES-128/192/256-CTR"
-      - "AES-128/192/256-GCM"
-      - "AES-128/192/256-CCM"
-      - "AES-128/192/256-KW"
-      - "AES-192-KWP"
-    standards:
-      - "FIPS 197"
-      - "SP 800-38A"
-      - "SP 800-38C"
-      - "SP 800-38D"
-      - "SP 800-38F"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_aes::{Aes256Key, gcm_encrypt};
-        use oxicrypt_module::initialize_with_tests;
-
-        initialize_with_tests(oxicrypt_aes::KATS).unwrap();
-        let key = Aes256Key::new(&[0u8; 32])?;  // use a real key
-        let iv = [0u8; 12];                     // use a unique nonce
-        let mut ct = [0u8; 16];
-        let mut tag = [0u8; 16];
-        gcm_encrypt(&key, &iv, b"", b"hello, world!   ", &mut ct, &mut tag).unwrap();
+    algorithms: ["AES-128/192/256 in ECB, CBC, CTR, GCM, CCM, KW, KWP"]
+    standards: ["FIPS 197", "SP 800-38A", "SP 800-38C", "SP 800-38D", "SP 800-38F"]
 
   - category: "Random number generation"
-    algorithms:
-      - "CTR_DRBG (AES-128/192/256)"
-      - "Hash_DRBG (SHA-256/384/512)"
-      - "HMAC_DRBG (SHA-256/384/512)"
-    standards:
-      - "SP 800-90A Rev. 1"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_drbg::HmacDrbgSha256;
-        use oxicrypt_module::initialize_with_tests;
-
-        initialize_with_tests(oxicrypt_drbg::KATS).unwrap();
-        let mut rng = HmacDrbgSha256::new();
-        rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
-        let mut output = [0u8; 32];
-        rng.generate(None, &mut output).unwrap();
+    algorithms: ["CTR_DRBG (AES-128/192/256)", "Hash_DRBG (SHA-256/384/512)", "HMAC_DRBG (SHA-256/384/512)"]
+    standards: ["SP 800-90A Rev. 1"]
 
   - category: "Key derivation"
-    algorithms:
-      - "SP 800-108r1 KBKDF (counter/feedback/double-pipeline)"
-      - "KDA-HKDF (SP 800-56Cr2)"
-      - "TLS 1.2 KDF"
-      - "TLS 1.3 KDF (HKDF-Expand-Label, Derive-Secret)"
-      - "PBKDF2"
-    standards:
-      - "SP 800-108"
-      - "SP 800-56Cr2"
-      - "SP 800-132"
-      - "SP 800-135r1"
-      - "RFC 8446"
+    algorithms: ["SP 800-108r1 KBKDF (counter/feedback/double-pipeline)", "KDA-HKDF (SP 800-56Cr2)", "TLS 1.2 KDF", "TLS 1.3 KDF", "PBKDF2"]
+    standards: ["SP 800-108", "SP 800-56Cr2", "SP 800-132", "SP 800-135r1", "RFC 8446"]
 
   - category: "Digital signatures"
-    algorithms:
-      - "ECDSA P-256"
-      - "ECDSA P-384"
-      - "Ed25519"
-      - "RSA-2048 PKCS#1 v1.5"
-      - "RSA-2048 PSS"
-      - "RSA-3072/4096 PKCS#1 v1.5 / PSS sign/verify, keygen with CRT + Bellcore"
-      - "ML-DSA-44 keygen/sign/verify (Unrestricted only)"
-      - "ML-DSA-65 keygen/sign/verify (Unrestricted only)"
-      - "ML-DSA-87 keygen/sign/verify"
-      - "SLH-DSA full family (SHA2-128s/f, SHA2-192s/f, SHA2-256s/f, SHAKE-128s/f, SHAKE-192s/f, SHAKE-256s/f) keygen/sign/verify (stateless, FIPS 205)"
-      - "LMS — complete SP 800-208 §A.3 grid: 80 (LMS, LM-OTS) pairs sign/verify/keygen (stateful); 4 hash families × 5 tree heights × 4 Winternitz parameters; CNSA 2.0 / CNSA 1.0 restrict to 8 pairs (SHA-256/M=32 × H{10,15,20,25} × W{4,8})"
-      - "XMSS XMSS-SHA2_10_256 sign/verify/keygen (stateful)"
-    standards:
-      - "FIPS 186-5"
-      - "FIPS 204"
-      - "FIPS 205"
-      - "SP 800-208"
-      - "RFC 8032"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_eddsa::{Ed25519PrivateKey, verify};
-        use oxicrypt_drbg::HmacDrbgSha256;
-        use oxicrypt_module::initialize_with_tests;
-
-        // init module (all KATs), then generate a key pair
-        initialize_with_tests(oxicrypt_eddsa::KATS).unwrap();
-        let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
-        let sk = Ed25519PrivateKey::generate(&mut drbg).unwrap();
-        let sig = sk.sign(b"message to sign").unwrap();
-        assert!(verify(&sk.public_key(), b"message to sign", &sig).is_ok());
+    algorithms: ["ECDSA P-256/P-384", "Ed25519", "RSA-2048/3072/4096 (PKCS#1 v1.5, PSS)", "ML-DSA-44/65/87", "SLH-DSA (SHA2 + SHAKE, all 12 FIPS 205 parameter sets)"]
+    standards: ["FIPS 186-5", "FIPS 204", "FIPS 205", "RFC 8032"]
 
   - category: "Key agreement"
-    algorithms:
-      - "ECDH P-256"
-      - "ECDH P-384"
-      - "DH-3072 (RFC 3526 Group 15)"
-    standards:
-      - "SP 800-56Ar3"
-      - "RFC 3526"
+    algorithms: ["ECDH P-256/P-384", "DH-3072 (RFC 3526 Group 15)"]
+    standards: ["SP 800-56Ar3", "RFC 3526"]
 
   - category: "Key encapsulation"
-    algorithms:
-      - "ML-KEM-512 (FIPS 203)"
-      - "ML-KEM-768 (FIPS 203)"
-      - "ML-KEM-1024 (FIPS 203)"
-    operations:
-      - "keygen"
-      - "encapsulate"
-      - "decapsulate"
-    crate: "oxicrypt-ml-kem"
-    standards:
-      - "FIPS 203"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_ml_kem::{keygen, encapsulate, decapsulate, SEED_LEN};
-        use oxicrypt_drbg::HmacDrbgSha256;
-
-        let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
-        let mut d = [0u8; SEED_LEN];
-        let mut z = [0u8; SEED_LEN];
-        drbg.generate(None, &mut d).unwrap();
-        drbg.generate(None, &mut z).unwrap();
-        let (ek, dk) = keygen(&d, &z).unwrap();
-        let mut m = [0u8; SEED_LEN];
-        drbg.generate(None, &mut m).unwrap();
-        let (ss_a, ct) = encapsulate(&ek, &m).unwrap();
-        let ss_b = decapsulate(&dk, &ct).unwrap();
-        assert_eq!(ss_a, ss_b);
-
-  - category: "Post-quantum signatures (hash-based)"
-    algorithms:
-      - "SLH-DSA-SHA2-128s (FIPS 205)"
-      - "SLH-DSA-SHA2-128f (FIPS 205)"
-      - "SLH-DSA-SHA2-192s (FIPS 205)"
-      - "SLH-DSA-SHA2-192f (FIPS 205)"
-      - "SLH-DSA-SHA2-256s (FIPS 205)"
-      - "SLH-DSA-SHA2-256f (FIPS 205)"
-      - "SLH-DSA-SHAKE-128s (FIPS 205)"
-      - "SLH-DSA-SHAKE-128f (FIPS 205)"
-      - "SLH-DSA-SHAKE-192s (FIPS 205)"
-      - "SLH-DSA-SHAKE-192f (FIPS 205)"
-      - "SLH-DSA-SHAKE-256s (FIPS 205)"
-      - "SLH-DSA-SHAKE-256f (FIPS 205)"
-    operations:
-      - "keygen"
-      - "sign"
-      - "verify"
-    crate: "oxicrypt-slh-dsa"
-    note: >
-      Each variant lives in its own submodule
-      (`oxicrypt_slh_dsa::slh_dsa_<sha2|shake>_<level><s|f>`); the crate
-      root re-exports the SHA2-256s surface for backward compatibility.
-      All 12 FIPS 205 §11 parameter sets are emitted from a single
-      declarative macro (`slh_dsa_impl!`) with hash-family dispatch via
-      `__hash_family_setup!` and seven per-construct sub-macros — each
-      variant monomorphises to one path at macro-expansion time.
-    standards:
-      - "FIPS 205"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_slh_dsa::{keygen, sign, verify};
-        use oxicrypt_drbg::HmacDrbgSha256;
-
-        let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
-        let mut xi = [0u8; 96];
-        drbg.generate(None, &mut xi).unwrap();
-        let (pk, sk) = keygen(&xi).unwrap();
-        let msg = b"hello SLH-DSA";
-        let ctx = b"";
-        let sig = sign(&sk, msg, ctx).unwrap();
-        verify(&pk, msg, ctx, &sig).unwrap();
-
-        // Other variants accessible directly:
-        // use oxicrypt_slh_dsa::slh_dsa_sha2_128s::{keygen, sign, verify};
+    algorithms: ["ML-KEM-512/768/1024"]
+    standards: ["FIPS 203"]
 
   - category: "Post-quantum signatures (stateful hash-based)"
-    note: >
-      LMS and XMSS are stateful hash-based signature schemes approved
-      by SP 800-208 for FIPS use and named in CNSA 2.0 for firmware
-      signing. Each Merkle-tree leaf may sign exactly one message;
-      reusing a leaf is a catastrophic break. The caller is the SOLE
-      custodian of the private-key state and MUST persist the
-      updated private-key blob to durable storage after every sign
-      before using the signature. LMS ships the complete SP 800-208
-      §A.3 grid (80 pairs from 4 hash families × 5 tree heights × 4
-      Winternitz parameters; signatures-per-key ranges from 32 at H=5
-      to 33,554,432 at H=25). Profile gating restricts CNSA 2.0 and
-      CNSA 1.0 to the 8-pair subset SHA-256/M=32 × H{10,15,20,25} ×
-      W{4,8}; all 80 pairs remain available under Unrestricted. XMSS
-      ships XMSS-SHA2_10_256 (1024 signatures per key).
-    algorithms:
-      - "LMS — SP 800-208 §A.3 grid, 80 (LMS, LM-OTS) pairs (RFC 8554, RFC 8708): 4 hash families × 5 tree heights × 4 Winternitz parameters"
-      - "XMSS-SHA2_10_256 (SP 800-208, RFC 8391)"
-    operations:
-      - "keygen"
-      - "sign"
-      - "verify"
-    crates:
-      - "oxicrypt-lms"
-      - "oxicrypt-xmss"
-    standards:
-      - "SP 800-208"
-      - "RFC 8554"
-      - "RFC 8391"
-    quickstart:
-      language: "rust"
-      code: |
-        use oxicrypt_lms::{keygen, sign, verify};
-        use oxicrypt_drbg::HmacDrbgSha256;
-
-        let mut drbg = HmacDrbgSha256::new();
-        drbg.instantiate(&[0xABu8; 32], &[0x01u8; 16], b"").unwrap();
-        let mut xi = [0u8; 32];
-        drbg.generate(None, &mut xi).unwrap();
-        let (mut sk, pk) = keygen(&xi).unwrap();
-        let sig = sign(&mut sk, b"hello LMS").unwrap();
-        // sk is now advanced by one leaf — persist sk.to_bytes() before using sig.
-        verify(&pk, b"hello LMS", &sig).unwrap();
+    # Stateful: each Merkle-tree leaf signs exactly once; the caller MUST
+    # persist the advanced private key after every sign. Full pitfall
+    # documentation in the manifest.
+    algorithms: ["LMS (SP 800-208 §A.3 grid, stateful)", "XMSS-SHA2_10_256 (stateful)"]
+    standards: ["SP 800-208", "RFC 8554", "RFC 8391"]
 
   - category: "Asymmetric encryption"
-    algorithms:
-      - "RSA-2048 OAEP"
-      - "RSA-3072/4096 OAEP encrypt/decrypt, keygen with CRT + Bellcore"
-    standards:
-      - "SP 800-56Br2"
+    algorithms: ["RSA-2048/3072/4096 OAEP"]
+    standards: ["SP 800-56Br2"]
 
   - category: "Module integrity"
-    algorithms:
-      - "HMAC-SHA-256 software integrity check"
-    standards:
-      - "FIPS 140-3 IG 10.3.A"
+    algorithms: ["HMAC-SHA-256 software integrity check"]
+    standards: ["FIPS 140-3 IG 10.3.A"]
 
-  - category: "ACVP harness and transport"
-    note: >
-      acvp-harness binary processes NIST ACVP vector sets offline and
-      can run end-to-end sessions against the ACVP demo server. 78
-      registered algorithm handlers. The demo-run subcommand uses
-      TOTP-signed JWT login and curl-based HTTPS with mutual TLS.
-    entry_points:
-      - "acvp-harness dispatch <prompt.json> <response.json>"
-      - "acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>"
-      - "acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>"
-
-  - category: "C ABI"
-    note: >
-      oxicrypt-ffi exposes extern "C" wrappers as cdylib and staticlib.
-      All symbols use the `oxi_` prefix. See include/oxicrypt.h for the
-      C header (cbindgen-generated, committed). Status codes follow the
-      OxiResult enum: 0 = success, distinct non-zero discriminants per
-      failure mode (1-7 module errors, 10-11 FFI errors, 20-27 AES-mode
-      errors, 255 internal). oxi_init(int profile) is the single
-      initialisation entry point — 0=Unrestricted, 1=CNSA 2.0, 2=CNSA 1.0;
-      unknown values return OxiResult::InvalidInput (=5). AES-256-GCM
-      handle-based exposure (OxiAes256Key opaque) lives in oxi_aes256_*.
-      The handle is allocated by oxi_aes256_new(out_handle, key_bytes_32),
-      released by oxi_aes256_free(NULL-safe), and used as a const handle
-      argument to all AES-256 mode entry points (GCM, CBC, CTR, CCM,
-      CMAC, KW, KWP). AAD-NULL with aad_len=0 is allowed for AEAD modes
-      (F9, SP 800-38D logical-by-length); tag mismatch on AEAD decrypt
-      returns OxiResult::TagMismatch=22 with undefined plaintext-buffer
-      contents. CBC inputs/outputs are block-aligned (caller-managed
-      padding); CTR is symmetric (single oxi_aes256_ctr entry point);
-      CCM accepts caller-chosen nonce length 7..=13 and tag length
-      {4,6,8,10,12,14,16}; CMAC tag is fixed 16 bytes; KW requires
-      plaintext multiples of 8 (≥16 bytes); KWP accepts any 1..=2^32-1
-      byte plaintext and reports recovered length on unwrap through an
-      out_len pointer.
-    entry_points:
-      - "oxi_init"
-      - "oxi_active_profile"
-      - "oxi_is_operational"
-      - "oxi_sha256"
-      - "oxi_sha512"
-      - "oxi_sha224"
-      - "oxi_sha384"
-      - "oxi_sha512_224"
-      - "oxi_sha512_256"
-      - "oxi_sha3_224"
-      - "oxi_sha3_256"
-      - "oxi_sha3_384"
-      - "oxi_sha3_512"
-      - "oxi_hmac_sha256"
-      - "oxi_hmac_sha384"
-      - "oxi_hmac_sha512"
-      - "oxi_hmac_sha3_224"
-      - "oxi_hmac_sha3_256"
-      - "oxi_hmac_sha3_384"
-      - "oxi_hmac_sha3_512"
-      - "oxi_aes256_new"
-      - "oxi_aes256_free"
-      - "oxi_aes256_gcm_encrypt"
-      - "oxi_aes256_gcm_decrypt"
-      - "oxi_aes256_cbc_encrypt"
-      - "oxi_aes256_cbc_decrypt"
-      - "oxi_aes256_ctr"
-      - "oxi_aes256_ccm_encrypt"
-      - "oxi_aes256_ccm_decrypt"
-      - "oxi_aes256_cmac"
-      - "oxi_aes256_kw_wrap"
-      - "oxi_aes256_kw_unwrap"
-      - "oxi_aes256_kwp_wrap"
-      - "oxi_aes256_kwp_unwrap"
-      - "oxi_hkdf_sha256_extract"
-      - "oxi_hkdf_sha256_expand"
-      - "oxi_hkdf_sha384_extract"
-      - "oxi_hkdf_sha384_expand"
-      - "oxi_hkdf_sha512_extract"
-      - "oxi_hkdf_sha512_expand"
-      - "oxi_tls13_hkdf_expand_label_sha256"
-      - "oxi_tls13_hkdf_expand_label_sha384"
-      - "oxi_tls13_derive_secret_sha256"
-      - "oxi_tls13_derive_secret_sha384"
-      - "oxi_ecdsa_p256_derive_public_key"
-      - "oxi_ecdsa_p256_sign_with_k"
-      - "oxi_ecdsa_p256_verify"
-      - "oxi_ecdsa_p256_private_key_new_generate"
-      - "oxi_ecdsa_p256_private_key_free"
-      - "oxi_ecdsa_p256_private_key_public_key"
-      - "oxi_ecdsa_p256_private_key_sign_sha256"
-      - "oxi_ecdsa_p384_derive_public_key"
-      - "oxi_ecdsa_p384_sign_with_k"
-      - "oxi_ecdsa_p384_verify"
-      - "oxi_ecdsa_p384_private_key_new_generate"
-      - "oxi_ecdsa_p384_private_key_free"
-      - "oxi_ecdsa_p384_private_key_public_key"
-      - "oxi_ecdsa_p384_private_key_sign_sha384"
-      - "oxi_ed25519_keygen"
-      - "oxi_ed25519_sign"
-      - "oxi_ed25519_verify"
-      - "oxi_ecdh_p256_compute_shared_secret"
-      - "oxi_ecdh_p384_compute_shared_secret"
-      - "oxi_ecdh_p256_generate_keypair"
-      - "oxi_ecdh_p384_generate_keypair"
-      - "oxi_dh3072_compute_shared_secret"
-      - "oxi_dh3072_generate_keypair"
-      - "oxi_rsa_pkcs1_v15_verify_2048_sha256"
-      - "oxi_rsa_pss_verify_2048_sha256"
-      - "oxi_rsa_pkcs1_v15_verify_3072_sha256"
-      - "oxi_rsa_pss_verify_3072_sha256"
-      - "oxi_rsa_pkcs1_v15_verify_4096_sha256"
-      - "oxi_rsa_pss_verify_4096_sha256"
-      - "oxi_rsa_2048_private_key_new_generate"
-      - "oxi_rsa_2048_private_key_free"
-      - "oxi_rsa_2048_modulus"
-      - "oxi_rsa_2048_public_exponent"
-      - "oxi_rsa_2048_sign_pkcs1_v15_sha256"
-      - "oxi_rsa_2048_sign_pss_sha256"
-      - "oxi_rsa_2048_oaep_encrypt_sha256"
-      - "oxi_rsa_2048_oaep_decrypt_sha256"
-      - "oxi_rsa_3072_private_key_new_generate"
-      - "oxi_rsa_3072_private_key_free"
-      - "oxi_rsa_3072_modulus"
-      - "oxi_rsa_3072_public_exponent"
-      - "oxi_rsa_3072_sign_pkcs1_v15_sha256"
-      - "oxi_rsa_3072_sign_pss_sha256"
-      - "oxi_rsa_3072_oaep_encrypt_sha256"
-      - "oxi_rsa_3072_oaep_decrypt_sha256"
-      - "oxi_rsa_4096_private_key_new_generate"
-      - "oxi_rsa_4096_private_key_free"
-      - "oxi_rsa_4096_modulus"
-      - "oxi_rsa_4096_public_exponent"
-      - "oxi_rsa_4096_sign_pkcs1_v15_sha256"
-      - "oxi_rsa_4096_sign_pss_sha256"
-      - "oxi_rsa_4096_oaep_encrypt_sha256"
-      - "oxi_rsa_4096_oaep_decrypt_sha256"
-      - "oxi_ml_dsa_87_keygen"
-      - "oxi_ml_dsa_87_sign"
-      - "oxi_ml_dsa_87_verify"
-      - "oxi_ml_kem_1024_keygen"
-      - "oxi_ml_kem_1024_encapsulate"
-      - "oxi_ml_kem_1024_decapsulate"
-      - "oxi_ml_kem_512_keygen"
-      - "oxi_ml_kem_512_encapsulate"
-      - "oxi_ml_kem_512_decapsulate"
-      - "oxi_ml_kem_768_keygen"
-      - "oxi_ml_kem_768_encapsulate"
-      - "oxi_ml_kem_768_decapsulate"
-      - "oxi_slh_dsa_sha2_128s_keygen"
-      - "oxi_slh_dsa_sha2_128s_sign"
-      - "oxi_slh_dsa_sha2_128s_verify"
-      - "oxi_slh_dsa_sha2_128f_keygen"
-      - "oxi_slh_dsa_sha2_128f_sign"
-      - "oxi_slh_dsa_sha2_128f_verify"
-      - "oxi_slh_dsa_sha2_192s_keygen"
-      - "oxi_slh_dsa_sha2_192s_sign"
-      - "oxi_slh_dsa_sha2_192s_verify"
-      - "oxi_slh_dsa_sha2_192f_keygen"
-      - "oxi_slh_dsa_sha2_192f_sign"
-      - "oxi_slh_dsa_sha2_192f_verify"
-      - "oxi_slh_dsa_sha2_256s_keygen"
-      - "oxi_slh_dsa_sha2_256s_sign"
-      - "oxi_slh_dsa_sha2_256s_verify"
-      - "oxi_slh_dsa_sha2_256f_keygen"
-      - "oxi_slh_dsa_sha2_256f_sign"
-      - "oxi_slh_dsa_sha2_256f_verify"
-      - "oxi_slh_dsa_shake_128s_keygen"
-      - "oxi_slh_dsa_shake_128s_sign"
-      - "oxi_slh_dsa_shake_128s_verify"
-      - "oxi_slh_dsa_shake_128f_keygen"
-      - "oxi_slh_dsa_shake_128f_sign"
-      - "oxi_slh_dsa_shake_128f_verify"
-      - "oxi_slh_dsa_shake_192s_keygen"
-      - "oxi_slh_dsa_shake_192s_sign"
-      - "oxi_slh_dsa_shake_192s_verify"
-      - "oxi_slh_dsa_shake_192f_keygen"
-      - "oxi_slh_dsa_shake_192f_sign"
-      - "oxi_slh_dsa_shake_192f_verify"
-      - "oxi_slh_dsa_shake_256s_keygen"
-      - "oxi_slh_dsa_shake_256s_sign"
-      - "oxi_slh_dsa_shake_256s_verify"
-      - "oxi_slh_dsa_shake_256f_keygen"
-      - "oxi_slh_dsa_shake_256f_sign"
-      - "oxi_slh_dsa_shake_256f_verify"
-      - "oxi_lms_keygen"
-      - "oxi_lms_sign"
-      - "oxi_lms_verify"
-      - "oxi_xmss_keygen"
-      - "oxi_xmss_sign"
-      - "oxi_xmss_verify"
-      - "oxi_hmac_drbg_sha256_new"
-      - "oxi_hmac_drbg_sha256_free"
-      - "oxi_hmac_drbg_sha256_instantiate"
-      - "oxi_hmac_drbg_sha256_reseed"
-      - "oxi_hmac_drbg_sha256_generate"
-      - "oxi_hmac_drbg_sha384_new"
-      - "oxi_hmac_drbg_sha384_free"
-      - "oxi_hmac_drbg_sha384_instantiate"
-      - "oxi_hmac_drbg_sha384_reseed"
-      - "oxi_hmac_drbg_sha384_generate"
-      - "oxi_hmac_drbg_sha512_new"
-      - "oxi_hmac_drbg_sha512_free"
-      - "oxi_hmac_drbg_sha512_instantiate"
-      - "oxi_hmac_drbg_sha512_reseed"
-      - "oxi_hmac_drbg_sha512_generate"
-      - "oxi_hash_drbg_sha256_new"
-      - "oxi_hash_drbg_sha256_free"
-      - "oxi_hash_drbg_sha256_instantiate"
-      - "oxi_hash_drbg_sha256_reseed"
-      - "oxi_hash_drbg_sha256_generate"
-      - "oxi_hash_drbg_sha384_new"
-      - "oxi_hash_drbg_sha384_free"
-      - "oxi_hash_drbg_sha384_instantiate"
-      - "oxi_hash_drbg_sha384_reseed"
-      - "oxi_hash_drbg_sha384_generate"
-      - "oxi_hash_drbg_sha512_new"
-      - "oxi_hash_drbg_sha512_free"
-      - "oxi_hash_drbg_sha512_instantiate"
-      - "oxi_hash_drbg_sha512_reseed"
-      - "oxi_hash_drbg_sha512_generate"
-      - "oxi_ctr_drbg_aes128_new"
-      - "oxi_ctr_drbg_aes128_free"
-      - "oxi_ctr_drbg_aes128_instantiate_no_df"
-      - "oxi_ctr_drbg_aes128_instantiate_df"
-      - "oxi_ctr_drbg_aes128_reseed_no_df"
-      - "oxi_ctr_drbg_aes128_reseed_df"
-      - "oxi_ctr_drbg_aes128_generate_no_df"
-      - "oxi_ctr_drbg_aes128_generate_df"
-      - "oxi_ctr_drbg_aes192_new"
-      - "oxi_ctr_drbg_aes192_free"
-      - "oxi_ctr_drbg_aes192_instantiate_no_df"
-      - "oxi_ctr_drbg_aes192_instantiate_df"
-      - "oxi_ctr_drbg_aes192_reseed_no_df"
-      - "oxi_ctr_drbg_aes192_reseed_df"
-      - "oxi_ctr_drbg_aes192_generate_no_df"
-      - "oxi_ctr_drbg_aes192_generate_df"
-      - "oxi_ctr_drbg_aes256_new"
-      - "oxi_ctr_drbg_aes256_free"
-      - "oxi_ctr_drbg_aes256_instantiate_no_df"
-      - "oxi_ctr_drbg_aes256_instantiate_df"
-      - "oxi_ctr_drbg_aes256_reseed_no_df"
-      - "oxi_ctr_drbg_aes256_reseed_df"
-      - "oxi_ctr_drbg_aes256_generate_no_df"
-      - "oxi_ctr_drbg_aes256_generate_df"
+  - category: "Tooling"
+    # acvp-harness binary processes NIST ACVP vector sets offline and runs
+    # sessions against the ACVP demo server (responds to --lama).
+    # oxicrypt-ffi exposes oxi_-prefixed extern "C" symbols (cdylib +
+    # staticlib); C header at include/oxicrypt.h (cbindgen-generated).
+    # Full entry-point inventory in the manifest.
+    standards: ["FIPS 140-3 IG 10.3.A"]
 
 security:
   certification: "FIPS 140-3 Level 1 (targeting)"
   side_channel_posture: "disclosed"
-  zeroization: "volatile-on-drop (all CSP-holding types via oxicrypt-zeroize: SHA-1/SHA-2 streaming state, Keccak sponge, HMAC ipad/opad state, AES round-key schedules, DRBG state, private-key types)"
-  self_tests: "183 power-up self-tests from NIST-sourced vectors"
+  zeroization: "volatile-on-drop for all CSP-holding types (via oxicrypt-zeroize)"
   algorithm_profiles:
     - name: "Unrestricted"
       description: "All FIPS-approved algorithms available (default)"
