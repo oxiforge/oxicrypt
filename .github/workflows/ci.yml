@@ -1,0 +1,100 @@
+# NOTE — manual-dispatch mode since 2026-06-10 (was fully paused
+# 2026-05-07 by rename to `ci.yml.disabled` after the Free-tier
+# minutes cap; minutes renewed June, but they burn fast — one full
+# cycle costs 1.5-2h+ of 2-core runner time, mostly the debug
+# single-threaded test stage).
+#
+# Trigger policy: `workflow_dispatch` ONLY — zero default burn.
+# Each merge picks its gate: the local pre-push hook (default,
+# free, runs the same fmt/clippy/test/build cycle on every push)
+# or cloud CI via `gh workflow run ci`. Spend minutes when the
+# VM is busy (e.g. ACVTS campaigns) or when the feature-matrix
+# coverage below is wanted — the `features` job runs the
+# non-default feature configs (oxicrypt-lms `parallel`,
+# oxicrypt-sha `accel-sha`) that the local hook structurally
+# skips (it tests default features only).
+#
+# Local CI parity for the four core jobs is preserved by
+# `scripts/git-hooks/pre-push`, activated via the existing
+# `git config core.hooksPath scripts/git-hooks` setting that the
+# pre-commit hook already relies on. The hook stays as the
+# default gate; this workflow is the on-demand cloud mirror.
+
+name: ci
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # fips-module's unit tests mutate a single global state, so they
+      # must run single-threaded. Other crates are unaffected but a
+      # global `--test-threads=1` is the safest workspace-wide default
+      # until we introduce per-crate test runners.
+      - run: cargo test --workspace -- --test-threads=1
+
+  build:
+    name: cargo build (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --release
+
+  # Non-default feature configs — the local pre-push hook tests
+  # default features only, so this job is cloud CI's unique
+  # coverage: the rayon `parallel` path (incl. the golden-pin
+  # byte-anchor of the parallel-built node table) and the SHA-NI
+  # `accel-sha` dispatch/equivalence suites. Runner hardware may
+  # lack SHA-NI; the detection contract makes those tests
+  # fail-portable, so the suite is meaningful either way.
+  features:
+    name: cargo test (feature matrix)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - crate: oxicrypt-lms
+            flags: --features parallel
+          - crate: oxicrypt-sha
+            flags: --features accel-sha
+          - crate: oxicrypt-sha-accel
+            flags: --all-features
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ${{ matrix.crate }} --release ${{ matrix.flags }}
