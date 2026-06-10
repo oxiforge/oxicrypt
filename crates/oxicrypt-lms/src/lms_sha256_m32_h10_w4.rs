@@ -130,4 +130,117 @@ mod tests {
         let sig = sign(&mut sk, b"gated test").unwrap();
         verify(&pk, b"gated test", &sig).unwrap();
     }
+
+    // ── Cached-signing determinism oracle (H = 10 arm) ──────────────
+    //
+    // The exhaustive every-leaf oracle lives in `lms_sha256_m32_h5_w4`
+    // (32 leaves); at H = 10 each uncached `sign` walks the full
+    // 1024-leaf tree, so this arm bounds the cached ≡ uncached check
+    // to the first 16 leaves.
+
+    #[test]
+    fn cached_sign_matches_uncached_first_16_leaves() {
+        let (mut sk, pk) = keygen_internal(&KAT_XI);
+        let (mut csk, cpk) = LmsSigningKey::new_internal(&KAT_XI);
+        assert_eq!(
+            pk, cpk,
+            "cached constructor must reproduce the keygen public key"
+        );
+
+        for q in 0..16u32 {
+            let msg = q.to_be_bytes();
+            assert_eq!(csk.leaf_index(), q);
+            let sig = sign_internal(&mut sk, &msg).unwrap();
+            let csig = csk.sign_internal(&msg).unwrap();
+            assert_eq!(
+                sig.as_slice(),
+                csig.as_slice(),
+                "signature mismatch at leaf {q}"
+            );
+            assert!(
+                verify_internal(&pk, &msg, &csig),
+                "cached signature fails verify at leaf {q}"
+            );
+        }
+        assert_eq!(sk.leaf_index(), csk.leaf_index());
+    }
+
+    #[test]
+    fn cached_node_table_matches_recursive_root_and_auth_path() {
+        let (sk, pk) = keygen_internal(&KAT_XI);
+        let csk = LmsSigningKey::from_private_key_internal(sk);
+        let key = csk.private_key();
+        let nodes = csk.node_table();
+        assert_eq!(nodes.len(), 2 * MAX_SIGNATURES as usize);
+
+        // Cached root == recursive root == public-key root.
+        assert_eq!(
+            nodes[1],
+            tree_internals::compute_root(&key.seed, &key.identifier)
+        );
+        assert_eq!(nodes[1].as_slice(), &pk[24..24 + N]);
+
+        // Table-derived auth path equals the recursive path (leaf 0).
+        let auth = tree_internals::compute_auth_path(&key.seed, &key.identifier, 0);
+        let mut node = MAX_SIGNATURES;
+        for (level, slot) in auth.iter().enumerate() {
+            assert_eq!(
+                nodes[(node ^ 1) as usize],
+                *slot,
+                "auth-path mismatch at level {level}"
+            );
+            node >>= 1;
+        }
+    }
+
+    #[test]
+    fn gated_cached_api_works_after_init() {
+        ensure_initialized();
+        let (mut csk, pk) = LmsSigningKey::new(&[0x99u8; 32]).unwrap();
+        let sig = csk.sign(b"gated cached test").unwrap();
+        verify(&pk, b"gated cached test", &sig).unwrap();
+        assert_eq!(csk.leaf_index(), 1);
+    }
+
+    // ── Parallel ≡ sequential determinism oracle (R75), H = 10 arm ──
+    //
+    // The exhaustive parallel-vs-sequential check lives in the H = 5 pair
+    // (32 leaves). At H = 10 (1024 leaves) this arm bounds the work: it
+    // still asserts the full parallel node table is byte-identical to the
+    // always-sequential reference build for the same (seed, I) — the
+    // whole-table comparison is the load-bearing property — and caps the
+    // cached-vs-uncached signing comparison at the first 16 leaves
+    // (uncached `sign` walks the full tree per call). Per the H ≤ 10 cap,
+    // no taller tree is exercised here.
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn parallel_node_table_byte_identical_to_sequential_h10() {
+        let (sk, _pk) = keygen_internal(&KAT_XI);
+        let par = cached_internals::build_node_table(&sk.seed, &sk.identifier);
+        let seq = cached_internals::build_node_table_sequential(&sk.seed, &sk.identifier);
+        assert_eq!(par.len(), 2 * MAX_SIGNATURES as usize);
+        assert_eq!(
+            par, seq,
+            "parallel Merkle node table diverged from sequential build at H=10"
+        );
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn parallel_cached_sign_matches_uncached_first_16_leaves_h10() {
+        let (mut sk, pk) = keygen_internal(&KAT_XI);
+        let (mut csk, cpk) = LmsSigningKey::new_internal(&KAT_XI);
+        assert_eq!(pk, cpk);
+        for q in 0..16u32 {
+            let msg = q.to_be_bytes();
+            let sig = sign_internal(&mut sk, &msg).unwrap();
+            let csig = csk.sign_internal(&msg).unwrap();
+            assert_eq!(
+                sig.as_slice(),
+                csig.as_slice(),
+                "parallel-built cache signature diverged at leaf {q}"
+            );
+            assert!(verify_internal(&pk, &msg, &csig));
+        }
+    }
 }

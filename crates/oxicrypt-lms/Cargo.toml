@@ -11,8 +11,24 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["alloc"]
+# Enables the per-pair `LmsSigningKey` cached signing wrapper, whose
+# Merkle node table lives on the heap. The core keygen/sign/verify
+# surface stays heap-free; disable for allocator-less no_std targets.
+alloc = []
+# Data-parallel Merkle leaf computation in the `LmsSigningKey` tree
+# cache, default OFF. The leaf sweep becomes an indexed disjoint-slice
+# `par_iter_mut` over `rayon`; output is byte-identical to the
+# sequential build (R75). Pulls in `rayon`, which requires `std`, so the
+# crate becomes `std` only under this feature — the default build stays
+# provably `no_std` with no rayon in its graph. Performance build only:
+# the CMVP-validated configuration is the default single-threaded build.
+parallel = ["alloc", "dep:rayon"]
+
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-xof = { path = "../oxicrypt-xof" }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+rayon = { version = "1", optional = true }

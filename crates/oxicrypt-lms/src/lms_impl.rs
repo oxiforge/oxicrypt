@@ -48,6 +48,7 @@
 //! | `LMS_TYPE`, `LMOTS_TYPE`                     | `pub const`|
 //! | `MAX_SIGNATURES`, `OTS_SIG_LEN`, `SIGNATURE_LEN`, `PUBLIC_KEY_LEN`, `PRIVATE_KEY_LEN` | `pub const` |
 //! | `LmsPrivateKey`                              | `pub`      |
+//! | `LmsSigningKey` (feature `alloc`)            | `pub`      |
 //! | `keygen`, `sign`, `verify`                   | `pub`      |
 //! | `keygen_internal`, `keygen_from_parts`, `sign_internal`, `verify_internal` | `pub` (doc-hidden) |
 //! | `KATS`, `self_test`                          | `pub`, private |
@@ -624,6 +625,304 @@ macro_rules! lms_impl {
 
             key.leaf_index = q + 1;
             Some(sig)
+        }
+
+        // ── Cached signing (feature `alloc`) ───────────────────────
+
+        /// Cached LMS signing key — the private key plus the full
+        /// precomputed Merkle node table.
+        ///
+        /// The free [`sign`](self::sign) on the plain [`LmsPrivateKey`]
+        /// recomputes the whole 2^H-leaf tree per signature; this
+        /// wrapper builds the tree **once** at construction (cost ≈
+        /// one keygen) and thereafter reads the H authentication-path
+        /// nodes straight from the table, taking per-signature tree
+        /// cost from O(2^H) to O(H). Signatures are **byte-identical**
+        /// to the uncached path for the same key state and message.
+        ///
+        /// # Memory
+        ///
+        /// The table holds every tree node in RFC 8554 numbering
+        /// (root = 1, leaves at `2^H .. 2^(H+1)`): `2^(H+1)` slots of
+        /// N bytes (slot 0 unused) — 64 KiB at H = 10, 2 MiB at
+        /// H = 15, 64 MiB at H = 20, 2 GiB at H = 25 (N = 32).
+        /// Intended for desktop/server signers; requires the crate's
+        /// `alloc` feature (on by default).
+        ///
+        /// # Security
+        ///
+        /// Merkle node hashes are **public** data — every node is
+        /// derived from the LM-OTS public keys and is exposed in
+        /// signatures (authentication paths) and the public key
+        /// (root). The node table therefore carries **no zeroization
+        /// requirement** and is deliberately not zeroized on drop.
+        /// The wrapped [`LmsPrivateKey`] keeps its existing
+        /// zeroize-on-Drop semantics for the tree seed and identifier.
+        ///
+        /// # Statefulness
+        ///
+        /// The one-leaf-per-signature contract is unchanged:
+        /// [`sign`](Self::sign) advances `leaf_index` exactly as the
+        /// free [`sign`](self::sign) does and refuses once the tree is
+        /// exhausted.
+        /// The caller must persist the underlying private-key state
+        /// (via [`private_key`](Self::private_key) /
+        /// [`LmsPrivateKey::to_bytes`]) after every signature —
+        /// failure to persist before a crash can lead to one-time-key
+        /// reuse, which is a catastrophic security failure for any
+        /// stateful hash-based signature scheme.
+        #[cfg(feature = "alloc")]
+        pub struct LmsSigningKey {
+            key: LmsPrivateKey,
+            nodes: ::alloc::vec::Vec<[u8; N]>,
+        }
+
+        /// Tree-cache construction internals (feature `alloc`).
+        #[cfg(feature = "alloc")]
+        #[allow(
+            clippy::indexing_slicing,
+            clippy::arithmetic_side_effects,
+            clippy::cast_possible_truncation
+        )]
+        mod cached_internals {
+            use super::*;
+
+            /// Build the full Merkle node table in RFC 8554 numbering:
+            /// slot 0 unused, root at 1, leaves at
+            /// `MAX_SIGNATURES .. 2·MAX_SIGNATURES`. One bottom-up
+            /// pass: 2^H leaf computations (the keygen-dominating
+            /// cost) plus 2^H − 1 internal-node hashes.
+            pub(super) fn build_node_table(
+                seed: &[u8; N],
+                i_val: &[u8; 16],
+            ) -> ::alloc::vec::Vec<[u8; N]> {
+                let total = 2 * (MAX_SIGNATURES as usize);
+                let mut nodes = ::alloc::vec::Vec::with_capacity(total);
+                nodes.resize(total, [0u8; N]);
+
+                // Leaf sweep: each leaf at index `r = MAX_SIGNATURES + q`
+                // is `hash_leaf(I, r, compute_public_key(seed, I, q))` — a
+                // pure function of `(seed, I, q)` with no cross-leaf
+                // dependency. The two builds below are byte-identical by
+                // construction (R75): the parallel form is an indexed
+                // disjoint-slice `par_iter_mut` writing each leaf to its
+                // own slot, recombined by index, never by completion
+                // order or thread count.
+                #[cfg(not(feature = "parallel"))]
+                for q in 0..MAX_SIGNATURES {
+                    let r = MAX_SIGNATURES + q;
+                    let k = super::lmots_internals::compute_public_key(seed, i_val, q);
+                    nodes[r as usize] = super::tree_internals::hash_leaf(i_val, r, &k);
+                }
+                #[cfg(feature = "parallel")]
+                {
+                    use ::rayon::iter::{
+                        IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+                    };
+                    nodes[MAX_SIGNATURES as usize..]
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(q, slot)| {
+                            let q = q as u32;
+                            let r = MAX_SIGNATURES + q;
+                            let k = super::lmots_internals::compute_public_key(seed, i_val, q);
+                            *slot = super::tree_internals::hash_leaf(i_val, r, &k);
+                        });
+                }
+
+                // Internal-node bottom-up pass — intentionally sequential
+                // (each node depends on its two children); out of scope
+                // for parallelization.
+                for r in (1..MAX_SIGNATURES).rev() {
+                    let left = nodes[(r * 2) as usize];
+                    let right = nodes[(r * 2 + 1) as usize];
+                    nodes[r as usize] =
+                        super::tree_internals::hash_internal(i_val, r, &left, &right);
+                }
+                nodes
+            }
+
+            /// Sequential reference build of the Merkle node table — the
+            /// always-single-threaded form, compiled regardless of the
+            /// `parallel` feature. Exists only so the determinism oracle
+            /// (R75) can assert the `parallel` `build_node_table` output is
+            /// byte-identical to the sequential build for the same
+            /// `(seed, I)`. Never on the production path. Compiled only
+            /// for the `parallel`-feature determinism tests — its sole
+            /// callers are those `#[cfg(feature = "parallel")]` tests.
+            /// The macro emits this for all 80 pairs but only the H = 5
+            /// and H = 10 baseline pairs call it, so the other expansions
+            /// see it unused.
+            #[cfg(all(test, feature = "parallel"))]
+            #[allow(dead_code)]
+            pub(super) fn build_node_table_sequential(
+                seed: &[u8; N],
+                i_val: &[u8; 16],
+            ) -> ::alloc::vec::Vec<[u8; N]> {
+                let total = 2 * (MAX_SIGNATURES as usize);
+                let mut nodes = ::alloc::vec::Vec::with_capacity(total);
+                nodes.resize(total, [0u8; N]);
+                for q in 0..MAX_SIGNATURES {
+                    let r = MAX_SIGNATURES + q;
+                    let k = super::lmots_internals::compute_public_key(seed, i_val, q);
+                    nodes[r as usize] = super::tree_internals::hash_leaf(i_val, r, &k);
+                }
+                for r in (1..MAX_SIGNATURES).rev() {
+                    let left = nodes[(r * 2) as usize];
+                    let right = nodes[(r * 2 + 1) as usize];
+                    nodes[r as usize] =
+                        super::tree_internals::hash_internal(i_val, r, &left, &right);
+                }
+                nodes
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl LmsSigningKey {
+            /// Generate a fresh key pair and build the Merkle node
+            /// table (cost ≈ one [`keygen`]). Returns the cached
+            /// signing key and the public key.
+            ///
+            /// # Errors
+            ///
+            /// [`Error::NotOperational`] / [`Error::AlgorithmRestricted`]
+            /// when the module gate denies the service.
+            pub fn new(
+                xi: &[u8; 32],
+            ) -> ::core::result::Result<(Self, [u8; PUBLIC_KEY_LEN]), Error> {
+                oxicrypt_module::require_operational()?;
+                oxicrypt_module::require_allowed($svc_sign)?;
+                Ok(Self::new_internal(xi))
+            }
+
+            /// Gate-free constructor — for self-tests and harness use.
+            #[doc(hidden)]
+            pub fn new_internal(xi: &[u8; 32]) -> (Self, [u8; PUBLIC_KEY_LEN]) {
+                let (key, pk) = keygen_internal(xi);
+                let nodes = cached_internals::build_node_table(&key.seed, &key.identifier);
+                (Self { key, nodes }, pk)
+            }
+
+            /// Wrap an existing private key (e.g. one resumed from
+            /// persisted state via [`LmsPrivateKey::from_bytes`]),
+            /// rebuilding the Merkle node table from its seed (cost ≈
+            /// one [`keygen`]). The key's current `leaf_index` is
+            /// preserved.
+            ///
+            /// # Errors
+            ///
+            /// [`Error::NotOperational`] / [`Error::AlgorithmRestricted`]
+            /// when the module gate denies the service.
+            pub fn from_private_key(key: LmsPrivateKey) -> ::core::result::Result<Self, Error> {
+                oxicrypt_module::require_operational()?;
+                oxicrypt_module::require_allowed($svc_sign)?;
+                Ok(Self::from_private_key_internal(key))
+            }
+
+            /// Gate-free [`Self::from_private_key`].
+            #[doc(hidden)]
+            pub fn from_private_key_internal(key: LmsPrivateKey) -> Self {
+                let nodes = cached_internals::build_node_table(&key.seed, &key.identifier);
+                Self { key, nodes }
+            }
+
+            /// Sign `message` and advance the leaf index, reading the
+            /// authentication path from the cached node table. Output
+            /// is byte-identical to the free [`sign`](self::sign) for
+            /// the same key state and message.
+            ///
+            /// # Errors
+            ///
+            /// [`Error::InvalidInput`] if the key is exhausted;
+            /// [`Error::NotOperational`] / [`Error::AlgorithmRestricted`]
+            /// from the module gate.
+            pub fn sign(
+                &mut self,
+                message: &[u8],
+            ) -> ::core::result::Result<[u8; SIGNATURE_LEN], Error> {
+                oxicrypt_module::require_operational()?;
+                oxicrypt_module::require_allowed($svc_sign)?;
+                self.sign_internal(message).ok_or(Error::InvalidInput)
+            }
+
+            /// Gate-free cached sign — `None` on exhausted key.
+            #[doc(hidden)]
+            pub fn sign_internal(&mut self, message: &[u8]) -> Option<[u8; SIGNATURE_LEN]> {
+                #![allow(
+                    clippy::indexing_slicing,
+                    clippy::arithmetic_side_effects,
+                    clippy::cast_possible_truncation
+                )]
+
+                if self.key.is_exhausted() {
+                    return None;
+                }
+
+                let q = self.key.leaf_index;
+                let ots_sig =
+                    lmots_internals::ots_sign(&self.key.seed, &self.key.identifier, q, message);
+
+                let mut sig = [0u8; SIGNATURE_LEN];
+                let mut pos = 0;
+                sig[pos..pos + 4].copy_from_slice(&q.to_be_bytes());
+                pos += 4;
+                sig[pos..pos + OTS_SIG_LEN].copy_from_slice(&ots_sig);
+                pos += OTS_SIG_LEN;
+                sig[pos..pos + 4].copy_from_slice(&LMS_TYPE.to_be_bytes());
+                pos += 4;
+                let mut node = MAX_SIGNATURES + q;
+                for _level in 0..H {
+                    let sibling = node ^ 1;
+                    sig[pos..pos + N].copy_from_slice(&self.nodes[sibling as usize]);
+                    pos += N;
+                    node >>= 1;
+                }
+
+                self.key.leaf_index = q + 1;
+                Some(sig)
+            }
+
+            /// Number of signatures issued so far (= index of next unused leaf).
+            pub fn leaf_index(&self) -> u32 {
+                self.key.leaf_index()
+            }
+
+            /// `true` once every leaf has been consumed.
+            pub fn is_exhausted(&self) -> bool {
+                self.key.is_exhausted()
+            }
+
+            /// Borrow the wrapped private key — e.g. to persist its
+            /// state via [`LmsPrivateKey::to_bytes`] after a signature.
+            pub fn private_key(&self) -> &LmsPrivateKey {
+                &self.key
+            }
+
+            /// Unwrap into the plain private key, dropping the node
+            /// table. Leaf state is preserved.
+            pub fn into_private_key(self) -> LmsPrivateKey {
+                let Self { key, nodes } = self;
+                drop(nodes);
+                key
+            }
+
+            /// Reassemble the public key from the cached root node.
+            pub fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
+                #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+                let mut pk = [0u8; PUBLIC_KEY_LEN];
+                pk[..4].copy_from_slice(&LMS_TYPE.to_be_bytes());
+                pk[4..8].copy_from_slice(&LMOTS_TYPE.to_be_bytes());
+                pk[8..24].copy_from_slice(&self.key.identifier);
+                pk[24..24 + N].copy_from_slice(&self.nodes[1]);
+                pk
+            }
+
+            /// Raw node table (RFC 8554 numbering; slot 0 unused) —
+            /// public Merkle data, exposed for determinism tests.
+            #[doc(hidden)]
+            pub fn node_table(&self) -> &[[u8; N]] {
+                &self.nodes
+            }
         }
 
         // ── Verification ───────────────────────────────────────────

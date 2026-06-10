@@ -60,6 +60,11 @@
 //! The `demo-run` CLI subcommand in `main.rs` is the user-facing
 //! entry point.
 //!
+//! Computed responses are persisted to a per-session directory (see
+//! [`session`]) before the first submit attempt, so a transport
+//! failure after a long compute costs a `resubmit` (pure replay of
+//! the cached bytes) instead of a recompute.
+//!
 //! # Zero-third-party-dependencies
 //!
 //! The JSON parser in [`json`] and the hex codec in [`hex`] are
@@ -88,6 +93,7 @@ pub mod hex;
 pub mod json;
 pub mod mct_helpers;
 pub mod rsp;
+pub mod session;
 pub mod shs;
 pub mod transport;
 

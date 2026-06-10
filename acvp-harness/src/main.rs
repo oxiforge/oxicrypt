@@ -28,6 +28,15 @@
 //!   zero-third-party-dependencies policy intact. JWT signing and TOTP
 //!   generation use the module's own HMAC-SHA-256. Optional
 //!   `--algorithm <name>` restricts the session to a single algorithm.
+//!   Computed responses are persisted to a per-session directory
+//!   (default `acvts-demo/sessions/<tsId>-<vsId>/`) before the first
+//!   submit attempt, so a transport failure never loses a compute.
+//! - `acvp-harness resubmit <tsId> <vsId> --cert <cert.pem> --totp-secret <b64>`
+//!   — replay a cached `response.json` against an existing test
+//!   session after a failed submit: re-login via the same cert/TOTP
+//!   flow, POST the cached bytes verbatim, poll the verdict, and
+//!   advance the session's `submit-status.txt`. Pure replay — it
+//!   never recomputes.
 //!
 //! Because this is a user-facing binary it is permitted to emit
 //! output to stdout/stderr — we override the workspace-wide
@@ -178,6 +187,9 @@ fn main() -> std::process::ExitCode {
     if args.len() >= 2 && args[1] == "demo-run" {
         return run_demo_cli(&args);
     }
+    if args.len() >= 2 && args[1] == "resubmit" {
+        return run_resubmit_cli(&args);
+    }
 
     print_self_test_banner();
     std::process::ExitCode::from(0)
@@ -209,6 +221,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     let mut refresh_with: Option<String> = None;
     let mut server = "https://demo.acvts.nist.gov".to_string();
     let mut log_path = "acvp-session.json".to_string();
+    let mut sessions_dir = "acvts-demo/sessions".to_string();
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -319,6 +332,12 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
                 i += 1;
                 if i < args.len() {
                     log_path.clone_from(&args[i]);
+                }
+            }
+            "--sessions-dir" => {
+                i += 1;
+                if i < args.len() {
+                    sessions_dir.clone_from(&args[i]);
                 }
             }
             other => {
@@ -438,6 +457,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         query_session_url: query_session,
         refresh_with_token: refresh_with,
         log_path,
+        sessions_dir,
     };
 
     if let Err(msg) = acvp_harness::transport::run_demo(&config) {
@@ -481,6 +501,261 @@ fn print_demo_run_usage() {
     eprintln!("  --refresh-with-file <path>  same as --refresh-with but read token from file");
     eprintln!("  --server <url>        ACVP server (default: https://demo.acvts.nist.gov)");
     eprintln!("  --log <path>          transcript log path (default: acvp-session.json)");
+    eprintln!("  --sessions-dir <dir>  root for per-vector-set persistence dirs");
+    eprintln!("                        <dir>/<tsId>-<vsId>/ (default: acvts-demo/sessions);");
+    eprintln!("                        prompt + computed response + submit status are written");
+    eprintln!("                        there BEFORE the submit attempt, so a failed submit is");
+    eprintln!("                        recoverable via `acvp-harness resubmit` without recompute");
+}
+
+// CLI parser mirroring run_demo_cli's flat flag-match style; the
+// resubmit subcommand reuses the demo-run transport flags minus the
+// registration-scoping ones (--algorithm/--mode/--paramset have no
+// meaning for a replay).
+#[allow(clippy::too_many_lines)]
+fn run_resubmit_cli(args: &[String]) -> std::process::ExitCode {
+    use acvp_harness::transport::{AcvpConfig, HttpBackend};
+
+    // resubmit <tsId> <vsId> --cert <cert> --totp-secret <b64>
+    //   { --key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private' }
+    //   [--pkcs11-module <path>] [--pkcs11-pin-source <path>]
+    //   [--http-backend curl|s_client] [--server <url>] [--log <path>]
+    //   [--sessions-dir <dir>] [--refresh-with <jwt>] [--refresh-with-file <path>]
+    if args.len() < 4 {
+        eprintln!("oxicrypt acvp-harness resubmit: missing <tsId> <vsId>");
+        print_resubmit_usage();
+        return std::process::ExitCode::from(2);
+    }
+    let Ok(ts_id) = args[2].parse::<u64>() else {
+        eprintln!(
+            "oxicrypt acvp-harness resubmit: <tsId> must be numeric, got {:?}",
+            args[2]
+        );
+        print_resubmit_usage();
+        return std::process::ExitCode::from(2);
+    };
+    let Ok(vs_id) = args[3].parse::<u64>() else {
+        eprintln!(
+            "oxicrypt acvp-harness resubmit: <vsId> must be numeric, got {:?}",
+            args[3]
+        );
+        print_resubmit_usage();
+        return std::process::ExitCode::from(2);
+    };
+
+    let mut cert = String::new();
+    let mut key = String::new();
+    let mut pkcs11_key = String::new();
+    let mut pkcs11_module = String::new();
+    let mut pkcs11_pin_source = String::new();
+    let mut http_backend_explicit: Option<HttpBackend> = None;
+    let mut totp_secret = String::new();
+    let mut refresh_with: Option<String> = None;
+    let mut server = "https://demo.acvts.nist.gov".to_string();
+    let mut log_path = "acvp-resubmit.json".to_string();
+    let mut sessions_dir = "acvts-demo/sessions".to_string();
+    let mut i = 4;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cert" => {
+                i += 1;
+                if i < args.len() {
+                    cert.clone_from(&args[i]);
+                }
+            }
+            "--key" => {
+                i += 1;
+                if i < args.len() {
+                    key.clone_from(&args[i]);
+                }
+            }
+            "--pkcs11-key" => {
+                i += 1;
+                if i < args.len() {
+                    pkcs11_key.clone_from(&args[i]);
+                }
+            }
+            "--pkcs11-module" => {
+                i += 1;
+                if i < args.len() {
+                    pkcs11_module.clone_from(&args[i]);
+                }
+            }
+            "--pkcs11-pin-source" => {
+                i += 1;
+                if i < args.len() {
+                    pkcs11_pin_source.clone_from(&args[i]);
+                }
+            }
+            "--http-backend" => {
+                i += 1;
+                if i < args.len() {
+                    http_backend_explicit = match args[i].as_str() {
+                        "curl" => Some(HttpBackend::Curl),
+                        "s_client" | "openssl-s_client" => Some(HttpBackend::OpenSslSClient),
+                        other => {
+                            eprintln!(
+                                "oxicrypt acvp-harness resubmit: unknown --http-backend value \
+                                 {other:?} (valid: curl, s_client)"
+                            );
+                            return std::process::ExitCode::from(2);
+                        }
+                    };
+                }
+            }
+            "--totp-secret" => {
+                i += 1;
+                if i < args.len() {
+                    totp_secret.clone_from(&args[i]);
+                }
+            }
+            "--refresh-with" => {
+                i += 1;
+                if i < args.len() {
+                    refresh_with = Some(args[i].clone());
+                }
+            }
+            "--refresh-with-file" => {
+                i += 1;
+                if i < args.len() {
+                    match std::fs::read_to_string(&args[i]) {
+                        Ok(s) => refresh_with = Some(s.trim().to_string()),
+                        Err(e) => {
+                            eprintln!(
+                                "oxicrypt acvp-harness resubmit: cannot read --refresh-with-file {:?}: {e}",
+                                &args[i]
+                            );
+                            return std::process::ExitCode::from(2);
+                        }
+                    }
+                }
+            }
+            "--server" => {
+                i += 1;
+                if i < args.len() {
+                    server.clone_from(&args[i]);
+                }
+            }
+            "--log" => {
+                i += 1;
+                if i < args.len() {
+                    log_path.clone_from(&args[i]);
+                }
+            }
+            "--sessions-dir" => {
+                i += 1;
+                if i < args.len() {
+                    sessions_dir.clone_from(&args[i]);
+                }
+            }
+            other => {
+                eprintln!("oxicrypt acvp-harness resubmit: unknown flag {other:?}");
+                print_resubmit_usage();
+                return std::process::ExitCode::from(2);
+            }
+        }
+        i += 1;
+    }
+
+    if cert.is_empty() || totp_secret.is_empty() {
+        eprintln!("oxicrypt acvp-harness resubmit: --cert and --totp-secret are required");
+        print_resubmit_usage();
+        return std::process::ExitCode::from(2);
+    }
+
+    // Exactly one of --key or --pkcs11-key.
+    let have_key = !key.is_empty();
+    let have_pkcs11 = !pkcs11_key.is_empty();
+    match (have_key, have_pkcs11) {
+        (false, false) => {
+            eprintln!(
+                "oxicrypt acvp-harness resubmit: must supply either --key <file.pem> or \
+                 --pkcs11-key <pkcs11:URI>"
+            );
+            print_resubmit_usage();
+            return std::process::ExitCode::from(2);
+        }
+        (true, true) => {
+            eprintln!(
+                "oxicrypt acvp-harness resubmit: --key and --pkcs11-key are mutually exclusive"
+            );
+            return std::process::ExitCode::from(2);
+        }
+        _ => {}
+    }
+
+    // Default backend: curl for software keys, s_client for hardware
+    // keys — same rationale as demo-run.
+    let http_backend = http_backend_explicit.unwrap_or(if have_pkcs11 {
+        HttpBackend::OpenSslSClient
+    } else {
+        HttpBackend::Curl
+    });
+
+    let config = AcvpConfig {
+        server_url: server,
+        cert_path: cert,
+        key_path: key,
+        pkcs11_uri: if pkcs11_key.is_empty() {
+            None
+        } else {
+            Some(pkcs11_key)
+        },
+        pkcs11_module_path: if pkcs11_module.is_empty() {
+            None
+        } else {
+            Some(pkcs11_module)
+        },
+        pkcs11_pin: if pkcs11_pin_source.is_empty() {
+            String::new()
+        } else {
+            match std::fs::read_to_string(&pkcs11_pin_source) {
+                Ok(s) => s.trim_end().to_string(),
+                Err(e) => {
+                    eprintln!(
+                        "oxicrypt acvp-harness resubmit: cannot read PIN from {pkcs11_pin_source:?}: {e}"
+                    );
+                    return std::process::ExitCode::from(2);
+                }
+            }
+        },
+        http_backend,
+        totp_secret,
+        filter_algorithm: None,
+        filter_mode: None,
+        filter_paramset: None,
+        query_session_url: None,
+        refresh_with_token: refresh_with,
+        log_path,
+        sessions_dir,
+    };
+
+    if let Err(msg) = acvp_harness::transport::run_resubmit(&config, ts_id, vs_id) {
+        eprintln!("oxicrypt acvp-harness: resubmit failed: {msg}");
+        return std::process::ExitCode::from(3);
+    }
+    std::process::ExitCode::from(0)
+}
+
+fn print_resubmit_usage() {
+    eprintln!("usage: acvp-harness resubmit <tsId> <vsId> --cert <cert.pem> --totp-secret <b64>");
+    eprintln!("               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')");
+    eprintln!("               [--pkcs11-module <path>] [--pkcs11-pin-source <path>]");
+    eprintln!("               [--http-backend curl|s_client] [--server <url>] [--log <path>]");
+    eprintln!(
+        "               [--sessions-dir <dir>] [--refresh-with <jwt>|--refresh-with-file <path>]"
+    );
+    eprintln!();
+    eprintln!("  Replays the cached response.json from <sessions-dir>/<tsId>-<vsId>/ against");
+    eprintln!("  the server: re-login (cert + TOTP, refreshing the cached session token),");
+    eprintln!("  POST the cached bytes verbatim, poll the verdict, update submit-status.txt.");
+    eprintln!("  Pure replay — nothing is recomputed. Use after a demo-run submit failure");
+    eprintln!("  left the session directory in status PENDING.");
+    eprintln!();
+    eprintln!("  --sessions-dir <dir>  persistence root (default: acvts-demo/sessions)");
+    eprintln!("  --refresh-with <jwt>  override the cached token.txt for the login refresh");
+    eprintln!("  --log <path>          transcript log path (default: acvp-resubmit.json)");
+    eprintln!("  (other flags as in demo-run)");
 }
 
 fn print_self_test_banner() {
@@ -504,7 +779,10 @@ fn print_self_test_banner() {
         "or `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>` for a CAVP SHS file,"
     );
     println!(
-        "or `acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>` for an end-to-end ACVP demo session."
+        "or `acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>` for an end-to-end ACVP demo session,"
+    );
+    println!(
+        "or `acvp-harness resubmit <tsId> <vsId> --cert <cert> --key <key> --totp-secret <hex>` to replay a cached response after a failed submit."
     );
 }
 

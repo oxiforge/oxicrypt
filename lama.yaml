@@ -65,7 +65,11 @@ capabilities:
   - category: "Post-quantum signatures (stateful hash-based)"
     # Stateful: each Merkle-tree leaf signs exactly once; the caller MUST
     # persist the advanced private key after every sign. Full pitfall
-    # documentation in the manifest.
+    # documentation in the manifest. LMS pairs also offer an
+    # LmsSigningKey tree-cache wrapper (default-on `alloc` feature) for
+    # O(H) signing with byte-identical output. Optional default-off
+    # `parallel` feature parallelizes the cache's Merkle leaf sweep
+    # (rayon; byte-identical output, std-only).
     algorithms: ["LMS (SP 800-208 §A.3 grid, stateful)", "XMSS-SHA2_10_256 (stateful)"]
     standards: ["SP 800-208", "RFC 8554", "RFC 8391"]
 

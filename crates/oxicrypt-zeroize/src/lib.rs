@@ -1,10 +1,14 @@
 //! Volatile zeroization for sensitive security parameters.
 //!
-//! This is the **only** crate in the oxicrypt workspace that uses
-//! `unsafe`. It provides a single function, [`zeroize`], that
-//! writes zeroes through a volatile store so the compiler cannot
-//! elide the write even if it can prove the buffer is never read
-//! again. All other crates remain `#![forbid(unsafe_code)]`.
+//! This is one of exactly **two** in-boundary crates in the oxicrypt
+//! workspace that use `unsafe` (the other is `oxicrypt-sha-accel`,
+//! the audited CPU-intrinsic acceleration crate). It provides a
+//! single mechanism, [`zeroize`], that writes zeroes through a
+//! volatile store so the compiler cannot elide the write even if it
+//! can prove the buffer is never read again. All other in-boundary
+//! crates remain `#![forbid(unsafe_code)]`; the authoritative
+//! unsafe-code accounting lives in
+//! `docs/security-policy/security-policy.md` §9.2.
 //!
 //! # Why a separate crate?
 //!
@@ -30,7 +34,7 @@
 
 #![no_std]
 // This crate deliberately uses unsafe for volatile writes.
-// Every other crate in the workspace forbids unsafe.
+// Every other in-boundary crate except oxicrypt-sha-accel forbids unsafe.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Overwrite `buf` with zeroes using a volatile store.

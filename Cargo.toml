@@ -5,6 +5,7 @@ members = [
     "crates/oxicrypt-test-vectors",
     "crates/oxicrypt-aes",
     "crates/oxicrypt-sha",
+    "crates/oxicrypt-sha-accel",
     "crates/oxicrypt-hmac",
     "crates/oxicrypt-drbg",
     "crates/oxicrypt-rsa",

@@ -1,10 +1,14 @@
 //! SHA-256 per FIPS 180-4.
 //!
-//! Pure-Rust, `no_std`, dependency-free. The implementation is a
-//! direct, unrolled transcription of FIPS 180-4 §6.2.2 — no SHA-NI
-//! acceleration, no assembly. Performance is adequate for Level 1
-//! self-tests and the ACVP harness; optimized variants come in
-//! Phase 4.
+//! Pure-Rust, `no_std`. The default implementation is a direct,
+//! unrolled transcription of FIPS 180-4 §6.2.2 — no intrinsics, no
+//! assembly — and this crate is unconditionally
+//! `#![forbid(unsafe_code)]`. Behind the default-off `accel-sha`
+//! feature, the compression boundary additionally dispatches to the
+//! audited `oxicrypt-sha-accel` crate (x86_64 SHA-NI) when runtime
+//! CPUID detection confirms support; the accelerated path computes the
+//! identical §6.2.2 function, proven by KAT + cross-path oracle tests.
+//! Default builds are byte-for-byte the portable baseline.
 //!
 //! # Module boundary
 //!
@@ -252,8 +256,28 @@ impl Drop for Sha256 {
 /// SHA-256 compression function — one 512-bit block.
 ///
 /// Exposed at the crate level so SHA-224 (FIPS 180-4 §6.3) can share
-/// the same core with a different initial hash value.
+/// the same core with a different initial hash value. This is the
+/// dispatch boundary for the optional `accel-sha` feature: SHA-224
+/// (defined by FIPS 180-4 as this same compression function with a
+/// different IV and truncated output) therefore inherits the
+/// accelerated path; SHA-1 acceleration is explicitly out of scope.
 pub(crate) fn compress256(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
+    // Feature-gated CPU acceleration: when `accel-sha` is enabled AND
+    // runtime CPUID detection confirms SHA-NI, the audited
+    // `oxicrypt-sha-accel` crate executes the same FIPS 180-4 §6.2.2
+    // rounds via CPU intrinsics. `sha256_compress` returns `false` —
+    // leaving `state` untouched — when the CPU lacks SHA-NI, and we fall
+    // through to the portable path. Default builds compile only the
+    // portable path below.
+    #[cfg(feature = "accel-sha")]
+    if oxicrypt_sha_accel::sha256_compress(state, block) {
+        return;
+    }
+    compress256_portable(state, block);
+}
+
+/// Portable SHA-256 compression — the validated baseline path.
+fn compress256_portable(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
     // 1. Prepare the message schedule W[0..64].
     let mut w = [0u32; 64];
     for i in 0..16 {
@@ -486,5 +510,133 @@ mod tests {
     #[test]
     fn digest_size_constant_is_32() {
         assert_eq!(DIGEST_SIZE, 32);
+    }
+}
+
+// ------------------------------------------------------------------------
+// Cross-path oracle: accelerated vs portable (feature `accel-sha` only)
+// ------------------------------------------------------------------------
+
+/// Equivalence oracle for the sanctioned CPU-intrinsic acceleration
+/// category: the accelerated and portable compression paths must produce
+/// identical results for every input. On hosts without SHA-NI the two
+/// paths collapse into one and the oracle passes trivially; the accel
+/// crate's own detection test pins down availability per host.
+#[cfg(all(test, feature = "accel-sha"))]
+#[allow(clippy::unwrap_used, clippy::cast_possible_truncation)]
+mod accel_oracle_tests {
+    use super::{BLOCK_SIZE, DIGEST_SIZE, H0, Sha256, compress256, compress256_portable};
+
+    type CompressFn = fn(&mut [u32; 8], &[u8; BLOCK_SIZE]);
+
+    /// Message lengths straddling every interesting block boundary:
+    /// empty, sub-block, the 55/56 padding split, 63/64/65 around one
+    /// block, 127/128/129 around two, and two long tails.
+    const LENGTHS: [usize; 12] = [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 1000, 10000];
+
+    /// Deterministic non-trivial fill so every byte position differs.
+    fn fill_pattern(buf: &mut [u8]) {
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(167).wrapping_add((i >> 8) as u8);
+        }
+    }
+
+    /// Drive a full FIPS 180-4 SHA-256 digest through an arbitrary
+    /// compression function — the harness that lets the same padding
+    /// logic exercise both the dispatching and the portable path.
+    fn digest_via(compress: CompressFn, msg: &[u8]) -> [u8; DIGEST_SIZE] {
+        let mut state = H0;
+        let mut chunks = msg.chunks_exact(BLOCK_SIZE);
+        for chunk in &mut chunks {
+            let mut block = [0u8; BLOCK_SIZE];
+            block.copy_from_slice(chunk);
+            compress(&mut state, &block);
+        }
+        let rem = chunks.remainder();
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..rem.len()].copy_from_slice(rem);
+        block[rem.len()] = 0x80;
+        if rem.len() + 1 > BLOCK_SIZE - 8 {
+            compress(&mut state, &block);
+            block = [0u8; BLOCK_SIZE];
+        }
+        let bit_len = (msg.len() as u64).wrapping_mul(8);
+        block[BLOCK_SIZE - 8..].copy_from_slice(&bit_len.to_be_bytes());
+        compress(&mut state, &block);
+        let mut out = [0u8; DIGEST_SIZE];
+        for (chunk, word) in out.chunks_exact_mut(4).zip(state.iter()) {
+            chunk.copy_from_slice(&word.to_be_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn accel_and_portable_digests_agree_across_block_boundaries() {
+        let mut buf = [0u8; 10000];
+        fill_pattern(&mut buf);
+        for &len in &LENGTHS {
+            let msg = &buf[..len];
+            assert_eq!(
+                digest_via(compress256, msg),
+                digest_via(compress256_portable, msg),
+                "cross-path divergence at len={len}"
+            );
+        }
+    }
+
+    #[test]
+    fn accel_compression_matches_portable_state_for_state_chained_blocks() {
+        // Direct compression-level oracle: identical state evolution
+        // across a 17-block chain (covers carry/schedule interactions
+        // that single-block KATs cannot). Skips the comparison only when
+        // SHA-NI is absent, where there is no second path to compare.
+        if !oxicrypt_sha_accel::sha256_compress_available() {
+            return;
+        }
+        let mut buf = [0u8; BLOCK_SIZE * 17];
+        fill_pattern(&mut buf);
+        let mut accel_state = H0;
+        let mut portable_state = H0;
+        for chunk in buf.chunks_exact(BLOCK_SIZE) {
+            let mut block = [0u8; BLOCK_SIZE];
+            block.copy_from_slice(chunk);
+            assert!(oxicrypt_sha_accel::sha256_compress(
+                &mut accel_state,
+                &block
+            ));
+            compress256_portable(&mut portable_state, &block);
+            assert_eq!(accel_state, portable_state);
+        }
+    }
+
+    #[test]
+    fn streaming_matches_one_shot_under_accel_dispatch() {
+        // The streaming path buffers partial blocks before hitting the
+        // dispatching compression boundary; feed irregular chunk sizes
+        // and require equality with a one-shot digest at every length.
+        let mut buf = [0u8; 10000];
+        fill_pattern(&mut buf);
+        for &len in &LENGTHS {
+            let msg = &buf[..len];
+            let mut one_shot = Sha256::new_internal();
+            one_shot.update(msg);
+            let expected = one_shot.finalize();
+
+            let mut streamed = Sha256::new_internal();
+            let mut offset = 0usize;
+            for chunk_len in [1usize, 7, 13, 64, 65, 128].iter().cycle() {
+                if offset >= msg.len() {
+                    break;
+                }
+                let end = (offset + chunk_len).min(msg.len());
+                streamed.update(&msg[offset..end]);
+                offset = end;
+            }
+            assert_eq!(
+                streamed.finalize(),
+                expected,
+                "streaming divergence at len={len}"
+            );
+        }
     }
 }

@@ -6,7 +6,7 @@ phase: seed
 progress: 0/0
 mode: interactive
 started: 2026-06-06T00:00:00Z
-updated: 2026-06-06T00:00:00Z
+updated: 2026-06-10T00:00:00Z
 ---
 
 # oxicrypt — ISA (Ideal State Artifact)
@@ -43,10 +43,14 @@ and the code agree because the commit gate forces them to.
 
 ## Principles
 
-- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 21 of 22 in-boundary crates
-  carry it; the lone exception, `oxicrypt-zeroize`, isolates one audited `unsafe` block for volatile
-  zeroization. It is a build-time control that enters the conformance argument. The C-ABI crate
-  (`oxicrypt-ffi`) sits outside the boundary and necessarily carries unsafe.
+- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 21 of 23 in-boundary crates
+  carry it. It is a build-time control that enters the conformance argument. Exactly two sanctioned
+  `unsafe` categories exist, each isolated in its own small audited crate: (1) **volatile CSP
+  zeroization** — `oxicrypt-zeroize`, one audited `unsafe` mechanism for `write_volatile`; and
+  (2) **CPU-intrinsic acceleration** — `oxicrypt-sha-accel`: feature-gated, default-off,
+  runtime-detected, equivalence to the portable path proven by KAT + cross-path oracle. The default
+  build graph contains no acceleration crate; the validated portable baseline is the shipping default.
+  The C-ABI crate (`oxicrypt-ffi`) sits outside the boundary and necessarily carries unsafe.
 - **One home per security claim** — the CMVP claims live in `docs/security-policy/security-policy.md`;
   code and rustdoc point at it, never restate it.
 - **Conformance is falsifiable** — every approved service has a known-answer / ACVP vector that fails if
@@ -70,7 +74,7 @@ by the commit-is-the-gate doc-sync discipline.
 
 > Placeholder set — expand into the full per-algorithm / per-service inventory during validation.
 
-- [ ] ISC-1: 21 of the 22 in-boundary crates carry `#![forbid(unsafe_code)]`; the sole exception is `oxicrypt-zeroize` (one audited `unsafe` block for volatile CSP zeroization). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
+- [ ] ISC-1: 21 of the 23 in-boundary crates carry `#![forbid(unsafe_code)]`; the two audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`) and `oxicrypt-sha-accel` (sanctioned CPU-intrinsic acceleration: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence; one audited `unsafe` block). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
 - [ ] ISC-2: every approved algorithm has known-answer / ACVP vectors that pass (`oxicrypt-test-vectors`, `acvp-harness/`)
 - [ ] ISC-3: power-up self-tests run and gate operation (`oxicrypt-integrity`)
 - [ ] ISC-4: the module boundary is formally defined (`oxicrypt-module`)
@@ -110,6 +114,15 @@ by the commit-is-the-gate doc-sync discipline.
 - 2026-06-06: ISA seeded as a placeholder during the AGENTS.md rollout. Boundary contract here; CMVP
   security-design detail stays in `docs/security-policy/security-policy.md` (its canonical home). Expand
   Criteria into the full per-service inventory as CAVP/CMVP work proceeds.
+- 2026-06-10: Project-lead ruling — a second sanctioned `unsafe` category, **CPU-intrinsic
+  acceleration** (feature-gated, default-off, runtime-detected, equivalence proven by KAT +
+  cross-path oracle), implemented as the new audited crate `oxicrypt-sha-accel`, mirroring the
+  `oxicrypt-zeroize` exception precedent. ISC-1 accounting amended from 21-of-22 to 21-of-23
+  in-boundary (two audited exceptions). Scope: SHA-256 compression only (SHA-224 inherits via the
+  shared FIPS 180-4 compression function); SHA-1 acceleration explicitly out (legacy-use). x86_64
+  SHA-NI first; AArch64 SHA2 intrinsics are a documented follow-up under the same category. Each
+  accel path is a distinct CAVP-tested operational-environment configuration when validation comes
+  (see security-policy R74).
 
 ## Changelog
 

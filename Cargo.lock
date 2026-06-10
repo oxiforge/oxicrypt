@@ -520,6 +520,7 @@ dependencies = [
  "oxicrypt-eddsa",
  "oxicrypt-hmac",
  "oxicrypt-kdf",
+ "oxicrypt-lms",
  "oxicrypt-module",
  "oxicrypt-rsa",
  "oxicrypt-sha",
@@ -645,6 +646,7 @@ dependencies = [
  "oxicrypt-sha",
  "oxicrypt-xof",
  "oxicrypt-zeroize",
+ "rayon",
 ]
 
 [[package]]
@@ -686,9 +688,14 @@ name = "oxicrypt-sha"
 version = "0.11.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-sha-accel",
  "oxicrypt-test-vectors",
  "oxicrypt-zeroize",
 ]
+
+[[package]]
+name = "oxicrypt-sha-accel"
+version = "0.11.0"
 
 [[package]]
 name = "oxicrypt-slh-dsa"

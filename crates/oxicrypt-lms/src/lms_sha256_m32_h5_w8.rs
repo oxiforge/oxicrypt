@@ -33,3 +33,49 @@ crate::lms_impl::lms_impl! {
     kat_msg = b"LMS self-test message for SP 800-208 / FIPS 140-3 compliance";
     kat_name = "LMS KAT (LMS_SHA256_M32_H5 / LMOTS_SHA256_N32_W8 keygen+sign+verify round-trip, SP 800-208)";
 }
+
+// ── Unit tests — cached-vs-uncached determinism (W = 8 arm) ─────────
+//
+// Companion to the exhaustive `lms_sha256_m32_h5_w4` oracle: same
+// every-leaf byte-identity check at the other CNSA-relevant Winternitz
+// parameter, so the cache is exercised across both `W` shapes of the
+// LM-OTS chain layout.
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    /// Deterministic seed shared by the cached and uncached paths.
+    const XI: [u8; 32] = [0x42u8; 32];
+
+    #[test]
+    fn cached_sign_matches_uncached_at_every_leaf_until_exhaustion() {
+        let (mut sk, pk) = keygen_internal(&XI);
+        let (mut csk, cpk) = LmsSigningKey::new_internal(&XI);
+        assert_eq!(
+            pk, cpk,
+            "cached constructor must reproduce the keygen public key"
+        );
+
+        for q in 0..MAX_SIGNATURES {
+            let msg = q.to_be_bytes();
+            let sig = sign_internal(&mut sk, &msg).unwrap();
+            let csig = csk.sign_internal(&msg).unwrap();
+            assert_eq!(
+                sig.as_slice(),
+                csig.as_slice(),
+                "signature mismatch at leaf {q}"
+            );
+            assert!(
+                verify_internal(&pk, &msg, &csig),
+                "cached signature fails verify at leaf {q}"
+            );
+        }
+
+        assert!(sk.is_exhausted());
+        assert!(csk.is_exhausted());
+        assert!(sign_internal(&mut sk, b"post-exhaustion").is_none());
+        assert!(csk.sign_internal(b"post-exhaustion").is_none());
+    }
+}

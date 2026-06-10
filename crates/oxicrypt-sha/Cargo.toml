@@ -15,3 +15,12 @@ workspace = true
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-test-vectors = { path = "../oxicrypt-test-vectors" }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+oxicrypt-sha-accel = { path = "../oxicrypt-sha-accel", optional = true }
+
+[features]
+# CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI), default OFF.
+# Runtime-detected: with the feature on, the compression boundary
+# dispatches to `oxicrypt-sha-accel` only when CPUID confirms SHA-NI,
+# else the portable path runs. Default builds carry no accel dependency
+# and are byte-for-byte the validated portable baseline.
+accel-sha = ["dep:oxicrypt-sha-accel"]

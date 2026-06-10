@@ -75,14 +75,15 @@ tests, each traceable to its published source.
 
 ## Architecture
 
-oxicrypt is organized as a Cargo workspace with 23 crates — 18 algorithm
-crates, a module crate, and 4 supporting crates — plus tools:
+oxicrypt is organized as a Cargo workspace with 24 crates — 18 algorithm
+crates, a module crate, and 5 supporting crates — plus tools:
 
 ```
 crates/
   oxicrypt-module        State machine, algorithm-profile gating, self-test runner
   oxicrypt-integrity     Power-up software integrity check (IG 10.3.A)
   oxicrypt-sha           SHA-1, SHA-2, SHA-3 hash families
+  oxicrypt-sha-accel     Audited x86_64 SHA-NI SHA-256 acceleration (default-off `accel-sha` feature)
   oxicrypt-xof           SHAKE128, SHAKE256, cSHAKE, KMAC, TupleHash, ParallelHash
   oxicrypt-hmac          HMAC over all 11 approved hashes
   oxicrypt-cmac          AES-CMAC (SP 800-38B)
@@ -97,7 +98,7 @@ crates/
   oxicrypt-ml-kem        ML-KEM-512/-768/-1024 (FIPS 203)
   oxicrypt-ml-dsa        ML-DSA-44/-65/-87 (FIPS 204)
   oxicrypt-slh-dsa       SLH-DSA-{SHA2,SHAKE}-{128,192,256}{s,f} (FIPS 205)
-  oxicrypt-lms           LMS hash-based signatures (SP 800-208)
+  oxicrypt-lms           LMS hash-based signatures (SP 800-208); optional default-off `parallel` feature for data-parallel Merkle leaf computation
   oxicrypt-xmss          XMSS hash-based signatures (SP 800-208)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
   oxicrypt-ffi           C ABI wrappers (cdylib + staticlib) with profile selection
@@ -115,15 +116,21 @@ single module binary. The ACVP harness and tools are outside the boundary.
 
 ### Design principles
 
-**Zero third-party dependencies.** Phase 1 requires every line of cryptographic
-code to be written in-tree in pure Rust. Dependencies will be re-evaluated
-per-crate in later phases and must be justified in the Security Policy before
-adoption.
+**Zero third-party dependencies in the validated build.** Phase 1 requires
+every line of cryptographic code in the default build to be written in-tree in
+pure Rust. Dependencies are re-evaluated per-crate and must be justified in the
+Security Policy before adoption; the only third-party dependencies present are
+gated behind non-default, default-off performance features and never enter the
+CMVP-validated default build graph — `oxicrypt-lms`'s `parallel` feature pulls
+in `rayon` for data-parallel Merkle leaf computation (justified in the Security
+Policy, R75).
 
 **`no_std` by default.** The core algorithm crates use `#![no_std]` with
 `alloc` where necessary, making them suitable for embedded and `wasm32` targets.
 The integrity crate uses `std` for file I/O and self-test
-orchestration; the module crate is `#![no_std]`.
+orchestration; the module crate is `#![no_std]`. `oxicrypt-lms` becomes `std`
+only under its optional default-off `parallel` feature (rayon requires `std`);
+the default build stays `no_std`.
 
 **Constant-time discipline.** At Level 1, FIPS 140-3 does not require
 side-channel resistance, but oxicrypt discloses its posture and actively
@@ -199,6 +206,28 @@ signs CertVerify via PKCS#11; `s_client`'s handshake is accepted).
 Override with `--http-backend curl|s_client` if needed. Session
 transcripts stream to `acvp-session.json` (configurable with `--log`)
 with incremental flush at registration and submit boundaries.
+
+### Submission persistence and resubmit
+
+Long computes must survive submit failures: every `demo-run` vector set
+gets a per-session directory `<sessions-dir>/<tsId>-<vsId>/` (default
+`acvts-demo/sessions/`, configurable with `--sessions-dir`) holding
+`prompt.json` (written at fetch), `response.json` (the exact POST body,
+written after compute and **before** the first submit attempt), and
+`submit-status.txt` (`PENDING` → `SUBMITTED` → grader verdict). If the
+submit dies — for example on a TLS keep-alive broken pipe after a
+75-minute stateful-HBS sigGen compute — the computed responses stay on
+disk in status `PENDING` and the error names the recovery command:
+
+```bash
+# Replay the cached response.json byte-for-byte — no recompute
+./target/debug/acvp-harness resubmit <tsId> <vsId> \
+    --cert client.pem --key client.key --totp-secret <b64>
+```
+
+`resubmit` re-runs the cert/TOTP login (refreshing the cached
+session-bound token from the directory's `token.txt`), POSTs the cached
+bytes verbatim, polls the verdict, and advances `submit-status.txt`.
 
 ### Constant-time validation
 

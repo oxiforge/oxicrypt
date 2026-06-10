@@ -6,11 +6,22 @@
 //! 1. **Login** — POST `/acvp/v1/login` with a TOTP-signed JWT.
 //! 2. **Register** — POST `/acvp/v1/testSessions` with algorithm
 //!    capabilities derived from the handler registry.
-//! 3. **Fetch** — GET each vector-set URL.
+//! 3. **Fetch** — GET each vector-set URL; persist the prompt to the
+//!    per-session directory (see [`crate::session`]).
 //! 4. **Process** — Feed each vector set through
-//!    [`crate::dispatch::process`].
-//! 5. **Submit** — POST responses back to each vector-set URL.
-//! 6. **Poll** — GET each vector set until the verdict is in.
+//!    [`crate::dispatch::process`]; persist the computed response and
+//!    a `PENDING` status BEFORE any submit attempt, so a transport
+//!    failure cannot lose a long compute.
+//! 5. **Submit** — POST responses back to each vector-set URL. On
+//!    failure the cached `PENDING` state is left intact and the error
+//!    names the `resubmit` recovery command.
+//! 6. **Poll** — GET each vector set until the verdict is in; the
+//!    verdict replaces the status file's `SUBMITTED` marker.
+//!
+//! [`run_resubmit`] (the `resubmit` CLI subcommand) replays a cached
+//! `response.json` byte-for-byte against an existing test session —
+//! re-login, re-fetch a session-bound token, POST, poll — without
+//! recomputing anything.
 //!
 //! # HTTP backend
 //!
@@ -37,6 +48,7 @@
 
 use crate::dispatch::{self, AlgorithmHandler, Registry};
 use crate::json::{self, JsonValue};
+use crate::session::{self, SessionDir};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── Configuration ──────────────────────────────────────────────────
@@ -127,6 +139,11 @@ pub struct AcvpConfig {
     pub refresh_with_token: Option<String>,
     /// Path to write the session transcript JSON log.
     pub log_path: String,
+    /// Root directory for per-session submission-persistence
+    /// directories (see [`crate::session`] for the layout). Each
+    /// vector set gets `<sessions_dir>/<tsId>-<vsId>/` holding the
+    /// prompt, the computed response, and the submit status.
+    pub sessions_dir: String,
 }
 
 impl AcvpConfig {
@@ -843,6 +860,67 @@ fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String> {
 
 // ── Main transport loop ───────────────────────────────────────────
 
+/// POST `/acvp/v1/login` and return the access token.
+///
+/// The ACVP demo server expects the current 8-digit TOTP code as a
+/// flat `password` field (per ACVP §10.1-10.2; verified empirically
+/// 2026-04-26 against demo.acvts.nist.gov via mtls-login-sclient.sh).
+/// No JWT wrapping.
+///
+/// When `refresh_with` carries an existing session-bound accessToken
+/// (from `--refresh-with` or a cached `token.txt`), it is embedded in
+/// the login body. The server validates its signature (ignoring the
+/// JWT's exp) and re-issues a fresh session-bound token with the same
+/// tsId/vsId scope, suitable for re-accessing /testSessions/{id}/*
+/// after the original 30-minute token expiry.
+///
+/// On HTTP failure the transcript is flushed to `config.log_path`
+/// before the error returns; on a parse failure the raw body is dumped
+/// next to the transcript log so the operator can inspect it manually
+/// (it may contain a still-valid JWT — shred after use).
+fn login_with_totp(
+    transport: &mut Transport,
+    config: &AcvpConfig,
+    refresh_with: Option<&str>,
+    totp_secret: &[u8],
+    log: &mut TranscriptLog,
+) -> Result<String, String> {
+    eprintln!("[transport] logging in to {}...", config.server_url);
+    let totp_code = totp_now(totp_secret)?;
+    let login_body = if let Some(token) = refresh_with {
+        eprintln!("[transport] requesting refresh of existing session token");
+        format!(
+            "[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\",\"accessToken\":\"{token}\"}}]"
+        )
+    } else {
+        format!("[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\"}}]")
+    };
+    let login_url = format!("{}/acvp/v1/login", config.server_url);
+    let login_resp = transport.post(&login_url, &login_body, "")?;
+    if login_resp.status < 200 || login_resp.status >= 300 {
+        log.log("login_failed", &format!("HTTP {}", login_resp.status));
+        log.write_to_file(&config.log_path)?;
+        return Err(format!(
+            "login failed: HTTP {} — {}",
+            login_resp.status, login_resp.body
+        ));
+    }
+    // Response shape: [{"acvVersion":"1.0"},{"accessToken":"..."}]
+    let login_json = json::parse(&login_resp.body).map_err(|e| {
+        let dump_path = format!("{}.login-raw.bin", config.log_path);
+        let _ = std::fs::write(&dump_path, login_resp.body.as_bytes());
+        let head: String = login_resp.body.chars().take(120).collect();
+        format!(
+            "parse login response: {e}\n  body length: {} bytes\n  body[0..120]: {head:?}\n  raw body dumped to: {dump_path}",
+            login_resp.body.len()
+        )
+    })?;
+    let access_token = extract_access_token(&login_json)?;
+    eprintln!("[transport] login successful, got access token");
+    log.log("login_ok", "access token obtained");
+    Ok(access_token)
+}
+
 /// Run a full ACVP demo-server session.
 ///
 /// This is the top-level entry point for the `demo-run` subcommand.
@@ -893,53 +971,13 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     let mut transport = Transport::open(config)?;
 
     // ── Step 1: Login ──────────────────────────────────────────────
-    // The ACVP demo server expects the current 8-digit TOTP code as a
-    // flat `password` field (per ACVP §10.1-10.2; verified empirically
-    // 2026-04-26 against demo.acvts.nist.gov via mtls-login-sclient.sh).
-    // No JWT wrapping.
-    eprintln!("[transport] logging in to {}...", config.server_url);
-    let totp_code = totp_now(&totp_secret)?;
-    // If the caller provided an existing session-bound accessToken via
-    // --refresh-with, embed it in the login body. The server validates
-    // its signature (ignoring the JWT's exp) and re-issues a fresh
-    // session-bound token with the same tsId/vsId scope, suitable for
-    // re-accessing /testSessions/{id}/* after the original 30-minute
-    // token expiry.
-    let login_body = if let Some(token) = &config.refresh_with_token {
-        eprintln!("[transport] requesting refresh of existing session token");
-        format!(
-            "[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\",\"accessToken\":\"{token}\"}}]"
-        )
-    } else {
-        format!("[{{\"acvVersion\":\"1.0\"}},{{\"password\":\"{totp_code}\"}}]")
-    };
-    let login_url = format!("{}/acvp/v1/login", config.server_url);
-    let login_resp = transport.post(&login_url, &login_body, "")?;
-    if login_resp.status < 200 || login_resp.status >= 300 {
-        log.log("login_failed", &format!("HTTP {}", login_resp.status));
-        log.write_to_file(&config.log_path)?;
-        return Err(format!(
-            "login failed: HTTP {} — {}",
-            login_resp.status, login_resp.body
-        ));
-    }
-    // Extract the access token from the login response.
-    // Response shape: [{"acvVersion":"1.0"},{"accessToken":"..."}]
-    // On parse failure, dump the raw body next to the transcript log so
-    // the operator can inspect it manually (it may contain a still-valid
-    // JWT — shred after use).
-    let login_json = json::parse(&login_resp.body).map_err(|e| {
-        let dump_path = format!("{}.login-raw.bin", config.log_path);
-        let _ = std::fs::write(&dump_path, login_resp.body.as_bytes());
-        let head: String = login_resp.body.chars().take(120).collect();
-        format!(
-            "parse login response: {e}\n  body length: {} bytes\n  body[0..120]: {head:?}\n  raw body dumped to: {dump_path}",
-            login_resp.body.len()
-        )
-    })?;
-    let access_token = extract_access_token(&login_json)?;
-    eprintln!("[transport] login successful, got access token");
-    log.log("login_ok", "access token obtained");
+    let access_token = login_with_totp(
+        &mut transport,
+        config,
+        config.refresh_with_token.as_deref(),
+        &totp_secret,
+        &mut log,
+    )?;
 
     // ── Branch: query-session mode skips registration + submission.
     if let Some(query_url) = config.query_session_url.clone() {
@@ -1026,6 +1064,7 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         &registry,
         &mut log,
         &config.log_path,
+        &config.sessions_dir,
     );
 
     // ── Summary ────────────────────────────────────────────────────
@@ -1034,7 +1073,144 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     summary_result
 }
 
+/// Replay a cached, already-computed response against an existing
+/// test session — the `resubmit` CLI subcommand.
+///
+/// This is the recovery half of the submission-persistence layer: when
+/// a `demo-run` submit fails after a long compute, the session
+/// directory `<sessions_dir>/<tsId>-<vsId>/` (see [`crate::session`])
+/// still holds `response.json` with `submit-status.txt` = `PENDING`.
+/// `run_resubmit`:
+///
+/// 1. Loads the cached `response.json` — refusing cleanly, before any
+///    network contact, when the directory or file is missing.
+/// 2. Re-runs the existing cert/TOTP login flow, embedding the cached
+///    session-bound token (`token.txt`, or `--refresh-with` when
+///    supplied) so the server re-issues a fresh token scoped to the
+///    same tsId/vsId.
+/// 3. POSTs the cached bytes verbatim to
+///    `/acvp/v1/testSessions/{tsId}/vectorSets/{vsId}/results`.
+/// 4. Polls the verdict and advances `submit-status.txt`
+///    (`PENDING` → `SUBMITTED` → verdict string).
+///
+/// It never recomputes: the graded vectors are byte-identical to what
+/// the IUT computed during the original `demo-run`.
+pub fn run_resubmit(config: &AcvpConfig, ts_id: u64, vs_id: u64) -> Result<(), String> {
+    let mut log = TranscriptLog::new();
+    log.log(
+        "resubmit_start",
+        &format!(
+            "server={} tsId={ts_id} vsId={vs_id} sessions_dir={}",
+            config.server_url, config.sessions_dir
+        ),
+    );
+
+    // ── Step 0: load the cached artifacts BEFORE any network contact.
+    let session = SessionDir::open(&config.sessions_dir, ts_id, vs_id)?;
+    let response_body = session.read_response()?;
+    let prior_status = session
+        .read_status()
+        .unwrap_or_else(|_| "<missing>".to_string());
+    eprintln!(
+        "[transport] resubmit: cached response loaded from {} ({} bytes, prior status: {prior_status})",
+        session.path().display(),
+        response_body.len()
+    );
+    log.log(
+        "resubmit_cached_response",
+        &format!("{} bytes, prior status {prior_status}", response_body.len()),
+    );
+
+    // Session-bound token for the login refresh: an explicit
+    // --refresh-with wins, then the cached token.txt. Without either,
+    // the general login token alone is likely to 403 on the
+    // vector-set endpoint — warn but proceed, the server is the
+    // authority.
+    let refresh_with = config
+        .refresh_with_token
+        .clone()
+        .or_else(|| session.read_token());
+    if refresh_with.is_none() {
+        eprintln!(
+            "[transport] WARN: no cached session token ({}) and no --refresh-with; \
+             vector-set requests may return HTTP 403",
+            session::TOKEN_FILE
+        );
+    }
+
+    let totp_secret = decode_totp_secret(&config.totp_secret)?;
+    let mut transport = Transport::open(config)?;
+
+    // ── Step 1: re-login (existing cert/TOTP flow) ─────────────────
+    let access_token = match login_with_totp(
+        &mut transport,
+        config,
+        refresh_with.as_deref(),
+        &totp_secret,
+        &mut log,
+    ) {
+        Ok(token) => token,
+        Err(e) => {
+            transport.close();
+            return Err(e);
+        }
+    };
+
+    // ── Step 2: POST the cached response verbatim ──────────────────
+    let vs_path = format!("/acvp/v1/testSessions/{ts_id}/vectorSets/{vs_id}");
+    let full_url = resolve_url(&config.server_url, &vs_path);
+    let results_url = format!("{full_url}/results");
+    eprintln!("[transport] resubmitting cached response to {vs_path}...");
+    log.log("resubmit_post", &vs_path);
+    let disposition = match submit_and_mark(&session, &response_body, |body| {
+        transport.post(&results_url, body, &access_token)
+    }) {
+        SubmitOutcome::Submitted => {
+            eprintln!("[transport] resubmitted OK");
+            log.log("submit_ok", &vs_path);
+            if let Err(e) = log.write_to_file(&config.log_path) {
+                eprintln!("[transport] transcript flush failed after submit (continuing): {e}");
+            }
+            // ── Step 3: poll verdict, advance the status file ──────
+            eprintln!("[transport] polling for verdict...");
+            match poll_verdict(&full_url, &mut transport, &access_token, &mut log) {
+                Ok(d) => {
+                    eprintln!("[transport] verdict: {d}");
+                    log.log("verdict", &format!("{vs_path}: {d}"));
+                    if let Err(e) = session.write_status(&d) {
+                        eprintln!("[transport] WARN: could not record verdict in status file: {e}");
+                    }
+                    d
+                }
+                Err(e) => {
+                    eprintln!("[transport] poll error: {e}");
+                    log.log("poll_error", &e);
+                    "POLL_ERROR".to_string()
+                }
+            }
+        }
+        SubmitOutcome::HttpError(status) => {
+            eprintln!("[transport] resubmit returned HTTP {status}");
+            eprint_resubmit_hint(&session);
+            log.log("submit_error", &format!("HTTP {status}"));
+            format!("SUBMIT_HTTP_{status}")
+        }
+        SubmitOutcome::TransportError(e) => {
+            eprintln!("[transport] resubmit error: {e}");
+            eprint_resubmit_hint(&session);
+            log.log("submit_error", &e);
+            "SUBMIT_ERROR".to_string()
+        }
+    };
+
+    let summary_result =
+        write_session_summary(&[(vs_path, disposition)], &mut log, &config.log_path);
+    transport.close();
+    summary_result
+}
+
 /// Fetch, process, submit, and poll each vector set in the session.
+#[allow(clippy::too_many_arguments)]
 fn process_vector_sets(
     urls: &[String],
     transport: &mut Transport,
@@ -1043,6 +1219,7 @@ fn process_vector_sets(
     registry: &Registry,
     log: &mut TranscriptLog,
     log_path: &str,
+    sessions_dir: &str,
 ) -> Vec<(String, String)> {
     let mut results: Vec<(String, String)> = Vec::new();
     for (i, vs_url) in urls.iter().enumerate() {
@@ -1056,6 +1233,7 @@ fn process_vector_sets(
             registry,
             log,
             log_path,
+            sessions_dir,
         );
         results.push((vs_url.clone(), disposition));
     }
@@ -1063,8 +1241,20 @@ fn process_vector_sets(
 }
 
 /// Process a single vector set: fetch (with retry-envelope polling)
-/// → dispatch → submit → poll verdict.
-#[allow(clippy::too_many_arguments)]
+/// → persist prompt → dispatch → persist response (`PENDING`) →
+/// submit → poll verdict.
+///
+/// Persistence failures *before* the compute are hard errors
+/// (`PERSIST_ERROR`): the compute hasn't started, failing is cheap,
+/// and proceeding without durability would silently reintroduce the
+/// lost-compute failure mode this layer exists to fix. Persistence
+/// failures *after* the compute only warn — at that point a submit
+/// attempt is strictly better than dying.
+///
+/// Like `run_demo`, the function linearly orchestrates one protocol
+/// leg (fetch → persist → dispatch → submit → poll); splitting it
+/// further would scatter the flow, hence the line-count allow.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn process_one_vector_set(
     vs_url: &str,
     index: usize,
@@ -1075,6 +1265,7 @@ fn process_one_vector_set(
     registry: &Registry,
     log: &mut TranscriptLog,
     log_path: &str,
+    sessions_dir: &str,
 ) -> String {
     let full_url = resolve_url(server_url, vs_url);
     eprintln!("[transport] [{index}/{total}] fetching {vs_url}...");
@@ -1143,6 +1334,19 @@ fn process_one_vector_set(
     let vs_body = unwrap_acvp_array(&prompt);
     log.log_json("vector_set_prompt", vs_body);
 
+    // ── Submission persistence: prompt (before compute) ───────────
+    // Carve the session directory out of the vector-set URL and write
+    // the prompt + session token now, so even a crash mid-compute
+    // leaves the operator a complete replayable record.
+    let session = match open_session_store(vs_url, sessions_dir, bearer, vs_body) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("  [transport] {e}");
+            log.log("persist_error", &e);
+            return "PERSIST_ERROR".to_string();
+        }
+    };
+
     // Process through the dispatcher
     eprintln!("  [transport] processing...");
     let response = match dispatch::process(vs_body, registry) {
@@ -1160,12 +1364,27 @@ fn process_one_vector_set(
     let response = inject_vs_id(&response, vs_body);
     log.log_json("vector_set_response", &response);
 
-    // Submit response
+    // ── Submission persistence: response + PENDING (before submit) ─
+    // The computed response is durable from this point on; a submit
+    // failure costs a `resubmit`, never a recompute. Failures here
+    // only warn — the compute is already done, so attempting the
+    // submit is strictly better than dying.
     let results_url = format!("{full_url}/results");
     let response_body = build_acvp_response_body(&response);
+    if let Err(e) = session
+        .write_response(&response_body)
+        .and_then(|()| session.write_status(session::STATUS_PENDING))
+    {
+        eprintln!("  [transport] WARN: response persistence failed (submitting anyway): {e}");
+        log.log("persist_warning", &e);
+    }
+
+    // Submit response
     eprintln!("  [transport] submitting response...");
-    match transport.post(&results_url, &response_body, bearer) {
-        Ok(r) if r.status >= 200 && r.status < 300 => {
+    match submit_and_mark(&session, &response_body, |body| {
+        transport.post(&results_url, body, bearer)
+    }) {
+        SubmitOutcome::Submitted => {
             eprintln!("  [transport] submitted OK");
             log.log("submit_ok", vs_url);
             // Incremental flush — captures the just-submitted state so
@@ -1176,13 +1395,15 @@ fn process_one_vector_set(
                 eprintln!("  [transport] transcript flush failed after submit (continuing): {e}");
             }
         }
-        Ok(r) => {
-            eprintln!("  [transport] submit returned HTTP {}", r.status);
-            log.log("submit_error", &format!("HTTP {}", r.status));
-            return format!("SUBMIT_HTTP_{}", r.status);
+        SubmitOutcome::HttpError(status) => {
+            eprintln!("  [transport] submit returned HTTP {status}");
+            eprint_resubmit_hint(&session);
+            log.log("submit_error", &format!("HTTP {status}"));
+            return format!("SUBMIT_HTTP_{status}");
         }
-        Err(e) => {
+        SubmitOutcome::TransportError(e) => {
             eprintln!("  [transport] submit error: {e}");
+            eprint_resubmit_hint(&session);
             log.log("submit_error", &e);
             return "SUBMIT_ERROR".to_string();
         }
@@ -1194,6 +1415,9 @@ fn process_one_vector_set(
         Ok(d) => {
             eprintln!("  [transport] verdict: {d}");
             log.log("verdict", &format!("{vs_url}: {d}"));
+            if let Err(e) = session.write_status(&d) {
+                eprintln!("  [transport] WARN: could not record verdict in status file: {e}");
+            }
             d
         }
         Err(e) => {
@@ -1202,6 +1426,88 @@ fn process_one_vector_set(
             "POLL_ERROR".to_string()
         }
     }
+}
+
+/// Resolve the session-persistence directory for a vector set and
+/// write the pre-compute artifacts (prompt + session token).
+///
+/// Returns a hard error when the ids can't be parsed from the URL or
+/// the artifacts can't be written: durability is the contract of this
+/// layer, and at this point nothing has been computed yet, so failing
+/// is cheap and loud beats a silent downgrade to the lossy pre-S2
+/// behavior.
+fn open_session_store(
+    vs_url: &str,
+    sessions_dir: &str,
+    bearer: &str,
+    vs_body: &JsonValue,
+) -> Result<SessionDir, String> {
+    let (ts_id, vs_id) = session::parse_session_ids(vs_url).ok_or_else(|| {
+        format!("persistence setup failed: cannot parse tsId/vsId from vector-set URL {vs_url}")
+    })?;
+    let store = SessionDir::create(sessions_dir, ts_id, vs_id)
+        .map_err(|e| format!("persistence setup failed: {e}"))?;
+    let mut prompt_text = json::to_pretty_string(vs_body);
+    prompt_text.push('\n');
+    store
+        .write_prompt(&prompt_text)
+        .and_then(|()| store.write_token(bearer))
+        .map_err(|e| format!("persistence setup failed: {e}"))?;
+    eprintln!(
+        "  [transport] session store ready at {}",
+        store.path().display()
+    );
+    Ok(store)
+}
+
+/// Outcome of a single submit attempt (factored out of the protocol
+/// loop so tests can drive the persistence state machine with a
+/// stubbed transport closure — no network).
+enum SubmitOutcome {
+    /// HTTP 2xx — response accepted; status advanced to `SUBMITTED`.
+    Submitted,
+    /// Non-2xx HTTP status; the cached `PENDING` state is left intact.
+    HttpError(u16),
+    /// Transport-level failure (broken pipe, TLS teardown, curl exec
+    /// error); the cached `PENDING` state is left intact.
+    TransportError(String),
+}
+
+/// Run one submit attempt through `submit` and advance the session
+/// store's status file on success.
+///
+/// On any failure the status file is deliberately NOT touched: it
+/// stays `PENDING`, which is exactly the on-disk state
+/// `acvp-harness resubmit` consumes. The caller surfaces the error and
+/// the resubmit command to the operator.
+fn submit_and_mark<F>(session: &SessionDir, response_body: &str, submit: F) -> SubmitOutcome
+where
+    F: FnOnce(&str) -> Result<HttpResponse, String>,
+{
+    match submit(response_body) {
+        Ok(r) if r.status >= 200 && r.status < 300 => {
+            if let Err(e) = session.write_status(session::STATUS_SUBMITTED) {
+                eprintln!("  [transport] WARN: could not update submit status file: {e}");
+            }
+            SubmitOutcome::Submitted
+        }
+        Ok(r) => SubmitOutcome::HttpError(r.status),
+        Err(e) => SubmitOutcome::TransportError(e),
+    }
+}
+
+/// Tell the operator where the computed response is preserved and the
+/// exact command that replays it without recomputing.
+fn eprint_resubmit_hint(session: &SessionDir) {
+    eprintln!(
+        "  [transport] computed response preserved at {} (status {})",
+        session.path().display(),
+        session::STATUS_PENDING
+    );
+    eprintln!(
+        "  [transport] resubmit WITHOUT recomputing via:\n    {}",
+        session::resubmit_command(session.ts_id(), session.vs_id())
+    );
 }
 
 /// Classify a vector-set disposition as a harness-level error.
@@ -1217,6 +1523,7 @@ fn is_error_disposition(disp: &str) -> bool {
     disp.starts_with("DISPATCH_ERROR")
         || disp.starts_with("FETCH_ERROR")
         || disp.starts_with("PARSE_ERROR")
+        || disp.starts_with("PERSIST_ERROR")
         || disp.starts_with("SUBMIT_")
         || disp.starts_with("RETRY_TIMEOUT")
         || disp.starts_with("POLL_ERROR")
@@ -1736,5 +2043,83 @@ mod tests {
         // RFC 9110 §5.1: header field names are case-insensitive.
         let buf = b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n";
         assert!(scan_connection_close(buf));
+    }
+
+    #[test]
+    fn is_error_disposition_persist_error() {
+        assert!(is_error_disposition("PERSIST_ERROR"));
+    }
+
+    // ── Submission-persistence state machine ─────────────────────
+    //
+    // submit_and_mark takes the submit step as a closure, so these
+    // tests drive the full persistence path with stubbed transports —
+    // no network. The simulated-failure cases assert the on-disk
+    // state is exactly what `resubmit` consumes.
+
+    /// Fresh per-test scratch root under the OS temp dir, pre-loaded
+    /// with a session dir holding a cached response + PENDING status —
+    /// the state demo-run leaves just before its submit attempt.
+    fn pending_session(tag: &str) -> (std::path::PathBuf, SessionDir, String) {
+        let root = std::env::temp_dir().join(format!(
+            "oxicrypt-acvp-transport-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let session = SessionDir::create(root.to_str().unwrap(), 42, 123).unwrap();
+        let response_body =
+            "[{\"acvVersion\": \"1.0\"},{\"vsId\": 123,\"testGroups\": []}]".to_string();
+        session.write_response(&response_body).unwrap();
+        session.write_status(session::STATUS_PENDING).unwrap();
+        (root, session, response_body)
+    }
+
+    #[test]
+    fn submit_and_mark_success_advances_status_to_submitted() {
+        let (root, session, response_body) = pending_session("ok");
+        let outcome = submit_and_mark(&session, &response_body, |body| {
+            // The closure receives the exact cached bytes.
+            assert_eq!(body, response_body);
+            Ok(HttpResponse {
+                status: 200,
+                body: String::new(),
+            })
+        });
+        assert!(matches!(outcome, SubmitOutcome::Submitted));
+        assert_eq!(session.read_status().unwrap(), session::STATUS_SUBMITTED);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn submit_and_mark_transport_error_leaves_pending_state_for_resubmit() {
+        let (root, session, response_body) = pending_session("broken-pipe");
+        // Simulated TLS keep-alive death mid-POST (the 2026-05-17 LMS
+        // B7 failure mode).
+        let outcome = submit_and_mark(&session, &response_body, |_| {
+            Err("write to s_client stdin: Broken pipe (os error 32)".to_string())
+        });
+        assert!(matches!(outcome, SubmitOutcome::TransportError(_)));
+        // The on-disk state is exactly what resubmit expects: the
+        // session dir opens, the response replays byte-identically,
+        // and the status is still PENDING.
+        let reopened = SessionDir::open(root.to_str().unwrap(), 42, 123).unwrap();
+        assert_eq!(reopened.read_response().unwrap(), response_body);
+        assert_eq!(reopened.read_status().unwrap(), session::STATUS_PENDING);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn submit_and_mark_http_error_leaves_pending_state() {
+        let (root, session, response_body) = pending_session("http-500");
+        let outcome = submit_and_mark(&session, &response_body, |_| {
+            Ok(HttpResponse {
+                status: 500,
+                body: "server error".to_string(),
+            })
+        });
+        assert!(matches!(outcome, SubmitOutcome::HttpError(500)));
+        assert_eq!(session.read_status().unwrap(), session::STATUS_PENDING);
+        assert_eq!(session.read_response().unwrap(), response_body);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

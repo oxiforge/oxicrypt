@@ -759,9 +759,17 @@ fn dispatch_keygen(
 
 /// SigGen dispatcher — returns `(pk_vec, signer)` where `signer` is a
 /// closure that consumes one message and produces its signature bytes.
-/// The closure owns the mutable per-pair `LmsPrivateKey` (which has
-/// type-distinct `seed` / `identifier` array sizes per pair), so the
-/// caller never needs to name the per-pair type at the call site.
+/// The closure owns the mutable per-pair `LmsSigningKey` — the cached
+/// signing key that precomputes the Merkle node table once at
+/// construction (`LmsSigningKey::new_internal`, cost ≈ one keygen) and
+/// thereafter reads authentication paths from the table, taking
+/// per-signature tree cost from O(2^H) to O(H). Output is
+/// byte-identical to the free `sign` on the plain `LmsPrivateKey` for
+/// the same key state and message; the stateful one-leaf-per-signature
+/// contract (q auto-advances from 0, one leaf per call) is unchanged.
+/// `LmsSigningKey` has type-distinct `seed` / `identifier` array sizes
+/// per pair, so the caller never needs to name the per-pair type at the
+/// call site.
 type LmsSigner = Box<dyn FnMut(&[u8]) -> Option<Vec<u8>>>;
 
 #[allow(clippy::too_many_lines)]
@@ -772,563 +780,475 @@ fn dispatch_siggen(
 ) -> Result<(Vec<u8>, LmsSigner), DispatchError> {
     let out: (Vec<u8>, LmsSigner) = match (lms_mode, lmots_mode) {
         ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H5", "LMOTS_SHA256_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h5_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h5_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H10", "LMOTS_SHA256_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h10_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h10_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H15", "LMOTS_SHA256_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h15_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h15_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H20", "LMOTS_SHA256_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h20_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h20_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m32_h25_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m32_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m32_h25_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H5", "LMOTS_SHA256_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h5_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h5_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H10", "LMOTS_SHA256_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h10_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h10_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H15", "LMOTS_SHA256_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h15_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h15_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H20", "LMOTS_SHA256_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h20_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h20_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHA256_M24_H25", "LMOTS_SHA256_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_sha256_m24_h25_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_sha256_m24_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_sha256_m24_h25_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H5", "LMOTS_SHAKE_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h5_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H10", "LMOTS_SHAKE_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h10_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h10_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H15", "LMOTS_SHAKE_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h15_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h15_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H20", "LMOTS_SHAKE_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h20_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h20_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M32_H25", "LMOTS_SHAKE_N32_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m32_h25_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m32_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m32_h25_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h5_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h5_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h5_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H5", "LMOTS_SHAKE_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h5_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h5_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h10_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h10_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h10_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H10", "LMOTS_SHAKE_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h10_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h10_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h10_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h15_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h15_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h15_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H15", "LMOTS_SHAKE_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h15_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h15_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h15_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h20_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h20_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h20_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H20", "LMOTS_SHAKE_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h20_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h20_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h20_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W1") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w1::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h25_w1::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w1::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W2") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w2::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h25_w2::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w2::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W4") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w4::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h25_w4::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w4::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         ("LMS_SHAKE_M24_H25", "LMOTS_SHAKE_N24_W8") => {
-            let (mut sk, pk) = oxicrypt_lms::lms_shake_m24_h25_w8::keygen_internal(seed);
-            let signer: LmsSigner = Box::new(move |msg| {
-                oxicrypt_lms::lms_shake_m24_h25_w8::sign_internal(&mut sk, msg).map(|s| s.to_vec())
-            });
+            let (mut sk, pk) =
+                oxicrypt_lms::lms_shake_m24_h25_w8::LmsSigningKey::new_internal(seed);
+            let signer: LmsSigner = Box::new(move |msg| sk.sign_internal(msg).map(|s| s.to_vec()));
             (pk.to_vec(), signer)
         }
         _ => {

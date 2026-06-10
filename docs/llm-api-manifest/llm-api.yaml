@@ -114,6 +114,9 @@ modules:
     description: >-
       SHA-1, SHA-2 (224/256/384/512/512-224/512-256), SHA-3
       (224/256/384/512) hash functions. Both one-shot and streaming APIs.
+      Optional default-off feature accel-sha dispatches SHA-256/SHA-224
+      compression to oxicrypt-sha-accel when runtime CPU detection
+      confirms x86_64 SHA-NI; the public API is identical either way.
     no_std: true
     depends_on: [oxicrypt-module]
 
@@ -212,7 +215,15 @@ modules:
       per-pair LmsPrivateKey type — macro-uniform shape, distinct types.
       Stateful key management: each key can sign at most 1024 messages.
       Caller is responsible for persisting private-key state between
-      sign calls to prevent one-time key reuse.
+      sign calls to prevent one-time key reuse. Each pair also emits an
+      LmsSigningKey tree-cache wrapper (default-on `alloc` feature)
+      that precomputes the Merkle node table once for O(H) signing with
+      byte-identical output; the core surface stays heap-free. An
+      optional default-off `parallel` feature parallelizes the cache's
+      Merkle leaf computation over rayon (indexed disjoint-slice sweep,
+      byte-identical output, std-only — the default build stays no_std);
+      no public-API change, equivalence argued structurally and
+      corroborated by test in the Security Policy (R75).
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-zeroize]
 
@@ -270,11 +281,25 @@ modules:
 
   - name: oxicrypt-zeroize
     description: >-
-      Volatile-write zeroization for CSP buffers. The only crate in the
-      workspace that uses unsafe code. Provides zeroize() for byte slices,
+      Volatile-write zeroization for CSP buffers. One of the two audited
+      unsafe crates inside the boundary (the other is
+      oxicrypt-sha-accel). Provides zeroize() for byte slices,
       zeroize_u32() for u32 word arrays (SHA-1/SHA-2 state), and
       zeroize_u64() for u64 limb arrays (SHA-2 64-bit, Keccak, RSA), all
       using core::ptr::write_volatile to prevent dead-store elimination.
+    no_std: true
+    depends_on: []
+
+  - name: oxicrypt-sha-accel
+    description: >-
+      Audited CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for
+      oxicrypt-sha. Not a consumer-facing algorithm API: exposes only
+      sha256_compress_available() (cached CPUID runtime detection) and
+      sha256_compress(state, block) -> bool (returns false with state
+      untouched when SHA-NI is absent, so callers fall back to the
+      portable path). Compiled into the boundary only via oxicrypt-sha's
+      default-off accel-sha feature. One of the two audited unsafe
+      crates inside the boundary (the other is oxicrypt-zeroize).
     no_std: true
     depends_on: []
 
@@ -284,13 +309,17 @@ modules:
       dispatch NIST ACVP vector sets offline (dispatch subcommand) and
       online against the ACVP demo server (demo-run subcommand). The
       demo-run transport uses TOTP-signed JWT login, curl-based HTTPS
-      with mutual TLS, and exponential-backoff polling. Outside the
-      cryptographic boundary.
+      with mutual TLS, and exponential-backoff polling. Computed
+      responses are persisted per session before the first submit
+      attempt; the resubmit subcommand replays the cached response
+      byte-for-byte after a submit failure, without recomputing.
+      Outside the cryptographic boundary.
     no_std: false
     entry_points:
       - "acvp-harness dispatch <prompt.json> <response.json>"
       - "acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>"
       - "acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>"
+      - "acvp-harness resubmit <tsId> <vsId> --cert <cert> --key <key> --totp-secret <hex>"
     depends_on:
       - oxicrypt-module
       - oxicrypt-sha
@@ -676,6 +705,42 @@ types:
       - name: leaf_index
         type: u32
         description: "Next unused leaf index (0..1023). Incremented after each sign."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: LmsSigningKey
+    module: oxicrypt-lms
+    kind: struct
+    description: >-
+      Cached LMS signing key (per-pair; the H10/W4 baseline shape is
+      shown). Wraps LmsPrivateKey together with the full precomputed
+      Merkle node table, so each sign reads its H authentication-path
+      nodes from the table instead of recomputing the 2^H-leaf tree —
+      per-signature tree cost drops from O(2^H) to O(H) and signatures
+      are byte-identical to the uncached path. Construction costs about
+      one keygen and allocates 2^(H+1) N-byte node slots on the heap
+      (64 KiB at H=10 up to 2 GiB at H=25 with N=32); requires the
+      crate's default-on `alloc` feature. Every per-pair module emits
+      its own LmsSigningKey type via the lms_impl! macro. STATEFUL
+      exactly like LmsPrivateKey: sign advances the leaf index and
+      refuses on exhaustion; persist the wrapped key
+      (private_key().to_bytes()) after every sign. Accessors:
+      leaf_index(), is_exhausted(), private_key(), into_private_key(),
+      public_key().
+    fields:
+      - name: key
+        type: LmsPrivateKey
+        description: "Wrapped stateful private key (secret; zeroized on Drop as usual)."
+      - name: nodes
+        type: "Vec<[u8; 32]>"
+        description: >-
+          Merkle node table in RFC 8554 numbering (root = 1, leaves at
+          2^H..2^(H+1); slot 0 unused). PUBLIC data — every node is
+          derived from LM-OTS public keys and appears in signatures or
+          the public key, so the table carries no zeroization
+          requirement and is deliberately not zeroized on drop.
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -4247,6 +4312,130 @@ functions:
       fips_approved: true
       fips_gate: Operational
     profiles: [Unrestricted, Cnsa2]
+
+  # Cached signing (feature `alloc`, on by default). Emitted per pair
+  # by the same lms_impl! macro; baseline H10/W4 shapes shown. Gate-free
+  # doc-hidden twins (new_internal, from_private_key_internal,
+  # sign_internal, node_table) exist for self-tests, harness use, and
+  # the cached-vs-uncached determinism oracle in the crate unit tests.
+
+  - name: "LmsSigningKey::new"
+    module: oxicrypt-lms
+    signature: "pub fn new(xi: &[u8; 32]) -> Result<(LmsSigningKey, [u8; 56]), Error>"
+    description: >-
+      Generate a fresh LMS key pair and precompute the full Merkle node
+      table (cost ~ one keygen; the table holds only public node
+      hashes). The returned LmsSigningKey signs in O(H) per signature.
+      Same module gating as keygen.
+    parameters:
+      - name: xi
+        type: "&[u8; 32]"
+        direction: in
+        description: "32-byte secret seed for the Merkle tree (from an approved DRBG)."
+    returns:
+      type: "Result<(LmsSigningKey, [u8; 56]), Error>"
+      description: "(cached_signing_key, public_key). Public key identical to keygen's for the same xi."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: LMS blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: "LmsSigningKey::from_private_key"
+    module: oxicrypt-lms
+    signature: "pub fn from_private_key(key: LmsPrivateKey) -> Result<LmsSigningKey, Error>"
+    description: >-
+      Wrap an existing private key (e.g. resumed from persisted state
+      via LmsPrivateKey::from_bytes), rebuilding the Merkle node table
+      from its seed (cost ~ one keygen). The key's current leaf_index
+      is preserved, so resumed cached signing continues exactly where
+      the uncached key left off.
+    parameters:
+      - name: key
+        type: LmsPrivateKey
+        direction: in
+        description: "Private key to wrap; leaf state preserved."
+    returns:
+      type: "Result<LmsSigningKey, Error>"
+      description: "Cached signing key over the same key state."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: LMS blocked by active profile.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+
+  - name: "LmsSigningKey::sign"
+    module: oxicrypt-lms
+    signature: "pub fn sign(&mut self, message: &[u8]) -> Result<[u8; 2508], Error>"
+    description: >-
+      Sign a message reading the authentication path from the cached
+      node table — O(H) per signature instead of the uncached O(2^H)
+      tree walk. Output is byte-identical to the free sign for the same
+      key state and message. STATEFUL: advances the wrapped key's leaf
+      index by 1 and returns Err(InvalidInput) once the tree is
+      exhausted, exactly like the uncached sign. The caller MUST
+      persist private_key().to_bytes() after this call.
+    parameters:
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Message to sign (arbitrary length)."
+    returns:
+      type: "Result<[u8; 2508], Error>"
+      description: "2508-byte LMS signature, byte-identical to the uncached sign."
+    error_variants:
+      - name: NotOperational
+        condition: Module not initialized.
+      - name: AlgorithmRestricted
+        condition: LMS blocked by active profile.
+      - name: InvalidInput
+        condition: Key exhausted (leaf_index >= 1024).
+    preconditions:
+      - description: Module must be Operational.
+      - description: Wrapped key not exhausted.
+    postconditions:
+      - description: Wrapped key's leaf_index incremented by 1. Caller MUST persist key state.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    profiles: [Unrestricted, Cnsa2]
+    pitfalls:
+      - description: >-
+          The same one-leaf-per-signature contract as the uncached sign
+          applies: persist the wrapped private key after every call.
+          The node table itself is public data and need not (and cannot
+          meaningfully) be kept secret — but it does NOT capture leaf
+          state; only the wrapped LmsPrivateKey does.
+        wrong: |
+          let (mut csk, pk) = lms_sha256_m32_h10_w4::LmsSigningKey::new(&seed)?;
+          let sig = csk.sign(b"msg")?;
+          // BUG: wrapped key not persisted — crash loses the advanced leaf index
+        right: |
+          let (mut csk, pk) = lms_sha256_m32_h10_w4::LmsSigningKey::new(&seed)?;
+          let sig = csk.sign(b"msg")?;
+          persist_to_disk(&csk.private_key().to_bytes());  // MUST persist after every sign
 
   # ── XMSS (SP 800-208 / RFC 8391) ─────────────────────────────────
 

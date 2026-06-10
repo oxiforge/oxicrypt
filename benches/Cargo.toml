@@ -22,6 +22,7 @@ oxicrypt-eddsa = { path = "../crates/oxicrypt-eddsa" }
 oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
 oxicrypt-rsa = { path = "../crates/oxicrypt-rsa" }
 oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
+oxicrypt-lms = { path = "../crates/oxicrypt-lms" }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
@@ -50,4 +51,8 @@ harness = false
 
 [[bench]]
 name = "ecdh"
+harness = false
+
+[[bench]]
+name = "lms"
 harness = false

@@ -42,6 +42,20 @@
 //! are Unrestricted-only, default-blocked by the fail-safe `matches!`
 //! patterns in [`oxicrypt_module::is_allowed`].
 //!
+//! # Cached signing — `LmsSigningKey` (feature `alloc`)
+//!
+//! Each per-pair module additionally emits an `LmsSigningKey` wrapper
+//! (behind the default-on `alloc` feature) that precomputes the full
+//! Merkle node table once at construction (cost ≈ one keygen) and
+//! reads authentication paths from it, taking per-signature tree cost
+//! from O(2^H) to O(H). Signatures are byte-identical to the uncached
+//! path. The node table holds only **public** Merkle data (derived
+//! from the LM-OTS public keys), so it carries no zeroization
+//! requirement; the wrapped `LmsPrivateKey` keeps its zeroize-on-Drop
+//! semantics, and the stateful one-leaf-per-signature contract is
+//! unchanged. The plain `keygen`/`sign`/`verify` surface stays
+//! heap-free and is unaffected when `alloc` is disabled.
+//!
 //! # Self-tests
 //!
 //! [`KATS`] aggregates the power-up KATs for every instantiated pair.
@@ -65,8 +79,15 @@
 //! `is_cnsa{1,2}_allowed` is automatically denied under the restrictive
 //! profiles.
 
-#![no_std]
+// `no_std` by default. The optional `parallel` feature pulls in `rayon`,
+// which requires `std`, so `std` enters ONLY under `parallel`; every
+// default build remains provably `no_std`. `forbid(unsafe_code)` is
+// unconditional in both configurations.
+#![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 pub mod hash;
 pub(crate) mod lms_impl;
