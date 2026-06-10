@@ -17,6 +17,11 @@ Cargo.lock.bak
 *.pem
 *.key
 
+# ACVP session store (acvp-harness submission persistence) — holds
+# session-bound access tokens (token.txt) and per-session vector
+# prompts/responses. Operational state, never repository content.
+acvts-demo/
+
 # Fuzzing / profiling artifacts
 /fuzz/target
 /fuzz/corpus

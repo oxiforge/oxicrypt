@@ -69,6 +69,7 @@ pub enum HttpBackend {
 }
 
 /// Configuration for an ACVP demo-server session.
+#[derive(Clone)]
 pub struct AcvpConfig {
     /// Base URL of the ACVP server (e.g. `https://demo.acvts.nist.gov`).
     pub server_url: String,
@@ -1066,6 +1067,57 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         &config.log_path,
         &config.sessions_dir,
     );
+
+    // ── Auto-recovery: one inline resubmit per SUBMIT_ERROR ────────
+    // A long compute idles the persistent TLS connection past the
+    // socket/server timeout, so the first write after compute dies
+    // with a broken pipe (the May B7 failure class). The response is
+    // already persisted as PENDING by then, so one automatic replay
+    // on a fresh connection banks the compute without operator
+    // action. A fresh connection means a new TLS handshake — on
+    // touch-policy PIV keys that is another YubiKey touch, so
+    // attended sessions recover immediately while unattended ones
+    // fail the handshake and stay parked at PENDING for a later
+    // manual `resubmit` (exactly the pre-patch behavior).
+    let results: Vec<(String, String)> = results
+        .into_iter()
+        .map(|(vs_url, disposition)| {
+            if disposition != "SUBMIT_ERROR" {
+                return (vs_url, disposition);
+            }
+            let Some((ts_id, vs_id)) = session::parse_session_ids(&vs_url) else {
+                return (vs_url, disposition);
+            };
+            eprintln!(
+                "[transport] submit failed for {vs_url}; attempting ONE automatic \
+                 resubmit on a fresh connection"
+            );
+            eprintln!("  ← TOUCH YUBIKEY if prompted (new TLS handshake)");
+            log.log("auto_resubmit_attempt", &vs_url);
+            // Distinct transcript path — run_resubmit writes its own
+            // transcript and must not clobber this session's.
+            let mut retry_cfg = config.clone();
+            retry_cfg.log_path = format!("{}.auto-resubmit.json", config.log_path);
+            match run_resubmit(&retry_cfg, ts_id, vs_id) {
+                Ok(()) => {
+                    let status = session::SessionDir::open(&config.sessions_dir, ts_id, vs_id)
+                        .and_then(|s| s.read_status())
+                        .unwrap_or_else(|_| session::STATUS_SUBMITTED.to_string());
+                    log.log("auto_resubmit_ok", &format!("{vs_url}: {status}"));
+                    (vs_url, status)
+                }
+                Err(e) => {
+                    eprintln!("[transport] automatic resubmit failed: {e}");
+                    eprintln!(
+                        "[transport] response remains preserved — bank it later via \
+                         `acvp-harness resubmit {ts_id} {vs_id} ...`"
+                    );
+                    log.log("auto_resubmit_error", &format!("{vs_url}: {e}"));
+                    (vs_url, disposition)
+                }
+            }
+        })
+        .collect();
 
     // ── Summary ────────────────────────────────────────────────────
     let summary_result = write_session_summary(&results, &mut log, &config.log_path);
