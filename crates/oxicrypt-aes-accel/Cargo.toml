@@ -1,0 +1,12 @@
+[package]
+name = "oxicrypt-aes-accel"
+description = "Audited CPU-intrinsic AES block acceleration (x86_64 AES-NI) for oxicrypt-aes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

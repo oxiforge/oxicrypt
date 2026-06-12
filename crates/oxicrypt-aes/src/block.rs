@@ -18,9 +18,13 @@
 //! A full table-based T-box implementation would be faster on
 //! modern CPUs but is subject to well-known cache-timing attacks.
 //! For a Level 1 software module we prefer the simple byte-wise
-//! S-box implementation. Constant-time hardening (bitsliced AES,
-//! or AES-NI intrinsics via `unsafe` feature-gated fallback) is
-//! deferred to Phase 4 hardening per the project plan.
+//! S-box implementation as the validated default. The optional
+//! `accel-aes` feature (default OFF) dispatches the single-block
+//! boundary to `oxicrypt-aes-accel` — AES-NI, runtime-detected via
+//! CPUID, fail-portable — which is *also* constant-time by
+//! construction (hardware rounds, no table lookups). Bitsliced
+//! hardening of the portable path remains Phase 4 work per the
+//! project plan.
 
 #![allow(
     clippy::indexing_slicing,
@@ -351,10 +355,18 @@ impl Aes128Key {
     }
     /// Encrypt a single 16-byte block in place.
     pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::encrypt_block(&self.rk, 10, block) {
+            return;
+        }
         encrypt_block_generic(block, &self.rk, 10);
     }
     /// Decrypt a single 16-byte block in place.
     pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::decrypt_block(&self.rk, 10, block) {
+            return;
+        }
         decrypt_block_generic(block, &self.rk, 10);
     }
 }
@@ -382,10 +394,18 @@ impl Aes192Key {
     }
     /// Encrypt a single 16-byte block in place.
     pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::encrypt_block(&self.rk, 12, block) {
+            return;
+        }
         encrypt_block_generic(block, &self.rk, 12);
     }
     /// Decrypt a single 16-byte block in place.
     pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::decrypt_block(&self.rk, 12, block) {
+            return;
+        }
         decrypt_block_generic(block, &self.rk, 12);
     }
 }
@@ -413,10 +433,18 @@ impl Aes256Key {
     }
     /// Encrypt a single 16-byte block in place.
     pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::encrypt_block(&self.rk, 14, block) {
+            return;
+        }
         encrypt_block_generic(block, &self.rk, 14);
     }
     /// Decrypt a single 16-byte block in place.
     pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+        #[cfg(feature = "accel-aes")]
+        if oxicrypt_aes_accel::decrypt_block(&self.rk, 14, block) {
+            return;
+        }
         decrypt_block_generic(block, &self.rk, 14);
     }
 }
@@ -500,5 +528,111 @@ mod tests {
         assert_eq!(buf, ct_expected);
         k.decrypt_block(&mut buf);
         assert_eq!(buf, pt);
+    }
+}
+
+// ── Cross-path oracle: AES-NI dispatch ≡ portable (accel-aes) ───────
+//
+// The accel crate cannot host the FIPS 197 correctness KATs itself —
+// an AES block KAT needs the expanded key schedule, which is private
+// to this crate by design. So the equivalence proof lives here: with
+// `accel-aes` enabled, the public block methods (which dispatch to
+// AES-NI when CPUID allows) must agree byte-for-byte with the portable
+// generic cipher AND with the FIPS 197 Appendix C known answers.
+#[cfg(all(test, feature = "accel-aes"))]
+#[allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    clippy::arithmetic_side_effects
+)]
+mod accel_cross_path_tests {
+    use super::*;
+
+    /// FIPS 197 Appendix C common plaintext.
+    const PT: [u8; 16] = [
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff,
+    ];
+
+    #[test]
+    fn fips197_appendix_c_through_dispatch() {
+        // C.1 — AES-128.
+        let key128: [u8; 16] = core::array::from_fn(|i| i as u8);
+        let expect128: [u8; 16] = [
+            0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
+            0xc5, 0x5a,
+        ];
+        let k = Aes128Key::new_internal(&key128);
+        let mut b = PT;
+        k.encrypt_block(&mut b);
+        assert_eq!(b, expect128, "AES-128 App C.1 ciphertext");
+        k.decrypt_block(&mut b);
+        assert_eq!(b, PT, "AES-128 App C.1 round-trip");
+
+        // C.2 — AES-192.
+        let key192: [u8; 24] = core::array::from_fn(|i| i as u8);
+        let expect192: [u8; 16] = [
+            0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d,
+            0x71, 0x91,
+        ];
+        let k = Aes192Key::new_internal(&key192);
+        let mut b = PT;
+        k.encrypt_block(&mut b);
+        assert_eq!(b, expect192, "AES-192 App C.2 ciphertext");
+        k.decrypt_block(&mut b);
+        assert_eq!(b, PT, "AES-192 App C.2 round-trip");
+
+        // C.3 — AES-256.
+        let key256: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let expect256: [u8; 16] = [
+            0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
+            0x60, 0x89,
+        ];
+        let k = Aes256Key::new_internal(&key256);
+        let mut b = PT;
+        k.encrypt_block(&mut b);
+        assert_eq!(b, expect256, "AES-256 App C.3 ciphertext");
+        k.decrypt_block(&mut b);
+        assert_eq!(b, PT, "AES-256 App C.3 round-trip");
+    }
+
+    #[test]
+    fn dispatch_equals_portable_generic_across_many_blocks() {
+        let k128 = Aes128Key::new_internal(&[0x13; 16]);
+        let k192 = Aes192Key::new_internal(&[0x37; 24]);
+        let k256 = Aes256Key::new_internal(&[0x42; 32]);
+        for i in 0..512u32 {
+            let x: [u8; 16] =
+                core::array::from_fn(|j| (i as usize).wrapping_mul(31).wrapping_add(j * 7) as u8);
+
+            // AES-128.
+            let (mut a, mut b) = (x, x);
+            k128.encrypt_block(&mut a);
+            encrypt_block_generic(&mut b, &k128.rk, 10);
+            assert_eq!(a, b, "AES-128 dispatch≡portable encrypt, block {i}");
+            let (mut da, mut db) = (a, b);
+            k128.decrypt_block(&mut da);
+            decrypt_block_generic(&mut db, &k128.rk, 10);
+            assert_eq!(da, x, "AES-128 dispatch decrypt inverts, block {i}");
+            assert_eq!(db, x, "AES-128 portable decrypt inverts, block {i}");
+
+            // AES-192.
+            let (mut a, mut b) = (x, x);
+            k192.encrypt_block(&mut a);
+            encrypt_block_generic(&mut b, &k192.rk, 12);
+            assert_eq!(a, b, "AES-192 dispatch≡portable encrypt, block {i}");
+
+            // AES-256.
+            let (mut a, mut b) = (x, x);
+            k256.encrypt_block(&mut a);
+            encrypt_block_generic(&mut b, &k256.rk, 14);
+            assert_eq!(a, b, "AES-256 dispatch≡portable encrypt, block {i}");
+            let (mut da, mut db) = (a, b);
+            k256.decrypt_block(&mut da);
+            decrypt_block_generic(&mut db, &k256.rk, 14);
+            assert_eq!(da, x, "AES-256 dispatch decrypt inverts, block {i}");
+            assert_eq!(db, x, "AES-256 portable decrypt inverts, block {i}");
+        }
     }
 }

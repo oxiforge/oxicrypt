@@ -43,9 +43,9 @@ and the code agree because the commit gate forces them to.
 
 ## Principles
 
-- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 21 of 23 in-boundary crates
+- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 21 of 24 in-boundary crates
   carry it. It is a build-time control that enters the conformance argument. Exactly two sanctioned
-  `unsafe` categories exist, each isolated in its own small audited crate: (1) **volatile CSP
+  `unsafe` categories exist, isolated in three small audited crates: (1) **volatile CSP
   zeroization** — `oxicrypt-zeroize`, one audited `unsafe` mechanism for `write_volatile`; and
   (2) **CPU-intrinsic acceleration** — `oxicrypt-sha-accel`: feature-gated, default-off,
   runtime-detected, equivalence to the portable path proven by KAT + cross-path oracle. The default
@@ -74,7 +74,7 @@ by the commit-is-the-gate doc-sync discipline.
 
 > Placeholder set — expand into the full per-algorithm / per-service inventory during validation.
 
-- [ ] ISC-1: 21 of the 23 in-boundary crates carry `#![forbid(unsafe_code)]`; the two audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`) and `oxicrypt-sha-accel` (sanctioned CPU-intrinsic acceleration: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence; one audited `unsafe` block). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
+- [ ] ISC-1: 21 of the 24 in-boundary crates carry `#![forbid(unsafe_code)]`; the three audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`) and the two CPU-intrinsic-acceleration crates `oxicrypt-sha-accel` / `oxicrypt-aes-accel` (sanctioned category: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
 - [ ] ISC-2: every approved algorithm has known-answer / ACVP vectors that pass (`oxicrypt-test-vectors`, `acvp-harness/`)
 - [ ] ISC-3: power-up self-tests run and gate operation (`oxicrypt-integrity`)
 - [ ] ISC-4: the module boundary is formally defined (`oxicrypt-module`)
@@ -123,6 +123,17 @@ by the commit-is-the-gate doc-sync discipline.
   SHA-NI first; AArch64 SHA2 intrinsics are a documented follow-up under the same category. Each
   accel path is a distinct CAVP-tested operational-environment configuration when validation comes
   (see security-policy R74).
+
+- 2026-06-11 (night loop, PROPOSED — merging this branch constitutes the project-lead ruling):
+  second implementation under the 2026-06-10 CPU-intrinsic acceleration category —
+  `oxicrypt-aes-accel` (x86_64 AES-NI single-block encrypt/decrypt), consumed by `oxicrypt-aes`
+  behind default-off `accel-aes`. ISC-1 accounting amended 21-of-23 → 21-of-24 (three audited
+  crates, still two sanctioned categories). Correctness oracle placement diverges from the SHA
+  precedent by necessity: FIPS 197 Appendix C KATs + 512-block dispatch≡portable cross-path tests
+  live in `oxicrypt-aes`'s feature-gated tests because the key schedule is deliberately private.
+  Measured 13.1× on AES-256 single-block (73.7 → 961.8 MiB/s, byte-identical outputs). Follow-ups
+  under the same category: multi-block pipelining for CTR/GCM bulk paths; AArch64 AES intrinsics.
+  See security-policy R76 + §9.2 item 3.
 
 ## Changelog
 

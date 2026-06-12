@@ -518,10 +518,11 @@ macro_rules! lms_impl {
             Ok(keygen_internal(xi))
         }
 
-        /// Gate-free keygen — for self-tests and ACVP harness use.
-        #[doc(hidden)]
-        pub fn keygen_internal(xi: &[u8; 32]) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
-            #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        /// Derive the private seed and 16-byte identifier `I` from the
+        /// 32-byte input `xi` — the domain-separated construction shared
+        /// by `keygen_internal` and the cached `LmsSigningKey` path.
+        fn derive_seed_identifier(xi: &[u8; 32]) -> ([u8; N], [u8; 16]) {
+            #![allow(clippy::indexing_slicing)]
 
             let mut h = <$hasher>::new_internal();
             h.update(xi);
@@ -534,6 +535,15 @@ macro_rules! lms_impl {
             let i_full = h.finalize();
             let mut identifier = [0u8; 16];
             identifier.copy_from_slice(&i_full[..16]);
+            (seed, identifier)
+        }
+
+        /// Gate-free keygen — for self-tests and ACVP harness use.
+        #[doc(hidden)]
+        pub fn keygen_internal(xi: &[u8; 32]) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
+            #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+
+            let (seed, identifier) = derive_seed_identifier(xi);
 
             let root = tree_internals::compute_root(&seed, &identifier);
 
@@ -796,11 +806,26 @@ macro_rules! lms_impl {
             }
 
             /// Gate-free constructor — for self-tests and harness use.
+            ///
+            /// Builds the Merkle node table once and assembles the public
+            /// key from its cached root (`nodes[1]`) instead of walking
+            /// the full tree a second time through `compute_root`. The
+            /// table is proven byte-identical to the recursive walk by
+            /// the cached-vs-uncached determinism oracle, so the public
+            /// key is unchanged — at half the construction cost, with the
+            /// tree build on the (feature-gated) parallel leaf sweep.
             #[doc(hidden)]
             pub fn new_internal(xi: &[u8; 32]) -> (Self, [u8; PUBLIC_KEY_LEN]) {
-                let (key, pk) = keygen_internal(xi);
+                let (seed, identifier) = derive_seed_identifier(xi);
+                let key = LmsPrivateKey {
+                    seed,
+                    identifier,
+                    leaf_index: 0,
+                };
                 let nodes = cached_internals::build_node_table(&key.seed, &key.identifier);
-                (Self { key, nodes }, pk)
+                let signing_key = Self { key, nodes };
+                let pk = signing_key.public_key();
+                (signing_key, pk)
             }
 
             /// Wrap an existing private key (e.g. one resumed from

@@ -504,9 +504,14 @@ dependencies = [
 name = "oxicrypt-aes"
 version = "0.11.0"
 dependencies = [
+ "oxicrypt-aes-accel",
  "oxicrypt-module",
  "oxicrypt-zeroize",
 ]
+
+[[package]]
+name = "oxicrypt-aes-accel"
+version = "0.11.0"
 
 [[package]]
 name = "oxicrypt-bench"
@@ -704,6 +709,7 @@ dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-xof",
+ "rayon",
 ]
 
 [[package]]

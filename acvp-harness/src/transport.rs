@@ -12,9 +12,14 @@
 //!    [`crate::dispatch::process`]; persist the computed response and
 //!    a `PENDING` status BEFORE any submit attempt, so a transport
 //!    failure cannot lose a long compute.
-//! 5. **Submit** — POST responses back to each vector-set URL. On
-//!    failure the cached `PENDING` state is left intact and the error
-//!    names the `resubmit` recovery command.
+//! 5. **Submit** — POST responses back to each vector-set URL. The
+//!    session-bound token (30-minute server TTL) is proactively
+//!    refreshed over the live connection when a long compute has aged
+//!    it past [`TOKEN_REFRESH_MARGIN_SECS`] — no new TLS handshake, no
+//!    YubiKey touch — with one reactive refresh-and-retry if the
+//!    server still answers 401/403. On failure the cached `PENDING`
+//!    state is left intact and the error names the `resubmit`
+//!    recovery command.
 //! 6. **Poll** — GET each vector set until the verdict is in; the
 //!    verdict replaces the status file's `SUBMITTED` marker.
 //!
@@ -922,6 +927,120 @@ fn login_with_totp(
     Ok(access_token)
 }
 
+/// Age at which the session-bound token is proactively refreshed before
+/// the next request that depends on it. The NIST per-vectorSet token
+/// TTL is 30 minutes (observed `exp − iat` = 1800 s); 20 minutes leaves
+/// a wide margin for the request plus verdict polling while never
+/// triggering on short computes.
+const TOKEN_REFRESH_MARGIN_SECS: u64 = 20 * 60;
+
+/// Pure proactive-refresh decision — split out so the threshold logic
+/// is unit-testable without a live token.
+fn token_needs_refresh(elapsed_secs: u64) -> bool {
+    elapsed_secs >= TOKEN_REFRESH_MARGIN_SECS
+}
+
+/// Pure reactive-retry decision for a rejected submit: one refresh-and-
+/// retry is allowed per submit, and only for the two statuses the demo
+/// server uses for an expired/unauthorized bearer.
+fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool {
+    !already_retried && (status == 401 || status == 403)
+}
+
+/// Session-bound access token plus its issuance instant, so a long IUT
+/// compute can refresh it in-flight.
+///
+/// The refresh re-runs the login flow over the **live connection**,
+/// embedding the current (possibly expired) token so the server
+/// re-issues a fresh token with the same tsId/vsId scope — the
+/// mechanism `resubmit` already relies on. Because no new TLS
+/// handshake occurs, no YubiKey touch is required: this is what makes
+/// long unattended runs submittable, where the post-compute
+/// auto-resubmit path (fresh handshake → touch) cannot proceed
+/// without an operator.
+struct SessionToken {
+    token: String,
+    issued: std::time::Instant,
+}
+
+impl SessionToken {
+    fn new(token: String) -> Self {
+        Self {
+            token,
+            issued: std::time::Instant::now(),
+        }
+    }
+
+    /// Construct a token with a synthetic age — mocked-expiry tests only.
+    #[cfg(test)]
+    fn with_age(token: String, age: std::time::Duration) -> Self {
+        Self {
+            token,
+            issued: std::time::Instant::now()
+                .checked_sub(age)
+                .unwrap_or_else(std::time::Instant::now),
+        }
+    }
+
+    fn bearer(&self) -> &str {
+        &self.token
+    }
+
+    fn elapsed_secs(&self) -> u64 {
+        self.issued.elapsed().as_secs()
+    }
+
+    fn needs_refresh(&self) -> bool {
+        token_needs_refresh(self.elapsed_secs())
+    }
+
+    /// Re-login over the live connection, embedding the current token so
+    /// the server re-issues a fresh same-scope token. On success the
+    /// token and issuance instant are replaced.
+    fn refresh(
+        &mut self,
+        transport: &mut Transport,
+        config: &AcvpConfig,
+        totp_secret: &[u8],
+        log: &mut TranscriptLog,
+    ) -> Result<(), String> {
+        eprintln!(
+            "[transport] session token age {}s — refreshing over the live connection \
+             (no new handshake, no touch)",
+            self.elapsed_secs()
+        );
+        log.log(
+            "token_refresh",
+            &format!("age_secs={}", self.elapsed_secs()),
+        );
+        let fresh = login_with_totp(transport, config, Some(&self.token), totp_secret, log)?;
+        self.token = fresh;
+        self.issued = std::time::Instant::now();
+        Ok(())
+    }
+
+    /// Proactive best-effort refresh: failure warns and keeps the
+    /// current token (the reactive submit retry remains as backstop).
+    fn refresh_if_stale(
+        &mut self,
+        transport: &mut Transport,
+        config: &AcvpConfig,
+        totp_secret: &[u8],
+        log: &mut TranscriptLog,
+    ) {
+        if !self.needs_refresh() {
+            return;
+        }
+        if let Err(e) = self.refresh(transport, config, totp_secret, log) {
+            eprintln!(
+                "[transport] WARN: proactive token refresh failed (continuing with \
+                 current token): {e}"
+            );
+            log.log("token_refresh_error", &e);
+        }
+    }
+}
+
 /// Run a full ACVP demo-server session.
 ///
 /// This is the top-level entry point for the `demo-run` subcommand.
@@ -1037,6 +1156,9 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         );
         access_token.clone()
     });
+    // Track issuance so long computes can refresh the 30-min-TTL token
+    // in-flight (over the live connection — no new handshake).
+    let mut session_token = SessionToken::new(session_token);
     eprintln!(
         "[transport] registered: {} vector set(s)",
         vector_set_urls.len()
@@ -1060,8 +1182,9 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
     let results = process_vector_sets(
         &vector_set_urls,
         &mut transport,
-        &config.server_url,
-        &session_token,
+        config,
+        &totp_secret,
+        &mut session_token,
         &registry,
         &mut log,
         &config.log_path,
@@ -1266,8 +1389,9 @@ pub fn run_resubmit(config: &AcvpConfig, ts_id: u64, vs_id: u64) -> Result<(), S
 fn process_vector_sets(
     urls: &[String],
     transport: &mut Transport,
-    server_url: &str,
-    bearer: &str,
+    config: &AcvpConfig,
+    totp_secret: &[u8],
+    token: &mut SessionToken,
     registry: &Registry,
     log: &mut TranscriptLog,
     log_path: &str,
@@ -1280,8 +1404,9 @@ fn process_vector_sets(
             i.wrapping_add(1),
             urls.len(),
             transport,
-            server_url,
-            bearer,
+            config,
+            totp_secret,
+            token,
             registry,
             log,
             log_path,
@@ -1312,16 +1437,22 @@ fn process_one_vector_set(
     index: usize,
     total: usize,
     transport: &mut Transport,
-    server_url: &str,
-    bearer: &str,
+    config: &AcvpConfig,
+    totp_secret: &[u8],
+    token: &mut SessionToken,
     registry: &Registry,
     log: &mut TranscriptLog,
     log_path: &str,
     sessions_dir: &str,
 ) -> String {
-    let full_url = resolve_url(server_url, vs_url);
+    let full_url = resolve_url(&config.server_url, vs_url);
     eprintln!("[transport] [{index}/{total}] fetching {vs_url}...");
     log.log("fetch_vectors", vs_url);
+
+    // In a multi-vector-set session, an earlier set's long compute may
+    // already have aged the token past its TTL before this set's first
+    // fetch — refresh proactively.
+    token.refresh_if_stale(transport, config, totp_secret, log);
 
     // Fetch loop. Per ACVP §11.4, when a vector set isn't yet generated
     // the server responds with `{"retry": <seconds>}` instead of the
@@ -1338,7 +1469,7 @@ fn process_one_vector_set(
             return "RETRY_TIMEOUT".to_string();
         }
 
-        let vs_resp = match transport.get(&full_url, bearer) {
+        let vs_resp = match transport.get(&full_url, token.bearer()) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("  [transport] fetch failed: {e}");
@@ -1390,7 +1521,7 @@ fn process_one_vector_set(
     // Carve the session directory out of the vector-set URL and write
     // the prompt + session token now, so even a crash mid-compute
     // leaves the operator a complete replayable record.
-    let session = match open_session_store(vs_url, sessions_dir, bearer, vs_body) {
+    let session = match open_session_store(vs_url, sessions_dir, token.bearer(), vs_body) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("  [transport] {e}");
@@ -1431,11 +1562,38 @@ fn process_one_vector_set(
         log.log("persist_warning", &e);
     }
 
-    // Submit response
+    // Submit response. Proactively refresh the session token first —
+    // after a long compute the registration-time token is past its
+    // 30-minute TTL, and refreshing over the live connection needs no
+    // new handshake (hence no YubiKey touch, hence works unattended).
+    token.refresh_if_stale(transport, config, totp_secret, log);
     eprintln!("  [transport] submitting response...");
-    match submit_and_mark(&session, &response_body, |body| {
-        transport.post(&results_url, body, bearer)
-    }) {
+    let mut outcome = submit_and_mark(&session, &response_body, |body| {
+        transport.post(&results_url, body, token.bearer())
+    });
+    // Reactive backstop: if the server still rejected the bearer,
+    // refresh once and retry once on the same connection.
+    if let SubmitOutcome::HttpError(status) = outcome
+        && submit_should_refresh_retry(status, false)
+    {
+        eprintln!(
+            "  [transport] submit rejected with HTTP {status} — refreshing session \
+             token and retrying once"
+        );
+        log.log("submit_auth_retry", &format!("HTTP {status}"));
+        match token.refresh(transport, config, totp_secret, log) {
+            Ok(()) => {
+                outcome = submit_and_mark(&session, &response_body, |body| {
+                    transport.post(&results_url, body, token.bearer())
+                });
+            }
+            Err(e) => {
+                eprintln!("  [transport] token refresh for retry failed: {e}");
+                log.log("token_refresh_error", &e);
+            }
+        }
+    }
+    match outcome {
         SubmitOutcome::Submitted => {
             eprintln!("  [transport] submitted OK");
             log.log("submit_ok", vs_url);
@@ -1463,7 +1621,7 @@ fn process_one_vector_set(
 
     // Poll for verdict
     eprintln!("  [transport] polling for verdict...");
-    match poll_verdict(&full_url, transport, bearer, log) {
+    match poll_verdict(&full_url, transport, token.bearer(), log) {
         Ok(d) => {
             eprintln!("  [transport] verdict: {d}");
             log.log("verdict", &format!("{vs_url}: {d}"));
@@ -1903,6 +2061,43 @@ fn poll_verdict(
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    // ── In-run session-token refresh (mocked expiry) ───────────────
+
+    #[test]
+    fn token_refresh_threshold_boundaries() {
+        assert!(!token_needs_refresh(0));
+        assert!(!token_needs_refresh(TOKEN_REFRESH_MARGIN_SECS - 1));
+        assert!(token_needs_refresh(TOKEN_REFRESH_MARGIN_SECS));
+        // Observed server TTL (exp − iat = 1800 s) is past the margin.
+        assert!(token_needs_refresh(1800));
+    }
+
+    #[test]
+    fn fresh_token_does_not_need_refresh() {
+        let t = SessionToken::new("jwt".to_string());
+        assert!(!t.needs_refresh());
+        assert_eq!(t.bearer(), "jwt");
+    }
+
+    #[test]
+    fn aged_token_needs_refresh_mocked_expiry() {
+        let aged = SessionToken::with_age("jwt".to_string(), std::time::Duration::from_mins(25));
+        assert!(aged.needs_refresh());
+        let young = SessionToken::with_age("jwt".to_string(), std::time::Duration::from_mins(5));
+        assert!(!young.needs_refresh());
+    }
+
+    #[test]
+    fn submit_retry_only_once_and_only_on_auth_statuses() {
+        assert!(submit_should_refresh_retry(401, false));
+        assert!(submit_should_refresh_retry(403, false));
+        assert!(!submit_should_refresh_retry(401, true));
+        assert!(!submit_should_refresh_retry(403, true));
+        assert!(!submit_should_refresh_retry(500, false));
+        assert!(!submit_should_refresh_retry(404, false));
+        assert!(!submit_should_refresh_retry(200, false));
+    }
 
     #[test]
     fn totp_deterministic_8_digit() {

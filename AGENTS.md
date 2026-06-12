@@ -7,14 +7,15 @@ every session by any agent that respects `AGENTS.md`. Model-agnostic — phrase 
 ## Project context
 
 oxicrypt is a **pure-Rust FIPS 140-3 Level 1 cryptographic module**. It implements FIPS-approved
-algorithms across a 24-crate workspace (AES, SHA, SHA-3/XOF, HMAC, CMAC, KDF, TLS-KDF, DRBG, ECDH,
+algorithms across a 25-crate workspace (AES, SHA, SHA-3/XOF, HMAC, CMAC, KDF, TLS-KDF, DRBG, ECDH,
 ECDSA, EdDSA, RSA, DH, ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS, plus `zeroize`, `sha-accel`, `integrity`,
 `ffi`, `module`, and `test-vectors`). The crate is `no_std`-capable and
-disciplined about `unsafe`: **21 of the 23 crates inside the cryptographic boundary are
-`#![forbid(unsafe_code)]`.** The two audited in-boundary exceptions, each isolating one sanctioned
-`unsafe` category in a small dedicated crate, are `oxicrypt-zeroize` (volatile zeroization of critical
-security parameters) and `oxicrypt-sha-accel` (CPU-intrinsic acceleration: feature-gated, default-off,
-runtime-detected, equivalence proven by KAT + cross-path oracle). Separately,
+disciplined about `unsafe`: **21 of the 24 crates inside the cryptographic boundary are
+`#![forbid(unsafe_code)]`.** The three audited in-boundary exceptions, each isolating sanctioned
+`unsafe` in a small dedicated crate, are `oxicrypt-zeroize` (volatile zeroization of critical
+security parameters) and the two CPU-intrinsic acceleration crates `oxicrypt-sha-accel` /
+`oxicrypt-aes-accel` (feature-gated, default-off, runtime-detected, equivalence proven by KAT +
+cross-path oracle). Separately,
 `oxicrypt-ffi` sits **outside** the boundary to offer a C ABI, where `unsafe extern "C"` is an
 unavoidable requirement of exposing the module to C callers. (See `docs/security-policy/security-policy.md`
 for the authoritative unsafe-code accounting.) It

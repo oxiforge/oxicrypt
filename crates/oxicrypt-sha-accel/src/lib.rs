@@ -1,7 +1,8 @@
 //! CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for `oxicrypt-sha`.
 //!
-//! This is one of exactly **two** in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (the other is `oxicrypt-zeroize`). It
+//! This is one of the small audited in-boundary crates in the oxicrypt
+//! workspace that use `unsafe` (alongside `oxicrypt-zeroize` and
+//! `oxicrypt-aes-accel`). It
 //! implements the sanctioned **CPU-intrinsic acceleration** category:
 //! feature-gated, default-off, runtime-detected, with equivalence to the
 //! portable implementation proven by KAT + cross-path oracle. All other

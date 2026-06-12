@@ -14,3 +14,12 @@ workspace = true
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+oxicrypt-aes-accel = { path = "../oxicrypt-aes-accel", optional = true }
+
+[features]
+# CPU-intrinsic AES block acceleration (x86_64 AES-NI), default OFF.
+# Runtime-detected: with the feature on, the single-block boundary
+# dispatches to `oxicrypt-aes-accel` only when CPUID confirms AESNI,
+# else the portable path runs. Default builds carry no accel dependency
+# and are byte-for-byte the validated portable baseline.
+accel-aes = ["dep:oxicrypt-aes-accel"]

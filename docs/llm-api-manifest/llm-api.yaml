@@ -281,9 +281,9 @@ modules:
 
   - name: oxicrypt-zeroize
     description: >-
-      Volatile-write zeroization for CSP buffers. One of the two audited
-      unsafe crates inside the boundary (the other is
-      oxicrypt-sha-accel). Provides zeroize() for byte slices,
+      Volatile-write zeroization for CSP buffers. One of the three audited
+      unsafe crates inside the boundary (with oxicrypt-sha-accel and
+      oxicrypt-aes-accel). Provides zeroize() for byte slices,
       zeroize_u32() for u32 word arrays (SHA-1/SHA-2 state), and
       zeroize_u64() for u64 limb arrays (SHA-2 64-bit, Keccak, RSA), all
       using core::ptr::write_volatile to prevent dead-store elimination.
@@ -298,8 +298,25 @@ modules:
       sha256_compress(state, block) -> bool (returns false with state
       untouched when SHA-NI is absent, so callers fall back to the
       portable path). Compiled into the boundary only via oxicrypt-sha's
-      default-off accel-sha feature. One of the two audited unsafe
-      crates inside the boundary (the other is oxicrypt-zeroize).
+      default-off accel-sha feature. One of the three audited unsafe
+      crates inside the boundary (with oxicrypt-zeroize and
+      oxicrypt-aes-accel).
+    no_std: true
+    depends_on: []
+
+  - name: oxicrypt-aes-accel
+    description: >-
+      Audited CPU-intrinsic AES block acceleration (x86_64 AES-NI) for
+      oxicrypt-aes. Not a consumer-facing algorithm API: exposes only
+      aes_block_available() (cached CPUID runtime detection) and
+      encrypt_block / decrypt_block(rk, nr, block) -> bool over a
+      pre-expanded FIPS 197 round-key schedule — both return false with
+      the block untouched when AES-NI is absent or the schedule shape
+      is invalid, so callers fall back to the portable path; decrypt
+      derives equivalent-inverse round keys per call via AESIMC.
+      Compiled into the boundary only via oxicrypt-aes's default-off
+      accel-aes feature. One of the three audited unsafe crates inside
+      the boundary (with oxicrypt-zeroize and oxicrypt-sha-accel).
     no_std: true
     depends_on: []
 

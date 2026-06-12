@@ -96,4 +96,35 @@ mod variant_tests {
         assert_eq!(LEN2, 3);
         assert_eq!(LEN, 67);
     }
+
+    /// Best-effort wall-clock for one SHA2-256s keygen — the slowest
+    /// (tallest-tree) SHA-2 parameter set, where the WOTS+ chain sweep
+    /// dominates keygen cost. Gated on the `parallel` feature because it
+    /// needs `std::time` (the default build is `#![no_std]`); compare
+    /// thread counts on the same parallel build to isolate the speedup:
+    ///
+    /// ```text
+    /// # baseline (one worker) vs 4 workers, release:
+    /// RAYON_NUM_THREADS=1 cargo test -p oxicrypt-slh-dsa --release --features parallel \
+    ///   slh_dsa_sha2_256s::variant_tests::keygen_timing -- --ignored --nocapture
+    /// RAYON_NUM_THREADS=4 cargo test -p oxicrypt-slh-dsa --release --features parallel \
+    ///   slh_dsa_sha2_256s::variant_tests::keygen_timing -- --ignored --nocapture
+    /// ```
+    #[cfg(feature = "parallel")]
+    #[test]
+    #[ignore = "timing benchmark, run explicitly with --ignored --nocapture"]
+    #[allow(clippy::print_stdout)] // intentional: human-read timing output
+    fn keygen_timing() {
+        let mut xi = [0u8; 3 * N];
+        for (i, b) in xi.iter_mut().enumerate() {
+            *b = ((i & 0xFF) as u8).wrapping_mul(37).wrapping_add(7);
+        }
+        let start = std::time::Instant::now();
+        let (pk, _sk) = keygen_internal(&xi);
+        let elapsed = start.elapsed();
+        // Touch the output so the keygen is not optimized away.
+        assert_eq!(pk.len(), PK_LEN);
+        let threads = std::env::var("RAYON_NUM_THREADS").unwrap_or_else(|_| "default".into());
+        println!("SHA2-256s keygen_internal (RAYON_NUM_THREADS={threads}): {elapsed:?}");
+    }
 }

@@ -11,7 +11,22 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Data-parallel evaluation of the embarrassingly-parallel inner loops,
+# default OFF. The WOTS+ chain sweep (`wots_pkgen` / `wots_sign`) and the
+# per-FORS-tree sweep (`fors_sign`) become indexed disjoint-slice `rayon`
+# `par_chunks_mut().enumerate()` loops; each closure writes one chunk it
+# exclusively owns and reads no other chunk, so output is byte-identical
+# to the sequential build (R77). Pulls in `rayon`, which requires `std`,
+# so the crate becomes `std` only under this feature — the default build
+# stays provably `no_std` with no rayon in its graph. Performance build
+# only: the CMVP-validated configuration is the default single-threaded
+# build.
+parallel = ["dep:rayon"]
+
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-xof = { path = "../oxicrypt-xof" }
+rayon = { version = "1", optional = true }

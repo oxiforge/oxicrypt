@@ -4,6 +4,7 @@ members = [
     "crates/oxicrypt-module",
     "crates/oxicrypt-test-vectors",
     "crates/oxicrypt-aes",
+    "crates/oxicrypt-aes-accel",
     "crates/oxicrypt-sha",
     "crates/oxicrypt-sha-accel",
     "crates/oxicrypt-hmac",

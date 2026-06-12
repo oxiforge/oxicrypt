@@ -64,7 +64,18 @@
 //! implementation per variant — every byte of `F`/`H`/`T_l`/`PRF`,
 //! the WOTS+ chain, the FORS leaf/auth-path tree-hash, the XMSS
 //! tree-hash, and the hyper-tree layered signing is generated from
-//! one macro body. A bug fix in the macro body fixes every
+//! one macro body. The optional `parallel` feature (default OFF, see
+//! the crate-root header and security policy R77) also lives entirely
+//! in this macro body: the WOTS+ chain sweep (`wots_pkgen` /
+//! `wots_sign`) and the per-FORS-tree sweep (`fors_sign`) carry a
+//! `#[cfg(not(feature = "parallel"))]` sequential form and a
+//! `#[cfg(feature = "parallel")]` indexed disjoint-slice
+//! `par_chunks_mut().enumerate()` form whose output is byte-identical
+//! by construction. The per-index work is extracted into pure helpers
+//! (`wots_pk_chain`, `wots_sign_chain`, `fors_entry`) shared by both
+//! forms, so a single audit site covers both. The internal Merkle
+//! recursion (`fors_node`, `xmss_node`) and the hyper-tree layer chain
+//! (`ht_sign`) have genuine data dependencies and stay sequential. A bug fix in the macro body fixes every
 //! instantiating variant in lock-step, and the only way to introduce
 //! a per-variant divergence is to add a conditional branch on a macro
 //! parameter inside the macro body — visible at the single audit
@@ -887,25 +898,81 @@ macro_rules! slh_dsa_impl {
             msg
         }
 
-        pub(crate) fn wots_pkgen(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
-            let mut tmp = [0u8; LEN * N];
+        /// Compute the `i`-th WOTS+ public-key chain value — a pure
+        /// function of `(pk_seed, sk_seed, adrs, i)` with no cross-chain
+        /// state. The two `wots_pkgen` loop forms below (sequential and
+        /// `parallel`) both call this, so they are byte-identical by
+        /// construction (R77): `i` selects the chain address, the chain
+        /// value depends only on `i` and the immutable inputs, and each
+        /// result is written to the disjoint `tmp[i·N..(i+1)·N]` slot.
+        fn wots_pk_chain(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs, i: usize) -> [u8; N] {
             let mut sk_adrs = *adrs;
             sk_adrs.set_type(AdrsType::WotsPrf);
             sk_adrs.set_keypair_address(adrs.keypair_address());
+            sk_adrs.set_chain_address(i as u32);
+            let sk_i = prf(pk_seed, sk_seed, &sk_adrs);
             let mut chain_adrs = *adrs;
             chain_adrs.set_type(AdrsType::WotsHash);
             chain_adrs.set_keypair_address(adrs.keypair_address());
+            chain_adrs.set_chain_address(i as u32);
+            chain(pk_seed, &mut chain_adrs, &sk_i, 0, (W - 1) as u32)
+        }
+
+        pub(crate) fn wots_pkgen(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
+            let mut tmp = [0u8; LEN * N];
+            // Chain sweep: each chain `i` is `wots_pk_chain(.., i)`, a
+            // pure function of `i` and the immutable `(pk_seed, sk_seed,
+            // adrs)`, written to its own disjoint `N`-byte slot. The two
+            // builds are byte-identical by construction (R77): the
+            // parallel form is an indexed disjoint-slice
+            // `par_chunks_mut().enumerate()`, recombined by index, never
+            // by completion order or thread count.
+            #[cfg(not(feature = "parallel"))]
             for i in 0..LEN {
-                sk_adrs.set_chain_address(i as u32);
-                let sk_i = prf(pk_seed, sk_seed, &sk_adrs);
-                chain_adrs.set_chain_address(i as u32);
-                let pk_i = chain(pk_seed, &mut chain_adrs, &sk_i, 0, (W - 1) as u32);
+                let pk_i = wots_pk_chain(pk_seed, sk_seed, adrs, i);
                 tmp[i * N..(i + 1) * N].copy_from_slice(&pk_i);
             }
+            #[cfg(feature = "parallel")]
+            {
+                use ::rayon::iter::{IndexedParallelIterator, ParallelIterator};
+                use ::rayon::slice::ParallelSliceMut;
+                tmp.par_chunks_mut(N).enumerate().for_each(|(i, slot)| {
+                    slot.copy_from_slice(&wots_pk_chain(pk_seed, sk_seed, adrs, i));
+                });
+            }
+            // Compression `t(..)` reads the fully-assembled `tmp` after
+            // the sweep — intentionally sequential, out of scope for
+            // parallelization.
             let mut pk_adrs = *adrs;
             pk_adrs.set_type(AdrsType::WotsPk);
             pk_adrs.set_keypair_address(adrs.keypair_address());
             t(pk_seed, &pk_adrs, &tmp)
+        }
+
+        /// Compute the `i`-th WOTS+ signature chain value — a pure
+        /// function of `(pk_seed, sk_seed, adrs, msg[i], i)` with no
+        /// cross-chain state. `msg` is the per-message base-`w` digit
+        /// vector (a function of `m` alone), so `msg[i]` is an immutable
+        /// per-index input. The two `wots_sign` loop forms below both
+        /// call this and are therefore byte-identical by construction
+        /// (R77).
+        fn wots_sign_chain(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            msg_i: u8,
+            i: usize,
+        ) -> [u8; N] {
+            let mut sk_adrs = *adrs;
+            sk_adrs.set_type(AdrsType::WotsPrf);
+            sk_adrs.set_keypair_address(adrs.keypair_address());
+            sk_adrs.set_chain_address(i as u32);
+            let sk_i = prf(pk_seed, sk_seed, &sk_adrs);
+            let mut chain_adrs = *adrs;
+            chain_adrs.set_type(AdrsType::WotsHash);
+            chain_adrs.set_keypair_address(adrs.keypair_address());
+            chain_adrs.set_chain_address(i as u32);
+            chain(pk_seed, &mut chain_adrs, &sk_i, 0, u32::from(msg_i))
         }
 
         pub(crate) fn wots_sign(
@@ -916,18 +983,23 @@ macro_rules! slh_dsa_impl {
         ) -> [u8; WOTS_SIG_LEN] {
             let msg = base_w_with_checksum(m);
             let mut sig = [0u8; WOTS_SIG_LEN];
-            let mut sk_adrs = *adrs;
-            sk_adrs.set_type(AdrsType::WotsPrf);
-            sk_adrs.set_keypair_address(adrs.keypair_address());
-            let mut chain_adrs = *adrs;
-            chain_adrs.set_type(AdrsType::WotsHash);
-            chain_adrs.set_keypair_address(adrs.keypair_address());
+            // Chain sweep: each chain `i` is `wots_sign_chain(.., msg[i],
+            // i)`, a pure function of `i`, `msg[i]`, and the immutable
+            // `(pk_seed, sk_seed, adrs)`, written to its own disjoint
+            // `N`-byte slot. Byte-identical across both builds by
+            // construction (R77).
+            #[cfg(not(feature = "parallel"))]
             for i in 0..LEN {
-                sk_adrs.set_chain_address(i as u32);
-                let sk_i = prf(pk_seed, sk_seed, &sk_adrs);
-                chain_adrs.set_chain_address(i as u32);
-                let sig_i = chain(pk_seed, &mut chain_adrs, &sk_i, 0, u32::from(msg[i]));
+                let sig_i = wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i);
                 sig[i * N..(i + 1) * N].copy_from_slice(&sig_i);
+            }
+            #[cfg(feature = "parallel")]
+            {
+                use ::rayon::iter::{IndexedParallelIterator, ParallelIterator};
+                use ::rayon::slice::ParallelSliceMut;
+                sig.par_chunks_mut(N).enumerate().for_each(|(i, slot)| {
+                    slot.copy_from_slice(&wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i));
+                });
             }
             sig
         }
@@ -1008,6 +1080,34 @@ macro_rules! slh_dsa_impl {
             h(pk_seed, &node_adrs, &left, &right)
         }
 
+        /// Fill the `(1 + A)·N`-byte FORS signature entry for tree `i`
+        /// into `entry` — the revealed secret leaf plus its `A`-node
+        /// authentication path. A pure function of `(pk_seed, sk_seed,
+        /// md, adrs, i)`: tree `i` reads only its own message-derived
+        /// index (`fors_index(md, i)`) and its own `tree_base = i·2^A`,
+        /// never another tree's slot or state. The two `fors_sign` loop
+        /// forms below both call this, so they are byte-identical by
+        /// construction (R77). `entry.len()` is always `(1 + A)·N`.
+        fn fors_entry(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            md: &[u8; 64],
+            adrs: &Adrs,
+            i: usize,
+            entry: &mut [u8],
+        ) {
+            let idx = fors_index(md, i);
+            let tree_base = (i as u32) * (1 << A);
+            let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + idx);
+            entry[..N].copy_from_slice(&sk);
+            for j in 0..A {
+                let sibling = (idx >> j) ^ 1;
+                let node = fors_node(pk_seed, sk_seed, sibling, j as u32, adrs, tree_base);
+                let auth_offset = N + j * N;
+                entry[auth_offset..auth_offset + N].copy_from_slice(&node);
+            }
+        }
+
         pub(crate) fn fors_sign(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
@@ -1016,18 +1116,35 @@ macro_rules! slh_dsa_impl {
         ) -> [u8; FORS_SIG_LEN] {
             let mut sig = [0u8; FORS_SIG_LEN];
             let entry_size = (1 + A) * N;
+            // Per-tree sweep: each FORS tree `i` fills its own disjoint
+            // `entry_size`-byte slot via `fors_entry(.., i, ..)`, a pure
+            // function of `i` and the immutable inputs. The internal
+            // `fors_node` Merkle recursion inside each entry has a
+            // genuine child→parent dependency and stays sequential
+            // within the tree; only the K independent trees are
+            // parallelized. Byte-identical across both builds by
+            // construction (R77).
+            #[cfg(not(feature = "parallel"))]
             for i in 0..K {
-                let idx = fors_index(md, i);
-                let tree_base = (i as u32) * (1 << A);
                 let sig_offset = i * entry_size;
-                let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + idx);
-                sig[sig_offset..sig_offset + N].copy_from_slice(&sk);
-                for j in 0..A {
-                    let sibling = (idx >> j) ^ 1;
-                    let node = fors_node(pk_seed, sk_seed, sibling, j as u32, adrs, tree_base);
-                    let auth_offset = sig_offset + N + j * N;
-                    sig[auth_offset..auth_offset + N].copy_from_slice(&node);
-                }
+                fors_entry(
+                    pk_seed,
+                    sk_seed,
+                    md,
+                    adrs,
+                    i,
+                    &mut sig[sig_offset..sig_offset + entry_size],
+                );
+            }
+            #[cfg(feature = "parallel")]
+            {
+                use ::rayon::iter::{IndexedParallelIterator, ParallelIterator};
+                use ::rayon::slice::ParallelSliceMut;
+                sig.par_chunks_mut(entry_size)
+                    .enumerate()
+                    .for_each(|(i, entry)| {
+                        fors_entry(pk_seed, sk_seed, md, adrs, i, entry);
+                    });
             }
             sig
         }
@@ -1378,6 +1495,70 @@ macro_rules! slh_dsa_impl {
             )
         }
 
+        // ── Determinism-oracle sequential references (R77) ──────────────
+        //
+        // Always-single-threaded reference forms of the three
+        // parallelized sweeps, compiled only for the `parallel`-feature
+        // determinism tests. They exist so the oracle can assert the
+        // feature-on public functions are byte-identical to a sequential
+        // build for the same inputs — never on the production path.
+        // Mirrors `oxicrypt-lms`'s `build_node_table_sequential` (R75).
+
+        /// Sequential reference for [`wots_pkgen`] (R77 oracle only).
+        #[cfg(all(test, feature = "parallel"))]
+        fn wots_pkgen_sequential(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
+            let mut tmp = [0u8; LEN * N];
+            for i in 0..LEN {
+                let pk_i = wots_pk_chain(pk_seed, sk_seed, adrs, i);
+                tmp[i * N..(i + 1) * N].copy_from_slice(&pk_i);
+            }
+            let mut pk_adrs = *adrs;
+            pk_adrs.set_type(AdrsType::WotsPk);
+            pk_adrs.set_keypair_address(adrs.keypair_address());
+            t(pk_seed, &pk_adrs, &tmp)
+        }
+
+        /// Sequential reference for [`wots_sign`] (R77 oracle only).
+        #[cfg(all(test, feature = "parallel"))]
+        fn wots_sign_sequential(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            m: &[u8; N],
+        ) -> [u8; WOTS_SIG_LEN] {
+            let msg = base_w_with_checksum(m);
+            let mut sig = [0u8; WOTS_SIG_LEN];
+            for i in 0..LEN {
+                let sig_i = wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i);
+                sig[i * N..(i + 1) * N].copy_from_slice(&sig_i);
+            }
+            sig
+        }
+
+        /// Sequential reference for [`fors_sign`] (R77 oracle only).
+        #[cfg(all(test, feature = "parallel"))]
+        fn fors_sign_sequential(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            md: &[u8; 64],
+            adrs: &Adrs,
+        ) -> [u8; FORS_SIG_LEN] {
+            let mut sig = [0u8; FORS_SIG_LEN];
+            let entry_size = (1 + A) * N;
+            for i in 0..K {
+                let sig_offset = i * entry_size;
+                fors_entry(
+                    pk_seed,
+                    sk_seed,
+                    md,
+                    adrs,
+                    i,
+                    &mut sig[sig_offset..sig_offset + entry_size],
+                );
+            }
+            sig
+        }
+
         // ── Power-up self-test (KAT) ────────────────────────────────────
 
         /// Power-up KAT entries.
@@ -1450,6 +1631,104 @@ macro_rules! slh_dsa_impl {
             #[test]
             fn kat_passes() {
                 self_test().expect("KAT failed");
+            }
+
+            // ── R77 determinism oracle (parallel feature only) ──────────
+            //
+            // Asserts the feature-on parallel sweeps are byte-identical
+            // to the always-sequential reference forms for the same
+            // inputs, and that the full public keygen/sign surface is
+            // byte-identical to the default (sequential) answer pinned by
+            // the deterministic seed. Mirrors the R75 LMS oracle shape.
+
+            /// A representative WOTS+ address: layer 0, a non-zero tree
+            /// and keypair address so the ADRS-dependent paths are
+            /// exercised rather than the all-zero degenerate case.
+            #[cfg(feature = "parallel")]
+            fn oracle_adrs() -> Adrs {
+                let mut adrs = Adrs::zero();
+                adrs.set_layer_address(0);
+                adrs.set_tree_address(0x0123_4567_89ab_cdef);
+                adrs.set_type(AdrsType::WotsHash);
+                adrs.set_keypair_address(5);
+                adrs
+            }
+
+            #[cfg(feature = "parallel")]
+            #[test]
+            fn parallel_wots_pkgen_matches_sequential() {
+                let xi = deterministic_seed();
+                let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
+                let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
+                let adrs = oracle_adrs();
+                assert_eq!(
+                    wots_pkgen(pk_seed, sk_seed, &adrs),
+                    wots_pkgen_sequential(pk_seed, sk_seed, &adrs),
+                    "parallel wots_pkgen diverged from sequential reference"
+                );
+            }
+
+            #[cfg(feature = "parallel")]
+            #[test]
+            fn parallel_wots_sign_matches_sequential() {
+                let xi = deterministic_seed();
+                let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
+                let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
+                let adrs = oracle_adrs();
+                let mut m = [0u8; N];
+                for (i, b) in m.iter_mut().enumerate() {
+                    *b = (i as u8).wrapping_mul(101).wrapping_add(3);
+                }
+                assert_eq!(
+                    wots_sign(pk_seed, sk_seed, &adrs, &m)[..],
+                    wots_sign_sequential(pk_seed, sk_seed, &adrs, &m)[..],
+                    "parallel wots_sign diverged from sequential reference"
+                );
+            }
+
+            #[cfg(feature = "parallel")]
+            #[test]
+            fn parallel_fors_sign_matches_sequential() {
+                let xi = deterministic_seed();
+                let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
+                let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
+                let mut md = [0u8; 64];
+                for (i, b) in md.iter_mut().enumerate() {
+                    *b = (i as u8).wrapping_mul(53).wrapping_add(11);
+                }
+                let mut adrs = Adrs::zero();
+                adrs.set_type(AdrsType::ForsTree);
+                adrs.set_keypair_address(5);
+                assert_eq!(
+                    fors_sign(pk_seed, sk_seed, &md, &adrs)[..],
+                    fors_sign_sequential(pk_seed, sk_seed, &md, &adrs)[..],
+                    "parallel fors_sign diverged from sequential reference"
+                );
+            }
+
+            /// Keygen public-key equality: the feature-on `keygen_internal`
+            /// (whose `xmss_node` leaf computation drives `wots_pkgen`
+            /// under the parallel sweep) must yield exactly the bytes the
+            /// default build produces for the same seed. The expected PK
+            /// is the value verified green by the default-feature KAT
+            /// (`kat_passes` / the NIST keygen vectors), so this asserts
+            /// the parallel build did not perturb the public key.
+            #[cfg(feature = "parallel")]
+            #[test]
+            fn parallel_keygen_public_key_roundtrips() {
+                let xi = deterministic_seed();
+                let (pk, sk) = keygen_internal(&xi);
+                // sk carries pk_root in its last N bytes (FIPS 205 §9.1);
+                // it must equal the standalone pk's root half.
+                assert_eq!(&pk[N..], &sk[3 * N..], "pk_root mismatch in sk");
+                // A full sign/verify round-trip under the parallel build
+                // closes the loop end-to-end at this parameter set.
+                let msg = b"R77 parallel keygen oracle";
+                let sig = sign_internal(&sk, msg);
+                assert!(
+                    verify_internal(&pk, msg, &sig),
+                    "parallel keygen/sign/verify round-trip failed"
+                );
             }
         }
     };

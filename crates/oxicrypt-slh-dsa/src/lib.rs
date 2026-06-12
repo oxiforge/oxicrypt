@@ -70,8 +70,24 @@
 //! Power-up KAT: deterministic keygen → sign → verify round-trip
 //! with a fixed seed (FIPS 140-3 IG D.G). Aggregated via
 //! [`KATS`] which currently re-exports the SHA2-256s variant's KAT.
+//!
+//! # Data-parallel evaluation (`parallel` feature, default OFF)
+//!
+//! The optional `parallel` feature swaps three embarrassingly-parallel
+//! inner loops — the WOTS+ chain sweep in `wots_pkgen` / `wots_sign`
+//! and the per-FORS-tree sweep in `fors_sign` — for indexed
+//! disjoint-slice `rayon` `par_chunks_mut().enumerate()` loops. Each
+//! closure computes one output chunk as a pure function of its index
+//! plus the immutable seeds/address and writes only the chunk it
+//! exclusively owns, so the parallel output is byte-identical to the
+//! sequential build (security policy R77). The feature pulls in
+//! `rayon` (hence `std`), so the crate is `#![no_std]` only when the
+//! feature is OFF; the default build graph contains no `rayon` and is
+//! the CMVP-validated single-threaded configuration. `parallel` is a
+//! throughput option for tall-tree (`*s`) keygen and signing, not a
+//! validated path.
 
-#![no_std]
+#![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
 // Cryptographic code requires pervasive index arithmetic, bitwise
 // operations, and controlled truncation that are safe by construction

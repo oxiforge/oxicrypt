@@ -131,6 +131,22 @@ mod tests {
     }
 
     #[test]
+    fn cached_constructor_public_key_matches_keygen() {
+        // `LmsSigningKey::new_internal` assembles its public key from the
+        // cached node-table root rather than a second `compute_root`
+        // walk; the two construction paths must agree byte-for-byte on
+        // both the public key and the private-key state.
+        let (sk, pk) = keygen_internal(&XI);
+        let (csk, cpk) = LmsSigningKey::new_internal(&XI);
+        assert_eq!(cpk, pk, "cached-path public key diverged from keygen");
+        assert_eq!(
+            csk.private_key().to_bytes(),
+            sk.to_bytes(),
+            "cached-path private key diverged from keygen"
+        );
+    }
+
+    #[test]
     fn cached_key_resumes_mid_state_identically() {
         let (mut sk, pk) = keygen_internal(&XI);
         for q in 0..5u32 {
