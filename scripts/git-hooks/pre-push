@@ -11,15 +11,19 @@
 # Gates (matching ci.yml):
 #   1. cargo fmt --all -- --check
 #   2. cargo clippy --workspace --all-targets -- -D warnings
-#   3. cargo test --workspace --exclude oxicrypt-module
-#      cargo test -p oxicrypt-module -- --test-threads=1
+#   3. cargo nextest run --workspace
+#      cargo test --workspace --doc
 #   4. cargo build --workspace --release
 #
-# Gate 3 is split (2026-06-12): only oxicrypt-module's unit tests
-# mutate a single global state and need --test-threads=1; every
-# other crate runs at full parallelism. Coverage is identical to
-# the old global single-threaded run — the same tests execute with
-# the same flags semantics per crate. The same split lives in ci.yml.
+# Gate 3 runs under cargo-nextest (2026-06-12): nextest executes
+# every test in its own process, so oxicrypt-module's global-state
+# mutation is isolated per test — the old --test-threads=1
+# constraint (and the brief --exclude split that replaced it)
+# evaporates entirely; the whole workspace runs at full parallelism
+# with per-test process isolation as a bonus hardening. nextest does
+# not run doctests, so a separate `cargo test --workspace --doc`
+# step keeps doctest coverage identical. The same pair lives in
+# ci.yml (installed there via taiki-e/install-action@nextest).
 #
 # Tag-only pushes skip the four gates:
 #   ci.yml triggers on `push: branches: [main]` and pull-request
@@ -145,11 +149,11 @@ cargo fmt --all -- --check
 echo "pre-push [2/4]: cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-echo "pre-push [3/4a]: cargo test --workspace --exclude oxicrypt-module"
-cargo test --workspace --exclude oxicrypt-module
+echo "pre-push [3/4a]: cargo nextest run --workspace"
+cargo nextest run --workspace
 
-echo "pre-push [3/4b]: cargo test -p oxicrypt-module -- --test-threads=1"
-cargo test -p oxicrypt-module -- --test-threads=1
+echo "pre-push [3/4b]: cargo test --workspace --doc"
+cargo test --workspace --doc
 
 echo "pre-push [4/4]: cargo build --workspace --release"
 cargo build --workspace --release

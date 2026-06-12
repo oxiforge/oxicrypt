@@ -178,6 +178,7 @@ mod tests {
     /// confirmed this for HMAC-SHA2-256.
     #[test]
     fn handle_group_reads_mac_len_from_group_for_aft() {
+        let _ = crate::ensure_initialized();
         let group = json::parse(
             r#"{
                 "tgId": 1,
@@ -204,6 +205,7 @@ mod tests {
     /// one group.
     #[test]
     fn handle_group_reads_mac_len_per_test_for_mvt() {
+        let _ = crate::ensure_initialized();
         let group = json::parse(
             r#"{
                 "tgId": 1,
@@ -227,6 +229,7 @@ mod tests {
     /// Per-test `macLen` overrides group-level `macLen`.
     #[test]
     fn per_test_mac_len_overrides_group() {
+        let _ = crate::ensure_initialized();
         let group = json::parse(
             r#"{
                 "tgId": 1,

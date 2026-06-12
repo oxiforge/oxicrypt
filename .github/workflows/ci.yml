@@ -57,13 +57,14 @@ jobs:
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      # Split test gate (2026-06-12): only oxicrypt-module's unit tests
-      # mutate a single global state and need --test-threads=1; every
-      # other crate runs at full parallelism. Coverage is identical to
-      # the previous global single-threaded run. The same split lives
-      # in scripts/git-hooks/pre-push.
-      - run: cargo test --workspace --exclude oxicrypt-module
-      - run: cargo test -p oxicrypt-module -- --test-threads=1
+      # nextest gate (2026-06-12): per-test process isolation makes
+      # oxicrypt-module's global-state mutation a non-issue — full
+      # parallelism workspace-wide. nextest skips doctests, so the
+      # --doc step keeps doctest coverage identical. The same pair
+      # lives in scripts/git-hooks/pre-push.
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace
+      - run: cargo test --workspace --doc
 
   build:
     name: cargo build (release)
