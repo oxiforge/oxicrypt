@@ -401,12 +401,23 @@ mod tests {
 
     #[test]
     fn unsupported_alpha_is_typed_at_construction() {
-        // α = 2⁻³⁰ has no APT table coverage until the generator lands.
-        let err = EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(2), Alpha::DEFAULT)
-            .unwrap_err();
+        // An α with no table coverage (e.g. 2⁻²⁵) is a typed refusal at
+        // construction — cutoffs are table-borne, never computed in-boundary.
+        let a25 = Alpha::from_exp(25).unwrap();
+        let err = EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(2), a25).unwrap_err();
         assert_eq!(
             err,
-            EntropyError::Health(HealthError::UnsupportedAlpha { alpha_exp: 30 })
+            EntropyError::Health(HealthError::UnsupportedAlpha { alpha_exp: 25 })
+        );
+    }
+
+    #[test]
+    fn default_alpha_30_is_now_supported() {
+        // The ratified default α = 2⁻³⁰ is table-covered (generated grid):
+        // construction succeeds where it previously returned UnsupportedAlpha.
+        // PrngMock is an 8-bit (non-binary) source; H = 2 → cutoff 190.
+        assert!(
+            EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(2), Alpha::DEFAULT).is_ok()
         );
     }
 

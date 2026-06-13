@@ -1,0 +1,27 @@
+[package]
+name = "oxicrypt-maxwell"
+description = "Out-of-boundary SP 800-90B min-entropy estimator suite (MCV) with NIST EA-tool parity harness and determinism self-test."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "maxwell"
+path = "src/main.rs"
+
+[dependencies]
+# Used only to verify dataset provenance (SHA-256 of each EA dataset) during
+# the parity harness. This is an out-of-boundary tooling dependency on an
+# in-boundary crate (like acvp-harness depends on the crypto crates); it does
+# not place oxicrypt-maxwell inside the cryptographic boundary.
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+# The SHA-256 service is gated by the module state machine; this tool powers the
+# module up with the real SHA-256 KAT set (oxicrypt_sha::KATS) before hashing,
+# rather than rolling its own digest. Out-of-boundary, same as acvp-harness.
+oxicrypt-module = { path = "../oxicrypt-module" }
+
+[lints]
+workspace = true

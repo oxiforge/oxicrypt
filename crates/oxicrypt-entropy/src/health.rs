@@ -31,9 +31,9 @@
 use crate::h::{H_STEPS_PER_BIT, MinEntropy};
 use crate::source::RawSample;
 use crate::sp800_90b::{
-    APT_TABLE2_ALPHA_EXP, APT_TABLE2_BINARY, APT_TABLE2_NON_BINARY, APT_WINDOW_BINARY,
-    APT_WINDOW_NON_BINARY, AptTable2Row, CONTINUOUS_ALPHA_EXP_RECOMMENDED_MAX,
-    CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN,
+    APT_ALPHA30_ALPHA_EXP, APT_ALPHA30_BINARY, APT_ALPHA30_NON_BINARY, APT_TABLE2_ALPHA_EXP,
+    APT_TABLE2_BINARY, APT_TABLE2_NON_BINARY, APT_WINDOW_BINARY, APT_WINDOW_NON_BINARY,
+    AptTable2Row, CONTINUOUS_ALPHA_EXP_RECOMMENDED_MAX, CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN,
 };
 
 /// False-positive probability for the continuous health tests, restricted
@@ -234,20 +234,24 @@ impl AdaptiveProportionTest {
 /// Looks up the APT cutoff for (h, alphabet, α), rounding `h` DOWN to the
 /// nearest covered table row (conservative direction).
 ///
-/// The current table is seeded with the transcribed SP 800-90B Table 2
-/// reference rows (α = 2⁻²⁰ only); the full (H, W, α) grid — including
-/// the α = 2⁻³⁰ default — arrives from the out-of-boundary generator and
-/// is verified against these same reference rows.
+/// Two α grids are table-covered: the transcribed SP 800-90B Table 2
+/// reference rows (α = 2⁻²⁰) and the generated α = 2⁻³⁰ grid (the ratified
+/// default — see [`crate::sp800_90b::APT_ALPHA30_BINARY`]). Both share the
+/// same H grid; only the cutoffs differ. Any other α exponent is a typed
+/// [`HealthError::UnsupportedAlpha`] refusal — cutoffs are table-borne, never
+/// computed in-boundary; a new α grows the table via the out-of-boundary
+/// generator.
 fn apt_cutoff(h: MinEntropy, is_binary: bool, alpha: Alpha) -> Result<u32, HealthError> {
-    if alpha.exp() != APT_TABLE2_ALPHA_EXP {
-        return Err(HealthError::UnsupportedAlpha {
-            alpha_exp: alpha.exp(),
-        });
-    }
-    let table: &[AptTable2Row] = if is_binary {
-        &APT_TABLE2_BINARY
-    } else {
-        &APT_TABLE2_NON_BINARY
+    let table: &[AptTable2Row] = match (alpha.exp(), is_binary) {
+        (APT_TABLE2_ALPHA_EXP, true) => &APT_TABLE2_BINARY,
+        (APT_TABLE2_ALPHA_EXP, false) => &APT_TABLE2_NON_BINARY,
+        (APT_ALPHA30_ALPHA_EXP, true) => &APT_ALPHA30_BINARY,
+        (APT_ALPHA30_ALPHA_EXP, false) => &APT_ALPHA30_NON_BINARY,
+        _ => {
+            return Err(HealthError::UnsupportedAlpha {
+                alpha_exp: alpha.exp(),
+            });
+        }
     };
     // Largest table H that does not exceed the claim (round DOWN).
     let mut chosen: Option<u32> = None;
@@ -431,13 +435,72 @@ mod tests {
     }
 
     #[test]
-    fn apt_default_alpha_refused_until_grid_lands() {
-        // The α = 2⁻³⁰ default has no table rows yet — typed refusal, not
-        // approximation. The out-of-boundary generator fills the grid.
+    fn apt_default_alpha_now_table_covered() {
+        // The α = 2⁻³⁰ default is now table-covered (generated grid landed).
+        // Binary H = 1 → 609; non-binary H = 1 → 325 (the jent cross-check).
+        let t =
+            AdaptiveProportionTest::new(MinEntropy::from_bits(1), true, Alpha::DEFAULT).unwrap();
+        assert_eq!(t.cutoff(), 609);
+        let t =
+            AdaptiveProportionTest::new(MinEntropy::from_bits(1), false, Alpha::DEFAULT).unwrap();
+        assert_eq!(t.cutoff(), 325);
+    }
+
+    #[test]
+    fn apt_alpha30_grid_rows() {
+        // Spot-check both ends of each α = 2⁻³⁰ grid.
+        //
+        // The binary grid floor is the H = 0.2 row. Note 0.2 bits = 51.2
+        // fixed-point steps, which floors to 51 — *below* the 0.2 row's
+        // 51.2-step boundary — so a claim of exactly 1/5 rounds under the
+        // grid (same fixed-point edge the α = 2⁻²⁰ path has). To exercise the
+        // 0.2 row we claim 0.3 bits, which rounds DOWN to the 0.2 row → 952.
+        let h_03 = MinEntropy::from_fraction_floor(3, 10).unwrap();
+        let t = AdaptiveProportionTest::new(h_03, true, Alpha::DEFAULT).unwrap();
+        assert_eq!(t.cutoff(), 952);
+        // Binary top of grid: H = 1 → 609.
+        let t =
+            AdaptiveProportionTest::new(MinEntropy::from_bits(1), true, Alpha::DEFAULT).unwrap();
+        assert_eq!(t.cutoff(), 609);
+        // Non-binary: H = 8 → 16, and H = 0.5 (exactly 128 steps) → 422.
+        let t =
+            AdaptiveProportionTest::new(MinEntropy::from_bits(8), false, Alpha::DEFAULT).unwrap();
+        assert_eq!(t.cutoff(), 16);
+        let t = AdaptiveProportionTest::new(
+            MinEntropy::from_fraction_floor(1, 2).unwrap(),
+            false,
+            Alpha::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(t.cutoff(), 422);
+    }
+
+    #[test]
+    fn apt_alpha30_rounds_down_to_grid() {
+        // Claimed H = 0.9 (binary) rounds DOWN to the 0.8 row at α = 2⁻³⁰
+        // (cutoff 683) — same round-down discipline as the α = 2⁻²⁰ path.
+        let h = MinEntropy::from_fraction_floor(9, 10).unwrap();
+        let t = AdaptiveProportionTest::new(h, true, Alpha::DEFAULT).unwrap();
+        assert_eq!(t.cutoff(), 683);
+    }
+
+    #[test]
+    fn apt_alpha30_below_grid_refused() {
+        // Below the binary grid floor (H = 0.2) there is still no row.
+        let h = MinEntropy::from_fraction_floor(1, 10).unwrap();
         assert_eq!(
-            AdaptiveProportionTest::new(MinEntropy::from_bits(1), true, Alpha::DEFAULT)
-                .unwrap_err(),
+            AdaptiveProportionTest::new(h, true, Alpha::DEFAULT).unwrap_err(),
             HealthError::UnsupportedAlpha { alpha_exp: 30 }
+        );
+    }
+
+    #[test]
+    fn apt_unsupported_alpha_still_refused() {
+        // An α with no table (e.g. 2⁻²⁵) is refused — cutoffs are table-borne.
+        let a25 = Alpha::from_exp(25).unwrap();
+        assert_eq!(
+            AdaptiveProportionTest::new(MinEntropy::from_bits(1), true, a25).unwrap_err(),
+            HealthError::UnsupportedAlpha { alpha_exp: 25 }
         );
     }
 

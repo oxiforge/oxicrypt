@@ -28,6 +28,7 @@ members = [
     "crates/oxicrypt-dh",
     "crates/oxicrypt-entropy",
     "crates/oxicrypt-timer",
+    "crates/oxicrypt-maxwell",
     "acvp-harness",
     "oxi",
     "benches",

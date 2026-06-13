@@ -198,7 +198,8 @@ modules:
       2025-05-29 checked — no transcribed value affected), and pipeline
       construction that refuses claims above a source's design ceiling,
       and the SP 800-90B approved continuous health tests (RCT closed-form
-      integer cutoff; APT precomputed-table cutoffs) with startup gating
+      integer cutoff; APT precomputed-table cutoffs at α=2⁻²⁰ (SP 800-90B
+      Table 2) and the ratified default α=2⁻³⁰) with startup gating
       (>=1024 samples, discarded), on-demand re-testing on fresh state,
       and permanent poisoning on any failure, plus the timer layer:
       per-arch TimerSource defaults, the measured-never-assumed adequacy

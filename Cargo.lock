@@ -663,6 +663,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-maxwell"
+version = "0.12.0"
+dependencies = [
+ "oxicrypt-module",
+ "oxicrypt-sha",
+]
+
+[[package]]
 name = "oxicrypt-ml-dsa"
 version = "0.12.0"
 dependencies = [

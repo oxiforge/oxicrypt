@@ -191,6 +191,84 @@ pub const APT_TABLE2_NON_BINARY: [AptTable2Row; 5] = [
     }, // H = 8
 ];
 
+// ─── §4.4.2 APT cutoffs at α = 2⁻³⁰ (the ratified default) ───────────────────
+
+/// α-exponent of the [`APT_ALPHA30_BINARY`] / [`APT_ALPHA30_NON_BINARY`]
+/// tables: α = 2⁻³⁰, the workspace's ratified default false-positive
+/// probability (jent v3.7.0 cert-lineage precedent; see
+/// [`crate::health::Alpha::DEFAULT`]).
+///
+/// # Provenance — generated, not from a published table
+///
+/// Unlike the [`APT_TABLE2_BINARY`] / [`APT_TABLE2_NON_BINARY`] rows (which
+/// are transcribed from SP 800-90B Table 2), the α = 2⁻³⁰ cutoffs below have
+/// no published reference table. They were **generated** by the
+/// out-of-boundary `oxicrypt-maxwell` APT generator
+/// (`oxicrypt_maxwell::apt::apt_cutoff`), which computes
+/// `C = 1 + qbinom(1 − α, W, 2⁻ᴴ)` with the binomial CDF evaluated via the
+/// regularized incomplete beta function (the same method R's `qbinom` uses).
+///
+/// That generator is validated to reproduce **all 11** SP 800-90B Table 2
+/// reference points exactly (α = 2⁻²⁰) plus the jent cross-check
+/// `W = 512, H = 1, α = 2⁻³⁰ → 325`. The single α = 2⁻³⁰ point with an
+/// external reference — non-binary `H = 1 → 325` — appears in
+/// [`APT_ALPHA30_NON_BINARY`] below and matches the jent value, anchoring the
+/// whole generated grid. The in-boundary crate does **not** depend on the
+/// generator: these are precomputed integer constants, and a unit test in
+/// this module re-asserts every value against the generator's known output.
+pub const APT_ALPHA30_ALPHA_EXP: u32 = 30;
+
+/// §4.4.2 cutoffs for binary data (W = 1024) at α = 2⁻³⁰. Generated; see
+/// [`APT_ALPHA30_ALPHA_EXP`] for provenance.
+pub const APT_ALPHA30_BINARY: [AptTable2Row; 5] = [
+    AptTable2Row {
+        h: SpecRatio { num: 1, den: 5 },
+        cutoff: 952,
+    }, // H = 0.2
+    AptTable2Row {
+        h: SpecRatio { num: 2, den: 5 },
+        cutoff: 856,
+    }, // H = 0.4
+    AptTable2Row {
+        h: SpecRatio { num: 3, den: 5 },
+        cutoff: 766,
+    }, // H = 0.6
+    AptTable2Row {
+        h: SpecRatio { num: 4, den: 5 },
+        cutoff: 683,
+    }, // H = 0.8
+    AptTable2Row {
+        h: SpecRatio { num: 1, den: 1 },
+        cutoff: 609,
+    }, // H = 1
+];
+
+/// §4.4.2 cutoffs for non-binary data (W = 512) at α = 2⁻³⁰. Generated; the
+/// `H = 1 → 325` row is the jent cross-check anchor. See
+/// [`APT_ALPHA30_ALPHA_EXP`] for provenance.
+pub const APT_ALPHA30_NON_BINARY: [AptTable2Row; 5] = [
+    AptTable2Row {
+        h: SpecRatio { num: 1, den: 2 },
+        cutoff: 422,
+    }, // H = 0.5
+    AptTable2Row {
+        h: SpecRatio { num: 1, den: 1 },
+        cutoff: 325,
+    }, // H = 1  (jent cross-check anchor)
+    AptTable2Row {
+        h: SpecRatio { num: 2, den: 1 },
+        cutoff: 190,
+    }, // H = 2
+    AptTable2Row {
+        h: SpecRatio { num: 4, den: 1 },
+        cutoff: 71,
+    }, // H = 4
+    AptTable2Row {
+        h: SpecRatio { num: 8, den: 1 },
+        cutoff: 16,
+    }, // H = 8
+];
+
 // ─── §3.1.5.1.1 Table 1 — Vetted Conditioning Components ────────────────────
 
 /// §3.1.5.1.1 Table 1: for a vetted hash-function conditioning component,
@@ -283,6 +361,78 @@ mod tests {
         }
         for row in &APT_TABLE2_NON_BINARY {
             assert!(row.cutoff <= APT_WINDOW_NON_BINARY);
+        }
+    }
+
+    /// The α = 2⁻³⁰ tables equal the values the out-of-boundary
+    /// `oxicrypt-maxwell` APT generator produces. The reference values are
+    /// hardcoded here so the in-boundary crate does NOT depend on maxwell;
+    /// `oxicrypt_maxwell::apt::tests::alpha30_grids_match_in_boundary_table`
+    /// asserts the generator side of this same contract.
+    #[test]
+    fn apt_alpha30_matches_generator() {
+        assert_eq!(APT_ALPHA30_ALPHA_EXP, 30);
+
+        // Binary W = 1024, α = 2⁻³⁰ (generator output, jent-anchored grid).
+        let bin = [
+            (SpecRatio { num: 1, den: 5 }, 952u32),
+            (SpecRatio { num: 2, den: 5 }, 856),
+            (SpecRatio { num: 3, den: 5 }, 766),
+            (SpecRatio { num: 4, den: 5 }, 683),
+            (SpecRatio { num: 1, den: 1 }, 609),
+        ];
+        for (row, (h, c)) in APT_ALPHA30_BINARY.iter().zip(bin) {
+            assert_eq!(row.h, h);
+            assert_eq!(row.cutoff, c);
+        }
+
+        // Non-binary W = 512, α = 2⁻³⁰; H = 1 → 325 is the jent cross-check.
+        let nonbin = [
+            (SpecRatio { num: 1, den: 2 }, 422u32),
+            (SpecRatio { num: 1, den: 1 }, 325),
+            (SpecRatio { num: 2, den: 1 }, 190),
+            (SpecRatio { num: 4, den: 1 }, 71),
+            (SpecRatio { num: 8, den: 1 }, 16),
+        ];
+        for (row, (h, c)) in APT_ALPHA30_NON_BINARY.iter().zip(nonbin) {
+            assert_eq!(row.h, h);
+            assert_eq!(row.cutoff, c);
+        }
+    }
+
+    /// The α = 2⁻³⁰ tables share the structural invariants of Table 2:
+    /// monotonic in H, within their windows, and aligned to the same H grid.
+    #[test]
+    fn apt_alpha30_structural_invariants() {
+        for (table, window) in [
+            (&APT_ALPHA30_BINARY, APT_WINDOW_BINARY),
+            (&APT_ALPHA30_NON_BINARY, APT_WINDOW_NON_BINARY),
+        ] {
+            for pair in table.windows(2) {
+                // h strictly increases.
+                assert!(
+                    u64::from(pair[0].h.num) * u64::from(pair[1].h.den)
+                        < u64::from(pair[1].h.num) * u64::from(pair[0].h.den)
+                );
+                // cutoff strictly decreases.
+                assert!(pair[0].cutoff > pair[1].cutoff);
+            }
+            for row in table {
+                assert!(row.cutoff <= window);
+            }
+        }
+        // Same H grid as Table 2 (rarer α only shifts cutoffs, not the grid).
+        for (a30, a20) in APT_ALPHA30_BINARY.iter().zip(APT_TABLE2_BINARY.iter()) {
+            assert_eq!(a30.h, a20.h);
+            // Rarer false positive (2⁻³⁰ < 2⁻²⁰) → larger cutoff.
+            assert!(a30.cutoff > a20.cutoff);
+        }
+        for (a30, a20) in APT_ALPHA30_NON_BINARY
+            .iter()
+            .zip(APT_TABLE2_NON_BINARY.iter())
+        {
+            assert_eq!(a30.h, a20.h);
+            assert!(a30.cutoff > a20.cutoff);
         }
     }
 }
