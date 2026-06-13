@@ -12,7 +12,7 @@ lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.11.0"
+  version: "0.12.0"
   description: >-
     Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing
     NIST-approved classical algorithms with a formal module boundary,
@@ -188,6 +188,50 @@ modules:
       (SP 800-56Ar3). Reuses U3072/MontCtx3072 from oxicrypt-rsa.
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-rsa, oxicrypt-drbg]
+
+  - name: oxicrypt-entropy
+    description: >-
+      SP 800-90B entropy-source scaffolding: NoiseSource abstraction,
+      fixed-point min-entropy type (1/256-bit steps), single cited
+      spec-constants module sp800_90b (SP 800-90B January 2018, DOI
+      10.6028/NIST.SP.800-90B, fetched 2026-06-12; NIST errata sheet of
+      2025-05-29 checked — no transcribed value affected), and pipeline
+      construction that refuses claims above a source's design ceiling,
+      and the SP 800-90B approved continuous health tests (RCT closed-form
+      integer cutoff; APT precomputed-table cutoffs) with startup gating
+      (>=1024 samples, discarded), on-demand re-testing on fresh state,
+      and permanent poisoning on any failure, plus the timer layer:
+      per-arch TimerSource defaults, the measured-never-assumed adequacy
+      self-check with typed refusals, and width-aware wrapping-delta
+      semantics with backwards classification, and noise source #1: the
+      design-derived CPU jitter source (black_box-disciplined SHA-256 +
+      memory-walk workload, 4-LSB digitization, 1-bit design ceiling,
+      construction-time adequacy refusal), and the vetted SHA-256
+      conditioning component (90B 3.1.5.1.1 Table 1, via oxicrypt-sha):
+      stateless per-block hashing, per-block sample count derived from
+      the injected claim under the SP 800-90C full-entropy input margin
+      (h_in >= n_out + 64; 90C 3.2.2.2, September 2025 final, fetched
+      2026-06-12), startup KAT with permanent refusal on mismatch, and
+      EntropyPipeline::conditioned_block as the conditioned-output API.
+      Features: std (OS nanosecond clock timer), raw-counter (audited
+      oxicrypt-timer counter reads); default build is no_std with both
+      off. Makes no entropy claims (pre-validation). All spec constants
+      are enumerated in the sp800_90b rustdoc (single transcription
+      site).
+    no_std: true
+    depends_on: [oxicrypt-sha]
+
+  - name: oxicrypt-timer
+    description: >-
+      Audited read-only CPU timer/counter reads for the entropy source:
+      serialized TSC (lfence + rdtsc) on x86_64, ISB + MRS CNTVCT_EL0 on
+      aarch64. Fourth audited unsafe exception crate (category: CPU
+      timer/counter intrinsics — read-only, side-effect-free, no
+      cryptographic logic; security-policy 9.2 item 4, R80). Nominal
+      counter frequency is never trusted — callers measure effective
+      granularity via oxicrypt-entropy's adequacy check.
+    no_std: true
+    depends_on: []
 
   - name: oxicrypt-ml-kem
     description: >-
@@ -1010,6 +1054,270 @@ types:
         description: Module state error (wraps oxicrypt_module::Error — NotOperational, AlgorithmRestricted, etc.).
       - name: OutputTooLong
         description: "Requested OKM length exceeds the algorithm maximum: 255*HashLen for HKDF; (2^32-1)*HashLen for PBKDF2."
+
+  - name: MinEntropy
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Exact fixed-point min-entropy in 1/256-bit steps (H_STEPS_PER_BIT =
+      256). No floating-point type exists on the claim or health-test
+      cutoff path; inexact conversions round down so a claim is never
+      overstated. Ordered, so ceiling checks are plain comparisons.
+
+  - name: SpecRatio
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Exact rational (num/den) carrying a non-integer SP 800-90B value in
+      the cited constants module — e.g. the restart sanity-check alpha
+      1/200000 (90B §3.1.4.3).
+    fields:
+      - name: num
+        type: u32
+        description: Numerator.
+      - name: den
+        type: u32
+        description: Denominator (non-zero by construction of each constant).
+
+  - name: AptTable2Row
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      One reference row of SP 800-90B Table 2 (§4.4.2) — example Adaptive
+      Proportion Test cutoff C for a min-entropy level at alpha = 2^-20.
+      Verification target for precomputed cutoff tables.
+    fields:
+      - name: h
+        type: SpecRatio
+        description: Min-entropy per sample (bits, exact rational).
+      - name: cutoff
+        type: u32
+        description: Example cutoff value C.
+
+  - name: SourceSpec
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Declared output alphabet of a noise source — sample width 1..=8 bits,
+      validated at construction; is_binary() selects the APT window size
+      downstream.
+
+  - name: TimerSource
+    module: oxicrypt-entropy
+    kind: enum
+    description: >-
+      Timer/counter a jitter-class noise source reads — configuration
+      vocabulary only; per-arch defaults, the startup adequacy
+      self-check, and Phase-0 unselectability of InternalTimerThread are
+      enforced by the timer layer. Deliberately exhaustive.
+    variants:
+      - name: RawCounter
+        description: Raw CPU cycle counter (TSC on x86_64, CNTVCT on aarch64).
+      - name: OsNanoClock
+        description: OS-provided nanosecond clock.
+      - name: InternalTimerThread
+        description: Reserved — unimplemented and unselectable in Phase 0.
+
+  - name: SourceMetadata
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Collection-environment identity recorded with every dataset (no
+      anonymous datasets): timer source (Option<TimerSource>, None for
+      sources that do not derive samples from a timer), nominal counter
+      frequency, CPU model, OS, and collection parameters. Borrowed
+      string fields keep the core crate no_std.
+
+  - name: SourceError
+    module: oxicrypt-entropy
+    kind: enum
+    description: Non-exhaustive noise-source failure.
+    variants:
+      - name: Unavailable
+        description: The source cannot currently produce samples.
+
+  - name: EntropyError
+    module: oxicrypt-entropy
+    kind: enum
+    description: >-
+      Typed entropy-pipeline errors. Construction refuses — never clamps —
+      a claim above the source ceiling or above the declared sample width.
+    variants:
+      - name: ClaimExceedsCeiling
+        description: Injected claim exceeds the source's design-anchored ceiling.
+      - name: ClaimExceedsSampleWidth
+        description: Injected claim exceeds the information content of the declared width.
+      - name: Source
+        description: Underlying noise-source failure (wraps SourceError).
+
+  - name: JitterConfig
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Jitter-source construction config: adequacy thresholds, recorded
+      TimerSource, and collection-environment identity strings (no
+      anonymous datasets).
+
+  - name: JitterSource
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      CPU execution-time jitter noise source (sealed NoiseSource impl,
+      generic over TimerRead). new(timer, config) runs the timer-adequacy
+      self-check and refuses inadequate timers with typed reasons.
+      Emits 4-bit digitized delta symbols; design ceiling 1 bit/sample;
+      backwards deltas discarded and remeasured (bounded, then
+      Unavailable). Debug never exposes internal buffers. Workload is
+      black_box-disciplined; a release-build guard test asserts delta
+      variance persists.
+
+  - name: TimerError
+    module: oxicrypt-entropy
+    kind: enum
+    description: >-
+      Typed timer-layer errors (non-exhaustive): Unsupported
+      (InternalTimerThread, reserved/unselectable Phase 0), Unavailable
+      (source not compiled in — std/raw-counter feature off), Backwards
+      (width-masked delta with the counter-width top bit set; affected
+      sample discarded), Inadequate(InadequacyReason).
+    variants:
+      - name: Unsupported
+        description: Reserved timer source, unselectable this phase.
+      - name: Unavailable
+        description: Timer source not compiled into this build.
+      - name: Backwards
+        description: Read went backwards; sample must be discarded.
+      - name: Inadequate
+        description: Measured behavior refused (typed reason).
+
+  - name: InadequacyReason
+    module: oxicrypt-entropy
+    kind: enum
+    description: Why the adequacy check refused (TooCoarse / TooUniform / NonMonotonic).
+    variants:
+      - name: TooCoarse
+        description: Zero-delta fraction above the configured bound.
+      - name: TooUniform
+        description: Too few distinct positive delta values.
+      - name: NonMonotonic
+        description: Backwards violations observed during measurement.
+
+  - name: AdequacyConfig
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Adequacy thresholds — conservative engineering defaults (4096
+      samples; max 900 permille zero deltas; min 4 distinct deltas),
+      explicitly NOT SP 800-90B values.
+
+  - name: AdequacyReport
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Observed timer behavior: deltas, zero deltas, min positive delta
+      (measured effective granularity), bounded distinct-delta count,
+      backwards violations. ensure_adequate(&AdequacyConfig) refuses with
+      typed reasons.
+
+  - name: TimerRead
+    module: oxicrypt-entropy
+    kind: trait
+    description: >-
+      Sealed counter-read abstraction (read() -> u64, width_bits());
+      implemented by PlatformTimer / RawCounterTimer (raw-counter
+      feature) / OsNanoClockTimer (std feature) and in-crate synthetic
+      test timers.
+
+  - name: PlatformTimer
+    module: oxicrypt-entropy
+    kind: enum
+    description: >-
+      Platform timer for a configured TimerSource. new(source) returns
+      typed Unsupported for InternalTimerThread (Phase 0) and Unavailable
+      for sources not compiled in.
+
+  - name: Alpha
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Health-test false-positive probability, restricted to alpha = 2^-a
+      with a in 20..=40 (90B 4.3 item 3 recommended range). DEFAULT is
+      2^-30 (certified jitter-entropy lineage precedent).
+
+  - name: HealthTest
+    module: oxicrypt-entropy
+    kind: enum
+    description: Which approved continuous test failed (non-exhaustive).
+    variants:
+      - name: Rct
+        description: Repetition Count Test (90B 4.4.1).
+      - name: Apt
+        description: Adaptive Proportion Test (90B 4.4.2).
+
+  - name: HealthError
+    module: oxicrypt-entropy
+    kind: enum
+    description: >-
+      Typed health-layer errors (non-exhaustive): Failed(HealthTest) —
+      permanent; Poisoned — every call after a failure; UnsupportedAlpha —
+      the (alpha, alphabet, H) point has no precomputed APT cutoff row
+      (table-borne by design, no runtime binomial).
+    variants:
+      - name: Failed
+        description: A continuous test failed; the monitor is permanently poisoned.
+      - name: Poisoned
+        description: An earlier failure already poisoned this monitor.
+      - name: UnsupportedAlpha
+        description: No precomputed cutoff coverage for the requested point.
+
+  - name: RepetitionCountTest
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      90B 4.4.1 RCT. Cutoff C = 1 + ceil(-log2(alpha)/H) evaluated in pure
+      integer arithmetic over the fixed-point claim; spec worked example
+      (C=11 at alpha=2^-20, H=2.0) and the cert-lineage point (C=31 at
+      alpha=2^-30, H=1) are pinned by test.
+
+  - name: AdaptiveProportionTest
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      90B 4.4.2 APT. Window 1024 (binary) / 512 (non-binary); cutoff from
+      the precomputed table seeded with transcribed Table 2 rows; claimed H
+      rounds down to the table grid (claim never overstated).
+
+  - name: HealthMonitor
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      RCT + APT over every sample with permanent poisoning on any failure:
+      the failing sample is never released and only re-instantiation
+      clears the condition.
+
+  - name: NoiseSource
+    module: oxicrypt-entropy
+    kind: trait
+    description: >-
+      Stage one of the three-stage pipeline (NoiseSource → health tests →
+      conditioner). SEALED — cannot be implemented outside the crate
+      while the validation story matures (unsealing later is
+      non-breaking); object-safe, but the pipeline is generic so no
+      vtable sits on the sample path. Sources are dumb emitters: spec(),
+      max_claimable_h()
+      (the design-anchored ceiling — the only entropy value a source ever
+      declares), sample() -> Result<RawSample = u8, SourceError>, and
+      metadata(). Health tests live outside the trait so every present and
+      future source inherits the same battery; claimed min-entropy is
+      injected at pipeline construction, never source-declared.
+
+  - name: EntropyPipeline
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Pipeline skeleton bound to one NoiseSource and one validated
+      min-entropy claim. The health-test and conditioning stages attach to
+      this skeleton as they land.
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -2353,6 +2661,120 @@ functions:
       handles_secrets: true
       fips_approved: true
       fips_gate: Operational
+
+  # ── Entropy (SP 800-90B scaffolding) ──────────────────────────────
+
+  - name: EntropyPipeline::new
+    module: oxicrypt-entropy
+    description: >-
+      Construct an entropy pipeline, injecting the claimed min-entropy per
+      sample and the health-test alpha. Refuses claims above the source's
+      design-anchored ceiling (ClaimExceedsCeiling) or above the declared
+      sample width (ClaimExceedsSampleWidth), and alpha/H points without
+      APT table coverage (Health(UnsupportedAlpha)) — refusal, never
+      clamping.
+    signature: "pub fn new(source: S, claimed_h: MinEntropy, alpha: Alpha) -> Result<EntropyPipeline<S>, EntropyError>"
+    returns:
+      type: "Result<EntropyPipeline<S>, EntropyError>"
+      description: Pipeline (awaiting startup) on success; typed refusal otherwise.
+
+  - name: EntropyPipeline::run_startup
+    module: oxicrypt-entropy
+    description: >-
+      Run the startup tests — continuous health tests over at least 1024
+      consecutive samples (90B 4.3 item 4); tested samples are discarded,
+      never released. Failure permanently poisons the pipeline.
+    signature: "pub fn run_startup(&mut self) -> Result<(), EntropyError>"
+    returns:
+      type: "Result<(), EntropyError>"
+      description: Operational on success; NotReady if already started; Health on failure.
+
+  - name: EntropyPipeline::on_demand_test
+    module: oxicrypt-entropy
+    description: >-
+      On-demand testing (90B 4.3 item 5): re-runs the startup battery on
+      fresh test state (no carryover); tested samples discarded. Only
+      callable while operational; failure permanently poisons.
+    signature: "pub fn on_demand_test(&mut self) -> Result<(), EntropyError>"
+    returns:
+      type: "Result<(), EntropyError>"
+      description: Ok when the battery passes; typed error otherwise.
+
+  - name: EntropyPipeline::sample
+    module: oxicrypt-entropy
+    description: >-
+      Emit one health-tested raw sample — the ONLY path by which a sample
+      leaves the pipeline. NotReady before startup or after poisoning; a
+      failing sample is never released and poisons permanently.
+    signature: "pub fn sample(&mut self) -> Result<RawSample, EntropyError>"
+    returns:
+      type: "Result<RawSample, EntropyError>"
+      description: One tested sample, or a typed refusal.
+
+  - name: MinEntropy::from_fraction_floor
+    module: oxicrypt-entropy
+    description: >-
+      Convert num/den bits of min-entropy to the 1/256-bit grid, rounding
+      down (the conservative direction — a claim is never overstated).
+    signature: "pub fn from_fraction_floor(num: u64, den: u64) -> Option<MinEntropy>"
+    returns:
+      type: "Option<MinEntropy>"
+      description: Floored fixed-point value; None on zero denominator or overflow.
+
+  - name: SourceSpec::new
+    module: oxicrypt-entropy
+    description: Validated constructor — sample width must be 1..=8 bits.
+    signature: "pub const fn new(sample_width_bits: u8) -> Option<SourceSpec>"
+    returns:
+      type: "Option<SourceSpec>"
+      description: Spec, or None for width 0 or greater than 8.
+
+  - name: TimerSource::default_for_target
+    module: oxicrypt-entropy
+    description: >-
+      Per-architecture default timer source with documented rationale:
+      x86_64 -> RawCounter (cert-precedented TSC path); aarch64 and
+      others -> OsNanoClock (raw counter admissible per-OE where MEASURED
+      granularity is adequate).
+    signature: "pub const fn default_for_target() -> TimerSource"
+    returns:
+      type: TimerSource
+      description: The default for the compilation target.
+
+  - name: wrapping_delta
+    module: oxicrypt-entropy
+    description: >-
+      Width-aware wrapping delta between two counter reads. Legitimate
+      narrow-counter wraparound yields the correct small delta; a masked
+      delta with the top bit of the width set is a Backwards violation.
+    signature: "pub fn wrapping_delta(prev: u64, now: u64, width_bits: u32) -> Result<u64, TimerError>"
+    returns:
+      type: "Result<u64, TimerError>"
+      description: The delta, or Backwards (caller discards the sample).
+
+  - name: measure_adequacy
+    module: oxicrypt-entropy
+    description: >-
+      The startup timer-adequacy self-check: observes actual read-to-read
+      behavior over config.samples reads (zero-delta fraction, min
+      positive delta, bounded distinct-delta variety, backwards
+      violations). Pure observation; refusal lives in
+      AdequacyReport::ensure_adequate.
+    signature: "pub fn measure_adequacy<T: TimerRead>(timer: &mut T, config: &AdequacyConfig) -> AdequacyReport"
+    returns:
+      type: AdequacyReport
+      description: Observed behavior for adequacy adjudication.
+
+  - name: oxi_timer::read_raw_counter
+    module: oxicrypt-timer
+    description: >-
+      Serialized raw counter read — lfence+rdtsc (x86_64) or ISB+MRS
+      CNTVCT_EL0 (aarch64). Side-effect-free; nominal frequency never to
+      be trusted (measure effective granularity instead).
+    signature: "pub fn read_raw_counter() -> u64"
+    returns:
+      type: u64
+      description: Raw counter value.
 
   # ── CMAC (SP 800-38B) ────────────────────────────────────────────
 

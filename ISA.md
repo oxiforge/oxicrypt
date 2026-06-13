@@ -74,7 +74,7 @@ by the commit-is-the-gate doc-sync discipline.
 
 > Placeholder set — expand into the full per-algorithm / per-service inventory during validation.
 
-- [ ] ISC-1: 21 of the 24 in-boundary crates carry `#![forbid(unsafe_code)]`; the three audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`) and the two CPU-intrinsic-acceleration crates `oxicrypt-sha-accel` / `oxicrypt-aes-accel` (sanctioned category: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
+- [ ] ISC-1: 22 of the 26 in-boundary crates carry `#![forbid(unsafe_code)]`; the four audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`), the two CPU-intrinsic-acceleration crates `oxicrypt-sha-accel` / `oxicrypt-aes-accel` (sanctioned category: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence), and `oxicrypt-timer` (sanctioned category: read-only CPU timer/counter intrinsics, side-effect-free, no cryptographic logic). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
 - [ ] ISC-2: every approved algorithm has known-answer / ACVP vectors that pass (`oxicrypt-test-vectors`, `acvp-harness/`)
 - [ ] ISC-3: power-up self-tests run and gate operation (`oxicrypt-integrity`)
 - [ ] ISC-4: the module boundary is formally defined (`oxicrypt-module`)
@@ -84,6 +84,14 @@ by the commit-is-the-gate doc-sync discipline.
 - [ ] ISC-8: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` are clean
 - [ ] ISC-9: Anti: no non-approved algorithm is reachable through the validated module boundary
 - [ ] ISC-10: Anti: no host path / private-project name / internal context appears in any tracked file
+- [ ] ISC-11: `oxicrypt-entropy` noise sources declare only a design-anchored ceiling — no claimed-H constant appears in any source implementation; the claim is injected at pipeline construction
+- [ ] ISC-12: entropy-pipeline construction with a claim above the source ceiling or above the declared sample width fails with a typed error
+- [ ] ISC-13: every SP 800-90B numeric lives in `oxicrypt_entropy::sp800_90b` with a clause citation; no 90B numeric is restated elsewhere in the workspace
+- [ ] ISC-14: every `oxicrypt-entropy` health-test failure is permanent — the failing sample is never released, no sample is released afterward, only re-instantiation clears
+- [ ] ISC-15: no sample leaves an entropy pipeline before startup tests pass over ≥1024 consecutive samples; startup-tested samples are discarded
+- [ ] ISC-16: the pipeline's emission method is the only sample path — every released sample passed RCT and APT
+- [ ] ISC-17: every 256-bit conditioned output block consumes health-tested samples carrying at least n_out + 64 bits of assessed min-entropy (SP 800-90C §3.2.2.2 input margin), the per-block count derived from the injected claim by exact integer arithmetic
+- [ ] ISC-18: the conditioner is stateless across output blocks (fresh hash per block, config-only struct) and a startup conditioning-KAT mismatch is a permanent refusal
 
 ## Test Strategy
 
@@ -96,6 +104,14 @@ by the commit-is-the-gate doc-sync discipline.
 | 6,7 | content | security policy + manifests match code | in sync | Read/Grep |
 | 8 | mechanical | fmt + clippy clean | 0 issues | Bash |
 | 9,10 | anti | boundary + leakage checks | 0 violations | Grep/review |
+| 11 | structure | API shape + grep for H literals in source impls | zero | Grep |
+| 12 | functional | ceiling/width refusal unit tests | green | cargo test |
+| 13 | constraint | grep 90B numerics outside sp800_90b | zero restatements | Grep + cargo test |
+| 14 | functional | poisoning permanence unit tests (RCT-fail + APT-fail paths) | green | cargo test |
+| 15 | functional | startup-gating + discard unit tests | green | cargo test |
+| 16 | structure | API-surface inspection — no bypass emission path | single path | Read + cargo test |
+| 17 | functional | margin + minimality sweep across the claim grid | green | cargo test |
+| 18 | functional | block-independence + corrupted-KAT refusal unit tests | green | cargo test |
 
 ## Features
 
@@ -108,6 +124,7 @@ by the commit-is-the-gate doc-sync discipline.
 | algorithm-vectors | ISC-2 | — | yes |
 | security-policy | ISC-6 | module-boundary, self-tests | no |
 | manifests | ISC-7 | — | yes |
+| entropy-scaffolding | ISC-11,12,13,14,15,16,17,18 | — | yes |
 
 ## Decisions
 
@@ -134,6 +151,54 @@ by the commit-is-the-gate doc-sync discipline.
   Measured 13.1× on AES-256 single-block (73.7 → 961.8 MiB/s, byte-identical outputs). Follow-ups
   under the same category: multi-block pipelining for CTR/GCM bulk paths; AArch64 AES intrinsics.
   See security-policy R76 + §9.2 item 3.
+
+- 2026-06-12: `oxicrypt-entropy` scaffolding landed (in-boundary; ISC-1 accounting 21-of-24 →
+  22-of-25, exceptions unchanged). Ratified trait shape: three-stage pipeline (noise source →
+  health tests → conditioner); sources are dumb emitters declaring only a design-anchored
+  `max_claimable_h()` ceiling; claimed min-entropy is injected at pipeline construction and
+  refused with a typed error above the ceiling or the declared sample width; min-entropy is
+  exact fixed-point (1/256-bit steps, floor rounding) with no floats on the claim/cutoff path.
+  SP 800-90B constants transcribed into the single cited module `sp800_90b` from the published
+  document plus same-day errata check (security-policy R78). Health tests, jitter source,
+  conditioning, and the 90B estimator suite follow as separate landings; ISC-11–13 added.
+
+- 2026-06-12: `oxicrypt-entropy` health layer landed: §4.4 approved tests (RCT closed-form
+  integer cutoff; APT precomputed-table cutoffs with typed refusal for uncovered (α, alphabet, H)
+  points — no runtime binomial), §4.3 startup gating (≥1024 samples, tested samples discarded)
+  and on-demand re-testing on fresh state, all failures permanent (terminal poisoned state,
+  re-instantiation only). Health-test KAT vector files shipped with documented generation and
+  known outcomes. ISC-14–16 added (security-policy R79). The APT table's α = 2⁻³⁰ default rows
+  arrive from the out-of-boundary cutoff-table generator; until then the seeded spec-reference
+  rows (α = 2⁻²⁰) are the covered grid.
+
+- 2026-06-12: Project-lead ruling — a third sanctioned `unsafe` category, **CPU timer/counter
+  intrinsics** (read-only, side-effect-free register/counter reads, no cryptographic logic,
+  dedicated audited crate), implemented as `oxicrypt-timer` (serialized TSC on x86_64,
+  CNTVCT_EL0 on aarch64; exactly two unsafe blocks with SAFETY comments). ISC-1 accounting
+  22-of-25 → 22-of-26 (four audited exceptions, three categories; security-policy §9.2 item 4 +
+  R80). The entropy crate's timer layer (safe Rust, forbid-clean) adds per-arch defaults with
+  documented rationale, the measured-never-assumed adequacy self-check with typed refusals, and
+  width-aware wrapping-delta semantics with backwards classification. aarch64 paths compile via
+  cfg; their runtime verification rides the CI matrix when it lands.
+
+- 2026-06-12: `oxicrypt-entropy` jitter source landed — the first real noise source behind
+  the sealed abstraction, design-derived CPU execution-time jitter (black_box-disciplined
+  SHA-256 + data-dependent memory-walk workload with a release-build variance guard; 4-LSB
+  digitization with one symbol stream end to end and the digitization-transparency
+  justification in the module rustdoc; 1 bit/sample design ceiling, no claimed-H constants;
+  construction-time timer-adequacy refusal; bounded backwards-delta retry yielding a typed
+  Unavailable on exhaustion). Independent design review confirmed the source fails closed.
+  Security-policy R81. (Entry recorded with the conditioning landing — same-day doc-sync
+  backfill.)
+
+- 2026-06-12: `oxicrypt-entropy` vetted conditioning landed: SHA-256 conditioning component
+  (90B §3.1.5.1.1 Table 1, via `oxicrypt-sha`) with per-block sample count derived from the
+  injected claim under the SP 800-90C §3.2.2.2 full-entropy input margin (h_in ≥ n_out + 64;
+  90C September 2025 final transcribed into `sp800_90b` with fetched-document provenance),
+  stateless per-block hashing (fresh hash instance per block, config-only conditioner struct),
+  startup conditioning KAT with permanent refusal on mismatch, and conditioned output drawing
+  every sample through the single health-tested emission path. ISC-17–18 added
+  (security-policy R82).
 
 ## Changelog
 

@@ -26,6 +26,8 @@ members = [
     "crates/oxicrypt-lms",
     "crates/oxicrypt-xmss",
     "crates/oxicrypt-dh",
+    "crates/oxicrypt-entropy",
+    "crates/oxicrypt-timer",
     "acvp-harness",
     "oxi",
     "benches",
@@ -36,7 +38,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0 OR MIT"

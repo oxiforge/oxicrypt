@@ -1,0 +1,23 @@
+[package]
+name = "oxicrypt-entropy"
+description = "SP 800-90B entropy-source scaffolding: noise-source abstraction, claimed-H pipeline, cited spec constants."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# OS monotonic nanosecond clock timer (std-gated surface; core stays no_std).
+std = []
+# Serialized raw CPU counter via the audited oxicrypt-timer crate.
+raw-counter = ["dep:oxicrypt-timer"]
+
+[dependencies]
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+oxicrypt-timer = { path = "../oxicrypt-timer", optional = true }
