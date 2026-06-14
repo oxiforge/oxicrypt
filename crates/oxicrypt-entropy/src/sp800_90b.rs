@@ -281,6 +281,23 @@ pub const VETTED_SHA256_NW_BITS: u32 = 256;
 /// For SHA-256: 256 bits.
 pub const VETTED_SHA256_NOUT_BITS: u32 = 256;
 
+// ─── ESV raw-data wire format (NOT an SP 800-90B constant) ───────────────────
+
+/// Number of samples in one raw-data file submitted to the Entropy Source
+/// Validation (ESV) demo server: exactly 1,000,000.
+///
+/// # Provenance — ESV submission convention, NOT a 90B clause
+///
+/// This is **not** an SP 800-90B or 90C specification numeric. It is the
+/// ESV data-file convention: each uploaded data file carries exactly
+/// 1,000,000 byte-padded samples (one byte per sample, effective width
+/// ≤ min(bitsPerSample, 8)). Recorded from the ESV protocol digest of
+/// 2026-06-12 (`esvp-protocol-digest-2026-06-12.md`), itself drawn from
+/// the ESV reference client. It lives in this module only so the wire
+/// format has one cited home alongside the spec constants; it carries no
+/// 90B/90C clause and must never be cited as one.
+pub const RAW_DATA_SAMPLE_COUNT: u32 = 1_000_000;
+
 // ─── SP 800-90C §3.2.2.2 — Full-Entropy Input Margin ────────────────────────
 
 /// SP 800-90C §3.2.2.2 (September 2025, final): "The amount of entropy

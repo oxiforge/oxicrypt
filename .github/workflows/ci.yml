@@ -95,6 +95,13 @@ jobs:
             flags: --features accel-sha
           - crate: oxicrypt-sha-accel
             flags: --all-features
+          # oxicrypt-entropy's std/collection-gated surface (raw collection,
+          # streaming dataset writer, sha256 manifest, resumable session) is
+          # invisible to the default workspace gates, which build entropy with
+          # default (no_std) features. --all-features = std + raw-counter +
+          # collection, covering the whole std-gated surface.
+          - crate: oxicrypt-entropy
+            flags: --all-features
     steps:
       - uses: actions/checkout@v4
       - name: Install stable toolchain

@@ -40,6 +40,14 @@ pub enum EntropyError {
     /// pipeline is permanently poisoned — refusal, never degraded
     /// operation.
     ConditionerKat,
+    /// A streaming raw-data collection failed to write to its output sink.
+    ///
+    /// This is a tool-boundary error: it arises only on the std-gated
+    /// streaming collection path ([`crate::raw`]'s `stream_to`), where
+    /// samples are written to a file as they are produced. It is a unit
+    /// variant (carries no `std::io::Error`) so [`EntropyError`] stays
+    /// `Copy` and the `no_std` core is unaffected.
+    Io,
 }
 
 impl From<SourceError> for EntropyError {

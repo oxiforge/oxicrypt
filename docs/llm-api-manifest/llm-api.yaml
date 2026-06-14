@@ -2766,6 +2766,31 @@ functions:
       type: AdequacyReport
       description: Observed behavior for adequacy adjudication.
 
+  - name: collection::run
+    module: oxicrypt-entropy
+    description: >-
+      Entry point of the off-boundary `collect` binary (behind the
+      default-off `collection` feature; absent from the default and
+      validated library build graphs). Parses CLI arguments and writes
+      SP 800-90B raw + restart datasets for one operational environment
+      under a versioned per-OE layout (`<oe-id>/<timer>/<boundary>/`) with
+      a top-level sha256 manifest, resumable via a content-hash session
+      checkpoint. Outside the validated module boundary; makes no entropy
+      claims.
+    signature: "pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError>"
+    returns:
+      type: "Result<(), CollectionError>"
+      description: Ok on success, else an operator-facing collection error.
+
+  - name: CollectionError
+    module: oxicrypt-entropy
+    kind: struct
+    description: >-
+      Operator-facing error from the off-boundary collection tool (the
+      `collection` feature). Folds typed EntropyError and filesystem IO
+      errors into one message; the bin maps it to a process exit. The
+      sample/health hot path itself never panics.
+
   - name: oxi_timer::read_raw_counter
     module: oxicrypt-timer
     description: >-

@@ -1,20 +1,30 @@
-//! Parity harness: check the MCV and Collision estimators against the NIST EA
-//! tool v1.1.8.
+//! Parity harness: check the MCV, Collision, Markov, Compression, t-Tuple, LRS,
+//! MultiMCW, Lag, MultiMMC, and LZ78Y estimators against the NIST EA tool v1.1.8.
+//! LZ78Y (§6.3.10) completes the SP 800-90B §6.3 non-IID estimator suite.
 //!
 //! The reference table ([`REFERENCE_TABLE`]) records, per dataset, the
 //! filename, declared bits-per-symbol, the dataset's SHA-256 (provenance), the
 //! EA tool's literal and (where applicable) bitstring MCV min-entropy values,
-//! and the EA tool's **bitstring Collision** min-entropy value (SP 800-90B
-//! §6.3.2). The harness loads each present dataset, verifies its SHA-256 against
-//! the recorded digest, computes both MCV tracks **and** the collision estimate,
-//! and compares all of them against the reference values at the pre-registered
-//! **1.0e-6 bits** absolute tolerance (`docs/estimator-parity-tolerances.md`).
+//! the EA tool's **bitstring Collision** min-entropy value (SP 800-90B §6.3.2),
+//! the EA tool's **bitstring Markov** min-entropy value (SP 800-90B §6.3.3), and
+//! the EA tool's **bitstring Compression** min-entropy value (SP 800-90B
+//! §6.3.4). The harness loads each present dataset, verifies its SHA-256 against
+//! the recorded digest, computes both MCV tracks, the collision estimate, the
+//! Markov estimate, **and** the compression estimate, and compares all of them
+//! against the reference values at the pre-registered **1.0e-6 bits** absolute
+//! tolerance (`docs/estimator-parity-tolerances.md`).
 //!
-//! The collision estimator runs on the bitstring track only (the EA tool calls
-//! `collision_test(data.bsymbols, …)`), so every dataset — including 1-bit data
-//! — carries one collision reference value. The `normal` dataset is the
+//! The collision, Markov, and compression estimators all run on the bitstring
+//! track only (the EA tool calls `collision_test(data.bsymbols, …)`,
+//! `markov_test(data.bsymbols, …)`, and `compression_test(data.bsymbols, …)`),
+//! so every dataset — including 1-bit data — carries one collision, one Markov,
+//! and one compression reference value. The `normal` dataset is the collision
 //! "Could Not Find p" edge case (collision min-entropy `1.0`); see
-//! [`crate::collision`].
+//! [`crate::collision`]. The Markov and compression reference values are the
+//! verbose "min entropy" line of the EA tool's `selftest/*.res` files (the
+//! controlling track per dataset — "Bitstring" for multi-bit data, "Literal"
+//! for 1-bit data, which are the same binary computation); see [`crate::markov`]
+//! and [`crate::compression`].
 //!
 //! A dataset whose file is **absent** is reported [`Outcome::Skip`] — not a
 //! failure. A present dataset whose computed value diverges by more than the
@@ -24,6 +34,13 @@
 use std::path::{Path, PathBuf};
 
 use crate::collision::collision;
+use crate::compression::compression;
+use crate::lag::lag;
+use crate::lrs::lrs;
+use crate::lz78y::lz78y;
+use crate::markov::markov;
+use crate::multi_mcw::multi_mcw;
+use crate::multi_mmc::multi_mmc;
 use crate::{McvResult, mcv};
 
 /// Pre-registered absolute parity tolerance, in bits of min-entropy.
@@ -53,6 +70,70 @@ pub struct Reference {
     /// 1-bit data) declares one. `normal` is the "Could Not Find p" edge case
     /// (`1.0`).
     pub collision_min_entropy: f64,
+    /// EA tool §6.3.3 **bitstring** Markov min-entropy value. The Markov
+    /// estimator always runs on the bitstring track, so every dataset (including
+    /// 1-bit data) declares one. Recorded from the verbose "min entropy" line of
+    /// the EA tool's `selftest/*.res` files; per-bit and capped at `1.0`.
+    pub markov_min_entropy: f64,
+    /// EA tool §6.3.4 **bitstring** Compression min-entropy value. The
+    /// compression estimator always runs on the bitstring track, so every
+    /// dataset (including 1-bit data) declares one. Recorded from the verbose
+    /// "min entropy" line of the EA tool's `selftest/*.res` files (the
+    /// controlling track — "Bitstring" for multi-bit data, "Literal" for 1-bit
+    /// data); per-bit and in `(0, 1]`.
+    pub compression_min_entropy: f64,
+    /// EA tool §6.3.5 **bitstring** t-Tuple min-entropy value. The t-Tuple
+    /// estimator's controlling assessment for these datasets runs on the
+    /// bitstring track (the EA tool computes both a "Bitstring" and a "Literal"
+    /// estimate for multi-bit data; the bitstring one is the controlling per-bit
+    /// value, and for 1-bit data the single "Literal" estimate equals the
+    /// bitstring one). Recorded from the verbose "t-Tuple Estimate: min entropy"
+    /// line of the EA tool's `selftest/*.res` files; per-bit and in `(0, 1]`.
+    pub t_tuple_min_entropy: f64,
+    /// EA tool §6.3.6 **bitstring** LRS (Longest Repeated Substring)
+    /// min-entropy value. Same track convention as the t-Tuple value (both are
+    /// derived from the one suffix-array/LCP pass). Recorded from the verbose
+    /// "LRS Estimate: min entropy" line of the EA tool's `selftest/*.res` files;
+    /// per-bit and in `(0, 1]`.
+    pub lrs_min_entropy: f64,
+    /// EA tool §6.3.7 **bitstring** MultiMCW prediction min-entropy value. The
+    /// MultiMCW estimator's controlling assessment runs on the bitstring track
+    /// (`multi_mcw_test(data.bsymbols, data.blen, 2, …)`); for 1-bit data the
+    /// single "Literal" estimate equals the bitstring one (`bsymbols ==
+    /// symbols`). Recorded from the verbose "MultiMCW Prediction Estimate: min
+    /// entropy" line of the EA tool's `selftest/*.res` files (the controlling
+    /// track — "Bitstring" for multi-bit data, "Literal" for 1-bit data);
+    /// per-bit and in `(0, 1]`. `normal` is the edge case where the predictor
+    /// reaches the per-bit ceiling (`1.0`).
+    pub multi_mcw_min_entropy: f64,
+    /// EA tool §6.3.8 **bitstring** Lag prediction min-entropy value. The Lag
+    /// estimator's controlling assessment runs on the bitstring track
+    /// (`lag_test(data.bsymbols, data.blen, 2, …)`); for 1-bit data the single
+    /// "Literal" estimate equals the bitstring one (`bsymbols == symbols`).
+    /// Recorded from the verbose "Lag Prediction Estimate: min entropy" line of
+    /// the EA tool's `selftest/*.res` files (the controlling track — "Bitstring"
+    /// for multi-bit data, "Literal" for 1-bit data); per-bit and in `(0, 1]`.
+    pub lag_min_entropy: f64,
+    /// EA tool §6.3.9 **bitstring** MultiMMC (Multi Markov Model with Counting)
+    /// prediction min-entropy value. The MultiMMC estimator's controlling
+    /// assessment runs on the bitstring track (`multi_mmc_test(data.bsymbols,
+    /// data.blen, 2, …)`, which dispatches to the binary fast path); for 1-bit
+    /// data the single "Literal" estimate equals the bitstring one (`bsymbols ==
+    /// symbols`). Recorded from the verbose "MultiMMC Prediction Estimate: min
+    /// entropy" line of the EA tool (`-i -a -v -v`, the controlling track —
+    /// "Bitstring" for multi-bit data, "Literal" for 1-bit data); per-bit and in
+    /// `(0, 1]`.
+    pub multi_mmc_min_entropy: f64,
+    /// EA tool §6.3.10 **bitstring** LZ78Y prediction min-entropy value. The
+    /// LZ78Y estimator's controlling assessment runs on the bitstring track
+    /// (`LZ78Y_test(data.bsymbols, data.blen, 2, …)`, which dispatches to the
+    /// binary fast path); for 1-bit data the single "Literal" estimate equals the
+    /// bitstring one (`bsymbols == symbols`). Recorded from the verbose "LZ78Y
+    /// Prediction Estimate: min entropy" line of the EA tool's `selftest/*.res`
+    /// files (the controlling track — "Bitstring" for multi-bit data, "Literal"
+    /// for 1-bit data); per-bit and in `(0, 1]`. LZ78Y completes the §6.3 non-IID
+    /// estimator suite.
+    pub lz78y_min_entropy: f64,
 }
 
 /// The 11 EA-distribution reference datasets and their EA tool v1.1.8 MCV
@@ -67,6 +148,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 0.028_633_069_781_464_744,
         bitstring_min_entropy: None,
         collision_min_entropy: 0.028_513_792_826_254_068,
+        markov_min_entropy: 0.029_123_023_940_057_06,
+        compression_min_entropy: 0.017_766_579_116_465_193,
+        t_tuple_min_entropy: 0.026_489_257_053_630_97,
+        lrs_min_entropy: 0.055_881_394_003_087_38,
+        multi_mcw_min_entropy: 0.028_634_892_142_081_356,
+        lag_min_entropy: 0.040_599_763_274_887_825,
+        multi_mmc_min_entropy: 0.028_634_586_256_344_21,
+        lz78y_min_entropy: 0.028_635_020_154_766_915,
     },
     Reference {
         name: "biased-random-bytes",
@@ -76,6 +165,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 0.319_650_651_838_182_03,
         bitstring_min_entropy: Some(0.151_827_325_076_523_44),
         collision_min_entropy: 0.072_705_888_458_565_96,
+        markov_min_entropy: 0.091_604_387_916_422_43,
+        compression_min_entropy: 0.063_135_493_215_718_44,
+        t_tuple_min_entropy: 0.032_217_608_875_810_14,
+        lrs_min_entropy: 0.064_801_730_063_926_1,
+        multi_mcw_min_entropy: 0.041_925_133_646_315_87,
+        lag_min_entropy: 0.042_001_643_639_251_546,
+        multi_mmc_min_entropy: 0.041_925_153_682_126_653,
+        lz78y_min_entropy: 0.041_925_148_755_351_95,
     },
     Reference {
         name: "data.pi",
@@ -85,6 +182,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 0.811_140_579_704_074_4,
         bitstring_min_entropy: None,
         collision_min_entropy: 0.569_537_593_457_779,
+        markov_min_entropy: 0.723_180_781_990_045_4,
+        compression_min_entropy: 0.601_559_190_632_196_5,
+        t_tuple_min_entropy: 0.701_860_994_150_4,
+        lrs_min_entropy: 0.908_803_656_483_348,
+        multi_mcw_min_entropy: 0.812_333_232_591_738_2,
+        lag_min_entropy: 0.811_434_612_614_889_9,
+        multi_mmc_min_entropy: 0.811_183_696_803_481_3,
+        lz78y_min_entropy: 0.811_158_644_364_686_8,
     },
     Reference {
         name: "normal",
@@ -95,6 +200,17 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         bitstring_min_entropy: Some(0.996_315_460_805_651_6),
         // Edge case: X̄' ≥ 2.5 → "Could Not Find p" → p = 0.5, H = 1.0.
         collision_min_entropy: 1.0,
+        markov_min_entropy: 0.993_792_543_295_742_4,
+        compression_min_entropy: 0.512_511_972_888_792_1,
+        t_tuple_min_entropy: 0.772_905_580_775_291_5,
+        lrs_min_entropy: 0.828_399_020_572_124_7,
+        // Edge case: predictor reaches the per-bit ceiling, H = 1.0.
+        multi_mcw_min_entropy: 1.0,
+        lag_min_entropy: 0.997_707_478_296_022_1,
+        // MultiMMC does NOT hit the ceiling here (it counts per-context, so the
+        // byte-structured `normal` data is partly predictable bit-to-bit).
+        multi_mmc_min_entropy: 0.676_757_600_522_602_7,
+        lz78y_min_entropy: 0.992_460_632_843_158_1,
     },
     Reference {
         name: "rand1_short",
@@ -104,6 +220,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 0.961_058_825_700_550_8,
         bitstring_min_entropy: None,
         collision_min_entropy: 0.691_464_120_997_246_6,
+        markov_min_entropy: 0.987_596_104_459_409,
+        compression_min_entropy: 0.611_716_204_793_945_1,
+        t_tuple_min_entropy: 0.867_624_430_817_073_7,
+        lrs_min_entropy: 0.962_625_803_832_787_2,
+        multi_mcw_min_entropy: 0.952_618_060_532_626_5,
+        lag_min_entropy: 0.943_333_706_575_771_2,
+        multi_mmc_min_entropy: 0.961_616_667_828_880_8,
+        lz78y_min_entropy: 0.961_446_245_952_478,
     },
     Reference {
         name: "rand4_short",
@@ -113,6 +237,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 3.790_037_390_213_974,
         bitstring_min_entropy: Some(0.979_189_482_962_402_2),
         collision_min_entropy: 0.898_179_448_381_018_8,
+        markov_min_entropy: 0.990_616_807_770_947_5,
+        compression_min_entropy: 0.803_872_066_969_184_1,
+        t_tuple_min_entropy: 0.898_777_229_390_377_4,
+        lrs_min_entropy: 0.932_969_314_495_336_3,
+        multi_mcw_min_entropy: 0.986_560_864_592_317,
+        lag_min_entropy: 0.982_641_821_735_989_1,
+        multi_mmc_min_entropy: 0.977_696_512_087_203,
+        lz78y_min_entropy: 0.980_145_173_356_401,
     },
     Reference {
         name: "rand8_short",
@@ -122,6 +254,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 7.010_454_037_736_041,
         bitstring_min_entropy: Some(0.983_386_784_659_150_3),
         collision_min_entropy: 0.832_052_982_215_248,
+        markov_min_entropy: 0.997_724_976_727_965_3,
+        compression_min_entropy: 0.732_611_718_060_656_2,
+        t_tuple_min_entropy: 0.910_786_445_735_414_1,
+        lrs_min_entropy: 0.981_930_357_736_374_3,
+        multi_mcw_min_entropy: 0.994_537_115_514_506,
+        lag_min_entropy: 0.989_693_493_887_954_9,
+        multi_mmc_min_entropy: 0.987_814_544_042_294_1,
+        lz78y_min_entropy: 0.988_081_803_799_903_1,
     },
     Reference {
         name: "ringOsc-nist",
@@ -131,6 +271,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 0.993_514_068_761_158_6,
         bitstring_min_entropy: None,
         collision_min_entropy: 0.126_445_736_196_048_68,
+        markov_min_entropy: 0.257_979_392_450_108_65,
+        compression_min_entropy: 0.159_322_697_721_578_98,
+        t_tuple_min_entropy: 0.201_708_508_170_827_92,
+        lrs_min_entropy: 0.365_798_634_802_780_9,
+        multi_mcw_min_entropy: 0.290_519_227_365_944_9,
+        lag_min_entropy: 0.251_066_953_571_429,
+        multi_mmc_min_entropy: 0.251_068_940_815_654_1,
+        lz78y_min_entropy: 0.251_073_056_820_698,
     },
     Reference {
         name: "truerand_1bit",
@@ -140,6 +288,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 0.995_043_015_131_225_7,
         bitstring_min_entropy: None,
         collision_min_entropy: 0.900_935_726_908_247_5,
+        markov_min_entropy: 0.998_486_475_556_110_6,
+        compression_min_entropy: 0.829_677_083_234_114_4,
+        t_tuple_min_entropy: 0.914_226_367_459_774,
+        lrs_min_entropy: 0.985_818_337_227_197_7,
+        multi_mcw_min_entropy: 0.996_972_248_016_237_1,
+        lag_min_entropy: 0.998_291_666_366_299_7,
+        multi_mmc_min_entropy: 0.996_659_943_803_952_2,
+        lz78y_min_entropy: 0.997_050_047_578_971_5,
     },
     Reference {
         name: "truerand_4bit",
@@ -149,6 +305,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 3.971_194_336_729_609_6,
         bitstring_min_entropy: Some(0.997_730_385_822_156_6),
         collision_min_entropy: 0.928_360_945_304_648,
+        markov_min_entropy: 0.999_469_539_754_720_5,
+        compression_min_entropy: 0.900_626_592_141_759_6,
+        t_tuple_min_entropy: 0.929_433_736_387_771_6,
+        lrs_min_entropy: 0.986_687_395_175_927_9,
+        multi_mcw_min_entropy: 0.998_080_076_228_014_5,
+        lag_min_entropy: 0.998_648_590_128_694_9,
+        multi_mmc_min_entropy: 0.998_205_084_168_765_3,
+        lz78y_min_entropy: 0.999_355_023_599_717_7,
     },
     Reference {
         name: "truerand_8bit",
@@ -158,6 +322,14 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         literal_min_entropy: 7.865_118_002_899_59,
         bitstring_min_entropy: Some(0.998_199_280_119_827_5),
         collision_min_entropy: 0.958_406_295_418_469_6,
+        markov_min_entropy: 0.999_439_303_166_861_9,
+        compression_min_entropy: 0.904_232_681_897_311_9,
+        t_tuple_min_entropy: 0.933_569_244_303_778_1,
+        lrs_min_entropy: 0.998_671_087_964_553_4,
+        multi_mcw_min_entropy: 0.999_562_833_166_665_5,
+        lag_min_entropy: 0.998_401_559_830_912_8,
+        multi_mmc_min_entropy: 0.999_660_367_563_434_2,
+        lz78y_min_entropy: 0.998_465_328_046_531_1,
     },
 ];
 
@@ -173,6 +345,22 @@ pub enum Outcome {
         bitstring_delta: Option<f64>,
         /// Absolute delta on the §6.3.2 bitstring Collision estimate.
         collision_delta: f64,
+        /// Absolute delta on the §6.3.3 bitstring Markov estimate.
+        markov_delta: f64,
+        /// Absolute delta on the §6.3.4 bitstring Compression estimate.
+        compression_delta: f64,
+        /// Absolute delta on the §6.3.5 bitstring t-Tuple estimate.
+        t_tuple_delta: f64,
+        /// Absolute delta on the §6.3.6 bitstring LRS estimate.
+        lrs_delta: f64,
+        /// Absolute delta on the §6.3.7 bitstring MultiMCW prediction estimate.
+        multi_mcw_delta: f64,
+        /// Absolute delta on the §6.3.8 bitstring Lag prediction estimate.
+        lag_delta: f64,
+        /// Absolute delta on the §6.3.9 bitstring MultiMMC prediction estimate.
+        multi_mmc_delta: f64,
+        /// Absolute delta on the §6.3.10 bitstring LZ78Y prediction estimate.
+        lz78y_delta: f64,
     },
     /// File absent — not counted as a failure.
     Skip {
@@ -205,12 +393,33 @@ impl DatasetResult {
                 literal_delta,
                 bitstring_delta,
                 collision_delta,
+                markov_delta,
+                compression_delta,
+                t_tuple_delta,
+                lrs_delta,
+                multi_mcw_delta,
+                lag_delta,
+                multi_mmc_delta,
+                lz78y_delta,
             } => {
                 let bit = bitstring_delta
                     .map_or_else(|| "  bit -".to_string(), |d| format!("  bit Δ={d:.1e}"));
                 format!(
-                    "PASS {:24} lit Δ={:.1e}{}  col Δ={:.1e}",
-                    self.name, literal_delta, bit, collision_delta
+                    "PASS {:24} lit Δ={:.1e}{}  col Δ={:.1e}  mkv Δ={:.1e}  cmp Δ={:.1e}  \
+                     ttu Δ={:.1e}  lrs Δ={:.1e}  mcw Δ={:.1e}  lag Δ={:.1e}  mmc Δ={:.1e}  \
+                     lzy Δ={:.1e}",
+                    self.name,
+                    literal_delta,
+                    bit,
+                    collision_delta,
+                    markov_delta,
+                    compression_delta,
+                    t_tuple_delta,
+                    lrs_delta,
+                    multi_mcw_delta,
+                    lag_delta,
+                    multi_mmc_delta,
+                    lz78y_delta
                 )
             }
             Outcome::Skip { reason } => format!("SKIP {:24} {}", self.name, reason),
@@ -347,13 +556,243 @@ fn check_collision(reference: &Reference, data: &[u8]) -> Result<f64, String> {
     Ok(collision_delta)
 }
 
-/// Check one dataset against its reference row (MCV + Collision).
+/// Compute the §6.3.3 Markov estimate for `data` and compare it to the
+/// reference's recorded value.
+///
+/// Returns the absolute delta on success, or the same failure message
+/// `check_one` would emit when the Markov delta exceeds the tolerance.
+/// Extracted from `check_one` so that function stays within the line budget.
+fn check_markov(reference: &Reference, data: &[u8]) -> Result<f64, String> {
+    let markov_est = markov(data, reference.bits_per_symbol);
+    let markov_delta = (markov_est.min_entropy - reference.markov_min_entropy).abs();
+    if markov_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "markov Δ={markov_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {}, ref {})",
+            markov_est.min_entropy, reference.markov_min_entropy
+        ));
+    }
+    Ok(markov_delta)
+}
+
+/// Compute the §6.3.4 compression estimate for `data` and compare it to the
+/// reference's recorded value.
+///
+/// Returns the absolute delta on success, or the same failure message
+/// `check_one` would emit when the compression delta exceeds the tolerance, or
+/// when the estimator unexpectedly reports insufficient data (a negative
+/// `min_entropy`) for a dataset the reference table declares a value for.
+/// Extracted from `check_one` so that function stays within the line budget.
+fn check_compression(reference: &Reference, data: &[u8]) -> Result<f64, String> {
+    let compression_est = compression(data, reference.bits_per_symbol);
+    // A negative min-entropy is the EA tool's "not enough samples" sentinel; the
+    // reference table only declares compression values for datasets with enough
+    // blocks, so a negative here is a genuine mismatch (not a parity miss).
+    if compression_est.min_entropy < 0.0 {
+        return Err(format!(
+            "compression reported insufficient data (min_entropy {}), \
+             but reference declares {}",
+            compression_est.min_entropy, reference.compression_min_entropy
+        ));
+    }
+    let compression_delta = (compression_est.min_entropy - reference.compression_min_entropy).abs();
+    if compression_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "compression Δ={compression_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {}, ref {})",
+            compression_est.min_entropy, reference.compression_min_entropy
+        ));
+    }
+    Ok(compression_delta)
+}
+
+/// Compute the §6.3.5 t-Tuple and §6.3.6 LRS estimates for `data` (one shared
+/// suffix-array/LCP pass) and compare both to the reference's recorded values.
+///
+/// Returns `(t_tuple_delta, lrs_delta)` on success, or the same failure message
+/// `check_one` would emit when either delta exceeds the tolerance, or when the
+/// estimator unexpectedly reports an estimate could not run (a negative
+/// `min_entropy`) for a dataset the reference table declares a value for. Both
+/// estimates come from one [`crate::lrs::lrs`] call, mirroring the EA tool's
+/// single `SAalgs` invocation. Extracted from `check_one` so that function stays
+/// within the line budget.
+fn check_lrs_pair(reference: &Reference, data: &[u8]) -> Result<(f64, f64), String> {
+    let est = lrs(data, reference.bits_per_symbol);
+
+    // A negative min-entropy is the EA tool's "estimate failed / could not run"
+    // sentinel; the reference table only declares values for datasets where both
+    // estimates run, so a negative here is a genuine mismatch (not a parity miss).
+    if est.t_tuple_min_entropy < 0.0 {
+        return Err(format!(
+            "t-Tuple reported estimate-failed (min_entropy {}), but reference declares {}",
+            est.t_tuple_min_entropy, reference.t_tuple_min_entropy
+        ));
+    }
+    if est.lrs_min_entropy < 0.0 {
+        return Err(format!(
+            "LRS reported could-not-run (min_entropy {}), but reference declares {}",
+            est.lrs_min_entropy, reference.lrs_min_entropy
+        ));
+    }
+
+    let t_tuple_delta = (est.t_tuple_min_entropy - reference.t_tuple_min_entropy).abs();
+    if t_tuple_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "t-Tuple Δ={t_tuple_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {}, ref {})",
+            est.t_tuple_min_entropy, reference.t_tuple_min_entropy
+        ));
+    }
+
+    let lrs_delta = (est.lrs_min_entropy - reference.lrs_min_entropy).abs();
+    if lrs_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "LRS Δ={lrs_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {}, ref {})",
+            est.lrs_min_entropy, reference.lrs_min_entropy
+        ));
+    }
+
+    Ok((t_tuple_delta, lrs_delta))
+}
+
+/// Compute the §6.3.7 MultiMCW prediction estimate for `data` and compare it to
+/// the reference's recorded value.
+///
+/// Returns the absolute delta on success, or the same failure message
+/// `check_one` would emit when the MultiMCW delta exceeds the tolerance, or when
+/// the estimator unexpectedly reports it could not run (a negative `min_entropy`)
+/// for a dataset the reference table declares a value for. Extracted from
+/// `check_one` so that function stays within the line budget.
+fn check_multi_mcw(reference: &Reference, data: &[u8]) -> Result<f64, String> {
+    let est = multi_mcw(data, reference.bits_per_symbol);
+    let got = est.min_entropy();
+    // A negative min-entropy is the EA tool's "estimate could not run" sentinel
+    // (fewer than 4096 samples); the reference table only declares values for the
+    // ≥ 1e6-bit datasets, so a negative here is a genuine mismatch.
+    if got < 0.0 {
+        return Err(format!(
+            "MultiMCW reported could-not-run (min_entropy {got}), but reference declares {}",
+            reference.multi_mcw_min_entropy
+        ));
+    }
+    let multi_mcw_delta = (got - reference.multi_mcw_min_entropy).abs();
+    if multi_mcw_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "MultiMCW Δ={multi_mcw_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {got}, ref {})",
+            reference.multi_mcw_min_entropy
+        ));
+    }
+    Ok(multi_mcw_delta)
+}
+
+/// Compute the §6.3.8 Lag prediction estimate for `data` and compare it to the
+/// reference's recorded value.
+///
+/// Returns the absolute delta on success, or the same failure message
+/// `check_one` would emit when the Lag delta exceeds the tolerance, or when the
+/// estimator unexpectedly reports it could not run (a negative `min_entropy`) for
+/// a dataset the reference table declares a value for. Extracted from `check_one`
+/// so that function stays within the line budget.
+fn check_lag(reference: &Reference, data: &[u8]) -> Result<f64, String> {
+    let est = lag(data, reference.bits_per_symbol);
+    let got = est.min_entropy();
+    // A negative min-entropy is the "estimate could not run" sentinel (fewer than
+    // 2 samples); the reference table only declares values for the ≥ 1e6-bit
+    // datasets, so a negative here is a genuine mismatch.
+    if got < 0.0 {
+        return Err(format!(
+            "Lag reported could-not-run (min_entropy {got}), but reference declares {}",
+            reference.lag_min_entropy
+        ));
+    }
+    let lag_delta = (got - reference.lag_min_entropy).abs();
+    if lag_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "Lag Δ={lag_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {got}, ref {})",
+            reference.lag_min_entropy
+        ));
+    }
+    Ok(lag_delta)
+}
+
+/// Compute the §6.3.9 MultiMMC prediction estimate for `data` and compare it to
+/// the reference's recorded value.
+///
+/// Returns the absolute delta on success, or the same failure message `check_one`
+/// would emit when the MultiMMC delta exceeds the tolerance, or when the estimator
+/// unexpectedly reports it could not run (a negative `min_entropy`) for a dataset
+/// the reference table declares a value for. Extracted from `check_one` so that
+/// function stays within the line budget.
+fn check_multi_mmc(reference: &Reference, data: &[u8]) -> Result<f64, String> {
+    let est = multi_mmc(data, reference.bits_per_symbol);
+    let got = est.min_entropy();
+    // A negative min-entropy is the EA tool's "estimate could not run" sentinel
+    // (fewer than 4 samples); the reference table only declares values for the
+    // ≥ 1e6-bit datasets, so a negative here is a genuine mismatch.
+    if got < 0.0 {
+        return Err(format!(
+            "MultiMMC reported could-not-run (min_entropy {got}), but reference declares {}",
+            reference.multi_mmc_min_entropy
+        ));
+    }
+    let multi_mmc_delta = (got - reference.multi_mmc_min_entropy).abs();
+    if multi_mmc_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "MultiMMC Δ={multi_mmc_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {got}, ref {})",
+            reference.multi_mmc_min_entropy
+        ));
+    }
+    Ok(multi_mmc_delta)
+}
+
+/// Compute the §6.3.10 LZ78Y prediction estimate for `data` and compare it to the
+/// reference's recorded value.
+///
+/// Returns the absolute delta on success, or the same failure message `check_one`
+/// would emit when the LZ78Y delta exceeds the tolerance, or when the estimator
+/// unexpectedly reports it could not run (a negative `min_entropy`) for a dataset
+/// the reference table declares a value for. Extracted from `check_one` so that
+/// function stays within the line budget.
+fn check_lz78y(reference: &Reference, data: &[u8]) -> Result<f64, String> {
+    let est = lz78y(data, reference.bits_per_symbol);
+    let got = est.min_entropy();
+    // A negative min-entropy is the EA tool's "estimate could not run" sentinel
+    // (fewer than B_len + 3 samples); the reference table only declares values for
+    // the ≥ 1e6-bit datasets, so a negative here is a genuine mismatch.
+    if got < 0.0 {
+        return Err(format!(
+            "LZ78Y reported could-not-run (min_entropy {got}), but reference declares {}",
+            reference.lz78y_min_entropy
+        ));
+    }
+    let lz78y_delta = (got - reference.lz78y_min_entropy).abs();
+    if lz78y_delta > PARITY_TOLERANCE_BITS {
+        return Err(format!(
+            "LZ78Y Δ={lz78y_delta:.3e} > {PARITY_TOLERANCE_BITS:.0e} \
+             (got {got}, ref {})",
+            reference.lz78y_min_entropy
+        ));
+    }
+    Ok(lz78y_delta)
+}
+
+/// Check one dataset against its reference row (MCV + Collision + Markov +
+/// Compression + t-Tuple + LRS + MultiMCW + Lag + MultiMMC + LZ78Y).
 ///
 /// Skips when the dataset file is absent; fails on a read error, a provenance
 /// (SHA-256) mismatch, a SHA-256 service error, or any estimator's min-entropy
 /// delta above [`PARITY_TOLERANCE_BITS`] (MCV literal, MCV bitstring where
-/// declared, or §6.3.2 collision); otherwise passes with the per-estimator
-/// deltas.
+/// declared, §6.3.2 collision, §6.3.3 Markov, §6.3.4 compression, §6.3.5
+/// t-Tuple, §6.3.6 LRS, §6.3.7 MultiMCW, §6.3.8 Lag, §6.3.9 MultiMMC, or §6.3.10
+/// LZ78Y); otherwise passes with the per-estimator deltas. The §6.3 non-IID
+/// estimator suite is complete with LZ78Y.
+// Grows by one sequential comparison block per estimator added to the suite;
+// the length is inherent to covering every estimator in one place.
+#[allow(clippy::too_many_lines)]
 pub fn check_one(reference: &Reference, dir: &Path) -> DatasetResult {
     if let Err(e) = ensure_module_powered_up() {
         return DatasetResult {
@@ -416,12 +855,106 @@ pub fn check_one(reference: &Reference, dir: &Path) -> DatasetResult {
         }
     };
 
+    // §6.3.3 Markov estimate — also always on the bitstring track, so every
+    // dataset (including 1-bit data) carries a reference value to check.
+    let markov_delta = match check_markov(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
+    // §6.3.4 Compression estimate — also always on the bitstring track, so every
+    // dataset (including 1-bit data) carries a reference value to check.
+    let compression_delta = match check_compression(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
+    // §6.3.5 t-Tuple and §6.3.6 LRS estimates — derived from one shared
+    // suffix-array/LCP pass; the bitstring track is controlling, so every dataset
+    // (including 1-bit data) carries a reference value for each to check.
+    let (t_tuple_delta, lrs_delta) = match check_lrs_pair(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
+    // §6.3.7 MultiMCW prediction estimate — also on the bitstring track, so every
+    // dataset (including 1-bit data) carries a reference value to check.
+    let multi_mcw_delta = match check_multi_mcw(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
+    // §6.3.8 Lag prediction estimate — also on the bitstring track, so every
+    // dataset (including 1-bit data) carries a reference value to check.
+    let lag_delta = match check_lag(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
+    // §6.3.9 MultiMMC prediction estimate — also on the bitstring track, so every
+    // dataset (including 1-bit data) carries a reference value to check.
+    let multi_mmc_delta = match check_multi_mmc(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
+    // §6.3.10 LZ78Y prediction estimate — also on the bitstring track, so every
+    // dataset (including 1-bit data) carries a reference value to check. This is
+    // the last estimator in the §6.3 non-IID suite.
+    let lz78y_delta = match check_lz78y(reference, &data) {
+        Ok(d) => d,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
     DatasetResult {
         name: reference.name,
         outcome: Outcome::Pass {
             literal_delta,
             bitstring_delta,
             collision_delta,
+            markov_delta,
+            compression_delta,
+            t_tuple_delta,
+            lrs_delta,
+            multi_mcw_delta,
+            lag_delta,
+            multi_mmc_delta,
+            lz78y_delta,
         },
     }
 }
@@ -531,6 +1064,81 @@ mod tests {
                 "{}: collision min-entropy {} out of (0, 1]",
                 r.name,
                 r.collision_min_entropy
+            );
+            // Markov is a per-bit (binary) min-entropy capped at 1.0:
+            // entEst = min(H_min/128, 1.0), so 0 ≤ H ≤ 1. Every EA dataset has
+            // non-degenerate transitions, so H > 0 here.
+            assert!(
+                r.markov_min_entropy > 0.0 && r.markov_min_entropy <= 1.0,
+                "{}: markov min-entropy {} out of (0, 1]",
+                r.name,
+                r.markov_min_entropy
+            );
+            // Compression is a per-bit (binary) min-entropy in (0, 1]:
+            // entEst = -log2(p)/b with p in (1/64, 1], so 0 <= H <= 1. Every EA
+            // dataset has enough blocks and finds p, so H > 0 here.
+            assert!(
+                r.compression_min_entropy > 0.0 && r.compression_min_entropy <= 1.0,
+                "{}: compression min-entropy {} out of (0, 1]",
+                r.name,
+                r.compression_min_entropy
+            );
+            // t-Tuple and LRS are per-bit (bitstring-track) min-entropies in
+            // (0, 1]: H = -log2(p_u) with p_u in [0.5, 1] for binary data, so
+            // 0 <= H <= 1. Every EA dataset has a repeated substring and clears
+            // the t-Tuple threshold, so both are > 0 here.
+            assert!(
+                r.t_tuple_min_entropy > 0.0 && r.t_tuple_min_entropy <= 1.0,
+                "{}: t-Tuple min-entropy {} out of (0, 1]",
+                r.name,
+                r.t_tuple_min_entropy
+            );
+            assert!(
+                r.lrs_min_entropy > 0.0 && r.lrs_min_entropy <= 1.0,
+                "{}: LRS min-entropy {} out of (0, 1]",
+                r.name,
+                r.lrs_min_entropy
+            );
+            // MultiMCW is a per-bit (bitstring-track) prediction min-entropy in
+            // (0, 1]: H = -log2(max(1/2, p_global', p_local)) with the inner max
+            // in [0.5, 1] for binary data, so 0 <= H <= 1. Every EA dataset runs
+            // the estimator (>= 1e6 bits) and is non-degenerate, so H > 0 here;
+            // `normal` reaches the ceiling at exactly 1.0.
+            assert!(
+                r.multi_mcw_min_entropy > 0.0 && r.multi_mcw_min_entropy <= 1.0,
+                "{}: MultiMCW min-entropy {} out of (0, 1]",
+                r.name,
+                r.multi_mcw_min_entropy
+            );
+            // Lag is a per-bit (bitstring-track) prediction min-entropy in
+            // (0, 1]: H = -log2(max(1/2, p_global', p_local)) with the inner max
+            // in [0.5, 1] for binary data, so 0 <= H <= 1. Every EA dataset runs
+            // the estimator (>= 1e6 bits) and is non-degenerate, so H > 0 here.
+            assert!(
+                r.lag_min_entropy > 0.0 && r.lag_min_entropy <= 1.0,
+                "{}: Lag min-entropy {} out of (0, 1]",
+                r.name,
+                r.lag_min_entropy
+            );
+            // MultiMMC is a per-bit (bitstring-track) prediction min-entropy in
+            // (0, 1]: H = -log2(max(1/2, p_global', p_local)) with the inner max
+            // in [0.5, 1] for binary data, so 0 <= H <= 1. Every EA dataset runs
+            // the estimator (>= 1e6 bits) and is non-degenerate, so H > 0 here.
+            assert!(
+                r.multi_mmc_min_entropy > 0.0 && r.multi_mmc_min_entropy <= 1.0,
+                "{}: MultiMMC min-entropy {} out of (0, 1]",
+                r.name,
+                r.multi_mmc_min_entropy
+            );
+            // LZ78Y is a per-bit (bitstring-track) prediction min-entropy in
+            // (0, 1]: H = -log2(max(1/2, p_global', p_local)) with the inner max
+            // in [0.5, 1] for binary data, so 0 <= H <= 1. Every EA dataset runs
+            // the estimator (>= 1e6 bits) and is non-degenerate, so H > 0 here.
+            assert!(
+                r.lz78y_min_entropy > 0.0 && r.lz78y_min_entropy <= 1.0,
+                "{}: LZ78Y min-entropy {} out of (0, 1]",
+                r.name,
+                r.lz78y_min_entropy
             );
         }
         assert_eq!(REFERENCE_TABLE.len(), 11);

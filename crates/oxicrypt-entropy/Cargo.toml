@@ -17,7 +17,22 @@ default = []
 std = []
 # Serialized raw CPU counter via the audited oxicrypt-timer crate.
 raw-counter = ["dep:oxicrypt-timer"]
+# Off-boundary raw-data collection tooling: the `collect` binary, the
+# streaming dataset writer, the versioned dataset layout + sha256 manifest,
+# and the resumable collection-session checkpoint. Pulls in std (fs +
+# serialization) and raw-counter (a real CPU-counter jitter source). This
+# feature is OUTSIDE the validated module boundary — the default and library
+# build graphs carry none of it, and `RawCollector` stays crate-private.
+collection = ["std", "raw-counter"]
 
 [dependencies]
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-timer = { path = "../oxicrypt-timer", optional = true }
+oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+
+# The off-boundary collection binary. Builds ONLY with `--features collection`
+# (or `--all-features`); absent from the default and library build graphs.
+[[bin]]
+name = "collect"
+path = "src/bin/collect.rs"
+required-features = ["collection"]

@@ -58,9 +58,25 @@ pub mod h;
 pub mod health;
 pub mod jitter;
 pub mod pipeline;
+pub(crate) mod raw;
 pub mod source;
 pub mod sp800_90b;
 pub mod timer;
+
+/// Off-boundary raw-data collection tooling (behind the default-off
+/// `collection` feature).
+///
+/// This module exists ONLY to back the off-boundary `collect` binary: it
+/// drives [`crate::raw`]'s crate-private collector to write SP 800-90B
+/// raw + restart datasets to disk under a versioned layout with a sha256
+/// manifest, resumable via a content-hash session checkpoint. It is gated
+/// behind the `collection` feature so the default build graph, the library's
+/// validated surface, and its rustdoc carry **none** of the tooling — and
+/// `RawCollector` itself remains crate-private (this module reaches it
+/// in-crate; it is never re-exported). The single public entry point is
+/// [`collection::run`], which the thin `collect` binary calls.
+#[cfg(feature = "collection")]
+pub mod collection;
 
 #[cfg(test)]
 mod kat_tests;

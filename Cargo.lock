@@ -594,6 +594,7 @@ version = "0.12.0"
 dependencies = [
  "oxicrypt-sha",
  "oxicrypt-timer",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]

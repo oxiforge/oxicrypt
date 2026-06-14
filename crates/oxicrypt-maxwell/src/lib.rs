@@ -2,9 +2,21 @@
 //!
 //! This crate implements the SP 800-90B §6.3.1 **Most Common Value (MCV)**
 //! min-entropy estimator (see [`mcv`]), the SP 800-90B §6.3.2 **Collision**
-//! min-entropy estimator (see [`collision`]), and a parity harness that checks
-//! both implementations against the NIST `SP800-90B_EntropyAssessment` reference
-//! tool ("EA tool"), version **1.1.8**. It is **outside the cryptographic
+//! min-entropy estimator (see [`collision`]), the SP 800-90B §6.3.3 **Markov**
+//! min-entropy estimator (see [`markov`]), the SP 800-90B §6.3.4 **Compression**
+//! min-entropy estimator (see [`compression`]), the SP 800-90B §6.3.5 **t-Tuple**
+//! and §6.3.6 **LRS** min-entropy estimators (see [`lrs`]), the SP 800-90B
+//! §6.3.7 **MultiMCW prediction** min-entropy estimator (see [`multi_mcw`]), the
+//! SP 800-90B §6.3.8 **Lag prediction** min-entropy estimator (see [`lag`]), the
+//! SP 800-90B §6.3.9 **MultiMMC prediction** min-entropy estimator (see
+//! [`multi_mmc`]), and the SP 800-90B §6.3.10 **LZ78Y prediction** min-entropy
+//! estimator (see [`lz78y`]) — which together complete the SP 800-90B §6.3
+//! non-IID estimator suite — all built on the shared [`prediction`] estimate
+//! machinery, and a parity
+//! harness that checks all of these implementations against the NIST
+//! `SP800-90B_EntropyAssessment` reference tool ("EA tool"), version **1.1.8**.
+//! It is **outside the
+//! cryptographic
 //! boundary** — it is pure offline analysis tooling (like `acvp-harness`, `oxi`,
 //! and `benches`) and is `#![forbid(unsafe_code)]`. It does not change the
 //! in-boundary unsafe accounting and produces no security parameters.
@@ -70,7 +82,17 @@
 
 pub mod apt;
 pub mod collision;
+pub mod compression;
+pub mod gate;
+pub mod lag;
+pub mod lrs;
+pub mod lz78y;
+pub mod markov;
+pub mod multi_mcw;
+pub mod multi_mmc;
 pub mod parity;
+pub mod periodicity;
+pub mod prediction;
 
 /// Full-precision `Z` value used by the EA tool v1.1.8: Φ⁻¹(0.995), the upper
 /// bound of a two-sided 99% normal confidence interval.

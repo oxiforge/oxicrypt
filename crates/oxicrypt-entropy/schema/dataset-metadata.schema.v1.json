@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://oxicrypt.dev/schema/dataset-metadata.schema.v1.json",
+  "title": "oxicrypt-entropy raw-data dataset metadata",
+  "description": "Sidecar metadata accompanying every raw-data collection. Records the collection environment (no anonymous datasets), the MEASURED counter frequency (never nominal), the injected min-entropy claim and health configuration, the sample count, and every health-test trip annotation observed during unfiltered characterization capture. Validated by the purpose-built subset validator in src/raw.rs; this is a draft-07-shaped document, not validated by a general JSON-Schema engine.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sample_count",
+    "sample_width_bits",
+    "claimed_h_steps",
+    "alpha_exp",
+    "timer_source",
+    "measured_counter_frequency_hz",
+    "cpu_model",
+    "os",
+    "collection_params",
+    "trips"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Schema version tag. This schema is version 1.",
+      "type": "integer",
+      "const": 1
+    },
+    "sample_count": {
+      "description": "Number of one-byte samples in the accompanying raw-data file.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "sample_width_bits": {
+      "description": "Declared sample width in bits (1..=8); effective emitted width is min(this, 8).",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+    "claimed_h_steps": {
+      "description": "Injected min-entropy claim per sample, in 1/256-bit fixed-point steps.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "alpha_exp": {
+      "description": "Health-test false-positive probability exponent a in alpha = 2^-a (20..=40).",
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 40
+    },
+    "timer_source": {
+      "description": "Timer/counter the noise source read, or null for non-timer sources.",
+      "type": ["string", "null"],
+      "enum": ["RawCounter", "OsNanoClock", "InternalTimerThread", null]
+    },
+    "measured_counter_frequency_hz": {
+      "description": "MEASURED counter frequency in Hz (never the nominal SourceMetadata value), or null when no measurement was taken.",
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "cpu_model": {
+      "description": "CPU model string of the collection environment.",
+      "type": "string"
+    },
+    "os": {
+      "description": "Operating system of the collection environment.",
+      "type": "string"
+    },
+    "collection_params": {
+      "description": "Free-form collection parameters sufficient to reproduce the dataset.",
+      "type": "string"
+    },
+    "trips": {
+      "description": "Health-test trip annotations recorded during unfiltered characterization capture. Annotated, never dropped: no sample is removed from the emitted stream because of a trip.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sample_index", "test", "value"],
+        "properties": {
+          "sample_index": {
+            "description": "Zero-based index of the sample at which the test tripped.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "test": {
+            "description": "Which continuous health test tripped.",
+            "type": "string",
+            "enum": ["Rct", "Apt"]
+          },
+          "value": {
+            "description": "The run-length (RCT) or windowed count (APT) at the trip.",
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}
