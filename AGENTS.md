@@ -107,6 +107,12 @@ crate — directly or by reference — do all that apply:
    item. The pre-commit hook enforces `llm-api.yaml` on any `pub fn|struct|enum|const|type|trait`
    change under `crates/*/src/`. Conform both to the LAMA spec; the root file stays a concise
    capabilities + manifest pointer — never a milestone/coverage/status board. **No human names in LAMA.**
+5. **Release history (`changelog-gem`).** On any commit that ships a release (the version bump + signed
+   `vX.Y.Z` tag), add a new dated, Keep-a-Changelog entry to `CHANGELOG.md` in the same commit. This is
+   the *one* home for human-readable release history (see Canonical homes); README/lama.yaml carry a
+   pointer, never a milestone table. Inter-release commits do not touch it. The org `changelog-gem`
+   instance in [`oxiforge/standards/doc-sync-rules.md`](https://github.com/oxiforge/standards) is the
+   full framing.
 
 **Insight capture (the gem).** Before staging any commit, ask: did this session surface a mechanistic
 insight a NIST/CST reviewer would need to accept a claim — a compiler guarantee that enforces a security
