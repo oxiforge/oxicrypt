@@ -17,10 +17,16 @@
 //! | `maxwell lag <FILE> <BITS_PER_SYMBOL>` | §6.3.8 Lag prediction estimate (bitstring) for one file |
 //! | `maxwell multi-mmc <FILE> <BITS_PER_SYMBOL>` | §6.3.9 MultiMMC prediction estimate (bitstring) for one file |
 //! | `maxwell lz78y <FILE> <BITS_PER_SYMBOL>` | §6.3.10 LZ78Y prediction estimate (bitstring) for one file |
+//! | `maxwell t-tuple <FILE> <BITS_PER_SYMBOL>` | §6.3.5 t-Tuple estimate (bitstring) for one file |
+//! | `maxwell lrs <FILE> <BITS_PER_SYMBOL>` | §6.3.6 LRS estimate (bitstring) for one file |
 //! | `maxwell parity [--datasets <DIR>]` | Run the full EA-tool parity table (all estimators) |
 //! | `maxwell apt-table <ALPHA_EXP>` | SP 800-90B §4.4.2 APT cutoff grids at α = 2⁻ᵃ |
 //! | `maxwell gate --oe <DIR>` | SP 800-90B §6.3 per-OE reuse/acceptance gate |
 //! | `maxwell periodicity <FILE>` | FFT + autocorrelation periodicity screen (pilot acceptance) |
+//! | `maxwell iid-permutation <FILE>` | SP 800-90B §5.1 permutation testing battery (19-statistic IID test) |
+//! | `maxwell chi-square <FILE>` | SP 800-90B §5.2 chi-square IID tests (independence + goodness-of-fit) |
+//! | `maxwell lrs-iid <FILE>` | SP 800-90B §5.3 LRS (longest-repeated-substring) IID test |
+//! | `maxwell iid-gate <FILE> <BITS_PER_SYMBOL>` | SP 800-90B §5 IID gate: §5 verdict + branch + routed per-bit min-entropy |
 //!
 //! `parity` resolves its dataset directory from `--datasets`, else the
 //! `OXICRYPT_EA_DATA` environment variable, else
@@ -47,16 +53,22 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use oxicrypt_maxwell::apt::{AptRow, binary_grid, non_binary_grid};
+use oxicrypt_maxwell::chi_square::chi_square_tests;
 use oxicrypt_maxwell::collision::collision;
 use oxicrypt_maxwell::compression::compression;
 use oxicrypt_maxwell::gate::{evaluate, load_inputs};
+use oxicrypt_maxwell::iid_gate::{Branch, iid_gate};
+use oxicrypt_maxwell::iid_lrs::len_lrs_iid_test;
 use oxicrypt_maxwell::lag::lag;
+use oxicrypt_maxwell::lrs::lrs;
 use oxicrypt_maxwell::lz78y::lz78y;
 use oxicrypt_maxwell::markov::markov;
 use oxicrypt_maxwell::multi_mcw::multi_mcw;
 use oxicrypt_maxwell::multi_mmc::multi_mmc;
 use oxicrypt_maxwell::parity::{Verdict, resolve_datasets_dir, run_parity};
 use oxicrypt_maxwell::periodicity::screen;
+use oxicrypt_maxwell::permutation::{PERMS, permutation_stats, permutation_test};
+use oxicrypt_maxwell::restart::restart_analysis;
 use oxicrypt_maxwell::{McvEstimate, mcv};
 
 fn main() -> ExitCode {
@@ -70,10 +82,17 @@ fn main() -> ExitCode {
         Some("lag") => cmd_lag(args.get(2..).unwrap_or(&[])),
         Some("multi-mmc") => cmd_multi_mmc(args.get(2..).unwrap_or(&[])),
         Some("lz78y") => cmd_lz78y(args.get(2..).unwrap_or(&[])),
+        Some("t-tuple") => cmd_t_tuple(args.get(2..).unwrap_or(&[])),
+        Some("lrs") => cmd_lrs(args.get(2..).unwrap_or(&[])),
         Some("parity") => cmd_parity(args.get(2..).unwrap_or(&[])),
         Some("apt-table") => cmd_apt_table(args.get(2..).unwrap_or(&[])),
         Some("gate") => cmd_gate(args.get(2..).unwrap_or(&[])),
         Some("periodicity") => cmd_periodicity(args.get(2..).unwrap_or(&[])),
+        Some("iid-permutation") => cmd_iid_permutation(args.get(2..).unwrap_or(&[])),
+        Some("chi-square") => cmd_chi_square(args.get(2..).unwrap_or(&[])),
+        Some("lrs-iid") => cmd_lrs_iid(args.get(2..).unwrap_or(&[])),
+        Some("iid-gate") => cmd_iid_gate(args.get(2..).unwrap_or(&[])),
+        Some("restart") => cmd_restart(args.get(2..).unwrap_or(&[])),
         Some("--help" | "-h") | None => {
             usage();
             ExitCode::SUCCESS
@@ -99,10 +118,17 @@ fn usage() {
          \x20 maxwell lag <FILE> <BITS_PER_SYMBOL>        §6.3.8 Lag prediction estimate (bitstring)\n\
          \x20 maxwell multi-mmc <FILE> <BITS_PER_SYMBOL>  §6.3.9 MultiMMC prediction estimate (bitstring)\n\
          \x20 maxwell lz78y <FILE> <BITS_PER_SYMBOL>      §6.3.10 LZ78Y prediction estimate (bitstring)\n\
+         \x20 maxwell t-tuple <FILE> <BITS_PER_SYMBOL>    §6.3.5 t-Tuple estimate (bitstring)\n\
+         \x20 maxwell lrs <FILE> <BITS_PER_SYMBOL>        §6.3.6 LRS estimate (bitstring)\n\
          \x20 maxwell parity [--datasets <DIR>]           run the EA-tool parity table (all estimators)\n\
          \x20 maxwell apt-table <ALPHA_EXP>               SP 800-90B §4.4.2 APT cutoff grids\n\
          \x20 maxwell gate --oe <DIR>                     SP 800-90B §6.3 per-OE acceptance gate\n\
          \x20 maxwell periodicity <FILE>                  FFT + autocorrelation periodicity screen\n\
+         \x20 maxwell iid-permutation <FILE>              SP 800-90B §5.1 permutation battery (19-stat IID test)\n\
+         \x20 maxwell chi-square <FILE>                   SP 800-90B §5.2 chi-square IID tests (indep + GOF)\n\
+         \x20 maxwell lrs-iid <FILE>                      SP 800-90B §5.3 LRS (longest repeated substring) IID test\n\
+         \x20 maxwell iid-gate <FILE> <BITS_PER_SYMBOL>   SP 800-90B §5 IID gate (verdict + branch + routed per-bit H)\n\
+         \x20 maxwell restart <FILE> <BITS_PER_SYMBOL> <H_I> SP 800-90B §3.1.4 restart analysis (sanity + §5 + gate)\n\
          \n\
          parity dataset dir precedence: --datasets, then $OXICRYPT_EA_DATA,\n\
          then ~/repos/SP800-90B_EntropyAssessment/bin\n\
@@ -463,6 +489,70 @@ fn cmd_lz78y(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Read `<FILE> <BITS_PER_SYMBOL>` and return the parsed bytes + width, or print
+/// a usage error and return `None`.
+fn read_file_and_bits(cmd: &str, args: &[String]) -> Option<(Vec<u8>, u8)> {
+    let (Some(file), Some(bits_str)) = (args.first(), args.get(1)) else {
+        eprintln!("usage: maxwell {cmd} <FILE> <BITS_PER_SYMBOL>");
+        return None;
+    };
+    let Ok(bits @ 1..=8) = bits_str.parse::<u8>() else {
+        eprintln!("maxwell: BITS_PER_SYMBOL must be an integer in 1..=8");
+        return None;
+    };
+    match std::fs::read(file) {
+        Ok(d) => Some((d, bits)),
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            None
+        }
+    }
+}
+
+/// §6.3.5 t-Tuple estimate (bitstring track). Shares the single suffix-array pass
+/// with `lrs`; parity is already covered by the harness — this is CLI convenience.
+fn cmd_t_tuple(args: &[String]) -> ExitCode {
+    let Some((data, bits)) = read_file_and_bits("t-tuple", args) else {
+        return ExitCode::FAILURE;
+    };
+    let est = lrs(&data, bits);
+    println!(
+        "L={} symbols, {bits} bits/symbol, bitstring track (n={} bits)",
+        data.len(),
+        est.n
+    );
+    if est.t_tuple_min_entropy < 0.0 {
+        println!("  *** §6.3.5 t-Tuple estimate did not run (no tuple recurs enough) ***");
+        return ExitCode::FAILURE;
+    }
+    println!("  t (= u-1)   = {}", est.u.saturating_sub(1));
+    println!("  P_max       = {:.17}", est.t_tuple_p_max);
+    println!("  min_entropy = {:.17}", est.t_tuple_min_entropy);
+    ExitCode::SUCCESS
+}
+
+/// §6.3.6 LRS (longest-repeated-substring) estimate (bitstring track). Shares the
+/// suffix-array pass with `t-tuple`; parity is harness-covered — CLI convenience.
+fn cmd_lrs(args: &[String]) -> ExitCode {
+    let Some((data, bits)) = read_file_and_bits("lrs", args) else {
+        return ExitCode::FAILURE;
+    };
+    let est = lrs(&data, bits);
+    println!(
+        "L={} symbols, {bits} bits/symbol, bitstring track (n={} bits)",
+        data.len(),
+        est.n
+    );
+    if est.lrs_min_entropy < 0.0 {
+        println!("  *** §6.3.6 LRS estimate could not run (v < u) ***");
+        return ExitCode::FAILURE;
+    }
+    println!("  v (max LRS) = {}", est.v);
+    println!("  P_max       = {:.17}", est.lrs_p_max);
+    println!("  min_entropy = {:.17}", est.lrs_min_entropy);
+    ExitCode::SUCCESS
+}
+
 fn cmd_parity(args: &[String]) -> ExitCode {
     // Parse optional --datasets <DIR>.
     let mut dir_override: Option<PathBuf> = None;
@@ -487,14 +577,23 @@ fn cmd_parity(args: &[String]) -> ExitCode {
     }
 
     let dir: PathBuf = resolve_datasets_dir(dir_override.as_deref().map(Path::new));
+    // ISC-62 version stamp: maxwell crate version vs the EA reference-tool
+    // version the table was generated against.
     println!(
-        "EA-tool parity (MCV + Collision + Markov + Compression + t-Tuple + LRS + MultiMCW + Lag \
-         + MultiMMC + LZ78Y) — datasets: {}",
+        "parity: oxicrypt-maxwell v{} vs EA tool v{}",
+        env!("CARGO_PKG_VERSION"),
+        oxicrypt_maxwell::parity::EA_TOOL_VERSION
+    );
+    println!(
+        "EA-tool parity (§6.3: MCV + Collision + Markov + Compression + t-Tuple + LRS + MultiMCW \
+         + Lag + MultiMMC + LZ78Y; §5 IID battery on the 3 short datasets) — datasets: {}",
         dir.display()
     );
     println!(
-        "tolerance: {:.0e} bits absolute, all estimators",
-        1.0e-6_f64
+        "tolerance: {:.0e} bits absolute (§6.3 estimators); §5.1 L1 stats relative-or-absolute \
+         {:.0e}; §5 verdicts exact",
+        oxicrypt_maxwell::parity::PARITY_TOLERANCE_BITS,
+        oxicrypt_maxwell::parity::PARITY_TOLERANCE_BITS
     );
 
     let results = run_parity(&dir);
@@ -662,3 +761,319 @@ fn cmd_periodicity(args: &[String]) -> ExitCode {
         ExitCode::SUCCESS
     }
 }
+
+fn cmd_iid_permutation(args: &[String]) -> ExitCode {
+    let Some(file) = args.first() else {
+        eprintln!("usage: maxwell iid-permutation <FILE>");
+        eprintln!(
+            "  SP 800-90B §5.1 permutation testing battery (19-statistic IID test) over a raw\n\
+             \x20 dataset (one byte/sample). The compression statistic (index 18) is a documented\n\
+             \x20 STOP-AND-LEAVE slot (bit-exact libbz2 length not reproduced) and is excluded\n\
+             \x20 from the verdict."
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let stats = permutation_stats(&data);
+    println!("{file}  (L={} symbols, one byte/sample)", data.len());
+    println!(
+        "note: SP 800-90B §5.1 permutation battery — compression (18) is STOP-AND-LEAVE (NaN)"
+    );
+    println!();
+    println!("unpermuted statistics t[i]:");
+    for (name, &v) in stats.names.iter().zip(stats.values.iter()) {
+        if v.is_nan() {
+            println!("  {name:<24} = NaN (STOP-AND-LEAVE)");
+        } else {
+            println!("  {name:<24} = {v:.17}");
+        }
+    }
+
+    println!();
+    println!("permutation test ({PERMS} shuffles, fixed seed):");
+    let verdict = permutation_test(&data);
+    println!("            statistic        C0(>)    C1(=)    C2(<)  pass");
+    println!("  ----------------------------------------------------------");
+    for (i, ((name, &(c0, c1, c2)), &pass)) in stats
+        .names
+        .iter()
+        .zip(verdict.c_counts.iter())
+        .zip(verdict.per_test_pass.iter())
+        .enumerate()
+    {
+        let mark = if i == COMPRESSION_INDEX && !verdict.compression_included {
+            "excl"
+        } else if pass {
+            "yes"
+        } else {
+            "NO"
+        };
+        println!("  {name:<24} {c0:>8} {c1:>8} {c2:>8}  {mark}");
+    }
+    println!();
+    println!(
+        "  compression included in verdict: {}",
+        verdict.compression_included
+    );
+    if verdict.is_iid {
+        println!("verdict: IID — all active statistics are IID-consistent");
+        ExitCode::SUCCESS
+    } else {
+        println!("verdict: NOT IID — at least one statistic is extreme under permutation");
+        ExitCode::FAILURE
+    }
+}
+
+fn cmd_chi_square(args: &[String]) -> ExitCode {
+    let Some(file) = args.first() else {
+        eprintln!("usage: maxwell chi-square <FILE>");
+        eprintln!(
+            "  SP 800-90B §5.2 chi-square IID tests (independence + goodness-of-fit) over a raw\n\
+             \x20 dataset (one byte/sample). Fails if either p-value < 0.001."
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let r = chi_square_tests(&data);
+    println!("{file}  (L={} symbols, one byte/sample)", data.len());
+    println!();
+    println!("Chi square independence: T = {:.17}", r.independence_score);
+    println!("Chi square independence: df = {}", r.independence_df);
+    println!(
+        "Chi square independence: P-value = {:.17}",
+        r.independence_pvalue
+    );
+    println!();
+    println!("Chi square goodness of fit: T = {:.17}", r.gof_score);
+    println!("Chi square goodness of fit: df = {}", r.gof_df);
+    println!("Chi square goodness of fit: P-value = {:.17}", r.gof_pvalue);
+    println!();
+
+    if r.passed {
+        println!("verdict: PASS");
+        ExitCode::SUCCESS
+    } else {
+        println!("verdict: FAIL");
+        ExitCode::FAILURE
+    }
+}
+
+fn cmd_lrs_iid(args: &[String]) -> ExitCode {
+    let Some(file) = args.first() else {
+        eprintln!("usage: maxwell lrs-iid <FILE>");
+        eprintln!(
+            "  SP 800-90B §5.3 LRS (longest repeated substring) IID test over a raw dataset\n\
+             \x20 (one byte/sample), on the literal symbol alphabet. Fails if Pr(X >= 1) < 1/1000."
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let r = len_lrs_iid_test(&data);
+    println!(
+        "{file}  (L={} symbols, one byte/sample, literal track)",
+        data.len()
+    );
+    println!();
+    // Strings mirror the EA tool's `ea_iid -v -v -v` "Literal Longest Repeated
+    // Substring results:" verbose lines for a clean diff.
+    println!(
+        "Literal Longest Repeated Substring results: P_col = {:.17}",
+        r.p_col
+    );
+    println!("Literal Longest Repeated Substring results: W = {}", r.w);
+    println!(
+        "Literal Longest Repeated Substring results: Pr(X >= 1) = {:.17}",
+        r.pr_x_ge_1
+    );
+    println!();
+
+    if r.passed {
+        println!("verdict: PASS");
+        ExitCode::SUCCESS
+    } else {
+        println!("verdict: FAIL");
+        ExitCode::FAILURE
+    }
+}
+
+fn cmd_iid_gate(args: &[String]) -> ExitCode {
+    let (Some(file), Some(bits_str)) = (args.first(), args.get(1)) else {
+        eprintln!("usage: maxwell iid-gate <FILE> <BITS_PER_SYMBOL>");
+        eprintln!(
+            "  SP 800-90B §5 IID gate: runs the three §5 tests (permutation, chi-square, LRS),\n\
+             \x20 reports the IID verdict and selected branch, and routes the per-bit min-entropy\n\
+             \x20 (IID -> §6.1 MCV; non-IID -> minimum over the §6.3 suite). The reported value is\n\
+             \x20 per-BIT; the per-symbol word_size scaling is out of scope for this gate."
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let Ok(bits @ 1..=8) = bits_str.parse::<u8>() else {
+        eprintln!("maxwell: BITS_PER_SYMBOL must be an integer in 1..=8");
+        return ExitCode::FAILURE;
+    };
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let r = iid_gate(&data, bits);
+    println!("{file}  (L={} symbols, {bits} bits/symbol)", data.len());
+    println!();
+    println!(
+        "  §5.1 permutation       [{}]",
+        verdict_mark(r.permutation_passed)
+    );
+    println!(
+        "  §5.2 chi-square        [{}]",
+        verdict_mark(r.chi_square_passed)
+    );
+    println!("  §5.3 LRS               [{}]", verdict_mark(r.lrs_passed));
+    println!();
+    println!("  IID: {}", if r.is_iid { "yes" } else { "no" });
+    let branch_label = match r.branch {
+        Branch::Iid => "IID (MCV)",
+        Branch::NonIid => "non-IID (§6.3 min)",
+    };
+    println!("  branch: {branch_label}");
+    println!("  routed min-entropy (per bit): {:.17}", r.min_entropy);
+
+    // The gate is a reporting tool; exit success once it has computed the
+    // verdict. (The verdict itself is in the output, not the exit code.)
+    ExitCode::SUCCESS
+}
+
+/// EA `DEFAULT_SIMULATION_ROUNDS` (`restart_main.cpp` line 27): the cutoff
+/// Monte-Carlo round count when `-s` is not given.
+const DEFAULT_SIMULATION_ROUNDS: usize = 5_000_000;
+
+/// EA fixes the restart matrix at `r = c = 1000` (1,000,000 samples).
+const RESTART_DIM: usize = 1000;
+
+fn cmd_restart(args: &[String]) -> ExitCode {
+    let (Some(file), Some(bits_str), Some(h_i_str)) = (args.first(), args.get(1), args.get(2))
+    else {
+        eprintln!("usage: maxwell restart <FILE> <BITS_PER_SYMBOL> <H_I>");
+        eprintln!(
+            "  SP 800-90B §3.1.4 restart analysis (IID path): the §3.1.4.3 sanity check,\n\
+             \x20 the three §5 IID tests on rows && columns, the §6.1 MCV per-bit H on rows\n\
+             \x20 and columns, and the §3.1.4.2 validation gate min(H_r, H_c) >= H_I/2.\n\
+             \x20 FILE must be exactly 1,000,000 bytes (1000x1000 restart matrix, row order)."
+        );
+        return ExitCode::FAILURE;
+    };
+
+    let Ok(bits @ 1..=8) = bits_str.parse::<u8>() else {
+        eprintln!("maxwell: BITS_PER_SYMBOL must be an integer in 1..=8");
+        return ExitCode::FAILURE;
+    };
+
+    let Ok(h_i) = h_i_str.parse::<f64>() else {
+        eprintln!("maxwell: H_I must be a real number");
+        return ExitCode::FAILURE;
+    };
+    if h_i < 0.0 {
+        eprintln!("maxwell: H_I ({h_i}) must be nonnegative");
+        return ExitCode::FAILURE;
+    }
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let expected = RESTART_DIM * RESTART_DIM;
+    if data.len() != expected {
+        eprintln!(
+            "maxwell: restart data must be exactly {expected} samples ({RESTART_DIM}x{RESTART_DIM}); got {}",
+            data.len()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let r = restart_analysis(
+        &data,
+        bits,
+        h_i,
+        RESTART_DIM,
+        RESTART_DIM,
+        DEFAULT_SIMULATION_ROUNDS,
+        PERMS,
+    );
+
+    println!("{file}  ({RESTART_DIM}x{RESTART_DIM} matrix, {bits} bits/symbol)");
+    println!("H_I: {h_i}");
+    println!("ALPHA: {:.17}, X_cutoff: {}", r.alpha, r.x_cutoff);
+    println!("X_r: {}", r.x_r);
+    println!("X_c: {}", r.x_c);
+    println!("X_max: {}", r.x_max);
+    println!(
+        "Restart Sanity Check: {}",
+        if r.sanity_passed { "Passed" } else { "FAILED" }
+    );
+    println!();
+    println!("  §5.1 permutation       [{}]", verdict_mark(r.perm_passed));
+    println!(
+        "  §5.2 chi-square        [{}]",
+        verdict_mark(r.chi_square_passed)
+    );
+    println!("  §5.3 LRS               [{}]", verdict_mark(r.lrs_passed));
+    println!("  IID: {}", if r.is_iid { "yes" } else { "no" });
+    println!();
+    println!("H_r: {:.17}", r.h_r);
+    println!("H_c: {:.17}", r.h_c);
+    println!("H_I: {:.17}", r.h_i);
+    println!();
+    println!(
+        "Validation Test: {}",
+        if r.validation_passed {
+            "Passed"
+        } else {
+            "FAILED"
+        }
+    );
+    println!("min(H_r, H_c, H_I): {:.17}", r.min_entropy);
+
+    // Reporting tool: exit success once computed (verdict is in the output).
+    ExitCode::SUCCESS
+}
+
+/// Render a PASS/FAIL tick for the §5 sub-test verdict lines.
+fn verdict_mark(pass: bool) -> &'static str {
+    if pass { "PASS" } else { "FAIL" }
+}
+
+/// Index of the compression statistic (mirrors `permutation::COMPRESSION_IDX`,
+/// which is private; used only for the CLI's "excl" annotation).
+const COMPRESSION_INDEX: usize = 18;

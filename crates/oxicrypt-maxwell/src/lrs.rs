@@ -887,6 +887,40 @@ fn saalgs(text: &[u8]) -> LrsEstimate {
     }
 }
 
+/// The length of the longest repeated substring (LRS) of `text` — the maximum
+/// LCP value over the literal symbols, exactly the EA tool's `len_LRS32`/
+/// `len_LRS64` (`max over the LCP array`, `lrs_test.h:569-595`).
+///
+/// This is the `W` used by the SP 800-90B §5.3 LRS **IID test** (which runs on
+/// the *literal* raw symbols, not the bitstring track — see
+/// [`crate::iid_lrs`]). It reuses the suffix-array + Kasai-LCP machinery
+/// ([`sa_lcp`]) the §6.3.6 estimator already builds, so the SA-IS implementation
+/// is not duplicated; the §6.3.6 estimator's `LrsEstimate.v` is the same value
+/// computed over the *bitstring* track.
+///
+/// Returns `0` for inputs too short to repeat (`text.len() < 2` or no repeated
+/// substring), matching the empty/degenerate LCP. The function is deterministic.
+///
+/// # Panics
+///
+/// Does not panic.
+#[must_use]
+pub fn lrs_length(text: &[u8]) -> usize {
+    let n = text.len();
+    if n < 2 {
+        return 0;
+    }
+    let (_sa, l) = sa_lcp(text);
+    // v = max over the LCP working array (lrs_test.h: `for(j ...) if(lcp[j] > v)`).
+    let mut v: usize = 0;
+    for &li in l.iter() {
+        if li > v {
+            v = li;
+        }
+    }
+    v
+}
+
 /// Compute the SP 800-90B §6.3.5 t-Tuple and §6.3.6 LRS min-entropy estimates
 /// for the bitstring track of `symbols`.
 ///

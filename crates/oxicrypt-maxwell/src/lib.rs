@@ -81,9 +81,12 @@
 #![forbid(unsafe_code)]
 
 pub mod apt;
+pub mod chi_square;
 pub mod collision;
 pub mod compression;
 pub mod gate;
+pub mod iid_gate;
+pub mod iid_lrs;
 pub mod lag;
 pub mod lrs;
 pub mod lz78y;
@@ -92,7 +95,9 @@ pub mod multi_mcw;
 pub mod multi_mmc;
 pub mod parity;
 pub mod periodicity;
+pub mod permutation;
 pub mod prediction;
+pub mod restart;
 
 /// Full-precision `Z` value used by the EA tool v1.1.8: Φ⁻¹(0.995), the upper
 /// bound of a two-sided 99% normal confidence interval.

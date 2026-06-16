@@ -1,0 +1,35 @@
+# Standalone cargo-fuzz crate for oxicrypt-maxwell.
+#
+# This crate is DELIBERATELY DETACHED from the main 23-crate workspace via the
+# empty `[workspace]` table below. The main workspace (../../../Cargo.toml) uses
+# an explicit `members` list that does not include this directory, so the fuzz
+# crate is excluded by construction; the `[workspace]` table here is the
+# belt-and-suspenders guarantee that `cargo` never walks up and folds this
+# libfuzzer/nightly-only crate into the main build, clippy, or nextest runs.
+#
+# Run with: cargo +nightly fuzz run estimators -- -max_total_time=45 -rss_limit_mb=4096
+# See fuzz/README.md for details.
+[package]
+name = "oxicrypt-maxwell-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Detach from the parent workspace — cargo-fuzz crates are standalone.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.oxicrypt-maxwell]
+path = ".."
+
+[[bin]]
+name = "estimators"
+path = "fuzz_targets/estimators.rs"
+test = false
+doc = false
+bench = false

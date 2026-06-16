@@ -33,14 +33,17 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::chi_square::chi_square_tests;
 use crate::collision::collision;
 use crate::compression::compression;
+use crate::iid_lrs::len_lrs_iid_test;
 use crate::lag::lag;
 use crate::lrs::lrs;
 use crate::lz78y::lz78y;
 use crate::markov::markov;
 use crate::multi_mcw::multi_mcw;
 use crate::multi_mmc::multi_mmc;
+use crate::permutation::{permutation_stats, run_permutation};
 use crate::{McvResult, mcv};
 
 /// Pre-registered absolute parity tolerance, in bits of min-entropy.
@@ -49,6 +52,24 @@ use crate::{McvResult, mcv};
 /// written numerical-analysis rationale and project-lead sign-off described
 /// there (and never in response to a failing result).
 pub const PARITY_TOLERANCE_BITS: f64 = 1.0e-6;
+
+/// Version of the NIST EA reference tool the reference table was generated
+/// against (`ea_iid` / `ea_non_iid` from `SP800-90B_EntropyAssessment`). Stamped
+/// into the `maxwell parity` header for provenance (ISC-62). A documented
+/// constant, not a runtime probe — the EA tool is referenced by path, never
+/// vendored or invoked.
+pub const EA_TOOL_VERSION: &str = "1.1.8";
+
+/// Number of §5.1 permutation-battery L1 statistics checked for parity: the 18
+/// non-compression statistics (EA index `0..=17`). The compression slot (EA
+/// index 18) is STOP-AND-LEAVE (NaN) and excluded.
+pub const PERM_STATS_PARITY_COUNT: usize = 18;
+
+/// Number of deterministic shuffles for the §5 L2 verdict parity check. Far
+/// below the spec [`crate::permutation::PERMS`] (10_000) because the three short
+/// datasets' verdicts are decided by extreme/deterministic statistics, not by a
+/// marginal shuffle count; keeps the harness fast while the verdict is stable.
+pub const PERM_VERDICT_PARITY_SHUFFLES: usize = 1500;
 
 /// One row of the EA-tool reference table.
 #[derive(Debug, Clone, Copy)]
@@ -134,11 +155,42 @@ pub struct Reference {
     /// for 1-bit data); per-bit and in `(0, 1]`. LZ78Y completes the §6.3 non-IID
     /// estimator suite.
     pub lz78y_min_entropy: f64,
+    /// Optional SP 800-90B §5.1 **L1** parity reference: the 18 unpermuted
+    /// permutation-battery statistics in EA index order `0..=17`, EXCLUDING the
+    /// compression slot (index 18), which is a documented STOP-AND-LEAVE / NaN
+    /// (bit-exact libbz2 length is not reproduced). Recorded verbatim from the EA
+    /// tool's `ea_iid -v -v -v` unpermuted-statistics block. Populated only for
+    /// the three SHORT (10k-sample) datasets — the §5 battery is skipped for the
+    /// 1M-sample datasets to keep the harness tractable; `None` elsewhere. When
+    /// `Some`, `check_one` compares `permutation_stats(data).values[0..18]` to
+    /// these at a relative-or-absolute `PARITY_TOLERANCE_BITS` tolerance (the
+    /// excursion statistic, index 0, accumulates a long-double-vs-f64 delta that
+    /// a pure absolute tolerance would not cover; see `check_perm_stats`).
+    pub perm_stats_ref: Option<[f64; 18]>,
+    /// Optional SP 800-90B §5.1 permutation-battery **L2 verdict** reference
+    /// (EA ground truth: `run_permutation(data, 1500).is_iid`). Populated only
+    /// for the three SHORT datasets; `None` elsewhere.
+    pub perm_verdict_ref: Option<bool>,
+    /// Optional SP 800-90B §5.2 chi-square IID **verdict** reference (EA ground
+    /// truth: `chi_square_tests(data).passed`). Populated only for the three
+    /// SHORT datasets; `None` elsewhere.
+    pub chi_verdict_ref: Option<bool>,
+    /// Optional SP 800-90B §5.3 LRS IID **verdict** reference (EA ground truth:
+    /// `len_lrs_iid_test(data).passed`). Populated only for the three SHORT
+    /// datasets; `None` elsewhere.
+    pub lrs_verdict_ref: Option<bool>,
 }
 
 /// The 11 EA-distribution reference datasets and their EA tool v1.1.8 MCV
 /// min-entropy values. Datasets are NIST-distributed and referenced by path,
 /// never vendored; the SHA-256 column is their provenance fingerprint.
+// The §5.1 L1 reference statistics (`perm_stats_ref`) are recorded VERBATIM from
+// the EA tool's `ea_iid -v -v -v` output, which prints `long double` values; a
+// few (excursion, avgCollision) carry more decimal digits than an `f64` can
+// represent. Keeping the literal verbatim documents the exact EA source value —
+// it still parses to the nearest `f64`, so behavior is identical to a truncated
+// form — so `excessive_precision` is allowed only on this table.
+#[allow(clippy::excessive_precision)]
 pub const REFERENCE_TABLE: &[Reference] = &[
     Reference {
         name: "biased-random-bits",
@@ -156,6 +208,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.040_599_763_274_887_825,
         multi_mmc_min_entropy: 0.028_634_586_256_344_21,
         lz78y_min_entropy: 0.028_635_020_154_766_915,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "biased-random-bytes",
@@ -173,6 +230,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.042_001_643_639_251_546,
         multi_mmc_min_entropy: 0.041_925_153_682_126_653,
         lz78y_min_entropy: 0.041_925_148_755_351_95,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "data.pi",
@@ -190,6 +252,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.811_434_612_614_889_9,
         multi_mmc_min_entropy: 0.811_183_696_803_481_3,
         lz78y_min_entropy: 0.811_158_644_364_686_8,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "normal",
@@ -211,6 +278,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         // byte-structured `normal` data is partly predictable bit-to-bit).
         multi_mmc_min_entropy: 0.676_757_600_522_602_7,
         lz78y_min_entropy: 0.992_460_632_843_158_1,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "rand1_short",
@@ -228,6 +300,31 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.943_333_706_575_771_2,
         multi_mmc_min_entropy: 0.961_616_667_828_880_8,
         lz78y_min_entropy: 0.961_446_245_952_478,
+        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=17; compression slot
+        // 18 excluded). §5 verdicts: IID under all three §5 tests.
+        perm_stats_ref: Some([
+            68.691_199_999_999_881_242_73,
+            793.0,
+            7.0,
+            746.0,
+            5044.0,
+            12.0,
+            22.943_396_226_415_092_797_88,
+            53.0,
+            222.0,
+            230.0,
+            224.0,
+            224.0,
+            235.0,
+            20021.0,
+            19982.0,
+            20092.0,
+            19719.0,
+            19526.0,
+        ]),
+        perm_verdict_ref: Some(true),
+        chi_verdict_ref: Some(true),
+        lrs_verdict_ref: Some(true),
     },
     Reference {
         name: "rand4_short",
@@ -245,6 +342,31 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.982_641_821_735_989_1,
         multi_mmc_min_entropy: 0.977_696_512_087_203,
         lz78y_min_entropy: 0.980_145_173_356_401,
+        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=17; compression slot
+        // 18 excluded). §5 verdicts: NOT IID — EA periodicity(1) is extreme.
+        perm_stats_ref: Some([
+            450.376_000_000_000_544_787_3,
+            6669.0,
+            7.0,
+            5269.0,
+            4990.0,
+            13.0,
+            5.742_102_240_091_901_066_421,
+            14.0,
+            547.0,
+            604.0,
+            664.0,
+            692.0,
+            598.0,
+            562_563.0,
+            562_511.0,
+            569_110.0,
+            568_260.0,
+            561_023.0,
+        ]),
+        perm_verdict_ref: Some(false),
+        chi_verdict_ref: Some(true),
+        lrs_verdict_ref: Some(true),
     },
     Reference {
         name: "rand8_short",
@@ -262,6 +384,32 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.989_693_493_887_954_9,
         multi_mmc_min_entropy: 0.987_814_544_042_294_1,
         lz78y_min_entropy: 0.988_081_803_799_903_1,
+        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=17; compression slot
+        // 18 excluded). §5 verdicts: NOT IID under chi-square (independence
+        // fails); permutation and LRS are IID-consistent.
+        perm_stats_ref: Some([
+            6_638.535_999_999_970_954_377,
+            6727.0,
+            6.0,
+            5006.0,
+            4938.0,
+            13.0,
+            20.304_878_048_780_487_631_57,
+            67.0,
+            34.0,
+            30.0,
+            49.0,
+            49.0,
+            35.0,
+            163_045_111.0,
+            163_784_454.0,
+            162_563_680.0,
+            162_531_901.0,
+            161_376_389.0,
+        ]),
+        perm_verdict_ref: Some(true),
+        chi_verdict_ref: Some(false),
+        lrs_verdict_ref: Some(true),
     },
     Reference {
         name: "ringOsc-nist",
@@ -279,6 +427,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.251_066_953_571_429,
         multi_mmc_min_entropy: 0.251_068_940_815_654_1,
         lz78y_min_entropy: 0.251_073_056_820_698,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "truerand_1bit",
@@ -296,6 +449,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.998_291_666_366_299_7,
         multi_mmc_min_entropy: 0.996_659_943_803_952_2,
         lz78y_min_entropy: 0.997_050_047_578_971_5,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "truerand_4bit",
@@ -313,6 +471,11 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.998_648_590_128_694_9,
         multi_mmc_min_entropy: 0.998_205_084_168_765_3,
         lz78y_min_entropy: 0.999_355_023_599_717_7,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
     Reference {
         name: "truerand_8bit",
@@ -330,8 +493,32 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.998_401_559_830_912_8,
         multi_mmc_min_entropy: 0.999_660_367_563_434_2,
         lz78y_min_entropy: 0.998_465_328_046_531_1,
+        // §5 battery skipped for the 1M-sample datasets (kept tractable).
+        perm_stats_ref: None,
+        perm_verdict_ref: None,
+        chi_verdict_ref: None,
+        lrs_verdict_ref: None,
     },
 ];
+
+/// §5 (IID-battery) parity deltas/results for a dataset that declares §5
+/// reference data (the three short datasets). Carried inside [`Outcome::Pass`]
+/// only when the reference row's §5 `Option` fields are `Some`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Section5Result {
+    /// Maximum per-statistic delta across the 18 checked §5.1 L1 statistics,
+    /// measured on the relative-or-absolute scale used by the check (so a value
+    /// `<= PARITY_TOLERANCE_BITS` means every statistic passed). `None` if the
+    /// reference declared no L1 statistics (it always declares them when §5 is
+    /// present, so this is `Some` in practice).
+    pub max_l1_scaled_delta: Option<f64>,
+    /// EA §5.1 permutation-battery IID verdict, reproduced and matched.
+    pub perm_verdict: bool,
+    /// EA §5.2 chi-square IID verdict, reproduced and matched.
+    pub chi_verdict: bool,
+    /// EA §5.3 LRS IID verdict, reproduced and matched.
+    pub lrs_verdict: bool,
+}
 
 /// Outcome of comparing one dataset against its reference row.
 #[derive(Debug, Clone, PartialEq)]
@@ -361,6 +548,10 @@ pub enum Outcome {
         multi_mmc_delta: f64,
         /// Absolute delta on the §6.3.10 bitstring LZ78Y prediction estimate.
         lz78y_delta: f64,
+        /// §5 IID-battery parity result; `Some` only for datasets whose
+        /// reference row declares §5 data (the three short datasets), `None`
+        /// otherwise (the §5 battery is skipped for the 1M-sample datasets).
+        section5: Option<Section5Result>,
     },
     /// File absent — not counted as a failure.
     Skip {
@@ -401,13 +592,25 @@ impl DatasetResult {
                 lag_delta,
                 multi_mmc_delta,
                 lz78y_delta,
+                section5,
             } => {
                 let bit = bitstring_delta
                     .map_or_else(|| "  bit -".to_string(), |d| format!("  bit Δ={d:.1e}"));
+                let sec5 = section5.map_or_else(String::new, |s| {
+                    let l1 = s
+                        .max_l1_scaled_delta
+                        .map_or_else(|| "-".to_string(), |d| format!("{d:.1e}"));
+                    format!(
+                        "  §5.1 maxΔ={l1}  perm={}  chi={}  iidlrs={}",
+                        if s.perm_verdict { "IID" } else { "nonIID" },
+                        if s.chi_verdict { "IID" } else { "nonIID" },
+                        if s.lrs_verdict { "IID" } else { "nonIID" },
+                    )
+                });
                 format!(
                     "PASS {:24} lit Δ={:.1e}{}  col Δ={:.1e}  mkv Δ={:.1e}  cmp Δ={:.1e}  \
                      ttu Δ={:.1e}  lrs Δ={:.1e}  mcw Δ={:.1e}  lag Δ={:.1e}  mmc Δ={:.1e}  \
-                     lzy Δ={:.1e}",
+                     lzy Δ={:.1e}{}",
                     self.name,
                     literal_delta,
                     bit,
@@ -419,7 +622,8 @@ impl DatasetResult {
                     multi_mcw_delta,
                     lag_delta,
                     multi_mmc_delta,
-                    lz78y_delta
+                    lz78y_delta,
+                    sec5
                 )
             }
             Outcome::Skip { reason } => format!("SKIP {:24} {}", self.name, reason),
@@ -780,6 +984,109 @@ fn check_lz78y(reference: &Reference, data: &[u8]) -> Result<f64, String> {
     Ok(lz78y_delta)
 }
 
+/// Check the optional SP 800-90B §5 (IID-battery) parity for `data` against the
+/// reference's §5 fields.
+///
+/// Returns `Ok(None)` when the reference declares no §5 data (the 1M-sample
+/// datasets), `Ok(Some(result))` when every §5 check passes, or the same kind of
+/// failure message `check_one` would emit on any §5.1 L1 statistic exceeding the
+/// tolerance or any §5 L2 verdict (permutation / chi-square / LRS) diverging from
+/// the EA ground truth.
+///
+/// **L1 (§5.1 statistics).** Compares `permutation_stats(data).values[0..18]` to
+/// `perm_stats_ref` (the 18 non-compression statistics; the compression slot is
+/// STOP-AND-LEAVE / NaN and excluded). The tolerance is **relative-or-absolute**
+/// at [`PARITY_TOLERANCE_BITS`] (`1e-6`): a statistic passes when
+/// `|got - ref| <= 1e-6` OR `|got - ref| <= 1e-6 * |ref|`. The relative arm is
+/// required for the excursion statistic (index 0), which carries a
+/// long-double-vs-f64 accumulation delta of up to ~3e-8 absolute on the
+/// 6638-scale `rand8_short` value (a relative delta of ~5e-12) — far inside the
+/// relative bound but it would breach a pure-absolute 1e-6 on some larger
+/// statistics' rounding. All other statistics are bit-exact or fp-noise and
+/// satisfy both arms.
+///
+/// **L2 (§5 verdicts).** Reproduces the three §5 verdicts and asserts they equal
+/// the recorded EA ground truth:
+/// `run_permutation(data, PERM_VERDICT_PARITY_SHUFFLES).is_iid == perm_verdict_ref`,
+/// `chi_square_tests(data).passed == chi_verdict_ref`, and
+/// `len_lrs_iid_test(data).passed == lrs_verdict_ref`.
+fn check_section5(reference: &Reference, data: &[u8]) -> Result<Option<Section5Result>, String> {
+    // §5 is present iff the reference declares its L1 statistics. The L2 verdict
+    // fields are populated in lockstep for the same datasets.
+    let Some(ref_stats) = reference.perm_stats_ref else {
+        return Ok(None);
+    };
+
+    // §5.1 L1: the 18 non-compression statistics, relative-or-absolute tolerance.
+    // The compression slot (EA index 18) is excluded — `ref_stats` only carries
+    // the first 18, so zipping with the 19-element `values`/`TEST_NAMES` arrays
+    // truncates to the 18 we check (and avoids any panicking index).
+    let got = permutation_stats(data).values;
+    let mut max_scaled_delta = 0.0_f64;
+    for ((i, &ref_v), (&got_v, &stat_name)) in ref_stats
+        .iter()
+        .enumerate()
+        .zip(got.iter().zip(crate::permutation::TEST_NAMES.iter()))
+    {
+        let abs_delta = (got_v - ref_v).abs();
+        // Relative-or-absolute: pass on either arm. The scaled delta we report is
+        // the smaller of (absolute, relative) so a reported value <= tolerance
+        // means the statistic passed.
+        let rel_delta = if ref_v == 0.0 {
+            abs_delta
+        } else {
+            abs_delta / ref_v.abs()
+        };
+        let scaled = abs_delta.min(rel_delta);
+        if scaled > max_scaled_delta {
+            max_scaled_delta = scaled;
+        }
+        if abs_delta > PARITY_TOLERANCE_BITS && rel_delta > PARITY_TOLERANCE_BITS {
+            return Err(format!(
+                "§5.1 statistic[{i}] ({stat_name}) Δ_abs={abs_delta:.3e} Δ_rel={rel_delta:.3e} \
+                 both > {PARITY_TOLERANCE_BITS:.0e} (got {got_v}, ref {ref_v})"
+            ));
+        }
+    }
+
+    // §5.1 L2 verdict (permutation battery).
+    let perm_verdict = run_permutation(data, PERM_VERDICT_PARITY_SHUFFLES).is_iid;
+    if let Some(ref_perm) = reference.perm_verdict_ref
+        && perm_verdict != ref_perm
+    {
+        return Err(format!(
+            "§5.1 permutation verdict mismatch: got {perm_verdict}, EA ref {ref_perm}"
+        ));
+    }
+
+    // §5.2 L2 verdict (chi-square IID tests).
+    let chi_verdict = chi_square_tests(data).passed;
+    if let Some(ref_chi) = reference.chi_verdict_ref
+        && chi_verdict != ref_chi
+    {
+        return Err(format!(
+            "§5.2 chi-square verdict mismatch: got {chi_verdict}, EA ref {ref_chi}"
+        ));
+    }
+
+    // §5.3 L2 verdict (LRS IID test).
+    let lrs_verdict = len_lrs_iid_test(data).passed;
+    if let Some(ref_lrs) = reference.lrs_verdict_ref
+        && lrs_verdict != ref_lrs
+    {
+        return Err(format!(
+            "§5.3 LRS-IID verdict mismatch: got {lrs_verdict}, EA ref {ref_lrs}"
+        ));
+    }
+
+    Ok(Some(Section5Result {
+        max_l1_scaled_delta: Some(max_scaled_delta),
+        perm_verdict,
+        chi_verdict,
+        lrs_verdict,
+    }))
+}
+
 /// Check one dataset against its reference row (MCV + Collision + Markov +
 /// Compression + t-Tuple + LRS + MultiMCW + Lag + MultiMMC + LZ78Y).
 ///
@@ -790,6 +1097,13 @@ fn check_lz78y(reference: &Reference, data: &[u8]) -> Result<f64, String> {
 /// t-Tuple, §6.3.6 LRS, §6.3.7 MultiMCW, §6.3.8 Lag, §6.3.9 MultiMMC, or §6.3.10
 /// LZ78Y); otherwise passes with the per-estimator deltas. The §6.3 non-IID
 /// estimator suite is complete with LZ78Y.
+///
+/// For datasets whose reference row declares SP 800-90B §5 (IID-battery) data —
+/// the three short datasets — `check_one` additionally checks the §5.1 L1
+/// statistics (relative-or-absolute tolerance) and the three §5 L2 verdicts
+/// (permutation / chi-square / LRS) against EA ground truth; any divergence is a
+/// parity failure. This §5 check is purely additive and does not touch the §6.3
+/// estimator logic above.
 // Grows by one sequential comparison block per estimator added to the suite;
 // the length is inherent to covering every estimator in one place.
 #[allow(clippy::too_many_lines)]
@@ -941,6 +1255,20 @@ pub fn check_one(reference: &Reference, dir: &Path) -> DatasetResult {
         }
     };
 
+    // SP 800-90B §5 IID battery — additive, fires only for datasets whose
+    // reference row declares §5 data (the three short datasets). `Ok(None)` for
+    // the 1M-sample datasets (battery skipped). Any §5.1 L1 statistic out of
+    // tolerance or any §5 L2 verdict mismatch is a parity failure.
+    let section5 = match check_section5(reference, &data) {
+        Ok(s) => s,
+        Err(reason) => {
+            return DatasetResult {
+                name: reference.name,
+                outcome: Outcome::Fail { reason },
+            };
+        }
+    };
+
     DatasetResult {
         name: reference.name,
         outcome: Outcome::Pass {
@@ -955,6 +1283,7 @@ pub fn check_one(reference: &Reference, dir: &Path) -> DatasetResult {
             lag_delta,
             multi_mmc_delta,
             lz78y_delta,
+            section5,
         },
     }
 }
@@ -1017,6 +1346,9 @@ mod tests {
     /// Absent files SKIP; present files must pass both tracks within 1e-6.
     #[test]
     fn parity_table_within_tolerance() {
+        // The §5 IID battery is declared only for these three short datasets.
+        const SHORT_DATASETS: [&str; 3] = ["rand1_short", "rand4_short", "rand8_short"];
+
         let dir = resolve_datasets_dir(None);
         let results = run_parity(&dir);
         // Present files must pass both tracks; a failure is fatal. Datasets that
@@ -1027,8 +1359,27 @@ mod tests {
                 panic!("dataset {} FAILED parity: {reason}", r.name);
             }
         }
+
+        // §5 coverage guard: any short dataset that is PRESENT (not skipped)
+        // must have actually exercised the §5 battery — i.e. its Pass outcome
+        // must carry a `Some(section5)`. This prevents the §5 path silently
+        // degrading to a no-op. Absent (skipped) datasets impose no requirement.
+        for r in &results {
+            if SHORT_DATASETS.contains(&r.name)
+                && let Outcome::Pass { section5, .. } = &r.outcome
+            {
+                assert!(
+                    section5.is_some(),
+                    "{}: present short dataset passed §6.3 but did not run the §5 battery",
+                    r.name
+                );
+            }
+        }
     }
 
+    // Asserts a fixed structural invariant per estimator column plus the §5
+    // option-field lockstep; the length is inherent to covering every column.
+    #[allow(clippy::too_many_lines)]
     #[test]
     fn reference_table_is_well_formed() {
         for r in REFERENCE_TABLE {
@@ -1140,7 +1491,42 @@ mod tests {
                 r.name,
                 r.lz78y_min_entropy
             );
+            // §5 reference fields move in lockstep: a row either declares all
+            // four (L1 stats + three L2 verdicts) or none of them.
+            let has_l1 = r.perm_stats_ref.is_some();
+            assert_eq!(
+                r.perm_verdict_ref.is_some(),
+                has_l1,
+                "{}: §5 perm_verdict_ref present-ness disagrees with perm_stats_ref",
+                r.name
+            );
+            assert_eq!(
+                r.chi_verdict_ref.is_some(),
+                has_l1,
+                "{}: §5 chi_verdict_ref present-ness disagrees with perm_stats_ref",
+                r.name
+            );
+            assert_eq!(
+                r.lrs_verdict_ref.is_some(),
+                has_l1,
+                "{}: §5 lrs_verdict_ref present-ness disagrees with perm_stats_ref",
+                r.name
+            );
+            // Declared §5.1 L1 statistics must be finite (the compression slot,
+            // which is NaN, is excluded from the 18-element reference array).
+            if let Some(stats) = r.perm_stats_ref {
+                assert_eq!(stats.len(), PERM_STATS_PARITY_COUNT);
+                for (i, v) in stats.iter().enumerate() {
+                    assert!(v.is_finite(), "{}: §5.1 stat[{i}] not finite ({v})", r.name);
+                }
+            }
         }
         assert_eq!(REFERENCE_TABLE.len(), 11);
+        // Exactly the three short datasets carry §5 reference data.
+        let with_section5 = REFERENCE_TABLE
+            .iter()
+            .filter(|r| r.perm_stats_ref.is_some())
+            .count();
+        assert_eq!(with_section5, 3, "exactly 3 datasets must declare §5 data");
     }
 }
