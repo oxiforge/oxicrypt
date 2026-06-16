@@ -1,0 +1,27 @@
+# cargo-nextest profiles for oxicrypt.
+#
+# The `default` profile is intentionally NOT declared here, so it keeps
+# nextest's built-in behaviour: every test runs. `cargo nextest run`, the
+# pre-push hook, and ci.yml all invoke the default profile, so the gate stays
+# exhaustive — do not weaken it from this file.
+#
+# `quick` is an OPT-IN dev-loop profile:
+#
+#     cargo nextest run --profile quick            # whole workspace, fast
+#     cargo nextest run --profile quick -p oxicrypt-maxwell
+#
+# It runs everything EXCEPT the long-running maxwell entropy tests, turning a
+# ~3.7-minute maxwell run into seconds during iteration. Always run the full
+# default profile before pushing (the pre-push hook does this for you).
+#
+# Excluded (observed wall-clock, unoptimized test build):
+#   parity::tests::parity_table_within_tolerance         ~200s  EA parity oracle (OXICRYPT_EA_DATA)
+#   iid_gate::tests::noniid_routed_value_is_suite_minimum  ~71s  100k-sample SP 800-90B §6.3 suite
+#   iid_gate::tests::periodic_synthetic_routes_to_noniid   ~70s  100k-sample non-IID routing
+#
+# Add any future long-running test to the filter below to keep `quick` quick.
+# (The ~460s `#[ignore]`-d full-shuffle test is already excluded from every
+# profile by default; run it explicitly with `--run-ignored all`.)
+
+[profile.quick]
+default-filter = "not (test(parity_table_within_tolerance) | test(noniid_routed_value_is_suite_minimum) | test(periodic_synthetic_routes_to_noniid))"

@@ -83,6 +83,21 @@ and re-run after any post-review fix-ups:
 4. **Doc-sync** — the commit is the gate: every commit lands with its documentation already true (see
    **Documentation sync** below). This is the judgment gate alongside the mechanical checks.
 
+### Test iteration — the `quick` nextest profile
+
+`cargo nextest run --profile quick` skips the long-running maxwell entropy tests for a fast inner
+loop; the profiles and the exact exclusions live in `.config/nextest.toml`. It is a latency
+optimization for iteration, never a correctness shortcut:
+
+- **Use it** while iterating on a crate and re-running tests often — fast signal on the bulk of the
+  suite without waiting on the multi-minute entropy oracles.
+- **Do not use it** as the basis for any "tests pass" claim, PR evidence, or definition-of-done
+  sign-off — and never on a change to the maxwell entropy estimators, parity table, or IID gate,
+  because the excluded tests (including the EA parity oracle) are exactly what validate that code, so
+  `quick` would hide the regression it should catch.
+- The full **default** profile is the gate. The pre-push hook and CI always run it; never reach for
+  `quick` (or `--no-verify`) to get a push past the gate faster.
+
 ## Documentation sync
 
 At each commit boundary, refresh documentation while the context is fresh. oxicrypt adopts the
