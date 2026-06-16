@@ -217,6 +217,9 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     let mut algorithm: Option<String> = None;
     let mut mode: Option<String> = None;
     let mut paramset: Option<String> = None;
+    // Runtime LMS capabilities filter (retires the manual caps.rs edit). Also
+    // sourced from OXICRYPT_CAPS_FILTER after the arg loop; see the guard below.
+    let mut caps_filter: Option<String> = None;
     let mut query_session: Option<String> = None;
     let mut refresh_with: Option<String> = None;
     let mut server = "https://demo.acvts.nist.gov".to_string();
@@ -293,6 +296,12 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
                 i += 1;
                 if i < args.len() {
                     paramset = Some(args[i].clone());
+                }
+            }
+            "--caps-filter" => {
+                i += 1;
+                if i < args.len() {
+                    caps_filter = Some(args[i].clone());
                 }
             }
             "--query-session" => {
@@ -409,6 +418,48 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         }
     }
 
+    // --caps-filter (or the OXICRYPT_CAPS_FILTER env fallback) scopes the LMS
+    // specificCapabilities grid at runtime, retiring the manual caps.rs edit. It
+    // shares the `acvp_capabilities_filtered` seam with --paramset (one filter value
+    // reaches every handler), so it is mutually exclusive with --paramset and must
+    // name an algorithm OTHER than SLH-DSA — whose filter is an exact paramSet name
+    // that would reject an LMS height/width token. Requiring --algorithm also keeps
+    // the filter from reaching SLH-DSA's handler at all (it is filtered out first).
+    if caps_filter.is_none()
+        && let Ok(v) = std::env::var("OXICRYPT_CAPS_FILTER")
+    {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            caps_filter = Some(v);
+        }
+    }
+    if let Some(spec) = caps_filter.as_deref() {
+        if paramset.is_some() {
+            eprintln!(
+                "oxicrypt acvp-harness demo-run: --caps-filter and --paramset are mutually \
+                 exclusive (both set the capabilities filter)"
+            );
+            return std::process::ExitCode::from(2);
+        }
+        match algorithm.as_deref() {
+            Some("SLH-DSA") => {
+                eprintln!(
+                    "oxicrypt acvp-harness demo-run: --caps-filter {spec:?} cannot be used with \
+                     --algorithm SLH-DSA; use --paramset for SLH-DSA"
+                );
+                return std::process::ExitCode::from(2);
+            }
+            Some(_) => {}
+            None => {
+                eprintln!(
+                    "oxicrypt acvp-harness demo-run: --caps-filter requires --algorithm (e.g. \
+                     --algorithm LMS) so the filter scopes a single algorithm"
+                );
+                return std::process::ExitCode::from(2);
+            }
+        }
+    }
+
     // Default backend: curl for software keys, s_client for hardware keys.
     // (The NIST ACVTS demo CDN filters curl's TLS fingerprint when curl
     // signs CertVerify via PKCS#11 — observed 2026-04-26. s_client's
@@ -453,7 +504,9 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         totp_secret,
         filter_algorithm: algorithm,
         filter_mode: mode,
-        filter_paramset: paramset,
+        // --caps-filter and --paramset are mutually exclusive (guarded above) and feed
+        // the same acvp_capabilities_filtered seam, so either one populates it.
+        filter_paramset: paramset.or(caps_filter),
         query_session_url: query_session,
         refresh_with_token: refresh_with,
         log_path,

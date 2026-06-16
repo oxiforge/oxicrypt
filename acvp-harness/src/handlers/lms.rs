@@ -48,7 +48,10 @@ impl AlgorithmHandler for LmsKeyGenHandler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::lms_keygen_capability())
+        Some(super::caps::lms_keygen_capability(None))
+    }
+    fn acvp_capabilities_filtered(&self, caps_filter: Option<&str>) -> Option<JsonValue> {
+        Some(super::caps::lms_keygen_capability(caps_filter))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_keygen_group(group)
@@ -71,7 +74,10 @@ impl AlgorithmHandler for LmsSigGenHandler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::lms_siggen_capability())
+        Some(super::caps::lms_siggen_capability(None))
+    }
+    fn acvp_capabilities_filtered(&self, caps_filter: Option<&str>) -> Option<JsonValue> {
+        Some(super::caps::lms_siggen_capability(caps_filter))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_siggen_group(group)
@@ -94,7 +100,10 @@ impl AlgorithmHandler for LmsSigVerHandler {
         "1.0"
     }
     fn acvp_capabilities(&self) -> Option<JsonValue> {
-        Some(super::caps::lms_sigver_capability())
+        Some(super::caps::lms_sigver_capability(None))
+    }
+    fn acvp_capabilities_filtered(&self, caps_filter: Option<&str>) -> Option<JsonValue> {
+        Some(super::caps::lms_sigver_capability(caps_filter))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)

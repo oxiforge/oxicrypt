@@ -1849,13 +1849,66 @@ fn lms_specific_capabilities() -> JsonValue {
 /// pairings are tracked under the PQ-expansion mandate
 /// (`algo-capability-matrix.md` rows 235–240) and will be added
 /// to `specificCapabilities` when their primitives ship.
-pub fn lms_keygen_capability() -> JsonValue {
+pub fn lms_keygen_capability(caps_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
         ("mode", str_val("keyGen")),
         ("revision", str_val("1.0")),
-        ("specificCapabilities", lms_specific_capabilities()),
+        (
+            "specificCapabilities",
+            lms_specific_capabilities_filtered(caps_filter),
+        ),
     ])
+}
+
+/// Read a string-valued field off a `JsonValue::Object`, or `None` if absent /
+/// non-object / non-string. Local helper for [`lms_specific_capabilities_filtered`].
+fn obj_str_field<'a>(v: &'a JsonValue, key: &str) -> Option<&'a str> {
+    v.as_object()?
+        .iter()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, val)| val.as_str())
+}
+
+/// Decide whether an LMS `(lmsMode, lmOtsMode)` pair survives a `--caps-filter`
+/// value. `None` keeps everything (the default — the full 80-pair grid). A
+/// `Some(spec)` is a DNF over case-sensitive substrings of the composite
+/// `"{lmsMode} {lmOtsMode}"`: comma-separated CLAUSES are OR-ed, and within a clause
+/// `+`-separated TERMS are AND-ed. So `"H25"` keeps every H25 pair, `"H20,H25"` keeps
+/// the H20 and H25 pairs, and `"H20+W4,H20+W8,H25+W4,H25+W8"` is exactly the
+/// tall-tree H{20,25}×W{4,8} subset. Empty terms/clauses are ignored (a trailing
+/// comma is harmless); a spec with no non-empty clause selects nothing.
+fn caps_filter_keep(filter: Option<&str>, lms_mode: &str, lmots_mode: &str) -> bool {
+    let Some(spec) = filter else {
+        return true;
+    };
+    let hay = format!("{lms_mode} {lmots_mode}");
+    spec.split(',').any(|clause| {
+        let mut terms = clause
+            .split('+')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .peekable();
+        terms.peek().is_some() && terms.all(|t| hay.contains(t))
+    })
+}
+
+/// The LMS `specificCapabilities` array narrowed by a `--caps-filter` value (see
+/// [`caps_filter_keep`]). `None` returns the full 80-pair grid unchanged — so the
+/// default registration is byte-identical to the pre-filter behaviour.
+fn lms_specific_capabilities_filtered(filter: Option<&str>) -> JsonValue {
+    let JsonValue::Array(all) = lms_specific_capabilities() else {
+        unreachable!("lms_specific_capabilities always builds a JSON array");
+    };
+    let kept: Vec<JsonValue> = all
+        .into_iter()
+        .filter(|pair| {
+            let lms = obj_str_field(pair, "lmsMode").unwrap_or_default();
+            let lmots = obj_str_field(pair, "lmOtsMode").unwrap_or_default();
+            caps_filter_keep(filter, lms, lmots)
+        })
+        .collect();
+    JsonValue::Array(kept)
 }
 
 /// Build an ACVP registration block for LMS / sigGen / 1.0.
@@ -1871,12 +1924,15 @@ pub fn lms_keygen_capability() -> JsonValue {
 /// a key for a one-time-leaf scheme. The handler in `lms.rs`
 /// generates a deterministic per-group key from `tgId` so prompt
 /// replays produce identical responses.
-pub fn lms_siggen_capability() -> JsonValue {
+pub fn lms_siggen_capability(caps_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
         ("mode", str_val("sigGen")),
         ("revision", str_val("1.0")),
-        ("specificCapabilities", lms_specific_capabilities()),
+        (
+            "specificCapabilities",
+            lms_specific_capabilities_filtered(caps_filter),
+        ),
     ])
 }
 
@@ -1884,12 +1940,15 @@ pub fn lms_siggen_capability() -> JsonValue {
 ///
 /// Cap shape per `draft-celi-acvp-lms §7.3.5`. Same subset
 /// rationale as [`lms_keygen_capability`].
-pub fn lms_sigver_capability() -> JsonValue {
+pub fn lms_sigver_capability(caps_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
         ("mode", str_val("sigVer")),
         ("revision", str_val("1.0")),
-        ("specificCapabilities", lms_specific_capabilities()),
+        (
+            "specificCapabilities",
+            lms_specific_capabilities_filtered(caps_filter),
+        ),
     ])
 }
 
@@ -2049,5 +2108,87 @@ mod tests {
     #[should_panic(expected = "unknown SLH-DSA paramset")]
     fn slh_dsa_keygen_panics_on_unknown_paramset() {
         let _ = slh_dsa_keygen_capability(Some("not-a-real-name"));
+    }
+
+    // ── LMS --caps-filter (the runtime tall-tree subset) ────────────
+
+    /// Helper: the `(lmsMode, lmOtsMode)` pairs of an LMS cap's
+    /// `specificCapabilities` array.
+    fn lms_pairs(cap: &JsonValue) -> Vec<(&str, &str)> {
+        let sc = cap
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| k == "specificCapabilities")
+            .map(|(_, v)| v)
+            .unwrap();
+        sc.as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                let o = p.as_object().unwrap();
+                let get = |key: &str| {
+                    o.iter()
+                        .find(|(k, _)| k == key)
+                        .and_then(|(_, v)| v.as_str())
+                        .unwrap()
+                };
+                (get("lmsMode"), get("lmOtsMode"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lms_caps_unfiltered_advertises_the_full_80_grid() {
+        // No filter == the full grid, byte-identical to the pre-filter behaviour.
+        assert_eq!(
+            lms_pairs(&lms_keygen_capability(None)).len(),
+            80,
+            "the full LMS grid is 80 (lmsMode, lmOtsMode) pairs"
+        );
+        assert_eq!(lms_pairs(&lms_siggen_capability(None)).len(), 80);
+        assert_eq!(lms_pairs(&lms_sigver_capability(None)).len(), 80);
+    }
+
+    #[test]
+    fn lms_caps_filter_scopes_to_the_tall_tree_subset() {
+        // Tall-tree H{20,25} × W{4,8} across the four hash/length families.
+        let cap = lms_keygen_capability(Some("H20+W4,H20+W8,H25+W4,H25+W8"));
+        let pairs = lms_pairs(&cap);
+        assert_eq!(pairs.len(), 16, "2 heights × 2 widths × 4 families");
+        for (lms, lmots) in &pairs {
+            let hay = format!("{lms} {lmots}");
+            assert!(
+                hay.contains("H20") || hay.contains("H25"),
+                "only tall trees survive: {hay}"
+            );
+            assert!(
+                hay.contains("W4") || hay.contains("W8"),
+                "only W4/W8 survive: {hay}"
+            );
+        }
+    }
+
+    #[test]
+    fn lms_caps_filter_or_clause_keeps_every_h25() {
+        let cap = lms_siggen_capability(Some("H25"));
+        let pairs = lms_pairs(&cap);
+        assert_eq!(pairs.len(), 16, "H25 across 4 widths × 4 families");
+        assert!(pairs.iter().all(|(lms, _)| lms.contains("H25")));
+    }
+
+    #[test]
+    fn lms_caps_filter_and_terms_pin_one_pair() {
+        let cap = lms_sigver_capability(Some("H25+W8+SHA256_M32"));
+        let pairs = lms_pairs(&cap);
+        assert_eq!(pairs.len(), 1, "a fully-qualified clause pins one pair");
+        assert_eq!(pairs[0], ("LMS_SHA256_M32_H25", "LMOTS_SHA256_N32_W8"));
+    }
+
+    #[test]
+    fn lms_caps_filter_separators_only_selects_nothing() {
+        // A spec with no non-empty clause keeps no pair (rather than everything).
+        let cap = lms_keygen_capability(Some(",,"));
+        assert_eq!(lms_pairs(&cap).len(), 0);
     }
 }

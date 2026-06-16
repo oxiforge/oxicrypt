@@ -175,6 +175,35 @@ pub fn iid_gate(data: &[u8], bits_per_symbol: u8) -> IidGateResult {
     }
 }
 
+/// Scale a per-bit IID/non-IID assessment to the per-**symbol** "Assessed min
+/// entropy" the EA tool reports as its final number.
+///
+/// EA's final line is `min(H_original, H_bitstring × word_size)` (EA
+/// `iid_main` / `non_iid_main`): `h_original_per_symbol` is the literal-track
+/// assessment (already per symbol), `h_bitstring_per_bit` is the bitstring-track
+/// assessment (per bit) scaled up by `word_size` bits/symbol. Verified against
+/// `ea_iid -v -v -v` on the multi-bit reference datasets (rand4_short → 3.7900…,
+/// rand8_short → 7.0105…). For 1-bit data the literal and bitstring tracks coincide:
+/// pass `None` and the literal value is returned unscaled (`word_size == 1`).
+///
+/// **Policy STOP-AND-LEAVE (ISC-9):** this is the scaling *arithmetic* only. Which
+/// number is canonical at maxwell's tool boundary — the per-bit controlling value
+/// ([`IidGateResult::min_entropy`], unchanged) or this per-symbol assessed number —
+/// is an attended decision and is deliberately NOT wired into the gate output here.
+#[must_use]
+pub fn assessed_per_symbol_min_entropy(
+    h_original_per_symbol: f64,
+    h_bitstring_per_bit: Option<f64>,
+    word_size: u8,
+) -> f64 {
+    match h_bitstring_per_bit {
+        // 1-bit data: the literal and bitstring tracks coincide, so the literal
+        // value already IS the per-symbol assessed number (word_size == 1).
+        None => h_original_per_symbol,
+        Some(bs) => h_original_per_symbol.min(bs * f64::from(word_size)),
+    }
+}
+
 #[cfg(test)]
 #[allow(
     // Tests panic on invariant violations, use unwrap/expect for fatal setup,
@@ -190,6 +219,46 @@ pub fn iid_gate(data: &[u8], bits_per_symbol: u8) -> IidGateResult {
 )]
 mod tests {
     use super::*;
+
+    /// The per-symbol `word_size` scaling matches the EA tool's final "Assessed min
+    /// entropy" on the multi-bit reference datasets — `min(H_original, H_bitstring ×
+    /// word_size)`. Values are `ea_iid -v -v -v` ground truth (v1.1.8); they are the
+    /// same `literal_min_entropy` / `bitstring_min_entropy` the parity table records.
+    #[test]
+    fn assessed_per_symbol_matches_ea_on_multi_bit_datasets() {
+        // rand4_short (4-bit): H_original 3.7900… < H_bitstring×4 3.9168… → H_original.
+        let rand4 = assessed_per_symbol_min_entropy(
+            3.790_037_390_213_974,
+            Some(0.979_189_482_962_402_2),
+            4,
+        );
+        assert!(
+            (rand4 - 3.790_037_390_213_974).abs() < 1e-12,
+            "rand4_short assessed: got {rand4}, EA = 3.7900373902139739"
+        );
+        // rand8_short (8-bit): H_original 7.0105… < H_bitstring×8 7.8671… → H_original.
+        let rand8 = assessed_per_symbol_min_entropy(
+            7.010_454_037_736_041,
+            Some(0.983_386_784_659_150_3),
+            8,
+        );
+        assert!(
+            (rand8 - 7.010_454_037_736_041).abs() < 1e-12,
+            "rand8_short assessed: got {rand8}, EA = 7.0104540377360411"
+        );
+    }
+
+    /// The scaling takes the minimum of the two tracks, and 1-bit data (no separate
+    /// bitstring track) returns the literal value unscaled.
+    #[test]
+    fn assessed_per_symbol_takes_the_min_of_the_two_tracks() {
+        // literal below the scaled bitstring → literal wins.
+        assert!((assessed_per_symbol_min_entropy(3.0, Some(0.9), 4) - 3.0).abs() < 1e-12);
+        // scaled bitstring below literal → scaled bitstring wins (0.9 × 4 = 3.6).
+        assert!((assessed_per_symbol_min_entropy(3.9, Some(0.9), 4) - 3.6).abs() < 1e-12);
+        // 1-bit data: the bitstring track coincides; the literal value is unscaled.
+        assert!((assessed_per_symbol_min_entropy(0.961, None, 1) - 0.961).abs() < 1e-12);
+    }
 
     /// Locate `tests/data/<name>` relative to the crate manifest.
     fn data_path(name: &str) -> std::path::PathBuf {
