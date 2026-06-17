@@ -16,6 +16,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.15.0] - 2026-06-17
+
+Completes the SP 800-90B §6.3 multi-bit entropy assessment in `oxicrypt-maxwell`: the
+literal-symbol track for every estimator EA computes on it, the assembled `H_original`, and
+the per-symbol "Assessed min entropy" headline on the IID gate (out-of-boundary tooling).
+
+### Added
+- **`oxicrypt-maxwell` literal-symbol track (§6.3):** t-Tuple, LRS, MultiMCW, Lag, MultiMMC,
+  and LZ78Y now compute a literal-track estimate for multi-bit data, each parity-checked against
+  the NIST Entropy Assessment reference tool v1.1.8 within 1e-6. (Collision, Markov, and
+  Compression have no distinct multi-bit literal value in EA and are correctly excluded.)
+- **`h_original`:** the minimum over the MCV-literal and the six literal-track estimates.
+- **Per-symbol assessed min-entropy on the IID gate:** `IidGateResult` gains an
+  `AssessedMinEntropy { per_symbol, h_original, h_bitstring, word_size }` field beside the
+  per-bit `min_entropy`. `iid_gate()` assembles the EA headline
+  `min(H_original, H_bitstring × word_size)` per branch (MCV-literal `H_original` on the IID
+  branch, the §6.3 literal-suite minimum on the non-IID branch), reproducing EA's "Assessed min
+  entropy" line within 1e-6 on the multi-bit reference datasets, branch-matched (the gate's
+  IID/non-IID verdict agrees with EA's per dataset).
+- **`maxwell iid-gate` CLI:** reports both the per-bit routed value and the per-symbol assessed
+  headline with its `min(...)` breakdown.
+
 ## [0.14.0] - 2026-06-15
 
 SP 800-90B §5 IID permutation-testing battery + §3.1.4 restart analysis — closing the
@@ -205,7 +227,8 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/oxiforge/oxicrypt/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/oxiforge/oxicrypt/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/oxiforge/oxicrypt/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/oxiforge/oxicrypt/compare/v0.11.0...v0.12.0
