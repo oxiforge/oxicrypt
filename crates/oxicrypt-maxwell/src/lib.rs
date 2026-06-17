@@ -249,6 +249,85 @@ pub fn mcv(symbols: &[u8], bits_per_symbol: u8) -> McvResult {
     McvResult { literal, bitstring }
 }
 
+/// Translate raw symbols to a dense `0..alph_size` alphabet, mirroring the EA
+/// tool's symbol translation (`data.alph_size` / *"Symbols have been
+/// translated"*).
+///
+/// Returns the translated symbols and `alph_size` = the count of distinct symbol
+/// values present. The §6.3 **literal track** of the prediction estimators
+/// (MultiMCW / Lag / MultiMMC / LZ78Y) sizes its per-symbol tables by `alph_size`
+/// and indexes them by symbol value, so a dense alphabet is required for correct
+/// indexing; the t-Tuple / LRS suffix-array core is alphabet-agnostic but takes
+/// the same distinct count for its entropy bound. The §6.3 estimates depend only
+/// on the symbols' **equality structure** and the alphabet size — both preserved
+/// by any bijection — so a first-seen → next-index mapping reproduces the EA
+/// "Literal" values exactly (verified ≤1e-6 by the parity harness).
+///
+/// The dense index of the `k`-th distinct value is `k-1` (`0..256`); the largest
+/// possible index is `255` (256 distinct byte values), so it always fits `u8`.
+#[must_use]
+pub(crate) fn dense_alphabet(symbols: &[u8]) -> (Vec<u8>, usize) {
+    // Sentinel u16::MAX = "value not yet seen"; real dense indices are 0..=255.
+    let mut map = [u16::MAX; 256];
+    let mut next: u16 = 0;
+    let mut out: Vec<u8> = Vec::with_capacity(symbols.len());
+    for &s in symbols {
+        // s as usize is 0..=255: always in bounds of the 256-slot map, so
+        // get_mut never returns None (it satisfies the no-indexing lint).
+        let Some(slot) = map.get_mut(s as usize) else {
+            continue;
+        };
+        if *slot == u16::MAX {
+            *slot = next;
+            next = next.saturating_add(1);
+        }
+        // *slot <= 255 (the 256th distinct value gets index 255), so the cast is
+        // lossless; the alphabet size `next` (<= 256) is returned as usize.
+        #[allow(clippy::cast_possible_truncation)]
+        out.push(*slot as u8);
+    }
+    (out, next as usize)
+}
+
+/// SP 800-90B §6.3 literal-track entropy **`H_original`** — the minimum over the
+/// literal-symbol-track min-entropy estimates the EA tool computes on multi-bit
+/// data: MCV plus the six §6.3 estimators that have a genuine literal track
+/// (t-Tuple §6.3.5, LRS §6.3.6, MultiMCW §6.3.7, Lag §6.3.8, MultiMMC §6.3.9,
+/// LZ78Y §6.3.10).
+///
+/// This mirrors the EA tool's `H_original` accumulation in `non_iid_main.cpp`.
+/// Collision, Markov, and Compression are deliberately **absent**: the EA tool
+/// runs them on the literal track only when `alph_size == 2` (binary), where the
+/// literal and bitstring tracks coincide — it computes no distinct multi-bit
+/// literal value for them, so they contribute nothing to `H_original`.
+///
+/// Returns the per-symbol min-entropy in bits. This is the literal-track input
+/// to the EA tool's final assessed min-entropy
+/// `min(H_original, H_bitstring * word_size)`. Estimators that did not run return
+/// the EA `-1.0` sentinel and are excluded from the minimum (matching the EA
+/// tool's `if (ret_min_entropy >= 0)` guards); each valid per-symbol estimate is
+/// `<= word_size`, so the EA tool's initial `H_original = word_size` cap never
+/// binds. Deterministic; does not panic.
+#[must_use]
+pub fn h_original(symbols: &[u8]) -> f64 {
+    // t-Tuple and LRS come from a single SAalgs pass.
+    let sa = lrs::lrs_literal(symbols);
+    let candidates = [
+        mcv_literal(symbols).min_entropy,
+        sa.t_tuple_min_entropy,
+        sa.lrs_min_entropy,
+        multi_mcw::multi_mcw_literal(symbols).min_entropy(),
+        lag::lag_literal(symbols).min_entropy(),
+        multi_mmc::multimmc_literal(symbols).min_entropy(),
+        lz78y::lz78y_literal(symbols).min_entropy(),
+    ];
+    candidates
+        .iter()
+        .copied()
+        .filter(|&h| h >= 0.0)
+        .fold(f64::INFINITY, f64::min)
+}
+
 #[cfg(test)]
 #[allow(
     // Tests assert exact sentinel values, use unwrap/expect/panic for fatal
@@ -376,5 +455,46 @@ mod tests {
         let bs = r.bitstring.expect("4-bit declares a bitstring track");
         assert_eq!(bs.mode_count, 400); // 100 symbols * 4 bits, all ones
         assert!((bs.min_entropy).abs() < UNIT_EPS);
+    }
+
+    /// `H_original` (the §6.3 literal-track minimum) reproduces the EA v1.1.8
+    /// `H_original` line to within 1e-6 on every multi-bit reference dataset
+    /// (harvested 2026-06-16 via `ea_non_iid -i -a -v -v`). This is the assembled
+    /// literal-track headline input. Skips datasets absent on host.
+    #[test]
+    #[allow(clippy::print_stderr)]
+    fn h_original_parity_multibit() {
+        use crate::parity::{REFERENCE_TABLE, resolve_datasets_dir};
+        // (dataset, EA "H_original").
+        const EA_H_ORIGINAL: &[(&str, f64)] = &[
+            ("biased-random-bytes", 0.291_159_804_498_6),
+            ("normal", 5.529_117_785_448_8),
+            ("rand4_short", 3.567_472_672_399_5),
+            ("rand8_short", 6.636_441_287_083_9),
+            ("truerand_4bit", 3.687_753_694_232_6),
+            ("truerand_8bit", 7.865_118_002_899_5),
+        ];
+        const PARITY_EPS: f64 = 1.0e-6;
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(name, ea) in EA_H_ORIGINAL {
+            let Some(row) = REFERENCE_TABLE.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            let Ok(data) = std::fs::read(dir.join(row.file)) else {
+                eprintln!("{name}.bin absent — skipping H_original parity");
+                continue;
+            };
+            let got = h_original(&data);
+            assert!(
+                (got - ea).abs() <= PARITY_EPS,
+                "{name}: H_original {got} vs EA {ea} (delta {})",
+                (got - ea).abs()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — H_original parity skipped");
+        }
     }
 }

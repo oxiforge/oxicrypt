@@ -19,21 +19,24 @@
 //! boundary** — pure offline analysis tooling, `#![forbid(unsafe_code)]`, and it
 //! produces no security parameters.
 //!
-//! # Per-bit, not per-symbol — scope boundary
+//! # Two reported numbers: per-bit controlling + per-symbol assessed
 //!
-//! The routed [`IidGateResult::min_entropy`] is the **per-bit** (controlling /
-//! bitstring-track) min-entropy — the same value each estimator contributes to
-//! the parity table ([`crate::parity`]), and the value used for the IID/non-IID
-//! routing decision.
+//! The gate reports two min-entropy numbers, mirroring the EA tool's two outputs:
 //!
-//! The EA tool's final `Assessed min entropy` line additionally scales the
-//! bitstring value by `word_size` (bits per symbol) and, for multi-bit data, may
-//! take the literal estimate as controlling. That **per-symbol final-number
-//! scaling is deliberately out of scope here** — it is the tool-level
-//! final-number concern of a later parity step. This gate's job is the §5
-//! verdict, the branch selection, and the per-bit routed estimate. Callers that
-//! need the per-symbol final number apply the `word_size` scaling on top of this
-//! value.
+//! - [`IidGateResult::min_entropy`] — the **per-bit** (controlling /
+//!   bitstring-track) value, the same number each estimator contributes to the
+//!   parity table ([`crate::parity`]) and the value used for the IID/non-IID
+//!   routing decision.
+//! - [`IidGateResult::assessed`] — the **per-symbol** [`AssessedMinEntropy`], the EA
+//!   tool's final `Assessed min entropy` headline `min(H_original, H_bitstring ×
+//!   word_size)`. `H_original` is the literal-track assessment — MCV-literal on the
+//!   IID branch (EA `iid_main`), the §6.3 literal-suite minimum
+//!   ([`crate::h_original`]) on the non-IID branch (EA `non_iid_main`);
+//!   `H_bitstring` is the per-bit controlling value above; `word_size` is
+//!   `bits_per_symbol`. For 1-bit data the literal and bitstring tracks coincide,
+//!   so the assessed number equals the per-bit value (`word_size == 1`, no
+//!   `H_bitstring` scaling — matching EA's "no `H_bitstring` assessment for binary
+//!   data").
 //!
 //! # Controlling-track values (matching the parity table)
 //!
@@ -77,6 +80,28 @@ pub enum Branch {
     NonIid,
 }
 
+/// The EA tool's final per-**symbol** "Assessed min entropy" headline and its
+/// inputs: `per_symbol = min(h_original, h_bitstring × word_size)`.
+///
+/// Exposing the components (not just `per_symbol`) lets a consumer recompute and
+/// audit the headline without re-running the gate — this is the reported-number
+/// surface for the entropy assessment. `h_bitstring` always equals
+/// [`IidGateResult::min_entropy`] (the per-bit controlling value).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AssessedMinEntropy {
+    /// The EA "Assessed min entropy" headline, per symbol:
+    /// `min(h_original, h_bitstring × word_size)`.
+    pub per_symbol: f64,
+    /// `H_original` — the literal-track assessment (per symbol). MCV-literal on the
+    /// IID branch; the §6.3 literal-suite minimum ([`crate::h_original`]) on the
+    /// non-IID branch.
+    pub h_original: f64,
+    /// `H_bitstring` — the per-bit controlling value (== [`IidGateResult::min_entropy`]).
+    pub h_bitstring: f64,
+    /// `word_size` — bits per symbol; the per-bit→per-symbol scaling factor.
+    pub word_size: u8,
+}
+
 /// The SP 800-90B §5 IID gate result: the three §5 verdicts, the combined IID
 /// decision, the selected branch, and the routed per-bit min-entropy.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,6 +124,9 @@ pub struct IidGateResult {
     /// estimate on the IID branch, or the minimum over the §6.3 suite on the
     /// non-IID branch. See the module docs for the per-bit/per-symbol boundary.
     pub min_entropy: f64,
+    /// The EA tool's final per-symbol "Assessed min entropy" headline and its
+    /// inputs (see [`AssessedMinEntropy`]). `assessed.h_bitstring == min_entropy`.
+    pub assessed: AssessedMinEntropy,
 }
 
 /// The §6.1 MCV controlling per-bit min-entropy.
@@ -118,9 +146,10 @@ fn mcv_controlling(result: &McvResult) -> f64 {
 /// Runs the three §5 tests, combines them into the IID verdict, selects the
 /// branch, and routes the per-bit min-entropy: the §6.1 MCV estimate on the IID
 /// branch, or the minimum over the §6.3 non-IID suite on the non-IID branch
-/// (mirroring the EA tool's `iid_main` vs `non_iid_main`). The min-entropy is the
-/// per-bit controlling-track value (see the module docs); the per-symbol
-/// `word_size` scaling is out of scope.
+/// (mirroring the EA tool's `iid_main` vs `non_iid_main`). [`IidGateResult::min_entropy`]
+/// is the per-bit controlling-track value; [`IidGateResult::assessed`] additionally
+/// carries the EA per-symbol `Assessed min entropy` headline and its inputs (see
+/// the module docs).
 ///
 /// This function is **deterministic**: the same `(data, bits_per_symbol)` always
 /// yields a bit-identical [`IidGateResult`].
@@ -165,6 +194,29 @@ pub fn iid_gate(data: &[u8], bits_per_symbol: u8) -> IidGateResult {
         candidates.iter().copied().fold(f64::INFINITY, f64::min)
     };
 
+    // 3. The per-symbol assessed headline: min(H_original, H_bitstring × word_size).
+    //    H_bitstring is the per-bit controlling value just routed (`min_entropy`);
+    //    H_original is the literal-track assessment — MCV-literal on the IID branch
+    //    (EA `iid_main`), the §6.3 literal-suite minimum on the non-IID branch (EA
+    //    `non_iid_main`). For 1-bit data the literal and bitstring tracks coincide,
+    //    so `bitstring` is `None`, `word_size` is 1, and the literal value is the
+    //    assessed number unscaled.
+    let h_original = if is_iid {
+        mcv_result.literal.min_entropy
+    } else {
+        crate::h_original(data)
+    };
+    let assessed = AssessedMinEntropy {
+        per_symbol: assessed_per_symbol_min_entropy(
+            h_original,
+            mcv_result.bitstring.map(|_| min_entropy),
+            bits_per_symbol,
+        ),
+        h_original,
+        h_bitstring: min_entropy,
+        word_size: bits_per_symbol,
+    };
+
     IidGateResult {
         permutation_passed,
         chi_square_passed,
@@ -172,6 +224,7 @@ pub fn iid_gate(data: &[u8], bits_per_symbol: u8) -> IidGateResult {
         is_iid,
         branch,
         min_entropy,
+        assessed,
     }
 }
 
@@ -258,6 +311,56 @@ mod tests {
         assert!((assessed_per_symbol_min_entropy(3.9, Some(0.9), 4) - 3.6).abs() < 1e-12);
         // 1-bit data: the bitstring track coincides; the literal value is unscaled.
         assert!((assessed_per_symbol_min_entropy(0.961, None, 1) - 0.961).abs() < 1e-12);
+    }
+
+    /// The assembled per-symbol `assessed.per_symbol` reproduces the EA tool's
+    /// final "Assessed min entropy" line to within 1e-6 on every multi-bit
+    /// reference dataset — and crucially in the EA mode matching the gate's own
+    /// branch verdict: the IID-classified datasets match `ea_iid -i -a -v -v`, the
+    /// non-IID ones match `ea_non_iid -i -a -v -v` (v1.1.8, harvested 2026-06-17).
+    /// This gates the full assembly: branch-selected H_original (MCV-literal on
+    /// IID, §6.3 literal-suite min on non-IID), H_bitstring × word_size, and the
+    /// outer min. Skips datasets absent on host.
+    #[test]
+    fn assessed_assembly_matches_ea_on_multi_bit_datasets() {
+        use crate::parity::resolve_datasets_dir;
+        // (file, bits_per_symbol, EA "Assessed min entropy" in the gate's branch mode).
+        const EA_ASSESSED: &[(&str, u8, f64)] = &[
+            ("biased-random-bytes.bin", 8, 0.319_650_651_838_2), // IID
+            ("normal.bin", 8, 5.622_155_277_204_8),              // IID
+            ("rand4_short.bin", 4, 3.215_488_267_876_7),         // non-IID
+            ("rand8_short.bin", 8, 5.860_893_744_485_2),         // non-IID
+            ("truerand_4bit.bin", 4, 3.971_194_336_729_6),       // IID
+            ("truerand_8bit.bin", 8, 7.865_118_002_899_6),       // IID
+        ];
+        const PARITY_EPS: f64 = 1.0e-6;
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(file, bits, ea) in EA_ASSESSED {
+            let Ok(data) = std::fs::read(dir.join(file)) else {
+                eprintln!("{file} absent — skipping assessed-assembly parity");
+                continue;
+            };
+            let r = iid_gate(&data, bits);
+            // H_bitstring is always the routed per-bit controlling value.
+            assert!(
+                (r.assessed.h_bitstring - r.min_entropy).abs() < 1e-15,
+                "{file}: assessed.h_bitstring {} != min_entropy {}",
+                r.assessed.h_bitstring,
+                r.min_entropy
+            );
+            assert_eq!(r.assessed.word_size, bits, "{file}: word_size");
+            assert!(
+                (r.assessed.per_symbol - ea).abs() <= PARITY_EPS,
+                "{file}: assessed.per_symbol {} vs EA {ea} (delta {})",
+                r.assessed.per_symbol,
+                (r.assessed.per_symbol - ea).abs()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — assessed-assembly parity skipped");
+        }
     }
 
     /// Locate `tests/data/<name>` relative to the crate manifest.

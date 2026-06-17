@@ -26,7 +26,7 @@
 //! | `maxwell iid-permutation <FILE>` | SP 800-90B §5.1 permutation testing battery (19-statistic IID test) |
 //! | `maxwell chi-square <FILE>` | SP 800-90B §5.2 chi-square IID tests (independence + goodness-of-fit) |
 //! | `maxwell lrs-iid <FILE>` | SP 800-90B §5.3 LRS (longest-repeated-substring) IID test |
-//! | `maxwell iid-gate <FILE> <BITS_PER_SYMBOL>` | SP 800-90B §5 IID gate: §5 verdict + branch + routed per-bit min-entropy |
+//! | `maxwell iid-gate <FILE> <BITS_PER_SYMBOL>` | SP 800-90B §5 IID gate: §5 verdict + branch + per-bit routed + per-symbol assessed min-entropy |
 //!
 //! `parity` resolves its dataset directory from `--datasets`, else the
 //! `OXICRYPT_EA_DATA` environment variable, else
@@ -127,7 +127,7 @@ fn usage() {
          \x20 maxwell iid-permutation <FILE>              SP 800-90B §5.1 permutation battery (19-stat IID test)\n\
          \x20 maxwell chi-square <FILE>                   SP 800-90B §5.2 chi-square IID tests (indep + GOF)\n\
          \x20 maxwell lrs-iid <FILE>                      SP 800-90B §5.3 LRS (longest repeated substring) IID test\n\
-         \x20 maxwell iid-gate <FILE> <BITS_PER_SYMBOL>   SP 800-90B §5 IID gate (verdict + branch + routed per-bit H)\n\
+         \x20 maxwell iid-gate <FILE> <BITS_PER_SYMBOL>   SP 800-90B §5 IID gate (verdict + branch + per-bit + per-symbol assessed H)\n\
          \x20 maxwell restart <FILE> <BITS_PER_SYMBOL> <H_I> SP 800-90B §3.1.4 restart analysis (sanity + §5 + gate)\n\
          \n\
          parity dataset dir precedence: --datasets, then $OXICRYPT_EA_DATA,\n\
@@ -925,9 +925,9 @@ fn cmd_iid_gate(args: &[String]) -> ExitCode {
         eprintln!("usage: maxwell iid-gate <FILE> <BITS_PER_SYMBOL>");
         eprintln!(
             "  SP 800-90B §5 IID gate: runs the three §5 tests (permutation, chi-square, LRS),\n\
-             \x20 reports the IID verdict and selected branch, and routes the per-bit min-entropy\n\
-             \x20 (IID -> §6.1 MCV; non-IID -> minimum over the §6.3 suite). The reported value is\n\
-             \x20 per-BIT; the per-symbol word_size scaling is out of scope for this gate."
+             \x20 reports the IID verdict and selected branch, routes the per-bit min-entropy\n\
+             \x20 (IID -> §6.1 MCV; non-IID -> minimum over the §6.3 suite), and reports the\n\
+             \x20 per-symbol assessed min-entropy headline min(H_original, H_bitstring x word_size)."
         );
         return ExitCode::FAILURE;
     };
@@ -964,7 +964,22 @@ fn cmd_iid_gate(args: &[String]) -> ExitCode {
         Branch::NonIid => "non-IID (§6.3 min)",
     };
     println!("  branch: {branch_label}");
-    println!("  routed min-entropy (per bit): {:.17}", r.min_entropy);
+    println!("  routed min-entropy (per bit):      {:.17}", r.min_entropy);
+    println!(
+        "  assessed min-entropy (per symbol): {:.17}",
+        r.assessed.per_symbol
+    );
+    if r.assessed.word_size == 1 {
+        println!(
+            "    = H_original {:.17}  (1-bit data: literal == bitstring, no H_bitstring scaling)",
+            r.assessed.h_original
+        );
+    } else {
+        println!(
+            "    = min(H_original {:.17}, H_bitstring {:.17} x {})",
+            r.assessed.h_original, r.assessed.h_bitstring, r.assessed.word_size
+        );
+    }
 
     // The gate is a reporting tool; exit success once it has computed the
     // verdict. (The verdict itself is in the output, not the exit code.)

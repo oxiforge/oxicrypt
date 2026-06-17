@@ -293,6 +293,21 @@ pub fn multi_mcw(symbols: &[u8], bits_per_symbol: u8) -> MultiMcwEstimate {
     multi_mcw_core(&bits, 2)
 }
 
+/// Compute the §6.3.7 MultiMCW prediction estimate for the **literal track**:
+/// the raw symbols over their own (translated) alphabet, mirroring the EA tool's
+/// `multi_mcw_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
+///
+/// The symbols are translated to a dense `0..alph_size` alphabet (see
+/// [`crate::dense_alphabet`]) so the per-symbol tables index correctly, then run
+/// through the same alphabet-generic [`multi_mcw_core`] as the bitstring track.
+/// This is the literal-track input to `H_original`. The function is
+/// **deterministic** and does not panic.
+#[must_use]
+pub fn multi_mcw_literal(symbols: &[u8]) -> MultiMcwEstimate {
+    let (dense, alph_size) = crate::dense_alphabet(symbols);
+    multi_mcw_core(&dense, alph_size)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::float_cmp,
@@ -358,6 +373,44 @@ mod tests {
             "min_entropy={}",
             est.min_entropy()
         );
+    }
+
+    /// Literal-track parity: `multi_mcw_literal` matches EA v1.1.8 "Literal
+    /// MultiMCW Prediction Estimate: min entropy" to within 1e-6 on every
+    /// multi-bit reference dataset (harvested 2026-06-16 via
+    /// `ea_non_iid -i -a -v -v <file> <width>`). Skips datasets absent on host.
+    #[test]
+    fn literal_parity_multibit() {
+        // (dataset name, EA "Literal MultiMCW" min entropy).
+        const EA_LITERAL_MULTIMCW: &[(&str, f64)] = &[
+            ("biased-random-bytes", 0.319_646_253_765_9),
+            ("normal", 5.668_174_320_274_3),
+            ("rand4_short", 3.866_954_682_482_6),
+            ("rand8_short", 7.375_192_249_729_9),
+            ("truerand_4bit", 3.992_285_280_721_5),
+            ("truerand_8bit", 7.988_579_819_367_0),
+        ];
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(name, ea) in EA_LITERAL_MULTIMCW {
+            let Some(row) = REFERENCE_TABLE.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            let Ok(data) = std::fs::read(dir.join(row.file)) else {
+                eprintln!("{name}.bin absent — skipping literal parity");
+                continue;
+            };
+            let got = multi_mcw_literal(&data).min_entropy();
+            assert!(
+                (got - ea).abs() <= PARITY_EPS,
+                "{name}: literal MultiMCW {got} vs EA {ea} (delta {})",
+                (got - ea).abs()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — literal parity skipped");
+        }
     }
 
     /// Determinism: two runs over the same buffer are bit-identical.

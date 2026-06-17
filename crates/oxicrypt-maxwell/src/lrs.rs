@@ -947,6 +947,21 @@ pub fn lrs(symbols: &[u8], bits_per_symbol: u8) -> LrsEstimate {
     saalgs(&bits)
 }
 
+/// Compute the §6.3.5 t-Tuple and §6.3.6 LRS estimates for the **literal track**:
+/// run [`saalgs`] over the raw symbols directly, mirroring the EA tool's
+/// `SAalgs(data.symbols, data.len, data.alph_size, …, "Literal")`.
+///
+/// The suffix-array core is alphabet-agnostic and both estimates depend only on
+/// the symbols' substring-repetition structure (bijection-invariant), so no
+/// dense translation is needed — `saalgs` runs on the raw byte alphabet. The
+/// returned [`LrsEstimate`] carries both `t_tuple_min_entropy` and `min_entropy`
+/// (LRS), the literal-track inputs to `H_original`. Deterministic; does not
+/// panic.
+#[must_use]
+pub fn lrs_literal(symbols: &[u8]) -> LrsEstimate {
+    saalgs(symbols)
+}
+
 #[cfg(test)]
 #[allow(
     // Tests assert exact reference intermediates, use unwrap/panic for fatal
@@ -1110,6 +1125,53 @@ mod tests {
                 assert_eq!(est.t_tuple_min_entropy, -1.0);
                 assert_eq!(est.lrs_min_entropy, -1.0);
             }
+        }
+    }
+
+    /// Literal-track parity: `lrs_literal` reproduces EA v1.1.8's "Literal
+    /// t-Tuple" and "Literal LRS" min-entropy lines to within 1e-6 on every
+    /// multi-bit reference dataset (harvested 2026-06-16 via
+    /// `ea_non_iid -i -a -v -v`). Skips datasets absent on host.
+    #[test]
+    fn literal_parity_multibit() {
+        // (dataset, EA "Literal t-Tuple", EA "Literal LRS").
+        const EA_LITERAL: &[(&str, f64, f64)] = &[
+            (
+                "biased-random-bytes",
+                0.291_159_804_498_6,
+                0.519_281_371_376_5,
+            ),
+            ("normal", 5.529_117_785_448_8, 6.105_039_079_589_7),
+            ("rand4_short", 3.567_472_672_399_5, 3.833_525_522_232_9),
+            ("rand8_short", 7.010_454_037_736_0, 7.289_198_671_720_6),
+            ("truerand_4bit", 3.687_753_694_232_6, 3.934_965_665_764_1),
+            ("truerand_8bit", 7.865_118_002_899_5, 7.939_199_033_369_9),
+        ];
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(name, ea_tt, ea_lrs) in EA_LITERAL {
+            let Some(row) = REFERENCE_TABLE.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            let Ok(data) = std::fs::read(dir.join(row.file)) else {
+                eprintln!("{name}.bin absent — skipping literal parity");
+                continue;
+            };
+            let est = lrs_literal(&data);
+            assert!(
+                (est.t_tuple_min_entropy - ea_tt).abs() <= PARITY_EPS,
+                "{name}: literal t-Tuple {} vs EA {ea_tt}",
+                est.t_tuple_min_entropy
+            );
+            assert!(
+                (est.lrs_min_entropy - ea_lrs).abs() <= PARITY_EPS,
+                "{name}: literal LRS {} vs EA {ea_lrs}",
+                est.lrs_min_entropy
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — literal parity skipped");
         }
     }
 }

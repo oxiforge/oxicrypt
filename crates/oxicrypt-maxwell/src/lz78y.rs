@@ -414,6 +414,164 @@ fn lz78y_core(data: &[u8]) -> Lz78yEstimate {
     }
 }
 
+/// A general-alphabet postfix dictionary, transcribing the EA tool's
+/// `PostfixDictionary` (`utils.h`). For one prefix context it counts how often
+/// each next symbol followed, caches the current argmax (`cur_best` count /
+/// `cur_prediction` symbol), and reproduces the EA tie-break: on equal count the
+/// **larger** symbol value wins.
+struct PostfixDictionary {
+    /// Next-symbol -> count map (EA's `map<uint8_t, long> postfixes`). `BTreeMap`
+    /// for deterministic iteration, though the cached best is what `predict` uses.
+    postfixes: std::collections::BTreeMap<u8, i64>,
+    /// Cached best (largest) count seen (EA's `curBest`); `0` means "no postfix
+    /// recorded yet" (the EA tool asserts `curBest > 0` before `predict`).
+    cur_best: i64,
+    /// Cached argmax next symbol (EA's `curPrediction`).
+    cur_prediction: u8,
+}
+
+impl PostfixDictionary {
+    /// Fresh dictionary with no postfixes (EA ctor: `curBest = 0; curPrediction = 0`).
+    fn new() -> Self {
+        Self {
+            postfixes: std::collections::BTreeMap::new(),
+            cur_best: 0,
+            cur_prediction: 0,
+        }
+    }
+
+    /// Return the argmax next symbol and its count (EA's `predict(&count)`). Only
+    /// called after at least one `increment_postfix`, so `cur_best > 0`.
+    fn predict(&self) -> (u8, i64) {
+        (self.cur_prediction, self.cur_best)
+    }
+
+    /// Increment the count for next symbol `in_sym`, creating the entry if absent
+    /// and `make_new`. Returns `true` iff a new entry was made. Updates the cached
+    /// best/prediction on every increment, with the EA tie-break (`>` on count, or
+    /// equal count and strictly larger symbol). Transcribes
+    /// `PostfixDictionary::incrementPostfix`.
+    fn increment_postfix(&mut self, in_sym: u8, make_new: bool) -> bool {
+        let cur_count;
+        let mut new_entry = false;
+        match self.postfixes.get_mut(&in_sym) {
+            Some(slot) => {
+                *slot += 1;
+                cur_count = *slot;
+            }
+            None => {
+                if make_new {
+                    new_entry = true;
+                    self.postfixes.insert(in_sym, 1);
+                    cur_count = 1;
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        if cur_count > self.cur_best || (cur_count == self.cur_best && in_sym > self.cur_prediction)
+        {
+            self.cur_prediction = in_sym;
+            self.cur_best = cur_count;
+        }
+
+        new_entry
+    }
+}
+
+/// Run the §6.3.10 LZ78Y predictor over a general (`alph_size > 2`) symbol slice
+/// `data`, transcribing `LZ78Y_test`'s general path (`alph_size != 2`).
+///
+/// `data` holds dense symbols (`0 .. alph_size`). One [`PostfixDictionary`] per
+/// `(prefix-length, context)` pair, keyed by the length-`m` context
+/// `(S[i-m] … S[i-1])` (a `Vec<u8>` of length `m`). Returns the shared prediction
+/// estimate, or [`Lz78yEstimate::unavailable`] when there are fewer than
+/// [`MIN_SAMPLES`] samples. Deterministic; does not panic.
+fn lz78y_core_general(data: &[u8], alph_size: usize) -> Lz78yEstimate {
+    let len = data.len();
+    if len < MIN_SAMPLES {
+        return Lz78yEstimate::unavailable();
+    }
+
+    // N = len - B_len - 1 predictions.
+    let n = (len - B_LEN - 1) as u64;
+
+    // D[j-1] maps a length-j context (Vec<u8>) to its PostfixDictionary
+    // (EA: array<map<array<uint8_t,B_len>, PostfixDictionary>, B_len> D).
+    let mut dict: Vec<std::collections::BTreeMap<Vec<u8>, PostfixDictionary>> = (0..B_LEN)
+        .map(|_| std::collections::BTreeMap::new())
+        .collect();
+    // Single shared entry counter across all prefix lengths (EA: dict_size).
+    let mut dict_size: i64 = 0;
+
+    let mut correct_count: u64 = 0;
+    let mut cur_run: u64 = 0;
+    let mut max_run: u64 = 0;
+
+    // --- Initialize dictionary (EA init loop: j = 1..=B_len). ---
+    // D[j-1][ data[B_len-j .. B_len] ].incrementPostfix(data[B_len], true).
+    {
+        let next = data[B_LEN]; // S[B_len]; len >= B_LEN + 3 guarantees this.
+        for j in 1..=B_LEN {
+            let key: Vec<u8> = data[B_LEN - j..B_LEN].to_vec();
+            dict[j - 1]
+                .entry(key)
+                .or_insert_with(PostfixDictionary::new)
+                .increment_postfix(next, true);
+            dict_size += 1;
+        }
+    }
+
+    // --- Perform predictions. i = B_len+1 .. len. ---
+    for i in (B_LEN + 1)..len {
+        let cur = data[i];
+        let mut have_prediction = false;
+        let mut prediction: u8 = 0;
+        let mut max_count: i64 = 0;
+
+        // j is the prefix length, iterated from B_len down to 1.
+        for j in (1..=B_LEN).rev() {
+            // Context = the j-tuple (S[i-j] ... S[i-1]).
+            let key: Vec<u8> = data[i - j..i].to_vec();
+
+            // Found if this context already has a PostfixDictionary (EA: D[j-1].find(x)).
+            if let Some(entry) = dict[j - 1].get_mut(&key) {
+                // x has occurred: find max (x,y) pair, then increment (x, cur).
+                let (y, count) = entry.predict();
+                if count > max_count {
+                    max_count = count;
+                    prediction = y;
+                    have_prediction = true;
+                }
+                entry.increment_postfix(cur, true);
+            } else if dict_size < MAX_DICTIONARY_SIZE {
+                // x not found, so (x, cur) can't have occurred; create if cap allows.
+                dict[j - 1]
+                    .entry(key)
+                    .or_insert_with(PostfixDictionary::new)
+                    .increment_postfix(cur, true);
+                dict_size += 1;
+            }
+        }
+
+        // Score ONCE per step.
+        if have_prediction && prediction == cur {
+            correct_count += 1;
+            cur_run += 1;
+            if cur_run > max_run {
+                max_run = cur_run;
+            }
+        } else {
+            cur_run = 0;
+        }
+    }
+
+    Lz78yEstimate {
+        estimate: prediction_estimate(correct_count, n, max_run, alph_size as u64),
+    }
+}
+
 /// Compute the SP 800-90B §6.3.10 LZ78Y prediction min-entropy estimate for the
 /// bitstring track of `symbols`.
 ///
@@ -438,6 +596,34 @@ pub fn lz78y(symbols: &[u8], bits_per_symbol: u8) -> Lz78yEstimate {
     let bits = to_bitstring(symbols, bps);
     // Bitstring track: binary alphabet.
     lz78y_core(&bits)
+}
+
+/// Compute the §6.3.10 LZ78Y prediction estimate for the **literal track**: the
+/// raw symbols over their own (translated) alphabet, mirroring the EA tool's
+/// `LZ78Y_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
+///
+/// The symbols are translated to a dense `0 .. alph_size` alphabet (see
+/// [`crate::dense_alphabet`]). A binary alphabet takes the dedicated binary fast
+/// path ([`lz78y_core`], same computation the EA tool dispatches for
+/// `alph_size == 2`); a larger alphabet takes the general path
+/// ([`lz78y_core_general`]). Literal-track input to `H_original`. Deterministic;
+/// does not panic.
+#[must_use]
+pub fn lz78y_literal(symbols: &[u8]) -> Lz78yEstimate {
+    let (dense, alph) = crate::dense_alphabet(symbols);
+    if alph <= 2 {
+        lz78y_core(&dense)
+    } else {
+        // The general path keys dictionaries by context and counts by next-symbol
+        // — it never indexes a table by symbol value, so it does not require a
+        // dense alphabet. Critically, the EA `PostfixDictionary` tie-break is on
+        // the **raw symbol value** (`in > curPrediction`), which a first-seen
+        // dense remap would NOT preserve (unlike MultiMCW/Lag/MultiMMC, whose
+        // tie-breaks are bijection-invariant). So the core runs over the raw
+        // symbols to reproduce the EA tie-break exactly; `dense_alphabet` is used
+        // only for the `alph_size` the final entropy bound needs.
+        lz78y_core_general(symbols, alph)
+    }
 }
 
 #[cfg(test)]
@@ -503,6 +689,42 @@ mod tests {
             "min_entropy={}",
             est.min_entropy()
         );
+    }
+
+    /// Literal-track parity: `lz78y_literal` matches EA v1.1.8 "Literal LZ78Y
+    /// Prediction Estimate: min entropy" to within 1e-6 on every multi-bit
+    /// reference dataset. Skips datasets absent on host.
+    #[test]
+    fn literal_parity_multibit() {
+        const EA_LITERAL_LZ78Y: &[(&str, f64)] = &[
+            ("biased-random-bytes", 0.321_372_180_809_8),
+            ("normal", 5.679_163_897_126_1),
+            ("rand4_short", 3.882_495_664_055_9),
+            ("rand8_short", 7.353_355_393_835_4),
+            ("truerand_4bit", 3.984_277_226_741_6),
+            ("truerand_8bit", 7.926_787_180_805_8),
+        ];
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(name, ea) in EA_LITERAL_LZ78Y {
+            let Some(row) = REFERENCE_TABLE.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            let Ok(data) = std::fs::read(dir.join(row.file)) else {
+                eprintln!("{name}.bin absent — skipping literal parity");
+                continue;
+            };
+            let got = lz78y_literal(&data).min_entropy();
+            assert!(
+                (got - ea).abs() <= PARITY_EPS,
+                "{name}: literal LZ78Y {got} vs EA {ea} (delta {})",
+                (got - ea).abs()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — literal parity skipped");
+        }
     }
 
     /// Determinism: two runs over the same buffer are bit-identical.

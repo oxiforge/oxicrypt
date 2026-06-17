@@ -249,6 +249,20 @@ pub fn lag(symbols: &[u8], bits_per_symbol: u8) -> LagEstimate {
     lag_core(&bits, 2)
 }
 
+/// Compute the §6.3.8 Lag prediction estimate for the **literal track**: the raw
+/// symbols over their own (translated) alphabet, mirroring the EA tool's
+/// `lag_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
+///
+/// The symbols are translated to a dense `0..alph_size` alphabet (see
+/// [`crate::dense_alphabet`]) and run through the same alphabet-generic
+/// [`lag_core`] as the bitstring track. Literal-track input to `H_original`.
+/// Deterministic; does not panic.
+#[must_use]
+pub fn lag_literal(symbols: &[u8]) -> LagEstimate {
+    let (dense, alph_size) = crate::dense_alphabet(symbols);
+    lag_core(&dense, alph_size as u64)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::float_cmp,
@@ -313,6 +327,43 @@ mod tests {
             "min_entropy={}",
             est.min_entropy()
         );
+    }
+
+    /// Literal-track parity: `lag_literal` matches EA v1.1.8 "Literal Lag
+    /// Prediction Estimate: min entropy" to within 1e-6 on every multi-bit
+    /// reference dataset (harvested 2026-06-16 via `ea_non_iid -i -a -v -v`).
+    /// Skips datasets absent on host.
+    #[test]
+    fn literal_parity_multibit() {
+        const EA_LITERAL_LAG: &[(&str, f64)] = &[
+            ("biased-random-bytes", 0.466_258_265_027_8),
+            ("normal", 6.106_223_223_599_8),
+            ("rand4_short", 3.783_650_612_553_7),
+            ("rand8_short", 6.636_441_287_083_9),
+            ("truerand_4bit", 3.976_270_969_447_0),
+            ("truerand_8bit", 7.939_764_556_109_4),
+        ];
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(name, ea) in EA_LITERAL_LAG {
+            let Some(row) = REFERENCE_TABLE.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            let Ok(data) = std::fs::read(dir.join(row.file)) else {
+                eprintln!("{name}.bin absent — skipping literal parity");
+                continue;
+            };
+            let got = lag_literal(&data).min_entropy();
+            assert!(
+                (got - ea).abs() <= PARITY_EPS,
+                "{name}: literal Lag {got} vs EA {ea} (delta {})",
+                (got - ea).abs()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — literal parity skipped");
+        }
     }
 
     /// Determinism: two runs over the same buffer are bit-identical.

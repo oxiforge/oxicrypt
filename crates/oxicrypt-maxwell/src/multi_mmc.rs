@@ -383,6 +383,249 @@ fn multi_mmc_core(data: &[u8]) -> MultiMmcEstimate {
     }
 }
 
+/// One sub-predictor's general-alphabet postfix dictionary for a single context,
+/// reproducing the EA tool's `PostfixDictionary` (`utils.h`).
+///
+/// Maps each observed next-symbol to its count and caches the current argmax
+/// (`best_count`) and the predicted symbol (`prediction`). The tie rule matches
+/// the EA tool exactly: on `(count == best_count)`, the **larger symbol value**
+/// wins (`in > curPrediction`). A `BTreeMap<u8, i64>` mirrors `map<uint8_t, long>`
+/// (the count update / membership semantics are independent of iteration order,
+/// but a `BTreeMap` keeps behavior deterministic and matches the C++ container's
+/// element type).
+struct PostfixDict {
+    /// Per-next-symbol counts (`map<uint8_t, long> postfixes`).
+    postfixes: std::collections::BTreeMap<u8, i64>,
+    /// Cached argmax count (`curBest`); `0` until the first increment.
+    best_count: i64,
+    /// Cached predicted next-symbol (`curPrediction`); `0` until the first
+    /// increment (matching the EA tool's `curPrediction = 0` constructor).
+    prediction: u8,
+}
+
+impl PostfixDict {
+    /// A fresh dictionary, matching `PostfixDictionary() { curBest = 0;
+    /// curPrediction = 0; }`.
+    fn new() -> Self {
+        Self {
+            postfixes: std::collections::BTreeMap::new(),
+            best_count: 0,
+            prediction: 0,
+        }
+    }
+
+    /// The argmax-count next-symbol, matching `predict(&count)`. The EA tool
+    /// asserts `curBest > 0` here; this is only ever called after a `found_x`
+    /// lookup that implies at least one increment, so `best_count > 0` holds.
+    fn predict(&self) -> u8 {
+        self.prediction
+    }
+
+    /// Increment the count for next-symbol `in_sym`, creating the entry when it is
+    /// absent only if `make_new`. Returns `true` iff a new entry was created.
+    /// Updates the cached argmax on every increment, with the EA tool's tie rule
+    /// (`(curCount == curBest) && (in > curPrediction)` → the larger symbol wins).
+    /// Mirrors `incrementPostfix(in, makeNew)`.
+    fn increment_postfix(&mut self, in_sym: u8, make_new: bool) -> bool {
+        let cur_count;
+        let mut new_entry = false;
+        if let Some(slot) = self.postfixes.get_mut(&in_sym) {
+            // Entry present: always increment.
+            *slot += 1;
+            cur_count = *slot;
+        } else if make_new {
+            // Entry absent but creation allowed.
+            new_entry = true;
+            self.postfixes.insert(in_sym, 1);
+            cur_count = 1;
+        } else {
+            // Entry absent and creation disallowed: no change.
+            return false;
+        }
+
+        if (cur_count > self.best_count)
+            || ((cur_count == self.best_count) && (in_sym > self.prediction))
+        {
+            self.prediction = in_sym;
+            self.best_count = cur_count;
+        }
+
+        new_entry
+    }
+}
+
+/// Run the §6.3.9 MultiMMC predictor over a general-alphabet symbol slice `data`,
+/// transcribing the `alph_size != 2` general path of `multi_mmc_test`.
+///
+/// `data` holds dense symbol values in `0..alph_size` (one per element).
+/// Sub-predictor `d` (prefix length `d + 1`) keys a `BTreeMap` on the `d + 1`
+/// context symbols (`data[i-d-1..=i-1]` as a `Vec<u8>`) to a [`PostfixDict`] over
+/// the next symbol. Returns the shared prediction estimate, or
+/// [`MultiMmcEstimate::unavailable`] when there are fewer than [`MIN_SAMPLES`]
+/// samples. The final estimate is `prediction_estimate(C, N = len − 2,
+/// max_run_len, alph_size)`, exactly like the binary core.
+///
+/// The function is deterministic and does not panic.
+fn multi_mmc_core_general(data: &[u8], alph_size: usize) -> MultiMmcEstimate {
+    use std::collections::BTreeMap;
+
+    let len = data.len();
+    if len < MIN_SAMPLES {
+        return MultiMmcEstimate::unavailable();
+    }
+
+    // N = len - 2.
+    let n = (len - 2) as u64;
+
+    // M[d] maps a length-(d+1) context (Vec<u8>) to its PostfixDict.
+    let mut m: Vec<BTreeMap<Vec<u8>, PostfixDict>> = (0..D_MMC).map(|_| BTreeMap::new()).collect();
+    let mut entries: [i64; D_MMC] = [0; D_MMC];
+    let mut scoreboard: [i64; D_MMC] = [0; D_MMC];
+    let mut winner: usize = 0;
+
+    let mut correct_count: u64 = 0;
+    let mut run_len: u64 = 0;
+    let mut max_run_len: u64 = 0;
+
+    // --- Initialize MMC counts (step 4.a/4.b for the () case). ---
+    // For predictor d (when d < N), context = data[0..=d] and seeded next =
+    // data[d+1]. The EA tool guards with `if(d < N)` (N = len-2), which is exactly
+    // when data[d+1] is in range (d+1 <= len-2 < len).
+    for d in 0..D_MMC {
+        if (d as u64) < n {
+            let key: Vec<u8> = data[0..=d].to_vec();
+            m[d].entry(key)
+                .or_insert_with(PostfixDict::new)
+                .increment_postfix(data[d + 1], true);
+            entries[d] = 1;
+        }
+    }
+
+    // --- Perform predictions. i is the index of the new symbol to predict. ---
+    for i in 2..len {
+        let mut found_x = false;
+        let cur_winner = winner;
+        let cur = data[i];
+
+        // d in 0..D_MMC while (i - 2 >= d), i.e. d <= i - 2.
+        let d_max = D_MMC.min(i - 1);
+        for d in 0..d_max {
+            // The length-(d+1) context (data[i-d-1] ... data[i-1]).
+            // Only resolve / predict on the first round (d==0) or when the shorter
+            // context was found; otherwise this and all deeper predictors skip.
+            let mut prediction: u8 = 0;
+            if d == 0 || found_x {
+                let key: Vec<u8> = data[i - d - 1..i].to_vec();
+                if let Some(pd) = m[d].get(&key) {
+                    found_x = true;
+                    prediction = pd.predict();
+                } else {
+                    found_x = false;
+                }
+            }
+
+            if found_x {
+                // The context occurred. Check the prediction; update scoreboard /
+                // winner and (when d == cur_winner) the run counters.
+                if prediction == cur {
+                    scoreboard[d] += 1;
+                    if scoreboard[d] >= scoreboard[winner] {
+                        winner = d;
+                    }
+                    if d == cur_winner {
+                        correct_count += 1;
+                        run_len += 1;
+                        if run_len > max_run_len {
+                            max_run_len = run_len;
+                        }
+                    }
+                } else if d == cur_winner {
+                    run_len = 0;
+                }
+
+                // Increment (context, cur); create only if the cap allows.
+                let key: Vec<u8> = data[i - d - 1..i].to_vec();
+                if let Some(pd) = m[d].get_mut(&key)
+                    && pd.increment_postfix(cur, entries[d] < MAX_ENTRIES)
+                {
+                    entries[d] += 1;
+                }
+            } else if entries[d] < MAX_ENTRIES {
+                // The context prefix was not found; create the (context, cur)
+                // entry (seeding the context) if the cap allows.
+                let key: Vec<u8> = data[i - d - 1..i].to_vec();
+                m[d].entry(key)
+                    .or_insert_with(PostfixDict::new)
+                    .increment_postfix(cur, true);
+                entries[d] += 1;
+            }
+        }
+    }
+
+    MultiMmcEstimate {
+        estimate: prediction_estimate(correct_count, n, max_run_len, alph_size as u64),
+    }
+}
+
+/// Translate `symbols` to a dense `0..alph_size` alphabet in **ascending raw-value
+/// order**, matching the EA tool's `symbol_map_down_table` (`utils.h`): the EA tool
+/// assigns dense indices by iterating raw values `0..256` and numbering the present
+/// ones in order, so the smallest present byte becomes `0`, the next `1`, and so on.
+///
+/// MultiMMC (unlike the other literal-track estimators) is **not** invariant under
+/// an arbitrary alphabet bijection: its prediction tie rule breaks ties toward the
+/// **larger symbol value** (`in > curPrediction` in [`PostfixDict::increment_postfix`]
+/// and in the EA tool's `PostfixDictionary`), so the dense labels must preserve the
+/// raw values' ordering, not merely their equality structure. `crate::dense_alphabet`
+/// numbers by first-seen order, which changes tie outcomes and shifts the EA `C`
+/// count (empirically by a few predictions per million on `normal`), so MultiMMC's
+/// literal track needs this value-sorted mapping instead. Returns the dense symbols
+/// and the alphabet size (number of distinct values, `1..=256`).
+fn value_sorted_alphabet(symbols: &[u8]) -> (Vec<u8>, usize) {
+    let mut present = [false; 256];
+    for &s in symbols {
+        if let Some(p) = present.get_mut(s as usize) {
+            *p = true;
+        }
+    }
+    // map[v] = dense index of raw value v (only meaningful where present[v]).
+    let mut map = [0u8; 256];
+    let mut next: u16 = 0;
+    for (v, &p) in present.iter().enumerate() {
+        if p {
+            // next < 256 here (at most 256 distinct values), so the cast is lossless.
+            if let Some(slot) = map.get_mut(v) {
+                *slot = next as u8;
+            }
+            next += 1;
+        }
+    }
+    let dense: Vec<u8> = symbols.iter().map(|&s| map[s as usize]).collect();
+    (dense, next as usize)
+}
+
+/// Compute the §6.3.9 MultiMMC prediction estimate for the **literal track**: the
+/// raw symbols over their own (translated) alphabet, mirroring the EA tool's
+/// `multi_mmc_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
+///
+/// The symbols are translated to a dense `0..alph_size` alphabet via
+/// [`value_sorted_alphabet`] — MultiMMC's value-sensitive tie rule requires the EA
+/// tool's ascending-value mapping rather than the first-seen
+/// [`crate::dense_alphabet`]. A binary alphabet (`alph_size <= 2`) routes through
+/// the binary fast path [`multi_mmc_core`] (the EA tool's `alph_size == 2`
+/// branch); larger alphabets use [`multi_mmc_core_general`]. This is the
+/// literal-track input to `H_original`. The function is **deterministic** and does
+/// not panic.
+#[must_use]
+pub fn multimmc_literal(symbols: &[u8]) -> MultiMmcEstimate {
+    let (dense, alph) = value_sorted_alphabet(symbols);
+    if alph <= 2 {
+        multi_mmc_core(&dense)
+    } else {
+        multi_mmc_core_general(&dense, alph)
+    }
+}
+
 /// Compute the SP 800-90B §6.3.9 MultiMMC prediction min-entropy estimate for the
 /// bitstring track of `symbols`.
 ///
@@ -472,6 +715,43 @@ mod tests {
             "min_entropy={}",
             est.min_entropy()
         );
+    }
+
+    /// Literal-track parity: `multimmc_literal` matches EA v1.1.8 "Literal
+    /// MultiMMC Prediction Estimate: min entropy" to within 1e-6 on every
+    /// multi-bit reference dataset. Skips datasets absent on host.
+    #[test]
+    fn literal_parity_multibit() {
+        // (dataset name, EA "Literal MultiMMC" min entropy).
+        const EA_LITERAL_MULTIMMC: &[(&str, f64)] = &[
+            ("biased-random-bytes", 0.320_276_876_685_1),
+            ("normal", 5.675_758_441_025_9),
+            ("rand4_short", 3.884_655_279_493_4),
+            ("rand8_short", 7.327_627_679_188_1),
+            ("truerand_4bit", 3.985_262_644_080_8),
+            ("truerand_8bit", 7.926_808_819_751_7),
+        ];
+        let dir = resolve_datasets_dir(None);
+        let mut checked = 0usize;
+        for &(name, ea) in EA_LITERAL_MULTIMMC {
+            let Some(row) = REFERENCE_TABLE.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            let Ok(data) = std::fs::read(dir.join(row.file)) else {
+                eprintln!("{name}.bin absent — skipping literal parity");
+                continue;
+            };
+            let got = multimmc_literal(&data).min_entropy();
+            assert!(
+                (got - ea).abs() <= PARITY_EPS,
+                "{name}: literal MultiMMC {got} vs EA {ea} (delta {})",
+                (got - ea).abs()
+            );
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!("no multi-bit datasets present — literal parity skipped");
+        }
     }
 
     /// Determinism: two runs over the same buffer are bit-identical.
