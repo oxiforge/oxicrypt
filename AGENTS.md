@@ -69,6 +69,29 @@ picking a home or copying the fact into several places.
 | **Compliance target** (FIPS 140-3 IG revision) | **`ISA.md`** + `docs/security-policy/` | never restated as an inline constant |
 | **Release history** — what shipped, when, under which tag | **git tags + `CHANGELOG.md`** | README/lama.yaml carry a pointer, never a milestone table |
 | **Release version** | **git tags** | `lama.yaml` / `README.md` stamped at release from the tag |
+| **Pending work** — concrete, scoped deliverables | **GitHub Issues** (`tier:` labels) | closed via `Closes #N`; `ROADMAP.md` holds not-yet-deliverable work |
+| **Forward-looking, not-yet-a-deliverable work** | **`ROADMAP.md`** (Ideas / Designs / Features) | becomes GitHub issue(s) when scoped, then removed |
+| **Design-of-record** — design-first epics | **`docs/design/*.md`** | `ROADMAP.md` Designs carries a one-line pointer |
+
+## Issue tracking, roadmap & design docs
+
+Three surfaces, one direction of flow — speculative → designed → actionable:
+
+- **GitHub Issues** hold every *concrete, scoped deliverable* (bugs, enhancements, docs). Type label
+  (`bug` / `enhancement` / `documentation`) + tier label (`tier:punchlist` hot → `tier:candidate` warm
+  → `tier:backlog` cold; **unlabeled tier = needs triage**). A PR closes its issue the ordinary way —
+  `Closes #N` / `Fixes #N` in the PR or commit body, auto-closing on merge to `main`.
+- **`ROADMAP.md`** (root) holds *forward-looking work that is not yet a deliverable*: `Ideas`
+  (speculative), `Designs` (design-first epics — one-line pointers to `docs/design/`), `Features`
+  (wanted-but-deferred). Forward-only, no status/history. When an item is decomposed into actionable
+  work it **becomes GitHub issue(s) and is removed** from `ROADMAP.md`.
+- **`docs/design/*.md`** hold the *design-of-record* for design-first epics (RFC-lite: problem →
+  constraints / ISC invariants → approach → open questions). An accepted design spawns issues; the doc
+  **persists** as rationale. (None yet — created when the first design-first epic appears.)
+
+So: an idea enters `ROADMAP.md`; if it needs design, it gets a `docs/design/` doc; once actionable, it
+graduates into GitHub issues (the roadmap entry is removed, the design doc stays). Nothing here records
+*status* or *history* — that is issues + git tags + `CHANGELOG.md`.
 
 ## Definition of done
 
@@ -122,10 +145,13 @@ crate — directly or by reference — do all that apply:
    item. The pre-commit hook enforces `llm-api.yaml` on any `pub fn|struct|enum|const|type|trait`
    change under `crates/*/src/`. Conform both to the LAMA spec; the root file stays a concise
    capabilities + manifest pointer — never a milestone/coverage/status board. **No human names in LAMA.**
-5. **Release history (`changelog-gem`).** On any commit that ships a release (the version bump + signed
-   `vX.Y.Z` tag), add a new dated, Keep-a-Changelog entry to `CHANGELOG.md` in the same commit. This is
-   the *one* home for human-readable release history (see Canonical homes); README/lama.yaml carry a
-   pointer, never a milestone table. Inter-release commits do not touch it. The org `changelog-gem`
+5. **Release history (`changelog-gem`).** `CHANGELOG.md` follows Keep-a-Changelog with a standing
+   `## [Unreleased]` section. Every PR that changes user-facing behavior adds its line under
+   `[Unreleased]` **in that same PR**, citing its issue/PR number (`… (#N)`) and closing the issue via
+   `Closes #N` / `Fixes #N`. At release, `[Unreleased]` is renamed to the dated `vX.Y.Z` heading (with
+   its `compare/` link) and a fresh empty `[Unreleased]` is opened — the version bump + signed tag ship
+   in that same commit. `CHANGELOG.md` is the *one* home for human-readable release history (see
+   Canonical homes); README/lama.yaml carry a pointer, never a milestone table. The org `changelog-gem`
    instance in [`oxiforge/standards/doc-sync-rules.md`](https://github.com/oxiforge/standards) is the
    full framing.
 
