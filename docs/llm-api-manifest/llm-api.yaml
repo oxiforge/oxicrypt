@@ -433,6 +433,29 @@ families:
       zeroize-on-drop state. One variant per backing hash.
     applies_to: types
 
+  - name: xof-streaming-hasher
+    description: >-
+      Extendable-output hasher types exposing new/update/finalize/squeeze,
+      where finalize ends the absorb phase and squeeze may be called
+      repeatedly for arbitrary-length output. Covers SHAKE, cSHAKE,
+      KMACXOF, TupleHashXOF, and ParallelHashXOF (SP 800-185 / FIPS 202).
+    applies_to: types
+
+  - name: xof-fixed-hasher
+    description: >-
+      Fixed-output Keccak-derived hasher types exposing
+      new/update/finalize_into, where finalize_into writes exactly
+      out.len() bytes and the output length is bound into the hash.
+      Covers KMAC, TupleHash, and ParallelHash (SP 800-185).
+    applies_to: types
+
+  - name: xof-oneshot
+    description: >-
+      One-shot SP 800-185 / FIPS 202 XOF convenience functions taking
+      the message (plus key/customization as applicable) and returning a
+      const-generic fixed-size output array. One variant per primitive.
+    applies_to: functions
+
   - name: hmac-new
     description: >-
       HMAC keyed-hasher constructors taking a key slice and returning
@@ -1035,6 +1058,272 @@ types:
     security:
       contains_secret: true
       zeroize_on_drop: true
+      constant_time: true
+
+  - name: Shake128
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      SHAKE128 extendable-output function (FIPS 202 §6.2). Streaming API
+      new/update/finalize/squeeze: update() absorbs (legal only before
+      finalize), finalize() ends the absorb phase, and squeeze() reads
+      out.len() bytes and may be called repeatedly for arbitrary-length
+      output. Keyless public primitive — no CSP.
+    size_bytes: null  # Internal Keccak sponge state, not a fixed public size
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Shake256
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      SHAKE256 extendable-output function (FIPS 202 §6.2). Same
+      new/update/finalize/squeeze streaming pattern as Shake128 with a
+      136-byte rate and 512-bit capacity. Keyless public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: CShake128
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      cSHAKE128 customizable XOF (SP 800-185 §3). Constructed with a
+      function-name string N and customization string S; thereafter the
+      new/update/finalize/squeeze streaming pattern matches Shake128. When
+      both N and S are empty, cSHAKE reduces to plain SHAKE128. Keyless
+      public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: CShake256
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      cSHAKE256 customizable XOF (SP 800-185 §3). Same constructor
+      (N, S) and new/update/finalize/squeeze streaming pattern as
+      CShake128 with a 136-byte rate. Reduces to plain SHAKE256 when N
+      and S are both empty. Keyless public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Kmac128
+    module: oxicrypt-xof
+    family: xof-fixed-hasher
+    kind: struct
+    description: >-
+      KMAC128 keyed message authentication code (SP 800-185 §4), built on
+      cSHAKE128 with N = "KMAC". Fixed-output streaming API
+      new/update/finalize_into: new() takes the key and a customization
+      string S, update() absorbs message data, and finalize_into() binds
+      the requested output length L = tag.len()*8 into the computation and
+      writes exactly tag.len() bytes. For arbitrary-length output use
+      KmacXof128 instead. The key is a sensitive security parameter.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: Kmac256
+    module: oxicrypt-xof
+    family: xof-fixed-hasher
+    kind: struct
+    description: >-
+      KMAC256 keyed MAC (SP 800-185 §4), built on cSHAKE256 with
+      N = "KMAC". Same new(key, s)/update/finalize_into fixed-output
+      pattern as Kmac128 with a 136-byte rate. The key is a sensitive
+      security parameter.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: KmacXof128
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      KMACXOF128 extendable-output keyed MAC (SP 800-185 §4.3.1).
+      Identical to Kmac128 except it appends right_encode(0) so output
+      length is NOT bound into the computation, enabling arbitrary-length
+      output via the new(key, s)/update/finalize/squeeze streaming
+      pattern. The key is a sensitive security parameter.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: KmacXof256
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      KMACXOF256 extendable-output keyed MAC (SP 800-185 §4.3.1). Same
+      new(key, s)/update/finalize/squeeze XOF pattern as KmacXof128 with a
+      136-byte rate. The key is a sensitive security parameter.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: TupleHash128
+    module: oxicrypt-xof
+    family: xof-fixed-hasher
+    kind: struct
+    description: >-
+      TupleHash128 (SP 800-185 §5). Hashes a tuple of byte strings with
+      unambiguous element framing (encode_string per element), so
+      ("AB","C") and ("A","BC") produce different hashes. Fixed-output
+      streaming API new/update/finalize_into where EACH update() call adds
+      exactly one tuple element and finalize_into() binds the output
+      length and writes out.len() bytes. For arbitrary-length output use
+      TupleHashXof128. Keyless public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: TupleHash256
+    module: oxicrypt-xof
+    family: xof-fixed-hasher
+    kind: struct
+    description: >-
+      TupleHash256 (SP 800-185 §5). 256-bit-security variant of
+      TupleHash128 with a 136-byte rate; same new(s)/update-per-element/
+      finalize_into pattern. Keyless public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: TupleHashXof128
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      TupleHashXOF128 (SP 800-185 §5.3.1). XOF variant of TupleHash128 —
+      appends right_encode(0) for arbitrary-length output via the
+      new(s)/update-per-element/finalize/squeeze streaming pattern.
+      Keyless public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: TupleHashXof256
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      TupleHashXOF256 (SP 800-185 §5.3.1). XOF variant of TupleHash256
+      with a 136-byte rate; same new(s)/update-per-element/finalize/
+      squeeze pattern as TupleHashXof128. Keyless public primitive.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: true
+      constant_time: true
+
+  - name: ParallelHash128
+    module: oxicrypt-xof
+    family: xof-fixed-hasher
+    kind: struct
+    description: >-
+      ParallelHash128 (SP 800-185 §6). Splits the input into B-byte
+      blocks (B fixed at construction), hashes each block with an inner
+      SHAKE128 to 256 bits, then feeds the concatenated inner hashes
+      through an outer cSHAKE128 with N = "ParallelHash". Fixed-output
+      streaming API new(block_size, s)/update/finalize_into; the streaming
+      update() buffers up to B bytes internally and flushes complete
+      blocks. For arbitrary-length output use ParallelHashXof128. NOT
+      zeroize-on-drop — keyless public primitive over public data.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: ParallelHash256
+    module: oxicrypt-xof
+    family: xof-fixed-hasher
+    kind: struct
+    description: >-
+      ParallelHash256 (SP 800-185 §6). Like ParallelHash128 but with
+      512-bit security: inner SHAKE256 squeezed to 512 bits and outer
+      cSHAKE256. Same new(block_size, s)/update/finalize_into pattern.
+      NOT zeroize-on-drop — keyless public primitive over public data.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: ParallelHashXof128
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      ParallelHashXOF128 (SP 800-185 §6.3.1). XOF variant of
+      ParallelHash128 — appends right_encode(0) for arbitrary-length
+      output via the new(block_size, s)/update/finalize/squeeze streaming
+      pattern. NOT zeroize-on-drop — keyless public primitive over public
+      data.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: true
+
+  - name: ParallelHashXof256
+    module: oxicrypt-xof
+    family: xof-streaming-hasher
+    kind: struct
+    description: >-
+      ParallelHashXOF256 (SP 800-185 §6.3.1). XOF variant of
+      ParallelHash256 with 512-bit security; same new(block_size, s)/
+      update/finalize/squeeze pattern as ParallelHashXof128. NOT
+      zeroize-on-drop — keyless public primitive over public data.
+    size_bytes: null
+    implements: []
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
       constant_time: true
 
   - name: BlockCipher
@@ -2051,6 +2340,962 @@ functions:
     signature: "pub fn HmacSha3_512::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha3_512, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── SHAKE / cSHAKE (FIPS 202 §6.2, SP 800-185 §3) ─────────────────
+  #
+  # XOF streaming pattern: new → update* → finalize → squeeze*. The
+  # Shake128 method entries below (update/finalize/squeeze) are the
+  # canonical documentation for the whole xof-streaming-hasher family —
+  # cSHAKE, KMACXOF, TupleHashXOF, and ParallelHashXOF expose the same
+  # update/finalize/squeeze methods with identical semantics (only the
+  # constructor parameters differ per primitive).
+
+  - name: "Shake128::new"
+    module: oxicrypt-xof
+    description: Create a streaming SHAKE128 extendable-output hasher.
+    signature: "pub fn Shake128::new() -> Result<Self, Error>"
+    parameters: []
+    returns:
+      type: "Result<Shake128, Error>"
+      description: A new SHAKE128 XOF ready to absorb data.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Hasher is ready for update() calls (absorb phase).
+    sequencing:
+      must_call_after: [update, finalize, squeeze]
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut x = oxicrypt_xof::Shake128::new()?;
+        x.update(b"hello world");
+        x.finalize();
+        let mut out = [0u8; 64];
+        x.squeeze(&mut out);  // may squeeze again for more output
+
+  - name: "Shake128::update"
+    module: oxicrypt-xof
+    description: >-
+      Feed data into the XOF absorb phase. Canonical documentation for
+      the xof-streaming-hasher family — Shake256, CShake128/256,
+      KmacXof128/256, TupleHashXof128/256, and ParallelHashXof128/256
+      expose an identical update() (TupleHashXOF update adds one tuple
+      element per call; KMACXOF/ParallelHashXOF update feed raw message
+      bytes). Legal only before finalize().
+    signature: "pub fn update(&mut self, data: &[u8])"
+    parameters:
+      - name: self
+        type: "&mut Shake128"
+        direction: in-out
+        description: The XOF to update.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to absorb. May be called multiple times.
+    returns:
+      type: "()"
+      description: No return value.
+    preconditions:
+      - description: XOF was created and finalize() has NOT been called.
+    postconditions:
+      - description: Internal sponge state updated with the provided data.
+    sequencing:
+      mutually_exclusive: [squeeze]
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: update() is illegal after finalize(). Absorb, then finalize, then squeeze.
+        wrong: |
+          let mut x = Shake128::new()?;
+          x.finalize();
+          x.update(b"data");  // debug-assert failure: already finalized
+        right: |
+          let mut x = Shake128::new()?;
+          x.update(b"data");
+          x.finalize();
+          let mut out = [0u8; 32];
+          x.squeeze(&mut out);
+
+  - name: "Shake128::finalize"
+    module: oxicrypt-xof
+    description: >-
+      End the absorb phase. After this call no more update()s are legal
+      and squeeze() may be called one or more times. Takes &mut self (the
+      XOF is NOT consumed). Canonical documentation for the
+      xof-streaming-hasher family — Shake256, CShake128/256,
+      KmacXof128/256, TupleHashXof128/256, and ParallelHashXof128/256
+      expose an identical finalize().
+    signature: "pub fn finalize(&mut self)"
+    parameters:
+      - name: self
+        type: "&mut Shake128"
+        direction: in-out
+        description: The XOF. Transitions from absorb to squeeze phase.
+    returns:
+      type: "()"
+      description: No return value.
+    preconditions:
+      - description: finalize() has not already been called.
+    postconditions:
+      - description: XOF is in the squeeze phase; squeeze() is now legal and update() is not.
+    sequencing:
+      must_call_before: [update]
+      must_call_after: [squeeze]
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "Shake128::squeeze"
+    module: oxicrypt-xof
+    description: >-
+      Read out.len() bytes of extendable output. May be called repeatedly
+      after finalize() — N successive squeezes produce the same byte
+      stream as one squeeze of the combined length. Canonical
+      documentation for the xof-streaming-hasher family (Shake256,
+      CShake128/256, KmacXof128/256, TupleHashXof128/256,
+      ParallelHashXof128/256 expose an identical squeeze()).
+    signature: "pub fn squeeze(&mut self, out: &mut [u8])"
+    parameters:
+      - name: self
+        type: "&mut Shake128"
+        direction: in-out
+        description: The finalized XOF.
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer; out.len() bytes are written.
+        constraints:
+          nullability: required
+          valid_range: "any length, including 0"
+    returns:
+      type: "()"
+      description: No return value; output is written to `out`.
+    preconditions:
+      - description: finalize() must have been called.
+        check: "internal: debug_assert!(finalized)"
+    postconditions:
+      - description: out is filled with the next out.len() bytes of XOF output.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: squeeze() before finalize() is illegal. Always finalize() first.
+        wrong: |
+          let mut x = Shake128::new()?;
+          x.update(b"data");
+          let mut out = [0u8; 32];
+          x.squeeze(&mut out);  // debug-assert failure: not finalized
+        right: |
+          let mut x = Shake128::new()?;
+          x.update(b"data");
+          x.finalize();
+          let mut out = [0u8; 32];
+          x.squeeze(&mut out);
+
+  - name: "Shake256::new"
+    module: oxicrypt-xof
+    description: "Create a streaming SHAKE256 XOF. update/finalize/squeeze identical to Shake128. See Shake128::new for full documentation."
+    signature: "pub fn Shake256::new() -> Result<Self, Error>"
+    returns:
+      type: "Result<Shake256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "CShake128::new"
+    module: oxicrypt-xof
+    description: >-
+      Create a streaming cSHAKE128 XOF with function-name string N and
+      customization string S (SP 800-185 §3). When both N and S are empty
+      this reduces to plain SHAKE128. update/finalize/squeeze are
+      identical to Shake128 — see Shake128::update / finalize / squeeze.
+    signature: "pub fn CShake128::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: n
+        type: "&[u8]"
+        direction: in
+        description: >-
+          Function-name string N (per SP 800-185 §3.2). Empty for the
+          plain-SHAKE reduction; KMAC/TupleHash/ParallelHash use fixed N
+          values internally.
+        constraints:
+          nullability: required
+          valid_range: "any length, including empty"
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+        constraints:
+          nullability: required
+          valid_range: "any length, including empty"
+    returns:
+      type: "Result<CShake128, Error>"
+      description: A new cSHAKE128 XOF ready to absorb data.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Hasher is ready for update() calls (absorb phase).
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut x = oxicrypt_xof::CShake128::new(b"", b"Email Signature")?;
+        x.update(&[0x00, 0x01, 0x02, 0x03]);
+        x.finalize();
+        let mut out = [0u8; 32];
+        x.squeeze(&mut out);
+
+  - name: "CShake256::new"
+    module: oxicrypt-xof
+    description: "Create a streaming cSHAKE256 XOF with N and S. update/finalize/squeeze identical to Shake128. See CShake128::new for full documentation."
+    signature: "pub fn CShake256::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<CShake256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── KMAC / KMACXOF (SP 800-185 §4, §4.3.1) ────────────────────────
+  #
+  # KMAC is the fixed-output keyed MAC: new(key, s) → update* →
+  # finalize_into. KMACXOF is the extendable-output variant: new(key, s)
+  # → update* → finalize → squeeze* (see the xof-streaming-hasher method
+  # docs under Shake128). The key is a sensitive security parameter.
+
+  - name: "Kmac128::new"
+    module: oxicrypt-xof
+    description: >-
+      Create a KMAC128 keyed MAC with key and customization string S
+      (SP 800-185 §4). Followed by update* then finalize_into for a
+      fixed-length tag. For arbitrary-length output use KmacXof128.
+    signature: "pub fn Kmac128::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: >-
+          KMAC key K (sensitive security parameter). Any length;
+          encode_string-framed and bytepad-padded to the rate internally
+          per SP 800-185 §4.
+        constraints:
+          nullability: required
+          valid_range: "any length; empty is technically valid"
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+        constraints:
+          nullability: required
+          valid_range: "any length, including empty"
+    returns:
+      type: "Result<Kmac128, Error>"
+      description: A new KMAC128 instance ready to absorb message data.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Instance initialized with the key; ready for update() calls.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut m = oxicrypt_xof::Kmac128::new(b"secret-key", b"")?;
+        m.update(b"message");
+        let mut tag = [0u8; 32];
+        m.finalize_into(&mut tag);
+
+  - name: "Kmac128::update"
+    module: oxicrypt-xof
+    description: >-
+      Feed message data into the KMAC computation. Identical for Kmac256,
+      KmacXof128, and KmacXof256. Legal only before finalize_into /
+      finalize.
+    signature: "pub fn update(&mut self, data: &[u8])"
+    parameters:
+      - name: self
+        type: "&mut Kmac128"
+        direction: in-out
+        description: The KMAC instance to update.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Message data to absorb. May be called multiple times.
+    returns:
+      type: "()"
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "Kmac128::finalize_into"
+    module: oxicrypt-xof
+    description: >-
+      Bind the output length L = tag.len()*8 into the computation, then
+      finalize and write exactly tag.len() bytes into `tag`. Canonical
+      documentation for the xof-fixed-hasher finalize_into shape (Kmac256,
+      TupleHash128/256, ParallelHash128/256 expose an identical
+      finalize_into — the tuple/parallel variants differ only in what
+      update() means). Because L is bound in, the same instance + inputs
+      with a different tag length yields different bytes.
+    signature: "pub fn finalize_into(&mut self, tag: &mut [u8])"
+    parameters:
+      - name: self
+        type: "&mut Kmac128"
+        direction: in-out
+        description: The KMAC instance. Takes &mut self; not consumed.
+      - name: tag
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer; exactly tag.len() bytes are written.
+        constraints:
+          nullability: required
+          valid_range: "any length; tag.len()*8 is bound in as L"
+    returns:
+      type: "()"
+      description: No return value; the tag is written to `tag`.
+    preconditions:
+      - description: Instance created via new(); finalize_into not already called.
+    postconditions:
+      - description: tag holds the KMAC tag for the chosen output length.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: >-
+          KMAC binds the output length into the result. A 32-byte tag is
+          NOT a prefix of a 64-byte tag. Choose the final length up front;
+          for length-independent output use KmacXof128/256.
+        wrong: |
+          // Expecting tag32 == &tag64[..32] — it does NOT hold for KMAC.
+          let mut tag32 = [0u8; 32];
+          m.finalize_into(&mut tag32);
+        right: |
+          // Either commit to one fixed length, or use the XOF variant:
+          let mut out = [0u8; 64];
+          let mut x = KmacXof128::new(b"key", b"")?;
+          x.update(b"msg"); x.finalize(); x.squeeze(&mut out);
+
+  - name: "Kmac256::new"
+    module: oxicrypt-xof
+    description: "Create a KMAC256 keyed MAC with key and S. update/finalize_into identical to Kmac128. See Kmac128::new for full documentation."
+    signature: "pub fn Kmac256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<Kmac256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "KmacXof128::new"
+    module: oxicrypt-xof
+    description: >-
+      Create a KMACXOF128 extendable-output keyed MAC with key and S
+      (SP 800-185 §4.3.1). Uses the new(key,s)/update/finalize/squeeze
+      streaming pattern — see Shake128::update / finalize / squeeze. Unlike
+      Kmac128, output length is not bound in, so squeeze() yields a
+      length-independent stream.
+    signature: "pub fn KmacXof128::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: KMAC key K (sensitive security parameter). Any length.
+        constraints:
+          nullability: required
+          valid_range: "any length; empty is technically valid"
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+        constraints:
+          nullability: required
+          valid_range: "any length, including empty"
+    returns:
+      type: "Result<KmacXof128, Error>"
+      description: A new KMACXOF128 instance ready to absorb message data.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Instance initialized with the key; ready for update() calls.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "KmacXof256::new"
+    module: oxicrypt-xof
+    description: "Create a KMACXOF256 XOF keyed MAC with key and S. update/finalize/squeeze identical to Shake128. See KmacXof128::new for full documentation."
+    signature: "pub fn KmacXof256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<KmacXof256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── TupleHash / TupleHashXOF (SP 800-185 §5, §5.3.1) ──────────────
+  #
+  # Each update() call adds ONE tuple element (encode_string-framed), so
+  # element boundaries are part of the hashed message. TupleHash is
+  # fixed-output (finalize_into); TupleHashXOF is extendable (finalize +
+  # squeeze, see the Shake128 method docs). Keyless public primitives.
+
+  - name: "TupleHash128::new"
+    module: oxicrypt-xof
+    description: >-
+      Create a TupleHash128 instance with customization string S
+      (SP 800-185 §5). Each subsequent update() adds one tuple element;
+      finalize_into binds the output length and writes the hash. For
+      arbitrary-length output use TupleHashXof128.
+    signature: "pub fn TupleHash128::new(s: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+        constraints:
+          nullability: required
+          valid_range: "any length, including empty"
+    returns:
+      type: "Result<TupleHash128, Error>"
+      description: A new TupleHash128 instance ready to accept tuple elements.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Instance ready; each update() adds one tuple element.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut h = oxicrypt_xof::TupleHash128::new(b"")?;
+        h.update(&[0x00, 0x01, 0x02]);          // tuple element 0
+        h.update(&[0x10, 0x11, 0x12, 0x13]);    // tuple element 1
+        let mut out = [0u8; 32];
+        h.finalize_into(&mut out);
+
+  - name: "TupleHash128::update"
+    module: oxicrypt-xof
+    description: >-
+      Add ONE tuple element (encode_string-framed). Identical for
+      TupleHash256, TupleHashXof128, and TupleHashXof256. Element
+      boundaries are significant: ("AB","C") differs from ("A","BC").
+    signature: "pub fn update(&mut self, element: &[u8])"
+    parameters:
+      - name: self
+        type: "&mut TupleHash128"
+        direction: in-out
+        description: The TupleHash instance.
+      - name: element
+        type: "&[u8]"
+        direction: in
+        description: One tuple element. Call once per element, in order.
+    returns:
+      type: "()"
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: One update() per tuple element — do NOT concatenate elements into one call.
+        wrong: |
+          h.update(b"ABC");            // one element "ABC"
+        right: |
+          h.update(b"AB");             // element 0
+          h.update(b"C");              // element 1 — different hash from "ABC"
+
+  - name: "TupleHash128::finalize_into"
+    module: oxicrypt-xof
+    description: "Bind the output length and write the TupleHash into `out`. Same finalize_into shape as Kmac128::finalize_into; identical for TupleHash256."
+    signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
+    parameters:
+      - name: self
+        type: "&mut TupleHash128"
+        direction: in-out
+        description: The TupleHash instance. Takes &mut self; not consumed.
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer; exactly out.len() bytes are written, with out.len()*8 bound in as L.
+        constraints:
+          nullability: required
+          valid_range: "any length"
+    returns:
+      type: "()"
+    preconditions:
+      - description: At least the intended tuple elements were added via update().
+    postconditions:
+      - description: out holds the TupleHash for the chosen output length.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "TupleHash256::new"
+    module: oxicrypt-xof
+    description: "Create a TupleHash256 instance with S. update (one element per call)/finalize_into identical to TupleHash128. See TupleHash128::new for full documentation."
+    signature: "pub fn TupleHash256::new(s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<TupleHash256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "TupleHashXof128::new"
+    module: oxicrypt-xof
+    description: "Create a TupleHashXOF128 instance with S (SP 800-185 §5.3.1). Each update() adds one tuple element; finalize then squeeze for arbitrary-length output (see Shake128 method docs). See TupleHash128::new for the tuple-element semantics."
+    signature: "pub fn TupleHashXof128::new(s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<TupleHashXof128, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "TupleHashXof256::new"
+    module: oxicrypt-xof
+    description: "Create a TupleHashXOF256 instance with S. update (one element per call)/finalize/squeeze identical to TupleHashXof128. See TupleHashXof128::new and Shake128 method docs."
+    signature: "pub fn TupleHashXof256::new(s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<TupleHashXof256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── ParallelHash / ParallelHashXOF (SP 800-185 §6, §6.3.1) ────────
+  #
+  # new(block_size, s) fixes the B-byte block size; update() streams data
+  # (buffering up to B bytes and flushing complete blocks to the inner
+  # hash). ParallelHash is fixed-output (finalize_into); ParallelHashXOF
+  # is extendable (finalize + squeeze, see Shake128 method docs).
+
+  - name: "ParallelHash128::new"
+    module: oxicrypt-xof
+    description: >-
+      Create a ParallelHash128 instance with block size B (bytes) and
+      customization string S (SP 800-185 §6). Followed by update* then
+      finalize_into. For arbitrary-length output use ParallelHashXof128.
+    signature: "pub fn ParallelHash128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: block_size
+        type: usize
+        direction: in
+        description: >-
+          Block size B in bytes. Input is split into B-byte blocks, each
+          hashed independently by the inner SHAKE. Different B values
+          produce different hashes.
+        constraints:
+          nullability: required
+          valid_range: "1..=8192 (PANICS outside this range)"
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+        constraints:
+          nullability: required
+          valid_range: "any length, including empty"
+    returns:
+      type: "Result<ParallelHash128, Error>"
+      description: A new ParallelHash128 instance ready to absorb data.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+      - description: 1 <= block_size <= 8192 (asserted; out-of-range panics, not an Error).
+    postconditions:
+      - description: Instance ready for update() calls with block size B fixed.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let mut h = oxicrypt_xof::ParallelHash128::new(8, b"")?;
+        h.update(&data);
+        let mut out = [0u8; 32];
+        h.finalize_into(&mut out);
+    pitfalls:
+      - description: block_size of 0 or > 8192 PANICS — it is not reported as an Error.
+        wrong: |
+          let h = ParallelHash128::new(0, b"")?;     // panics: block_size must be > 0
+        right: |
+          let h = ParallelHash128::new(8, b"")?;     // 1..=8192
+
+  - name: "ParallelHash128::update"
+    module: oxicrypt-xof
+    description: >-
+      Feed data into the hasher. Internally buffers up to B bytes and
+      flushes each complete B-byte block to the inner SHAKE. Identical for
+      ParallelHash256, ParallelHashXof128, and ParallelHashXof256.
+      Streaming in any chunking yields the same result as one call.
+    signature: "pub fn update(&mut self, data: &[u8])"
+    parameters:
+      - name: self
+        type: "&mut ParallelHash128"
+        direction: in-out
+        description: The ParallelHash instance.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Data to absorb. May be called multiple times.
+    returns:
+      type: "()"
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "ParallelHash128::finalize_into"
+    module: oxicrypt-xof
+    description: "Flush the trailing partial block, bind the output length, and write the hash into `out`. Same finalize_into shape as Kmac128::finalize_into; identical for ParallelHash256."
+    signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
+    parameters:
+      - name: self
+        type: "&mut ParallelHash128"
+        direction: in-out
+        description: The ParallelHash instance. Takes &mut self; not consumed.
+      - name: out
+        type: "&mut [u8]"
+        direction: out
+        description: Output buffer; exactly out.len() bytes are written, with out.len()*8 bound in as L.
+        constraints:
+          nullability: required
+          valid_range: "any length"
+    returns:
+      type: "()"
+    preconditions:
+      - description: Instance created via new(block_size, s); data optionally fed via update().
+    postconditions:
+      - description: out holds the ParallelHash for the chosen output length.
+    thread_safety: not-thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "ParallelHash256::new"
+    module: oxicrypt-xof
+    description: "Create a ParallelHash256 instance with block size B and S. update/finalize_into identical to ParallelHash128. See ParallelHash128::new for full documentation."
+    signature: "pub fn ParallelHash256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<ParallelHash256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "ParallelHashXof128::new"
+    module: oxicrypt-xof
+    description: "Create a ParallelHashXOF128 instance with block size B and S (SP 800-185 §6.3.1). update then finalize then squeeze for arbitrary-length output (see Shake128 method docs). See ParallelHash128::new for the block-size semantics and panic range."
+    signature: "pub fn ParallelHashXof128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<ParallelHashXof128, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: "ParallelHashXof256::new"
+    module: oxicrypt-xof
+    description: "Create a ParallelHashXOF256 instance with block size B and S. update/finalize/squeeze identical to ParallelHashXof128. See ParallelHashXof128::new and Shake128 method docs."
+    signature: "pub fn ParallelHashXof256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
+    returns:
+      type: "Result<ParallelHashXof256, Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  # ── XOF one-shot convenience functions (FIPS 202 / SP 800-185) ────
+  #
+  # Each takes the message (plus key/customization as applicable) and a
+  # const-generic output length, returning a fixed-size array. They wrap
+  # the new → update → finalize → squeeze/finalize_into chain.
+
+  - name: shake128
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: One-shot SHAKE128 — absorb data, finalize, squeeze OUT_LEN bytes.
+    signature: "pub fn shake128<const OUT_LEN: usize>(data: &[u8]) -> Result<[u8; OUT_LEN], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Message to hash. Any length.
+        constraints:
+          nullability: required
+          valid_range: "0..=2^64 - 1 bytes"
+    returns:
+      type: "Result<[u8; OUT_LEN], Error>"
+      description: OUT_LEN bytes of SHAKE128 output (length chosen by the const-generic turbofish).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+        check: "oxicrypt_module::require_operational()"
+    postconditions:
+      - description: Returns the first OUT_LEN bytes of SHAKE128(data).
+    thread_safety: thread-safe
+    side_effects: []
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    example:
+      language: rust
+      code: |
+        let out = oxicrypt_xof::shake128::<32>(b"hello world")?;
+        assert_eq!(out.len(), 32);
+
+  - name: shake256
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: "One-shot SHAKE256. See shake128 for full documentation."
+    signature: "pub fn shake256<const OUT_LEN: usize>(data: &[u8]) -> Result<[u8; OUT_LEN], Error>"
+    returns:
+      type: "Result<[u8; OUT_LEN], Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: cshake128
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: >-
+      One-shot cSHAKE128 with function-name N and customization S
+      (SP 800-185 §3). Reduces to shake128 when N and S are both empty.
+    signature: "pub fn cshake128<const OUT_LEN: usize>(data: &[u8], n: &[u8], s: &[u8]) -> Result<[u8; OUT_LEN], Error>"
+    parameters:
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Message to hash. Any length.
+      - name: n
+        type: "&[u8]"
+        direction: in
+        description: Function-name string N. Empty for the plain-SHAKE reduction.
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+    returns:
+      type: "Result<[u8; OUT_LEN], Error>"
+      description: OUT_LEN bytes of cSHAKE128 output.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: cshake256
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: "One-shot cSHAKE256 with N and S. See cshake128 for full documentation."
+    signature: "pub fn cshake256<const OUT_LEN: usize>(data: &[u8], n: &[u8], s: &[u8]) -> Result<[u8; OUT_LEN], Error>"
+    returns:
+      type: "Result<[u8; OUT_LEN], Error>"
+    security:
+      constant_time: true
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kmac128
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: >-
+      One-shot KMAC128 — key K, message data, customization S, returning
+      a TAG_LEN-byte tag (SP 800-185 §4). The output length TAG_LEN*8 is
+      bound into the computation.
+    signature: "pub fn kmac128<const TAG_LEN: usize>(key: &[u8], data: &[u8], s: &[u8]) -> Result<[u8; TAG_LEN], Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: KMAC key K (sensitive security parameter). Any length.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Message to authenticate. Any length.
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+    returns:
+      type: "Result<[u8; TAG_LEN], Error>"
+      description: TAG_LEN-byte KMAC128 tag (TAG_LEN*8 bound in as L).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+    pitfalls:
+      - description: KMAC binds output length — a TAG_LEN tag is not a prefix of a longer one. Use kmacxof128 for length-independent output.
+        wrong: |
+          let t = kmac128::<16>(key, msg, b"")?;   // not a prefix of kmac128::<32>
+        right: |
+          let t = kmac128::<32>(key, msg, b"")?;   // commit to the final length
+
+  - name: kmac256
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: "One-shot KMAC256. See kmac128 for full documentation."
+    signature: "pub fn kmac256<const TAG_LEN: usize>(key: &[u8], data: &[u8], s: &[u8]) -> Result<[u8; TAG_LEN], Error>"
+    returns:
+      type: "Result<[u8; TAG_LEN], Error>"
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kmacxof128
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: >-
+      One-shot KMACXOF128 — key K, message data, customization S,
+      squeezing OUT_LEN bytes (SP 800-185 §4.3.1). Unlike kmac128, the
+      output length is NOT bound in, so longer requests extend the same
+      stream.
+    signature: "pub fn kmacxof128<const OUT_LEN: usize>(key: &[u8], data: &[u8], s: &[u8]) -> Result<[u8; OUT_LEN], Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: KMAC key K (sensitive security parameter). Any length.
+      - name: data
+        type: "&[u8]"
+        direction: in
+        description: Message to authenticate. Any length.
+      - name: s
+        type: "&[u8]"
+        direction: in
+        description: Customization string S for domain separation.
+    returns:
+      type: "Result<[u8; OUT_LEN], Error>"
+      description: OUT_LEN bytes of KMACXOF128 output (length-independent stream).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
+
+  - name: kmacxof256
+    module: oxicrypt-xof
+    family: xof-oneshot
+    description: "One-shot KMACXOF256. See kmacxof128 for full documentation."
+    signature: "pub fn kmacxof256<const OUT_LEN: usize>(key: &[u8], data: &[u8], s: &[u8]) -> Result<[u8; OUT_LEN], Error>"
+    returns:
+      type: "Result<[u8; OUT_LEN], Error>"
     security:
       constant_time: true
       handles_secrets: true
@@ -10486,6 +11731,18 @@ error_types:
 # ─────────────────────────────────────────────────────────────────────
 
 constants:
+  - name: SHAKE128_RATE
+    module: oxicrypt-xof
+    type: usize
+    value: "168"
+    description: "SHAKE128 / cSHAKE128 / KMAC128 sponge rate in bytes (capacity 256 bits)."
+
+  - name: SHAKE256_RATE
+    module: oxicrypt-xof
+    type: usize
+    value: "136"
+    description: "SHAKE256 / cSHAKE256 / KMAC256 sponge rate in bytes (capacity 512 bits)."
+
   - name: RSA_2048_MODULUS_BYTES
     module: oxicrypt-rsa
     type: usize

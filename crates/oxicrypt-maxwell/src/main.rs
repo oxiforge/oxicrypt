@@ -767,9 +767,9 @@ fn cmd_iid_permutation(args: &[String]) -> ExitCode {
         eprintln!("usage: maxwell iid-permutation <FILE>");
         eprintln!(
             "  SP 800-90B §5.1 permutation testing battery (19-statistic IID test) over a raw\n\
-             \x20 dataset (one byte/sample). The compression statistic (index 18) is a documented\n\
-             \x20 STOP-AND-LEAVE slot (bit-exact libbz2 length not reproduced) and is excluded\n\
-             \x20 from the verdict."
+             \x20 dataset (one byte/sample). The compression statistic (index 18) is computed\n\
+             \x20 bit-exactly vs the EA tool (pure-Rust bzip2 length) and is included in the\n\
+             \x20 verdict like every other statistic."
         );
         return ExitCode::FAILURE;
     };
@@ -785,16 +785,12 @@ fn cmd_iid_permutation(args: &[String]) -> ExitCode {
     let stats = permutation_stats(&data);
     println!("{file}  (L={} symbols, one byte/sample)", data.len());
     println!(
-        "note: SP 800-90B §5.1 permutation battery — compression (18) is STOP-AND-LEAVE (NaN)"
+        "note: SP 800-90B §5.1 permutation battery — compression (18) is the bit-exact bzip2 length"
     );
     println!();
     println!("unpermuted statistics t[i]:");
     for (name, &v) in stats.names.iter().zip(stats.values.iter()) {
-        if v.is_nan() {
-            println!("  {name:<24} = NaN (STOP-AND-LEAVE)");
-        } else {
-            println!("  {name:<24} = {v:.17}");
-        }
+        println!("  {name:<24} = {v:.17}");
     }
 
     println!();
@@ -802,20 +798,13 @@ fn cmd_iid_permutation(args: &[String]) -> ExitCode {
     let verdict = permutation_test(&data);
     println!("            statistic        C0(>)    C1(=)    C2(<)  pass");
     println!("  ----------------------------------------------------------");
-    for (i, ((name, &(c0, c1, c2)), &pass)) in stats
+    for ((name, &(c0, c1, c2)), &pass) in stats
         .names
         .iter()
         .zip(verdict.c_counts.iter())
         .zip(verdict.per_test_pass.iter())
-        .enumerate()
     {
-        let mark = if i == COMPRESSION_INDEX && !verdict.compression_included {
-            "excl"
-        } else if pass {
-            "yes"
-        } else {
-            "NO"
-        };
+        let mark = if pass { "yes" } else { "NO" };
         println!("  {name:<24} {c0:>8} {c1:>8} {c2:>8}  {mark}");
     }
     println!();
@@ -1090,5 +1079,8 @@ fn verdict_mark(pass: bool) -> &'static str {
 }
 
 /// Index of the compression statistic (mirrors `permutation::COMPRESSION_IDX`,
-/// which is private; used only for the CLI's "excl" annotation).
+/// which is private). Retained as documentation of the slot index; compression
+/// is now computed and displayed like every other statistic, so it no longer
+/// drives any special-case display branch.
+#[allow(dead_code)]
 const COMPRESSION_INDEX: usize = 18;

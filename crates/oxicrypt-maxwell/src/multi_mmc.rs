@@ -567,58 +567,21 @@ fn multi_mmc_core_general(data: &[u8], alph_size: usize) -> MultiMmcEstimate {
     }
 }
 
-/// Translate `symbols` to a dense `0..alph_size` alphabet in **ascending raw-value
-/// order**, matching the EA tool's `symbol_map_down_table` (`utils.h`): the EA tool
-/// assigns dense indices by iterating raw values `0..256` and numbering the present
-/// ones in order, so the smallest present byte becomes `0`, the next `1`, and so on.
-///
-/// MultiMMC (unlike the other literal-track estimators) is **not** invariant under
-/// an arbitrary alphabet bijection: its prediction tie rule breaks ties toward the
-/// **larger symbol value** (`in > curPrediction` in [`PostfixDict::increment_postfix`]
-/// and in the EA tool's `PostfixDictionary`), so the dense labels must preserve the
-/// raw values' ordering, not merely their equality structure. `crate::dense_alphabet`
-/// numbers by first-seen order, which changes tie outcomes and shifts the EA `C`
-/// count (empirically by a few predictions per million on `normal`), so MultiMMC's
-/// literal track needs this value-sorted mapping instead. Returns the dense symbols
-/// and the alphabet size (number of distinct values, `1..=256`).
-fn value_sorted_alphabet(symbols: &[u8]) -> (Vec<u8>, usize) {
-    let mut present = [false; 256];
-    for &s in symbols {
-        if let Some(p) = present.get_mut(s as usize) {
-            *p = true;
-        }
-    }
-    // map[v] = dense index of raw value v (only meaningful where present[v]).
-    let mut map = [0u8; 256];
-    let mut next: u16 = 0;
-    for (v, &p) in present.iter().enumerate() {
-        if p {
-            // next < 256 here (at most 256 distinct values), so the cast is lossless.
-            if let Some(slot) = map.get_mut(v) {
-                *slot = next as u8;
-            }
-            next += 1;
-        }
-    }
-    let dense: Vec<u8> = symbols.iter().map(|&s| map[s as usize]).collect();
-    (dense, next as usize)
-}
-
 /// Compute the §6.3.9 MultiMMC prediction estimate for the **literal track**: the
 /// raw symbols over their own (translated) alphabet, mirroring the EA tool's
 /// `multi_mmc_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
-/// The symbols are translated to a dense `0..alph_size` alphabet via
-/// [`value_sorted_alphabet`] — MultiMMC's value-sensitive tie rule requires the EA
-/// tool's ascending-value mapping rather than the first-seen
-/// [`crate::dense_alphabet`]. A binary alphabet (`alph_size <= 2`) routes through
-/// the binary fast path [`multi_mmc_core`] (the EA tool's `alph_size == 2`
-/// branch); larger alphabets use [`multi_mmc_core_general`]. This is the
-/// literal-track input to `H_original`. The function is **deterministic** and does
-/// not panic.
+/// The symbols are translated to a dense `0..alph_size` alphabet via the shared
+/// [`crate::value_sorted_alphabet`] — MultiMMC's value-sensitive tie rule requires
+/// the EA tool's ascending-value mapping rather than the first-seen
+/// [`crate::dense_alphabet`] (LZ78Y shares this requirement and the same helper). A
+/// binary alphabet (`alph_size <= 2`) routes through the binary fast path
+/// [`multi_mmc_core`] (the EA tool's `alph_size == 2` branch); larger alphabets use
+/// [`multi_mmc_core_general`]. This is the literal-track input to `H_original`. The
+/// function is **deterministic** and does not panic.
 #[must_use]
 pub fn multimmc_literal(symbols: &[u8]) -> MultiMmcEstimate {
-    let (dense, alph) = value_sorted_alphabet(symbols);
+    let (dense, alph) = crate::value_sorted_alphabet(symbols);
     if alph <= 2 {
         multi_mmc_core(&dense)
     } else {

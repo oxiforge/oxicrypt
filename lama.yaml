@@ -31,7 +31,7 @@ capabilities:
     standards: ["FIPS 180-4", "FIPS 202"]
 
   - category: "Extendable-output functions (XOF)"
-    algorithms: ["cSHAKE128", "cSHAKE256", "KMAC128", "KMAC256", "TupleHash128", "TupleHash256", "ParallelHash128", "ParallelHash256"]
+    algorithms: ["cSHAKE128", "cSHAKE256", "KMAC128", "KMAC256", "KMACXOF128", "KMACXOF256", "TupleHash128", "TupleHash256", "TupleHashXOF128", "TupleHashXOF256", "ParallelHash128", "ParallelHash256", "ParallelHashXOF128", "ParallelHashXOF256"]
     standards: ["SP 800-185"]
 
   - category: "Message authentication"

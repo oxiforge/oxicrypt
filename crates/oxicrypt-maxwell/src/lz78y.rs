@@ -602,27 +602,24 @@ pub fn lz78y(symbols: &[u8], bits_per_symbol: u8) -> Lz78yEstimate {
 /// raw symbols over their own (translated) alphabet, mirroring the EA tool's
 /// `LZ78Y_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
-/// The symbols are translated to a dense `0 .. alph_size` alphabet (see
-/// [`crate::dense_alphabet`]). A binary alphabet takes the dedicated binary fast
-/// path ([`lz78y_core`], same computation the EA tool dispatches for
-/// `alph_size == 2`); a larger alphabet takes the general path
-/// ([`lz78y_core_general`]). Literal-track input to `H_original`. Deterministic;
-/// does not panic.
+/// The symbols are translated to a dense `0 .. alph_size` alphabet via the shared
+/// [`crate::value_sorted_alphabet`] (ascending raw-value order). LZ78Y's
+/// `PostfixDictionary` tie-break is on the **raw symbol value**
+/// (`in > curPrediction`), so the remap must be order-preserving — value-sorted
+/// gives "larger raw value wins" ⟺ "larger dense index wins", reproducing the EA
+/// tie-break exactly; a first-seen remap ([`crate::dense_alphabet`]) would NOT
+/// preserve it. (MultiMMC §6.3.9 shares this requirement and the same helper.) A
+/// binary alphabet (`alph_size <= 2`) takes the dedicated binary fast path
+/// ([`lz78y_core`], same computation the EA tool dispatches for `alph_size == 2`);
+/// a larger alphabet takes the general path ([`lz78y_core_general`]). Literal-track
+/// input to `H_original`. Deterministic; does not panic.
 #[must_use]
 pub fn lz78y_literal(symbols: &[u8]) -> Lz78yEstimate {
-    let (dense, alph) = crate::dense_alphabet(symbols);
+    let (dense, alph) = crate::value_sorted_alphabet(symbols);
     if alph <= 2 {
         lz78y_core(&dense)
     } else {
-        // The general path keys dictionaries by context and counts by next-symbol
-        // — it never indexes a table by symbol value, so it does not require a
-        // dense alphabet. Critically, the EA `PostfixDictionary` tie-break is on
-        // the **raw symbol value** (`in > curPrediction`), which a first-seen
-        // dense remap would NOT preserve (unlike MultiMCW/Lag/MultiMMC, whose
-        // tie-breaks are bijection-invariant). So the core runs over the raw
-        // symbols to reproduce the EA tie-break exactly; `dense_alphabet` is used
-        // only for the `alph_size` the final entropy bound needs.
-        lz78y_core_general(symbols, alph)
+        lz78y_core_general(&dense, alph)
     }
 }
 

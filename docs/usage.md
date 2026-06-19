@@ -84,6 +84,46 @@ All eleven HMAC instantiations are available: `HmacSha1`, `HmacSha224`,
 `HmacSha512_256`, `HmacSha3_224`, `HmacSha3_256`, `HmacSha3_384`,
 `HmacSha3_512`.
 
+## XOF and SP 800-185 functions
+
+### SHAKE (extendable output)
+
+```rust
+use oxicrypt_xof::{shake256, Shake256};
+
+// One-shot: ask for a fixed number of output bytes via the const generic.
+let digest: [u8; 64] = shake256(b"hello world")?;
+
+// Streaming: absorb, finalize, then squeeze as much as you need.
+let mut xof = Shake256::new()?;
+xof.update(b"hello ");
+xof.update(b"world");
+xof.finalize();
+let mut out = [0u8; 100];
+xof.squeeze(&mut out);          // squeeze may be called repeatedly
+```
+
+### KMAC (keyed MAC)
+
+```rust
+use oxicrypt_xof::kmac256;
+
+// key, message, customization string S (b"" if unused).
+let tag: [u8; 32] = kmac256(b"my-secret-key", b"message", b"")?;
+```
+
+### TupleHash (unambiguous tuple hashing)
+
+```rust
+use oxicrypt_xof::TupleHash128;
+
+let mut th = TupleHash128::new(b"")?;   // S = customization string
+th.update(b"first");                    // each update is one tuple element
+th.update(b"second");
+let mut out = [0u8; 32];
+th.finalize_into(&mut out);
+```
+
 ## AES
 
 ### AES-GCM (authenticated encryption)
@@ -263,6 +303,134 @@ let shared_secret = compute_shared_secret_p256(&our_d, &peer_pk)?;  // [u8; 32]
 
 The shared secret is the x-coordinate of the resulting point, suitable
 for input to a KDF (SP 800-56Cr2 two-step or HKDF).
+
+## DH-3072 (finite-field key agreement)
+
+```rust
+use oxicrypt_dh::{generate_keypair_3072, compute_shared_secret_3072};
+use oxicrypt_drbg::hmac::HmacDrbgSha256;
+
+let mut drbg = HmacDrbgSha256::new();
+drbg.instantiate(&entropy, &nonce, b"dh-keygen")?;
+
+// Each party generates a key pair: (private x, public y), 384 bytes each.
+let (alice_x, alice_y) = generate_keypair_3072(&mut drbg)?;
+let (bob_x, bob_y) = generate_keypair_3072(&mut drbg)?;
+
+// Exchange public keys, then each derives the same shared secret Z.
+let z_alice = compute_shared_secret_3072(&alice_x, &bob_y)?;  // [u8; 384]
+let z_bob = compute_shared_secret_3072(&bob_x, &alice_y)?;
+assert_eq!(z_alice, z_bob);
+```
+
+`Z` is the raw shared secret — feed it into an SP 800-56Cr2 extractor or
+HKDF before using it as keying material.
+
+## ML-KEM (post-quantum key encapsulation, FIPS 203)
+
+```rust
+use oxicrypt_ml_kem::ml_kem_1024::{keygen, encapsulate, decapsulate};
+
+// Recipient generates a key pair from 32-byte d and z randomness.
+let (ek, dk) = keygen(&d, &z)?;        // (encapsulation key, decapsulation key)
+
+// Sender encapsulates against the public ek with 32 bytes of randomness m.
+let (ss_sender, ct) = encapsulate(&ek, &m)?;  // (shared secret, ciphertext)
+
+// Recipient decapsulates the ciphertext to recover the same shared secret.
+let ss_recipient = decapsulate(&dk, &ct)?;
+assert_eq!(ss_sender, ss_recipient);   // both are [u8; 32]
+```
+
+`d`, `z`, and `m` are each 32 bytes of fresh DRBG output. ML-KEM-512 and
+ML-KEM-768 are available via the `ml_kem_512` / `ml_kem_768` modules with
+the same API.
+
+## ML-DSA (post-quantum signatures, FIPS 204)
+
+```rust
+use oxicrypt_ml_dsa::ml_dsa_87::{keygen, sign, verify};
+
+// keygen from a 32-byte seed; returns (public key, secret key).
+let (pk, sk) = keygen(&xi)?;
+
+// Sign with an empty context (the X.509 / CMS / OpenSSL 3.5 default).
+let sig = sign(&sk, b"message to sign", b"")?;
+
+// Verify returns Ok(()) on success, Err(..) on a bad signature.
+verify(&pk, b"message to sign", b"", &sig)?;
+```
+
+ML-DSA-44 and ML-DSA-65 are available via the `ml_dsa_44` / `ml_dsa_65`
+modules with the same API.
+
+## SLH-DSA (post-quantum stateless hash-based signatures, FIPS 205)
+
+```rust
+use oxicrypt_slh_dsa::slh_dsa_sha2_256s::{keygen, sign, verify, N};
+
+// xi is exactly 3 * N bytes (SK_SEED || SK_PRF || PK_SEED).
+let mut xi = [0u8; 3 * N];
+drbg.generate(None, &mut xi)?;
+
+let (pk, sk) = keygen(&xi)?;           // (public key, secret key)
+let sig = sign(&sk, b"firmware image", b"")?;
+verify(&pk, b"firmware image", b"", &sig)?;
+```
+
+The other 11 parameter sets live in their own
+`slh_dsa_{sha2,shake}_{128,192,256}{s,f}` modules with the same API.
+
+## LMS (stateful hash-based signatures, SP 800-208)
+
+LMS is **stateful**: every leaf signs exactly one message. After each
+signature you MUST persist the updated private-key state (including its
+leaf index) before the signature leaves the process — reusing a leaf is a
+catastrophic key-recovery failure.
+
+```rust
+use oxicrypt_lms::lms_sha256_m32_h10_w4::{keygen, sign, verify, LmsPrivateKey};
+
+// keygen returns (private key, public key) — note the order.
+let (mut sk, pk) = keygen(&xi)?;
+
+let sig = sign(&mut sk, b"message")?;  // advances sk.leaf_index by one
+// Persist sk.to_bytes() to durable storage HERE, before using the signature.
+
+verify(&pk, b"message", &sig)?;
+```
+
+For high-throughput signing, wrap the key in `LmsSigningKey` (feature
+`alloc`), which precomputes the Merkle tree once and is byte-identical to
+the free `sign`:
+
+```rust
+use oxicrypt_lms::lms_sha256_m32_h10_w4::LmsSigningKey;
+
+let (mut signer, pk) = LmsSigningKey::new(&xi)?;
+let sig = signer.sign(b"message")?;
+// Persist signer.private_key().to_bytes() after each signature.
+```
+
+## XMSS (stateful hash-based signatures, SP 800-208)
+
+XMSS is also **stateful** — the same persist-after-every-signature
+discipline as LMS applies.
+
+```rust
+use oxicrypt_xmss::{keygen, sign, verify};
+
+// keygen from a 32-byte seed; returns (private key, public key).
+let (mut sk, pk) = keygen(&xi)?;
+
+let sig = sign(&mut sk, b"message")?;  // advances sk.leaf_index by one
+// Persist sk.to_bytes() to durable storage HERE, before using the signature.
+
+verify(&pk, b"message", &sig)?;
+```
+
+XMSS-SHA2_10_256 supports up to 1024 signatures per key
+(`MAX_SIGNATURES`); `sign` returns `Err` once the tree is exhausted.
 
 ## Error handling
 

@@ -16,6 +16,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.16.0] - 2026-06-19
+
+Closes the SP 800-90B §5.1 compression statistic (statistic 18) in `oxicrypt-maxwell`, so the IID
+permutation test now evaluates all nineteen statistics; adds post-quantum criterion benchmarks; and
+refreshes the public-API and ACVP-mapping documentation (out-of-boundary tooling and docs only — the
+cryptographic boundary is unchanged).
+
+### Added
+- **§5.1 compression statistic (statistic 18) in `oxicrypt-maxwell`:** previously a `NaN` sentinel
+  excluded from the IID verdict, now computed bit-exactly. The samples are formatted as the NIST
+  Entropy Assessment tool does (space-separated decimal text) and bzip2-compressed at level 5,
+  matching `ea_iid -v -v -v` "Unpermuted result compression" byte-for-byte (rand1_short = 1611,
+  rand4_short = 5520, rand8_short = 10987). All nineteen statistics now participate in the verdict.
+- **Post-quantum criterion benchmarks:** ML-KEM, ML-DSA, SLH-DSA, and XMSS.
+
+### Changed
+- **`oxicrypt-maxwell`** centralizes the value-sorted-alphabet helper shared across estimators
+  (EA-parity ≤ 1e-6 preserved).
+- **Documentation:** `api.md` and `usage.md` refreshed to the current public-API surface
+  (post-quantum, Diffie–Hellman, XOF families); the LAMA manifest gains full `oxicrypt-xof` coverage;
+  per-family ACVP-algorithm → handler dispatch notes added.
+- **First third-party dependency in the workspace:** the pure-Rust `bzip2` crate (libbz2-rs-sys
+  backend — no C, no `bzip2-sys`), confined to the out-of-boundary `oxicrypt-maxwell` tool. The
+  cryptographic boundary and `acvp-harness` remain dependency-free; the Security Policy records the
+  scoping. With compression now scored per shuffle, the `oxicrypt-maxwell` permutation suite roughly
+  doubles in wall-clock (≈490s → ≈972s) — the inherent cost of a complete nineteen-statistic §5.1
+  verdict, matching the reference tool.
+
 ## [0.15.0] - 2026-06-17
 
 Completes the SP 800-90B §6.3 multi-bit entropy assessment in `oxicrypt-maxwell`: the
@@ -227,7 +255,8 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/oxiforge/oxicrypt/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/oxiforge/oxicrypt/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/oxiforge/oxicrypt/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/oxiforge/oxicrypt/compare/v0.12.0...v0.13.0

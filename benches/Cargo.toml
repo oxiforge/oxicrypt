@@ -23,6 +23,10 @@ oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
 oxicrypt-rsa = { path = "../crates/oxicrypt-rsa" }
 oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
 oxicrypt-lms = { path = "../crates/oxicrypt-lms" }
+oxicrypt-ml-kem = { path = "../crates/oxicrypt-ml-kem" }
+oxicrypt-ml-dsa = { path = "../crates/oxicrypt-ml-dsa" }
+oxicrypt-slh-dsa = { path = "../crates/oxicrypt-slh-dsa" }
+oxicrypt-xmss = { path = "../crates/oxicrypt-xmss" }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
@@ -55,4 +59,20 @@ harness = false
 
 [[bench]]
 name = "lms"
+harness = false
+
+[[bench]]
+name = "ml_kem"
+harness = false
+
+[[bench]]
+name = "ml_dsa"
+harness = false
+
+[[bench]]
+name = "slh_dsa"
+harness = false
+
+[[bench]]
+name = "xmss"
 harness = false

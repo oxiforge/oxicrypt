@@ -70,24 +70,23 @@
 //! `alt_sequence2(data, 0.5, …)` on `dp->symbols`, *not* conversion1), unlike
 //! the directional family which uses conversion1.
 //!
-//! # The compression slot (STOP-AND-LEAVE)
+//! # The compression slot
 //!
 //! Statistic 18 (`compression`) is the bzip2-compressed length of the
-//! space-separated decimal text of the raw bytes. The EA tool links libbz2 (the
-//! C reference implementation) at level 5. Reproducing its compressed length
-//! **bit-for-bit** requires byte-identical BWT block boundaries, MTF/RLE, and
-//! Huffman-table selection — which no independent encoder matches (an empirical
-//! check of the pure-Rust `banzai` encoder on `rand4_short` gave 6563 bytes vs
-//! libbz2's 5520, ≈19 % off). A bit-exact match is also out of reach within the
-//! workspace's **zero-third-party-dependency** Phase-1 policy (libbz2 is a C
-//! dependency; a pure-Rust encoder would be a third-party crate). The other 18
-//! statistics fully determine the verdict for the oracle datasets, so:
+//! space-separated decimal text of the raw bytes (EA `compression()`,
+//! `blockSize100k = 5`). It is computed **bit-exactly** against the EA tool via
+//! the pure-Rust `bzip2` crate (libbz2-rs-sys backend — no C, no `bzip2-sys`):
+//! the compressed length matches EA's `ea_iid -v -v -v` "Unpermuted result
+//! compression" value byte-for-byte on the oracle datasets (rand1_short = 1611,
+//! rand4_short = 5520, rand8_short = 10987). As `oxicrypt-maxwell` is
+//! out-of-boundary tooling, this third-party dependency never touches the
+//! validated module or its zero-dependency claim (see
+//! `docs/security-policy/security-policy.md`).
 //!
-//! - [`compression`] returns [`f64::NAN`] (a sentinel: "not computed").
-//! - The compression slot (index 18) is **excluded** from the verdict
-//!   ([`PermutationVerdict::compression_included`] is `false`).
-//!
-//! See the `// STOP-AND-LEAVE:` marker on [`compression`].
+//! - [`compression`] returns the real compressed byte length as an `f64`.
+//! - The compression slot (index 18) is **included** in the verdict
+//!   ([`PermutationVerdict::compression_included`] is `true`) — it participates
+//!   like every other statistic.
 //!
 //! # Determinism (ISC-134)
 //!
@@ -168,8 +167,8 @@ pub struct AlphabetStats {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PermutationStats {
     /// `values[i]` is the original (unpermuted) value of statistic `i`.
-    /// `values[18]` (compression) is [`f64::NAN`] — see the module STOP-AND-LEAVE
-    /// note.
+    /// `values[18]` (compression) is the real bzip2-compressed byte length,
+    /// computed bit-exactly vs the EA tool — see the module compression-slot note.
     pub values: [f64; NUM_TESTS],
     /// The statistic names, parallel to `values`.
     pub names: [&'static str; NUM_TESTS],
@@ -182,14 +181,15 @@ pub struct PermutationVerdict {
     /// tallies across the completed shuffles for statistic `i`.
     pub c_counts: [(u64, u64, u64); NUM_TESTS],
     /// `per_test_pass[i]` — whether statistic `i` is IID-consistent
-    /// (`(C0 + C1 > 5) && (C1 + C2 > 5)`). The compression slot is `false` when
-    /// excluded (it is never counted toward the verdict).
+    /// (`(C0 + C1 > 5) && (C1 + C2 > 5)`). All 19 statistics — including the
+    /// compression slot (index 18) — count toward the verdict.
     pub per_test_pass: [bool; NUM_TESTS],
-    /// `true` iff every *active* statistic passed (compression excluded when
-    /// [`compression_included`](Self::compression_included) is `false`).
+    /// `true` iff every statistic passed (all 19, including compression, are
+    /// active).
     pub is_iid: bool,
     /// Whether the compression slot (index 18) was computed and counted toward
-    /// the verdict. Currently always `false` (STOP-AND-LEAVE).
+    /// the verdict. Always `true`: compression is computed bit-exactly vs the EA
+    /// tool and participates in the verdict like every other statistic.
     pub compression_included: bool,
 }
 
@@ -546,25 +546,54 @@ fn covariance(data: &[u8], p: usize) -> f64 {
     t as f64
 }
 
-/// §5.1.11 compression — **STOP-AND-LEAVE**.
+/// §5.1.11 compression — bzip2-compressed length of the space-separated decimal
+/// text of the raw bytes, at bzip2 level 5.
 ///
-/// The EA tool links libbz2 (a C dependency) and reports the compressed length
-/// of the space-separated decimal text of the raw bytes at level 5. Reproducing
-/// that length bit-for-bit is not achievable here: (a) no independent encoder
-/// matches libbz2's exact output (the pure-Rust `banzai` encoder gave 6563 vs
-/// libbz2's 5520 on `rand4_short`), and (b) the workspace's Phase-1 policy
-/// forbids third-party dependencies (libbz2 is C; a Rust bzip2 crate is
-/// third-party). The other 18 statistics fully determine the verdict for the
-/// oracle datasets, so this slot returns a NaN sentinel and is excluded from the
-/// verdict.
-//
-// STOP-AND-LEAVE: bit-exact bzip2 compression length is intentionally not
-// implemented (see the doc-comment above). Index 18 is excluded from the
-// verdict; `compression_included` is reported as `false`.
+/// Transcribes the EA tool's `compression()` (`cpp/iid/permutation_tests.h`):
+/// each sample is formatted as `"%u"` decimal, values are joined by single
+/// spaces with **no trailing space and no newline**, and the buffer is passed to
+/// `BZ2_bzBuffToBuffCompress(dest, &dest_len, msg, curlen, 5, 0, 0)` —
+/// `blockSize100k = 5`, `verbosity = 0`, `workFactor = 0` (libbz2's default
+/// work factor of 30). The statistic is the compressed byte length.
+///
+/// Backed by the pure-Rust `bzip2` crate (libbz2-rs-sys backend — no C, no
+/// `bzip2-sys`). `oxicrypt-maxwell` is **out-of-boundary** tooling, so this — the
+/// workspace's first third-party dependency — never touches the validated module
+/// or its zero-dependency claim; see `docs/security-policy/security-policy.md`.
+/// The crate's `#![forbid(unsafe_code)]` is unaffected: the unavoidable bzip2
+/// `unsafe` lives inside the dependency, not here.
+///
+/// Deterministic. In-memory bzip2 compression of a finite buffer cannot fail; on
+/// the impossible error path the function returns [`f64::NAN`] rather than panic.
 #[must_use]
-#[allow(clippy::unused_self, clippy::missing_const_for_fn)]
-fn compression(_data: &[u8]) -> f64 {
-    f64::NAN
+fn compression(data: &[u8]) -> f64 {
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+
+    // EA decimal text: each byte as ASCII decimal, single-space separated, no
+    // trailing space, no newline. `write!` into a String performs the `%u`
+    // formatting without manual digit arithmetic and never fails for a String.
+    let mut text = String::with_capacity(data.len().saturating_mul(4));
+    for (i, &b) in data.iter().enumerate() {
+        if i > 0 {
+            text.push(' ');
+        }
+        if write!(text, "{b}").is_err() {
+            return f64::NAN;
+        }
+    }
+
+    // bzip2 level 5 (EA blockSize100k = 5), default work factor.
+    let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::new(5));
+    let compressed = encoder
+        .write_all(text.as_bytes())
+        .and_then(|()| encoder.finish());
+    match compressed {
+        // Lengths here are small (≤ a few KB); the usize→f64 cast is exact.
+        #[allow(clippy::cast_precision_loss)]
+        Ok(out) => out.len() as f64,
+        Err(_) => f64::NAN,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +716,7 @@ fn compute_all(
         }
     }
 
-    // 18: compression — STOP-AND-LEAVE sentinel.
+    // 18: compression (bit-exact bzip2 length).
     if is_active(COMPRESSION_IDX) {
         set(out, COMPRESSION_IDX, compression(data));
     }
@@ -851,18 +880,16 @@ const fn is_decided(entry: (u64, u64, u64)) -> bool {
 /// Compute the 19 unpermuted §5.1 statistics for `data` (L1).
 ///
 /// Deterministic: the same input always yields a bit-identical
-/// [`PermutationStats`]. The compression slot (`values[18]`) is [`f64::NAN`]
-/// (STOP-AND-LEAVE).
+/// [`PermutationStats`]. The compression slot (`values[18]`) is the real
+/// bzip2-compressed byte length, computed bit-exactly vs the EA tool.
 #[must_use]
 pub fn permutation_stats(data: &[u8]) -> PermutationStats {
     let stats = alphabet_stats(data);
     let active = [true; NUM_TESTS];
     let mut values = [0.0_f64; NUM_TESTS];
     compute_all(data, &stats, &active, &mut values);
-    // The STOP-AND-LEAVE compression slot is explicitly NaN.
-    if let Some(slot) = values.get_mut(COMPRESSION_IDX) {
-        *slot = f64::NAN;
-    }
+    // Statistic 18 (compression) is computed bit-exactly vs the EA tool, like
+    // every other statistic.
     PermutationStats {
         values,
         names: TEST_NAMES,
@@ -874,8 +901,8 @@ pub fn permutation_stats(data: &[u8]) -> PermutationStats {
 /// (greater, equal, less) per statistic and applying the early-exit decision.
 ///
 /// Deterministic (fixed [`SHUFFLE_SEED`], ISC-134): the same input always yields
-/// a bit-identical [`PermutationVerdict`]. The compression slot is excluded from
-/// the verdict (STOP-AND-LEAVE).
+/// a bit-identical [`PermutationVerdict`]. The compression slot (index 18) is
+/// included in the verdict — all 19 statistics participate.
 ///
 /// # Early-exit (matches EA)
 ///
@@ -910,13 +937,10 @@ pub fn run_permutation(data: &[u8], perms: usize) -> PermutationVerdict {
     let mut t = [0.0_f64; NUM_TESTS];
     compute_all(data, &stats, &active_all, &mut t);
 
-    // The compression slot is excluded: mark it inactive (never tallied) and
-    // record that it is not included in the verdict.
-    let compression_included = false;
+    // All 19 statistics participate, including compression (statistic 18), now
+    // computed bit-exactly vs the EA tool — no longer a STOP-AND-LEAVE exclusion.
+    let compression_included = true;
     let mut active = [true; NUM_TESTS];
-    if let Some(slot) = active.get_mut(COMPRESSION_IDX) {
-        *slot = false;
-    }
 
     let mut c: [(u64, u64, u64); NUM_TESTS] = [(0, 0, 0); NUM_TESTS];
 
@@ -927,13 +951,8 @@ pub fn run_permutation(data: &[u8], perms: usize) -> PermutationVerdict {
     // Scratch for per-shuffle statistics; inactive slots retain prior values.
     let mut tp = t;
 
-    // We stop only once EVERY slot is "done": a started-inactive slot (the
-    // compression STOP-AND-LEAVE) or a retired (decided) statistic. The
-    // `decided` recount below counts inactive slots via its `!*act` branch, so
-    // the target must be the full slot count (NUM_TESTS), not just the active
-    // ones — otherwise the inactive compression slot's phantom +1 makes the loop
-    // break one active statistic early, under-sampling a slow-to-decide holdout
-    // and reporting a false non-IID verdict on genuinely-IID data.
+    // We stop once every statistic is decided. All NUM_TESTS slots start active
+    // now (no STOP-AND-LEAVE exclusion), so the target is the full slot count.
     let total_slots = NUM_TESTS;
     let mut decided: usize = 0;
 
@@ -971,7 +990,7 @@ pub fn run_permutation(data: &[u8], perms: usize) -> PermutationVerdict {
         decided = 0;
         for (act, &entry) in active.iter_mut().zip(c.iter()) {
             if !*act {
-                // Already decided (includes the excluded compression slot).
+                // Already decided.
                 decided = decided.saturating_add(1);
             } else if is_decided(entry) {
                 *act = false;
@@ -981,15 +1000,11 @@ pub fn run_permutation(data: &[u8], perms: usize) -> PermutationVerdict {
     }
 
     // Per-statistic pass + overall verdict. A statistic passes iff its final
-    // counts satisfy the decision inequality. The compression slot is reported
-    // as not-passed and is excluded from `is_iid`.
+    // counts satisfy the decision inequality; all 19 (including compression)
+    // count toward `is_iid`.
     let mut per_test_pass = [false; NUM_TESTS];
     let mut is_iid = true;
-    for (idx, (pass_slot, &entry)) in per_test_pass.iter_mut().zip(c.iter()).enumerate() {
-        if idx == COMPRESSION_IDX && !compression_included {
-            *pass_slot = false;
-            continue;
-        }
+    for (pass_slot, &entry) in per_test_pass.iter_mut().zip(c.iter()) {
         let pass = is_decided(entry);
         *pass_slot = pass;
         if !pass {
@@ -1156,14 +1171,27 @@ mod tests {
         assert!((excursion(&data, stats.rawmean) - 1.0).abs() < EPS);
     }
 
-    /// Compression slot is the NaN STOP-AND-LEAVE sentinel.
+    /// Compression slot matches the EA tool bit-for-bit (`ea_iid -v -v -v`
+    /// "Unpermuted result compression") on the three short oracle datasets:
+    /// rand1_short = 1611, rand4_short = 5520, rand8_short = 10987.
     #[test]
-    fn compression_is_nan_sentinel() {
-        let s = permutation_stats(&[1u8, 2, 3, 4, 5, 6, 7, 8]);
-        assert!(
-            s.values[COMPRESSION_IDX].is_nan(),
-            "compression must be NaN sentinel"
-        );
+    fn compression_matches_ea_on_short_datasets() {
+        let dir = crate::parity::resolve_datasets_dir(None);
+        for (file, expected) in [
+            ("rand1_short.bin", 1611.0_f64),
+            ("rand4_short.bin", 5520.0_f64),
+            ("rand8_short.bin", 10987.0_f64),
+        ] {
+            let Ok(data) = std::fs::read(dir.join(file)) else {
+                eprintln!("skipping {file}: dataset not present");
+                continue;
+            };
+            let got = permutation_stats(&data).values[COMPRESSION_IDX];
+            assert!(
+                (got - expected).abs() < f64::EPSILON,
+                "{file}: compression {got} != EA {expected}"
+            );
+        }
     }
 
     /// Determinism: permutation_stats is bit-identical across two calls.
@@ -1174,7 +1202,12 @@ mod tests {
         let b = permutation_stats(&buf);
         for i in 0..NUM_TESTS {
             if i == COMPRESSION_IDX {
-                assert!(a.values[i].is_nan() && b.values[i].is_nan());
+                // Compression is a real finite bzip2 length: deterministic means
+                // it is equal across the two calls and finite (no longer NaN).
+                assert!(
+                    a.values[i] == b.values[i] && a.values[i].is_finite(),
+                    "compression slot must be equal and finite across calls"
+                );
             } else {
                 assert_eq!(a.values[i], b.values[i], "stat {i} differs");
             }
@@ -1193,7 +1226,8 @@ mod tests {
         assert_eq!(a.c_counts, b.c_counts, "c_counts must be identical");
         assert_eq!(a.per_test_pass, b.per_test_pass);
         assert_eq!(a.is_iid, b.is_iid);
-        assert!(!a.compression_included);
+        // Compression is now computed bit-exactly and counts toward the verdict.
+        assert!(a.compression_included);
     }
 
     /// Locate `tests/data/<name>` relative to the crate manifest.

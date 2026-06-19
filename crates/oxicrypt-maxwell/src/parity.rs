@@ -60,10 +60,10 @@ pub const PARITY_TOLERANCE_BITS: f64 = 1.0e-6;
 /// vendored or invoked.
 pub const EA_TOOL_VERSION: &str = "1.1.8";
 
-/// Number of §5.1 permutation-battery L1 statistics checked for parity: the 18
-/// non-compression statistics (EA index `0..=17`). The compression slot (EA
-/// index 18) is STOP-AND-LEAVE (NaN) and excluded.
-pub const PERM_STATS_PARITY_COUNT: usize = 18;
+/// Number of §5.1 permutation-battery L1 statistics checked for parity: all 19
+/// statistics (EA index `0..=18`), including the compression slot (EA index 18),
+/// which is now computed bit-exactly vs the EA tool.
+pub const PERM_STATS_PARITY_COUNT: usize = 19;
 
 /// Number of deterministic shuffles for the §5 L2 verdict parity check. Far
 /// below the spec [`crate::permutation::PERMS`] (10_000) because the three short
@@ -155,18 +155,18 @@ pub struct Reference {
     /// for 1-bit data); per-bit and in `(0, 1]`. LZ78Y completes the §6.3 non-IID
     /// estimator suite.
     pub lz78y_min_entropy: f64,
-    /// Optional SP 800-90B §5.1 **L1** parity reference: the 18 unpermuted
-    /// permutation-battery statistics in EA index order `0..=17`, EXCLUDING the
-    /// compression slot (index 18), which is a documented STOP-AND-LEAVE / NaN
-    /// (bit-exact libbz2 length is not reproduced). Recorded verbatim from the EA
-    /// tool's `ea_iid -v -v -v` unpermuted-statistics block. Populated only for
-    /// the three SHORT (10k-sample) datasets — the §5 battery is skipped for the
+    /// Optional SP 800-90B §5.1 **L1** parity reference: the 19 unpermuted
+    /// permutation-battery statistics in EA index order `0..=18`, INCLUDING the
+    /// compression statistic (index 18), now computed bit-exactly vs the EA tool
+    /// (pure-Rust bzip2 length). Recorded verbatim from the EA tool's
+    /// `ea_iid -v -v -v` unpermuted-statistics block. Populated only for the
+    /// three SHORT (10k-sample) datasets — the §5 battery is skipped for the
     /// 1M-sample datasets to keep the harness tractable; `None` elsewhere. When
-    /// `Some`, `check_one` compares `permutation_stats(data).values[0..18]` to
+    /// `Some`, `check_one` compares `permutation_stats(data).values[0..19]` to
     /// these at a relative-or-absolute `PARITY_TOLERANCE_BITS` tolerance (the
     /// excursion statistic, index 0, accumulates a long-double-vs-f64 delta that
     /// a pure absolute tolerance would not cover; see `check_perm_stats`).
-    pub perm_stats_ref: Option<[f64; 18]>,
+    pub perm_stats_ref: Option<[f64; 19]>,
     /// Optional SP 800-90B §5.1 permutation-battery **L2 verdict** reference
     /// (EA ground truth: `run_permutation(data, 1500).is_iid`). Populated only
     /// for the three SHORT datasets; `None` elsewhere.
@@ -300,8 +300,8 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.943_333_706_575_771_2,
         multi_mmc_min_entropy: 0.961_616_667_828_880_8,
         lz78y_min_entropy: 0.961_446_245_952_478,
-        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=17; compression slot
-        // 18 excluded). §5 verdicts: IID under all three §5 tests.
+        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=18; compression slot
+        // 18 included). §5 verdicts: IID under all three §5 tests.
         perm_stats_ref: Some([
             68.691_199_999_999_881_242_73,
             793.0,
@@ -321,6 +321,7 @@ pub const REFERENCE_TABLE: &[Reference] = &[
             20092.0,
             19719.0,
             19526.0,
+            1611.0,
         ]),
         perm_verdict_ref: Some(true),
         chi_verdict_ref: Some(true),
@@ -342,8 +343,8 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.982_641_821_735_989_1,
         multi_mmc_min_entropy: 0.977_696_512_087_203,
         lz78y_min_entropy: 0.980_145_173_356_401,
-        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=17; compression slot
-        // 18 excluded). §5 verdicts: NOT IID — EA periodicity(1) is extreme.
+        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=18; compression slot
+        // 18 included). §5 verdicts: NOT IID — EA periodicity(1) is extreme.
         perm_stats_ref: Some([
             450.376_000_000_000_544_787_3,
             6669.0,
@@ -363,6 +364,7 @@ pub const REFERENCE_TABLE: &[Reference] = &[
             569_110.0,
             568_260.0,
             561_023.0,
+            5520.0,
         ]),
         perm_verdict_ref: Some(false),
         chi_verdict_ref: Some(true),
@@ -384,8 +386,8 @@ pub const REFERENCE_TABLE: &[Reference] = &[
         lag_min_entropy: 0.989_693_493_887_954_9,
         multi_mmc_min_entropy: 0.987_814_544_042_294_1,
         lz78y_min_entropy: 0.988_081_803_799_903_1,
-        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=17; compression slot
-        // 18 excluded). §5 verdicts: NOT IID under chi-square (independence
+        // §5.1 L1 stats (EA `ea_iid -v -v -v`, indices 0..=18; compression slot
+        // 18 included). §5 verdicts: NOT IID under chi-square (independence
         // fails); permutation and LRS are IID-consistent.
         perm_stats_ref: Some([
             6_638.535_999_999_970_954_377,
@@ -406,6 +408,7 @@ pub const REFERENCE_TABLE: &[Reference] = &[
             162_563_680.0,
             162_531_901.0,
             161_376_389.0,
+            10987.0,
         ]),
         perm_verdict_ref: Some(true),
         chi_verdict_ref: Some(false),
@@ -506,7 +509,7 @@ pub const REFERENCE_TABLE: &[Reference] = &[
 /// only when the reference row's §5 `Option` fields are `Some`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Section5Result {
-    /// Maximum per-statistic delta across the 18 checked §5.1 L1 statistics,
+    /// Maximum per-statistic delta across the 19 checked §5.1 L1 statistics,
     /// measured on the relative-or-absolute scale used by the check (so a value
     /// `<= PARITY_TOLERANCE_BITS` means every statistic passed). `None` if the
     /// reference declared no L1 statistics (it always declares them when §5 is
@@ -993,9 +996,9 @@ fn check_lz78y(reference: &Reference, data: &[u8]) -> Result<f64, String> {
 /// tolerance or any §5 L2 verdict (permutation / chi-square / LRS) diverging from
 /// the EA ground truth.
 ///
-/// **L1 (§5.1 statistics).** Compares `permutation_stats(data).values[0..18]` to
-/// `perm_stats_ref` (the 18 non-compression statistics; the compression slot is
-/// STOP-AND-LEAVE / NaN and excluded). The tolerance is **relative-or-absolute**
+/// **L1 (§5.1 statistics).** Compares `permutation_stats(data).values[0..19]` to
+/// `perm_stats_ref` (all 19 statistics, including the compression slot at index
+/// 18, now computed bit-exactly vs the EA tool). The tolerance is **relative-or-absolute**
 /// at [`PARITY_TOLERANCE_BITS`] (`1e-6`): a statistic passes when
 /// `|got - ref| <= 1e-6` OR `|got - ref| <= 1e-6 * |ref|`. The relative arm is
 /// required for the excursion statistic (index 0), which carries a
@@ -1017,10 +1020,10 @@ fn check_section5(reference: &Reference, data: &[u8]) -> Result<Option<Section5R
         return Ok(None);
     };
 
-    // §5.1 L1: the 18 non-compression statistics, relative-or-absolute tolerance.
-    // The compression slot (EA index 18) is excluded — `ref_stats` only carries
-    // the first 18, so zipping with the 19-element `values`/`TEST_NAMES` arrays
-    // truncates to the 18 we check (and avoids any panicking index).
+    // §5.1 L1: all 19 statistics (including the compression slot at EA index 18,
+    // now computed bit-exactly), relative-or-absolute tolerance. `ref_stats`
+    // carries all 19, matching the 19-element `values`/`TEST_NAMES` arrays one
+    // for one (no panicking index).
     let got = permutation_stats(data).values;
     let mut max_scaled_delta = 0.0_f64;
     for ((i, &ref_v), (&got_v, &stat_name)) in ref_stats
@@ -1512,8 +1515,9 @@ mod tests {
                 "{}: §5 lrs_verdict_ref present-ness disagrees with perm_stats_ref",
                 r.name
             );
-            // Declared §5.1 L1 statistics must be finite (the compression slot,
-            // which is NaN, is excluded from the 18-element reference array).
+            // Declared §5.1 L1 statistics must all be finite — including the
+            // compression slot (index 18), now a real bzip2 length in the
+            // 19-element reference array.
             if let Some(stats) = r.perm_stats_ref {
                 assert_eq!(stats.len(), PERM_STATS_PARITY_COUNT);
                 for (i, v) in stats.iter().enumerate() {

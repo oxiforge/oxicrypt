@@ -289,6 +289,60 @@ pub(crate) fn dense_alphabet(symbols: &[u8]) -> (Vec<u8>, usize) {
     (out, next as usize)
 }
 
+/// Translate `symbols` to a dense `0..alph_size` alphabet in **ascending raw-value
+/// order**, matching the EA tool's `symbol_map_down_table` (`utils.h`): the EA tool
+/// assigns dense indices by iterating raw values `0..256` and numbering the present
+/// ones in order, so the smallest present byte becomes `0`, the next `1`, and so on.
+///
+/// This is the value-ordering counterpart to [`dense_alphabet`] (first-seen order).
+/// The §6.3 prediction estimators **MultiMMC** (§6.3.9) and **LZ78Y** (§6.3.10) are
+/// *not* invariant under an arbitrary alphabet bijection: their `PostfixDictionary`
+/// prediction tie rule breaks ties toward the **larger symbol value**
+/// (`in > curPrediction` in the EA tool's `PostfixDictionary` and in this crate's
+/// `PostfixDict::increment_postfix`), so the dense labels must preserve the raw
+/// values' *ordering*, not merely their equality structure. A first-seen remap
+/// ([`dense_alphabet`]) reorders ties and shifts the EA `C` count (empirically a few
+/// predictions per million on `normal`); the value-sorted remap is order-preserving,
+/// so "larger raw value wins" maps to "larger dense index wins" and the EA tie-break
+/// is reproduced exactly. The other literal-track estimators (MultiMCW, Lag, t-Tuple,
+/// LRS) are bijection-invariant and may use either helper.
+///
+/// Returns the dense symbols and the alphabet size (number of distinct values,
+/// `1..=256`).
+#[must_use]
+pub(crate) fn value_sorted_alphabet(symbols: &[u8]) -> (Vec<u8>, usize) {
+    let mut present = [false; 256];
+    for &s in symbols {
+        if let Some(p) = present.get_mut(s as usize) {
+            *p = true;
+        }
+    }
+    // map[v] = dense index of raw value v (only meaningful where present[v]).
+    let mut map = [0u8; 256];
+    let mut next: u16 = 0;
+    for (v, &p) in present.iter().enumerate() {
+        if p {
+            if let Some(slot) = map.get_mut(v) {
+                // next <= 255 here: this is the (next+1)-th distinct value and at
+                // most 256 distinct values exist, so the cast is lossless.
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    *slot = next as u8;
+                }
+            }
+            next = next.saturating_add(1);
+        }
+    }
+    // s as usize is 0..=255 — always in bounds of the 256-slot map — and every
+    // symbol was marked present above, so map[s] holds its dense index; the
+    // unwrap_or fallback is never reached.
+    let dense: Vec<u8> = symbols
+        .iter()
+        .map(|&s| map.get(s as usize).copied().unwrap_or(0))
+        .collect();
+    (dense, next as usize)
+}
+
 /// SP 800-90B §6.3 literal-track entropy **`H_original`** — the minimum over the
 /// literal-symbol-track min-entropy estimates the EA tool computes on multi-bit
 /// data: MCV plus the six §6.3 estimators that have a genuine literal track

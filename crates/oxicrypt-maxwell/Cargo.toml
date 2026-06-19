@@ -22,6 +22,12 @@ oxicrypt-sha = { path = "../oxicrypt-sha" }
 # module up with the real SHA-256 KAT set (oxicrypt_sha::KATS) before hashing,
 # rather than rolling its own digest. Out-of-boundary, same as acvp-harness.
 oxicrypt-module = { path = "../oxicrypt-module" }
+# §5.1 statistic-18 (compression): pure-Rust bzip2. bzip2 0.6's default backend
+# is libbz2-rs-sys (pure Rust); the `bzip2-sys` C backend is an opt-in feature we
+# deliberately do NOT enable. maxwell is out-of-boundary tooling, so this — the
+# workspace's first third-party dep — never touches the validated module. See
+# docs/security-policy/security-policy.md.
+bzip2 = "0.6"
 
 [lints]
 workspace = true
