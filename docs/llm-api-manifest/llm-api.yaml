@@ -215,10 +215,12 @@ modules:
       2026-06-12), startup KAT with permanent refusal on mismatch, and
       EntropyPipeline::conditioned_block as the conditioned-output API.
       Features: std (OS nanosecond clock timer), raw-counter (audited
-      oxicrypt-timer counter reads); default build is no_std with both
-      off. Makes no entropy claims (pre-validation). All spec constants
-      are enumerated in the sp800_90b rustdoc (single transcription
-      site).
+      oxicrypt-timer counter reads), rand-core (rand_core_compat::EntropyRng
+      exposes the conditioned output as a fallible rand_core 0.9 TryRngCore
+      + TryCryptoRng — default-off, no_std-preserving, fail-closed); default
+      build is no_std with all off. Makes no entropy claims (pre-validation).
+      All spec constants are enumerated in the sp800_90b rustdoc (single
+      transcription site).
     no_std: true
     depends_on: [oxicrypt-sha]
 

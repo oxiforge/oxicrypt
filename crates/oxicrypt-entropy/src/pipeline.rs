@@ -630,4 +630,53 @@ mod tests {
         };
         assert_eq!(m.timer_source, Some(TimerSource::OsNanoClock));
     }
+
+    // ── Entropy → DRBG seeding (ISC-34) ──────────────────────────────
+
+    /// ISC-34: the pipeline's conditioned full-entropy output seeds an
+    /// `oxicrypt-drbg` instance through the module-gated public API, which
+    /// then produces output.
+    ///
+    /// End-to-end chain: bring the module operational (default
+    /// `Unrestricted` profile, which permits `HashDrbgSha256`) → run the
+    /// pipeline's §4.3 startup gate → draw two conditioned blocks (the
+    /// first is the 32-byte seed, the first 16 bytes of the second are the
+    /// nonce) → instantiate + generate through `HashDrbgSha256`'s gated
+    /// API. The instantiate/generate calls go through both the
+    /// `require_operational` and `require_allowed` gates, so this also
+    /// proves the seed flows across the validated module boundary.
+    #[test]
+    fn conditioned_output_seeds_module_gated_drbg() {
+        use oxicrypt_drbg::HashDrbgSha256;
+
+        // Make the module operational. Defensive under `cargo test` (shared
+        // global state); under nextest each test is its own process. The
+        // default profile is `Unrestricted`, which permits Hash_DRBG-256 —
+        // no non-default profile is needed.
+        let _ = oxicrypt_module::initialize();
+        assert!(
+            oxicrypt_module::is_operational(),
+            "module must be operational before the gated DRBG API can be used"
+        );
+
+        // Drive the pipeline through startup, then draw conditioned output
+        // for the DRBG seed material.
+        let mut pipeline = healthy_pipeline();
+        pipeline.run_startup().unwrap();
+        let seed = pipeline.conditioned_block().unwrap();
+        let nonce_block = pipeline.conditioned_block().unwrap();
+        let nonce = &nonce_block[..16];
+
+        // Seed the DRBG through its module-gated public API.
+        let mut drbg = HashDrbgSha256::new();
+        drbg.instantiate(&seed, nonce, &[]).unwrap();
+
+        // Generate through the gated public API and confirm real output.
+        let mut out = [0u8; 64];
+        drbg.generate(None, &mut out).unwrap();
+        assert!(
+            out.iter().any(|&b| b != 0),
+            "DRBG output must not be all-zero"
+        );
+    }
 }

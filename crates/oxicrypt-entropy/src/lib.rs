@@ -45,6 +45,25 @@
 //! transcription site, fetched-document provenance recorded in that
 //! module's docs. Conditioned output is produced by the vetted SHA-256
 //! component ([`conditioner`]) under the 90C full-entropy input margin.
+//!
+//! # Feature graph
+//!
+//! The crate is `#![no_std]` by default; every `std`-only surface sits
+//! behind a named feature, and the default build graph carries no
+//! optional dependency.
+//!
+//! - **`default = []`** — the validated configuration: `no_std` core,
+//!   no optional dependency. The sealed [`source::NoiseSource`] trait,
+//!   [`health`] tests, [`conditioner`], and the cited [`sp800_90b`]
+//!   numerics are all available here.
+//! - **`std`** — enables the OS monotonic-nanosecond-clock timer surface
+//!   (pulls in `std`; brings no third-party dependency).
+//! - **`raw-counter`** — enables the serialized raw CPU counter timer via
+//!   the audited `oxicrypt-timer` crate (`dep:oxicrypt-timer`), the only
+//!   optional dependency.
+//! - **`collection`** (= `std` + `raw-counter`) — the off-boundary
+//!   raw-data `collection` module tooling backing the `collect` binary;
+//!   never part of the validated surface.
 
 #![forbid(unsafe_code)]
 #![no_std]
@@ -62,6 +81,13 @@ pub(crate) mod raw;
 pub mod source;
 pub mod sp800_90b;
 pub mod timer;
+
+/// `rand_core` 0.9 compatibility shim (behind the default-off `rand-core`
+/// feature). Exposes the pipeline's vetted conditioned output as a standard
+/// fallible `rand_core::TryRngCore` generator. See
+/// [`rand_core_compat::EntropyRng`].
+#[cfg(feature = "rand-core")]
+pub mod rand_core_compat;
 
 /// Off-boundary raw-data collection tooling (behind the default-off
 /// `collection` feature).

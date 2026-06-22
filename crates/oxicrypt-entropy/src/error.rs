@@ -43,11 +43,31 @@ pub enum EntropyError {
     /// A streaming raw-data collection failed to write to its output sink.
     ///
     /// This is a tool-boundary error: it arises only on the std-gated
-    /// streaming collection path ([`crate::raw`]'s `stream_to`), where
+    /// streaming collection path (the `raw` module's `stream_to`), where
     /// samples are written to a file as they are produced. It is a unit
     /// variant (carries no `std::io::Error`) so [`EntropyError`] stays
     /// `Copy` and the `no_std` core is unaffected.
     Io,
+}
+
+impl core::fmt::Display for EntropyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ClaimExceedsCeiling { .. } => {
+                f.write_str("min-entropy claim exceeds the source's design ceiling")
+            }
+            Self::ClaimExceedsSampleWidth { .. } => {
+                f.write_str("min-entropy claim exceeds the declared sample width")
+            }
+            Self::Source(_) => f.write_str("noise source failure"),
+            Self::Health(_) => f.write_str("health-test rejection or permanent poisoning"),
+            Self::NotReady => {
+                f.write_str("pipeline not ready: output before startup, re-run, or after poisoning")
+            }
+            Self::ConditionerKat => f.write_str("conditioning known-answer test failed"),
+            Self::Io => f.write_str("raw-data collection I/O failure"),
+        }
+    }
 }
 
 impl From<SourceError> for EntropyError {

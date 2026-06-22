@@ -24,11 +24,26 @@ raw-counter = ["dep:oxicrypt-timer"]
 # feature is OUTSIDE the validated module boundary — the default and library
 # build graphs carry none of it, and `RawCollector` stays crate-private.
 collection = ["std", "raw-counter"]
+# rand_core 0.9 compatibility: expose the pipeline's vetted conditioned output
+# as a standard fallible `rand_core::TryRngCore` generator. Default-off and
+# `no_std`-clean — `rand_core` is pulled with `default-features = false`, so
+# this feature adds NO std dependency (unlike `std`/`collection`), keeping the
+# `--no-default-features --features rand-core` build a pure `no_std` graph.
+rand-core = ["dep:rand_core"]
 
 [dependencies]
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-timer = { path = "../oxicrypt-timer", optional = true }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+# no_std rand_core compat (default-off; see the `rand-core` feature above).
+rand_core = { version = "0.9", optional = true, default-features = false }
+
+# Dev-only: prove the conditioned pipeline output can seed the module-gated
+# DRBG (ISC-34). Test-graph-only deps with no dependency cycle — neither
+# oxicrypt-drbg nor oxicrypt-module depends on oxicrypt-entropy.
+[dev-dependencies]
+oxicrypt-drbg = { path = "../oxicrypt-drbg" }
+oxicrypt-module = { path = "../oxicrypt-module" }
 
 # The off-boundary collection binary. Builds ONLY with `--features collection`
 # (or `--all-features`); absent from the default and library build graphs.
