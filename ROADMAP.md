@@ -12,7 +12,7 @@ GitHub issue and is removed from here**.
 
 ## Designs
 
-- **AVX2 acceleration of Keccak-f[1600]** → [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md). The worthwhile form is a 4-way-batched permutation requiring a batched sponge API + caller rewiring (not a drop-in single-stream accel); design-first before any issues.
+*(design-first epics — one-line pointers to `docs/design/*.md`. The AVX2/AVX-512 Keccak epic is now tracked in [#110](https://github.com/oxiforge/oxicrypt/issues/110); design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md).)*
 
 ## Features
 
@@ -20,3 +20,12 @@ GitHub issue and is removed from here**.
   SP 800-90B §6.3 estimators is proven against the reference tool's bundled datasets; before the
   suite's numbers back a live assessment it should also be exercised on real collected entropy
   (a source's own samples). Becomes one or more issues once scoped.
+- **ARMv8 crypto-extension paths (SHA-Ext + AES-Ext).** The x86 SHA-NI / AES-NI acceleration
+  paths exist; the aarch64 equivalents are pending an aarch64 CI runner — becomes an issue once
+  the runner exists.
+- **PKCS#11 provider crate (`oxicrypt-pkcs11`).** Deployment-surface work so oxicrypt can serve
+  as a drop-in for HSM-offload integrations; becomes an issue when scoped.
+- **AWS-LC interop test suite.** Run AWS-LC clients against oxicrypt and vice versa to flag
+  conformance gaps; becomes an issue when scoped.
+- **Supply-chain advisory integration.** `cargo audit` / RustSec hooks with FIPS-aware triage.
+- **ARM SVE2 SIMD paths.** Lower priority; pick up when the first ARM customer asks.
