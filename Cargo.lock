@@ -699,6 +699,7 @@ dependencies = [
  "oxicrypt-sha",
  "oxicrypt-xof",
  "oxicrypt-zeroize",
+ "rayon",
 ]
 
 [[package]]
@@ -709,6 +710,7 @@ dependencies = [
  "oxicrypt-sha",
  "oxicrypt-xof",
  "oxicrypt-zeroize",
+ "rayon",
 ]
 
 [[package]]
@@ -773,6 +775,7 @@ dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-zeroize",
+ "rayon",
 ]
 
 [[package]]

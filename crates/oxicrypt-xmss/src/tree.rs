@@ -166,9 +166,51 @@ fn hash_tree_node(
 ///
 /// Height 0 = leaf level. Height H = root. Index is the position
 /// at the given height (0-indexed from the left).
+///
+/// Sequential build (default, `no_std`): the two child sub-trees are
+/// computed in order and combined `(left, right)`.
+#[cfg(not(feature = "parallel"))]
 fn compute_node(sk_seed: &[u8; N], pub_seed: &[u8; N], height: u32, index: u32) -> [u8; N] {
     if height == 0 {
         compute_leaf(sk_seed, pub_seed, index)
+    } else {
+        let left = compute_node(sk_seed, pub_seed, height - 1, 2 * index);
+        let right = compute_node(sk_seed, pub_seed, height - 1, 2 * index + 1);
+        hash_tree_node(&left, &right, pub_seed, height, index)
+    }
+}
+
+/// Height above which the two child sub-trees are forked across rayon;
+/// at or below it the recursion stays sequential to cap task-spawn
+/// overhead near the leaves (where sub-trees are tiny). The cutoff only
+/// chooses *where* work runs — both branches compute the identical pure
+/// function of `(height, index)` and the seeds — so it never changes the
+/// output (only `H == 10` here, so the top ~6 levels fork).
+#[cfg(feature = "parallel")]
+const PAR_HEIGHT_CUTOFF: u32 = 3;
+
+/// Recursively compute the hash of tree node at (`height`, `index`).
+///
+/// Height 0 = leaf level. Height H = root. Index is the position
+/// at the given height (0-indexed from the left).
+///
+/// Parallel build: above [`PAR_HEIGHT_CUTOFF`] the two child sub-trees
+/// are computed concurrently via [`rayon::join`]. Each closure computes
+/// one child sub-tree — a pure function of its `(height, index)` plus
+/// the immutable seeds, touching no shared mutable state — and the
+/// parent recombines them *by position* as `(left, right)`, never by
+/// completion order. The result is therefore byte-identical to the
+/// sequential build regardless of which child finishes first.
+#[cfg(feature = "parallel")]
+fn compute_node(sk_seed: &[u8; N], pub_seed: &[u8; N], height: u32, index: u32) -> [u8; N] {
+    if height == 0 {
+        compute_leaf(sk_seed, pub_seed, index)
+    } else if height > PAR_HEIGHT_CUTOFF {
+        let (left, right) = rayon::join(
+            || compute_node(sk_seed, pub_seed, height - 1, 2 * index),
+            || compute_node(sk_seed, pub_seed, height - 1, 2 * index + 1),
+        );
+        hash_tree_node(&left, &right, pub_seed, height, index)
     } else {
         let left = compute_node(sk_seed, pub_seed, height - 1, 2 * index);
         let right = compute_node(sk_seed, pub_seed, height - 1, 2 * index + 1);
@@ -244,4 +286,90 @@ pub(crate) fn root_from_sig(
 ) -> [u8; N] {
     let leaf = compute_leaf_from_sig(msg_hash, wots_sig, pub_seed, q);
     walk_auth_path(&leaf, pub_seed, q, auth)
+}
+
+// ── Determinism oracle (parallel feature only) ──────────────────
+
+/// Determinism property tests for the `parallel` Merkle tree build.
+///
+/// Oracle choice: `compute_node` is cfg-gated, so there is no second
+/// runtime function to diff against within one build. Instead we provide
+/// a self-contained *iterative*, leaf-by-leaf sequential root
+/// reconstruction (`sequential_root_reference`) that never calls the
+/// cfg-gated recursive `compute_node` — it materializes all 1024 leaves
+/// and folds them up level by level using the same `compute_leaf` /
+/// `hash_tree_node` primitives. In the parallel build we assert the
+/// fork-join `compute_root` equals this independent sequential
+/// reconstruction across several deterministic seeds. We additionally
+/// assert the auth path verifies back to the same root — an internal
+/// consistency check of `compute_auth_path` then `walk_auth_path` — for
+/// several leaf indices, so both public entry points the parallel split
+/// touches are pinned. Seeds are derived from a loop counter (no rand)
+/// so the test is reproducible.
+#[cfg(all(test, feature = "parallel"))]
+mod parallel_determinism {
+    extern crate alloc;
+
+    use super::*;
+
+    /// Iterative sequential root: build all `NUM_LEAVES` leaves, then
+    /// fold pairs upward. Does NOT use the recursive `compute_node`, so
+    /// it is an independent oracle for the fork-join build.
+    fn sequential_root_reference(sk_seed: &[u8; N], pub_seed: &[u8; N]) -> [u8; N] {
+        let mut level: alloc::vec::Vec<[u8; N]> = (0..NUM_LEAVES)
+            .map(|i| compute_leaf(sk_seed, pub_seed, i))
+            .collect();
+        let mut height: u32 = 1;
+        while level.len() > 1 {
+            let half = level.len() / 2;
+            let mut next = alloc::vec::Vec::with_capacity(half);
+            for i in 0..half {
+                next.push(hash_tree_node(
+                    &level[2 * i],
+                    &level[2 * i + 1],
+                    pub_seed,
+                    height,
+                    i as u32,
+                ));
+            }
+            level = next;
+            height += 1;
+        }
+        level[0]
+    }
+
+    fn seed_pair(k: u8) -> ([u8; N], [u8; N]) {
+        let mut sk = [0u8; N];
+        let mut ps = [0u8; N];
+        for i in 0..N {
+            sk[i] = k.wrapping_add(i as u8);
+            ps[i] = k.wrapping_mul(3).wrapping_add(i as u8).wrapping_add(0x5a);
+        }
+        (sk, ps)
+    }
+
+    #[test]
+    fn parallel_root_matches_sequential_reference() {
+        for k in 0u8..6 {
+            let (sk, ps) = seed_pair(k);
+            let par = compute_root(&sk, &ps);
+            let seq = sequential_root_reference(&sk, &ps);
+            assert_eq!(par, seq, "root mismatch at seed k={k}");
+        }
+    }
+
+    #[test]
+    fn parallel_auth_path_verifies_to_root() {
+        for k in 0u8..4 {
+            let (sk, ps) = seed_pair(k);
+            let root = compute_root(&sk, &ps);
+            // Sample several leaves (both parities, spread across the tree).
+            for &q in &[0u32, 1, 2, 511, 512, NUM_LEAVES - 1] {
+                let leaf = compute_leaf(&sk, &ps, q);
+                let auth = compute_auth_path(&sk, &ps, q);
+                let walked = walk_auth_path(&leaf, &ps, q, &auth);
+                assert_eq!(walked, root, "auth path mismatch at seed k={k}, q={q}");
+            }
+        }
+    }
 }

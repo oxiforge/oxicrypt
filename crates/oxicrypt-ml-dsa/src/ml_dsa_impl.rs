@@ -519,6 +519,10 @@ macro_rules! ml_dsa_impl {
 
         /// ExpandA (FIPS 204 §8.3 Algorithm 30): A[i][j] ←
         /// RejNTTPoly(SHAKE-128(ρ ‖ IntegerToBits(j,8) ‖ IntegerToBits(i,8))).
+        ///
+        /// Sequential build (default, `no_std`): the rows are filled in
+        /// order, each cell from its own fresh local XOF.
+        #[cfg(not(feature = "parallel"))]
         fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
             let mut mat: [[Poly; L]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
@@ -531,6 +535,41 @@ macro_rules! ml_dsa_impl {
                     mat[i][j] = rej_ntt_poly(&mut xof);
                 }
             }
+            mat
+        }
+
+        /// ExpandA (FIPS 204 §8.3 Algorithm 30): A[i][j] ←
+        /// RejNTTPoly(SHAKE-128(ρ ‖ IntegerToBits(j,8) ‖ IntegerToBits(i,8))).
+        ///
+        /// Parallel build: the *outer* row loop is forked across a
+        /// `rayon` parallel iterator. Each closure owns exactly its row
+        /// `i` and writes only `row[j]`, sampling every cell from a
+        /// fresh local SHAKE-128 XOF that is a pure function of ρ and
+        /// `(i, j)` — there is no shared mutable state. Because each row
+        /// is written into its fixed array slot, the matrix is
+        /// recombined *by position*, never by completion order, so the
+        /// output is byte-identical to the sequential build regardless
+        /// of thread count.
+        #[cfg(feature = "parallel")]
+        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+            use rayon::iter::{
+                IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+            };
+
+            let mut mat: [[Poly; L]; K] =
+                core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+            (&mut mat[..])
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, row)| {
+                    for j in 0..L {
+                        let mut xof = Shake128::new_internal();
+                        xof.update(rho);
+                        xof.update(&[j as u8, i as u8]);
+                        xof.finalize();
+                        row[j] = rej_ntt_poly(&mut xof);
+                    }
+                });
             mat
         }
 
@@ -1516,6 +1555,59 @@ macro_rules! ml_dsa_impl {
         // `crate::params` matches the variant-local re-export.
         #[allow(dead_code)]
         const _ASSERT_SEED_LEN_MATCHES: usize = SHARED_SEED_LEN - SEED_LEN;
+
+        // ── Determinism oracle (parallel feature only) ──────────────
+        //
+        // Oracle choice: `expand_a` is reachable in-crate (the per-variant
+        // unit-test module reaches the macro-internal items via
+        // `use super::*`), so we add a direct equality oracle rather than
+        // relying only on the keygen-KAT-on/off check. We rebuild the
+        // matrix with an always-sequential reference loop (which never
+        // touches the rayon path) and assert it equals the feature-gated
+        // `expand_a` cell-for-cell, for a few deterministic ρ values. The
+        // keygen KATs (fixed ξ → fixed ρ → fixed A → fixed pk/sk) remain
+        // the end-to-end oracle; this test pins `expand_a` itself.
+        #[cfg(all(test, feature = "parallel"))]
+        mod parallel_determinism {
+            use super::*;
+
+            /// Always-sequential reference: identical to the non-parallel
+            /// `expand_a` body, never invoking the rayon path.
+            fn expand_a_sequential_reference(rho: &[u8; 32]) -> [[Poly; L]; K] {
+                let mut mat: [[Poly; L]; K] =
+                    core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+                for i in 0..K {
+                    for j in 0..L {
+                        let mut xof = Shake128::new_internal();
+                        xof.update(rho);
+                        xof.update(&[j as u8, i as u8]);
+                        xof.finalize();
+                        mat[i][j] = rej_ntt_poly(&mut xof);
+                    }
+                }
+                mat
+            }
+
+            #[test]
+            fn parallel_expand_a_matches_sequential_reference() {
+                for k in 0u8..4 {
+                    let mut rho = [0u8; 32];
+                    for (idx, b) in rho.iter_mut().enumerate() {
+                        *b = k.wrapping_mul(7).wrapping_add(idx as u8).wrapping_add(0x5a);
+                    }
+                    let par = expand_a(&rho);
+                    let seq = expand_a_sequential_reference(&rho);
+                    for i in 0..K {
+                        for j in 0..L {
+                            assert_eq!(
+                                par[i][j].coeffs, seq[i][j].coeffs,
+                                "A cell mismatch at seed k={k}, i={i}, j={j}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     };
 }
 

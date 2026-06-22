@@ -11,7 +11,22 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Data-parallel evaluation of the recursive Merkle tree build, default
+# OFF. `compute_node` splits its two child sub-trees across a `rayon`
+# fork-join (`rayon::join`); each child closure computes one sub-tree as
+# a pure function of its `(height, index)` plus the immutable seeds, and
+# the parent recombines the two results by position (left, right) — never
+# by completion order — so output is byte-identical to the sequential
+# build. Pulls in `rayon`, which requires `std`, so the crate becomes
+# `std` only under this feature — the default build stays provably
+# `no_std` with no rayon in its graph. Performance build only: the
+# CMVP-validated configuration is the default single-threaded build.
+parallel = ["dep:rayon"]
+
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+rayon = { version = "1", optional = true }

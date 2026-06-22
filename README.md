@@ -124,22 +124,57 @@ every line of cryptographic code in the default build to be written in-tree in
 pure Rust. Dependencies are re-evaluated per-crate and must be justified in the
 Security Policy before adoption; the only third-party dependencies present are
 gated behind non-default, default-off performance features and never enter the
-CMVP-validated default build graph — `oxicrypt-lms`'s `parallel` feature pulls
-in `rayon` for data-parallel Merkle leaf computation (justified in the Security
-Policy, R75).
+CMVP-validated default build graph: the `parallel` feature on the hash-based and
+lattice crates pulls in `rayon` for data-parallel keygen, and the `accel-sha` /
+`accel-aes` features pull the audited CPU-intrinsic crates. All are justified in
+the Security Policy (the `parallel` rules R75/R77/R83/R84/R85 and the `accel-*`
+audited-unsafe rules). See **Performance features** below.
 
 **`no_std` by default.** The core algorithm crates use `#![no_std]` with
 `alloc` where necessary, making them suitable for embedded and `wasm32` targets.
 The integrity crate uses `std` for file I/O and self-test
-orchestration; the module crate is `#![no_std]`. `oxicrypt-lms` becomes `std`
-only under its optional default-off `parallel` feature (rayon requires `std`);
-the default build stays `no_std`.
+orchestration; the module crate is `#![no_std]`. The parallel-capable crates
+(`oxicrypt-lms`, `oxicrypt-slh-dsa`, `oxicrypt-xmss`, `oxicrypt-ml-kem`,
+`oxicrypt-ml-dsa`) become `std` only under their optional default-off `parallel`
+feature (rayon requires `std`); the default build stays `no_std`.
 
 **Constant-time discipline.** At Level 1, FIPS 140-3 does not require
 side-channel resistance, but oxicrypt discloses its posture and actively
 validates it. A dudect-style timing harness (`tools/ct-validation`) runs
 Welch's t-test across seven CSP-touching primitives. Two real timing leaks
 were discovered and fixed by this harness.
+
+### Performance features
+
+All performance features are **default-OFF, non-validated, and byte-identical to
+the validated default build** — the CMVP-tested configuration is the portable,
+single-threaded, intrinsic-free default. They exist purely for throughput; their
+equivalence to the default build is argued structurally and corroborated by
+KAT-on/off + determinism oracles per crate (Security Policy).
+
+| Feature | Crate(s) | Effect | Brings in |
+|---------|----------|--------|-----------|
+| `parallel` | `oxicrypt-lms`, `oxicrypt-slh-dsa`, `oxicrypt-xmss`, `oxicrypt-ml-kem`, `oxicrypt-ml-dsa` | `rayon` data-parallelism over independent keygen work (Merkle leaf / tree build, WOTS+ & FORS sweeps, matrix-Â expansion) | `rayon` (+ `std`) |
+| `accel-sha` | `oxicrypt-sha` | runtime-detected x86_64 SHA-NI SHA-256 (portable fallback when absent) | `oxicrypt-sha-accel` |
+| `accel-aes` | `oxicrypt-aes` | runtime-detected x86_64 AES-NI block cipher (portable fallback when absent) | `oxicrypt-aes-accel` |
+
+**Performance build** — enable all throughput options at once:
+
+```sh
+cargo build --release --features "parallel accel-sha accel-aes"
+```
+
+Each crate's `parallel` feature may also be enabled individually.
+
+**When `parallel` helps** (measured on an AMD Ryzen 7 4800H, 8c/8t; keygen,
+criterion `--quick`): XMSS ≈ 6.7×, SLH-DSA ≈ 3.8–4.7×, ML-DSA ≈ 1.2–2.1×. It
+does **not** speed up ML-KEM keygen (µs-scale matrix work — `rayon` fork/join
+overhead dominates), and LMS gains appear only at tall trees (H ≥ 15). Prefer
+enabling `parallel` per-crate where it pays off rather than blanket-enabling it.
+
+SHAKE/Keccak SIMD acceleration (an `accel-xof` path) is **not yet implemented** —
+the worthwhile form is a 4-way-batched permutation needing a batched sponge API;
+see the design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md).
 
 ## ACVP harness
 

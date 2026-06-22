@@ -52,8 +52,23 @@
 //!
 //! [`sign`] gates on `Service::XmssSign`; [`verify`] gates on
 //! `Service::XmssVerify`. Both gate on `require_operational`.
+//!
+//! # Data-parallel tree build (`parallel` feature, default OFF)
+//!
+//! The optional `parallel` feature parallelizes the recursive Merkle
+//! tree build in [`tree::compute_node`]: above a small height cutoff the
+//! two child sub-trees are computed concurrently via a `rayon`
+//! fork-join, and the parent recombines them by position (left, right)
+//! — never by completion order. Each child sub-tree is a pure function
+//! of its `(height, index)` plus the immutable seeds, so the parallel
+//! output is byte-identical to the sequential build. The feature pulls
+//! in `rayon` (hence `std`), so the crate is `#![no_std]` only when the
+//! feature is OFF; the default build graph contains no `rayon` and is
+//! the CMVP-validated single-threaded configuration. `parallel` is a
+//! throughput option for keygen (which hashes all 1024 leaves), not a
+//! validated path.
 
-#![no_std]
+#![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
 
 mod adrs;

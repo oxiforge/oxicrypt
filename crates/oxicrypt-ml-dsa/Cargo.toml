@@ -11,8 +11,25 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Data-parallel expansion of the public matrix Â, default OFF.
+# `expand_a` builds the k × ℓ matrix where each cell A[i][j] is a pure
+# function of ρ plus the cell's (i, j) indices, sampled from a fresh
+# local SHAKE-128 XOF with no shared mutable state. Under this feature
+# the *outer* row loop is forked across a `rayon` parallel iterator:
+# each closure owns exactly its row `i` and writes only `row[j]`, and
+# the rows are recombined by position (never by completion order) — so
+# output is byte-identical to the sequential build regardless of thread
+# count. Pulls in `rayon`, which requires `std`, so the crate becomes
+# `std` only under this feature — the default build stays provably
+# `no_std` with no rayon in its graph. Performance build only: the
+# CMVP-validated configuration is the default single-threaded build.
+parallel = ["dep:rayon"]
+
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }
 oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-xof = { path = "../oxicrypt-xof" }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+rayon = { version = "1", optional = true }

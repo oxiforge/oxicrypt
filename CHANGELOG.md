@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `oxicrypt-xmss`: optional `parallel` feature (default off) — `rayon` fork-join over the recursive Merkle tree build for keygen throughput, byte-identical to the validated single-threaded build (security policy R83).
+- `oxicrypt-ml-kem`: optional `parallel` feature (default off) — `rayon` row-disjoint expansion of the k×k matrix Â in `expand_a`, byte-identical to the validated single-threaded build (security policy R84).
+- `oxicrypt-ml-dsa`: optional `parallel` feature (default off) — `rayon` row-disjoint expansion of the k×ℓ matrix Â in `expand_a`, byte-identical to the validated single-threaded build (security policy R85).
 
 ## [0.16.0] - 2026-06-19
 

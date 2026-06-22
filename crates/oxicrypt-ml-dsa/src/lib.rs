@@ -100,8 +100,25 @@
 //! Within each iteration, norm checks and coefficient comparisons
 //! use data-independent control flow. NTT operations have
 //! data-independent control flow.
+//!
+//! # Data-parallel matrix expansion (`parallel` feature, default OFF)
+//!
+//! The optional `parallel` feature parallelizes the public-matrix
+//! expansion `expand_a`: the k × ℓ matrix A is built by forking its
+//! *rows* across a `rayon` parallel iterator. Each cell A[i][j] is a
+//! pure function of ρ plus the cell's (i, j) indices — sampled from a
+//! fresh local SHAKE-128 XOF with no shared mutable state — and each
+//! row is written by exactly one closure, then recombined by position
+//! (never by completion order). The parallel output is therefore
+//! byte-identical to the sequential build, which the keygen KATs
+//! (fixed ξ → fixed ρ → fixed A → fixed pk/sk) confirm with the
+//! feature ON. The feature pulls in `rayon` (hence `std`), so the
+//! crate is `#![no_std]` only when the feature is OFF; the default
+//! build graph contains no `rayon` and is the CMVP-validated
+//! single-threaded configuration. `parallel` is a throughput option,
+//! not a validated path.
 
-#![no_std]
+#![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
 
 mod field;

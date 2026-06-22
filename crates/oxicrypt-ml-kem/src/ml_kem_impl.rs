@@ -230,6 +230,10 @@ macro_rules! ml_kem_impl {
         /// Â[i][j] = SampleNTT(XOF(ρ, j, i)) where XOF = SHAKE-128
         /// and the input is ρ ‖ j ‖ i (column index before row index,
         /// per FIPS 203 Algorithm 12 step 3).
+        ///
+        /// Sequential build (default, `no_std`): the rows are filled in
+        /// order, each cell from its own fresh local XOF.
+        #[cfg(not(feature = "parallel"))]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
         fn expand_a(rho: &[u8; SEED_LEN]) -> PolyMatrix {
             let mut rows: [[Poly; K]; K] =
@@ -243,6 +247,45 @@ macro_rules! ml_kem_impl {
                     rows[i][j] = sample_ntt(&mut xof);
                 }
             }
+            PolyMatrix { rows }
+        }
+
+        /// Expand the k × k public matrix Â from seed ρ.
+        ///
+        /// Â[i][j] = SampleNTT(XOF(ρ, j, i)) where XOF = SHAKE-128
+        /// and the input is ρ ‖ j ‖ i (column index before row index,
+        /// per FIPS 203 Algorithm 12 step 3).
+        ///
+        /// Parallel build: the *outer* row loop is forked across a
+        /// `rayon` parallel iterator. Each closure owns exactly its row
+        /// `i` and writes only `row[j]`, sampling every cell from a
+        /// fresh local SHAKE-128 XOF that is a pure function of ρ and
+        /// `(i, j)` — there is no shared mutable state. Because each row
+        /// is written into its fixed array slot, the matrix is
+        /// recombined *by position*, never by completion order, so the
+        /// output is byte-identical to the sequential build regardless
+        /// of thread count.
+        #[cfg(feature = "parallel")]
+        #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
+        fn expand_a(rho: &[u8; SEED_LEN]) -> PolyMatrix {
+            use rayon::iter::{
+                IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+            };
+
+            let mut rows: [[Poly; K]; K] =
+                core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+            (&mut rows[..])
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, row)| {
+                    for j in 0..K {
+                        let mut xof = Shake128::new_internal();
+                        xof.update(rho);
+                        xof.update(&[j as u8, i as u8]);
+                        xof.finalize();
+                        row[j] = sample_ntt(&mut xof);
+                    }
+                });
             PolyMatrix { rows }
         }
 
@@ -778,6 +821,60 @@ macro_rules! ml_kem_impl {
         // without leaking them in public API.
         #[allow(dead_code)]
         const _ASSERT_K_GT_0: usize = K - 1;
+
+        // ── Determinism oracle (parallel feature only) ──────────────
+        //
+        // Oracle choice: `expand_a` is reachable in-crate (the per-variant
+        // unit-test module reaches the macro-internal items via
+        // `use super::*`), so we add a direct equality oracle rather than
+        // relying only on the keygen-KAT-on/off check. We rebuild the
+        // matrix with an always-sequential reference loop (which never
+        // touches the rayon path) and assert it equals the feature-gated
+        // `expand_a` cell-for-cell, for a few deterministic ρ values. The
+        // keygen KATs (fixed ρ → fixed Â → fixed ek/dk) remain the
+        // end-to-end oracle; this test pins `expand_a` itself.
+        #[cfg(all(test, feature = "parallel"))]
+        #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
+        mod parallel_determinism {
+            use super::*;
+
+            /// Always-sequential reference: identical to the non-parallel
+            /// `expand_a` body, never invoking the rayon path.
+            fn expand_a_sequential_reference(rho: &[u8; SEED_LEN]) -> PolyMatrix {
+                let mut rows: [[Poly; K]; K] =
+                    core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+                for i in 0..K {
+                    for j in 0..K {
+                        let mut xof = Shake128::new_internal();
+                        xof.update(rho);
+                        xof.update(&[j as u8, i as u8]);
+                        xof.finalize();
+                        rows[i][j] = sample_ntt(&mut xof);
+                    }
+                }
+                PolyMatrix { rows }
+            }
+
+            #[test]
+            fn parallel_expand_a_matches_sequential_reference() {
+                for k in 0u8..4 {
+                    let mut rho = [0u8; SEED_LEN];
+                    for (idx, b) in rho.iter_mut().enumerate() {
+                        *b = k.wrapping_mul(7).wrapping_add(idx as u8).wrapping_add(0x5a);
+                    }
+                    let par = expand_a(&rho);
+                    let seq = expand_a_sequential_reference(&rho);
+                    for i in 0..K {
+                        for j in 0..K {
+                            assert_eq!(
+                                par.rows[i][j].coeffs, seq.rows[i][j].coeffs,
+                                "Â cell mismatch at seed k={k}, i={i}, j={j}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     };
 }
 

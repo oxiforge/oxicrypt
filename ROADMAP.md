@@ -12,7 +12,7 @@ GitHub issue and is removed from here**.
 
 ## Designs
 
-*(design-first epics — one-line pointers to `docs/design/*.md`; none yet.)*
+- **AVX2 acceleration of Keccak-f[1600]** → [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md). The worthwhile form is a 4-way-batched permutation requiring a batched sponge API + caller rewiring (not a drop-in single-stream accel); design-first before any issues.
 
 ## Features
 

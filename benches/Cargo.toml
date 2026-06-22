@@ -11,6 +11,20 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Forward the `parallel` (rayon) feature to every PQ crate that has one, so
+# the benchmark harness can compare the default single-threaded build against
+# the parallel build (`cargo bench -p oxicrypt-bench --features parallel`).
+# Off by default — the default bench build mirrors the CMVP-validated config.
+default = []
+parallel = [
+    "oxicrypt-lms/parallel",
+    "oxicrypt-ml-kem/parallel",
+    "oxicrypt-ml-dsa/parallel",
+    "oxicrypt-slh-dsa/parallel",
+    "oxicrypt-xmss/parallel",
+]
+
 [dependencies]
 oxicrypt-module = { path = "../crates/oxicrypt-module" }
 oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
