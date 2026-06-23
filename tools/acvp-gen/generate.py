@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 """
-Generator for pqclib NIST-derived power-up KAT constants.
+Generator for oxicrypt NIST-derived power-up KAT constants.
 
 This tool produces:
-  - crates/fips-test-vectors/src/generated.rs
+  - crates/oxicrypt-test-vectors/src/generated.rs
   - vendor/nist/acvp-server/gen-val/json-files/<dir>/kat-slice.json (slim)
   - vendor/nist/MANIFEST.toml
 
@@ -374,7 +374,7 @@ def pick_kbkdf_double_pipeline_vector(kdf_json: dict, mac_mode: str) -> dict:
 # test group's `kdfConfiguration.fixedInfoPattern`. The underlying
 # primitive is a standard `HKDF::extract(salt, ikm)` call with
 # `ikm = Z || T`, followed by `HKDF::expand(FixedInfo, out)`, so the
-# HKDF primitive in fips-kdf is exercised unchanged.
+# HKDF primitive in oxicrypt-kdf is exercised unchanged.
 #
 # The FixedInfo encoder is evaluated here in Python so that the Rust
 # KAT can consume a single pre-encoded `FIXED_INFO` byte string.
@@ -1556,7 +1556,7 @@ def main() -> int:
     # R14-A: vendor slim AFT slices for AES block-cipher modes handled
     # by the acvp-harness dispatcher. No `generated.rs` entries are
     # emitted here — the AES power-up KATs already live in
-    # `fips-aes` and read from its own vector module. These slices feed
+    # `oxicrypt-aes` and read from its own vector module. These slices feed
     # only the ACVP dispatcher's round-trip tests.
     manifest.append("[acvp_server.aes_aft]")
     for algorithm, algo_dir, require_byte_aligned in AES_ACVP_AFT_MODES:
@@ -1609,7 +1609,7 @@ def main() -> int:
 
     # --- Write outputs --------------------------------------------------
     (vendor / "MANIFEST.toml").write_text("\n".join(manifest) + "\n")
-    out_rs = repo / "crates" / "fips-test-vectors" / "src" / "generated.rs"
+    out_rs = repo / "crates" / "oxicrypt-test-vectors" / "src" / "generated.rs"
     out_rs.parent.mkdir(parents=True, exist_ok=True)
     out_rs.write_text("\n".join(rust_parts) + "\n")
     print(f"wrote {out_rs}")

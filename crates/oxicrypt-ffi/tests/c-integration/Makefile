@@ -28,7 +28,8 @@ TESTS := test_init test_aes_gcm test_aes_modes test_handles \
          test_ml_kem_512_smoke test_ml_kem_768_smoke test_ml_kem_1024_smoke \
          test_ml_dsa_44_smoke test_ml_dsa_65_smoke test_ml_dsa_87_smoke \
          test_slh_dsa_sha2_256s_smoke test_slh_dsa_shake_128f_smoke \
-         test_lms_sha256_m32_h5_w4_smoke test_lms_shake_m32_h10_w4_smoke
+         test_lms_sha256_m32_h5_w4_smoke test_lms_shake_m32_h10_w4_smoke \
+         test_drbg_smoke
 
 .PHONY: all test-cdylib test-staticlib clean help
 

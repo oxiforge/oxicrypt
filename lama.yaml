@@ -1,29 +1,19 @@
-# ─────────────────────────────────────────────────────────────────────
-# oxicrypt — LAMA discovery file
-#
-# Repository-root entry point for AI coding agents: a concise, 10-second
-# evaluation of what oxicrypt does and where to find the full API manifest.
-# Per the LAMA spec this file is a SUMMARY + POINTER — every function
-# signature, parameter constraint, error type, precondition, state machine,
-# and pitfall lives in the full manifest referenced at the bottom.
-#
-# Specification: https://github.com/lamaspec/lama
-# ─────────────────────────────────────────────────────────────────────
+# oxicrypt — LAMA discovery summary. Spec: https://github.com/lamaspec/lama
 
 lama: "0.1"
 
 library:
   name: oxicrypt
-  version: "0.12.0"
+  version: "0.17.0"
   description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
   repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
   license: "Apache-2.0 OR MIT"
   languages:
     - rust
-    - c           # oxicrypt-ffi provides extern "C" wrappers (cdylib + staticlib)
+    - c
   minimum_toolchain: "rust 1.95"
-  no_std: true    # core algorithm crates are no_std + alloc
+  no_std: true
 
 capabilities:
   - category: "Hashing"
@@ -63,13 +53,6 @@ capabilities:
     standards: ["FIPS 203"]
 
   - category: "Post-quantum signatures (stateful hash-based)"
-    # Stateful: each Merkle-tree leaf signs exactly once; the caller MUST
-    # persist the advanced private key after every sign. Full pitfall
-    # documentation in the manifest. LMS pairs also offer an
-    # LmsSigningKey tree-cache wrapper (default-on `alloc` feature) for
-    # O(H) signing with byte-identical output. Optional default-off
-    # `parallel` feature parallelizes the cache's Merkle leaf sweep
-    # (rayon; byte-identical output, std-only).
     algorithms: ["LMS (SP 800-208 §A.3 grid, stateful)", "XMSS-SHA2_10_256 (stateful)"]
     standards: ["SP 800-208", "RFC 8554", "RFC 8391"]
 
@@ -82,21 +65,11 @@ capabilities:
     standards: ["FIPS 140-3 IG 10.3.A"]
 
   - category: "Entropy source (pre-validation scaffolding)"
-    # oxicrypt-entropy: a jitter NoiseSource behind a sealed trait, RCT/APT
-    # continuous health tests with permanent poisoning, timer-adequacy
-    # self-checks, and vetted SHA-256 conditioning under the SP 800-90C
-    # full-entropy input margin. Makes NO entropy claims (pre-validation);
-    # not part of the validated boundary's approved services yet. Full API
-    # surface in the manifest (docs/llm-api-manifest/llm-api.yaml).
     algorithms: ["jitter NoiseSource", "RCT/APT continuous health tests", "SHA-256 vetted conditioning"]
     standards: ["SP 800-90B", "SP 800-90C"]
 
   - category: "Tooling"
-    # acvp-harness binary processes NIST ACVP vector sets offline and runs
-    # sessions against the ACVP demo server (responds to --lama).
-    # oxicrypt-ffi exposes oxi_-prefixed extern "C" symbols (cdylib +
-    # staticlib); C header at include/oxicrypt.h (cbindgen-generated).
-    # Full entry-point inventory in the manifest.
+    algorithms: ["acvp-harness (offline ACVP vector processing + demo-server sessions; --lama)", "oxicrypt-ffi (oxi_-prefixed extern \"C\" cdylib + staticlib; include/oxicrypt.h)"]
     standards: ["FIPS 140-3 IG 10.3.A"]
 
 security:
@@ -111,6 +84,4 @@ security:
     - name: "CNSA 1.0"
       description: "Classical transition: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072, DH >= 3072"
 
-# Full manifest with every function signature, parameter constraint,
-# error type, precondition, state machine, and pitfall.
 manifest: "docs/llm-api-manifest/llm-api.yaml"

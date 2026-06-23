@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `oxicrypt-ffi`: C-ABI integration smoke test for the SP 800-90A DRBG families (`oxi_{hmac,hash,ctr}_drbg_*`) — full `new → instantiate → generate → reseed → generate → free` lifecycle per family with a non-trivial-output assertion and the documented `NullPointer` guard on a NULL handle (#98).
+
+### Changed
+
+- LAMA manifests (`lama.yaml`, `docs/llm-api-manifest/llm-api.yaml`): descriptions stripped to one declarative line per the LAMA spec's declarative-not-narrative principle, and `library.version` stamped to 0.17.0; no API or structured-fact change.
+
+### Fixed
+
+- `tools/acvp-gen`: the KAT-constant generator wrote to the dead `crates/fips-test-vectors/src/generated.rs` path (missed by the `pqclib → oxicrypt` rename), so it created a stray crate directory and never regenerated the live file; the output now targets `crates/oxicrypt-test-vectors/src/generated.rs` (#100).
+
 ## [0.17.0] - 2026-06-22
 
 ### Added
