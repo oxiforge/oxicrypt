@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - LAMA manifests (`lama.yaml`, `docs/llm-api-manifest/llm-api.yaml`): descriptions stripped to one declarative line per the LAMA spec's declarative-not-narrative principle, and `library.version` stamped to 0.17.0; no API or structured-fact change.
+- `oxicrypt-maxwell`: relicensed to **PolyForm Noncommercial 1.0.0** (`license-file` + `publish = false`), overriding the workspace `Apache-2.0 OR MIT`. Out-of-boundary tooling and a dependency-leaf with no in-tree dependents, so no library crate's licensing changes; noncommercial use is free, commercial use requires a separate license.
 
 ### Fixed
 
