@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-06-24
+
 ### Added
 
 - `oxicrypt-ffi`: C-ABI integration smoke test for the SP 800-90A DRBG families (`oxi_{hmac,hash,ctr}_drbg_*`) — full `new → instantiate → generate → reseed → generate → free` lifecycle per family with a non-trivial-output assertion and the documented `NullPointer` guard on a NULL handle (#98).
@@ -21,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- LAMA manifests (`lama.yaml`, `docs/llm-api-manifest/llm-api.yaml`): descriptions stripped to one declarative line per the LAMA spec's declarative-not-narrative principle, and `library.version` stamped to 0.17.0; no API or structured-fact change.
+- LAMA manifests (`lama.yaml`, `docs/llm-api-manifest/llm-api.yaml`): descriptions reduced to one declarative sentence each per the LAMA spec's declarative-not-narrative principle (the 287 remaining multi-sentence descriptions collapsed), and `library.version` stamped to 0.18.0; no API or structured-fact change (#116, #118).
 - `oxicrypt-maxwell`: relicensed to **PolyForm Noncommercial 1.0.0** (`license-file` + `publish = false`), overriding the workspace `Apache-2.0 OR MIT`. Out-of-boundary tooling and a dependency-leaf with no in-tree dependents, so no library crate's licensing changes; noncommercial use is free, commercial use requires a separate license.
 
 ### Fixed
@@ -276,7 +278,8 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/oxiforge/oxicrypt/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/oxiforge/oxicrypt/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/oxiforge/oxicrypt/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/oxiforge/oxicrypt/compare/v0.14.0...v0.15.0
