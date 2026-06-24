@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-06-24
+
 ### Changed
 
 - `oxicrypt-maxwell`: relicensed back to the workspace `Apache-2.0 OR MIT`, reverting the 0.18.0 PolyForm Noncommercial license. It is commodity out-of-boundary tooling that competes with the free authoritative NIST `SP800-90B_EntropyAssessment` reference, so a noncommercial gate protected nothing while forfeiting adoption; `publish = false` is retained (it stays off crates.io as internal tooling — a publish-status choice independent of the license).
@@ -282,7 +284,8 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/oxiforge/oxicrypt/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/oxiforge/oxicrypt/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/oxiforge/oxicrypt/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/oxiforge/oxicrypt/compare/v0.15.0...v0.16.0

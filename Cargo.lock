@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acvp-harness"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-cmac",
@@ -286,7 +286,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "ct-validation"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-ecdh",
@@ -506,7 +506,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "oxi"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-drbg",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-aes"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-aes-accel",
  "oxicrypt-module",
@@ -526,11 +526,11 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-aes-accel"
-version = "0.18.0"
+version = "0.18.1"
 
 [[package]]
 name = "oxicrypt-bench"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "criterion",
  "oxicrypt-aes",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-cmac"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-module",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-dh"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-drbg"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-hmac",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-ecdh"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-ecdsa",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-ecdsa"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-eddsa"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-entropy"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-ffi"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "cbindgen",
  "oxicrypt-aes",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-hmac"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-integrity"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-module",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-kdf"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-module",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-lms"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-maxwell"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "bzip2",
  "oxicrypt-module",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-ml-dsa"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-ml-kem"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -718,11 +718,11 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-module"
-version = "0.18.0"
+version = "0.18.1"
 
 [[package]]
 name = "oxicrypt-rsa"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-sha"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha-accel",
@@ -742,11 +742,11 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-sha-accel"
-version = "0.18.0"
+version = "0.18.1"
 
 [[package]]
 name = "oxicrypt-slh-dsa"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -756,15 +756,15 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-test-vectors"
-version = "0.18.0"
+version = "0.18.1"
 
 [[package]]
 name = "oxicrypt-timer"
-version = "0.18.0"
+version = "0.18.1"
 
 [[package]]
 name = "oxicrypt-tls-kdf"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-kdf",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-xmss"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-xof"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-zeroize"
-version = "0.18.0"
+version = "0.18.1"
 
 [[package]]
 name = "plotters"
