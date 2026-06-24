@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `oxicrypt-maxwell`: relicensed back to the workspace `Apache-2.0 OR MIT`, reverting the 0.18.0 PolyForm Noncommercial license. It is commodity out-of-boundary tooling that competes with the free authoritative NIST `SP800-90B_EntropyAssessment` reference, so a noncommercial gate protected nothing while forfeiting adoption; `publish = false` is retained (it stays off crates.io as internal tooling — a publish-status choice independent of the license).
+
 ## [0.18.0] - 2026-06-24
 
 ### Added

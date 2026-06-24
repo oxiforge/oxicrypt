@@ -509,12 +509,6 @@ Licensed under either of
 
 at your option.
 
-The one exception is **`oxicrypt-maxwell`**, an out-of-boundary tool (the SP 800-90B
-min-entropy estimator / EA-parity harness, not part of the validated module): it is
-source-available under the **PolyForm Noncommercial License 1.0.0**
-(see [`crates/oxicrypt-maxwell/LICENSE`](crates/oxicrypt-maxwell/LICENSE)) and is not
-published to crates.io. Noncommercial use is free; commercial use requires a separate license.
-
 The `oxicrypt` and `OxiTLS` names are intended to be filed as trademarks
 and reserved for the upstream-validated build lineage; consumers may use
 the source under the terms above and rebrand any redistributed builds.

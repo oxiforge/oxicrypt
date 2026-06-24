@@ -60,7 +60,7 @@ and the code agree because the commit gate forces them to.
 
 - **FIPS 140-3 Level 1**, Implementation Guidance D.G (March 2026) — reconcile on IG updates.
 - **`no_std`-capable**, `forbid(unsafe_code)` at every crate root, deny-level workspace lints.
-- **License:** Apache-2.0 OR MIT — every in-boundary/library crate. The one exception is the out-of-boundary `oxicrypt-maxwell` tool, source-available under PolyForm Noncommercial 1.0.0 (`publish = false`).
+- **License:** Apache-2.0 OR MIT.
 - **Public repository** — no host paths, no private-project names, no internal/vault context.
 
 ## Goal

@@ -4,12 +4,10 @@ description = "Out-of-boundary SP 800-90B min-entropy estimator suite (MCV) with
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-# Out-of-boundary tooling: deliberately NOT under the workspace Apache-2.0 OR MIT.
-# Source-available under PolyForm Noncommercial 1.0.0 — free for noncommercial
-# use; commercial use requires a separate license. publish=false keeps it off
-# crates.io even when the library crates are flipped to publishable.
-license-file = "LICENSE"
+license.workspace = true
 repository.workspace = true
+# Out-of-boundary tooling (SP 800-90B EA-parity harness), not a product — kept off
+# crates.io. Licensed under the workspace Apache-2.0 OR MIT like every other crate.
 publish = false
 
 [[bin]]

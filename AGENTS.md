@@ -175,10 +175,7 @@ it hot in the next commit. See `oxiforge/standards/doc-sync-rules.md` for the fu
 ## License posture
 
 - **Dual-licensed Apache-2.0 OR MIT** (Rust-ecosystem default). Repo root carries `LICENSE-APACHE` and
-  `LICENSE-MIT`; every library/in-boundary crate selects both via its `Cargo.toml` `license` field
-  (the one exception is noted below).
-- **Exception — `oxicrypt-maxwell`:** out-of-boundary tooling (the SP 800-90B min-entropy estimator /
-  EA-parity harness, not part of the validated module), source-available under **PolyForm
-  Noncommercial 1.0.0** via `license-file` + `publish = false`, deliberately *not* `Apache-2.0 OR MIT`.
-  It is a dependency-leaf with no in-tree dependents, so it does not affect any library crate's licensing.
+  `LICENSE-MIT`; every crate selects both via `license.workspace = true`. The out-of-boundary
+  `oxicrypt-maxwell` tool carries `publish = false` (kept off crates.io as internal tooling) but is
+  licensed the same Apache-2.0 OR MIT as the rest of the workspace.
 - **Git identity:** `caraka <caraka@oxicrypt.dev>`.
