@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `oxicrypt-ffi`: C-ABI integration smoke test for the SP 800-90A DRBG families (`oxi_{hmac,hash,ctr}_drbg_*`) — full `new → instantiate → generate → reseed → generate → free` lifecycle per family with a non-trivial-output assertion and the documented `NullPointer` guard on a NULL handle (#98).
+- `oxicrypt-aes-accel`: PCLMULQDQ-accelerated constant-time GCM GHASH multiply (`ghash_available` / `ghash_mul`), CPUID-gated (PCLMULQDQ + SSSE3 + SSE2) and dispatched from `oxicrypt-aes`'s `gf_mul` behind the default-off `accel-aes` feature; byte-exact to the portable schoolbook reduction (50 000-pair differential oracle + GCM KATs feature-on), fail-portable on absence, out of the validated default build graph (#109).
 
 ### Changed
 

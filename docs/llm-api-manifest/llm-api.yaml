@@ -197,7 +197,7 @@ modules:
     depends_on: []
 
   - name: oxicrypt-aes-accel
-    description: Audited x86_64 AES-NI block acceleration for oxicrypt-aes; compiled in only via the default-off accel-aes feature.
+    description: Audited x86_64 AES-NI block plus PCLMULQDQ GCM GHASH acceleration for oxicrypt-aes; compiled in only via the default-off accel-aes feature.
     no_std: true
     depends_on: []
 

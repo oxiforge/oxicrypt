@@ -322,7 +322,13 @@ fn inc128_for_ctr(ctr: &mut [u8; 16]) {
 /// The implementation is the standard bit-by-bit schoolbook
 /// algorithm ("Algorithm 1" in McGrew & Viega), which is slow but
 /// simple and avoids cache-timing risk from table-based variants.
-fn gf_mul(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
+///
+/// This is the **validated baseline** and the correctness oracle for
+/// the optional PCLMULQDQ-accelerated path: [`gf_mul`] dispatches to
+/// `oxicrypt-aes-accel` when the `accel-aes` feature is on and PCLMULQDQ
+/// is present, and falls back here otherwise. Keep this function
+/// byte-for-byte unchanged.
+fn gf_mul_portable(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
     let mut z = [0u8; 16];
     let mut v = *y;
     for i in 0..128 {
@@ -346,6 +352,23 @@ fn gf_mul(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
         }
     }
     z
+}
+
+/// GHASH multiply dispatcher: the CPU-accelerated PCLMULQDQ path when
+/// the `accel-aes` feature is on and the running CPU supports it, else
+/// the validated portable [`gf_mul_portable`]. The result is
+/// byte-for-byte identical either way — the accel path is proven
+/// equivalent by the `accel-aes`-gated differential oracle in this
+/// module's tests. All GCM callers use this dispatcher unchanged.
+fn gf_mul(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
+    #[cfg(feature = "accel-aes")]
+    {
+        let mut out = [0u8; 16];
+        if oxicrypt_aes_accel::ghash_mul(x, y, &mut out) {
+            return out;
+        }
+    }
+    gf_mul_portable(x, y)
 }
 
 /// Accumulate `data` into `y` by XOR-then-multiply-by-H, padding the
@@ -577,5 +600,116 @@ mod tests {
         gcm_encrypt(&k, &iv, &[], &pt, &mut ct, &mut tag).unwrap();
         tag[0] ^= 1;
         assert!(gcm_decrypt(&k, &iv, &[], &ct, &tag, &mut back).is_err());
+    }
+}
+
+// ── GHASH cross-path differential oracle (accel-aes) ────────────────
+//
+// The UNFORGEABLE gate for the PCLMULQDQ GHASH multiply: for many
+// thousands of pseudo-random (x, y) pairs, the accelerated product
+// must equal the validated portable `gf_mul_portable` byte-for-byte.
+// The accelerated value is obtained through the public dispatcher
+// `gf_mul` (which, under `accel-aes` with PCLMULQDQ present, runs the
+// hardware path). Skips gracefully on non-PCLMUL hosts so the suite is
+// a no-op there; on PCLMUL hosts (CI + dev) it WILL run.
+#[cfg(all(test, feature = "accel-aes"))]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod ghash_accel_oracle {
+    use super::{gf_mul, gf_mul_portable};
+
+    /// Tiny self-contained xorshift128+ PRNG — deterministic, no extra
+    /// dependency, reproducible from a fixed seed. Good enough to spray
+    /// the GF(2^128) input space for the oracle.
+    struct XorShift128p {
+        s0: u64,
+        s1: u64,
+    }
+
+    impl XorShift128p {
+        fn new(seed: u64) -> Self {
+            // SplitMix64-style seeding so a single u64 seed yields a
+            // well-mixed 128-bit state (avoids the all-zero fixed point).
+            let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut next = || {
+                z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut x = z;
+                x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                x ^ (x >> 31)
+            };
+            Self {
+                s0: next(),
+                s1: next(),
+            }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.s0;
+            let y = self.s1;
+            self.s0 = y;
+            x ^= x << 23;
+            self.s1 = x ^ y ^ (x >> 17) ^ (y >> 26);
+            self.s1.wrapping_add(y)
+        }
+
+        fn fill_block(&mut self) -> [u8; 16] {
+            let mut b = [0u8; 16];
+            b[..8].copy_from_slice(&self.next_u64().to_le_bytes());
+            b[8..].copy_from_slice(&self.next_u64().to_le_bytes());
+            b
+        }
+    }
+
+    const CASES: usize = 50_000;
+
+    #[test]
+    fn accel_ghash_matches_portable_byte_exact() {
+        // No-op on CPUs without PCLMULQDQ (gf_mul falls back to portable
+        // there, so the comparison would be trivially equal anyway, but
+        // we skip to keep intent honest).
+        if !oxicrypt_aes_accel::ghash_available() {
+            return;
+        }
+
+        let mut rng = XorShift128p::new(0x0C1C_8A54_6A45_5701);
+
+        // A handful of structured edge cases up front, then the random
+        // spray. Edge cases stress the reduction's lane-crossing and
+        // high-bit handling.
+        let edge: &[([u8; 16], [u8; 16])] = &[
+            ([0u8; 16], [0u8; 16]),
+            ([0xFFu8; 16], [0xFFu8; 16]),
+            (
+                [0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+            (
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            ),
+            (
+                [0xFFu8; 16],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            ),
+        ];
+        for (x, y) in edge {
+            let want = gf_mul_portable(x, y);
+            let got = gf_mul(x, y);
+            assert_eq!(
+                got, want,
+                "GHASH accel != portable on edge case x={x:02x?} y={y:02x?}"
+            );
+        }
+
+        for i in 0..CASES {
+            let x = rng.fill_block();
+            let y = rng.fill_block();
+            let want = gf_mul_portable(&x, &y);
+            let got = gf_mul(&x, &y);
+            assert_eq!(
+                got, want,
+                "GHASH accel != portable at random case {i}: x={x:02x?} y={y:02x?}"
+            );
+        }
     }
 }

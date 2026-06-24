@@ -85,6 +85,57 @@ pub fn aes_block_available() -> bool {
     }
 }
 
+/// Returns `true` if the running CPU supports the PCLMULQDQ-accelerated
+/// GHASH multiply (x86_64 with PCLMULQDQ + SSSE3 + SSE2 — SSSE3 for the
+/// `_mm_shuffle_epi8` byte-reflect).
+///
+/// Mirrors [`aes_block_available`] but probes a **distinct** CPU
+/// feature: PCLMULQDQ (carry-less multiply) is independent of AES-NI,
+/// so it is cached in its own `AtomicU8`. The first call probes CPUID;
+/// subsequent calls are a single relaxed atomic load. On non-x86_64
+/// targets this is a constant `false`.
+#[must_use]
+pub fn ghash_available() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        x86_64_pclmul::available()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// GHASH single-block multiply in GF(2^128) via PCLMULQDQ, if available.
+///
+/// Computes the GCM field product (SP 800-38D §6.3, polynomial
+/// `x^128 + x^7 + x^2 + x + 1`) of `x` and `y`, byte-for-byte identical
+/// to the portable schoolbook `gf_mul` in `oxicrypt-aes`'s `modes`
+/// module. The GCM bit convention (bit 7 of byte 0 is the highest
+/// coefficient) is handled by byte-reflecting both operands into the
+/// natural PCLMULQDQ polynomial order, multiplying, reducing, then
+/// reflecting the result back.
+///
+/// Returns `true` if the accelerated path ran — in which case `out`
+/// holds the product — or `false` if PCLMULQDQ is unavailable or the
+/// target is not x86_64, in which case `out` is **untouched** and the
+/// caller must run its portable path instead.
+///
+/// The kernel is straight-line and branch-free (no data-dependent
+/// control flow, no table lookups): PCLMULQDQ is inherently
+/// constant-time, so the multiply is CT by construction.
+pub fn ghash_mul(x: &[u8; 16], y: &[u8; 16], out: &mut [u8; 16]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        x86_64_pclmul::mul(x, y, out)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (x, y, out);
+        false
+    }
+}
+
 /// Validate the `(rk, nr)` pair against the FIPS 197 schedule shape:
 /// `nr ∈ {10, 12, 14}` and exactly `16 × (nr + 1)` round-key bytes.
 // `nr` is matched to at most 14 before the arithmetic, so `16 * (nr + 1)`
@@ -281,6 +332,179 @@ mod x86_64_aes_ni {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+mod x86_64_pclmul {
+    //! PCLMULQDQ implementation of the GCM GHASH multiply
+    //! (SP 800-38D §6.3, polynomial `x^128 + x^7 + x^2 + x + 1`).
+    //!
+    //! The carry-less multiply `_mm_clmulepi64_si128` operates on
+    //! polynomials in the natural little-endian order (bit i of the
+    //! register is the coefficient of `x^i`). GCM uses the opposite
+    //! bit order — bit 7 of byte 0 is the *highest* coefficient — so we
+    //! byte-reflect both operands (a 16-byte `BSWAP`) into degree-rising
+    //! order, do a 128×128→256 carry-less multiply (Karatsuba: three
+    //! `clmul`s), reduce the 256-bit product modulo the GCM polynomial
+    //! with the standard two-step shift-fold Montgomery-style reduction,
+    //! and byte-reflect the 128-bit result back into GCM order.
+    //!
+    //! The whole sequence is straight-line and branch-free, so it is
+    //! constant-time regardless of operand values.
+    #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+
+    use core::arch::x86_64::{
+        __cpuid_count, _mm_clmulepi64_si128, _mm_loadu_si128, _mm_shuffle_epi8, _mm_slli_epi32,
+        _mm_slli_si128, _mm_srli_epi32, _mm_srli_si128, _mm_storeu_si128, _mm_xor_si128,
+    };
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    // Detection-cache states for the PCLMULQDQ probe. A single byte
+    // cannot tear and CPUID is a pure read of fixed CPU state, so a
+    // benign first-call race at worst probes twice and stores the same
+    // verdict. This is a *separate* cache from the AES-NI one in
+    // `x86_64_aes_ni`: PCLMULQDQ and AES-NI are distinct CPU features.
+    const NOT_PROBED: u8 = 0;
+    const UNAVAILABLE: u8 = 1;
+    const AVAILABLE: u8 = 2;
+
+    static DETECTED: AtomicU8 = AtomicU8::new(NOT_PROBED);
+
+    pub(crate) fn available() -> bool {
+        match DETECTED.load(Ordering::Relaxed) {
+            AVAILABLE => true,
+            UNAVAILABLE => false,
+            _ => {
+                let avail = probe();
+                DETECTED.store(
+                    if avail { AVAILABLE } else { UNAVAILABLE },
+                    Ordering::Relaxed,
+                );
+                avail
+            }
+        }
+    }
+
+    /// Hand-rolled CPUID probe for PCLMULQDQ + SSSE3 + SSE2 (`no_std`, so
+    /// the std `is_x86_feature_detected!` macro is unavailable here). All
+    /// three are required: PCLMULQDQ for `_mm_clmulepi64_si128`, SSSE3 for
+    /// the `_mm_shuffle_epi8` byte-reflect, SSE2 for the load/store/xor/shift
+    /// lanes. Probing every feature the kernel uses keeps the runtime gate
+    /// sound (PCLMULQDQ implies SSSE3 on every shipping CPU, but the gate
+    /// asserts it rather than assuming it).
+    fn probe() -> bool {
+        /// CPUID leaf 1 EDX bit 26 — SSE2.
+        const LEAF1_EDX_SSE2: u32 = 1 << 26;
+        /// CPUID leaf 1 ECX bit 1 — PCLMULQDQ.
+        const LEAF1_ECX_PCLMULQDQ: u32 = 1 << 1;
+        /// CPUID leaf 1 ECX bit 9 — SSSE3 (the `_mm_shuffle_epi8` reflect).
+        const LEAF1_ECX_SSSE3: u32 = 1 << 9;
+
+        // `__cpuid_count` is a safe intrinsic on x86_64 (the CPUID
+        // instruction is architecturally guaranteed in long mode and
+        // only reads fixed processor identification registers).
+        let leaf1 = __cpuid_count(1, 0);
+        (leaf1.edx & LEAF1_EDX_SSE2) != 0
+            && (leaf1.ecx & LEAF1_ECX_PCLMULQDQ) != 0
+            && (leaf1.ecx & LEAF1_ECX_SSSE3) != 0
+    }
+
+    pub(crate) fn mul(x: &[u8; 16], y: &[u8; 16], out: &mut [u8; 16]) -> bool {
+        if !available() {
+            return false;
+        }
+        // SAFETY: `available()` has confirmed via CPUID — cached, but
+        // probed on this very machine — that the CPU supports the
+        // pclmulqdq, ssse3, and sse2 target features, the exact precondition
+        // for `ghash_mul_pclmul`. CPU features cannot be revoked at runtime.
+        unsafe { ghash_mul_pclmul(x, y, out) };
+        true
+    }
+
+    /// GCM GHASH multiply over PCLMULQDQ.
+    ///
+    /// Verbatim implementation of Intel's reflected-operand `gfmul`
+    /// ("Intel® Carry-Less Multiplication Instruction and its Usage for
+    /// Computing the GCM Mode", Gueron & Kounavis, rev 2.02, Figure 5).
+    /// We byte-reflect both 16-byte operands so polynomial degree rises
+    /// with bit position (GCM's MSB-first convention is the reverse of
+    /// PCLMULQDQ's natural order), run the Karatsuba 128×128 carry-less
+    /// multiply, then apply the whitepaper's 32-bit-granular two-phase
+    /// reduction modulo `x^128 + x^7 + x^2 + x + 1` (which folds in the
+    /// reflection's one-bit shift), and byte-reflect the residue back.
+    ///
+    /// Straight-line and branch-free: constant time by construction.
+    ///
+    /// # Safety
+    ///
+    /// Requires pclmulqdq+ssse3+sse2 (CPUID-confirmed by the caller). SSSE3
+    /// is needed for the `_mm_shuffle_epi8` byte-reflect.
+    #[target_feature(enable = "pclmulqdq,ssse3,sse2")]
+    unsafe fn ghash_mul_pclmul(x: &[u8; 16], y: &[u8; 16], out: &mut [u8; 16]) {
+        // SAFETY: all loads/stores are unaligned-tolerant; the BSWAP
+        // shuffle mask is a fixed local array; every intrinsic below
+        // requires only the pclmulqdq+ssse3+sse2 features this function is
+        // compiled for (ssse3 for `_mm_shuffle_epi8`).
+        unsafe {
+            // Byte-reverse mask: lane i <- byte (15 - i). Maps GCM's
+            // MSB-first byte order onto PCLMULQDQ's degree-rising order.
+            const BSWAP: [u8; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+            let bswap = _mm_loadu_si128(BSWAP.as_ptr().cast());
+
+            let a = _mm_shuffle_epi8(_mm_loadu_si128(x.as_ptr().cast()), bswap);
+            let b = _mm_shuffle_epi8(_mm_loadu_si128(y.as_ptr().cast()), bswap);
+
+            // --- Karatsuba carry-less multiply (Figure 5, steps 1-8).
+            // tmp3 = low 128 bits of the product, tmp6 = high 128 bits.
+            let mut tmp3 = _mm_clmulepi64_si128(a, b, 0x00); // a0*b0
+            let mut tmp6 = _mm_clmulepi64_si128(a, b, 0x11); // a1*b1
+            let mut tmp4 = _mm_clmulepi64_si128(a, b, 0x10); // a1*b0
+            let mut tmp5 = _mm_clmulepi64_si128(a, b, 0x01); // a0*b1
+            tmp4 = _mm_xor_si128(tmp4, tmp5); // middle term
+            tmp3 = _mm_xor_si128(tmp3, _mm_slli_si128(tmp4, 8));
+            tmp6 = _mm_xor_si128(tmp6, _mm_srli_si128(tmp4, 8));
+
+            // --- Phase 1 of the reduction (Figure 5, steps 9-20):
+            // shift tmp3:tmp6 left by 1 (reflection adjustment) and fold
+            // the three taps using 32-bit-granular shifts.
+            let mut tmp7 = _mm_srli_epi32(tmp3, 31);
+            let mut tmp8 = _mm_srli_epi32(tmp6, 31);
+            tmp3 = _mm_slli_epi32(tmp3, 1);
+            tmp6 = _mm_slli_epi32(tmp6, 1);
+
+            let mut tmp9 = _mm_srli_si128(tmp7, 12);
+            tmp8 = _mm_slli_si128(tmp8, 4);
+            tmp7 = _mm_slli_si128(tmp7, 4);
+            tmp3 = _mm_xor_si128(tmp3, tmp7);
+            tmp6 = _mm_xor_si128(tmp6, tmp8);
+            tmp6 = _mm_xor_si128(tmp6, tmp9);
+
+            // --- Phase 2 (steps 21-37): fold tmp3 by x^1, x^2, x^7.
+            tmp7 = _mm_slli_epi32(tmp3, 31);
+            tmp8 = _mm_slli_epi32(tmp3, 30);
+            tmp9 = _mm_slli_epi32(tmp3, 25);
+            tmp7 = _mm_xor_si128(tmp7, tmp8);
+            tmp7 = _mm_xor_si128(tmp7, tmp9);
+            tmp8 = _mm_srli_si128(tmp7, 4);
+            tmp7 = _mm_slli_si128(tmp7, 12);
+            tmp3 = _mm_xor_si128(tmp3, tmp7);
+
+            // --- Phase 3 (steps 38-end): finish the fold and combine
+            // with the high half.
+            let mut tmp2 = _mm_srli_epi32(tmp3, 1);
+            tmp4 = _mm_srli_epi32(tmp3, 2);
+            tmp5 = _mm_srli_epi32(tmp3, 7);
+            tmp2 = _mm_xor_si128(tmp2, tmp4);
+            tmp2 = _mm_xor_si128(tmp2, tmp5);
+            tmp2 = _mm_xor_si128(tmp2, tmp8);
+            tmp3 = _mm_xor_si128(tmp3, tmp2);
+            tmp6 = _mm_xor_si128(tmp6, tmp3);
+
+            // tmp6 holds the reduced 128-bit residue.
+            let result = _mm_shuffle_epi8(tmp6, bswap);
+            _mm_storeu_si128(out.as_mut_ptr().cast(), result);
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -290,7 +514,10 @@ mod x86_64_aes_ni {
 mod tests {
     extern crate std;
 
-    use super::{aes_block_available, decrypt_block, encrypt_block, schedule_shape_ok};
+    use super::{
+        aes_block_available, decrypt_block, encrypt_block, ghash_available, ghash_mul,
+        schedule_shape_ok,
+    };
 
     #[test]
     fn schedule_shape_gate() {
@@ -374,6 +601,75 @@ mod tests {
     #[test]
     fn detection_is_false_off_x86_64() {
         assert!(!aes_block_available());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn ghash_detection_agrees_with_std_runtime_detection() {
+        let std_says = std::arch::is_x86_feature_detected!("pclmulqdq")
+            && std::arch::is_x86_feature_detected!("ssse3")
+            && std::arch::is_x86_feature_detected!("sse2");
+        assert_eq!(ghash_available(), std_says);
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    #[test]
+    fn ghash_detection_is_false_off_x86_64() {
+        assert!(!ghash_available());
+    }
+
+    #[test]
+    fn ghash_unavailable_leaves_out_untouched() {
+        // On non-PCLMUL hosts (or off-x86_64) the false path must leave
+        // `out` exactly as supplied; on PCLMUL hosts the true path
+        // overwrites it. Either way the *contract* holds.
+        let x = [0x11u8; 16];
+        let y = [0x22u8; 16];
+        let sentinel = [0xCDu8; 16];
+        let mut out = sentinel;
+        let ran = ghash_mul(&x, &y, &mut out);
+        if ran {
+            // Accelerated: out was written (the GF product of nonzero
+            // operands is itself nonzero, so it cannot equal a constant
+            // sentinel by accident here — but assert the bool contract
+            // rather than the value, which the oracle in oxicrypt-aes
+            // pins exactly).
+            assert!(ghash_available());
+        } else {
+            assert!(!ghash_available());
+            assert_eq!(out, sentinel);
+        }
+    }
+
+    #[test]
+    fn ghash_zero_operand_is_zero() {
+        // x * 0 == 0 in GF(2^128); a useful invariant that holds on the
+        // accelerated path and is cheap to check without the portable
+        // reference (which lives in oxicrypt-aes).
+        if !ghash_available() {
+            return;
+        }
+        let x = [0x9Eu8; 16];
+        let zero = [0u8; 16];
+        let mut out = [0xFFu8; 16];
+        assert!(ghash_mul(&x, &zero, &mut out));
+        assert_eq!(out, [0u8; 16]);
+    }
+
+    #[test]
+    fn ghash_deterministic_across_repeated_calls() {
+        if !ghash_available() {
+            return;
+        }
+        let x = [0x3Au8; 16];
+        let y = [0xC7u8; 16];
+        let mut reference = [0u8; 16];
+        assert!(ghash_mul(&x, &y, &mut reference));
+        for _ in 0..100 {
+            let mut out = [0u8; 16];
+            assert!(ghash_mul(&x, &y, &mut out));
+            assert_eq!(out, reference);
+        }
     }
 
     #[test]
