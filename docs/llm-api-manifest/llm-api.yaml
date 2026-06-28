@@ -87,7 +87,7 @@ modules:
     depends_on: []
 
   - name: oxicrypt-sha
-    description: SHA-1, SHA-2, and SHA-3 hash functions with one-shot and streaming APIs; default-off accel-sha feature dispatches SHA-256/SHA-224 to oxicrypt-sha-accel on x86_64 SHA-NI.
+    description: SHA-1, SHA-2, and SHA-3 hash functions with one-shot and streaming APIs, plus a batched Sponge4 four-way Keccak sponge; default-off accel-sha dispatches SHA-256/SHA-224 to oxicrypt-sha-accel on x86_64 SHA-NI, and default-off accel-keccak dispatches Sponge4 to oxicrypt-keccak-accel on x86_64 AVX2.
     no_std: true
     depends_on: [oxicrypt-module]
 
@@ -157,7 +157,7 @@ modules:
     depends_on: [oxicrypt-module, oxicrypt-sha, oxicrypt-drbg]
 
   - name: oxicrypt-ml-dsa
-    description: "ML-DSA-87 (FIPS 204) digital signatures: keygen, sign, verify with deterministic Fiat-Shamir-with-aborts signing."
+    description: "ML-DSA-87 (FIPS 204) digital signatures: keygen, sign, verify with deterministic Fiat-Shamir-with-aborts signing; a default-off accel-keccak feature batches ExpandA four SHAKE-128 streams at a time through oxicrypt-sha's Sponge4, byte-identical to the scalar build."
     no_std: true
     depends_on: [oxicrypt-module, oxicrypt-sha]
 
@@ -198,6 +198,11 @@ modules:
 
   - name: oxicrypt-aes-accel
     description: Audited x86_64 AES-NI block plus PCLMULQDQ GCM GHASH acceleration for oxicrypt-aes; compiled in only via the default-off accel-aes feature.
+    no_std: true
+    depends_on: []
+
+  - name: oxicrypt-keccak-accel
+    description: Audited x86_64 AVX2 4-way batched Keccak-f[1600] permutation for oxicrypt-sha; compiled in only behind a default-off feature, runtime-detected via CPUID.
     no_std: true
     depends_on: []
 

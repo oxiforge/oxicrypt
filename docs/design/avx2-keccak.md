@@ -72,9 +72,19 @@ audited-unsafe surface — starting with the batched sponge API design, then one
 sweep) as the first beneficiary. **Do not ship Option A**: its gain does not justify the unsafe.
 Until then, the portable scalar Keccak remains the path.
 
+## Resolved
+
+- **Batched API shape: a distinct concrete `Sponge4`** (not a generic `SpongeN<const LANES>`).
+  The AVX2 primitive is `KeccakP1600times4` — exactly four lanes — so the concrete type is the
+  hard-to-vary fit; a generic lane count has no caller until an AVX-512 8-way path exists.
+- **First caller: lattice `expand_a`** (`oxicrypt-ml-dsa`), not the LMS leaf sweep. `expand_a`
+  has ACVP keyGen/sigGen KATs that run feature-on and feature-off — a byte-exact Â oracle for
+  the exact path — which the SHAKE-LMS keygen path lacks (sigVer-only KATs). Batching composes
+  **with** the `parallel` (rayon) feature independently: `parallel` forks the outer row loop,
+  `accel-keccak` batches the inner SHAKE-128 streams 4-at-a-time; all four of
+  {`parallel`} × {`accel-keccak`} produce byte-identical Â.
+
 ## Open questions
 
-- Batched API shape: a distinct `Sponge4` type vs. a generic `SpongeN<const LANES>`?
-- Which caller batches first (LMS leaf sweep vs. lattice `expand_a`), and does batching compose
-  with the existing `parallel` (rayon) features or replace them on those paths?
-- AVX-512 (`KeccakP1600times8`) as a later tier — shares this batched-API design.
+- AVX-512 (`KeccakP1600times8`) as a later tier — shares this batched-API design and is the
+  only future lane count that would reopen the `SpongeN<const LANES>` generalization question.

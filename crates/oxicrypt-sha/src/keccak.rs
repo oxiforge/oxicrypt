@@ -254,13 +254,214 @@ impl<const RATE_BYTES: usize> Drop for Sponge<RATE_BYTES> {
 }
 
 // ------------------------------------------------------------------------
+// Batched 4-way sponge
+// ------------------------------------------------------------------------
+
+/// Four independent Keccak sponges run in lockstep.
+///
+/// `Sponge4` holds four independent 25-lane Keccak states and drives
+/// them through the same SPONGE\[KECCAK-p\[1600,24\], pad10*1, r\]
+/// lifecycle as the single-stream [`Sponge`], with one difference: the
+/// permutation is applied to all four states together. When the
+/// `accel-keccak` feature is enabled and the CPU supports it, that
+/// batched permutation dispatches to the AVX2 4-way path in
+/// `oxicrypt-keccak-accel`; otherwise (and in every default build) it
+/// runs the portable [`keccak_f1600`] on each of the four states. The
+/// emitted bytes are byte-for-byte identical to running four separate
+/// [`Sponge`]s — only the execution unit of the permutation differs.
+///
+/// # Equal-length precondition
+///
+/// `Sponge4` batches the realistic case in which the four streams have
+/// **the same input length and the same output length** (e.g. four
+/// SHAKE calls with a common message length and a common output length).
+/// Under that precondition all four sponges reach a rate boundary at the
+/// same `offset`, so a single batched permutation advances all four in
+/// lockstep — which is what makes the batching sound. The four absorb
+/// slices passed to [`absorb_4`](Sponge4::absorb_4) must therefore share
+/// one length, and the four squeeze slices passed to
+/// [`squeeze_4`](Sponge4::squeeze_4) must share one length; both are
+/// `debug_assert!`-checked. The unequal-length generalization is
+/// intentionally out of scope (a caller needing it simply does not
+/// batch and runs four single [`Sponge`]s instead).
+///
+/// Lifecycle, mirroring [`Sponge`]:
+///   `new()` → `absorb_4()` (repeatedly) → `finalize_4(domain)` →
+///   `squeeze_4()`
+#[derive(Clone)]
+pub struct Sponge4<const RATE_BYTES: usize> {
+    states: [[u64; LANES]; 4],
+    /// Byte offset within the current rate block (0..RATE_BYTES),
+    /// shared across all four states by the equal-length precondition.
+    offset: usize,
+    /// True once `finalize_4` has been called.
+    finalized: bool,
+}
+
+impl<const RATE_BYTES: usize> Sponge4<RATE_BYTES> {
+    /// Creates four fresh sponges, each with an all-zero state.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            states: [[0u64; LANES]; 4],
+            offset: 0,
+            finalized: false,
+        }
+    }
+
+    /// Absorbs one slice into each of the four sponges.
+    ///
+    /// `inputs[i]` is absorbed into state `i`. All four slices must share
+    /// the same length (the equal-length precondition); when they do,
+    /// every state crosses a rate boundary at the same `offset`, so the
+    /// single batched permutation keeps all four synchronized.
+    ///
+    /// # Panics
+    ///
+    /// Panics (debug only) if called after `finalize_4`, or if the four
+    /// input slices do not all have the same length.
+    pub fn absorb_4(&mut self, inputs: [&[u8]; 4]) {
+        debug_assert!(!self.finalized, "absorb after finalize");
+        let len = inputs[0].len();
+        debug_assert!(
+            inputs.iter().all(|s| s.len() == len),
+            "Sponge4::absorb_4 requires equal-length inputs",
+        );
+        for pos in 0..len {
+            for stream in 0..4 {
+                Self::xor_byte(&mut self.states[stream], self.offset, inputs[stream][pos]);
+            }
+            self.offset += 1;
+            if self.offset == RATE_BYTES {
+                self.permute4();
+                self.offset = 0;
+            }
+        }
+    }
+
+    /// Pads each of the four sponges with pad10*1, XORs in the domain
+    /// byte, and runs one batched permutation. After this call,
+    /// `squeeze_4` may be used to extract output bytes.
+    ///
+    /// The padding is byte-for-byte the single-[`Sponge`] pad10*1 applied
+    /// to each state at the shared `offset` (FIPS 202 §B.2).
+    ///
+    /// # Panics
+    ///
+    /// Panics (debug only) if called more than once.
+    pub fn finalize_4(&mut self, domain: u8) {
+        debug_assert!(!self.finalized, "double finalize");
+        for stream in 0..4 {
+            Self::xor_byte(&mut self.states[stream], self.offset, domain);
+            Self::xor_byte(&mut self.states[stream], RATE_BYTES - 1, 0x80);
+        }
+        self.permute4();
+        self.offset = 0;
+        self.finalized = true;
+    }
+
+    /// Squeezes `outs[i].len()` bytes of output from sponge `i`.
+    ///
+    /// May be called repeatedly after `finalize_4` — the SHAKE XOFs rely
+    /// on this. All four output slices must share the same length (the
+    /// equal-length precondition), so every state crosses a rate boundary
+    /// at the same `offset` and one batched permutation refills all four.
+    ///
+    /// # Panics
+    ///
+    /// Panics (debug only) if called before `finalize_4`, or if the four
+    /// output slices do not all have the same length.
+    // Taken by value, not by reference: writing through each inner
+    // `&mut [u8]` requires owning the array of mutable references (a
+    // `&[&mut [u8]; 4]` would only grant shared access to the elements).
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn squeeze_4(&mut self, outs: [&mut [u8]; 4]) {
+        debug_assert!(self.finalized, "squeeze before finalize");
+        let len = outs[0].len();
+        debug_assert!(
+            outs.iter().all(|o| o.len() == len),
+            "Sponge4::squeeze_4 requires equal-length outputs",
+        );
+        let mut produced = 0;
+        while produced < len {
+            if self.offset == RATE_BYTES {
+                self.permute4();
+                self.offset = 0;
+            }
+            let take = core::cmp::min(RATE_BYTES - self.offset, len - produced);
+            for i in 0..take {
+                let pos = self.offset + i;
+                for stream in 0..4 {
+                    outs[stream][produced + i] = Self::read_byte(&self.states[stream], pos);
+                }
+            }
+            self.offset += take;
+            produced += take;
+        }
+    }
+
+    /// The single batched-permutation point. With the `accel-keccak`
+    /// feature enabled, dispatches the four states to the AVX2 4-way path
+    /// when CPUID confirms support; otherwise (and always in default
+    /// builds) runs the portable [`keccak_f1600`] on each of the four.
+    /// Either way the result is byte-for-byte four independent
+    /// permutations.
+    #[inline]
+    fn permute4(&mut self) {
+        #[cfg(feature = "accel-keccak")]
+        {
+            if oxicrypt_keccak_accel::keccak_f1600_x4(&mut self.states) {
+                return;
+            }
+        }
+        for s in &mut self.states {
+            keccak_f1600(s);
+        }
+    }
+
+    /// XORs a single byte into one state at byte position `pos` within
+    /// the rate — identical lane math to [`Sponge::xor_byte`].
+    #[inline]
+    fn xor_byte(state: &mut [u64; LANES], pos: usize, byte: u8) {
+        let lane = pos / 8;
+        let shift = (pos % 8) * 8;
+        state[lane] ^= u64::from(byte) << shift;
+    }
+
+    /// Reads a single byte from one state at byte position `pos` within
+    /// the rate — identical lane math to [`Sponge::read_byte`].
+    #[inline]
+    fn read_byte(state: &[u64; LANES], pos: usize) -> u8 {
+        let lane = pos / 8;
+        let shift = (pos % 8) * 8;
+        ((state[lane] >> shift) & 0xff) as u8
+    }
+}
+
+impl<const RATE_BYTES: usize> Default for Sponge4<RATE_BYTES> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const RATE_BYTES: usize> Drop for Sponge4<RATE_BYTES> {
+    fn drop(&mut self) {
+        for s in &mut self.states {
+            oxicrypt_zeroize::zeroize_u64(s);
+        }
+    }
+}
+
+// ------------------------------------------------------------------------
 // Permutation unit tests
 // ------------------------------------------------------------------------
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{LANES, Sponge, keccak_f1600};
+    extern crate std;
+
+    use super::{LANES, Sponge, Sponge4, keccak_f1600};
 
     #[test]
     fn permutation_all_zero_after_one_round_matches_known_lane0() {
@@ -329,5 +530,124 @@ mod tests {
         let mut out = [0u8; 272];
         sp.squeeze(&mut out);
         assert!(out.iter().any(|&x| x != 0));
+    }
+
+    // --------------------------------------------------------------------
+    // Sponge4 batched-vs-single oracle
+    // --------------------------------------------------------------------
+
+    /// Tiny deterministic PRNG (splitmix64) so the batched-vs-single
+    /// comparison is reproducible without an `rand` dependency.
+    struct SplitMix64 {
+        state: u64,
+    }
+
+    impl SplitMix64 {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+
+        fn fill(&mut self, buf: &mut [u8]) {
+            for b in buf.iter_mut() {
+                *b = (self.next_u64() & 0xff) as u8;
+            }
+        }
+    }
+
+    /// Core oracle body: at a given rate `R`, for a spread of equal input
+    /// lengths and equal output lengths (output spanning ≥ 3 rate blocks),
+    /// assert each of the four `Sponge4<R>` outputs is byte-identical to
+    /// the corresponding single `Sponge<R>`. Exercised for both the SHAKE
+    /// domain byte (0x1f) and the SHA-3 domain byte (0x06).
+    fn sponge4_equals_4x_single<const R: usize>(seed: u64) {
+        let mut prng = SplitMix64::new(seed);
+        // Input lengths chosen to straddle rate boundaries (0, partial,
+        // exactly one rate, multi-rate). Output spans ≥ 3 rate blocks.
+        let in_lens = [0usize, 1, R - 1, R, R + 5, 2 * R + 3];
+        let out_lens = [1usize, R, 3 * R + 7];
+
+        for &domain in &[0x1fu8, 0x06u8] {
+            for &in_len in &in_lens {
+                for &out_len in &out_lens {
+                    // Four independent random inputs of the SAME length.
+                    let mut inputs = [
+                        std::vec![0u8; in_len],
+                        std::vec![0u8; in_len],
+                        std::vec![0u8; in_len],
+                        std::vec![0u8; in_len],
+                    ];
+                    for inp in &mut inputs {
+                        prng.fill(inp);
+                    }
+
+                    // Reference: four single sponges.
+                    let mut single_outs = [
+                        std::vec![0u8; out_len],
+                        std::vec![0u8; out_len],
+                        std::vec![0u8; out_len],
+                        std::vec![0u8; out_len],
+                    ];
+                    for stream in 0..4 {
+                        let mut sp = Sponge::<R>::new();
+                        sp.absorb(&inputs[stream]);
+                        sp.finalize(domain);
+                        sp.squeeze(&mut single_outs[stream]);
+                    }
+
+                    // Batched: one Sponge4.
+                    let mut batch_outs = [
+                        std::vec![0u8; out_len],
+                        std::vec![0u8; out_len],
+                        std::vec![0u8; out_len],
+                        std::vec![0u8; out_len],
+                    ];
+                    let mut sp4 = Sponge4::<R>::new();
+                    sp4.absorb_4([&inputs[0], &inputs[1], &inputs[2], &inputs[3]]);
+                    sp4.finalize_4(domain);
+                    {
+                        let [o0, o1, o2, o3] = &mut batch_outs;
+                        sp4.squeeze_4([o0, o1, o2, o3]);
+                    }
+
+                    for stream in 0..4 {
+                        assert_eq!(
+                            batch_outs[stream], single_outs[stream],
+                            "Sponge4 stream {stream} diverged at R={R} domain={domain:#x} \
+                             in_len={in_len} out_len={out_len}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sponge4_matches_4x_single_portable() {
+        // Always-on portable oracle (feature OFF): the 4× scalar fallback
+        // inside Sponge4 must reproduce four independent single sponges
+        // byte-for-byte. Run at the SHAKE128 rate (168) and SHAKE256
+        // rate (136), both domain bytes, multi-block inputs and outputs.
+        sponge4_equals_4x_single::<168>(0x5301_4b45_0000_0001);
+        sponge4_equals_4x_single::<136>(0x5301_4b45_0000_0002);
+    }
+
+    #[cfg(all(test, feature = "accel-keccak"))]
+    #[test]
+    fn sponge4_matches_4x_single_accel() {
+        // Feature-ON oracle: exercises the batched AVX2 dispatch through
+        // the sponge (when CPUID confirms AVX2; else the same 4× scalar
+        // fallback). Multi-block inputs/outputs force multiple
+        // permutations, so the batched permutation path is hit. Equality
+        // with four single sponges must still hold byte-for-byte.
+        sponge4_equals_4x_single::<168>(0xacce_0168_0000_0168);
+        sponge4_equals_4x_single::<136>(0xacce_0136_0000_0136);
     }
 }

@@ -43,14 +43,17 @@ and the code agree because the commit gate forces them to.
 
 ## Principles
 
-- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 21 of 24 in-boundary crates
-  carry it. It is a build-time control that enters the conformance argument. Exactly two sanctioned
-  `unsafe` categories exist, isolated in three small audited crates: (1) **volatile CSP
-  zeroization** — `oxicrypt-zeroize`, one audited `unsafe` mechanism for `write_volatile`; and
-  (2) **CPU-intrinsic acceleration** — `oxicrypt-sha-accel`: feature-gated, default-off,
-  runtime-detected, equivalence to the portable path proven by KAT + cross-path oracle. The default
-  build graph contains no acceleration crate; the validated portable baseline is the shipping default.
-  The C-ABI crate (`oxicrypt-ffi`) sits outside the boundary and necessarily carries unsafe.
+- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 22 of 27 in-boundary crates
+  carry it. It is a build-time control that enters the conformance argument. Three sanctioned
+  `unsafe` categories exist, isolated in five small audited crates: (1) **volatile CSP
+  zeroization** — `oxicrypt-zeroize`, one audited `unsafe` mechanism for `write_volatile`;
+  (2) **CPU-intrinsic acceleration** — `oxicrypt-sha-accel` (x86_64 SHA-NI), `oxicrypt-aes-accel`
+  (x86_64 AES-NI + PCLMULQDQ GHASH), and `oxicrypt-keccak-accel` (x86_64 AVX2 4-way batched
+  Keccak-f[1600]): feature-gated, default-off, runtime-detected, equivalence to the portable path
+  proven by KAT + cross-path oracle; and (3) **CPU timer/counter intrinsics** — `oxicrypt-timer`:
+  read-only, side-effect-free counter reads, no cryptographic logic. The default build graph contains
+  no acceleration crate; the validated portable baseline is the shipping default. The C-ABI crate
+  (`oxicrypt-ffi`) sits outside the boundary and necessarily carries unsafe.
 - **One home per security claim** — the CMVP claims live in `docs/security-policy/security-policy.md`;
   code and rustdoc point at it, never restate it.
 - **Conformance is falsifiable** — every approved service has a known-answer / ACVP vector that fails if
@@ -74,7 +77,7 @@ by the commit-is-the-gate doc-sync discipline.
 
 > Placeholder set — expand into the full per-algorithm / per-service inventory during validation.
 
-- [ ] ISC-1: 22 of the 26 in-boundary crates carry `#![forbid(unsafe_code)]`; the four audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`), the two CPU-intrinsic-acceleration crates `oxicrypt-sha-accel` / `oxicrypt-aes-accel` (sanctioned category: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence), and `oxicrypt-timer` (sanctioned category: read-only CPU timer/counter intrinsics, side-effect-free, no cryptographic logic). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
+- [ ] ISC-1: 22 of the 27 in-boundary crates carry `#![forbid(unsafe_code)]`; the five audited exceptions are `oxicrypt-zeroize` (volatile CSP zeroization via `write_volatile`), the three CPU-intrinsic-acceleration crates `oxicrypt-sha-accel` / `oxicrypt-aes-accel` / `oxicrypt-keccak-accel` (sanctioned category: feature-gated, default-off, runtime-detected, KAT + cross-path-oracle equivalence), and `oxicrypt-timer` (sanctioned category: read-only CPU timer/counter intrinsics, side-effect-free, no cryptographic logic). `oxicrypt-ffi` lives outside the boundary to offer a C ABI, where `unsafe extern "C"` is unavoidable; `no_std` where applicable
 - [ ] ISC-2: every approved algorithm has known-answer / ACVP vectors that pass (`oxicrypt-test-vectors`, `acvp-harness/`)
 - [ ] ISC-3: power-up self-tests run and gate operation (`oxicrypt-integrity`)
 - [ ] ISC-4: the module boundary is formally defined (`oxicrypt-module`)
@@ -199,6 +202,23 @@ by the commit-is-the-gate doc-sync discipline.
   startup conditioning KAT with permanent refusal on mismatch, and conditioned output drawing
   every sample through the single health-tested emission path. ISC-17–18 added
   (security-policy R82).
+
+- 2026-06-26: `oxicrypt-ml-dsa` gains a default-off `accel-keccak` feature — the first
+  in-boundary algorithm caller of the batched Keccak path (#110). `expand_a` samples the public
+  matrix Â four independent SHAKE-128 cell streams at a time through
+  `oxicrypt_sha::keccak::Sponge4` (a shared `fill_cells_accel` 4-lane batcher driving four
+  `rej_ntt_poly` accumulators in lockstep, re-squeezing in equal-length rate-block rounds until
+  all four lanes reach N accepted coefficients — never truncating; the 1–3 cell tail when K·ℓ is
+  not a multiple of 4, e.g. ML-DSA-65's tail of 2, falls back to the scalar single-sponge
+  sampler). The crate stays `#![forbid(unsafe_code)]` — it adds no `unsafe`, only enabling the
+  consumed feature transitively — and Â is byte-identical to the scalar build because each lane's
+  stream is consumed under the identical 3-byte `t < Q` rejection rule. All four feature
+  combinations {`parallel`} × {`accel-keccak`} produce identical Â; under both, the rayon row loop
+  batches each row's ℓ cells. A throughput option only: no approved service, SSP, self-test, or
+  state-machine change, and ISC-1's audited-`unsafe` accounting is unchanged (ml-dsa adds none).
+  Correctness oracle: a direct accel-vs-scalar `expand_a` differential test generated per
+  parameter set (ML-DSA-44/65/87), plus the per-variant keygen→sign→verify KATs run feature-on
+  and -off. Security-policy §9.2 item 4 extended with the caller note.
 
 ## Changelog
 

@@ -522,7 +522,7 @@ macro_rules! ml_dsa_impl {
         ///
         /// Sequential build (default, `no_std`): the rows are filled in
         /// order, each cell from its own fresh local XOF.
-        #[cfg(not(feature = "parallel"))]
+        #[cfg(all(not(feature = "parallel"), not(feature = "accel-keccak")))]
         fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
             let mut mat: [[Poly; L]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
@@ -550,7 +550,7 @@ macro_rules! ml_dsa_impl {
         /// recombined *by position*, never by completion order, so the
         /// output is byte-identical to the sequential build regardless
         /// of thread count.
-        #[cfg(feature = "parallel")]
+        #[cfg(all(feature = "parallel", not(feature = "accel-keccak")))]
         fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
@@ -568,6 +568,180 @@ macro_rules! ml_dsa_impl {
                         xof.update(&[j as u8, i as u8]);
                         xof.finalize();
                         row[j] = rej_ntt_poly(&mut xof);
+                    }
+                });
+            mat
+        }
+
+        /// `RejNTTPoly` batched four cells at a time over the AVX2 4-way
+        /// Keccak path (`accel-keccak`). Fills `out[n]` with the matrix
+        /// cell sampled from SHAKE-128(ρ ‖ \[j, i\]) for `cells[n] =
+        /// (i, j)`, processing four independent cell streams together
+        /// through [`oxicrypt_sha::keccak::Sponge4`] and falling back to
+        /// the scalar [`rej_ntt_poly`] for a 1–3 cell tail.
+        ///
+        /// Byte-identical to the scalar build: each lane's SHAKE-128
+        /// stream is consumed in the same 3-byte groups under the same
+        /// `t < Q` accept rule, so the accepted coefficients — and thus
+        /// every Â cell — match the per-cell single-sponge path exactly.
+        /// Rejection sampling is probabilistic, so the four lanes are
+        /// driven in lockstep and *re-squeezed* (never truncated) until
+        /// all four reach `N` accepted coefficients.
+        #[cfg(feature = "accel-keccak")]
+        fn fill_cells_accel(rho: &[u8; 32], cells: &[(usize, usize)], out: &mut [Poly]) {
+            use oxicrypt_sha::keccak::Sponge4;
+
+            // SHAKE-128 rate in bytes. It is a multiple of 3, so each
+            // squeezed rate block yields exactly 56 complete 3-byte
+            // candidate groups — no partial group is ever carried across
+            // squeeze rounds, which keeps the lane bookkeeping simple.
+            const SHAKE128_RATE: usize = 168;
+
+            let total = cells.len();
+            let mut base = 0;
+            while base + 4 <= total {
+                // The four equal-length (34-byte) absorb inputs ρ ‖ [j, i].
+                let mut inputs = [[0u8; 34]; 4];
+                for lane in 0..4 {
+                    let (i, j) = cells[base + lane];
+                    inputs[lane][..32].copy_from_slice(rho);
+                    inputs[lane][32] = j as u8;
+                    inputs[lane][33] = i as u8;
+                }
+                let mut sponge = Sponge4::<SHAKE128_RATE>::new();
+                sponge.absorb_4([
+                    inputs[0].as_slice(),
+                    inputs[1].as_slice(),
+                    inputs[2].as_slice(),
+                    inputs[3].as_slice(),
+                ]);
+                sponge.finalize_4(0x1f);
+
+                // Four rej_ntt_poly accumulators advanced in lockstep.
+                let mut polys: [Poly; 4] = core::array::from_fn(|_| Poly::zero());
+                let mut counts = [0usize; 4];
+                let mut rounds = 0usize;
+                while counts.iter().any(|&c| c < N) {
+                    // One rate block per lane (equal length, as Sponge4
+                    // requires). A lane already at N still squeezes to
+                    // keep the four states synchronized, but consumes
+                    // nothing — its surplus bytes are discarded.
+                    let mut bufs = [[0u8; SHAKE128_RATE]; 4];
+                    {
+                        let [b0, b1, b2, b3] = &mut bufs;
+                        sponge.squeeze_4([
+                            b0.as_mut_slice(),
+                            b1.as_mut_slice(),
+                            b2.as_mut_slice(),
+                            b3.as_mut_slice(),
+                        ]);
+                    }
+                    for lane in 0..4 {
+                        if counts[lane] >= N {
+                            continue;
+                        }
+                        let buf = &bufs[lane];
+                        let mut p = 0;
+                        while p + 3 <= SHAKE128_RATE && counts[lane] < N {
+                            let t = ((buf[p] as u32)
+                                | ((buf[p + 1] as u32) << 8)
+                                | ((buf[p + 2] as u32) << 16))
+                                & 0x7F_FFFF;
+                            if t < Q as u32 {
+                                polys[lane].coeffs[counts[lane]] = t as i32;
+                                counts[lane] += 1;
+                            }
+                            p += 3;
+                        }
+                    }
+                    rounds += 1;
+                    // Safety net only — never a real cap. The loop
+                    // terminator is `all lanes reached N`; a lane short of
+                    // N always forces another squeeze round, so nothing is
+                    // ever truncated. Each round yields 56 candidates per
+                    // lane at ~99.9% acceptance (N reached in ~5 rounds),
+                    // so 4096 is unreachable in practice.
+                    debug_assert!(
+                        rounds < 4096,
+                        "rej_ntt_poly batched: improbable squeeze-round count",
+                    );
+                }
+                for lane in 0..4 {
+                    out[base + lane] = polys[lane].clone();
+                }
+                base += 4;
+            }
+
+            // Tail: the final 1–3 cells when K·L is not a multiple of 4
+            // (e.g. ML-DSA-65 with K·L = 30 → a tail of 2), sampled by the
+            // scalar single-sponge path.
+            while base < total {
+                let (i, j) = cells[base];
+                let mut xof = Shake128::new_internal();
+                xof.update(rho);
+                xof.update(&[j as u8, i as u8]);
+                xof.finalize();
+                out[base] = rej_ntt_poly(&mut xof);
+                base += 1;
+            }
+        }
+
+        /// ExpandA — AVX2 batched build (`accel-keccak`, no `parallel`).
+        /// Flattens the K×ℓ matrix row-major, batches the cells four at a
+        /// time through [`fill_cells_accel`], and recombines by position.
+        /// Each cell is a pure function of ρ and (i, j), so the output is
+        /// byte-identical to the scalar build.
+        #[cfg(all(feature = "accel-keccak", not(feature = "parallel")))]
+        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+            let mut cells = [(0usize, 0usize); K * L];
+            let mut n = 0;
+            for i in 0..K {
+                for j in 0..L {
+                    cells[n] = (i, j);
+                    n += 1;
+                }
+            }
+            let mut out: [Poly; K * L] = core::array::from_fn(|_| Poly::zero());
+            fill_cells_accel(rho, &cells, &mut out);
+
+            let mut mat: [[Poly; L]; K] =
+                core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+            let mut n = 0;
+            for i in 0..K {
+                for j in 0..L {
+                    mat[i][j] = out[n].clone();
+                    n += 1;
+                }
+            }
+            mat
+        }
+
+        /// ExpandA — AVX2 batched build under `parallel`: the rayon row
+        /// loop of the non-accel parallel build, where each row task
+        /// batches its own ℓ cells through [`fill_cells_accel`] (a single
+        /// 4-group plus a 0/1/3-cell tail). Rows are written into fixed
+        /// slots and recombined by position, so the output is
+        /// byte-identical regardless of thread count or batching.
+        #[cfg(all(feature = "accel-keccak", feature = "parallel"))]
+        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+            use rayon::iter::{
+                IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+            };
+
+            let mut mat: [[Poly; L]; K] =
+                core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+            (&mut mat[..])
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, row)| {
+                    let mut cells = [(0usize, 0usize); L];
+                    for j in 0..L {
+                        cells[j] = (i, j);
+                    }
+                    let mut out: [Poly; L] = core::array::from_fn(|_| Poly::zero());
+                    fill_cells_accel(rho, &cells, &mut out);
+                    for j in 0..L {
+                        row[j] = out[j].clone();
                     }
                 });
             mat
@@ -1604,6 +1778,101 @@ macro_rules! ml_dsa_impl {
                                 "A cell mismatch at seed k={k}, i={i}, j={j}"
                             );
                         }
+                    }
+                }
+            }
+        }
+
+        /// Direct byte-exact oracle for the `accel-keccak` batched
+        /// [`expand_a`]: compares it cell-for-cell against an
+        /// always-scalar reference (one single SHAKE-128 sponge per
+        /// cell, never the batched [`oxicrypt_sha::keccak::Sponge4`]
+        /// path) over many random ρ. Generated once per parameter set,
+        /// so it covers ML-DSA-44 / -65 / -87 — including the ML-DSA-65
+        /// tail-of-2 batching. Non-tautological: the reference shares no
+        /// code with the batched sampler.
+        #[cfg(all(test, feature = "accel-keccak"))]
+        mod accel_keccak_determinism {
+            use super::*;
+
+            /// Always-scalar reference, independent of the batched path.
+            fn expand_a_scalar_reference(rho: &[u8; 32]) -> [[Poly; L]; K] {
+                let mut mat: [[Poly; L]; K] =
+                    core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
+                for i in 0..K {
+                    for j in 0..L {
+                        let mut xof = Shake128::new_internal();
+                        xof.update(rho);
+                        xof.update(&[j as u8, i as u8]);
+                        xof.finalize();
+                        mat[i][j] = rej_ntt_poly(&mut xof);
+                    }
+                }
+                mat
+            }
+
+            #[test]
+            fn accel_expand_a_matches_scalar_reference() {
+                for seed in 0u8..16 {
+                    let mut rho = [0u8; 32];
+                    for (idx, b) in rho.iter_mut().enumerate() {
+                        *b = seed
+                            .wrapping_mul(31)
+                            .wrapping_add(idx as u8)
+                            .wrapping_add(0xa5);
+                    }
+                    let accel = expand_a(&rho);
+                    let scalar = expand_a_scalar_reference(&rho);
+                    for i in 0..K {
+                        for j in 0..L {
+                            assert_eq!(
+                                accel[i][j].coeffs, scalar[i][j].coeffs,
+                                "A cell mismatch (accel vs scalar) at seed={seed}, i={i}, j={j}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            /// Tail-boundary coverage for the batched fill: drives
+            /// [`fill_cells_accel`] at cell counts whose remainder mod 4 is
+            /// 1, 2, and 3, so the scalar tail and the batched→tail boundary
+            /// are exercised at every remainder — not only the tail-of-2 that
+            /// ML-DSA-65's K·ℓ = 30 happens to hit (44 and 87 have no tail).
+            /// Each output cell must land byte-identical to an independent
+            /// per-cell scalar single-sponge reference, which also pins that
+            /// the batched groups and the tail write to the correct output
+            /// positions (a boundary off-by-one at remainder 1 or 3 would
+            /// misplace a cell and fail here).
+            #[test]
+            fn fill_cells_accel_tail_remainders_match_scalar() {
+                const MAX: usize = 7;
+                let mut rho = [0u8; 32];
+                for (idx, b) in rho.iter_mut().enumerate() {
+                    *b = (idx as u8).wrapping_mul(53).wrapping_add(0x3c);
+                }
+                // 1 → pure tail (rem 1); 3 → pure tail (rem 3);
+                // 5/6/7 → one full batched group then a tail of 1/2/3.
+                for &n in &[1usize, 3, 5, 6, 7] {
+                    let mut cells = [(0usize, 0usize); MAX];
+                    for (k, c) in cells.iter_mut().enumerate().take(n) {
+                        *c = (k % K, k % L);
+                    }
+                    let mut accel: [Poly; MAX] = core::array::from_fn(|_| Poly::zero());
+                    fill_cells_accel(&rho, &cells[..n], &mut accel[..n]);
+                    for k in 0..n {
+                        let (i, j) = cells[k];
+                        let mut xof = Shake128::new_internal();
+                        xof.update(&rho);
+                        xof.update(&[j as u8, i as u8]);
+                        xof.finalize();
+                        let want = rej_ntt_poly(&mut xof);
+                        assert_eq!(
+                            accel[k].coeffs,
+                            want.coeffs,
+                            "tail-boundary mismatch at n={n}, k={k} (rem {})",
+                            n % 4
+                        );
                     }
                 }
             }

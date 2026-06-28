@@ -675,6 +675,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-keccak-accel"
+version = "0.18.1"
+dependencies = [
+ "oxicrypt-sha",
+]
+
+[[package]]
 name = "oxicrypt-lms"
 version = "0.18.1"
 dependencies = [
@@ -734,6 +741,7 @@ dependencies = [
 name = "oxicrypt-sha"
 version = "0.18.1"
 dependencies = [
+ "oxicrypt-keccak-accel",
  "oxicrypt-module",
  "oxicrypt-sha-accel",
  "oxicrypt-test-vectors",

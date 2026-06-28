@@ -7,6 +7,7 @@ members = [
     "crates/oxicrypt-aes-accel",
     "crates/oxicrypt-sha",
     "crates/oxicrypt-sha-accel",
+    "crates/oxicrypt-keccak-accel",
     "crates/oxicrypt-hmac",
     "crates/oxicrypt-drbg",
     "crates/oxicrypt-rsa",

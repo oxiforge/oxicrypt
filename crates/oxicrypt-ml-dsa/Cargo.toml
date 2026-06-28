@@ -26,6 +26,14 @@ default = []
 # `no_std` with no rayon in its graph. Performance build only: the
 # CMVP-validated configuration is the default single-threaded build.
 parallel = ["dep:rayon"]
+# AVX2 4-way batched Keccak for ExpandA, default OFF. Turns on the
+# batched `Sponge4` dispatch feature on `oxicrypt-sha`; `expand_a` then
+# samples the public matrix Â four independent SHAKE-128 cell streams at
+# a time. Output is byte-identical to the scalar build (each lane's
+# stream is consumed under the same `t < Q` rejection rule), so the
+# default single-threaded build remains the CMVP-validated configuration.
+# Composes with `parallel`: the rayon row loop batches each row's cells.
+accel-keccak = ["oxicrypt-sha/accel-keccak"]
 
 [dependencies]
 oxicrypt-module = { path = "../oxicrypt-module" }

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `oxicrypt-keccak-accel`: new audited-unsafe crate carrying an x86_64 AVX2 4-way batched Keccak-f[1600] permutation (`keccak_f1600_x4` / `keccak_f1600_x4_available`), CPUID-gated and byte-exact to the portable `keccak_f1600` (1000-trial cross-path equality oracle against the real scalar permutation); the fifth audited in-boundary acceleration crate, default-off and out of the validated default build graph (#110).
+- `oxicrypt-sha`: batched `Sponge4` four-way Keccak sponge API (`absorb_4` / `finalize_4` / `squeeze_4` over four equal-length streams); its single permutation point dispatches to the AVX2 4-way path behind the new default-off `accel-keccak` feature, byte-identical to four independent `Sponge`s (cross-path oracle, feature on and off) (#110).
+- `oxicrypt-ml-dsa`: default-off `accel-keccak` feature batches `ExpandA` four independent SHAKE-128 cell streams at a time through `Sponge4` (the first in-boundary caller of the batched Keccak path); the crate stays `#![forbid(unsafe_code)]` and Â is byte-identical to the scalar build (direct accel-vs-scalar differential oracle for ML-DSA-44/65/87, feature on and off) (#110).
+
 ## [0.18.1] - 2026-06-24
 
 ### Changed
