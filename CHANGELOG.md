@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-28
+
 ### Added
 
 - `oxicrypt-keccak-accel`: new audited-unsafe crate carrying an x86_64 AVX2 4-way batched Keccak-f[1600] permutation (`keccak_f1600_x4` / `keccak_f1600_x4_available`), CPUID-gated and byte-exact to the portable `keccak_f1600` (1000-trial cross-path equality oracle against the real scalar permutation); the fifth audited in-boundary acceleration crate, default-off and out of the validated default build graph (#110).
@@ -290,7 +292,8 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/oxiforge/oxicrypt/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/oxiforge/oxicrypt/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/oxiforge/oxicrypt/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/oxiforge/oxicrypt/compare/v0.16.0...v0.17.0
