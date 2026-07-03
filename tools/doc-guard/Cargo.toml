@@ -1,0 +1,13 @@
+[package]
+name = "doc-guard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Drift guard: asserts the boundary/unsafe accounting stated in the repo documentation matches the workspace as built."
+
+[lints]
+workspace = true

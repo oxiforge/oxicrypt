@@ -115,6 +115,7 @@ acvp-harness/           ACVP protocol handler with 86 registered algorithm handl
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors
+tools/doc-guard/        Test-gate drift guard: doc-stated boundary/unsafe accounting vs the workspace as built
 ```
 
 The cryptographic boundary encompasses the `oxicrypt-*` crates compiled into a

@@ -297,6 +297,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-guard"
+version = "0.19.0"
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -34,6 +34,7 @@ members = [
     "oxi",
     "benches",
     "tools/ct-validation",
+    "tools/doc-guard",
 ]
 exclude = [
     "playground",
