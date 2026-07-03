@@ -75,8 +75,8 @@ tests, each traceable to its published source.
 
 ## Architecture
 
-oxicrypt is organized as a Cargo workspace with 27 crates — 18 algorithm
-crates, a module crate, an entropy-source scaffolding crate, and 7 supporting
+oxicrypt is organized as a Cargo workspace with 29 crates — 18 algorithm
+crates, a module crate, an entropy-source scaffolding crate, and 9 supporting
 crates — plus tools:
 
 ```
@@ -85,10 +85,12 @@ crates/
   oxicrypt-integrity     Power-up software integrity check (IG 10.3.A)
   oxicrypt-sha           SHA-1, SHA-2, SHA-3 hash families
   oxicrypt-sha-accel     Audited x86_64 SHA-NI SHA-256 acceleration (default-off `accel-sha` feature)
+  oxicrypt-keccak-accel  Audited x86_64 AVX2 4-way batched Keccak-f[1600] acceleration (default-off `accel-keccak` feature)
   oxicrypt-xof           SHAKE128, SHAKE256, cSHAKE, KMAC, TupleHash, ParallelHash
   oxicrypt-hmac          HMAC over all 11 approved hashes
   oxicrypt-cmac          AES-CMAC (SP 800-38B)
   oxicrypt-aes           AES block cipher and all approved modes
+  oxicrypt-aes-accel     Audited x86_64 AES-NI block + PCLMULQDQ GCM GHASH acceleration (default-off `accel-aes` feature)
   oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
   oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246) + TLS 1.3 KDF (RFC 8446 §7.1)
@@ -106,6 +108,7 @@ crates/
   oxicrypt-timer         Audited read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
   oxicrypt-ffi           C ABI wrappers (cdylib + staticlib) with profile selection
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
+  oxicrypt-maxwell       Out-of-boundary SP 800-90B entropy-assessment tool (EA-parity estimators, IID battery, restart analysis)
   oxicrypt-zeroize       Volatile zeroization for sensitive security parameters
 
 acvp-harness/           ACVP protocol handler with 86 registered algorithm handlers
