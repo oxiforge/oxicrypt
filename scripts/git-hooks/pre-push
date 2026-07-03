@@ -155,6 +155,24 @@ cargo nextest run --workspace
 echo "pre-push [3/4b]: cargo test --workspace --doc"
 cargo test --workspace --doc
 
+# 3c (2026-07-03): the entropy construction/elision live guard in RELEASE
+# profile. nextest runs debug, and the release-optimized timer-read/workload
+# loops behave differently on live hardware — a debug-only gate hid a
+# release-only jitter-source construction refusal (#124, found by the first
+# pilot-collection run). Deliberately runs ONLY the construction-stage guard
+# (release_guard_delta_variance_persists): the full-pipeline live test rolls
+# the startup health tests, whose verdict on a virtualized counter's pinned
+# low bits is load-dependent — correct behavior, wrong thing to gate a push
+# on. Bare-metal hosts run the full pipeline via the collect/pilot path.
+echo "pre-push [3/4c]: cargo test --release -p oxicrypt-entropy --features raw-counter release_guard"
+guard_out=$(cargo test --release -p oxicrypt-entropy --features raw-counter release_guard 2>&1)
+echo "$guard_out"
+# Fail closed on a zero-match filter: `cargo test <filter>` exits 0 with
+# "0 tests run" if the guard test is renamed or feature-moved, which would
+# silently disable this gate.
+echo "$guard_out" | grep -Eq "test result: ok\. [1-9][0-9]* passed" \
+    || { echo "pre-push [3/4c] FAILED: release_guard matched no passing tests" >&2; exit 1; }
+
 echo "pre-push [4/4]: cargo build --workspace --release"
 cargo build --workspace --release
 

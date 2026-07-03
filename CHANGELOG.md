@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `oxicrypt-entropy`: two-stage timer-adequacy check — bare reads gate monotonicity/coarseness; delta variety is gated on workload-measured deltas via a separate `workload_samples` knob (default 256); `TimerError::Inadequate` carries the measured `AdequacyReport`; `JitterSource` exposes `adequacy()` (workload signal) and `bare_adequacy()`; pre-push gate gains a fail-closed release-profile construction-guard step (#124).
 - `security-policy.md`: §1 boundary accounting made explicit (29 library crates, two out-of-boundary, `oxicrypt-test-vectors` ruled in-boundary — its KAT constants compile into the power-up self-tests), resolving a latent §1-vs-§9.2 denominator contradiction; module-version field annotated as assigned-at-submission; §3.1 states the as-built 451-function FFI surface; Appendix B scoped to design/boundary rationale with release history pointed at `CHANGELOG.md`. `AGENTS.md` and `README.md` synced to the same accounting (#101).
 
 ## [0.19.0] - 2026-06-28

@@ -1075,12 +1075,12 @@ types:
   - name: JitterSource
     module: oxicrypt-entropy
     kind: struct
-    description: CPU execution-time jitter noise source (sealed NoiseSource impl, generic over TimerRead); new(timer, config) runs the timer-adequacy self-check and emits 4-bit digitized delta symbols with a design ceiling of 1 bit/sample.
+    description: CPU execution-time jitter noise source (sealed NoiseSource impl, generic over TimerRead); new(timer, config) runs the two-stage timer-adequacy self-check (bare-read soundness via ensure_sound, then delta variety on workload_samples workload-measured deltas via ensure_varied) and emits 4-bit digitized delta symbols with a design ceiling of 1 bit/sample; adequacy() returns the workload-signal report, bare_adequacy() the bare-read report.
 
   - name: TimerError
     module: oxicrypt-entropy
     kind: enum
-    description: "Typed timer-layer errors (non-exhaustive): Unsupported, Unavailable, Backwards, Inadequate(InadequacyReason)."
+    description: "Typed timer-layer errors (non-exhaustive): Unsupported, Unavailable, Backwards, Inadequate { reason, report }."
     variants:
       - name: Unsupported
         description: Reserved timer source, unselectable this phase.
@@ -1089,7 +1089,7 @@ types:
       - name: Backwards
         description: Read went backwards; sample must be discarded.
       - name: Inadequate
-        description: Measured behavior refused (typed reason).
+        description: "Measured behavior refused; struct variant carrying reason: InadequacyReason and report: AdequacyReport (the measured evidence)."
 
   - name: InadequacyReason
     module: oxicrypt-entropy
@@ -1106,12 +1106,17 @@ types:
   - name: AdequacyConfig
     module: oxicrypt-entropy
     kind: struct
-    description: "Adequacy thresholds: conservative engineering defaults (4096 samples, max 900 permille zero deltas, min 4 distinct deltas), explicitly NOT SP 800-90B values."
+    description: "Adequacy thresholds: conservative engineering defaults (4096 bare-read samples, 256 workload_samples for the stage-2 workload measurement, max 900 permille zero deltas, min 4 distinct deltas), explicitly NOT SP 800-90B values."
 
   - name: AdequacyReport
     module: oxicrypt-entropy
     kind: struct
-    description: "Observed timer behavior: deltas, zero deltas, min positive delta, bounded distinct-delta count, backwards violations; ensure_adequate(&AdequacyConfig) refuses with typed reasons."
+    description: "Observed timer behavior: deltas, zero deltas, min positive delta, bounded distinct-delta count, backwards violations. ensure_sound(&AdequacyConfig) gates monotonicity+coarseness, ensure_varied(&AdequacyConfig) gates delta variety, ensure_adequate(&AdequacyConfig) applies all gates to one measured signal; every refusal carries this report."
+
+  - name: AdequacyAccumulator
+    module: oxicrypt-entropy
+    kind: struct
+    description: "Bounded no-alloc delta-observation accumulator: new(), record(Result<u64, TimerError>), finish() -> AdequacyReport; backs measure_adequacy and the jitter source's workload-signal measurement."
 
   - name: TimerRead
     module: oxicrypt-entropy
@@ -3359,7 +3364,7 @@ functions:
 
   - name: measure_adequacy
     module: oxicrypt-entropy
-    description: Startup timer-adequacy self-check observing read-to-read behavior over config.samples reads (zero-delta fraction, min positive delta, distinct-delta variety, backwards violations); refusal lives in AdequacyReport::ensure_adequate.
+    description: Bare-read adequacy measurement over config.samples consecutive reads (zero-delta fraction, min positive delta, distinct-delta variety, backwards violations); refusal policy lives on AdequacyReport (ensure_sound for bare reads; ensure_adequate on the operational workload-measured signal).
     signature: "pub fn measure_adequacy<T: TimerRead>(timer: &mut T, config: &AdequacyConfig) -> AdequacyReport"
     returns:
       type: AdequacyReport
