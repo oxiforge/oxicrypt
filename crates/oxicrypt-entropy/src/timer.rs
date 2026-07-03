@@ -155,9 +155,17 @@ pub struct AdequacyConfig {
     /// too coarse for the read cost).
     pub max_zero_delta_permille: u32,
     /// Minimum distinct positive delta values observed (default 4 —
-    /// counted up to a bounded tracker capacity of 16).
+    /// counted up to a bounded tracker capacity of 16). Values below
+    /// [`MIN_DISTINCT_DELTAS_FLOOR`] are clamped up by
+    /// [`AdequacyReport::ensure_varied`]: the dead-signal refusal is a
+    /// hard property, not an operator choice.
     pub min_distinct_deltas: u32,
 }
+
+/// Hard floor on the [`AdequacyConfig::min_distinct_deltas`] bound: a
+/// measured signal with a single distinct delta is dead (the jitter
+/// source's dead-timer fixed point), and no configuration may accept it.
+pub const MIN_DISTINCT_DELTAS_FLOOR: u32 = 2;
 
 impl Default for AdequacyConfig {
     fn default() -> Self {
@@ -242,12 +250,17 @@ impl AdequacyReport {
     /// deltas — never to bare back-to-back reads, whose spacing carries no
     /// operational variety.
     ///
+    /// The configured bound is clamped below at a hard floor of
+    /// [`MIN_DISTINCT_DELTAS_FLOOR`]: a signal with a single distinct delta
+    /// is a dead signal regardless of operator configuration, so the
+    /// dead-timer construction refusal cannot be tuned away.
+    ///
     /// # Errors
     ///
     /// [`TimerError::Inadequate`] carrying [`InadequacyReason::TooUniform`]
     /// and the measured report.
     pub fn ensure_varied(&self, config: &AdequacyConfig) -> Result<(), TimerError> {
-        if self.distinct_deltas < config.min_distinct_deltas {
+        if self.distinct_deltas < config.min_distinct_deltas.max(MIN_DISTINCT_DELTAS_FLOOR) {
             return Err(TimerError::Inadequate {
                 reason: InadequacyReason::TooUniform,
                 report: *self,

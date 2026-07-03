@@ -802,7 +802,7 @@ mod jitter_factory {
             Self {
                 cpu_model: format!("oe:{oe_id}"),
                 os: std::env::consts::OS.to_string(),
-                params: String::from("raw-counter jitter, default workload"),
+                params: String::from("raw-counter jitter, delta-steered variable workload (#125)"),
             }
         }
 

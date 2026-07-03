@@ -1106,12 +1106,18 @@ types:
   - name: AdequacyConfig
     module: oxicrypt-entropy
     kind: struct
-    description: "Adequacy thresholds: conservative engineering defaults (4096 bare-read samples, 256 workload_samples for the stage-2 workload measurement, max 900 permille zero deltas, min 4 distinct deltas), explicitly NOT SP 800-90B values."
+    description: "Adequacy thresholds: conservative engineering defaults (4096 bare-read samples, 256 workload_samples for the stage-2 workload measurement, max 900 permille zero deltas, min 4 distinct deltas), explicitly NOT SP 800-90B values; min_distinct_deltas is clamped below at MIN_DISTINCT_DELTAS_FLOOR by ensure_varied."
+
+  - name: MIN_DISTINCT_DELTAS_FLOOR
+    module: oxicrypt-entropy
+    kind: const
+    signature: "pub const MIN_DISTINCT_DELTAS_FLOOR: u32 = 2"
+    description: "Hard floor on AdequacyConfig.min_distinct_deltas applied by AdequacyReport::ensure_varied — a signal with one distinct delta is dead and no operator configuration may accept it."
 
   - name: AdequacyReport
     module: oxicrypt-entropy
     kind: struct
-    description: "Observed timer behavior: deltas, zero deltas, min positive delta, bounded distinct-delta count, backwards violations. ensure_sound(&AdequacyConfig) gates monotonicity+coarseness, ensure_varied(&AdequacyConfig) gates delta variety, ensure_adequate(&AdequacyConfig) applies all gates to one measured signal; every refusal carries this report."
+    description: "Observed timer behavior: deltas, zero deltas, min positive delta, bounded distinct-delta count, backwards violations. ensure_sound(&AdequacyConfig) gates monotonicity+coarseness, ensure_varied(&AdequacyConfig) gates delta variety (bound clamped at MIN_DISTINCT_DELTAS_FLOOR), ensure_adequate(&AdequacyConfig) applies all gates to one measured signal; every refusal carries this report."
 
   - name: AdequacyAccumulator
     module: oxicrypt-entropy
