@@ -651,7 +651,7 @@ pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError
         oe_id: parsed.oe_id,
         datasets_dir: parsed.datasets_dir,
         counts: Counts::production(),
-        claim: default_claim()?,
+        claim: default_claim(),
     };
 
     if parsed.dry_run {
@@ -683,15 +683,15 @@ pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError
 }
 
 /// The default production claim (conservative): H = 1 bit/sample at the
-/// recommended α = 2^-20. The real per-OE claim is set after the pilot EA
-/// assessment; this default keeps the tool runnable for a first capture.
-fn default_claim() -> Result<ClaimConfig, CollectionError> {
-    let alpha = Alpha::from_exp(crate::sp800_90b::CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN)
-        .ok_or_else(|| CollectionError(String::from("invalid default alpha")))?;
-    Ok(ClaimConfig {
+/// ratified default α = 2^-30 ([`Alpha::DEFAULT`], the jent-precedent
+/// value the health layer defaults to). The real per-OE claim is set
+/// after the pilot EA assessment; this default keeps the tool runnable
+/// for a first capture.
+fn default_claim() -> ClaimConfig {
+    ClaimConfig {
         claimed_h: MinEntropy::from_bits(1),
-        alpha,
-    })
+        alpha: Alpha::DEFAULT,
+    }
 }
 
 fn print_dry_run<W: Write>(plan: &Plan, out: &mut W) -> Result<(), CollectionError> {
