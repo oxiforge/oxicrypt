@@ -57,7 +57,14 @@
 //! `Run Successful` — the second maxwell oracle), and enforces the vetted ⇒
 //! no-conditioned-bits-upload refusal (ISC-107). The request builder and
 //! the status decision function are pure; the polling loop is generic over
-//! the transport trait with the injectable sleeper.
+//! the transport trait with the injectable sleeper, is bounded on both the
+//! consecutive not-yet-processed and the total poll counts, tolerates a
+//! bounded run of transient transport/parse failures, and takes a token
+//! provider so a poll can outlive the JWT TTL. The `Run Successful`
+//! assessment carries fractional min-entropy numbers the integer-only
+//! [`acvp_harness::json`] codec cannot read, so the status response is
+//! parsed by the float-tolerant, raw-token [`jsonlite`] reader (the
+//! assessment body itself is still captured verbatim).
 //!
 //! # Supporting docs, certify, and the session store (slice S4)
 //!
@@ -98,6 +105,7 @@
 
 pub mod certify;
 pub mod datafiles;
+pub mod jsonlite;
 pub mod login;
 pub mod preflight;
 pub mod registration;

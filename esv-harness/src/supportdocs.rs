@@ -257,8 +257,14 @@ impl SupportingDocUpload {
     /// Serialize the request to a raw `multipart/form-data` body via the
     /// shared [`serialize_multipart`] encoder, returning the `Content-Type`
     /// header value (carrying `boundary`) and the body bytes.
-    #[must_use]
-    pub fn to_multipart(&self, boundary: &str) -> (String, Vec<u8>) {
+    ///
+    /// # Errors
+    /// [`crate::datafiles::MultipartError`] if `boundary` is not a valid
+    /// RFC 2046 token or occurs inside a part body (see [`serialize_multipart`]).
+    pub fn to_multipart(
+        &self,
+        boundary: &str,
+    ) -> Result<(String, Vec<u8>), crate::datafiles::MultipartError> {
         serialize_multipart(&self.parts(), boundary)
     }
 }
@@ -457,7 +463,7 @@ mod tests {
     fn to_multipart_carries_type_and_content_type() {
         let up =
             SupportingDocUpload::new(SdType::PublicUseDocument, "pud.pdf", pdf_bytes()).unwrap();
-        let (content_type, body) = up.to_multipart("BNDRY");
+        let (content_type, body) = up.to_multipart("BNDRY").unwrap();
         assert_eq!(content_type, "multipart/form-data; boundary=BNDRY");
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("name=\"sdType\""), "{text}");

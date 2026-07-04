@@ -223,7 +223,7 @@ modules:
       - all algorithm crates
 
   - name: esv-harness
-    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single/bulk token refresh, entropy-source registration, offline payload preflight, and data-file multipart upload plus processing-status polling over acvp-harness's curl(1)/mTLS transport.
+    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single/bulk token refresh, entropy-source registration, offline payload preflight, data-file multipart upload plus bounded processing-status polling, supporting-document upload, certify request builders, and a resumable per-submission session store, over acvp-harness's curl(1)/mTLS transport.
     no_std: false
     entry_points:
       - "esv-harness login-body < secret.b64"
@@ -1266,7 +1266,7 @@ types:
   - name: DataFileUpload
     module: esv-harness
     kind: struct
-    description: A data-file upload request (ea_id/df_id/filename/bytes plus optional sample_size); new builds a raw-noise/restart upload, with_sample_size emits the capitalized DataFileSampleSize field (typed-error outside 1..=8), path/parts/to_multipart inspect or serialize the request with no transport.
+    description: A data-file upload request (ea_id/df_id/filename/bytes plus optional sample_size); new builds a raw-noise/restart upload, with_sample_size emits the capitalized DataFileSampleSize field (typed-error outside 1..=8), path/parts inspect the request and to_multipart serializes it (fallible — invalid or colliding boundary is a typed MultipartError).
 
   - name: DataFileTarget
     module: esv-harness
@@ -1296,7 +1296,7 @@ types:
   - name: PollConfig
     module: esv-harness
     kind: struct
-    description: Data-file polling tunables (not-yet-processed and processing waits, and the max consecutive not-yet-processed poll cap); Default is 30 s / 30 s / 20.
+    description: Data-file polling tunables — not-yet-processed and processing waits, the max consecutive not-yet-processed cap, a global max_total_polls ceiling (catches an alternating-status livelock), and a max_consecutive_transient_failures budget (a transport error or unparseable body is transient, reset by a well-formed response); Default is 30 s / 30 s / 20 / 240 / 3.
 
   - name: DataFileResult
     module: esv-harness
@@ -1306,7 +1306,125 @@ types:
   - name: DataFileError
     module: esv-harness
     kind: enum
-    description: A data-file upload/poll error (sample-size out of range, conditioned-upload forbidden or missing component, unrecognized status, not-yet-processed timeout, server error, malformed response, transport failure).
+    description: A data-file upload/poll error (sample-size out of range, conditioned-upload forbidden or missing component, unrecognized status, not-yet-processed timeout, total-poll timeout, transient-failure budget exhausted, token-provider failure, server error, malformed response, transport failure).
+
+  - name: MultipartError
+    module: esv-harness
+    kind: enum
+    description: A multipart serialization error — an invalid RFC 2046 boundary (empty/over-70/disallowed char/trailing space) or a boundary that collides with a part body.
+
+  # ── esv-harness jsonlite (float-tolerant status-body reader) ────────
+
+  - name: JsonLite
+    module: esv-harness
+    kind: enum
+    description: A JSON value with numbers kept as their raw source token (never interpreted), so an ESV status body carrying fractional/e-notation min-entropy is read losslessly where the integer-only acvp_harness::json codec cannot; accessors as_array/as_object/as_str/as_number_str/as_bool/is_null/get.
+
+  - name: ParseError
+    module: esv-harness
+    kind: enum
+    description: A jsonlite parse failure (unexpected EOF/byte, invalid escape, invalid number, invalid UTF-8, depth exceeded, trailing data).
+
+  # ── esv-harness supporting docs (ESVP §6.2) ────────────────────────
+
+  - name: SdType
+    module: esv-harness
+    kind: enum
+    description: ESVP §6.2 supporting-document type; wire_str/from_wire map each variant (EntropyAssessmentReport, PublicUseDocument, DataCollectionAttestation, RandomBitGeneratorReport, Other) to/from its exact wire string.
+
+  - name: SupportDocError
+    module: esv-harness
+    kind: enum
+    description: A supporting-document construction guard failure — the payload is not a PDF (no %PDF- signature at offset 0) or is empty.
+
+  - name: SupportingDocUpload
+    module: esv-harness
+    kind: struct
+    description: A supporting-document upload request; new enforces a fail-closed PDF-only content check (%PDF- magic), with_comment attaches the optional sdComments field, parts/to_multipart inspect or (fallibly) serialize the multipart body over the shared serialize_multipart encoder.
+
+  - name: SupportingDoc
+    module: esv-harness
+    kind: struct
+    description: A successfully-uploaded supporting document (sdId, sdType carried from the request, and the scoped JWT) — exactly what a certify request references.
+
+  # ── esv-harness certify (ESVP §7) ──────────────────────────────────
+
+  - name: CertifyError
+    module: esv-harness
+    kind: enum
+    description: A certify-request construction violation (missing entropyId/moduleId/oeId/entropyCertificate, non-positive eaId, no assessments, wrong EAR/PUD count, too many DCAs, non-PUD updatePUD doc, non-numeric registration eaId).
+
+  - name: CertifyAssessment
+    module: esv-harness
+    kind: struct
+    description: One entropy-assessment reference in a certify request (the ESV eaId, the ACVTS oeId, the scoped JWT); from_registration bridges an OeRegistration with the ACVTS oeId.
+
+  - name: CertifyRequest
+    module: esv-harness
+    kind: struct
+    description: A full §7.1 certify submission; new enforces every precondition (entropyId, positive moduleId, ≥1 assessment with positive eaId/oeId, exactly-one EAR + exactly-one PUD + at-most-one DCA), with_vendor_id/with_limit_to_single_module tune optional fields, to_wire_json serializes the versioned envelope.
+
+  - name: AddOeRequest
+    module: esv-harness
+    kind: struct
+    description: A §7.2 AddOE certify request (append OEs to an existing certificate); like CertifyRequest but keyed on entropyCertificate instead of moduleId, same assessment/supporting-doc preconditions.
+
+  - name: UpdatePudRequest
+    module: esv-harness
+    kind: struct
+    description: A §7.3 UpdatePUD certify request (attach a new Public Use Document to an existing certificate); new requires a non-empty entropyId/entropyCertificate and a PublicUseDocument supporting document.
+
+  # ── esv-harness session store (resumable per-submission dir) ───────
+
+  - name: Slot
+    module: esv-harness
+    kind: enum
+    description: Which data-file slot an upload targeted (RawNoise, Restart, Conditioned); as_str/from_str_token round-trip the on-disk token.
+
+  - name: CertifyMode
+    module: esv-harness
+    kind: enum
+    description: Which certify path completed a submission (Full §7.1 or AddOe §7.2); as_str/from_str_token round-trip the on-disk token.
+
+  - name: SlotRef
+    module: esv-harness
+    kind: struct
+    description: A data-file slot reference recorded from registration (its URL and id).
+
+  - name: OeRecord
+    module: esv-harness
+    kind: struct
+    description: One operating environment's registration record tracked in a session (eaId, url, raw-noise/restart slots, scoped JWT); from_registration captures the trackable fields of an OeRegistration.
+
+  - name: UploadedFile
+    module: esv-harness
+    kind: struct
+    description: A recorded data-file upload (eaId, slot, dfId).
+
+  - name: CapturedAssessment
+    module: esv-harness
+    kind: struct
+    description: A captured Run Successful assessment sidecar (eaId, slot, the stored file name).
+
+  - name: Event
+    module: esv-harness
+    kind: enum
+    description: One state-advancing session event appended to events.jsonl before its submit (Registered, FileUploaded, AssessmentCaptured, DocUploaded, Certified); to_json/from_json round-trip via the shared codec.
+
+  - name: SubmissionStage
+    module: esv-harness
+    kind: enum
+    description: The coarse stage a submission has reached (Empty, Registered, FilesUploaded, DocsUploaded, Certified), derived from the replayed events.
+
+  - name: SubmissionState
+    module: esv-harness
+    kind: struct
+    description: The full submission state reconstructed by replaying events.jsonl (entropyId, moduleId, OEs, uploaded files, captured assessments, docs, certify mode); stage() reports the coarse SubmissionStage.
+
+  - name: SessionDir
+    module: esv-harness
+    kind: struct
+    description: Handle to a <sessions-root>/<entropyId>/ submission directory (entropyId validated as a safe filename token); create/open, append_event and persist_then (write the event before the submit runs), store_assessment/store_certify_response/read_sidecar (verbatim), load_state replays the log.
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -9822,6 +9940,11 @@ functions:
     description: Reactive-retry decision; true for a single refresh-and-retry only on an unretried 401 or 403.
     signature: "pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool"
 
+  - name: to_compact_string
+    module: acvp-harness
+    description: Serialize a JsonValue to compact single-line JSON (no indentation), the encoder the esv-harness session store writes events.jsonl with.
+    signature: "pub fn to_compact_string(value: &JsonValue) -> String"
+
   # ── esv-harness ESVP builders / parsers / flows (out-of-boundary tooling) ──
 
   - name: build_login_body
@@ -9906,8 +10029,38 @@ functions:
 
   - name: poll_data_file
     module: esv-harness
-    description: Poll a data file's processing status over an EsvTransport until a terminal state, waiting the (bounded) not-yet-processed / processing intervals via the Sleeper and capturing the returned assessment on Run Successful.
-    signature: "pub fn poll_data_file<T: EsvTransport>(ea_id: &str, df_id: &str, bearer: &str, transport: &mut T, sleeper: &mut dyn Sleeper, config: &PollConfig) -> Result<DataFileResult, DataFileError>"
+    description: Poll a data file's processing status over an EsvTransport until a terminal state; a token_provider yields a fresh bearer per request (for a poll outliving the JWT TTL), the loop is bounded by the consecutive not-yet-processed cap, a global total-poll cap, and a consecutive-transient-failure budget, the status body is read with the float-tolerant jsonlite reader, and the returned assessment is captured verbatim on Run Successful.
+    signature: "pub fn poll_data_file<T: EsvTransport>(ea_id: &str, df_id: &str, token_provider: &mut dyn FnMut() -> Result<String, String>, transport: &mut T, sleeper: &mut dyn Sleeper, config: &PollConfig) -> Result<DataFileResult, DataFileError>"
+
+  - name: fixed_token
+    module: esv-harness
+    description: Adapt a fixed bearer into the token provider poll_data_file takes, for a poll needing no in-flight refresh.
+    signature: "pub fn fixed_token(token: &str) -> impl FnMut() -> Result<String, String> + '_"
+
+  - name: serialize_multipart
+    module: esv-harness
+    description: The single multipart/form-data encoder shared by the data-file and supporting-document uploads; validates the boundary (RFC 2046) and scans every part body for the delimiter, failing closed on an invalid or colliding boundary.
+    signature: "pub fn serialize_multipart(parts: &[MultipartPart<'_>], boundary: &str) -> Result<(String, Vec<u8>), MultipartError>"
+
+  - name: validate_boundary
+    module: esv-harness
+    description: Validate a multipart boundary against RFC 2046 §5.1.1 (1..=70 bchars, last char not a space).
+    signature: "pub fn validate_boundary(boundary: &str) -> Result<(), MultipartError>"
+
+  - name: generate_boundary
+    module: esv-harness
+    description: Generate a multipart boundary provably absent from every part body (a fixed base plus an incrementing decimal suffix; terminates because each body is finite).
+    signature: "pub fn generate_boundary(parts: &[MultipartPart<'_>]) -> String"
+
+  - name: parse_supporting_doc_response
+    module: esv-harness
+    description: Parse a supporting-document upload response (versioned envelope) into a SupportingDoc, requiring status success; the sdType is threaded in from the upload request.
+    signature: "pub fn parse_supporting_doc_response(body: &str, sd_type: SdType) -> Result<SupportingDoc, String>"
+
+  - name: jsonlite::parse
+    module: esv-harness
+    description: Parse a JSON document into a JsonLite, keeping numbers as raw source tokens (full RFC 8259 grammar incl. frac/exp; strict on malformed numerals, trailing data, depth, and truncation).
+    signature: "pub fn parse(input: &str) -> Result<JsonLite, ParseError>"
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
@@ -10161,6 +10314,78 @@ constants:
     type: u8
     value: "8"
     description: Maximum valid DataFileSampleSize — a byte-padded sample is at most one byte.
+
+  - name: SUPPORTING_DOC_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/supportingDocumentation"
+    description: ESVP §6.2 supporting-documentation upload endpoint, full server-relative path.
+
+  - name: SD_FILE_PART_NAME
+    module: esv-harness
+    type: "&str"
+    value: "sdFile"
+    description: Multipart part name of the supporting-document PDF payload.
+
+  - name: SD_TYPE_FIELD
+    module: esv-harness
+    type: "&str"
+    value: "sdType"
+    description: Multipart text-field name carrying the supporting-document classification.
+
+  - name: SD_COMMENTS_FIELD
+    module: esv-harness
+    type: "&str"
+    value: "sdComments"
+    description: Multipart text-field name carrying the optional supporting-document comment.
+
+  - name: SD_CONTENT_TYPE
+    module: esv-harness
+    type: "&str"
+    value: "application/pdf"
+    description: Content-Type of the sdFile multipart part — PDF only (ESVP §6.2).
+
+  - name: PDF_MAGIC
+    module: esv-harness
+    type: "&[u8]"
+    value: "%PDF-"
+    description: PDF file signature the supporting-document upload fail-closed content check requires at offset 0.
+
+  - name: CERTIFY_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/certify"
+    description: ESVP §7.1 full-submission certify endpoint, full server-relative path.
+
+  - name: CERTIFY_ADD_OE_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/certify/addOE"
+    description: ESVP §7.2 AddOE certify endpoint (append operating environments to an existing certificate).
+
+  - name: CERTIFY_UPDATE_PUD_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/certify/updatePUD"
+    description: ESVP §7.3 UpdatePUD certify endpoint (attach a new Public Use Document).
+
+  - name: DEFAULT_LIMIT_TO_SINGLE_MODULE
+    module: esv-harness
+    type: bool
+    value: "true"
+    description: Default for a certify payload's limitEntropyAssessmentToSingleModule (the reference client's default).
+
+  - name: EVENTS_FILE
+    module: esv-harness
+    type: "&str"
+    value: "events.jsonl"
+    description: File name of the session store's append-only JSON-lines event log (source of truth).
+
+  - name: CERTIFY_RESPONSE_FILE
+    module: esv-harness
+    type: "&str"
+    value: "certify-response.json"
+    description: File name of the session store's stored-verbatim certify response.
 
   - name: EK_LEN
     module: oxicrypt-ml-kem

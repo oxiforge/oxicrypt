@@ -222,6 +222,48 @@ pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> Str
     ])
 }
 
+/// The minimal read surface an ESV versioned-array envelope is validated
+/// against, so the one [`esv_payload_element`] check can run over **either**
+/// JSON value model the harness parses with: the integer-only
+/// [`acvp_harness::json`] codec (every float-free auth / registration /
+/// supporting-doc response) and the float-tolerant [`crate::jsonlite`] reader
+/// (the data-file status response, whose `Run Successful` body carries
+/// fractional min-entropy numbers the integer-only codec cannot read). Keeping
+/// a single envelope validator over this trait means the two readers cannot
+/// drift on what a well-formed ESV envelope is.
+pub(crate) trait EnvelopeValue: Sized {
+    /// Borrow this value as a slice of the same value type if it is an array.
+    fn env_as_array(&self) -> Option<&[Self]>;
+    /// Look up an object field by key.
+    fn env_get(&self, key: &str) -> Option<&Self>;
+    /// Borrow this value as a `&str` if it is a string.
+    fn env_as_str(&self) -> Option<&str>;
+}
+
+impl EnvelopeValue for JsonValue {
+    fn env_as_array(&self) -> Option<&[Self]> {
+        self.as_array()
+    }
+    fn env_get(&self, key: &str) -> Option<&Self> {
+        self.get(key)
+    }
+    fn env_as_str(&self) -> Option<&str> {
+        self.as_str()
+    }
+}
+
+impl EnvelopeValue for crate::jsonlite::JsonLite {
+    fn env_as_array(&self) -> Option<&[Self]> {
+        self.as_array()
+    }
+    fn env_get(&self, key: &str) -> Option<&Self> {
+        self.get(key)
+    }
+    fn env_as_str(&self) -> Option<&str> {
+        self.as_str()
+    }
+}
+
 /// Require the ESVP versioned envelope `[{esvVersion}, {payload}, …]` and
 /// return a reference to the payload element (index 1).
 ///
@@ -231,14 +273,17 @@ pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> Str
 /// additive server-side envelope variance is tolerated while a bare
 /// `{accessToken:…}` object (or a version-less first element) is still
 /// rejected. This is the fail-closed esv-side check that
-/// [`parse_access_token`], [`parse_bulk_refresh_tokens`], and
-/// [`crate::registration::parse_registration_response`] share; it deliberately
+/// [`parse_access_token`], [`parse_bulk_refresh_tokens`],
+/// [`crate::registration::parse_registration_response`], and the data-file
+/// status poll ([`crate::datafiles::poll_data_file`]) share; it deliberately
 /// rejects the bare-object form that the more permissive
-/// [`acvp_harness::transport::extract_access_token`] accepts. Exposed
-/// `pub(crate)` so the registration parser reuses the identical validation.
-pub(crate) fn esv_payload_element(parsed: &JsonValue) -> Result<&JsonValue, String> {
+/// [`acvp_harness::transport::extract_access_token`] accepts. Generic over
+/// [`EnvelopeValue`] so both the integer-only codec and the float-tolerant
+/// [`crate::jsonlite`] reader reuse the identical validation. Exposed
+/// `pub(crate)`.
+pub(crate) fn esv_payload_element<V: EnvelopeValue>(parsed: &V) -> Result<&V, String> {
     let arr = parsed
-        .as_array()
+        .env_as_array()
         .ok_or("ESV response is not a versioned-array envelope")?;
     if arr.len() < 2 {
         return Err(format!(
@@ -248,8 +293,8 @@ pub(crate) fn esv_payload_element(parsed: &JsonValue) -> Result<&JsonValue, Stri
     }
     let version_ok = arr
         .first()
-        .and_then(|v| v.get("esvVersion"))
-        .and_then(JsonValue::as_str)
+        .and_then(|v| v.env_get("esvVersion"))
+        .and_then(V::env_as_str)
         .is_some();
     if !version_ok {
         return Err("ESV response envelope element 0 is not an {esvVersion} object".to_string());

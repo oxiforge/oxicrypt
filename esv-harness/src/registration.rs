@@ -475,9 +475,9 @@ pub struct OeRegistration {
     /// [`parse_registration_response`], which requires it (the `Option` is
     /// retained for hand-built values); see [`parse_one_assessment`].
     pub raw_noise: Option<DataFileRef>,
-    /// The restart-test data-file slot. Always `Some` when produced by
-    /// [`parse_registration_response`], which requires it (the `Option` is
-    /// retained for hand-built values); see [`parse_one_assessment`].
+    /// The restart-test data-file slot. `None` when the registration response
+    /// carried no `restartTestBits` slot — it is tolerated-absent
+    /// (DEFERRED-VERIFY at the attended smoke; see `parse_one_assessment`).
     pub restart: Option<DataFileRef>,
     /// Any conditioned-bits slots (empty for a vetted source).
     pub conditioned: Vec<ConditionedFileRef>,
@@ -541,11 +541,16 @@ pub fn parse_registration_response(body: &str) -> Result<Vec<OeRegistration>, St
 /// Parse one entropy-assessment object from a registration response.
 ///
 /// Fail-closed on the data-file slots: `dataFileUrls` must be present, an
-/// array, and non-empty, and it must carry both a `rawNoiseBits` and a
-/// `restartTestBits` slot (a non-IID assessment always needs both). A
-/// duplicate `rawNoiseBits` / `restartTestBits` slot is a typed error rather
-/// than a silent last-wins overwrite. Conditioned-bits slots stay optional
-/// (absent for the vetted oxicrypt path) and may repeat, one per component.
+/// array, and non-empty, and it must carry a `rawNoiseBits` slot. The
+/// `restartTestBits` slot is **tolerated-absent** (`None` when missing): the
+/// exact per-OE slot set the demo server returns is unproven, so requiring it
+/// would reject a plausible server shape — **DEFERRED-VERIFY at the attended
+/// smoke** whether a non-IID assessment always returns a restart slot; tighten
+/// back to required only if the server confirms it. A duplicate `rawNoiseBits`
+/// / `restartTestBits` slot, and a duplicate `conditionedBits`
+/// `sequencePosition`, are each a typed error rather than a silent last-wins
+/// overwrite. Conditioned-bits slots stay optional (absent for the vetted
+/// oxicrypt path) and may repeat, one per distinct component position.
 fn parse_one_assessment(ea: &JsonValue) -> Result<OeRegistration, String> {
     let url = ea
         .get("url")
@@ -567,7 +572,7 @@ fn parse_one_assessment(ea: &JsonValue) -> Result<OeRegistration, String> {
 
     let mut raw_noise = None;
     let mut restart = None;
-    let mut conditioned = Vec::new();
+    let mut conditioned: Vec<ConditionedFileRef> = Vec::new();
     for slot in slots {
         if let Some(u) = slot.get("rawNoiseBits").and_then(JsonValue::as_str) {
             if raw_noise.is_some() {
@@ -586,6 +591,14 @@ fn parse_one_assessment(ea: &JsonValue) -> Result<OeRegistration, String> {
                 .get("sequencePosition")
                 .and_then(JsonValue::as_i64)
                 .ok_or("conditionedBits slot missing integer `sequencePosition`")?;
+            if conditioned
+                .iter()
+                .any(|c| c.sequence_position == sequence_position)
+            {
+                return Err(format!(
+                    "assessment carries a duplicate `conditionedBits` slot for sequence position {sequence_position}"
+                ));
+            }
             conditioned.push(ConditionedFileRef {
                 url: u.to_string(),
                 id: url_tail(u)?.to_string(),
@@ -594,14 +607,15 @@ fn parse_one_assessment(ea: &JsonValue) -> Result<OeRegistration, String> {
         }
     }
 
+    // rawNoiseBits stays required; restartTestBits is tolerated-absent (see
+    // the fn docs — DEFERRED-VERIFY at the attended smoke).
     let raw_noise = raw_noise.ok_or("assessment `dataFileUrls` has no `rawNoiseBits` slot")?;
-    let restart = restart.ok_or("assessment `dataFileUrls` has no `restartTestBits` slot")?;
 
     Ok(OeRegistration {
         ea_id: url_tail(url)?.to_string(),
         url: url.to_string(),
         raw_noise: Some(raw_noise),
-        restart: Some(restart),
+        restart,
         conditioned,
         access_token: access_token.to_string(),
     })
@@ -898,6 +912,45 @@ mod tests {
         );
         let err = parse_registration_response(&body).unwrap_err();
         assert!(err.contains("duplicate `rawNoiseBits`"), "{err}");
+    }
+
+    // ── Fix 5: duplicate conditionedBits sequencePosition ─────────────
+
+    #[test]
+    fn parse_rejects_duplicate_conditioned_sequence_position() {
+        // Two conditionedBits slots at the same sequence position → typed
+        // error, no silent duplicate.
+        let body = one_oe_with_slots(
+            r#"[{"rawNoiseBits":"x/70"},{"restartTestBits":"x/71"},{"conditionedBits":"x/90","sequencePosition":1},{"conditionedBits":"x/91","sequencePosition":1}]"#,
+        );
+        let err = parse_registration_response(&body).unwrap_err();
+        assert!(err.contains("duplicate `conditionedBits`"), "{err}");
+        assert!(err.contains("sequence position 1"), "{err}");
+    }
+
+    #[test]
+    fn parse_accepts_distinct_conditioned_sequence_positions() {
+        // Two conditionedBits slots at DIFFERENT positions are fine.
+        let body = one_oe_with_slots(
+            r#"[{"rawNoiseBits":"x/70"},{"restartTestBits":"x/71"},{"conditionedBits":"x/90","sequencePosition":1},{"conditionedBits":"x/91","sequencePosition":2}]"#,
+        );
+        let oes = parse_registration_response(&body).unwrap();
+        assert_eq!(oes[0].conditioned.len(), 2);
+        assert_eq!(oes[0].conditioned[0].sequence_position, 1);
+        assert_eq!(oes[0].conditioned[1].sequence_position, 2);
+    }
+
+    // ── Fix 8: restartTestBits is tolerated-absent again ──────────────
+
+    #[test]
+    fn parse_tolerates_missing_restart_slot() {
+        // rawNoiseBits present, no restartTestBits → parses Ok with restart
+        // = None (DEFERRED-VERIFY at the attended smoke).
+        let body = one_oe_with_slots(r#"[{"rawNoiseBits":"x/70"}]"#);
+        let oes = parse_registration_response(&body).unwrap();
+        assert_eq!(oes.len(), 1);
+        assert_eq!(oes[0].raw_noise.as_ref().unwrap().id, "70");
+        assert!(oes[0].restart.is_none());
     }
 
     // ── Item 7: url_tail trailing-slash handling ──────────────────────

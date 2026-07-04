@@ -63,9 +63,9 @@
 
 use std::time::Duration;
 
-use acvp_harness::json::{self, JsonValue};
 use acvp_harness::transport::HttpResponse;
 
+use crate::jsonlite::{self, JsonLite};
 use crate::login::{EsvTransport, Sleeper};
 use crate::registration::EntropyRegistration;
 
@@ -164,9 +164,66 @@ pub enum DataFileError {
         /// What was wrong.
         detail: String,
     },
+    /// The data file did not reach a terminal state within
+    /// [`PollConfig::max_total_polls`] total polls — bounds an
+    /// alternating-status livelock (e.g. `Uploaded`/`not-yet-processed`
+    /// flip-flop) that keeps resetting the consecutive-not-yet-processed
+    /// counter and so never trips [`Self::NotYetProcessedTimeout`].
+    PollTimeout {
+        /// The total-poll cap that was reached.
+        polls: u32,
+    },
+    /// The poll loop saw more consecutive transient failures (a transport
+    /// error, or an unparseable response body such as a 502 HTML page) than
+    /// [`PollConfig::max_consecutive_transient_failures`] allows; a
+    /// well-formed response resets the run. Carries the last failure seen.
+    TransientFailuresExhausted {
+        /// The number of consecutive transient failures tolerated.
+        failures: u32,
+        /// The last transient failure message.
+        last: String,
+    },
+    /// The token provider failed to yield a bearer for a poll request.
+    Token(String),
     /// The underlying transport failed.
     Transport(String),
 }
+
+/// An error serializing a `multipart/form-data` body: the boundary is not a
+/// valid RFC 2046 token, or it occurs inside a part body (which would
+/// prematurely terminate that part on the wire).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MultipartError {
+    /// The boundary is not a valid RFC 2046 `boundary` token (empty, longer
+    /// than 70 characters, a disallowed character, or a trailing space).
+    InvalidBoundary {
+        /// Why the boundary was rejected.
+        reason: String,
+    },
+    /// The boundary delimiter occurs inside a part body, so serializing with
+    /// it would corrupt the message. Carries the 0-based index of the
+    /// colliding part.
+    BoundaryCollision {
+        /// The index of the colliding part.
+        part_index: usize,
+    },
+}
+
+impl core::fmt::Display for MultipartError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidBoundary { reason } => {
+                write!(f, "invalid multipart boundary: {reason}")
+            }
+            Self::BoundaryCollision { part_index } => write!(
+                f,
+                "multipart boundary occurs inside the body of part {part_index}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MultipartError {}
 
 impl core::fmt::Display for DataFileError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -197,6 +254,15 @@ impl core::fmt::Display for DataFileError {
             Self::MalformedResponse { detail } => {
                 write!(f, "malformed ESV data-file status response: {detail}")
             }
+            Self::PollTimeout { polls } => write!(
+                f,
+                "data file did not reach a terminal state within {polls} total polls"
+            ),
+            Self::TransientFailuresExhausted { failures, last } => write!(
+                f,
+                "ESV data-file poll gave up after {failures} consecutive transient failures; last: {last}"
+            ),
+            Self::Token(e) => write!(f, "ESV data-file token provider error: {e}"),
             Self::Transport(e) => write!(f, "ESV data-file transport error: {e}"),
         }
     }
@@ -328,10 +394,14 @@ impl DataFileUpload {
     /// bytes.
     ///
     /// `boundary` is caller-supplied so the serialization is deterministic
-    /// for fixtures; live wiring at the attended smoke chooses a boundary
-    /// that does not occur in the payload. (Filenames are module-controlled
-    /// and not quote-escaped here.)
-    pub fn to_multipart(&self, boundary: &str) -> (String, Vec<u8>) {
+    /// for fixtures; live wiring can obtain a provably non-colliding one from
+    /// [`generate_boundary`]. (Filenames are module-controlled and not
+    /// quote-escaped here.)
+    ///
+    /// # Errors
+    /// [`MultipartError`] if `boundary` is not a valid RFC 2046 token or
+    /// occurs inside a part body (see [`serialize_multipart`]).
+    pub fn to_multipart(&self, boundary: &str) -> Result<(String, Vec<u8>), MultipartError> {
         serialize_multipart(&self.parts(), boundary)
     }
 }
@@ -345,11 +415,25 @@ impl DataFileUpload {
 /// ([`crate::supportdocs::SupportingDocUpload::to_multipart`]) share, so
 /// the two upload paths cannot drift on the wire format. `boundary` is
 /// caller-supplied so the serialization is deterministic for fixtures; live
-/// wiring at the attended smoke chooses a boundary that does not occur in
-/// the payload. (Part names/filenames are module-controlled and not
-/// quote-escaped here.)
-#[must_use]
-pub fn serialize_multipart(parts: &[MultipartPart<'_>], boundary: &str) -> (String, Vec<u8>) {
+/// wiring can obtain a provably non-colliding one from [`generate_boundary`].
+/// (Part names/filenames are module-controlled and not quote-escaped here.)
+///
+/// # Errors
+/// [`MultipartError::InvalidBoundary`] if `boundary` is not a valid RFC 2046
+/// `boundary` token (1..=70 `bchars`, no trailing space);
+/// [`MultipartError::BoundaryCollision`] if the boundary delimiter occurs
+/// inside a part body — either would corrupt the message, so it fails closed
+/// rather than emit a body a receiver could mis-split.
+pub fn serialize_multipart(
+    parts: &[MultipartPart<'_>],
+    boundary: &str,
+) -> Result<(String, Vec<u8>), MultipartError> {
+    validate_boundary(boundary)?;
+    for (index, part) in parts.iter().enumerate() {
+        if body_collides(part_body_bytes(part), boundary) {
+            return Err(MultipartError::BoundaryCollision { part_index: index });
+        }
+    }
     let content_type = format!("multipart/form-data; boundary={boundary}");
     let mut body: Vec<u8> = Vec::new();
     for part in parts {
@@ -382,12 +466,121 @@ pub fn serialize_multipart(parts: &[MultipartPart<'_>], boundary: &str) -> (Stri
         }
     }
     push_str(&mut body, &format!("--{boundary}--\r\n"));
-    (content_type, body)
+    Ok((content_type, body))
 }
 
 /// Append a string's bytes to a byte buffer.
 fn push_str(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
+}
+
+// ── Boundary validation + generation (ISC-98 hardening) ───────────────
+
+/// True if `b` is an RFC 2046 `bchars` character (the set a multipart
+/// boundary may use, including the space that a boundary must not *end*
+/// with).
+fn is_bchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'\''
+                | b'('
+                | b')'
+                | b'+'
+                | b'_'
+                | b','
+                | b'-'
+                | b'.'
+                | b'/'
+                | b':'
+                | b'='
+                | b'?'
+                | b' '
+        )
+}
+
+/// Validate a multipart boundary against RFC 2046 §5.1.1: the `boundary` is
+/// `1*70` `bchars` whose last character is a `bcharsnospace` (i.e. not a
+/// space).
+///
+/// # Errors
+/// [`MultipartError::InvalidBoundary`] with a reason for an empty or
+/// over-long boundary, a disallowed character, or a trailing space.
+pub fn validate_boundary(boundary: &str) -> Result<(), MultipartError> {
+    let bytes = boundary.as_bytes();
+    if bytes.is_empty() || bytes.len() > 70 {
+        return Err(MultipartError::InvalidBoundary {
+            reason: format!(
+                "length {} is outside the RFC 2046 range 1..=70",
+                bytes.len()
+            ),
+        });
+    }
+    for &b in bytes {
+        if !is_bchar(b) {
+            return Err(MultipartError::InvalidBoundary {
+                reason: format!("byte {b:#04x} is not an RFC 2046 boundary character"),
+            });
+        }
+    }
+    if bytes.last() == Some(&b' ') {
+        return Err(MultipartError::InvalidBoundary {
+            reason: "boundary must not end with a space".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// The bytes of a part a boundary delimiter could hide inside — a text
+/// field's value or the binary file bytes.
+fn part_body_bytes<'a>(part: &'a MultipartPart<'a>) -> &'a [u8] {
+    match part {
+        MultipartPart::Field { value, .. } => value.as_bytes(),
+        MultipartPart::File { bytes, .. } => bytes,
+    }
+}
+
+/// True if the boundary delimiter occurs inside `body`, which would
+/// prematurely terminate the part on the wire. The delimiter is
+/// `CRLF "--" boundary`; at the very start of a body the preceding
+/// header separator (`…\r\n\r\n`) already supplies the leading CRLF, so a
+/// bare leading `--boundary` is also a live delimiter.
+fn body_collides(body: &[u8], boundary: &str) -> bool {
+    let mut bare = Vec::with_capacity(boundary.len().saturating_add(2));
+    bare.extend_from_slice(b"--");
+    bare.extend_from_slice(boundary.as_bytes());
+    if body.starts_with(&bare) {
+        return true;
+    }
+    let mut crlf = Vec::with_capacity(bare.len().saturating_add(2));
+    crlf.extend_from_slice(b"\r\n");
+    crlf.extend_from_slice(&bare);
+    body.windows(crlf.len()).any(|w| w == crlf.as_slice())
+}
+
+/// Generate a multipart boundary guaranteed not to occur inside any part
+/// body of `parts`.
+///
+/// Deterministic and provably collision-free: it takes a fixed valid base
+/// and appends an incrementing decimal suffix until a candidate collides
+/// with no part body. Each body is finite, so only finitely many candidates
+/// can collide, and the base is pure ASCII-alphanumeric so every candidate
+/// is a valid boundary (well under 70 characters); the search therefore
+/// terminates on a valid, non-colliding boundary.
+#[must_use]
+pub fn generate_boundary(parts: &[MultipartPart<'_>]) -> String {
+    const BASE: &str = "oxicryptEsvBoundary";
+    let mut n: u64 = 0;
+    loop {
+        let candidate = format!("{BASE}{n}");
+        if parts
+            .iter()
+            .all(|p| !body_collides(part_body_bytes(p), &candidate))
+        {
+            return candidate;
+        }
+        n = n.saturating_add(1);
+    }
 }
 
 // ── Vetted-conditioning upload refusal (ISC-107, Anti) ────────────────
@@ -555,26 +748,26 @@ fn normalize_status(raw: &str) -> String {
 }
 
 /// Classify a raw status string into a [`DataFileStatus`] (pure,
-/// case/separator-insensitive; anything unrecognized becomes
-/// [`DataFileStatus::Unrecognized`] carrying the original string).
+/// case/separator-insensitive).
+///
+/// Matching is **exact** on the normalized token — an enumerated set of
+/// accepted spellings — not a substring match, so a status that merely
+/// *contains* a documented phrase is not misclassified: `"Rerun Successful"`
+/// does not fold to `RunSuccessful`, and `"Recoverable Error - Retrying"`
+/// does not fold to `Error`. Only the two documented cancelled spellings
+/// (`"run cancelled"` / `"run canceled"`) fold together. Anything else
+/// becomes [`DataFileStatus::Unrecognized`] carrying the original string, so
+/// the poll loop fails closed rather than guess.
 pub fn classify_status(raw: &str) -> DataFileStatus {
-    let n = normalize_status(raw);
-    if n.contains("not yet processed") {
-        DataFileStatus::NotYetProcessed
-    } else if n.contains("run successful") {
-        DataFileStatus::RunSuccessful
-    } else if n.contains("run failed") {
-        DataFileStatus::RunFailed
-    } else if n.contains("run cancelled") || n.contains("run canceled") {
-        DataFileStatus::RunCancelled
-    } else if n.contains("run started") {
-        DataFileStatus::RunStarted
-    } else if n == "uploaded" {
-        DataFileStatus::Uploaded
-    } else if n.contains("error") {
-        DataFileStatus::Error
-    } else {
-        DataFileStatus::Unrecognized(raw.to_string())
+    match normalize_status(raw).as_str() {
+        "not yet processed" => DataFileStatus::NotYetProcessed,
+        "uploaded" => DataFileStatus::Uploaded,
+        "run started" => DataFileStatus::RunStarted,
+        "run successful" => DataFileStatus::RunSuccessful,
+        "run failed" => DataFileStatus::RunFailed,
+        "run cancelled" | "run canceled" => DataFileStatus::RunCancelled,
+        "error" => DataFileStatus::Error,
+        _ => DataFileStatus::Unrecognized(raw.to_string()),
     }
 }
 
@@ -597,6 +790,17 @@ pub struct PollConfig {
     /// [`DataFileError::NotYetProcessedTimeout`] — bounds an otherwise
     /// unbounded wait on a registration that never finishes processing.
     pub max_not_yet_processed_polls: u32,
+    /// Maximum **total** polls (of any status) before
+    /// [`DataFileError::PollTimeout`]. This is the global ceiling the
+    /// per-status caps cannot provide: an alternating status stream (e.g.
+    /// `Uploaded` ↔ `not-yet-processed`) keeps resetting
+    /// [`Self::max_not_yet_processed_polls`] and would otherwise loop forever.
+    pub max_total_polls: u32,
+    /// Maximum consecutive transient failures — a transport error or an
+    /// unparseable response body (a 502 HTML page) — tolerated before
+    /// [`DataFileError::TransientFailuresExhausted`]. A well-formed response
+    /// resets the run, so a single blip mid-poll no longer kills the loop.
+    pub max_consecutive_transient_failures: u32,
 }
 
 impl Default for PollConfig {
@@ -607,6 +811,12 @@ impl Default for PollConfig {
             // ~20 consecutive 30 s not-yet-processed polls ≈ 10 min, a
             // generous ceiling on registration processing (~5 min typical).
             max_not_yet_processed_polls: 20,
+            // 240 polls at the 30 s cadence ≈ 2 h — a generous hard ceiling
+            // on total processing time, well past any real assessment run.
+            max_total_polls: 240,
+            // Tolerate a short run of transient blips (a dropped connection,
+            // a momentary gateway error) before giving up.
+            max_consecutive_transient_failures: 3,
         }
     }
 }
@@ -623,50 +833,113 @@ pub struct DataFileResult {
     /// the session dir (slice S4) and compare it against local EA v1.1.8 with
     /// a float-capable parser downstream. `None` for the failure terminals.
     ///
-    /// It is captured verbatim rather than as a parsed value because the
-    /// assessment carries fractional min-entropy numbers the integer-only
-    /// [`acvp_harness::json`] codec cannot represent — so a round-trip
-    /// through it would be lossy (or fail). See [`neutralize_fractionals`].
+    /// It is captured verbatim (never re-serialized) because the assessment
+    /// carries fractional min-entropy numbers. The status envelope is read
+    /// with the float-tolerant, raw-token [`crate::jsonlite`] reader, but the
+    /// assessment returned here is the untouched response body, so its
+    /// floating-point values are preserved exactly.
     pub assessment: Option<String>,
+}
+
+/// Adapt a fixed bearer token into the token provider [`poll_data_file`]
+/// takes, for the common case where the token needs no in-flight refresh
+/// across the poll (a short poll, or a caller managing refresh out of band).
+///
+/// ```ignore
+/// poll_data_file(ea, df, &mut fixed_token("jwt"), &mut transport, &mut sleeper, &cfg)
+/// ```
+pub fn fixed_token(token: &str) -> impl FnMut() -> Result<String, String> + '_ {
+    move || Ok(token.to_string())
 }
 
 /// Poll a data file's processing status until it reaches a terminal state.
 ///
-/// Issues `GET`s against [`data_file_path`] with `bearer`, classifies the
-/// `status` field, and per [`DataFileStatus::poll_decision`]: waits the
-/// (bounded) not-yet-processed interval, waits the processing interval, or
-/// returns the terminal [`DataFileResult`] (capturing the returned
-/// assessment on success). Every wait uses the injectable `sleeper`.
+/// Issues `GET`s against [`data_file_path`], classifies the `status` field,
+/// and per [`DataFileStatus::poll_decision`]: waits the (bounded)
+/// not-yet-processed interval, waits the processing interval, or returns the
+/// terminal [`DataFileResult`] (capturing the returned assessment on success).
+/// Every wait uses the injectable `sleeper`.
 ///
-/// Mirrors the reference client's raw-bearer `send_get_data_file_status`
-/// (`request_types/data_files.py:8-33`); as there, the caller supplies the
-/// (fresh) token — for a poll that could outlive the 30-min JWT TTL, refresh
-/// the bearer via [`crate::login::EsvSession`] before re-entering.
+/// The bearer comes from `token_provider`, invoked **once per request** so a
+/// poll that outlives the ~30-minute JWT TTL can hand back a freshly-refreshed
+/// token (wire an [`crate::login::EsvSession`]-backed closure); the fixed-token
+/// case is [`fixed_token`]. The loop is bounded three ways: the consecutive
+/// not-yet-processed cap, a global `max_total_polls` ceiling (which also stops
+/// an alternating-status livelock the per-status cap alone cannot), and a
+/// consecutive-transient-failure budget so a single dropped connection or 502
+/// HTML page no longer kills the poll (a well-formed response resets it;
+/// transient retries count toward `max_total_polls`).
+///
+/// The status body is read with the float-tolerant [`crate::jsonlite`] reader
+/// (a `Run Successful` assessment carries fractional min-entropy the
+/// integer-only codec cannot parse); the returned assessment is the untouched
+/// raw body, so its floats survive exactly.
 ///
 /// # Errors
-/// [`DataFileError::NotYetProcessedTimeout`] on cap exhaustion,
-/// [`DataFileError::UnrecognizedStatus`] on an undocumented status,
+/// [`DataFileError::NotYetProcessedTimeout`] on the consecutive-NYP cap,
+/// [`DataFileError::PollTimeout`] on the total-poll cap,
+/// [`DataFileError::TransientFailuresExhausted`] on the transient-failure
+/// budget, [`DataFileError::UnrecognizedStatus`] on an undocumented status,
 /// [`DataFileError::ServerError`] on an error payload,
-/// [`DataFileError::MalformedResponse`] on an unparsable/short envelope, or
-/// [`DataFileError::Transport`] on a transport failure.
+/// [`DataFileError::MalformedResponse`] on a structurally-invalid envelope,
+/// or [`DataFileError::Token`] on a token-provider failure.
 pub fn poll_data_file<T: EsvTransport>(
     ea_id: &str,
     df_id: &str,
-    bearer: &str,
+    token_provider: &mut dyn FnMut() -> Result<String, String>,
     transport: &mut T,
     sleeper: &mut dyn Sleeper,
     config: &PollConfig,
 ) -> Result<DataFileResult, DataFileError> {
     let path = data_file_path(ea_id, df_id);
     let mut consecutive_nyp: u32 = 0;
+    let mut consecutive_transient: u32 = 0;
+    let mut total_polls: u32 = 0;
     loop {
-        let resp = transport
-            .request("GET", &path, None, bearer)
-            .map_err(DataFileError::Transport)?;
-        let parsed = parse_status_envelope(&resp.body)?;
-        let payload = payload_element(&parsed)?;
+        if total_polls >= config.max_total_polls {
+            return Err(DataFileError::PollTimeout { polls: total_polls });
+        }
+        total_polls = total_polls.saturating_add(1);
 
-        let raw_status = match payload.get("status").and_then(JsonValue::as_str) {
+        // Fresh bearer per request so a long poll can outlive the JWT TTL.
+        let bearer = token_provider().map_err(DataFileError::Token)?;
+
+        // A transport error or an unparseable body is transient (a dropped
+        // connection, a 502 HTML page): tolerate a bounded consecutive run,
+        // then surface typed. A well-formed body resets the run.
+        let resp = match transport.request("GET", &path, None, &bearer) {
+            Ok(r) => r,
+            Err(e) => {
+                consecutive_transient = consecutive_transient.saturating_add(1);
+                if consecutive_transient > config.max_consecutive_transient_failures {
+                    return Err(DataFileError::TransientFailuresExhausted {
+                        failures: config.max_consecutive_transient_failures,
+                        last: format!("transport error: {e}"),
+                    });
+                }
+                sleeper.sleep(config.processing_wait);
+                continue;
+            }
+        };
+        let parsed = match parse_status_envelope(&resp.body) {
+            Ok(v) => v,
+            Err(e) => {
+                consecutive_transient = consecutive_transient.saturating_add(1);
+                if consecutive_transient > config.max_consecutive_transient_failures {
+                    return Err(DataFileError::TransientFailuresExhausted {
+                        failures: config.max_consecutive_transient_failures,
+                        last: e.to_string(),
+                    });
+                }
+                sleeper.sleep(config.processing_wait);
+                continue;
+            }
+        };
+        // A well-formed, parseable body ends the transient run.
+        consecutive_transient = 0;
+
+        let payload = payload_element(&parsed)?;
+        let raw_status = match payload.get("status").and_then(JsonLite::as_str) {
             Some(s) => s.to_string(),
             None => return Err(status_absent_error(payload, &resp)),
         };
@@ -710,8 +983,8 @@ pub fn poll_data_file<T: EsvTransport>(
 /// Build the error for a status response whose payload carries no `status`
 /// field: an explicit `error` field (reference client `data_files.py:22`),
 /// else a non-2xx server error, else a malformed-response error.
-fn status_absent_error(payload: &JsonValue, resp: &HttpResponse) -> DataFileError {
-    if let Some(err) = payload.get("error").and_then(JsonValue::as_str) {
+fn status_absent_error(payload: &JsonLite, resp: &HttpResponse) -> DataFileError {
+    if let Some(err) = payload.get("error").and_then(JsonLite::as_str) {
         return DataFileError::ServerError {
             message: err.to_string(),
         };
@@ -726,113 +999,33 @@ fn status_absent_error(payload: &JsonValue, resp: &HttpResponse) -> DataFileErro
     }
 }
 
-/// Parse a status-response body, tolerating the fractional entropy numbers a
-/// `Run Successful` assessment carries.
-///
-/// The shared [`acvp_harness::json`] codec is integer-only, so a real
-/// assessment body (with values like `0.7275`) fails the direct parse. On
-/// that failure we re-parse a [`neutralize_fractionals`] copy — enough to
-/// read the (string) `status` and `id` fields; the assessment values are
-/// captured separately from the untouched raw body, so the lossy neutralized
-/// copy never reaches returned data. A body that fails **both** parses is a
-/// genuine [`DataFileError::MalformedResponse`] (the original error is
-/// reported).
-fn parse_status_envelope(body: &str) -> Result<JsonValue, DataFileError> {
-    match json::parse(body) {
-        Ok(v) => Ok(v),
-        Err(e) => json::parse(&neutralize_fractionals(body)).map_err(|_| {
-            DataFileError::MalformedResponse {
-                detail: format!("parse status response: {e}"),
-            }
-        }),
-    }
-}
-
-/// Return a copy of `body` with the fractional part of every numeric literal
-/// occurring **outside** a JSON string removed (`0.7275` → `0`, `1.0` → `1`),
-/// so the integer-only [`acvp_harness::json`] codec can parse it. Decimal
-/// points inside strings (e.g. the `"1.0"` `esvVersion`) are left untouched.
-///
-/// This is a read-only aid for extracting the `status`/`id` string/integer
-/// fields from a float-bearing assessment response; the assessment's own
-/// numbers are always taken from the untouched raw body, so this lossy
-/// transform never affects returned data. (Exponent notation, if NIST ever
-/// emitted it, is not handled — flagged for the attended smoke.)
-fn neutralize_fractionals(body: &str) -> String {
-    let mut out = String::with_capacity(body.len());
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut chars = body.chars().peekable();
-    while let Some(c) = chars.next() {
-        if in_string {
-            out.push(c);
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if c == '"' {
-            in_string = true;
-            out.push(c);
-            continue;
-        }
-        // A '.' following a digit begins a fractional part: drop it and the
-        // trailing digits, keeping the already-emitted integer part.
-        if c == '.' && out.chars().last().is_some_and(|p| p.is_ascii_digit()) {
-            while chars.peek().is_some_and(char::is_ascii_digit) {
-                let _ = chars.next();
-            }
-            continue;
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Require the ESVP versioned envelope `[{esvVersion}, {payload}, …]` and
-/// return the payload element (index 1). Fail-closed, mirroring the strict
-/// **at-least-two** check in [`crate::login::esv_payload_element`]: element 0
-/// must carry a string `esvVersion`, element 1 is the payload, and trailing
-/// elements are ignored (additive server variance tolerated; a bare object is
-/// still rejected).
-fn payload_element(parsed: &JsonValue) -> Result<&JsonValue, DataFileError> {
-    let arr = parsed
-        .as_array()
-        .ok_or_else(|| DataFileError::MalformedResponse {
-            detail: "response is not a versioned-array envelope".to_string(),
-        })?;
-    if arr.len() < 2 {
-        return Err(DataFileError::MalformedResponse {
-            detail: format!(
-                "response envelope must have at least two elements, got {}",
-                arr.len()
-            ),
-        });
-    }
-    let version_ok = arr
-        .first()
-        .and_then(|v| v.get("esvVersion"))
-        .and_then(JsonValue::as_str)
-        .is_some();
-    if !version_ok {
-        return Err(DataFileError::MalformedResponse {
-            detail: "response envelope element 0 is not an {esvVersion} object".to_string(),
-        });
-    }
-    arr.get(1).ok_or_else(|| DataFileError::MalformedResponse {
-        detail: "response envelope is missing its payload element".to_string(),
+/// Parse a status-response body with the float-tolerant [`crate::jsonlite`]
+/// reader, which reads the `Run Successful` assessment's fractional /
+/// exponent-notation min-entropy numbers losslessly (as raw tokens) where the
+/// integer-only [`acvp_harness::json`] codec would reject the whole body. A
+/// body that does not parse is a [`DataFileError::MalformedResponse`] — the
+/// poll loop treats that (like a transport error) as a transient failure.
+fn parse_status_envelope(body: &str) -> Result<JsonLite, DataFileError> {
+    jsonlite::parse(body).map_err(|e| DataFileError::MalformedResponse {
+        detail: format!("parse status response: {e}"),
     })
 }
 
-/// Render a data-file `id` (a JSON string or integer) as a string.
-fn id_to_string(v: &JsonValue) -> Option<String> {
+/// Require the ESVP versioned envelope `[{esvVersion}, {payload}, …]` and
+/// return the payload element (index 1), delegating to the one shared
+/// [`crate::login::esv_payload_element`] validator (which runs over both the
+/// integer-only codec and the [`crate::jsonlite`] reader), so the envelope
+/// contract cannot drift between the auth/registration parsers and this poll.
+fn payload_element(parsed: &JsonLite) -> Result<&JsonLite, DataFileError> {
+    crate::login::esv_payload_element(parsed)
+        .map_err(|detail| DataFileError::MalformedResponse { detail })
+}
+
+/// Render a data-file `id` (a JSON string or number token) as a string.
+fn id_to_string(v: &JsonLite) -> Option<String> {
     v.as_str()
         .map(str::to_string)
-        .or_else(|| v.as_i64().map(|n| n.to_string()))
+        .or_else(|| v.as_number_str().map(str::to_string))
 }
 
 #[cfg(test)]
@@ -993,7 +1186,7 @@ mod tests {
         let up = DataFileUpload::new("1", "2", "raw.bin", vec![0xAB, 0xCD])
             .with_sample_size(4)
             .unwrap();
-        let (content_type, body) = up.to_multipart("BOUNDARY123");
+        let (content_type, body) = up.to_multipart("BOUNDARY123").unwrap();
         assert_eq!(content_type, "multipart/form-data; boundary=BOUNDARY123");
         let text = String::from_utf8_lossy(&body);
         // Boundary delimiters (opening and closing).
@@ -1020,6 +1213,79 @@ mod tests {
         );
         // Raw file bytes survive verbatim.
         assert!(body.windows(2).any(|w| w == [0xAB, 0xCD]));
+    }
+
+    // ── Multipart boundary validation + generation (fix 7) ────────────
+
+    #[test]
+    fn serialize_rejects_invalid_boundaries() {
+        let up = DataFileUpload::new("1", "2", "raw.bin", vec![1, 2, 3]);
+        // Disallowed character.
+        assert!(matches!(
+            up.to_multipart("bad boundary!"),
+            Err(MultipartError::InvalidBoundary { .. })
+        ));
+        // Empty.
+        assert!(matches!(
+            up.to_multipart(""),
+            Err(MultipartError::InvalidBoundary { .. })
+        ));
+        // Over 70 characters.
+        let long = "a".repeat(71);
+        assert!(matches!(
+            up.to_multipart(&long),
+            Err(MultipartError::InvalidBoundary { .. })
+        ));
+        // Trailing space (a bchar, but not a valid last char).
+        assert!(matches!(
+            up.to_multipart("abc "),
+            Err(MultipartError::InvalidBoundary { .. })
+        ));
+        // A valid boundary succeeds.
+        assert!(up.to_multipart("abc-123").is_ok());
+    }
+
+    #[test]
+    fn serialize_detects_a_seeded_boundary_collision() {
+        // A file body that literally contains the boundary delimiter would be
+        // mis-split by a receiver — a typed collision, no body produced.
+        let colliding = b"leading\r\n--BNDRY tail".to_vec();
+        let up = DataFileUpload::new("1", "2", "raw.bin", colliding);
+        assert_eq!(
+            up.to_multipart("BNDRY"),
+            Err(MultipartError::BoundaryCollision { part_index: 0 })
+        );
+        // A leading (CRLF-less) `--BNDRY` at body start also collides.
+        let up2 = DataFileUpload::new("1", "2", "raw.bin", b"--BNDRY at start".to_vec());
+        assert!(matches!(
+            up2.to_multipart("BNDRY"),
+            Err(MultipartError::BoundaryCollision { .. })
+        ));
+    }
+
+    #[test]
+    fn generate_boundary_is_absent_from_every_part_and_serializes() {
+        // A body that carries the delimiter for the base candidate
+        // `oxicryptEsvBoundary0` at a real delimiter position (CRLF-prefixed),
+        // forcing generate_boundary to increment past it.
+        let body = b"noise\r\n--oxicryptEsvBoundary0 more noise".to_vec();
+        let up = DataFileUpload::new("1", "2", "raw.bin", body)
+            .with_sample_size(4)
+            .unwrap();
+        let parts = up.parts();
+        let boundary = generate_boundary(&parts);
+        // The generated boundary collides with no part body…
+        assert!(
+            parts
+                .iter()
+                .all(|p| !body_collides(part_body_bytes(p), &boundary))
+        );
+        // …is a valid boundary…
+        assert!(validate_boundary(&boundary).is_ok());
+        // …and it was forced off the colliding base candidate.
+        assert_ne!(boundary, "oxicryptEsvBoundary0");
+        // …so serialization succeeds with it.
+        assert!(up.to_multipart(&boundary).is_ok());
     }
 
     // ── Status classification (ISC-101) ───────────────────────────────
@@ -1071,6 +1337,22 @@ mod tests {
         assert_eq!(
             classify_status("Frobnicated"),
             DataFileStatus::Unrecognized("Frobnicated".to_string())
+        );
+    }
+
+    #[test]
+    fn classify_is_exact_not_substring() {
+        // "Rerun Successful" CONTAINS "run successful" but must NOT fold to
+        // RunSuccessful — exact match, not substring.
+        assert_eq!(
+            classify_status("Rerun Successful"),
+            DataFileStatus::Unrecognized("Rerun Successful".to_string())
+        );
+        // "Recoverable Error - Retrying" CONTAINS "error" but must NOT fold to
+        // Error.
+        assert_eq!(
+            classify_status("Recoverable Error - Retrying"),
+            DataFileStatus::Unrecognized("Recoverable Error - Retrying".to_string())
         );
     }
 
@@ -1147,13 +1429,20 @@ mod tests {
         ]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let res = poll_data_file("101", "11", "jwt-oe1", &mut t, &mut sl, &cfg).unwrap();
+        let res = poll_data_file(
+            "101",
+            "11",
+            &mut fixed_token("jwt-oe1"),
+            &mut t,
+            &mut sl,
+            &cfg,
+        )
+        .unwrap();
 
         assert_eq!(res.status, TerminalStatus::RunSuccessful);
         assert_eq!(res.id.as_deref(), Some("42"));
         // The returned assessment (second maxwell oracle) is captured as the
-        // raw body — the fractional entropy numbers survive verbatim even
-        // though the integer-only codec cannot represent them.
+        // raw body — the fractional entropy numbers survive verbatim.
         let assessment = res.assessment.unwrap();
         assert!(assessment.contains("\"minEntropy\":0.7275"), "{assessment}");
         assert!(assessment.contains("\"hOriginal\":0.75"), "{assessment}");
@@ -1171,26 +1460,42 @@ mod tests {
         );
     }
 
+    // ── Fix 1: float-tolerant status reads via jsonlite ───────────────
+
     #[test]
-    fn neutralize_fractionals_strips_floats_outside_strings_only() {
-        // Fractional literals outside strings collapse to their integer part;
-        // the decimal inside the "1.0" esvVersion string is preserved.
-        let raw =
-            r#"[{"esvVersion":"1.0"},{"id":42,"status":"Run Successful","h":0.7275,"x":1.0}]"#;
-        let neutralized = neutralize_fractionals(raw);
-        assert!(
-            neutralized.contains("\"esvVersion\":\"1.0\""),
-            "{neutralized}"
-        );
-        assert!(neutralized.contains("\"h\":0,"), "{neutralized}");
-        assert!(neutralized.contains("\"x\":1}"), "{neutralized}");
-        // And the neutralized copy now parses under the integer-only codec.
-        let parsed = json::parse(&neutralized).unwrap();
-        let payload = &parsed.as_array().unwrap()[1];
-        assert_eq!(
-            payload.get("status").and_then(JsonValue::as_str),
-            Some("Run Successful")
-        );
+    fn run_successful_body_with_e_notation_float_polls_and_captures_assessment() {
+        // The review's exact good case: a Run Successful body carrying an
+        // e-notation min-entropy `1.2e-05` yields RunSuccessful with the
+        // assessment captured verbatim.
+        let success = HttpResponse {
+            status: 200,
+            body:
+                r#"[{"esvVersion":"1.0"},{"id":7,"status":"Run Successful","minEntropy":1.2e-05}]"#
+                    .to_string(),
+        };
+        let mut t = StubTransport::new(vec![success]);
+        let mut sl = RecordingSleeper::default();
+        let cfg = PollConfig::default();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
+        assert_eq!(res.status, TerminalStatus::RunSuccessful);
+        assert_eq!(res.id.as_deref(), Some("7"));
+        assert!(res.assessment.unwrap().contains("1.2e-05"));
+    }
+
+    #[test]
+    fn malformed_number_body_is_a_malformed_response_at_the_parse_boundary() {
+        // The review's exact bad case: `1.2.3` is an invalid numeral, so the
+        // whole body is a MalformedResponse (the poll loop then treats a
+        // MalformedResponse like a transient failure — see the transient-budget
+        // tests below).
+        let body = r#"[{"esvVersion":"1.0"},{"id":1.2.3,"status":"Run Successful"}]"#;
+        assert!(matches!(
+            parse_status_envelope(body),
+            Err(DataFileError::MalformedResponse { .. })
+        ));
+        // A decimal inside a string is left untouched (the old pre-pass hazard).
+        let ok = r#"[{"esvVersion":"1.0"},{"esvVersion":"1.0","status":"Uploaded"}]"#;
+        assert!(parse_status_envelope(ok).is_ok());
     }
 
     #[test]
@@ -1202,7 +1507,7 @@ mod tests {
         ]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let res = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
         assert_eq!(res.status, TerminalStatus::RunSuccessful);
         // Two not-yet-processed waits of 30 s recorded.
         assert_eq!(
@@ -1224,11 +1529,101 @@ mod tests {
             status_body("not-yet-processed"),
         ]);
         let mut sl = RecordingSleeper::default();
-        let err = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap_err();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
         assert_eq!(err, DataFileError::NotYetProcessedTimeout { polls: 2 });
         // Two waits before the third poll trips the cap.
         assert_eq!(sl.slept.len(), 2);
         assert_eq!(t.calls.len(), 3);
+    }
+
+    // ── Fix 2: global total-poll bound catches an alternating livelock ─
+
+    #[test]
+    fn poll_alternating_statuses_terminate_with_a_total_poll_timeout() {
+        // Uploaded ↔ not-yet-processed alternation resets the consecutive-NYP
+        // counter forever; only the total-poll cap stops it.
+        let cfg = PollConfig {
+            max_total_polls: 4,
+            ..PollConfig::default()
+        };
+        let mut t = StubTransport::new(vec![
+            status_body("not-yet-processed"),
+            status_body("Uploaded"),
+            status_body("not-yet-processed"),
+            status_body("Uploaded"),
+        ]);
+        let mut sl = RecordingSleeper::default();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
+        assert_eq!(err, DataFileError::PollTimeout { polls: 4 });
+        assert_eq!(t.calls.len(), 4);
+    }
+
+    // ── Fix 4: transient-failure budget ───────────────────────────────
+
+    #[test]
+    fn poll_survives_a_single_transient_malformed_body_to_success() {
+        // A 502 HTML page mid-sequence is a transient blip, not fatal.
+        let html_502 = HttpResponse {
+            status: 502,
+            body: "<html><body>502 Bad Gateway</body></html>".to_string(),
+        };
+        let mut t = StubTransport::new(vec![
+            status_body("Uploaded"),
+            html_502,
+            status_body("Run Successful"),
+        ]);
+        let mut sl = RecordingSleeper::default();
+        let cfg = PollConfig::default();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
+        assert_eq!(res.status, TerminalStatus::RunSuccessful);
+        assert_eq!(t.calls.len(), 3);
+    }
+
+    #[test]
+    fn poll_gives_up_after_the_transient_budget_is_exhausted() {
+        // budget = 2 tolerated; a 3rd consecutive transient failure gives up.
+        let cfg = PollConfig {
+            max_consecutive_transient_failures: 2,
+            ..PollConfig::default()
+        };
+        let html = || HttpResponse {
+            status: 502,
+            body: "<html>bad gateway</html>".to_string(),
+        };
+        let mut t = StubTransport::new(vec![html(), html(), html()]);
+        let mut sl = RecordingSleeper::default();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
+        match err {
+            DataFileError::TransientFailuresExhausted { failures, .. } => {
+                assert_eq!(failures, 2);
+            }
+            other => panic!("expected TransientFailuresExhausted, got {other:?}"),
+        }
+        assert_eq!(t.calls.len(), 3);
+    }
+
+    #[test]
+    fn poll_transient_failures_reset_on_a_well_formed_response() {
+        // A malformed body, then a good Uploaded (resets the run), then two
+        // more malformed bodies: with budget 2 this never exhausts because the
+        // Uploaded broke the consecutive run — it ends on the total-poll cap.
+        let cfg = PollConfig {
+            max_consecutive_transient_failures: 2,
+            max_total_polls: 4,
+            ..PollConfig::default()
+        };
+        let html = || HttpResponse {
+            status: 502,
+            body: "<html/>".to_string(),
+        };
+        let mut t = StubTransport::new(vec![html(), status_body("Uploaded"), html(), html()]);
+        let mut sl = RecordingSleeper::default();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
+        assert_eq!(err, DataFileError::PollTimeout { polls: 4 });
     }
 
     #[test]
@@ -1238,7 +1633,7 @@ mod tests {
         let mut t = StubTransport::new(vec![status_body("Run Failed")]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let res = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
         assert_eq!(res.status, TerminalStatus::RunFailed);
         assert!(res.assessment.is_none());
         assert_eq!(t.calls.len(), 1);
@@ -1250,7 +1645,7 @@ mod tests {
         let mut t = StubTransport::new(vec![status_body("Run Cancelled")]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let res = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
         assert_eq!(res.status, TerminalStatus::RunCancelled);
         assert!(res.assessment.is_none());
     }
@@ -1260,7 +1655,8 @@ mod tests {
         let mut t = StubTransport::new(vec![status_body("Frobnicated")]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let err = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap_err();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
         assert_eq!(
             err,
             DataFileError::UnrecognizedStatus {
@@ -1278,7 +1674,8 @@ mod tests {
         let mut t = StubTransport::new(vec![resp]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let err = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap_err();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
         assert_eq!(
             err,
             DataFileError::ServerError {
@@ -1289,8 +1686,8 @@ mod tests {
 
     #[test]
     fn poll_tolerates_trailing_envelope_element() {
-        // Item 5: a third envelope element is ignored; the payload stays at
-        // index 1, so a Run Successful still terminates cleanly.
+        // A third envelope element is ignored; the payload stays at index 1,
+        // so a Run Successful still terminates cleanly.
         let resp = HttpResponse {
             status: 200,
             body: r#"[{"esvVersion":"1.0"},{"id":42,"status":"Run Successful"},{"extra":1}]"#
@@ -1299,32 +1696,77 @@ mod tests {
         let mut t = StubTransport::new(vec![resp]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let res = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
         assert_eq!(res.status, TerminalStatus::RunSuccessful);
         assert_eq!(res.id.as_deref(), Some("42"));
     }
 
     #[test]
     fn poll_non_envelope_response_is_malformed() {
+        // A bare object parses fine but is not the versioned envelope: a
+        // structural (not parse) failure, so it is fatal MalformedResponse.
         let resp = HttpResponse {
             status: 200,
-            body: r#"{"status":"Uploaded"}"#.to_string(), // bare object, not the envelope
+            body: r#"{"status":"Uploaded"}"#.to_string(),
         };
         let mut t = StubTransport::new(vec![resp]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let err = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap_err();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
         assert!(matches!(err, DataFileError::MalformedResponse { .. }));
     }
 
     #[test]
-    fn poll_transport_failure_surfaces_typed() {
-        // Empty stub → the transport errors on the first request.
+    fn poll_persistent_transport_failure_exhausts_the_transient_budget() {
+        // An empty stub errors on every request; a transport error is
+        // transient, so it is retried until the budget is exhausted.
+        let cfg = PollConfig {
+            max_consecutive_transient_failures: 2,
+            ..PollConfig::default()
+        };
         let mut t = StubTransport::new(vec![]);
         let mut sl = RecordingSleeper::default();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            DataFileError::TransientFailuresExhausted { failures: 2, .. }
+        ));
+    }
+
+    // ── Fix 6: token provider ─────────────────────────────────────────
+
+    #[test]
+    fn poll_calls_the_token_provider_once_per_request() {
+        let mut t =
+            StubTransport::new(vec![status_body("Uploaded"), status_body("Run Successful")]);
+        let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
-        let err = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap_err();
-        assert!(matches!(err, DataFileError::Transport(_)));
+        let mut calls = 0u32;
+        let mut provider = || -> Result<String, String> {
+            calls = calls.saturating_add(1);
+            Ok(format!("jwt-{calls}"))
+        };
+        let res = poll_data_file("1", "2", &mut provider, &mut t, &mut sl, &cfg).unwrap();
+        assert_eq!(res.status, TerminalStatus::RunSuccessful);
+        // Two requests → the provider was invoked twice, and each request
+        // carried the freshly-provided bearer.
+        assert_eq!(calls, 2);
+        assert_eq!(t.calls[0].bearer, "jwt-1");
+        assert_eq!(t.calls[1].bearer, "jwt-2");
+    }
+
+    #[test]
+    fn poll_token_provider_error_surfaces_typed() {
+        let mut t = StubTransport::new(vec![status_body("Run Successful")]);
+        let mut sl = RecordingSleeper::default();
+        let cfg = PollConfig::default();
+        let mut provider = || -> Result<String, String> { Err("no token available".to_string()) };
+        let err = poll_data_file("1", "2", &mut provider, &mut t, &mut sl, &cfg).unwrap_err();
+        assert_eq!(err, DataFileError::Token("no token available".to_string()));
+        // The provider failed before any request went out.
+        assert!(t.calls.is_empty());
     }
 
     // ── Vetted-conditioning refusal (ISC-107, Anti) ───────────────────
