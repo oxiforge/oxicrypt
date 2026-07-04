@@ -7,11 +7,16 @@
 //! any network contact:
 //!
 //! - `esv-harness` (no args) — print a short description and usage.
-//! - `esv-harness login-body --totp-secret <base64>` — compute the
-//!   current TOTP and print the `/esv/v1/login` request body.
-//! - `esv-harness bulk-refresh-body --totp-secret <base64> <jwt>...` —
-//!   print the `/esv/v1/login/refresh` bulk-refresh body for the given
-//!   tokens.
+//! - `esv-harness login-body` — read the base64 TOTP secret from
+//!   **stdin**, compute the current TOTP, and print the `/esv/v1/login`
+//!   request body.
+//! - `esv-harness bulk-refresh-body <jwt>...` — read the base64 TOTP
+//!   secret from **stdin** and print the `/esv/v1/login/refresh`
+//!   bulk-refresh body for the given tokens.
+//!
+//! The TOTP secret is a credential: it is read from stdin (pipe-friendly)
+//! and never taken on argv (world-readable via `/proc`, and lands in shell
+//! history) or from the environment.
 //!
 //! The live login/refresh flow (`esv_harness::login::login` and friends)
 //! is generic over `EsvTransport`; wiring it to acvp-harness's
@@ -21,6 +26,7 @@
 
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+use std::io::Read;
 use std::process::ExitCode;
 
 use acvp_harness::transport::{decode_totp_secret, totp_now};
@@ -30,45 +36,29 @@ fn usage() {
     eprintln!(
         "esv-harness — ESVP §2 offline request builders (slice S1)\n\
          \n\
-         USAGE:\n  \
-         esv-harness login-body --totp-secret <base64>\n  \
-         esv-harness bulk-refresh-body --totp-secret <base64> <jwt>...\n\
+         USAGE (the base64 TOTP secret is read from stdin, never argv):\n  \
+         esv-harness login-body < secret.b64\n  \
+         esv-harness bulk-refresh-body <jwt>... < secret.b64\n\
          \n\
          The live, credentialed submission run is a separate attended session."
     );
 }
 
-/// Pull the value following `--totp-secret` out of the argument list.
-fn take_totp_secret(args: &[String]) -> Result<String, String> {
-    let mut it = args.iter();
-    while let Some(arg) = it.next() {
-        if arg == "--totp-secret" {
-            return it
-                .next()
-                .cloned()
-                .ok_or_else(|| "--totp-secret requires a base64 value".to_string());
-        }
+/// Read the base64 TOTP secret from stdin and decode it to raw bytes.
+///
+/// The secret is a credential, so it is piped in on stdin rather than
+/// passed on argv (world-readable via `/proc`, shell history) or via the
+/// environment. Surrounding whitespace/newlines are trimmed.
+fn read_totp_secret_from_stdin() -> Result<Vec<u8>, String> {
+    let mut raw = String::new();
+    std::io::stdin()
+        .read_to_string(&mut raw)
+        .map_err(|e| format!("read TOTP secret from stdin: {e}"))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("no TOTP secret on stdin (pipe the base64 secret in)".to_string());
     }
-    Err("missing --totp-secret <base64>".to_string())
-}
-
-/// The positional token arguments (everything that isn't `--totp-secret`
-/// or its value).
-fn positional_tokens(args: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut skip_next = false;
-    for arg in args {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if arg == "--totp-secret" {
-            skip_next = true;
-            continue;
-        }
-        out.push(arg.clone());
-    }
-    out
+    decode_totp_secret(trimmed)
 }
 
 fn run() -> Result<(), String> {
@@ -81,19 +71,18 @@ fn run() -> Result<(), String> {
 
     match command {
         "login-body" => {
-            let secret = decode_totp_secret(&take_totp_secret(rest)?)?;
+            let secret = read_totp_secret_from_stdin()?;
             let code = totp_now(&secret)?;
             println!("{}", build_login_body(&code));
             Ok(())
         }
         "bulk-refresh-body" => {
-            let secret = decode_totp_secret(&take_totp_secret(rest)?)?;
-            let code = totp_now(&secret)?;
-            let tokens = positional_tokens(rest);
-            if tokens.is_empty() {
+            if rest.is_empty() {
                 return Err("bulk-refresh-body requires at least one <jwt> token".to_string());
             }
-            println!("{}", build_bulk_refresh_body(&code, &tokens));
+            let secret = read_totp_secret_from_stdin()?;
+            let code = totp_now(&secret)?;
+            println!("{}", build_bulk_refresh_body(&code, rest));
             Ok(())
         }
         other => {

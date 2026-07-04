@@ -64,9 +64,11 @@ use acvp_harness::json::{self, JsonValue};
 
 use crate::preflight;
 
-/// The registration endpoint path (relative to the server base, which
-/// already carries `/esv/v1`). (ESVP digest §3; ESV-Server reference
-/// client `request_types/entropy_assessments.py:15`.)
+/// The registration endpoint path — the **full server-relative path**;
+/// the transport base is host-only (see [`crate::login::LOGIN_PATH`] for
+/// the convention and the reference-config `/esv/v1` doubling trap).
+/// (ESVP digest §3; ESV-Server reference client
+/// `request_types/entropy_assessments.py:15`.)
 pub const REGISTRATION_PATH: &str = "/esv/v1/entropyAssessments";
 
 /// An error constructing a registration payload component.

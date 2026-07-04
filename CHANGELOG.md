@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `tools/doc-guard`: test-gate drift guard whose tests recompute the boundary/`unsafe` accounting from the workspace on disk (crate count, out-of-boundary set, `forbid(unsafe_code)` ratio, audited-exception names, exported-FFI-function count) and assert the values stated in `security-policy.md` §1/§9.2/§3.1, `AGENTS.md`, and `README.md` match (#101).
+- `esv-harness`: new out-of-boundary ESV submission client for SP 800-90B entropy-source validation — ESVP login / single-token / bulk refresh (tunable proactive margin, reactive 401/403 retry, TOTP-window-reuse retry, and a fresh-login fallback when a stale-token refresh is rejected), the entropy-source registration payload builder plus multi-OE response parser, and an offline payload preflight drift-guarded against the vendored NIST metadata schema; fixture-tested with zero network and zero third-party dependencies.
 
 ### Fixed
 

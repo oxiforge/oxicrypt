@@ -14,9 +14,10 @@
 //!   `[{"esvVersion":"1.0"}, {payload}]` — the ACVP-style versioned
 //!   envelope acvp-harness already handles. (ESVP digest §"Protocol
 //!   shape"; reference client `authentication/login.py:84-85`.)
-//! - **Base path `/esv/v1`, version `"1.0"`.** (reference client
-//!   `jsons/config.demo.json:5-6`: `ServerURL .../esv/v1`,
-//!   `EsvVersion "1.0"`.)
+//! - **Endpoint paths carry the full server-relative path** (`/esv/v1/…`)
+//!   and the transport base is **host-only** — see the path constants
+//!   below and the reference-config trap they document.
+//!   (reference client `jsons/config.demo.json:5-6`: `EsvVersion "1.0"`.)
 //! - **Login:** POST `/esv/v1/login` body `[{esvVersion},{password}]`,
 //!   where `password` is the current TOTP. (login.py:66,85.)
 //! - **TOTP:** RFC 6238, 30-second step, T0 = 0, **8 digits**,
@@ -37,6 +38,12 @@
 //!   "NEW vs ACVP: bulk refresh … accessToken ARRAY"; the reference
 //!   client's `refresh_payload` (login.py:80-81) carries the same
 //!   `{password, accessToken}` object.)
+//! - **TOTP-window-reuse retry:** a 403 whose body reports "TOTP Window
+//!   has already been used" is transient — the reference client waits
+//!   10 s and retries with a fresh TOTP (`login.py:19-29,41-44`). This
+//!   module mirrors that (see [`is_totp_window_reuse`] and the
+//!   [`Sleeper`]-driven retry in the flow entry points), bounded by
+//!   [`TOTP_REUSE_RETRY_CAP`].
 //!
 //! ## Resolved-by-judgment: the single-refresh endpoint
 //!
@@ -50,9 +57,11 @@
 //! attended demo smoke; if the demo server rejects it, point
 //! [`SINGLE_REFRESH_PATH`] at [`BULK_REFRESH_PATH`].
 
+use std::time::Duration;
+
 use acvp_harness::json::{self, JsonValue};
 use acvp_harness::transport::{
-    HttpResponse, extract_access_token, submit_should_refresh_retry, token_needs_refresh, totp_now,
+    HttpResponse, TOKEN_REFRESH_MARGIN_SECS, submit_should_refresh_retry, totp_now,
 };
 
 /// The only ESVP version the NIST servers support.
@@ -60,19 +69,76 @@ use acvp_harness::transport::{
 /// (reference client `jsons/config.demo.json:6`: `EsvVersion "1.0"`.)
 pub const ESV_VERSION: &str = "1.0";
 
-/// Login endpoint path (relative to the server base, which already
-/// carries `/esv/v1`). (reference client `authentication/login.py:66`.)
+/// Login endpoint path — the **full server-relative path**.
+///
+/// The transport base is **host-only** (e.g.
+/// `https://demo.esvts.nist.gov:7443`), matching acvp-harness's
+/// convention: its `server_url` is host-only and the paths carry
+/// `/acvp/v1` (`acvp-harness/src/transport.rs` ~L904). These ESV
+/// constants likewise carry the full `/esv/v1/…` path, so the base must
+/// contribute the host only.
+///
+/// **Reference-config trap:** the reference client's
+/// `jsons/config.demo.json` `ServerURL` already ends in `/esv/v1`
+/// (`https://demo.esvts.nist.gov:7443/esv/v1`). It must **not** be used
+/// verbatim as the transport base — doing so doubles the path to
+/// `/esv/v1/esv/v1/login` (404). Strip the `/esv/v1` suffix to a
+/// host-only base. (reference client `authentication/login.py:66`.)
 pub const LOGIN_PATH: &str = "/esv/v1/login";
 
-/// Single-token refresh endpoint. Per the ESVP digest §2 a single
-/// refresh is a same-scope re-login at [`LOGIN_PATH`]; see the module
-/// docs for the reference-client divergence resolved by judgment.
+/// Single-token refresh endpoint — the full server-relative path. Per the
+/// ESVP digest §2 a single refresh is a same-scope re-login at
+/// [`LOGIN_PATH`]; see the module docs for the reference-client
+/// divergence resolved by judgment, and [`LOGIN_PATH`] for the host-only
+/// base convention and the reference-config trap.
 pub const SINGLE_REFRESH_PATH: &str = LOGIN_PATH;
 
-/// Bulk refresh endpoint — refreshes an array of per-object JWTs in one
-/// TOTP touch. (ESVP digest §2; reference client
-/// `authentication/login.py:39`.)
+/// Bulk refresh endpoint — the full server-relative path; refreshes an
+/// array of per-object JWTs in one TOTP touch. See [`LOGIN_PATH`] for the
+/// host-only base convention and the reference-config trap. (ESVP digest
+/// §2; reference client `authentication/login.py:39`.)
 pub const BULK_REFRESH_PATH: &str = "/esv/v1/login/refresh";
+
+/// Maximum TOTP-window-reuse retries before surfacing a typed error.
+///
+/// The reference client (`authentication/login.py:41-44`) loops
+/// unbounded on the "TOTP Window has already been used" 403, waiting 10 s
+/// each time. This harness caps the retries to avoid an indefinite
+/// attended stall on a persistently rejected window.
+pub const TOTP_REUSE_RETRY_CAP: u8 = 3;
+
+/// The wait between TOTP-window-reuse retries (reference client
+/// `authentication/login.py:44`: `time.sleep(10)`).
+const TOTP_REUSE_WAIT: Duration = Duration::from_secs(10);
+
+/// An injectable wait, so the TOTP-window-reuse retry is driven by a
+/// recording no-op in unit tests and by real [`std::thread::sleep`] in
+/// attended runs.
+pub trait Sleeper {
+    /// Block for `dur`.
+    fn sleep(&mut self, dur: Duration);
+}
+
+/// The production [`Sleeper`], backed by [`std::thread::sleep`].
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ThreadSleeper;
+
+impl Sleeper for ThreadSleeper {
+    fn sleep(&mut self, dur: Duration) {
+        std::thread::sleep(dur);
+    }
+}
+
+/// True when a response is the transient "TOTP window already used" 403
+/// the NIST reference client retries.
+///
+/// The reference client (`authentication/login.py:19-29`, `did_totp_fail`)
+/// treats a 403 whose envelope element 1 carries an `error` containing
+/// "TOTP Window has already been used" as the retry trigger; a substring
+/// match over the whole body is equivalent and robust to envelope shape.
+pub fn is_totp_window_reuse(status: u16, body: &str) -> bool {
+    status == 403 && body.contains("TOTP Window has already been used")
+}
 
 /// A minimal ESVP HTTP transport: one call per authenticated request.
 ///
@@ -156,60 +222,157 @@ pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> Str
     ])
 }
 
+/// Require the ESVP two-element versioned envelope `[{esvVersion}, {payload}]`
+/// and return a reference to the payload element (index 1).
+///
+/// ESV responses are **always** this envelope. This is the fail-closed
+/// esv-side check that [`parse_access_token`] and
+/// [`parse_bulk_refresh_tokens`] share; it deliberately rejects the bare
+/// `{accessToken:…}` object form that the more permissive
+/// [`acvp_harness::transport::extract_access_token`] accepts.
+fn esv_payload_element(parsed: &JsonValue) -> Result<&JsonValue, String> {
+    let arr = parsed
+        .as_array()
+        .ok_or("ESV response is not a versioned-array envelope")?;
+    if arr.len() != 2 {
+        return Err(format!(
+            "ESV response envelope must be a two-element array, got {} element(s)",
+            arr.len()
+        ));
+    }
+    let version_ok = arr
+        .first()
+        .and_then(|v| v.get("esvVersion"))
+        .and_then(JsonValue::as_str)
+        .is_some();
+    if !version_ok {
+        return Err("ESV response envelope element 0 is not an {esvVersion} object".to_string());
+    }
+    arr.get(1)
+        .ok_or_else(|| "ESV response envelope is missing its payload element".to_string())
+}
+
 /// Parse a single `accessToken` string out of a login / single-refresh
-/// response body. Reuses [`acvp_harness::transport::extract_access_token`],
-/// which scans the versioned-array envelope for a string `accessToken`
-/// — so a bulk-refresh array response is correctly rejected here.
+/// response body.
+///
+/// **Fail-closed vs. the acvp helper:** this requires the ESVP two-element
+/// versioned envelope `[{esvVersion}, {payload}]` and reads `accessToken`
+/// from the payload element. It intentionally does **not** delegate to
+/// [`acvp_harness::transport::extract_access_token`], which also accepts a
+/// bare `{"accessToken":"…"}` object (an ACVP-side permissiveness) — ESV
+/// responses are always the envelope, so the bare-object form is rejected.
 pub fn parse_access_token(body: &str) -> Result<String, String> {
     let parsed = json::parse(body).map_err(|e| format!("parse ESV auth response: {e}"))?;
-    extract_access_token(&parsed)
+    let payload = esv_payload_element(&parsed)?;
+    payload
+        .get("accessToken")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "no string accessToken in ESV auth payload: {}",
+                json::to_pretty_string(&parsed)
+            )
+        })
 }
 
 /// Parse the `accessToken` array from a bulk-refresh response body,
-/// returning the refreshed tokens in order. A response carrying a single
-/// string `accessToken` is accepted and wrapped in a one-element vector.
-pub fn parse_bulk_refresh_tokens(body: &str) -> Result<Vec<String>, String> {
+/// returning the refreshed tokens in order.
+///
+/// `expected` is the number of tokens submitted. The ESVP bulk-refresh
+/// response maps positionally one-to-one onto the submitted array, so the
+/// returned length **must** equal `expected` — a mismatch (including an
+/// empty array, or a single string when more than one token was sent) is
+/// a typed error rather than a silently truncated mapping. A single-string
+/// response is accepted only when exactly one token was expected.
+pub fn parse_bulk_refresh_tokens(body: &str, expected: usize) -> Result<Vec<String>, String> {
     let parsed = json::parse(body).map_err(|e| format!("parse ESV bulk-refresh response: {e}"))?;
-    // The token(s) live on the payload object of the versioned array;
-    // scan every array element (and the flat-object fallback) for an
-    // `accessToken` field.
-    let candidates: Vec<&JsonValue> = match parsed.as_array() {
-        Some(items) => items.iter().collect(),
-        None => vec![&parsed],
+    let payload = esv_payload_element(&parsed)?;
+    let field = payload.get("accessToken").ok_or_else(|| {
+        format!(
+            "no accessToken in ESV bulk-refresh response: {}",
+            json::to_pretty_string(&parsed)
+        )
+    })?;
+
+    let tokens = if let Some(arr) = field.as_array() {
+        let mut out = Vec::with_capacity(arr.len());
+        for tok in arr {
+            let s = tok
+                .as_str()
+                .ok_or("accessToken array element is not a string")?;
+            out.push(s.to_string());
+        }
+        out
+    } else if let Some(s) = field.as_str() {
+        vec![s.to_string()]
+    } else {
+        return Err("bulk-refresh accessToken is neither a string nor an array".to_string());
     };
-    for item in candidates {
-        let Some(field) = item.get("accessToken") else {
-            continue;
-        };
-        if let Some(arr) = field.as_array() {
-            let mut out = Vec::with_capacity(arr.len());
-            for tok in arr {
-                let s = tok
-                    .as_str()
-                    .ok_or("accessToken array element is not a string")?;
-                out.push(s.to_string());
-            }
-            return Ok(out);
-        }
-        if let Some(s) = field.as_str() {
-            return Ok(vec![s.to_string()]);
-        }
+
+    if tokens.len() != expected {
+        return Err(format!(
+            "ESV bulk-refresh returned {} token(s) for {} submitted — positional mapping broken",
+            tokens.len(),
+            expected
+        ));
     }
-    Err(format!(
-        "no accessToken in ESV bulk-refresh response: {}",
-        json::to_pretty_string(&parsed)
-    ))
+    Ok(tokens)
 }
 
-/// POST a body to `path` and require an HTTP 2xx, returning the response
-/// on success and a status-and-body error otherwise.
-fn post_expect_success<T: EsvTransport>(
+/// POST a freshly-TOTP-signed body to `path`, transparently retrying a
+/// "TOTP window already used" 403 after a 10 s [`Sleeper`] wait (bounded
+/// by [`TOTP_REUSE_RETRY_CAP`]).
+///
+/// `build_body` is invoked on **each** attempt so every retry carries a
+/// fresh TOTP. Returns the final response — including a non-2xx status
+/// other than TOTP-window-reuse — so the caller decides how to treat it.
+/// Errs only on a transport failure or when the window-reuse retry cap is
+/// exhausted.
+fn post_totp_signed<T, F>(
     transport: &mut T,
+    sleeper: &mut dyn Sleeper,
     path: &str,
-    body: &str,
-    bearer: &str,
-) -> Result<HttpResponse, String> {
-    let resp = transport.request("POST", path, Some(body), bearer)?;
+    totp_secret: &[u8],
+    build_body: F,
+) -> Result<HttpResponse, String>
+where
+    T: EsvTransport,
+    F: Fn(&str) -> String,
+{
+    let mut retries = 0u8;
+    loop {
+        let code = totp_now(totp_secret)?;
+        let body = build_body(&code);
+        let resp = transport.request("POST", path, Some(&body), "")?;
+        if is_totp_window_reuse(resp.status, &resp.body) {
+            if retries >= TOTP_REUSE_RETRY_CAP {
+                return Err(format!(
+                    "ESV POST {path} rejected: TOTP window reuse persisted after {retries} retries"
+                ));
+            }
+            retries = retries.saturating_add(1);
+            sleeper.sleep(TOTP_REUSE_WAIT);
+            continue;
+        }
+        return Ok(resp);
+    }
+}
+
+/// [`post_totp_signed`] plus an HTTP-2xx requirement: a non-2xx status
+/// (that is not TOTP-window-reuse) becomes a status-and-body error.
+fn post_totp_signed_expect_success<T, F>(
+    transport: &mut T,
+    sleeper: &mut dyn Sleeper,
+    path: &str,
+    totp_secret: &[u8],
+    build_body: F,
+) -> Result<HttpResponse, String>
+where
+    T: EsvTransport,
+    F: Fn(&str) -> String,
+{
+    let resp = post_totp_signed(transport, sleeper, path, totp_secret, build_body)?;
     if is_success(resp.status) {
         Ok(resp)
     } else {
@@ -223,12 +386,18 @@ fn post_expect_success<T: EsvTransport>(
 /// Perform an ESVP login and return the authenticated session.
 ///
 /// Computes the current TOTP from the raw secret (reusing acvp-harness's
-/// generator), POSTs the login envelope to [`LOGIN_PATH`], and parses
-/// the returned access token.
-pub fn login<T: EsvTransport>(totp_secret: &[u8], transport: &mut T) -> Result<EsvSession, String> {
-    let code = totp_now(totp_secret)?;
-    let body = build_login_body(&code);
-    let resp = post_expect_success(transport, LOGIN_PATH, &body, "")?;
+/// generator), POSTs the login envelope to [`LOGIN_PATH`] (retrying a
+/// transient TOTP-window-reuse 403 via `sleeper`), and parses the
+/// returned access token.
+pub fn login<T: EsvTransport>(
+    totp_secret: &[u8],
+    transport: &mut T,
+    sleeper: &mut dyn Sleeper,
+) -> Result<EsvSession, String> {
+    let resp =
+        post_totp_signed_expect_success(transport, sleeper, LOGIN_PATH, totp_secret, |code| {
+            build_login_body(code)
+        })?;
     let token = parse_access_token(&resp.body)?;
     Ok(EsvSession::new(token))
 }
@@ -236,36 +405,61 @@ pub fn login<T: EsvTransport>(totp_secret: &[u8], transport: &mut T) -> Result<E
 /// Bulk-refresh an array of per-object JWTs in one TOTP touch, returning
 /// the refreshed tokens in the same order. Used immediately before
 /// certify, when many per-object tokens must all be fresh at once.
+///
+/// The response is required to carry exactly as many tokens as were
+/// submitted (see [`parse_bulk_refresh_tokens`]); a transient
+/// TOTP-window-reuse 403 is retried via `sleeper`.
 pub fn bulk_refresh<T: EsvTransport>(
     totp_secret: &[u8],
     access_tokens: &[String],
     transport: &mut T,
+    sleeper: &mut dyn Sleeper,
 ) -> Result<Vec<String>, String> {
-    let code = totp_now(totp_secret)?;
-    let body = build_bulk_refresh_body(&code, access_tokens);
-    let resp = post_expect_success(transport, BULK_REFRESH_PATH, &body, "")?;
-    parse_bulk_refresh_tokens(&resp.body)
+    let resp = post_totp_signed_expect_success(
+        transport,
+        sleeper,
+        BULK_REFRESH_PATH,
+        totp_secret,
+        |code| build_bulk_refresh_body(code, access_tokens),
+    )?;
+    parse_bulk_refresh_tokens(&resp.body, access_tokens.len())
 }
 
 /// An authenticated ESV session: the current access token plus its
 /// issuance instant, so a long submission can refresh the 30-minute-TTL
 /// token in flight.
 ///
-/// The proactive-margin and reactive-retry decisions reuse acvp-harness's
-/// pure predicates ([`token_needs_refresh`] /
-/// [`submit_should_refresh_retry`]) so the ESV and ACVP token lifecycles
-/// stay in lockstep.
+/// The reactive-retry decision reuses acvp-harness's pure predicate
+/// ([`submit_should_refresh_retry`]); the proactive margin is a per-session
+/// field ([`EsvSession::refresh_margin_secs`]) so it can be tuned once the
+/// ESV-side token TTL is measured at the attended demo smoke.
 pub struct EsvSession {
     token: String,
+    /// Issuance instant of [`Self::token`].
+    ///
+    /// **Suspend-blind:** [`std::time::Instant`] is CLOCK_MONOTONIC and
+    /// does **not** advance across an OS suspend, so `elapsed()` can read
+    /// "fresh" while the wall-clock token TTL has already expired (for
+    /// example a laptop suspended for longer than the ~30-minute TTL). A
+    /// refresh that then embeds the stale token would 401/403;
+    /// [`Self::refresh`] falls back to a plain fresh login for exactly
+    /// this case.
     issued: std::time::Instant,
+    /// Token age (seconds) at which [`Self::needs_refresh`] fires.
+    /// Defaults to acvp-harness's ACVP-measured
+    /// [`TOKEN_REFRESH_MARGIN_SECS`]; tunable via
+    /// [`Self::with_refresh_margin_secs`] / [`Self::set_refresh_margin_secs`].
+    refresh_margin_secs: u64,
 }
 
 impl EsvSession {
-    /// Wrap a freshly-issued token, stamping the issuance instant to now.
+    /// Wrap a freshly-issued token, stamping the issuance instant to now
+    /// and the refresh margin to the ACVP-measured default.
     fn new(token: String) -> Self {
         Self {
             token,
             issued: std::time::Instant::now(),
+            refresh_margin_secs: TOKEN_REFRESH_MARGIN_SECS,
         }
     }
 
@@ -278,6 +472,7 @@ impl EsvSession {
             issued: std::time::Instant::now()
                 .checked_sub(age)
                 .unwrap_or_else(std::time::Instant::now),
+            refresh_margin_secs: TOKEN_REFRESH_MARGIN_SECS,
         }
     }
 
@@ -292,24 +487,89 @@ impl EsvSession {
         self.issued.elapsed().as_secs()
     }
 
-    /// True once the token has aged past the proactive refresh margin
-    /// (reuses [`token_needs_refresh`] / `TOKEN_REFRESH_MARGIN_SECS`).
-    pub fn needs_refresh(&self) -> bool {
-        token_needs_refresh(self.elapsed_secs())
+    /// The proactive refresh margin in seconds (see
+    /// [`Self::refresh_margin_secs`] field).
+    pub fn refresh_margin_secs(&self) -> u64 {
+        self.refresh_margin_secs
     }
 
-    /// Single-token refresh: re-login at [`SINGLE_REFRESH_PATH`]
-    /// embedding the current token, replacing the token and resetting
-    /// its age on success.
+    /// Builder: set the proactive refresh margin (seconds).
+    ///
+    /// The default is the ACVP-measured [`TOKEN_REFRESH_MARGIN_SECS`]
+    /// (20 min, against the ACVP demo's observed `exp − iat` = 1800 s). The
+    /// **ESV-side** token TTL is unmeasured until the attended demo smoke;
+    /// re-measure `exp − iat` there and adjust if it differs.
+    #[must_use]
+    pub fn with_refresh_margin_secs(mut self, secs: u64) -> Self {
+        self.refresh_margin_secs = secs;
+        self
+    }
+
+    /// Setter form of [`Self::with_refresh_margin_secs`].
+    pub fn set_refresh_margin_secs(&mut self, secs: u64) {
+        self.refresh_margin_secs = secs;
+    }
+
+    /// True once the token has aged past the proactive refresh margin.
+    pub fn needs_refresh(&self) -> bool {
+        self.elapsed_secs() >= self.refresh_margin_secs
+    }
+
+    /// Single-token refresh: re-login at [`SINGLE_REFRESH_PATH`] embedding
+    /// the current token, replacing the token and resetting its age on
+    /// success.
+    ///
+    /// If the refresh is rejected 401/403 (a non-window-reuse rejection —
+    /// window reuse is retried transparently by the [`Sleeper`]-driven
+    /// POST), the embedded token is treated as stale (see the
+    /// suspend-blind note on [`Self::issued`]) and the flow falls back to a
+    /// **plain fresh login** (no embedded token) before surfacing an
+    /// error.
     pub fn refresh<T: EsvTransport>(
         &mut self,
         totp_secret: &[u8],
         transport: &mut T,
+        sleeper: &mut dyn Sleeper,
     ) -> Result<(), String> {
-        let code = totp_now(totp_secret)?;
-        let body = build_single_refresh_body(&code, &self.token);
-        let resp = post_expect_success(transport, SINGLE_REFRESH_PATH, &body, "")?;
-        self.token = parse_access_token(&resp.body)?;
+        let old = self.token.clone();
+        let resp = post_totp_signed(
+            transport,
+            sleeper,
+            SINGLE_REFRESH_PATH,
+            totp_secret,
+            |code| build_single_refresh_body(code, &old),
+        )?;
+        if is_success(resp.status) {
+            self.adopt_token(&resp.body)?;
+            return Ok(());
+        }
+        if resp.status == 401 || resp.status == 403 {
+            // Suspend-blind clock (see the `issued` field docs): the
+            // embedded token may be wall-clock-expired even though the
+            // monotonic age looked fresh. Fall back to a fresh login.
+            let fresh = post_totp_signed(transport, sleeper, LOGIN_PATH, totp_secret, |code| {
+                build_login_body(code)
+            })?;
+            if is_success(fresh.status) {
+                self.adopt_token(&fresh.body)?;
+                return Ok(());
+            }
+            return Err(format!(
+                "ESV refresh and fresh-login fallback both failed: \
+                 refresh HTTP {}, login HTTP {} — {}",
+                resp.status, fresh.status, fresh.body
+            ));
+        }
+        Err(format!(
+            "ESV refresh POST {SINGLE_REFRESH_PATH} failed: HTTP {} — {}",
+            resp.status, resp.body
+        ))
+    }
+
+    /// Parse a fresh token out of a login/refresh response body and adopt
+    /// it, resetting the issuance instant.
+    fn adopt_token(&mut self, body: &str) -> Result<(), String> {
+        self.token = parse_access_token(body)?;
         self.issued = std::time::Instant::now();
         Ok(())
     }
@@ -320,9 +580,10 @@ impl EsvSession {
         &mut self,
         totp_secret: &[u8],
         transport: &mut T,
+        sleeper: &mut dyn Sleeper,
     ) -> Result<bool, String> {
         if self.needs_refresh() {
-            self.refresh(totp_secret, transport)?;
+            self.refresh(totp_secret, transport, sleeper)?;
             Ok(true)
         } else {
             Ok(false)
@@ -341,11 +602,12 @@ impl EsvSession {
         path: &str,
         body: Option<&str>,
         transport: &mut T,
+        sleeper: &mut dyn Sleeper,
     ) -> Result<HttpResponse, String> {
-        self.refresh_if_stale(totp_secret, transport)?;
+        self.refresh_if_stale(totp_secret, transport, sleeper)?;
         let resp = transport.request(method, path, body, self.bearer())?;
         if submit_should_refresh_retry(resp.status, false) {
-            self.refresh(totp_secret, transport)?;
+            self.refresh(totp_secret, transport, sleeper)?;
             return transport.request(method, path, body, self.bearer());
         }
         Ok(resp)
@@ -409,6 +671,18 @@ mod tests {
         }
     }
 
+    /// A [`Sleeper`] that records the requested waits instead of blocking.
+    #[derive(Default)]
+    struct RecordingSleeper {
+        slept: Vec<Duration>,
+    }
+
+    impl Sleeper for RecordingSleeper {
+        fn sleep(&mut self, dur: Duration) {
+            self.slept.push(dur);
+        }
+    }
+
     fn ok(body: &str) -> HttpResponse {
         HttpResponse {
             status: 200,
@@ -423,7 +697,25 @@ mod tests {
         }
     }
 
+    /// A 403 body reporting a reused TOTP window (reference-client shape).
+    fn totp_reuse_403() -> HttpResponse {
+        status(
+            403,
+            r#"[{"esvVersion":"1.0"},{"error":"TOTP Window has already been used"}]"#,
+        )
+    }
+
     const SECRET: &[u8] = b"12345678901234567890";
+
+    /// The 8-digit password carried by a signed request body.
+    fn password_of(body: &str) -> String {
+        let parsed = json::parse(body).unwrap();
+        parsed.as_array().unwrap()[1]
+            .get("password")
+            .and_then(JsonValue::as_str)
+            .unwrap()
+            .to_string()
+    }
 
     // ── Request-shape builders ────────────────────────────────────────
 
@@ -499,10 +791,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_access_token_rejects_bare_object_envelope() {
+        // Item 2: the acvp helper accepts a bare {accessToken}; the strict
+        // esv-side parser requires the two-element versioned envelope.
+        let bare = r#"{"accessToken":"jwt-bare"}"#;
+        assert!(parse_access_token(bare).is_err());
+        // Sanity: the same token inside a proper envelope IS accepted.
+        let enveloped = r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-bare"}]"#;
+        assert_eq!(parse_access_token(enveloped).unwrap(), "jwt-bare");
+    }
+
+    #[test]
     fn parse_bulk_refresh_tokens_returns_array_in_order() {
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":["t1","t2","t3"]}]"#;
         assert_eq!(
-            parse_bulk_refresh_tokens(body).unwrap(),
+            parse_bulk_refresh_tokens(body, 3).unwrap(),
             vec!["t1".to_string(), "t2".to_string(), "t3".to_string()]
         );
     }
@@ -511,7 +814,7 @@ mod tests {
     fn parse_bulk_refresh_tokens_wraps_single_string() {
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":"solo"}]"#;
         assert_eq!(
-            parse_bulk_refresh_tokens(body).unwrap(),
+            parse_bulk_refresh_tokens(body, 1).unwrap(),
             vec!["solo".to_string()]
         );
     }
@@ -519,7 +822,45 @@ mod tests {
     #[test]
     fn parse_bulk_refresh_tokens_errors_when_absent() {
         let body = r#"[{"esvVersion":"1.0"},{"nope":true}]"#;
-        assert!(parse_bulk_refresh_tokens(body).is_err());
+        assert!(parse_bulk_refresh_tokens(body, 1).is_err());
+    }
+
+    // ── Item 1: bulk count integrity ──────────────────────────────────
+
+    #[test]
+    fn parse_bulk_refresh_tokens_rejects_short_count() {
+        // Submitted 2, server returned 1 → positional mapping broken.
+        let body = r#"[{"esvVersion":"1.0"},{"accessToken":["only-one"]}]"#;
+        let err = parse_bulk_refresh_tokens(body, 2).unwrap_err();
+        assert!(err.contains("positional mapping broken"), "{err}");
+    }
+
+    #[test]
+    fn parse_bulk_refresh_tokens_rejects_empty_array() {
+        let body = r#"[{"esvVersion":"1.0"},{"accessToken":[]}]"#;
+        assert!(parse_bulk_refresh_tokens(body, 2).is_err());
+        // Even a zero-expected empty array is a degenerate no-op we reject
+        // by construction only when expected>0; expected==0 matches.
+        assert_eq!(
+            parse_bulk_refresh_tokens(body, 0).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn parse_bulk_refresh_tokens_exact_count_preserves_order() {
+        let body = r#"[{"esvVersion":"1.0"},{"accessToken":["x","y"]}]"#;
+        assert_eq!(
+            parse_bulk_refresh_tokens(body, 2).unwrap(),
+            vec!["x".to_string(), "y".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_bulk_refresh_tokens_single_string_wrong_expected_fails() {
+        // A single string when two were submitted is a count mismatch.
+        let body = r#"[{"esvVersion":"1.0"},{"accessToken":"solo"}]"#;
+        assert!(parse_bulk_refresh_tokens(body, 2).is_err());
     }
 
     // ── Login flow ────────────────────────────────────────────────────
@@ -529,7 +870,8 @@ mod tests {
         let mut t = StubTransport::new(vec![ok(
             r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-A"}]"#,
         )]);
-        let session = login(SECRET, &mut t).unwrap();
+        let mut sl = RecordingSleeper::default();
+        let session = login(SECRET, &mut t, &mut sl).unwrap();
         assert_eq!(session.bearer(), "jwt-A");
         assert_eq!(t.calls.len(), 1);
         let call = &t.calls[0];
@@ -537,21 +879,79 @@ mod tests {
         assert_eq!(call.path, LOGIN_PATH);
         assert_eq!(call.bearer, "");
         // Body is a well-formed login envelope with an 8-digit password.
-        let parsed = json::parse(call.body.as_ref().unwrap()).unwrap();
-        let payload = &parsed.as_array().unwrap()[1];
-        let code = payload.get("password").and_then(JsonValue::as_str).unwrap();
+        let code = password_of(call.body.as_ref().unwrap());
         assert_eq!(code.len(), 8);
         assert!(code.bytes().all(|b| b.is_ascii_digit()));
+        assert!(sl.slept.is_empty());
     }
 
     #[test]
     fn login_surfaces_http_error_status_and_body() {
         let mut t = StubTransport::new(vec![status(403, "forbidden")]);
-        let Err(err) = login(SECRET, &mut t) else {
+        let mut sl = RecordingSleeper::default();
+        let Err(err) = login(SECRET, &mut t, &mut sl) else {
             panic!("expected login to fail on HTTP 403");
         };
         assert!(err.contains("403"), "{err}");
         assert!(err.contains("forbidden"), "{err}");
+    }
+
+    // ── Item 3: TOTP-window-reuse retry ───────────────────────────────
+
+    #[test]
+    fn is_totp_window_reuse_matches_only_the_reuse_403() {
+        let phrase = r#"[{"esvVersion":"1.0"},{"error":"TOTP Window has already been used"}]"#;
+        assert!(is_totp_window_reuse(403, phrase));
+        // Non-403 status with the phrase, or a 403 without it, do not match.
+        assert!(!is_totp_window_reuse(200, phrase));
+        assert!(!is_totp_window_reuse(401, phrase));
+        assert!(!is_totp_window_reuse(403, "some other forbidden reason"));
+    }
+
+    #[test]
+    fn login_retries_on_totp_window_reuse_then_succeeds() {
+        let mut t = StubTransport::new(vec![
+            totp_reuse_403(),
+            ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-A"}]"#),
+        ]);
+        let mut sl = RecordingSleeper::default();
+        let session = login(SECRET, &mut t, &mut sl).unwrap();
+        assert_eq!(session.bearer(), "jwt-A");
+        // Two POSTs (rejected + retried); exactly one 10 s wait.
+        assert_eq!(t.calls.len(), 2);
+        assert_eq!(sl.slept, vec![Duration::from_secs(10)]);
+        // The retry recomputed a fresh signed body (8-digit password).
+        for call in &t.calls {
+            assert_eq!(call.path, LOGIN_PATH);
+            assert_eq!(password_of(call.body.as_ref().unwrap()).len(), 8);
+        }
+    }
+
+    #[test]
+    fn login_non_window_403_is_not_retried() {
+        let mut t = StubTransport::new(vec![status(403, "bad certificate")]);
+        let mut sl = RecordingSleeper::default();
+        assert!(login(SECRET, &mut t, &mut sl).is_err());
+        assert_eq!(t.calls.len(), 1);
+        assert!(sl.slept.is_empty());
+    }
+
+    #[test]
+    fn totp_window_reuse_retry_cap_is_enforced() {
+        // Persistent reuse: initial + CAP retries all reused → typed error.
+        let mut responses = Vec::new();
+        for _ in 0..=TOTP_REUSE_RETRY_CAP {
+            responses.push(totp_reuse_403());
+        }
+        let mut t = StubTransport::new(responses);
+        let mut sl = RecordingSleeper::default();
+        let Err(err) = login(SECRET, &mut t, &mut sl) else {
+            panic!("expected login to fail once the TOTP-reuse cap is hit");
+        };
+        assert!(err.contains("TOTP window reuse persisted"), "{err}");
+        // CAP waits, CAP+1 POSTs.
+        assert_eq!(sl.slept.len(), usize::from(TOTP_REUSE_RETRY_CAP));
+        assert_eq!(t.calls.len(), usize::from(TOTP_REUSE_RETRY_CAP) + 1);
     }
 
     // ── Single refresh ────────────────────────────────────────────────
@@ -562,8 +962,9 @@ mod tests {
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-A"}]"#),
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-B"}]"#),
         ]);
-        let mut session = login(SECRET, &mut t).unwrap();
-        session.refresh(SECRET, &mut t).unwrap();
+        let mut sl = RecordingSleeper::default();
+        let mut session = login(SECRET, &mut t, &mut sl).unwrap();
+        session.refresh(SECRET, &mut t, &mut sl).unwrap();
         assert_eq!(session.bearer(), "jwt-B");
         // The refresh POST went to the single-refresh path and embedded
         // the OLD token in the body.
@@ -577,13 +978,57 @@ mod tests {
         );
     }
 
+    // ── Item 6: fresh-login fallback on refresh 401/403 ───────────────
+
+    #[test]
+    fn refresh_falls_back_to_fresh_login_on_401() {
+        let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
+        let mut t = StubTransport::new(vec![
+            status(401, "unauthorized: token expired"), // embedded-token refresh rejected
+            ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-C"}]"#), // fresh login
+        ]);
+        let mut sl = RecordingSleeper::default();
+        session.refresh(SECRET, &mut t, &mut sl).unwrap();
+        assert_eq!(session.bearer(), "jwt-C");
+        // First call embedded the old token; the fallback carried none.
+        assert_eq!(t.calls.len(), 2);
+        assert_eq!(t.calls[0].path, SINGLE_REFRESH_PATH);
+        let first = json::parse(t.calls[0].body.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            first.as_array().unwrap()[1]
+                .get("accessToken")
+                .and_then(JsonValue::as_str),
+            Some("jwt-A")
+        );
+        assert_eq!(t.calls[1].path, LOGIN_PATH);
+        let second = json::parse(t.calls[1].body.as_ref().unwrap()).unwrap();
+        assert!(
+            second.as_array().unwrap()[1].get("accessToken").is_none(),
+            "fresh-login fallback must not embed a token"
+        );
+    }
+
+    #[test]
+    fn refresh_surfaces_typed_error_when_both_refresh_and_login_fail() {
+        let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
+        let mut t = StubTransport::new(vec![
+            status(403, "expired"), // refresh rejected
+            status(403, "denied"),  // fresh login also rejected
+        ]);
+        let mut sl = RecordingSleeper::default();
+        let err = session.refresh(SECRET, &mut t, &mut sl).unwrap_err();
+        assert!(err.contains("both failed"), "{err}");
+        assert_eq!(t.calls.len(), 2);
+    }
+
     // ── Proactive margin ──────────────────────────────────────────────
 
     #[test]
     fn refresh_if_stale_is_a_noop_when_fresh() {
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![]);
-        assert!(!session.refresh_if_stale(SECRET, &mut t).unwrap());
+        let mut sl = RecordingSleeper::default();
+        assert!(!session.refresh_if_stale(SECRET, &mut t, &mut sl).unwrap());
         assert!(t.calls.is_empty());
         assert_eq!(session.bearer(), "jwt-A");
     }
@@ -596,10 +1041,32 @@ mod tests {
         let mut t = StubTransport::new(vec![ok(
             r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-B"}]"#,
         )]);
-        assert!(session.refresh_if_stale(SECRET, &mut t).unwrap());
+        let mut sl = RecordingSleeper::default();
+        assert!(session.refresh_if_stale(SECRET, &mut t, &mut sl).unwrap());
         assert_eq!(session.bearer(), "jwt-B");
         assert!(!session.needs_refresh());
         assert_eq!(t.calls.len(), 1);
+    }
+
+    // ── Item 7: tunable refresh margin ────────────────────────────────
+
+    #[test]
+    fn refresh_margin_defaults_to_acvp_measured_const() {
+        let session = EsvSession::new("jwt-A".to_string());
+        assert_eq!(session.refresh_margin_secs(), TOKEN_REFRESH_MARGIN_SECS);
+    }
+
+    #[test]
+    fn tunable_refresh_margin_changes_needs_refresh() {
+        // A 2-minute-old token is fresh under the 20-min default…
+        let session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::from_mins(2));
+        assert!(!session.needs_refresh());
+        // …but stale once the margin is tightened to 60 s (builder + setter).
+        let session = session.with_refresh_margin_secs(60);
+        assert!(session.needs_refresh());
+        let mut session = session;
+        session.set_refresh_margin_secs(10 * 60);
+        assert!(!session.needs_refresh());
     }
 
     // ── Reactive 401/403 retry ────────────────────────────────────────
@@ -612,8 +1079,16 @@ mod tests {
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-B"}]"#), // refresh
             ok("payload-ok"),                                        // retried request
         ]);
+        let mut sl = RecordingSleeper::default();
         let resp = session
-            .authenticated_request(SECRET, "POST", "/esv/v1/dataFiles", Some("x"), &mut t)
+            .authenticated_request(
+                SECRET,
+                "POST",
+                "/esv/v1/dataFiles",
+                Some("x"),
+                &mut t,
+                &mut sl,
+            )
             .unwrap();
         assert_eq!(resp.status, 200);
         assert_eq!(resp.body, "payload-ok");
@@ -630,8 +1105,9 @@ mod tests {
     fn authenticated_request_does_not_retry_on_success() {
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![ok("payload-ok")]);
+        let mut sl = RecordingSleeper::default();
         let resp = session
-            .authenticated_request(SECRET, "GET", "/esv/v1/dataFiles/1", None, &mut t)
+            .authenticated_request(SECRET, "GET", "/esv/v1/dataFiles/1", None, &mut t, &mut sl)
             .unwrap();
         assert_eq!(resp.body, "payload-ok");
         assert_eq!(t.calls.len(), 1);
@@ -646,8 +1122,9 @@ mod tests {
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-B"}]"#), // proactive refresh
             ok("payload-ok"),                                        // request with fresh bearer
         ]);
+        let mut sl = RecordingSleeper::default();
         let resp = session
-            .authenticated_request(SECRET, "GET", "/esv/v1/dataFiles/1", None, &mut t)
+            .authenticated_request(SECRET, "GET", "/esv/v1/dataFiles/1", None, &mut t, &mut sl)
             .unwrap();
         assert_eq!(resp.body, "payload-ok");
         assert_eq!(t.calls.len(), 2);
@@ -663,7 +1140,8 @@ mod tests {
         let mut t = StubTransport::new(vec![ok(
             r#"[{"esvVersion":"1.0"},{"accessToken":["n1","n2"]}]"#,
         )]);
-        let refreshed = bulk_refresh(SECRET, &tokens, &mut t).unwrap();
+        let mut sl = RecordingSleeper::default();
+        let refreshed = bulk_refresh(SECRET, &tokens, &mut t, &mut sl).unwrap();
         assert_eq!(refreshed, vec!["n1".to_string(), "n2".to_string()]);
         assert_eq!(t.calls.len(), 1);
         assert_eq!(t.calls[0].path, BULK_REFRESH_PATH);
@@ -677,14 +1155,35 @@ mod tests {
         assert_eq!(sent, vec!["t1", "t2"]);
     }
 
-    // ── TOTP reuse (byte-identical to ESV-Server totp.py) ─────────────
+    #[test]
+    fn bulk_refresh_fails_when_server_returns_wrong_count() {
+        // Submitted 2, server returned 1 → typed count-integrity error.
+        let tokens = vec!["t1".to_string(), "t2".to_string()];
+        let mut t = StubTransport::new(vec![ok(
+            r#"[{"esvVersion":"1.0"},{"accessToken":["only-one"]}]"#,
+        )]);
+        let mut sl = RecordingSleeper::default();
+        assert!(bulk_refresh(SECRET, &tokens, &mut t, &mut sl).is_err());
+    }
+
+    // ── Item 5: TOTP known-answer test + reuse of the ESV generator ───
+
+    #[test]
+    fn totp_matches_rfc6238_appendix_b_sha256_vector() {
+        // RFC 6238 Appendix B (HMAC-SHA-256): seed = ASCII
+        // "12345678901234567890123456789012", T = 59 s → counter 1 (30 s
+        // step) → 8-digit TOTP "46119246". This is a real known-answer
+        // check against the standard, not a self-referential determinism
+        // assertion.
+        let seed = b"12345678901234567890123456789012";
+        assert_eq!(totp_at(seed, 1).unwrap(), "46119246");
+    }
 
     #[test]
     fn reused_totp_is_deterministic_and_eight_digits() {
-        // Reuse acvp-harness's generator, which produces the same code
-        // as the ESV reference client's totp.py (confirmed: RFC-4226
-        // dynamic truncation over HMAC-SHA-256, top bit masked, mod
-        // 10^8, 8 digits).
+        // The generator is acvp-harness's, byte-identical to the ESV
+        // reference client's totp.py (RFC-4226 dynamic truncation over
+        // HMAC-SHA-256, top bit masked, mod 10^8, 8 digits).
         let a = totp_at(SECRET, 1).unwrap();
         let b = totp_at(SECRET, 1).unwrap();
         assert_eq!(a, b);

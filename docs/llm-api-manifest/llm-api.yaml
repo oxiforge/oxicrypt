@@ -223,11 +223,11 @@ modules:
       - all algorithm crates
 
   - name: esv-harness
-    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single-token refresh, and bulk refresh over acvp-harness's curl(1)/mTLS transport.
+    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single/bulk token refresh, entropy-source registration, and offline payload preflight over acvp-harness's curl(1)/mTLS transport.
     no_std: false
     entry_points:
-      - "esv-harness login-body --totp-secret <base64>"
-      - "esv-harness bulk-refresh-body --totp-secret <base64> <jwt>..."
+      - "esv-harness login-body < secret.b64"
+      - "esv-harness bulk-refresh-body <jwt>... < secret.b64"
     depends_on:
       - acvp-harness
 
@@ -1195,6 +1195,68 @@ types:
       - name: body
         type: String
         description: Response body as a string.
+
+  # ── esv-harness (ESVP client; out-of-boundary tooling) ──────────────
+
+  - name: EsvTransport
+    module: esv-harness
+    kind: trait
+    description: One-call-per-request ESVP HTTP transport seam (method/path/body/bearer); a live impl wraps acvp-harness's curl(1)/mTLS transport, unit tests supply a recording stub.
+
+  - name: Sleeper
+    module: esv-harness
+    kind: trait
+    description: Injectable wait driving the TOTP-window-reuse retry; ThreadSleeper backs it with std::thread::sleep, tests record durations without blocking.
+
+  - name: ThreadSleeper
+    module: esv-harness
+    kind: struct
+    description: Production Sleeper backed by std::thread::sleep.
+
+  - name: EsvSession
+    module: esv-harness
+    kind: struct
+    description: Authenticated ESV session (token plus monotonic issuance instant plus tunable refresh margin); exposes bearer/elapsed_secs/needs_refresh, refresh with a fresh-login fallback on a 401/403, refresh_if_stale, authenticated_request, and refresh_margin_secs/with_refresh_margin_secs/set_refresh_margin_secs.
+
+  - name: ConditioningComponent
+    module: esv-harness
+    kind: struct
+    description: One entropy-source conditioning component; the vetted and vetted_sha2_256 constructors enforce D2 (a CAVP validationNumber and a recognized ACVTS algorithm name).
+
+  - name: EntropyRegistration
+    module: esv-harness
+    kind: struct
+    description: SP 800-90B entropy-source metadata payload; new_non_iid bakes iidClaim=false and physical=false, to_wire_json serializes the versioned envelope and fails typed on a non-finite float field.
+
+  - name: DataFileRef
+    module: esv-harness
+    kind: struct
+    description: A registration-returned data-file slot (server URL plus its trailing numeric id).
+
+  - name: ConditionedFileRef
+    module: esv-harness
+    kind: struct
+    description: A conditioned-bits data-file slot with its conditioning sequence position (present only for non-vetted conditioning).
+
+  - name: OeRegistration
+    module: esv-harness
+    kind: struct
+    description: One operating environment's registration result (eaId, raw-noise/restart/conditioned data-file slots, and the per-OE scoped JWT).
+
+  - name: RegError
+    module: esv-harness
+    kind: enum
+    description: Fail-typed registration-construction guard (missing CAVP validationNumber, unknown vetted-algorithm name, or a non-finite float field).
+
+  - name: CcError
+    module: esv-harness
+    kind: enum
+    description: One conditioning-component preflight violation (positive-integer bounds, float finiteness/sign, and vetted/non-vetted validationNumber and bijectiveClaim applicability).
+
+  - name: PreflightError
+    module: esv-harness
+    kind: enum
+    description: One registration-payload preflight violation (field bounds, hminEstimate<=bitsPerSample, restart minimums, numberOfOEs, and conditioning sequence positions 1..=n).
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -9710,6 +9772,63 @@ functions:
     description: Reactive-retry decision; true for a single refresh-and-retry only on an unretried 401 or 403.
     signature: "pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool"
 
+  # ── esv-harness ESVP builders / parsers / flows (out-of-boundary tooling) ──
+
+  - name: build_login_body
+    module: esv-harness
+    description: Build the ESVP login body [{esvVersion},{password:<totp>}].
+    signature: "pub fn build_login_body(totp_code: &str) -> String"
+
+  - name: build_single_refresh_body
+    module: esv-harness
+    description: Build the single-token refresh body embedding the current token [{esvVersion},{password,accessToken:<old>}].
+    signature: "pub fn build_single_refresh_body(totp_code: &str, access_token: &str) -> String"
+
+  - name: build_bulk_refresh_body
+    module: esv-harness
+    description: Build the bulk-refresh body carrying an ordered accessToken array [{esvVersion},{password,accessToken:[...]}].
+    signature: "pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> String"
+
+  - name: parse_access_token
+    module: esv-harness
+    description: Fail-closed parse of a single accessToken from the ESVP two-element versioned envelope; rejects the bare-object form the acvp helper accepts.
+    signature: "pub fn parse_access_token(body: &str) -> Result<String, String>"
+
+  - name: parse_bulk_refresh_tokens
+    module: esv-harness
+    description: Parse the ordered accessToken array from a bulk-refresh response, erroring when the returned count differs from the number of tokens submitted.
+    signature: "pub fn parse_bulk_refresh_tokens(body: &str, expected: usize) -> Result<Vec<String>, String>"
+
+  - name: is_totp_window_reuse
+    module: esv-harness
+    description: True for the transient "TOTP Window has already been used" 403 the NIST reference client retries after a 10 s wait.
+    signature: "pub fn is_totp_window_reuse(status: u16, body: &str) -> bool"
+
+  - name: login
+    module: esv-harness
+    description: Perform an ESVP login over an EsvTransport (retrying a TOTP-window-reuse 403 via the Sleeper) and return the authenticated EsvSession.
+    signature: "pub fn login<T: EsvTransport>(totp_secret: &[u8], transport: &mut T, sleeper: &mut dyn Sleeper) -> Result<EsvSession, String>"
+
+  - name: bulk_refresh
+    module: esv-harness
+    description: Bulk-refresh an ordered array of per-object JWTs in one TOTP touch, returning exactly as many refreshed tokens as were submitted.
+    signature: "pub fn bulk_refresh<T: EsvTransport>(totp_secret: &[u8], access_tokens: &[String], transport: &mut T, sleeper: &mut dyn Sleeper) -> Result<Vec<String>, String>"
+
+  - name: parse_registration_response
+    module: esv-harness
+    description: Parse an ESVP registration response into one OeRegistration per operating environment (data-file slots plus the per-OE scoped JWT).
+    signature: "pub fn parse_registration_response(body: &str) -> Result<Vec<OeRegistration>, String>"
+
+  - name: preflight
+    module: esv-harness
+    description: Offline validation of a registration payload against the vendored NIST metadata schema plus the vetted/non-vetted conditioning rules; returns every violation found.
+    signature: "pub fn preflight(reg: &EntropyRegistration) -> Result<(), Vec<PreflightError>>"
+
+  - name: is_vetted_algorithm_name
+    module: esv-harness
+    description: Whether a string is a recognized ACVTS vetted-conditioning algorithm name (VETTED_ALGORITHM_NAMES).
+    signature: "pub fn is_vetted_algorithm_name(name: &str) -> bool"
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────
@@ -9846,6 +9965,92 @@ constants:
     type: u64
     value: "1200"
     description: Session-token age (20 minutes) at which the harness proactively refreshes the 30-minute-TTL token before the next dependent request.
+
+  # ── esv-harness (ESVP client; out-of-boundary tooling) ──────────────
+
+  - name: ESV_VERSION
+    module: esv-harness
+    type: "&str"
+    value: "1.0"
+    description: The only ESVP version the NIST ESV servers support.
+
+  - name: LOGIN_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/login"
+    description: ESVP login endpoint, full server-relative path; the transport base is host-only, so the reference config's /esv/v1 ServerURL must not be used verbatim as the base.
+
+  - name: SINGLE_REFRESH_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/login"
+    description: Single-token refresh endpoint; a same-scope re-login at LOGIN_PATH per the ESVP digest.
+
+  - name: BULK_REFRESH_PATH
+    module: esv-harness
+    type: "&str"
+    value: "/esv/v1/login/refresh"
+    description: ESVP bulk-refresh endpoint, full server-relative path.
+
+  - name: TOTP_REUSE_RETRY_CAP
+    module: esv-harness
+    type: u8
+    value: "3"
+    description: Maximum "TOTP Window has already been used" 403 retries before a typed error (the reference client loops unbounded).
+
+  - name: BITS_PER_SAMPLE_MIN
+    module: esv-harness
+    type: i64
+    value: "1"
+    description: Minimum bitsPerSample (vendored NIST metadata schema).
+
+  - name: BITS_PER_SAMPLE_MAX
+    module: esv-harness
+    type: i64
+    value: "256"
+    description: Maximum bitsPerSample (vendored NIST metadata schema).
+
+  - name: PRIMARY_NOISE_SOURCE_MAX_CHARS
+    module: esv-harness
+    type: usize
+    value: "64"
+    description: Maximum primaryNoiseSource length in characters (vendored NIST metadata schema).
+
+  - name: RESTART_FIELD_MIN
+    module: esv-harness
+    type: i64
+    value: "1"
+    description: Minimum numberOfRestarts / samplesPerRestart (vendored NIST metadata schema).
+
+  - name: CC_POSITIVE_INT_MIN
+    module: esv-harness
+    type: i64
+    value: "1"
+    description: Minimum for a conditioning component's minNin / nw / nOut (vendored NIST metadata schema).
+
+  - name: VETTED_SHA2_256_NAME
+    module: esv-harness
+    type: "&str"
+    value: "SHA2-256"
+    description: Exact ACVTS algorithm name for the vetted SHA2-256 conditioning component.
+
+  - name: REQUIRED_METADATA_FIELDS
+    module: esv-harness
+    type: "&[&str]"
+    value: "8 fields"
+    description: Metadata object's required fields in schema order (primaryNoiseSource, iidClaim, bitsPerSample, hminEstimate, physical, numberOfRestarts, samplesPerRestart, additionalNoiseSources).
+
+  - name: REQUIRED_CC_FIELDS
+    module: esv-harness
+    type: "&[&str]"
+    value: "8 fields"
+    description: Conditioning component's required fields in schema order (sequencePosition, vetted, description, minNin, minHin, nw, nOut, hOut).
+
+  - name: VETTED_ALGORITHM_NAMES
+    module: esv-harness
+    type: "&[&str]"
+    value: "12 names"
+    description: Recognized ACVTS vetted-conditioning algorithm names accepted for a vetted component's description (SHA2 and SHA3/SHAKE families).
 
   - name: EK_LEN
     module: oxicrypt-ml-kem

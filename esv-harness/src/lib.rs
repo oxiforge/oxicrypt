@@ -50,9 +50,12 @@
 //!
 //! # Attended-credential tradition
 //!
-//! Like ACVTS, ESV submissions are attended: credentials (the PIV PIN,
-//! the TOTP secret) never enter this harness's configuration or an AI's
-//! context. This library computes and validates everything; the live,
+//! Like ACVTS, ESV submissions are attended. Credentials (the PIV PIN,
+//! the TOTP secret) are process-lifetime values supplied interactively at
+//! an attended run: the TOTP secret is piped in on **stdin** (see
+//! `src/main.rs`), never passed on argv (world-readable via `/proc`, and
+//! it lands in shell history) and never read from the environment or a
+//! config file. This library computes and validates everything; the live,
 //! credentialed run is a separate attended session.
 
 #![forbid(unsafe_code)]
