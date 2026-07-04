@@ -188,7 +188,7 @@ impl AcvpConfig {
 ///
 /// Uses the standard 30-second time step with T0 = 0. The secret is
 /// expected as raw bytes (the caller decodes from base64 before calling).
-fn totp_now(secret: &[u8]) -> Result<String, String> {
+pub fn totp_now(secret: &[u8]) -> Result<String, String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("system time error: {e}"))?;
@@ -197,7 +197,7 @@ fn totp_now(secret: &[u8]) -> Result<String, String> {
 }
 
 /// Generate an 8-digit TOTP code for a specific time counter value.
-fn totp_at(secret: &[u8], counter: u64) -> Result<String, String> {
+pub fn totp_at(secret: &[u8], counter: u64) -> Result<String, String> {
     let counter_bytes = counter.to_be_bytes();
     // Use oxicrypt's own HMAC-SHA-256 (internal constructor to avoid
     // module-state gating — we're in the harness, not the module).
@@ -299,11 +299,11 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 // ── HTTP transport ────────────────────────────────────────────────
 
 /// HTTP response.
-struct HttpResponse {
+pub struct HttpResponse {
     /// HTTP status code.
-    status: u16,
+    pub status: u16,
     /// Response body as a string.
-    body: String,
+    pub body: String,
 }
 
 /// A persistent `openssl s_client` TLS tunnel for HTTP/1.1 keep-alive
@@ -860,7 +860,7 @@ impl TranscriptLog {
 
 /// Decode the TOTP secret from base64 (RFC 4648 §4). NIST ACVTS demo
 /// distributes the shared secret in this form.
-fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String> {
+pub fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String> {
     base64_decode(s.trim()).map_err(|e| format!("bad TOTP secret base64: {e}"))
 }
 
@@ -932,18 +932,18 @@ fn login_with_totp(
 /// TTL is 30 minutes (observed `exp − iat` = 1800 s); 20 minutes leaves
 /// a wide margin for the request plus verdict polling while never
 /// triggering on short computes.
-const TOKEN_REFRESH_MARGIN_SECS: u64 = 20 * 60;
+pub const TOKEN_REFRESH_MARGIN_SECS: u64 = 20 * 60;
 
 /// Pure proactive-refresh decision — split out so the threshold logic
 /// is unit-testable without a live token.
-fn token_needs_refresh(elapsed_secs: u64) -> bool {
+pub fn token_needs_refresh(elapsed_secs: u64) -> bool {
     elapsed_secs >= TOKEN_REFRESH_MARGIN_SECS
 }
 
 /// Pure reactive-retry decision for a rejected submit: one refresh-and-
 /// retry is allowed per submit, and only for the two statuses the demo
 /// server uses for an expired/unauthorized bearer.
-fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool {
+pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool {
     !already_retried && (status == 401 || status == 403)
 }
 
@@ -1808,7 +1808,7 @@ fn write_session_summary(
 ///
 /// The response is typically:
 /// `[{"acvVersion":"1.0"},{"accessToken":"...","large...":...}]`
-fn extract_access_token(resp: &JsonValue) -> Result<String, String> {
+pub fn extract_access_token(resp: &JsonValue) -> Result<String, String> {
     // Try array-of-objects shape
     if let Some(arr) = resp.as_array() {
         for item in arr {

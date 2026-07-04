@@ -222,6 +222,15 @@ modules:
       - oxicrypt-drbg
       - all algorithm crates
 
+  - name: esv-harness
+    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single-token refresh, and bulk refresh over acvp-harness's curl(1)/mTLS transport.
+    no_std: false
+    entry_points:
+      - "esv-harness login-body --totp-secret <base64>"
+      - "esv-harness bulk-refresh-body --totp-secret <base64> <jwt>..."
+    depends_on:
+      - acvp-harness
+
   - name: oxicrypt-ffi
     description: C ABI wrappers (extern "C") for language bindings, built as cdylib and staticlib.
     no_std: false
@@ -1174,6 +1183,18 @@ types:
     module: oxicrypt-entropy
     kind: struct
     description: Pipeline skeleton bound to one NoiseSource and one validated min-entropy claim; health-test and conditioning stages attach as they land.
+
+  - name: HttpResponse
+    module: acvp-harness
+    kind: struct
+    description: Harness transport HTTP response (status plus body string); exposed as the ESV harness transport-seam return type.
+    fields:
+      - name: status
+        type: u16
+        description: HTTP status code.
+      - name: body
+        type: String
+        description: Response body as a string.
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -9657,6 +9678,38 @@ functions:
       handles_secrets: true
       fips_approved: true
 
+  # ── acvp-harness transport primitives (out-of-boundary tooling; ESV harness seam) ──
+
+  - name: totp_now
+    module: acvp-harness
+    description: Generate the current 8-digit HMAC-SHA-256 TOTP code (RFC 6238, 30-second step, T0=0) from a raw secret, matching the NIST demo-server expectation.
+    signature: "pub fn totp_now(secret: &[u8]) -> Result<String, String>"
+
+  - name: totp_at
+    module: acvp-harness
+    description: Generate the deterministic 8-digit HMAC-SHA-256 TOTP code for a specific 30-second time counter; used for fixture tests.
+    signature: "pub fn totp_at(secret: &[u8], counter: u64) -> Result<String, String>"
+
+  - name: decode_totp_secret
+    module: acvp-harness
+    description: Decode a base64 (RFC 4648 §4) TOTP shared secret to raw bytes.
+    signature: "pub fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String>"
+
+  - name: extract_access_token
+    module: acvp-harness
+    description: Extract a string accessToken from an ACVP/ESV versioned-array or flat-object login/refresh response.
+    signature: "pub fn extract_access_token(resp: &JsonValue) -> Result<String, String>"
+
+  - name: token_needs_refresh
+    module: acvp-harness
+    description: Proactive-refresh decision; true once a session token's age reaches TOKEN_REFRESH_MARGIN_SECS.
+    signature: "pub fn token_needs_refresh(elapsed_secs: u64) -> bool"
+
+  - name: submit_should_refresh_retry
+    module: acvp-harness
+    description: Reactive-retry decision; true for a single refresh-and-retry only on an unretried 401 or 403.
+    signature: "pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool"
+
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────
@@ -9787,6 +9840,12 @@ constants:
     type: usize
     value: "64"
     description: "ECDSA P-256 signature: r (32 bytes) || s (32 bytes)."
+
+  - name: TOKEN_REFRESH_MARGIN_SECS
+    module: acvp-harness
+    type: u64
+    value: "1200"
+    description: Session-token age (20 minutes) at which the harness proactively refreshes the 30-minute-TTL token before the next dependent request.
 
   - name: EK_LEN
     module: oxicrypt-ml-kem
