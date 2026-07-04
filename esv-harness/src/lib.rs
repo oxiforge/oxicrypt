@@ -28,6 +28,17 @@
 //! a single POST that refreshes an array of per-object JWTs in one TOTP
 //! touch, for certify-time freshness (see [`login::bulk_refresh`]).
 //!
+//! # Registration (slice S2)
+//!
+//! [`registration`] builds the ESVP §3 entropy-source metadata payload
+//! (multi-OE via `numberOfOEs`, the vetted SHA2-256 conditioning entry
+//! with its CAVP `validationNumber` as required config — D2) and parses
+//! the per-OE registration response. [`preflight`] validates that payload
+//! **offline, before any server contact**, against a constraint table
+//! transcribed from — and drift-guarded against — the vendored NIST
+//! metadata schema (`vendor/entropy-source-metadata-schema.json`,
+//! ESV-Server `59e0438`).
+//!
 //! # Protocol sources
 //!
 //! Endpoint paths, envelope shapes, and TOTP parameters are transcribed
@@ -47,3 +58,5 @@
 #![forbid(unsafe_code)]
 
 pub mod login;
+pub mod preflight;
+pub mod registration;

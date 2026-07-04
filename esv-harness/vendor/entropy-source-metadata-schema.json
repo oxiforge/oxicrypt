@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "entropy source metadata schema",
+  "description": "JSON schema decribing a valid entropy source metatadata submission for NIST ESV",
+  "type": "array",
+  "items": [
+    {
+      "type": "object",
+      "properties": {
+        "esvVersion": {
+          "description": "esv Version currently 1.0 and no other version is supported",
+          "type": "string",
+          "const": "1.0"
+        }
+      },
+      "required": ["esvVersion"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "primaryNoiseSource": {
+          "description": "brief description of noise source (64 characters)",
+          "type": "string",
+          "maxLength": 64
+        },
+        "iidClaim": {
+          "description": "whether an IID claim is made on the noise source",
+          "type": "boolean"
+        },
+        "bitsPerSample": {
+          "description": "number of bits in a sample output of the noise source",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "hminEstimate": {
+          "description": "estimate of the entropy in one sample out of the noise source, value must be between 0.0 and value of bitsPerSample",
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 256.0
+        },
+        "physical": {
+          "description": "whether the noise source is physical or non-physical",
+          "type": "boolean"
+        },
+        "numberOfRestarts": {
+          "description": "number of restarts used to perform the restart tests",
+          "type": "integer",
+          "minimum": 1
+        },
+        "samplesPerRestart": {
+          "description": "number of samples generated per restart to perform the restart tests",
+          "type": "integer",
+          "minimum": 1
+        },
+        "additionalNoiseSources": {
+          "description": "whether the entropy source includes additional noise sources according to Section 3.1.6 of SP 800-90B",
+          "type": "boolean"
+        },
+        "conditioningComponent": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sequencePosition": {
+                "description": "ordered list with other conditioning components on where in the sequence of operations the individual component occurs, must be 1, 2, ...n for n elements in this array",
+                "type": "integer",
+                "minimum": 1
+              },
+              "vetted": {
+                "description": "whether the conditioning components meets the SP 800-90B definition of vetted",
+                "type": "boolean"
+              },
+              "bijectiveClaim": {
+                "description": "if non-vetted, whether the conditioning component is claimed to be bijective",
+                "type": "boolean"
+              },
+              "description": {
+                "description": "brief description of the conditioning component, or if vetted, the ACVP algorithm name",
+                "type": "string"
+              },
+              "minNin": {
+                "description": "minimum number of bits required to run the conditioning component",
+                "type": "integer",
+                "minimum": 1
+              },
+              "minHin": {
+                "description": "minimum amount of entropy required to run the conditioning component",
+                "type": "number",
+                "minimum": 0.0
+              },
+              "nw": {
+                "description": "narrowest width of the conditioning component",
+                "type": "integer",
+                "minimum": 1
+              },
+              "nOut": {
+                "description": "output size in bits of the conditioning component",
+                "type": "integer",
+                "minimum": 1
+              },
+              "hOut": {
+                "description": "amount of entropy in bits output by the conditioning component",
+                "type": "number",
+                "minimum": 0.0
+              }
+            },
+            "required": [
+              "sequencePosition",
+              "vetted",
+              "description",
+              "minNin",
+              "minHin",
+              "nw",
+              "nOut",
+              "hOut"
+            ]
+          }
+        }
+      },
+      "required": [
+        "primaryNoiseSource",
+        "iidClaim",
+        "bitsPerSample",
+        "hminEstimate",
+        "physical",
+        "numberOfRestarts",
+        "samplesPerRestart",
+        "additionalNoiseSources"
+      ]
+    }
+  ]
+}
