@@ -545,6 +545,54 @@ pub fn to_pretty_string(value: &JsonValue) -> String {
     out
 }
 
+/// Serialize a JSON value to a compact, single-line string — no
+/// indentation, no newlines between tokens, one space nowhere.
+///
+/// Pairs with [`to_pretty_string`]: identical value model and identical
+/// string escaping (via the same `write_string`, so a string field never
+/// emits a raw newline), but the output occupies exactly one line. This is
+/// the form the ESV harness's session store appends to its JSON-lines event
+/// log, where every record must be exactly one line so a torn final write
+/// costs only the last event.
+#[must_use]
+pub fn to_compact_string(value: &JsonValue) -> String {
+    let mut out = String::new();
+    write_value_compact(&mut out, value);
+    out
+}
+
+fn write_value_compact(out: &mut String, value: &JsonValue) {
+    match value {
+        JsonValue::Null => out.push_str("null"),
+        JsonValue::Bool(true) => out.push_str("true"),
+        JsonValue::Bool(false) => out.push_str("false"),
+        JsonValue::Number(n) => out.push_str(&n.to_string()),
+        JsonValue::String(s) => write_string(out, s),
+        JsonValue::Array(a) => {
+            out.push('[');
+            for (i, v) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_value_compact(out, v);
+            }
+            out.push(']');
+        }
+        JsonValue::Object(o) => {
+            out.push('{');
+            for (i, (k, v)) in o.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_string(out, k);
+                out.push(':');
+                write_value_compact(out, v);
+            }
+            out.push('}');
+        }
+    }
+}
+
 fn write_value(out: &mut String, value: &JsonValue, indent: usize) {
     match value {
         JsonValue::Null => out.push_str("null"),
@@ -729,6 +777,32 @@ mod tests {
         let v = parse(src).unwrap();
         let out = to_pretty_string(&v);
         assert_eq!(out, src);
+    }
+
+    #[test]
+    fn compact_is_single_line_and_round_trips() {
+        let v = parse("{\n  \"a\": 1,\n  \"b\": [2, 3],\n  \"c\": \"x\"\n}").unwrap();
+        let compact = to_compact_string(&v);
+        // No structural whitespace at all.
+        assert_eq!(compact, r#"{"a":1,"b":[2,3],"c":"x"}"#);
+        assert!(!compact.contains('\n'), "compact output is one line");
+        // And it re-parses to the same value.
+        assert_eq!(parse(&compact).unwrap(), v);
+    }
+
+    #[test]
+    fn compact_escapes_newlines_in_strings() {
+        // A string field carrying a newline must be escaped, so the compact
+        // record stays a single physical line (the JSON-lines invariant).
+        let compact = to_compact_string(&s("line1\nline2"));
+        assert_eq!(compact, r#""line1\nline2""#);
+        assert!(!compact.contains('\n'));
+    }
+
+    #[test]
+    fn compact_empty_containers() {
+        assert_eq!(to_compact_string(&JsonValue::Array(vec![])), "[]");
+        assert_eq!(to_compact_string(&JsonValue::Object(vec![])), "{}");
     }
 
     #[test]

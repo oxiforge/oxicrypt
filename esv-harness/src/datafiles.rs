@@ -332,40 +332,57 @@ impl DataFileUpload {
     /// that does not occur in the payload. (Filenames are module-controlled
     /// and not quote-escaped here.)
     pub fn to_multipart(&self, boundary: &str) -> (String, Vec<u8>) {
-        let content_type = format!("multipart/form-data; boundary={boundary}");
-        let mut body: Vec<u8> = Vec::new();
-        for part in self.parts() {
-            push_str(&mut body, &format!("--{boundary}\r\n"));
-            match part {
-                MultipartPart::Field { name, value } => {
-                    push_str(
-                        &mut body,
-                        &format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"),
-                    );
-                    push_str(&mut body, &value);
-                    push_str(&mut body, "\r\n");
-                }
-                MultipartPart::File {
-                    field_name,
-                    filename,
-                    content_type: part_ct,
-                    bytes,
-                } => {
-                    push_str(
-                        &mut body,
-                        &format!(
-                            "Content-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"\r\n"
-                        ),
-                    );
-                    push_str(&mut body, &format!("Content-Type: {part_ct}\r\n\r\n"));
-                    body.extend_from_slice(bytes);
-                    push_str(&mut body, "\r\n");
-                }
+        serialize_multipart(&self.parts(), boundary)
+    }
+}
+
+/// Serialize an ordered list of [`MultipartPart`]s into a raw
+/// `multipart/form-data` body, returning the `Content-Type` header value
+/// (carrying `boundary`) and the body bytes.
+///
+/// This is the single encoder both the data-file upload
+/// ([`DataFileUpload::to_multipart`]) and the supporting-document upload
+/// ([`crate::supportdocs::SupportingDocUpload::to_multipart`]) share, so
+/// the two upload paths cannot drift on the wire format. `boundary` is
+/// caller-supplied so the serialization is deterministic for fixtures; live
+/// wiring at the attended smoke chooses a boundary that does not occur in
+/// the payload. (Part names/filenames are module-controlled and not
+/// quote-escaped here.)
+#[must_use]
+pub fn serialize_multipart(parts: &[MultipartPart<'_>], boundary: &str) -> (String, Vec<u8>) {
+    let content_type = format!("multipart/form-data; boundary={boundary}");
+    let mut body: Vec<u8> = Vec::new();
+    for part in parts {
+        push_str(&mut body, &format!("--{boundary}\r\n"));
+        match part {
+            MultipartPart::Field { name, value } => {
+                push_str(
+                    &mut body,
+                    &format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"),
+                );
+                push_str(&mut body, value);
+                push_str(&mut body, "\r\n");
+            }
+            MultipartPart::File {
+                field_name,
+                filename,
+                content_type: part_ct,
+                bytes,
+            } => {
+                push_str(
+                    &mut body,
+                    &format!(
+                        "Content-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"\r\n"
+                    ),
+                );
+                push_str(&mut body, &format!("Content-Type: {part_ct}\r\n\r\n"));
+                body.extend_from_slice(bytes);
+                push_str(&mut body, "\r\n");
             }
         }
-        push_str(&mut body, &format!("--{boundary}--\r\n"));
-        (content_type, body)
     }
+    push_str(&mut body, &format!("--{boundary}--\r\n"));
+    (content_type, body)
 }
 
 /// Append a string's bytes to a byte buffer.

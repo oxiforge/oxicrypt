@@ -59,6 +59,22 @@
 //! the status decision function are pure; the polling loop is generic over
 //! the transport trait with the injectable sleeper.
 //!
+//! # Supporting docs, certify, and the session store (slice S4)
+//!
+//! [`supportdocs`] builds the ESVP §6.2 supporting-document upload (the
+//! `sdType` classification, a fail-closed PDF-only content guard, and the
+//! multipart request over the shared [`datafiles::serialize_multipart`]
+//! encoder). [`certify`] builds the three §7 request bodies — the full
+//! submission, the AddOE append, and the UpdatePUD swap — enforcing at
+//! construction the exactly-one-EAR / exactly-one-PUD / at-most-one-DCA
+//! supporting-document constraints and the required ACVTS `moduleId` +
+//! per-assessment `oeId` (typed required-config, no defaults). [`session`]
+//! is the per-submission session directory (the `acvp-harness` `SessionDir`
+//! philosophy): an append-only JSON-lines event log makes the submission's
+//! progress durable **before** each network submit, so a fresh process can
+//! reload it and know exactly where the submission stands (registered /
+//! files-uploaded / docs-uploaded / certified).
+//!
 //! # Protocol sources
 //!
 //! Endpoint paths, envelope shapes, and TOTP parameters are transcribed
@@ -80,7 +96,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod certify;
 pub mod datafiles;
 pub mod login;
 pub mod preflight;
 pub mod registration;
+pub mod session;
+pub mod supportdocs;
