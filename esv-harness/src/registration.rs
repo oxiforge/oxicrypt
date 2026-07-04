@@ -61,7 +61,9 @@
 //! response is always an array, one element per OE, even for a single OE.
 
 use acvp_harness::json::{self, JsonValue};
+use oxicrypt_entropy::h::MinEntropy;
 
+use crate::hmin;
 use crate::preflight;
 
 /// The registration endpoint path — the **full server-relative path**;
@@ -251,8 +253,18 @@ pub struct EntropyRegistration {
     pub iid_claim: bool,
     /// Bits in one noise-source sample (1..=256).
     pub bits_per_sample: i64,
-    /// Claimed min-entropy per sample (0.0..=`bits_per_sample`).
+    /// Claimed min-entropy per sample (0.0..=`bits_per_sample`). Used for the
+    /// payload preflight bounds and for the wire value **unless**
+    /// [`Self::hmin_exact`] is set (an assessment outcome is a plain `f64`;
+    /// the module's own fixed-point claim takes the exact path).
     pub hmin_estimate: f64,
+    /// The optional **exact** fixed-point min-entropy claim
+    /// ([`oxicrypt_entropy::h::MinEntropy`], 1/256-bit steps). When `Some`,
+    /// [`Self::to_wire_json`] renders `hminEstimate` from it as an exact
+    /// decimal via [`crate::hmin`] (no `f64` on the claim path); when `None`,
+    /// the `f64` [`Self::hmin_estimate`] is rendered. Set both consistently
+    /// with [`Self::set_hmin_exact`]. (ISC-109.)
+    pub hmin_exact: Option<MinEntropy>,
     /// Whether the noise source is physical — `false`: the oxicrypt
     /// source is CPU timing jitter (non-physical). The rationale lives in
     /// the noise-source description, not here (ISC-112).
@@ -289,6 +301,7 @@ impl EntropyRegistration {
             iid_claim: false,
             bits_per_sample,
             hmin_estimate,
+            hmin_exact: None,
             physical: false,
             number_of_restarts,
             samples_per_restart,
@@ -296,6 +309,17 @@ impl EntropyRegistration {
             number_of_oes: None,
             conditioning: Vec::new(),
         }
+    }
+
+    /// Set the **exact** fixed-point min-entropy claim (ISC-109). Records the
+    /// [`MinEntropy`] so [`Self::to_wire_json`] emits `hminEstimate` as an
+    /// exact decimal, and mirrors it into the `f64` [`Self::hmin_estimate`]
+    /// (exactly — every 1/256-bit step is dyadic) so the payload preflight's
+    /// `<= bitsPerSample` bound still applies to the same value.
+    pub fn set_hmin_exact(&mut self, h: MinEntropy) {
+        self.hmin_exact = Some(h);
+        // Exact: steps/256 is a dyadic rational, representable without loss.
+        self.hmin_estimate = f64::from(h.steps()) / f64::from(oxicrypt_entropy::h::H_STEPS_PER_BIT);
     }
 
     /// Serialize the registration to its ESVP wire body: the versioned
@@ -331,11 +355,17 @@ impl EntropyRegistration {
             }
         }
 
+        // hminEstimate: the exact fixed-point path when set (ISC-109 —
+        // integer-derived decimal, no f64 on the claim path), else the f64.
+        let hmin_wire = match self.hmin_exact {
+            Some(h) => Wire::Raw(hmin::serialize_hmin(h)),
+            None => Wire::Float(self.hmin_estimate),
+        };
         let mut fields: Vec<(&str, Wire<'_>)> = vec![
             ("primaryNoiseSource", Wire::Str(&self.primary_noise_source)),
             ("iidClaim", Wire::Bool(self.iid_claim)),
             ("bitsPerSample", Wire::Int(self.bits_per_sample)),
-            ("hminEstimate", Wire::Float(self.hmin_estimate)),
+            ("hminEstimate", hmin_wire),
             ("physical", Wire::Bool(self.physical)),
             ("numberOfRestarts", Wire::Int(self.number_of_restarts)),
             ("samplesPerRestart", Wire::Int(self.samples_per_restart)),
@@ -394,6 +424,10 @@ enum Wire<'a> {
     Str(&'a str),
     Int(i64),
     Float(f64),
+    /// A pre-formatted, verbatim numeric token (e.g. the exact `hminEstimate`
+    /// decimal from [`crate::hmin::serialize_hmin`]). Emitted as-is; the
+    /// producer guarantees it is a valid JSON number.
+    Raw(String),
     Bool(bool),
     Obj(Vec<(&'a str, Wire<'a>)>),
     Arr(Vec<Wire<'a>>),
@@ -409,6 +443,7 @@ fn render_wire(w: &Wire<'_>) -> String {
         Wire::Int(n) => json::to_pretty_string(&JsonValue::Number(*n)),
         Wire::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
         Wire::Float(f) => format!("{f}"),
+        Wire::Raw(token) => token.clone(),
         Wire::Obj(fields) => {
             let inner = fields
                 .iter()
@@ -738,6 +773,49 @@ mod tests {
         // Unquoted decimal number, not a string.
         assert!(body.contains("\"hminEstimate\":0.7552"), "{body}");
         assert!(!body.contains("\"hminEstimate\":\"0.7552\""), "{body}");
+    }
+
+    #[test]
+    fn set_hmin_exact_renders_the_exact_decimal_and_mirrors_the_f64() {
+        // 193/256 bits = 0.75390625 exactly; under a 4-bit sample.
+        let mut reg = EntropyRegistration::new_non_iid("jitter", 4, 0.0, 1000, 1000, false);
+        reg.conditioning.push(
+            ConditioningComponent::vetted_sha2_256(1, "A1234", 384, 0.0, 256, 256, 0.0).unwrap(),
+        );
+        reg.set_hmin_exact(MinEntropy::from_steps(193));
+
+        // The f64 mirror is set exactly (used by the payload preflight bound).
+        assert_eq!(reg.hmin_estimate, 0.753_906_25);
+
+        let body = reg.to_wire_json().unwrap();
+        // The wire carries the exact integer-derived decimal, unquoted — and
+        // NOT the shared integer-only codec's rejected float. Re-read it with
+        // the lossless jsonlite reader: the fractional hminEstimate makes the
+        // integer-only codec unusable, which is exactly why this exact path
+        // renders a verbatim token.
+        assert!(body.contains("\"hminEstimate\":0.75390625"), "{body}");
+        let parsed = crate::jsonlite::parse(&body).unwrap();
+        let meta = &parsed.as_array().unwrap()[1];
+        assert_eq!(
+            meta.get("hminEstimate")
+                .and_then(crate::jsonlite::JsonLite::as_number_str),
+            Some("0.75390625")
+        );
+        // The exact path did not disturb the other fields.
+        assert_eq!(
+            meta.get("bitsPerSample")
+                .and_then(crate::jsonlite::JsonLite::as_number_str),
+            Some("4")
+        );
+    }
+
+    #[test]
+    fn set_hmin_exact_on_a_whole_bit_renders_a_bare_integer() {
+        let mut reg = EntropyRegistration::new_non_iid("jitter", 8, 0.0, 1000, 1000, false);
+        reg.set_hmin_exact(MinEntropy::from_bits(2));
+        let body = reg.to_wire_json().unwrap();
+        assert!(body.contains("\"hminEstimate\":2"), "{body}");
+        assert!(!body.contains("\"hminEstimate\":2.0"), "{body}");
     }
 
     #[test]

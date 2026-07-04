@@ -12,7 +12,10 @@ GitHub issue and is removed from here**.
 
 ## Designs
 
-*(design-first epics — one-line pointers to `docs/design/*.md`. The AVX2/AVX-512 Keccak epic is now tracked in [#110](https://github.com/oxiforge/oxicrypt/issues/110); design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md).)*
+*(design-first epics — one-line pointers to `docs/design/*.md`.)*
+
+- **AVX2/AVX-512 Keccak** — tracked in [#110](https://github.com/oxiforge/oxicrypt/issues/110); design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-keccak.md).
+- **ESV submission client (`esv-harness`)** — design-of-record at [`docs/design/esv-harness.md`](docs/design/esv-harness.md).
 
 ## Features
 

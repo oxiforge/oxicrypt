@@ -20,10 +20,36 @@
 //! so it cannot police this — the builder ([`crate::registration`]) and
 //! this preflight do.
 //!
-//! Scope note: this is the **payload** preflight (registration metadata).
-//! Data-file preflight (1M byte-padded samples, sample-size bounds) is a
-//! later slice (S5); the NIST `validation_rules/` DSL is not executed here
-//! (that would need a rule interpreter — deferred with it).
+//! # Two preflights: payloads and files
+//!
+//! [`preflight`] validates the registration **metadata payload** (the rules
+//! above). [`preflight_data_file`] validates a **data file on disk** against
+//! the ESV wire constraints — exactly 1,000,000 one-byte-per-sample symbols,
+//! symbol values within the effective `min(bitsPerSample, 8)` width, the
+//! mandated 1000×1000 restart layout, and `DataFileSampleSize` consistency.
+//! Both run **before any server contact**, at zero credential cost.
+//!
+//! The file constraints are checked against the module's own SP 800-90B
+//! constants — [`oxicrypt_entropy::sp800_90b::RAW_DATA_SAMPLE_COUNT`] (the
+//! 1,000,000-sample ESV wire format) and the §3.1.4.1 restart dimensions
+//! [`RESTART_ROUNDS`](oxicrypt_entropy::sp800_90b::RESTART_ROUNDS) ×
+//! [`RESTART_SAMPLES_PER_ROUND`](oxicrypt_entropy::sp800_90b::RESTART_SAMPLES_PER_ROUND)
+//! — the *same* constants the module's dataset emitters produce against
+//! (entropy-crate ISC-97/99/108: `oxicrypt_entropy::collection`), so the
+//! validator and the emitter cannot drift. The reference client applies one
+//! `VALID_FILE_SIZE = 1_000_000` byte-size check to raw-noise and restart
+//! files alike (ESV-Server `59e0438`, `client/utilities/utils.py`;
+//! `1000 × 1000 = 1_000_000`).
+//!
+//! Scope note: the NIST `validation_rules/` DSL is not *executed* here (that
+//! would need a rule interpreter); the machine-checkable rules it encodes are
+//! transcribed and drift-guarded (payloads) or checked against the cited
+//! constants (files). Conditioned-bits data files are out of scope for the
+//! vetted oxicrypt path, which uploads none (ISC-107).
+
+use oxicrypt_entropy::sp800_90b::{
+    RAW_DATA_SAMPLE_COUNT, RESTART_ROUNDS, RESTART_SAMPLES_PER_ROUND,
+};
 
 use crate::registration::{ConditioningComponent, EntropyRegistration};
 
@@ -363,6 +389,171 @@ fn conditioning_errors(cc: &ConditioningComponent) -> Vec<CcError> {
     }
 
     errs
+}
+
+// ── Data-file preflight (files half of ISC-110) ───────────────────────
+
+/// Which data-file slot a file fills. Both carry exactly 1,000,000
+/// one-byte-per-sample symbols; only the restart file adds the 1000×1000
+/// dimension cross-check. (The vetted oxicrypt path uploads no conditioned
+/// file — ISC-107 — so that slot has no file preflight.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataFileKind {
+    /// The raw-noise data file.
+    RawNoise,
+    /// The restart-test data file (1000 restarts × 1000 samples).
+    Restart,
+}
+
+/// A single data-file preflight violation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilePreflightError {
+    /// The file's byte length — which, at one byte per sample, is the sample
+    /// count — is not the required 1,000,000
+    /// ([`RAW_DATA_SAMPLE_COUNT`](oxicrypt_entropy::sp800_90b::RAW_DATA_SAMPLE_COUNT)).
+    WrongSampleCount {
+        /// The file's actual byte length.
+        actual: usize,
+        /// The required sample count (1,000,000).
+        expected: u32,
+    },
+    /// A sample byte does not fit in the effective `min(bitsPerSample, 8)`
+    /// width — reported for the first offending symbol (a byte-padded sample
+    /// must never set a bit above its declared width). Entropy-crate ISC-108
+    /// is the emitter side; this is the validator side.
+    SampleValueTooWide {
+        /// Byte offset of the first over-wide sample.
+        index: usize,
+        /// Its value.
+        value: u8,
+        /// The effective width in bits (`min(bitsPerSample, 8)`).
+        width: u32,
+    },
+    /// A restart file whose registration `numberOfRestarts` ×
+    /// `samplesPerRestart` is not the mandated 1000 × 1000 layout
+    /// (SP 800-90B §3.1.4.1;
+    /// [`RESTART_ROUNDS`](oxicrypt_entropy::sp800_90b::RESTART_ROUNDS) ×
+    /// [`RESTART_SAMPLES_PER_ROUND`](oxicrypt_entropy::sp800_90b::RESTART_SAMPLES_PER_ROUND)).
+    /// Entropy-crate ISC-99 is the emitter-side consistency; this is the
+    /// validator side.
+    RestartDimensionsMismatch {
+        /// The registration's `numberOfRestarts`.
+        number_of_restarts: i64,
+        /// The registration's `samplesPerRestart`.
+        samples_per_restart: i64,
+        /// The required restart rounds (1000).
+        expected_rounds: u32,
+        /// The required samples per round (1000).
+        expected_samples_per_round: u32,
+    },
+    /// The declared `DataFileSampleSize` disagrees with the effective width
+    /// `min(bitsPerSample, 8)` derived from the registration (the server
+    /// interprets the file by this width, so a mismatch mis-reads the data).
+    SampleSizeInconsistent {
+        /// The declared `DataFileSampleSize`.
+        declared: u8,
+        /// The effective width the registration implies.
+        expected: u32,
+    },
+}
+
+/// The effective per-sample width for a `bitsPerSample`: `min(bitsPerSample,
+/// 8)`, since a byte-padded sample holds at most eight bits. Clamped into
+/// `1..=8` — a `bitsPerSample` outside the schema's `1..=256` is flagged by
+/// the payload [`preflight`], so run that first; here the clamp keeps the
+/// width well-defined.
+#[must_use]
+pub fn effective_sample_width(bits_per_sample: i64) -> u32 {
+    let clamped = bits_per_sample.clamp(1, 8);
+    // 1..=8 after clamping, so the cast is exact and lossless.
+    u32::try_from(clamped).unwrap_or(8)
+}
+
+/// Preflight a data file on disk against the ESV wire constraints, **before
+/// any server contact**. Returns every violation found (empty ⇒ `Ok`).
+///
+/// Checks, against the module's own cited constants so validator and emitter
+/// cannot drift:
+///
+/// 1. **Sample count / byte padding** — `bytes.len()` (one byte per sample)
+///    must equal [`RAW_DATA_SAMPLE_COUNT`](oxicrypt_entropy::sp800_90b::RAW_DATA_SAMPLE_COUNT)
+///    (1,000,000).
+/// 2. **Symbol width** — every sample must fit in the effective
+///    `min(bitsPerSample, 8)` width (the first offender is reported).
+/// 3. **Restart layout** (restart files only) — the registration's
+///    `numberOfRestarts` × `samplesPerRestart` must be the mandated
+///    1000 × 1000 (SP 800-90B §3.1.4.1).
+/// 4. **`DataFileSampleSize` consistency** — when a per-file sample width is
+///    declared, it must equal the effective width the registration implies.
+///
+/// `declared_sample_size` is the `DataFileSampleSize` the upload would carry
+/// (see [`crate::datafiles::DataFileUpload::sample_size`]); pass `None` when
+/// the field is omitted.
+///
+/// # Errors
+/// A non-empty `Vec<FilePreflightError>` listing each violation.
+pub fn preflight_data_file(
+    bytes: &[u8],
+    kind: DataFileKind,
+    reg: &EntropyRegistration,
+    declared_sample_size: Option<u8>,
+) -> Result<(), Vec<FilePreflightError>> {
+    let mut errors = Vec::new();
+    let width = effective_sample_width(reg.bits_per_sample);
+
+    // 1. Sample count == file byte length (one byte per sample).
+    if bytes.len() != RAW_DATA_SAMPLE_COUNT as usize {
+        errors.push(FilePreflightError::WrongSampleCount {
+            actual: bytes.len(),
+            expected: RAW_DATA_SAMPLE_COUNT,
+        });
+    }
+
+    // 2. Every symbol fits in the effective width (report the first offender).
+    // A full byte (width 8) admits every value, so only narrower widths gate.
+    if width < 8 {
+        let ceiling = 1u32 << width; // width ∈ 1..=7 here → 2..=128, no overflow
+        if let Some((index, &value)) = bytes
+            .iter()
+            .enumerate()
+            .find(|&(_, &b)| u32::from(b) >= ceiling)
+        {
+            errors.push(FilePreflightError::SampleValueTooWide {
+                index,
+                value,
+                width,
+            });
+        }
+    }
+
+    // 3. Restart files: the 1000 × 1000 layout (SP 800-90B §3.1.4.1).
+    if kind == DataFileKind::Restart
+        && (reg.number_of_restarts != i64::from(RESTART_ROUNDS)
+            || reg.samples_per_restart != i64::from(RESTART_SAMPLES_PER_ROUND))
+    {
+        errors.push(FilePreflightError::RestartDimensionsMismatch {
+            number_of_restarts: reg.number_of_restarts,
+            samples_per_restart: reg.samples_per_restart,
+            expected_rounds: RESTART_ROUNDS,
+            expected_samples_per_round: RESTART_SAMPLES_PER_ROUND,
+        });
+    }
+
+    // 4. Declared DataFileSampleSize must match the effective width.
+    if let Some(declared) = declared_sample_size
+        && u32::from(declared) != width
+    {
+        errors.push(FilePreflightError::SampleSizeInconsistent {
+            declared,
+            expected: width,
+        });
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 #[cfg(test)]
@@ -705,5 +896,161 @@ mod tests {
     fn vetted_name_constant_is_recognized() {
         assert!(is_vetted_algorithm_name(VETTED_SHA2_256_NAME));
         assert!(!is_vetted_algorithm_name("SHA-256"));
+    }
+
+    // ── Data-file preflight (files half of ISC-110) ───────────────────
+
+    /// A registration with a 4-bit sample (the oxicrypt pilot shape), whose
+    /// restart dimensions are the mandated 1000 × 1000.
+    fn reg_4bit() -> EntropyRegistration {
+        valid() // bits_per_sample = 4, number_of_restarts = samples_per_restart = 1000
+    }
+
+    /// A synthetic 1,000,000-byte file whose bytes all fit in 4 bits.
+    fn good_4bit_file() -> Vec<u8> {
+        (0..RAW_DATA_SAMPLE_COUNT as usize)
+            .map(|i| u8::try_from(i % 16).unwrap()) // 0..=15 → all fit in 4 bits
+            .collect()
+    }
+
+    #[test]
+    fn effective_width_is_min_bits_8_clamped() {
+        assert_eq!(effective_sample_width(1), 1);
+        assert_eq!(effective_sample_width(4), 4);
+        assert_eq!(effective_sample_width(8), 8);
+        assert_eq!(effective_sample_width(256), 8); // capped at 8
+        assert_eq!(effective_sample_width(0), 1); // clamped up
+        assert_eq!(effective_sample_width(-5), 1);
+    }
+
+    #[test]
+    fn good_raw_and_restart_files_pass() {
+        let reg = reg_4bit();
+        let file = good_4bit_file();
+        assert_eq!(
+            preflight_data_file(&file, DataFileKind::RawNoise, &reg, Some(4)),
+            Ok(())
+        );
+        assert_eq!(
+            preflight_data_file(&file, DataFileKind::Restart, &reg, Some(4)),
+            Ok(())
+        );
+        // The DataFileSampleSize field may be omitted.
+        assert_eq!(
+            preflight_data_file(&file, DataFileKind::RawNoise, &reg, None),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn wrong_sample_count_is_caught() {
+        let reg = reg_4bit();
+        // One byte short of the required million.
+        let short = vec![0u8; RAW_DATA_SAMPLE_COUNT as usize - 1];
+        let errs = preflight_data_file(&short, DataFileKind::RawNoise, &reg, None).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            FilePreflightError::WrongSampleCount {
+                actual,
+                expected: 1_000_000
+            } if *actual == RAW_DATA_SAMPLE_COUNT as usize - 1
+        )));
+    }
+
+    #[test]
+    fn over_wide_symbol_is_caught_at_its_index() {
+        let reg = reg_4bit(); // width 4 → ceiling 16
+        let mut file = good_4bit_file();
+        file[42] = 16; // 16 does not fit in 4 bits
+        let errs = preflight_data_file(&file, DataFileKind::RawNoise, &reg, Some(4)).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            FilePreflightError::SampleValueTooWide {
+                index: 42,
+                value: 16,
+                width: 4
+            }
+        )));
+    }
+
+    #[test]
+    fn full_byte_width_admits_every_symbol() {
+        // bits_per_sample 8 → width 8 → no symbol can be too wide.
+        let mut reg = reg_4bit();
+        reg.bits_per_sample = 8;
+        let file = vec![0xFFu8; RAW_DATA_SAMPLE_COUNT as usize];
+        assert_eq!(
+            preflight_data_file(&file, DataFileKind::RawNoise, &reg, Some(8)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn restart_dimension_mismatch_is_caught() {
+        let mut reg = reg_4bit();
+        reg.number_of_restarts = 500;
+        reg.samples_per_restart = 2000; // product is 1e6 but not the 1000×1000 layout
+        let file = good_4bit_file();
+        let errs = preflight_data_file(&file, DataFileKind::Restart, &reg, Some(4)).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            FilePreflightError::RestartDimensionsMismatch {
+                number_of_restarts: 500,
+                samples_per_restart: 2000,
+                expected_rounds: 1000,
+                expected_samples_per_round: 1000,
+            }
+        )));
+        // The same off-layout dims do NOT trip a raw-noise preflight (the
+        // restart layout is a restart-file constraint only).
+        assert_eq!(
+            preflight_data_file(&file, DataFileKind::RawNoise, &reg, Some(4)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn declared_sample_size_inconsistent_with_registration_is_caught() {
+        let reg = reg_4bit(); // effective width 4
+        let file = good_4bit_file();
+        // Declaring width 8 when the registration implies 4 mis-reads the file.
+        let errs = preflight_data_file(&file, DataFileKind::RawNoise, &reg, Some(8)).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            FilePreflightError::SampleSizeInconsistent {
+                declared: 8,
+                expected: 4
+            }
+        )));
+    }
+
+    #[test]
+    fn all_file_violations_are_collected_together() {
+        let mut reg = reg_4bit();
+        reg.number_of_restarts = 7; // wrong restart layout
+        // Wrong size + over-wide symbol + declared-size mismatch, on a restart file.
+        let mut file = vec![0u8; 10]; // far too short
+        file[0] = 200; // over-wide for 4-bit width
+        let errs = preflight_data_file(&file, DataFileKind::Restart, &reg, Some(2)).unwrap_err();
+        assert!(
+            errs.len() >= 4,
+            "expected all four violations, got {errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, FilePreflightError::WrongSampleCount { .. }))
+        );
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, FilePreflightError::SampleValueTooWide { .. }))
+        );
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, FilePreflightError::RestartDimensionsMismatch { .. }))
+        );
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, FilePreflightError::SampleSizeInconsistent { .. }))
+        );
     }
 }

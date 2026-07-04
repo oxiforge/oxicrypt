@@ -1226,7 +1226,7 @@ types:
   - name: EntropyRegistration
     module: esv-harness
     kind: struct
-    description: SP 800-90B entropy-source metadata payload; new_non_iid bakes iidClaim=false and physical=false, to_wire_json serializes the versioned envelope and fails typed on a non-finite float field.
+    description: SP 800-90B entropy-source metadata payload; new_non_iid bakes iidClaim=false and physical=false, set_hmin_exact records an exact fixed-point min-entropy claim (rendered as an exact decimal on the wire, mirrored into the f64 hmin_estimate for the preflight bound), to_wire_json serializes the versioned envelope and fails typed on a non-finite float field.
 
   - name: DataFileRef
     module: esv-harness
@@ -1257,6 +1257,16 @@ types:
     module: esv-harness
     kind: enum
     description: One registration-payload preflight violation (field bounds, hminEstimate<=bitsPerSample, restart minimums, numberOfOEs, and conditioning sequence positions 1..=n).
+
+  - name: DataFileKind
+    module: esv-harness
+    kind: enum
+    description: Which data-file slot a file fills for the file preflight — RawNoise or Restart (the vetted oxicrypt path uploads no conditioned file, ISC-107).
+
+  - name: FilePreflightError
+    module: esv-harness
+    kind: enum
+    description: One data-file preflight violation (WrongSampleCount off the 1,000,000 one-byte-per-sample size, SampleValueTooWide past the effective min(bitsPerSample,8) width, RestartDimensionsMismatch off the 1000x1000 layout, or SampleSizeInconsistent between the declared DataFileSampleSize and the registration).
 
   - name: MultipartPart
     module: esv-harness
@@ -1312,6 +1322,13 @@ types:
     module: esv-harness
     kind: enum
     description: A multipart serialization error — an invalid RFC 2046 boundary (empty/over-70/disallowed char/trailing space) or a boundary that collides with a part body.
+
+  # ── esv-harness hmin (exact hminEstimate serialization) ────────────
+
+  - name: HminError
+    module: esv-harness
+    kind: enum
+    description: Why an hminEstimate cannot be serialized for a payload — AboveBitsPerSample (the claim exceeds bitsPerSample) or NegativeBitsPerSample.
 
   # ── esv-harness jsonlite (float-tolerant status-body reader) ────────
 
@@ -10002,6 +10019,16 @@ functions:
     description: Whether a string is a recognized ACVTS vetted-conditioning algorithm name (VETTED_ALGORITHM_NAMES).
     signature: "pub fn is_vetted_algorithm_name(name: &str) -> bool"
 
+  - name: preflight_data_file
+    module: esv-harness
+    description: Offline validation of a data file on disk against the ESV wire constraints (exactly 1,000,000 one-byte-per-sample symbols, symbols within the effective min(bitsPerSample,8) width, the 1000x1000 restart layout for a restart file, and DataFileSampleSize consistency), checked against the module's own SP 800-90B constants; returns every violation found.
+    signature: "pub fn preflight_data_file(bytes: &[u8], kind: DataFileKind, reg: &EntropyRegistration, declared_sample_size: Option<u8>) -> Result<(), Vec<FilePreflightError>>"
+
+  - name: effective_sample_width
+    module: esv-harness
+    description: The effective per-sample width min(bitsPerSample, 8) clamped into 1..=8 (a byte-padded sample holds at most eight bits).
+    signature: "pub fn effective_sample_width(bits_per_sample: i64) -> u32"
+
   - name: data_file_path
     module: esv-harness
     description: The full server-relative data-file resource path /esv/v1/entropyAssessments/{ea_id}/dataFiles/{df_id} (upload POST and status GET).
@@ -10061,6 +10088,21 @@ functions:
     module: esv-harness
     description: Parse a JSON document into a JsonLite, keeping numbers as raw source tokens (full RFC 8259 grammar incl. frac/exp; strict on malformed numerals, trailing data, depth, and truncation).
     signature: "pub fn parse(input: &str) -> Result<JsonLite, ParseError>"
+
+  - name: serialize_hmin
+    module: esv-harness
+    description: Serialize a fixed-point min-entropy (oxicrypt-entropy MinEntropy, 1/256-bit steps) to its exact decimal JSON-number token with pure integer arithmetic — no f64 on the claim path; a whole-bit value renders as a bare integer, a fractional one with trailing zeros stripped. No bounds check (see hmin_wire_token).
+    signature: "pub fn serialize_hmin(h: MinEntropy) -> String"
+
+  - name: hmin_within_bits
+    module: esv-harness
+    description: Whether a fixed-point min-entropy is within the schema bound 0 <= h <= bits_per_sample, checked in exact integer steps.
+    signature: "pub fn hmin_within_bits(h: MinEntropy, bits_per_sample: i64) -> bool"
+
+  - name: hmin_wire_token
+    module: esv-harness
+    description: Serialize a fixed-point min-entropy to its exact decimal token after enforcing the schema bound 0 <= h <= bits_per_sample; a typed HminError on an over-claim or a negative ceiling.
+    signature: "pub fn hmin_wire_token(h: MinEntropy, bits_per_sample: i64) -> Result<String, HminError>"
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)

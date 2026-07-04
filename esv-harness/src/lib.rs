@@ -82,6 +82,24 @@
 //! reload it and know exactly where the submission stands (registered /
 //! files-uploaded / docs-uploaded / certified).
 //!
+//! # File preflight and exact hmin (slice S5)
+//!
+//! [`preflight`] gains a second half: [`preflight::preflight_data_file`]
+//! validates a **data file on disk** against the ESV wire constraints
+//! (exactly 1,000,000 one-byte-per-sample symbols, symbols within the
+//! effective `min(bitsPerSample, 8)` width, the mandated 1000×1000 restart
+//! layout, and `DataFileSampleSize` consistency) — all **offline**, checked
+//! against the module's own SP 800-90B constants so the harness cannot drift
+//! from the dataset emitters (`oxicrypt_entropy`). [`hmin`] serializes
+//! `hminEstimate` **exactly** from the module's fixed-point min-entropy type
+//! ([`oxicrypt_entropy::h::MinEntropy`], 1/256-bit steps) as a finite decimal
+//! with pure integer arithmetic — no `f64` on the claim path — round-tripped
+//! byte-for-byte through the lossless [`jsonlite`] reader. The registration
+//! builder carries an optional exact-hmin path
+//! ([`registration::EntropyRegistration::set_hmin_exact`]) that renders that
+//! token verbatim on the wire while leaving the `f64` field for the
+//! assessment-outcome and preflight-bounds paths.
+//!
 //! # Protocol sources
 //!
 //! Endpoint paths, envelope shapes, and TOTP parameters are transcribed
@@ -105,6 +123,7 @@
 
 pub mod certify;
 pub mod datafiles;
+pub mod hmin;
 pub mod jsonlite;
 pub mod login;
 pub mod preflight;

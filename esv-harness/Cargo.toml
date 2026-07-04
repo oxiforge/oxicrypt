@@ -21,3 +21,10 @@ path = "src/main.rs"
 # new transport. Zero third-party dependencies (workspace policy); acvp-harness
 # transitively provides oxicrypt-hmac for TOTP.
 acvp-harness = { path = "../acvp-harness" }
+# The module's own SP 800-90B scaffolding: the fixed-point min-entropy type
+# (`h::MinEntropy`, steps of 1/256 bit) the `hmin` module serializes exactly,
+# and the cited raw-data / restart sample-count constants the file preflight
+# validates against — used rather than re-transcribed so the harness cannot
+# drift from the module's real H scale and file dimensions. Default features
+# only (no `std`/`collection`): just the core type + `pub const`s are needed.
+oxicrypt-entropy = { path = "../crates/oxicrypt-entropy", default-features = false }

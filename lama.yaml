@@ -69,7 +69,7 @@ capabilities:
     standards: ["SP 800-90B", "SP 800-90C"]
 
   - category: "Tooling"
-    algorithms: ["acvp-harness (offline ACVP vector processing + demo-server sessions; --lama)", "esv-harness (offline ESVP/SP 800-90B entropy-source registration, login/single+bulk refresh, data-file multipart upload + bounded status-poll, supporting-doc upload, certify request builders, and a resumable per-submission session store, over acvp-harness transport)", "oxicrypt-ffi (oxi_-prefixed extern \"C\" cdylib + staticlib; include/oxicrypt.h)"]
+    algorithms: ["acvp-harness (offline ACVP vector processing + demo-server sessions; --lama)", "esv-harness (offline ESVP/SP 800-90B entropy-source registration, login/single+bulk refresh, offline payload+data-file preflight, exact fixed-point hminEstimate serialization, data-file multipart upload + bounded status-poll, supporting-doc upload, certify request builders, and a resumable per-submission session store, over acvp-harness transport)", "oxicrypt-ffi (oxi_-prefixed extern \"C\" cdylib + staticlib; include/oxicrypt.h)"]
     standards: ["FIPS 140-3 IG 10.3.A", "SP 800-90B"]
 
 security:

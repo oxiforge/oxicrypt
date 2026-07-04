@@ -327,6 +327,7 @@ name = "esv-harness"
 version = "0.19.0"
 dependencies = [
  "acvp-harness",
+ "oxicrypt-entropy",
 ]
 
 [[package]]
