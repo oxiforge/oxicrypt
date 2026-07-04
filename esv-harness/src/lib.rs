@@ -39,6 +39,17 @@
 //! metadata schema (`vendor/entropy-source-metadata-schema.json`,
 //! ESV-Server `59e0438`).
 //!
+//! # Data files (slice S3)
+//!
+//! [`datafiles`] builds the ESVP §6.1 multipart upload request (the
+//! `dataFile` part plus the v1.8-capitalized `DataFileSampleSize` field),
+//! drives the processing-status polling state machine over all seven
+//! documented statuses (capturing NIST's returned assessment on
+//! `Run Successful` — the second maxwell oracle), and enforces the vetted ⇒
+//! no-conditioned-bits-upload refusal (ISC-107). The request builder and
+//! the status decision function are pure; the polling loop is generic over
+//! the transport trait with the injectable sleeper.
+//!
 //! # Protocol sources
 //!
 //! Endpoint paths, envelope shapes, and TOTP parameters are transcribed
@@ -60,6 +71,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod datafiles;
 pub mod login;
 pub mod preflight;
 pub mod registration;
