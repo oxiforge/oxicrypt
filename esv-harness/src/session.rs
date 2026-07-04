@@ -429,6 +429,29 @@ pub enum Intent {
 }
 
 impl Intent {
+    /// Whether `event` is the outcome that fulfills this intent — same
+    /// operation, same target. Replay clears a pending intent only on a match,
+    /// so a non-matching outcome cannot silently resolve (and thereby mask) an
+    /// unconfirmed action.
+    fn matches_outcome(&self, event: &Event) -> bool {
+        match (self, event) {
+            (Self::Register { .. }, Event::Registered { .. }) => true,
+            (
+                Self::UploadFile { ea_id, slot },
+                Event::FileUploaded {
+                    ea_id: e_ea,
+                    slot: e_slot,
+                    ..
+                },
+            ) => ea_id == e_ea && slot == e_slot,
+            (Self::UploadDoc { sd_type, .. }, Event::DocUploaded { sd_type: e_ty, .. }) => {
+                sd_type == e_ty
+            }
+            (Self::Certify { mode }, Event::Certified { mode: e_mode, .. }) => mode == e_mode,
+            _ => false,
+        }
+    }
+
     /// A short, operator-facing description of the pending action, for the
     /// [`SubmissionStage::Interrupted`] surface.
     #[must_use]
@@ -683,12 +706,7 @@ fn is_safe_id(id: &str) -> bool {
 impl SessionDir {
     /// Validate the entropy id and compute the session directory path.
     fn dir_for(sessions_root: &Path, entropy_id: &str) -> Result<PathBuf, String> {
-        if !is_safe_id(entropy_id) {
-            return Err(format!(
-                "unsafe entropyId {entropy_id:?}: must be a non-empty [A-Za-z0-9._-] token \
-                 (not '.', '..', or containing a path separator)"
-            ));
-        }
+        ensure_safe_component(entropy_id, "entropyId")?;
         Ok(sessions_root.join(entropy_id))
     }
 
@@ -796,24 +814,41 @@ impl SessionDir {
     /// so the next append starts on a clean line boundary. A missing or
     /// already-newline-terminated log is left untouched.
     fn heal_torn_tail(path: &Path) -> Result<(), String> {
-        let data = match std::fs::read(path) {
-            Ok(d) => d,
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        let mut file = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+        {
+            Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(format!("read {}: {e}", path.display())),
+            Err(e) => return Err(format!("open {} to heal: {e}", path.display())),
         };
-        if data.is_empty() || data.last() == Some(&b'\n') {
+        let len = file
+            .metadata()
+            .map_err(|e| format!("stat {}: {e}", path.display()))?
+            .len();
+        if len == 0 {
             return Ok(());
         }
-        // Keep everything up to and including the last newline (0 if none).
+        // Common (untorn) case is O(1): inspect only the final byte rather than
+        // re-reading the whole log on every append.
+        file.seek(SeekFrom::Start(len.saturating_sub(1)))
+            .map_err(|e| format!("seek {}: {e}", path.display()))?;
+        let mut last = [0u8; 1];
+        file.read_exact(&mut last)
+            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        if last[0] == b'\n' {
+            return Ok(());
+        }
+        // Torn tail (rare — post-crash residue): find the last newline and
+        // truncate the dead partial record so the next append starts clean.
+        let data = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let keep = data
             .iter()
             .rposition(|&b| b == b'\n')
             .map_or(0, |i| i.saturating_add(1));
         let keep = u64::try_from(keep).map_err(|_| "session log too large to heal".to_string())?;
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(path)
-            .map_err(|e| format!("open {} to heal: {e}", path.display()))?;
         file.set_len(keep)
             .map_err(|e| format!("truncate torn tail in {}: {e}", path.display()))?;
         file.sync_all()
@@ -905,25 +940,37 @@ impl SessionDir {
     /// names the offending line number).
     pub fn load_state(&self) -> Result<SubmissionState, String> {
         let path = self.dir.join(EVENTS_FILE);
-        let raw = match std::fs::read_to_string(&path) {
-            Ok(s) => s,
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(SubmissionState::default());
             }
             Err(e) => return Err(format!("read {}: {e}", path.display())),
         };
 
-        // A non-empty body not ending in a newline has a torn final line: the
-        // residue of a crashed append (a completed append fsyncs its newline).
-        // Tolerate it — replay the complete lines, record the dropped tail.
-        let torn_tail = if raw.is_empty() || raw.ends_with('\n') {
-            None
-        } else {
-            raw.rsplit('\n').next().filter(|s| !s.trim().is_empty())
+        // Split on the last newline at the BYTE level: a torn final line (the
+        // residue of a crashed append — a completed append fsyncs its newline)
+        // may bisect a multibyte UTF-8 character, so decoding the whole file up
+        // front would fail the load on an otherwise-recoverable session. Every
+        // newline-terminated record is complete and valid UTF-8; only the tail
+        // may not be, and it is never parsed — only reported.
+        // split point = one past the last newline (0 if none): the complete
+        // prefix is every newline-terminated record, the tail is the residue.
+        let split = bytes
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |i| i.saturating_add(1));
+        let (complete_bytes, tail_bytes) = bytes.split_at(split);
+        let torn_tail = {
+            let tail = String::from_utf8_lossy(tail_bytes);
+            if tail.trim().is_empty() {
+                None
+            } else {
+                Some(tail.into_owned())
+            }
         };
-
-        let complete_len = torn_tail.map_or(raw.len(), |tail| raw.len().saturating_sub(tail.len()));
-        let complete = raw.get(..complete_len).unwrap_or(&raw);
+        let complete = std::str::from_utf8(complete_bytes)
+            .map_err(|e| format!("event log {} is not valid UTF-8: {e}", path.display()))?;
 
         let mut state = SubmissionState::default();
         let mut pending: Option<Intent> = None;
@@ -936,19 +983,34 @@ impl SessionDir {
             let record = LogRecord::from_json(&value)
                 .map_err(|e| format!("event log line {}: {e}", idx.saturating_add(1)))?;
             match record {
-                // An outcome supersedes (clears) its preceding intent.
                 LogRecord::Outcome(event) => {
+                    // An outcome clears the pending intent only if it *fulfills*
+                    // it (same operation + target). A non-matching outcome
+                    // leaves the intent dangling rather than silently resolving
+                    // it — so an unrelated later step can't mask an unconfirmed
+                    // action's interrupted signal.
+                    let matched = pending.as_ref().is_some_and(|p| p.matches_outcome(&event));
                     state.apply(event);
-                    pending = None;
+                    if matched {
+                        pending = None;
+                    }
                 }
-                LogRecord::Intent(intent) => pending = Some(intent),
+                LogRecord::Intent(intent) => {
+                    // A new intent while one is still pending means the prior
+                    // intent never got its outcome — it dangled. Capture it
+                    // before it is overwritten so the interrupted signal is
+                    // never lost (keep the first; a genuine crash surfaces one).
+                    if let Some(prev) = pending.replace(intent) {
+                        state.interrupted.get_or_insert_with(|| prev.describe());
+                    }
+                }
             }
         }
-        // A dangling intent → the interrupted operator-surface.
+        // A still-pending intent at end of log is the dangling operator-surface.
         if let Some(intent) = pending {
-            state.interrupted = Some(intent.describe());
+            state.interrupted.get_or_insert_with(|| intent.describe());
         }
-        state.torn_tail = torn_tail.map(str::to_string);
+        state.torn_tail = torn_tail;
         Ok(state)
     }
 }
@@ -1347,6 +1409,66 @@ mod tests {
         assert_eq!(st.oes.len(), 1);
         let torn = st.torn_tail.unwrap();
         assert!(torn.contains("fileUploaded"), "{torn}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_torn_multibyte_utf8_tail_does_not_fail_the_whole_load() {
+        // A crashed append can bisect a multibyte UTF-8 char (e.g. a non-ASCII
+        // filename written verbatim). Byte-level splitting must replay the
+        // complete prefix and merely report the invalid-UTF-8 tail, not error.
+        let root = temp_root("torn-utf8");
+        let s = SessionDir::create(root_str(&root), "TIDU").unwrap();
+        s.append_event(&Event::registered("TIDU", 3, &[sample_reg("11")]))
+            .unwrap();
+        let path = s.path().join(EVENTS_FILE);
+        let mut bytes = std::fs::read(&path).unwrap();
+        // A partial record ending in the lead byte of a 2-byte UTF-8 sequence
+        // (0xC3) with no continuation — invalid UTF-8, no trailing newline.
+        bytes.extend_from_slice(br#"{"kind":"fileUploaded","eaId":"11","x":""#);
+        bytes.push(0xC3);
+        std::fs::write(&path, &bytes).unwrap();
+
+        let st = s.load_state().unwrap(); // must not be Err(invalid utf-8)
+        assert_eq!(st.stage(), SubmissionStage::Registered);
+        assert_eq!(st.oes.len(), 1);
+        assert!(st.torn_tail.is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_dangling_intent_is_not_masked_by_a_later_unrelated_step() {
+        // intentCertify dangles (no certified outcome); an unrelated doc upload
+        // then completes. The interrupted signal for the unconfirmed certify
+        // must survive — an outcome clears only the intent it fulfills.
+        let root = temp_root("mask");
+        let s = SessionDir::create(root_str(&root), "TIDM").unwrap();
+        s.append_intent(&Intent::Certify {
+            mode: CertifyMode::Full,
+        })
+        .unwrap(); // dangling — no Certified outcome follows
+        s.append_intent(&Intent::UploadDoc {
+            sd_type: SdType::PublicUseDocument,
+            filename: "pud.pdf".to_string(),
+        })
+        .unwrap();
+        s.append_event(&Event::DocUploaded {
+            sd_id: 7,
+            sd_type: SdType::PublicUseDocument,
+            access_token: "tok".to_string(),
+        })
+        .unwrap();
+
+        let st = SessionDir::open(root_str(&root), "TIDM")
+            .unwrap()
+            .load_state()
+            .unwrap();
+        assert_eq!(st.stage(), SubmissionStage::Interrupted);
+        assert!(
+            st.interrupted.as_deref().unwrap_or("").contains("certify"),
+            "the unconfirmed certify must not be masked: {:?}",
+            st.interrupted
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
