@@ -131,9 +131,25 @@ fixtures with no network. The library modules mirror the ESVP resources:
   request builders, enforcing the cardinality and required-identifier
   constraints at construction.
 - **Session store** — a per-submission directory with an append-only,
-  persist-before-submit event log, so a fresh process can reload exactly where a
+  intent-then-outcome log, so a fresh process can reload exactly where a
   submission stands (registered / files-uploaded / docs-uploaded / certified)
-  and resume.
+  and resume. Each server-facing step records **two** log lines: an *intent*
+  carrying only locally-known data (what is about to be attempted) that
+  genuinely persists *before* the network call, then an *outcome* built from
+  the response, appended after. Both are single buffered newline-terminated
+  writes, each fsync'd, so durability holds against power loss. On resume an
+  outcome supersedes its preceding intent — a completed step reconstructs
+  cleanly — while an intent with **no** following outcome is a *dangling
+  intent*: the action may have taken effect on the server but was never
+  confirmed, so it is surfaced as an **interrupted** state (verify before
+  retrying) rather than blindly re-submitted, closing the response-to-record
+  crash window that a single persist-before-submit event could not. A torn
+  final line (the residue of a crashed append) is tolerated: it is dropped and
+  recorded, the earlier records replay intact, and the next append heals it so
+  a retry can never concatenate onto a partial record. A duplicated
+  registration replay is deduplicated by assessment id, and every path
+  component derived from outside input is validated so it cannot escape the
+  submission directory.
 
 Three state machines carry the judgment content and are frozen: the **token
 lifecycle** (login → JWT → proactive margin refresh → one reactive

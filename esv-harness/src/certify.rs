@@ -122,6 +122,22 @@ pub enum CertifyError {
         /// The non-numeric `eaId` string.
         ea_id: String,
     },
+    /// Two entropy-assessment references shared an `eaId`. Every EaID must be
+    /// distinct (server rule
+    /// `Rules/CertifyRequest/Entropyassessmentreference/eaIdIsDistinct.json`,
+    /// imported by both `new.json` and `addOe.json`).
+    DuplicateEaId {
+        /// The `eaId` that appeared more than once.
+        ea_id: i64,
+    },
+    /// A certify was built for a **non-IID** assessment with no restart-test
+    /// data-file upload recorded. SP 800-90B requires restart-test data for a
+    /// non-IID assessment, so a certify referencing it must have a restart
+    /// upload. Carries the offending `eaId`.
+    MissingRestartUpload {
+        /// The `eaId` of the non-IID assessment missing its restart upload.
+        ea_id: i64,
+    },
 }
 
 impl core::fmt::Display for CertifyError {
@@ -164,6 +180,14 @@ impl core::fmt::Display for CertifyError {
             Self::EaIdNotNumeric { ea_id } => {
                 write!(f, "registration eaId {ea_id:?} is not a base-ten integer")
             }
+            Self::DuplicateEaId { ea_id } => write!(
+                f,
+                "certify request requires distinct eaIds; eaId {ea_id} appears more than once"
+            ),
+            Self::MissingRestartUpload { ea_id } => write!(
+                f,
+                "non-IID entropy assessment eaId {ea_id} requires a restart-test data-file upload before certify"
+            ),
         }
     }
 }
@@ -230,18 +254,53 @@ impl CertifyAssessment {
 // ── Shared constraint checks ──────────────────────────────────────────
 
 /// Enforce the entropy-assessment preconditions: at least one assessment,
-/// each with a positive `eaId` and a positive ACVTS `oeId`.
+/// each with a positive `eaId` and a positive ACVTS `oeId`, and all `eaId`s
+/// **distinct** (server rule
+/// `Rules/CertifyRequest/Entropyassessmentreference/eaIdIsDistinct.json`,
+/// imported by both `new.json` and `addOe.json`).
 fn check_assessments(assessments: &[CertifyAssessment]) -> Result<(), CertifyError> {
     if assessments.is_empty() {
         return Err(CertifyError::NoAssessments);
     }
-    for a in assessments {
+    for (i, a) in assessments.iter().enumerate() {
         if a.ea_id <= 0 {
             return Err(CertifyError::InvalidEaId { ea_id: a.ea_id });
         }
         if a.oe_id <= 0 {
             return Err(CertifyError::MissingOeId { ea_id: a.ea_id });
         }
+        if assessments.iter().take(i).any(|b| b.ea_id == a.ea_id) {
+            return Err(CertifyError::DuplicateEaId { ea_id: a.ea_id });
+        }
+    }
+    Ok(())
+}
+
+/// Certify precondition (SP 800-90B restart-test rule): a **non-IID**
+/// assessment must have a restart-test data file uploaded before certify; an
+/// IID assessment (`iid_claim == true`) has no restart requirement.
+///
+/// The iid claim and the restart-upload record are **not** carried by
+/// [`CertifyAssessment`] (whose currency is `eaId`/`oeId`/token), so they are
+/// supplied explicitly: the orchestrator reads `iid_claim` from the
+/// [`crate::registration::EntropyRegistration`] and `restart_uploaded` from
+/// the session's recorded uploads (a [`crate::session::Slot::Restart`]
+/// [`crate::session::UploadedFile`] for this `ea_id`). This guard was
+/// deliberately removed from the registration-response *parser*
+/// (`restartTestBits` is tolerated-absent there, since the demo server's exact
+/// slot set is unproven) and re-established here — the certify-precondition
+/// layer, where both facts are known — matching the submission-lifecycle
+/// "certify precondition check" step in the design.
+///
+/// # Errors
+/// [`CertifyError::MissingRestartUpload`] when `!iid_claim && !restart_uploaded`.
+pub fn check_non_iid_restart_upload(
+    ea_id: i64,
+    iid_claim: bool,
+    restart_uploaded: bool,
+) -> Result<(), CertifyError> {
+    if !iid_claim && !restart_uploaded {
+        return Err(CertifyError::MissingRestartUpload { ea_id });
     }
     Ok(())
 }
@@ -739,6 +798,56 @@ mod tests {
             ],
         );
         assert!(ok.is_ok(), "{ok:?}");
+    }
+
+    // ── Fix 4: distinct eaIds (eaIdIsDistinct) ────────────────────────
+
+    #[test]
+    fn full_certify_requires_distinct_ea_ids() {
+        // Two assessments sharing eaId 11 → typed error at construction.
+        let dup = vec![
+            CertifyAssessment::new(11, 7, "t1"),
+            CertifyAssessment::new(11, 8, "t2"),
+        ];
+        assert_eq!(
+            CertifyRequest::new("T", 3, dup, valid_docs()),
+            Err(CertifyError::DuplicateEaId { ea_id: 11 })
+        );
+        // Distinct eaIds are fine.
+        let ok = vec![
+            CertifyAssessment::new(11, 7, "t1"),
+            CertifyAssessment::new(22, 8, "t2"),
+        ];
+        assert!(CertifyRequest::new("T", 3, ok, valid_docs()).is_ok());
+    }
+
+    #[test]
+    fn add_oe_requires_distinct_ea_ids() {
+        // The same rule applies on the AddOE path.
+        let dup = vec![
+            CertifyAssessment::new(5, 7, "t1"),
+            CertifyAssessment::new(5, 8, "t2"),
+        ];
+        assert_eq!(
+            AddOeRequest::new("T", "E1", dup, valid_docs()),
+            Err(CertifyError::DuplicateEaId { ea_id: 5 })
+        );
+    }
+
+    // ── Fix 7: non-IID restart-upload certify precondition ────────────
+
+    #[test]
+    fn non_iid_assessment_requires_a_restart_upload_before_certify() {
+        // Non-IID (iid_claim = false) with no restart upload → typed error.
+        assert_eq!(
+            check_non_iid_restart_upload(11, false, false),
+            Err(CertifyError::MissingRestartUpload { ea_id: 11 })
+        );
+        // Non-IID with a restart upload recorded → ok.
+        assert_eq!(check_non_iid_restart_upload(11, false, true), Ok(()));
+        // An IID assessment has no restart requirement, upload or not.
+        assert_eq!(check_non_iid_restart_upload(11, true, false), Ok(()));
+        assert_eq!(check_non_iid_restart_upload(11, true, true), Ok(()));
     }
 
     // ── AddOE ─────────────────────────────────────────────────────────

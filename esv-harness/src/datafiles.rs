@@ -207,6 +207,16 @@ pub enum MultipartError {
         /// The index of the colliding part.
         part_index: usize,
     },
+    /// A part header value (a field `name` or a `filename`) carried a
+    /// character that cannot be safely placed in a `Content-Disposition`
+    /// header — a CR, LF, or other control character — which would inject or
+    /// forge headers. Fails closed rather than emit a corruptible message.
+    InvalidPartHeader {
+        /// The 0-based index of the offending part.
+        part_index: usize,
+        /// Why the header value was rejected.
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for MultipartError {
@@ -218,6 +228,10 @@ impl core::fmt::Display for MultipartError {
             Self::BoundaryCollision { part_index } => write!(
                 f,
                 "multipart boundary occurs inside the body of part {part_index}"
+            ),
+            Self::InvalidPartHeader { part_index, reason } => write!(
+                f,
+                "invalid Content-Disposition header value in part {part_index}: {reason}"
             ),
         }
     }
@@ -395,12 +409,13 @@ impl DataFileUpload {
     ///
     /// `boundary` is caller-supplied so the serialization is deterministic
     /// for fixtures; live wiring can obtain a provably non-colliding one from
-    /// [`generate_boundary`]. (Filenames are module-controlled and not
-    /// quote-escaped here.)
+    /// [`generate_boundary`]. The filename is validated (no CR/LF/control
+    /// characters) and quote-escaped by [`serialize_multipart`].
     ///
     /// # Errors
-    /// [`MultipartError`] if `boundary` is not a valid RFC 2046 token or
-    /// occurs inside a part body (see [`serialize_multipart`]).
+    /// [`MultipartError`] if `boundary` is not a valid RFC 2046 token, a
+    /// part name/filename carries a control character, or the boundary occurs
+    /// inside a part body or filename (see [`serialize_multipart`]).
     pub fn to_multipart(&self, boundary: &str) -> Result<(String, Vec<u8>), MultipartError> {
         serialize_multipart(&self.parts(), boundary)
     }
@@ -416,21 +431,38 @@ impl DataFileUpload {
 /// the two upload paths cannot drift on the wire format. `boundary` is
 /// caller-supplied so the serialization is deterministic for fixtures; live
 /// wiring can obtain a provably non-colliding one from [`generate_boundary`].
-/// (Part names/filenames are module-controlled and not quote-escaped here.)
+/// Part names and filenames are placed into `Content-Disposition` headers as
+/// quoted-strings: a CR/LF/control character in either is rejected
+/// (header-injection guard) and a `"`/`\` is backslash-escaped, and the
+/// filename bytes are included in the boundary-collision scan.
 ///
 /// # Errors
 /// [`MultipartError::InvalidBoundary`] if `boundary` is not a valid RFC 2046
 /// `boundary` token (1..=70 `bchars`, no trailing space);
-/// [`MultipartError::BoundaryCollision`] if the boundary delimiter occurs
-/// inside a part body — either would corrupt the message, so it fails closed
-/// rather than emit a body a receiver could mis-split.
+/// [`MultipartError::InvalidPartHeader`] if a part name/filename carries a
+/// CR/LF/control character; [`MultipartError::BoundaryCollision`] if the
+/// boundary delimiter occurs inside a part body or filename — any of these
+/// would corrupt or forge the message, so it fails closed rather than emit a
+/// body a receiver could mis-split.
 pub fn serialize_multipart(
     parts: &[MultipartPart<'_>],
     boundary: &str,
 ) -> Result<(String, Vec<u8>), MultipartError> {
     validate_boundary(boundary)?;
     for (index, part) in parts.iter().enumerate() {
-        if body_collides(part_body_bytes(part), boundary) {
+        // Header-injection guard: names/filenames go into Content-Disposition.
+        for value in header_values(part) {
+            check_header_param(value).map_err(|reason| MultipartError::InvalidPartHeader {
+                part_index: index,
+                reason,
+            })?;
+        }
+        // Collision scan over every span a boundary must not hide inside: the
+        // body AND (for a file part) the header-interpolated filename.
+        if collision_spans(part)
+            .iter()
+            .any(|span| body_collides(span, boundary))
+        {
             return Err(MultipartError::BoundaryCollision { part_index: index });
         }
     }
@@ -440,6 +472,7 @@ pub fn serialize_multipart(
         push_str(&mut body, &format!("--{boundary}\r\n"));
         match part {
             MultipartPart::Field { name, value } => {
+                let name = escape_quoted(name);
                 push_str(
                     &mut body,
                     &format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"),
@@ -453,6 +486,8 @@ pub fn serialize_multipart(
                 content_type: part_ct,
                 bytes,
             } => {
+                let field_name = escape_quoted(field_name);
+                let filename = escape_quoted(filename);
                 push_str(
                     &mut body,
                     &format!(
@@ -467,6 +502,48 @@ pub fn serialize_multipart(
     }
     push_str(&mut body, &format!("--{boundary}--\r\n"));
     Ok((content_type, body))
+}
+
+/// The `Content-Disposition` header values a part interpolates: a field's
+/// `name`, or a file part's `field_name` and `filename`. These must be free of
+/// control characters (header injection) and are quote-escaped on emit.
+fn header_values<'a>(part: &'a MultipartPart<'a>) -> Vec<&'a str> {
+    match part {
+        MultipartPart::Field { name, .. } => vec![name],
+        MultipartPart::File {
+            field_name,
+            filename,
+            ..
+        } => vec![field_name, filename],
+    }
+}
+
+/// Reject a `Content-Disposition` parameter value carrying a CR, LF, or other
+/// control character — a header-injection vector (RFC 7578 §5.1 / RFC 6266:
+/// the value is placed in a header quoted-string, so a raw CRLF would split or
+/// forge headers).
+fn check_header_param(value: &str) -> Result<(), String> {
+    if let Some(ch) = value.chars().find(|c| c.is_control()) {
+        return Err(format!(
+            "control character U+{:04X} is not allowed in a header value",
+            ch as u32
+        ));
+    }
+    Ok(())
+}
+
+/// Backslash-escape the two `quoted-pair` characters (`\` and `"`) so a value
+/// containing a quote cannot terminate the quoted-string early. Control
+/// characters are assumed already rejected by [`check_header_param`].
+fn escape_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch == '\\' || ch == '"' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Append a string's bytes to a byte buffer.
@@ -540,6 +617,20 @@ fn part_body_bytes<'a>(part: &'a MultipartPart<'a>) -> &'a [u8] {
     }
 }
 
+/// Every byte span of a part a boundary delimiter must not occur inside: the
+/// part body (a field value or the file bytes) and, for a file part, the
+/// header-interpolated `filename`. A boundary hiding in either would let a
+/// receiver mis-split the message, so both the collision scan
+/// ([`serialize_multipart`]) and boundary generation ([`generate_boundary`])
+/// avoid all of them.
+fn collision_spans<'a>(part: &'a MultipartPart<'a>) -> Vec<&'a [u8]> {
+    let mut spans = vec![part_body_bytes(part)];
+    if let MultipartPart::File { filename, .. } = part {
+        spans.push(filename.as_bytes());
+    }
+    spans
+}
+
 /// True if the boundary delimiter occurs inside `body`, which would
 /// prematurely terminate the part on the wire. The delimiter is
 /// `CRLF "--" boundary`; at the very start of a body the preceding
@@ -573,10 +664,11 @@ pub fn generate_boundary(parts: &[MultipartPart<'_>]) -> String {
     let mut n: u64 = 0;
     loop {
         let candidate = format!("{BASE}{n}");
-        if parts
-            .iter()
-            .all(|p| !body_collides(part_body_bytes(p), &candidate))
-        {
+        if parts.iter().all(|p| {
+            collision_spans(p)
+                .iter()
+                .all(|span| !body_collides(span, &candidate))
+        }) {
             return candidate;
         }
         n = n.saturating_add(1);
@@ -935,15 +1027,35 @@ pub fn poll_data_file<T: EsvTransport>(
                 continue;
             }
         };
-        // A well-formed, parseable body ends the transient run.
+        // A parseable body that is NOT the versioned envelope (e.g. a load
+        // balancer's JSON `{"message":"Bad Gateway"}` 502) is transient too —
+        // the same budget as an unparseable body — not a fatal abort.
+        let payload = match payload_element(&parsed) {
+            Ok(p) => p,
+            Err(e) => {
+                consecutive_transient = consecutive_transient.saturating_add(1);
+                if consecutive_transient > config.max_consecutive_transient_failures {
+                    return Err(DataFileError::TransientFailuresExhausted {
+                        failures: config.max_consecutive_transient_failures,
+                        last: e.to_string(),
+                    });
+                }
+                sleeper.sleep(config.processing_wait);
+                continue;
+            }
+        };
+        // A well-formed versioned envelope ends the transient run.
         consecutive_transient = 0;
 
-        let payload = payload_element(&parsed)?;
-        let raw_status = match payload.get("status").and_then(JsonLite::as_str) {
+        // Read status/id with the strict duplicate-rejecting accessor: a
+        // repeated `status`/`id` key in a response is a malformed/hostile
+        // signal, so it fails closed (a fatal MalformedResponse) rather than
+        // silently first-winning.
+        let raw_status = match unique_str_field(payload, "status")?.and_then(JsonLite::as_str) {
             Some(s) => s.to_string(),
             None => return Err(status_absent_error(payload, &resp)),
         };
-        let id = payload.get("id").and_then(id_to_string);
+        let id = unique_str_field(payload, "id")?.and_then(id_to_string);
 
         match classify_status(&raw_status).poll_decision() {
             PollDecision::Terminal(term) => {
@@ -1019,6 +1131,23 @@ fn parse_status_envelope(body: &str) -> Result<JsonLite, DataFileError> {
 fn payload_element(parsed: &JsonLite) -> Result<&JsonLite, DataFileError> {
     crate::login::esv_payload_element(parsed)
         .map_err(|detail| DataFileError::MalformedResponse { detail })
+}
+
+/// Read a status-payload field with the duplicate-rejecting
+/// [`JsonLite::get_unique`], mapping a duplicate key to a fatal
+/// [`DataFileError::MalformedResponse`]. Used for the trusted `status`/`id`
+/// reads, where a repeated key is a malformed/hostile signal (the general
+/// first-wins tolerance stays for the verbatim-capture path). `Ok(None)` when
+/// the key is simply absent.
+fn unique_str_field<'a>(
+    payload: &'a JsonLite,
+    key: &str,
+) -> Result<Option<&'a JsonLite>, DataFileError> {
+    payload
+        .get_unique(key)
+        .map_err(|d| DataFileError::MalformedResponse {
+            detail: format!("duplicate `{}` key in data-file status response", d.key),
+        })
 }
 
 /// Render a data-file `id` (a JSON string or number token) as a string.
@@ -1261,6 +1390,58 @@ mod tests {
             up2.to_multipart("BNDRY"),
             Err(MultipartError::BoundaryCollision { .. })
         ));
+    }
+
+    // ── Fix 9: filename header-injection + collision (ISC-98/102) ─────
+
+    #[test]
+    fn filename_with_crlf_is_rejected_as_a_header_injection() {
+        // A filename carrying a CRLF (or any control char) could forge/split
+        // the Content-Disposition header — rejected, no body produced.
+        let up = DataFileUpload::new("1", "2", "evil\r\nX-Injected: 1", vec![1, 2, 3]);
+        assert!(matches!(
+            up.to_multipart("BNDRY"),
+            Err(MultipartError::InvalidPartHeader { part_index: 0, .. })
+        ));
+        // The supporting-doc path (arbitrary caller filename) is guarded too.
+        let sd = crate::supportdocs::SupportingDocUpload::new(
+            crate::supportdocs::SdType::Other,
+            "a\r\nb.pdf",
+            b"%PDF-1.7\n...".to_vec(),
+        )
+        .unwrap();
+        assert!(matches!(
+            sd.to_multipart("BNDRY"),
+            Err(MultipartError::InvalidPartHeader { .. })
+        ));
+    }
+
+    #[test]
+    fn filename_with_a_quote_is_backslash_escaped_not_left_raw() {
+        // A `"` in a filename must not terminate the quoted-string early; it is
+        // backslash-escaped so the header stays well-formed.
+        let up = DataFileUpload::new("1", "2", r#"a"b.bin"#, vec![9]);
+        let (_ct, body) = up.to_multipart("BNDRY").unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains(r#"filename="a\"b.bin""#), "{text}");
+    }
+
+    #[test]
+    fn filename_engineered_to_carry_the_boundary_is_caught() {
+        // A filename that itself carries the boundary delimiter is included in
+        // the collision scan (not only the body), so it cannot smuggle a
+        // delimiter into the header.
+        let up = DataFileUpload::new("1", "2", "--BNDRY.bin", vec![0]);
+        assert!(matches!(
+            up.to_multipart("BNDRY"),
+            Err(MultipartError::BoundaryCollision { part_index: 0 })
+        ));
+        // generate_boundary also avoids a filename-borne collision.
+        let up2 = DataFileUpload::new("1", "2", "--oxicryptEsvBoundary0.bin", vec![0]);
+        let parts = up2.parts();
+        let b = generate_boundary(&parts);
+        assert_ne!(b, "oxicryptEsvBoundary0");
+        assert!(up2.to_multipart(&b).is_ok());
     }
 
     #[test]
@@ -1702,19 +1883,75 @@ mod tests {
     }
 
     #[test]
-    fn poll_non_envelope_response_is_malformed() {
-        // A bare object parses fine but is not the versioned envelope: a
-        // structural (not parse) failure, so it is fatal MalformedResponse.
+    fn poll_survives_a_json_non_envelope_body_mid_poll_to_success() {
+        // A load balancer's JSON 502 `{"message":"Bad Gateway"}` parses fine
+        // but is NOT the versioned envelope. Like a byte-identical HTML-body
+        // failure it is transient (same budget), not a fatal abort, so a single
+        // one mid-sequence survives to success.
+        let json_502 = HttpResponse {
+            status: 502,
+            body: r#"{"message":"Bad Gateway"}"#.to_string(),
+        };
+        let mut t = StubTransport::new(vec![
+            status_body("Uploaded"),
+            json_502,
+            status_body("Run Successful"),
+        ]);
+        let mut sl = RecordingSleeper::default();
+        let cfg = PollConfig::default();
+        let res = poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap();
+        assert_eq!(res.status, TerminalStatus::RunSuccessful);
+        assert_eq!(t.calls.len(), 3);
+    }
+
+    #[test]
+    fn poll_json_non_envelope_bodies_exhaust_the_transient_budget() {
+        // N+1 consecutive JSON-but-not-envelope bodies (budget N) give up typed
+        // — the same budget as the unparseable-body case.
+        let cfg = PollConfig {
+            max_consecutive_transient_failures: 2,
+            ..PollConfig::default()
+        };
+        let json = || HttpResponse {
+            status: 502,
+            body: r#"{"message":"Bad Gateway"}"#.to_string(),
+        };
+        let mut t = StubTransport::new(vec![json(), json(), json()]);
+        let mut sl = RecordingSleeper::default();
+        let err =
+            poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            DataFileError::TransientFailuresExhausted { failures: 2, .. }
+        ));
+        assert_eq!(t.calls.len(), 3);
+    }
+
+    #[test]
+    fn poll_duplicate_status_key_is_a_fatal_malformed_response() {
+        // A response with a repeated `status` key is a malformed/hostile signal
+        // — read with the strict duplicate-rejecting accessor, so it fails
+        // closed (MalformedResponse), not first-wins and not transient.
         let resp = HttpResponse {
             status: 200,
-            body: r#"{"status":"Uploaded"}"#.to_string(),
+            body:
+                r#"[{"esvVersion":"1.0"},{"id":42,"status":"Uploaded","status":"Run Successful"}]"#
+                    .to_string(),
         };
         let mut t = StubTransport::new(vec![resp]);
         let mut sl = RecordingSleeper::default();
         let cfg = PollConfig::default();
         let err =
             poll_data_file("1", "2", &mut fixed_token("jwt"), &mut t, &mut sl, &cfg).unwrap_err();
-        assert!(matches!(err, DataFileError::MalformedResponse { .. }));
+        match err {
+            DataFileError::MalformedResponse { detail } => {
+                assert!(detail.contains("duplicate"), "{detail}");
+                assert!(detail.contains("status"), "{detail}");
+            }
+            other => panic!("expected MalformedResponse, got {other:?}"),
+        }
+        // Fatal on the first response — no retry.
+        assert_eq!(t.calls.len(), 1);
     }
 
     #[test]

@@ -1321,7 +1321,7 @@ types:
   - name: MultipartError
     module: esv-harness
     kind: enum
-    description: A multipart serialization error — an invalid RFC 2046 boundary (empty/over-70/disallowed char/trailing space) or a boundary that collides with a part body.
+    description: A multipart serialization error — an invalid RFC 2046 boundary (empty/over-70/disallowed char/trailing space), a part name/filename carrying a CR/LF/control character (header-injection guard), or a boundary that collides with a part body or filename.
 
   # ── esv-harness hmin (exact hminEstimate serialization) ────────────
 
@@ -1335,12 +1335,17 @@ types:
   - name: JsonLite
     module: esv-harness
     kind: enum
-    description: A JSON value with numbers kept as their raw source token (never interpreted), so an ESV status body carrying fractional/e-notation min-entropy is read losslessly where the integer-only acvp_harness::json codec cannot; accessors as_array/as_object/as_str/as_number_str/as_bool/is_null/get.
+    description: A JSON value with numbers kept as their raw source token (never interpreted), so an ESV status body carrying fractional/e-notation min-entropy is read losslessly where the integer-only acvp_harness::json codec cannot; accessors as_array/as_object/as_str/as_number_str/as_bool/is_null/get (first-wins) and get_unique (rejects a duplicate key, for the strict status-envelope read).
 
   - name: ParseError
     module: esv-harness
     kind: enum
     description: A jsonlite parse failure (unexpected EOF/byte, invalid escape, invalid number, invalid UTF-8, depth exceeded, trailing data).
+
+  - name: DuplicateKey
+    module: esv-harness
+    kind: struct
+    description: A duplicate-key rejection from JsonLite::get_unique — a key required to be unique appeared more than once.
 
   # ── esv-harness supporting docs (ESVP §6.2) ────────────────────────
 
@@ -1369,7 +1374,7 @@ types:
   - name: CertifyError
     module: esv-harness
     kind: enum
-    description: A certify-request construction violation (missing entropyId/moduleId/oeId/entropyCertificate, non-positive eaId, no assessments, wrong EAR/PUD count, too many DCAs, non-PUD updatePUD doc, non-numeric registration eaId).
+    description: A certify-request construction violation (missing entropyId/moduleId/oeId/entropyCertificate, non-positive eaId, no assessments, duplicate eaId, wrong EAR/PUD count, too many DCAs, non-PUD updatePUD doc, non-numeric registration eaId, or a non-IID assessment missing its restart-test upload).
 
   - name: CertifyAssessment
     module: esv-harness
@@ -1423,25 +1428,30 @@ types:
     kind: struct
     description: A captured Run Successful assessment sidecar (eaId, slot, the stored file name).
 
+  - name: Intent
+    module: esv-harness
+    kind: enum
+    description: The pre-submit half of intent-then-outcome — a network side-effect a submission is about to attempt, appended with only locally-known data before the call (Register, UploadFile, UploadDoc, Certify); describe() gives an operator-facing summary. An outcome Event appended after supersedes it; an intent with no following outcome is a dangling intent (SubmissionStage::Interrupted).
+
   - name: Event
     module: esv-harness
     kind: enum
-    description: One state-advancing session event appended to events.jsonl before its submit (Registered, FileUploaded, AssessmentCaptured, DocUploaded, Certified); to_json/from_json round-trip via the shared codec.
+    description: The post-submit outcome appended to events.jsonl after its network call, built from the server response (Registered, FileUploaded, AssessmentCaptured, DocUploaded, Certified); to_json/from_json round-trip via the shared codec.
 
   - name: SubmissionStage
     module: esv-harness
     kind: enum
-    description: The coarse stage a submission has reached (Empty, Registered, FilesUploaded, DocsUploaded, Certified), derived from the replayed events.
+    description: The coarse stage a submission has reached (Empty, Registered, FilesUploaded, DocsUploaded, Certified, or Interrupted for a dangling intent that must be verified before retrying), derived from the replayed log.
 
   - name: SubmissionState
     module: esv-harness
     kind: struct
-    description: The full submission state reconstructed by replaying events.jsonl (entropyId, moduleId, OEs, uploaded files, captured assessments, docs, certify mode); stage() reports the coarse SubmissionStage.
+    description: The full submission state reconstructed by replaying events.jsonl (entropyId, moduleId, OEs deduped by eaId, uploaded files, captured assessments, docs, certify mode, an interrupted dangling-intent description, and a torn-tail warning); stage() reports the coarse SubmissionStage.
 
   - name: SessionDir
     module: esv-harness
     kind: struct
-    description: Handle to a <sessions-root>/<entropyId>/ submission directory (entropyId validated as a safe filename token); create/open, append_event and persist_then (write the event before the submit runs), store_assessment/store_certify_response/read_sidecar (verbatim), load_state replays the log.
+    description: Handle to a <sessions-root>/<entropyId>/ submission directory (entropyId validated as a safe filename token); create/open, append_intent/append_event (single buffered newline-terminated fsync'd write, healing any torn tail) and persist_intent_then (append the intent, run the submit, append its outcome), store_assessment/store_certify_response/read_sidecar (verbatim, path-component-validated), load_state replays the log tolerating a torn final line and surfacing a dangling intent.
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -10056,7 +10066,7 @@ functions:
 
   - name: poll_data_file
     module: esv-harness
-    description: Poll a data file's processing status over an EsvTransport until a terminal state; a token_provider yields a fresh bearer per request (for a poll outliving the JWT TTL), the loop is bounded by the consecutive not-yet-processed cap, a global total-poll cap, and a consecutive-transient-failure budget, the status body is read with the float-tolerant jsonlite reader, and the returned assessment is captured verbatim on Run Successful.
+    description: Poll a data file's processing status over an EsvTransport until a terminal state; a token_provider yields a fresh bearer per request (for a poll outliving the JWT TTL), the loop is bounded by the consecutive not-yet-processed cap, a global total-poll cap, and a consecutive-transient-failure budget that also absorbs a valid-JSON-but-not-envelope body (a JSON 502), status/id are read with the duplicate-rejecting accessor (a repeated key is a fatal MalformedResponse), the status body is read with the float-tolerant jsonlite reader, and the returned assessment is captured verbatim on Run Successful.
     signature: "pub fn poll_data_file<T: EsvTransport>(ea_id: &str, df_id: &str, token_provider: &mut dyn FnMut() -> Result<String, String>, transport: &mut T, sleeper: &mut dyn Sleeper, config: &PollConfig) -> Result<DataFileResult, DataFileError>"
 
   - name: fixed_token
@@ -10066,7 +10076,7 @@ functions:
 
   - name: serialize_multipart
     module: esv-harness
-    description: The single multipart/form-data encoder shared by the data-file and supporting-document uploads; validates the boundary (RFC 2046) and scans every part body for the delimiter, failing closed on an invalid or colliding boundary.
+    description: The single multipart/form-data encoder shared by the data-file and supporting-document uploads; validates the boundary (RFC 2046), rejects a CR/LF/control character in any part name/filename (header-injection guard) and backslash-escapes quotes, and scans every part body and filename for the delimiter, failing closed on an invalid boundary, an injected header, or a collision.
     signature: "pub fn serialize_multipart(parts: &[MultipartPart<'_>], boundary: &str) -> Result<(String, Vec<u8>), MultipartError>"
 
   - name: validate_boundary
@@ -10076,13 +10086,18 @@ functions:
 
   - name: generate_boundary
     module: esv-harness
-    description: Generate a multipart boundary provably absent from every part body (a fixed base plus an incrementing decimal suffix; terminates because each body is finite).
+    description: Generate a multipart boundary provably absent from every part body and filename (a fixed base plus an incrementing decimal suffix; terminates because each span is finite).
     signature: "pub fn generate_boundary(parts: &[MultipartPart<'_>]) -> String"
 
   - name: parse_supporting_doc_response
     module: esv-harness
     description: Parse a supporting-document upload response (versioned envelope) into a SupportingDoc, requiring status success; the sdType is threaded in from the upload request.
     signature: "pub fn parse_supporting_doc_response(body: &str, sd_type: SdType) -> Result<SupportingDoc, String>"
+
+  - name: check_non_iid_restart_upload
+    module: esv-harness
+    description: Certify precondition — a non-IID assessment must have a restart-test data-file upload recorded before certify (an IID assessment has none); the iid claim and restart-upload record are passed explicitly since CertifyAssessment carries neither. Typed MissingRestartUpload when a non-IID assessment lacks its restart upload.
+    signature: "pub fn check_non_iid_restart_upload(ea_id: i64, iid_claim: bool, restart_uploaded: bool) -> Result<(), CertifyError>"
 
   - name: jsonlite::parse
     module: esv-harness

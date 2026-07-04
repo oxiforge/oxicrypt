@@ -137,7 +137,53 @@ impl JsonLite {
         }
         None
     }
+
+    /// Look up an object field by key, **rejecting a duplicate**.
+    ///
+    /// Unlike the first-wins [`Self::get`] — correct for the verbatim-capture
+    /// path, where RFC 8259 leaves duplicate keys undefined — this is the
+    /// strict accessor for a **trusted-envelope read** (the NIST data-file
+    /// status body), where a repeated `status` / `id` key is a malformed or
+    /// hostile signal that must fail closed rather than silently pick one.
+    /// `Ok(None)` when the key is absent, `Ok(Some(v))` on a single match, and
+    /// an error on two or more. A non-object value has no keys → `Ok(None)`.
+    ///
+    /// # Errors
+    /// [`DuplicateKey`] when `key` appears more than once in the object.
+    pub fn get_unique(&self, key: &str) -> Result<Option<&JsonLite>, DuplicateKey> {
+        let Some(obj) = self.as_object() else {
+            return Ok(None);
+        };
+        let mut found: Option<&JsonLite> = None;
+        for (k, v) in obj {
+            if k == key {
+                if found.is_some() {
+                    return Err(DuplicateKey {
+                        key: key.to_string(),
+                    });
+                }
+                found = Some(v);
+            }
+        }
+        Ok(found)
+    }
 }
+
+/// A duplicate-key rejection from [`JsonLite::get_unique`] — a key required to
+/// be unique appeared more than once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateKey {
+    /// The key that appeared more than once.
+    pub key: String,
+}
+
+impl fmt::Display for DuplicateKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "duplicate object key {:?}", self.key)
+    }
+}
+
+impl std::error::Error for DuplicateKey {}
 
 /// A [`parse`] failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -712,5 +758,27 @@ mod tests {
         // undefined); `get` returns the first.
         let v = parse(r#"{"status":"Uploaded","status":"Run Failed"}"#).unwrap();
         assert_eq!(v.get("status").and_then(JsonLite::as_str), Some("Uploaded"));
+    }
+
+    #[test]
+    fn get_unique_rejects_a_duplicate_key_but_reads_a_single_one() {
+        // The strict accessor for a trusted-envelope read fails closed on a
+        // duplicate `status`, where `get` would silently first-win.
+        let dup = parse(r#"{"status":"Uploaded","status":"Run Failed"}"#).unwrap();
+        assert_eq!(
+            dup.get_unique("status"),
+            Err(DuplicateKey {
+                key: "status".to_string()
+            })
+        );
+        // A single key returns it; an absent key is Ok(None).
+        let ok = parse(r#"{"status":"Uploaded","id":7}"#).unwrap();
+        assert_eq!(
+            ok.get_unique("status").unwrap().and_then(JsonLite::as_str),
+            Some("Uploaded")
+        );
+        assert!(ok.get_unique("missing").unwrap().is_none());
+        // A non-object value has no keys.
+        assert!(parse("42").unwrap().get_unique("x").unwrap().is_none());
     }
 }

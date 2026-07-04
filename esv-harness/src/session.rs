@@ -12,14 +12,32 @@
 //!
 //! Where `acvp-harness` tracks a single `(tsId, vsId)` compute, an ESV
 //! submission fans out over many objects and stages, so the state model is
-//! richer: an **append-only JSON-lines event log** (`events.jsonl`) is the
-//! single source of truth. Each state-advancing step appends one line —
-//! serialized by the shared `acvp_harness::json` codec's
-//! [`to_compact_string`](acvp_harness::json::to_compact_string), one JSON
-//! object per line — and only then runs the submit
-//! ([`SessionDir::persist_then`]). A torn final write costs only the last
-//! event; every earlier line stays intact and replayable
-//! ([`SessionDir::load_state`]).
+//! richer: an **append-only JSON-lines log** (`events.jsonl`) is the single
+//! source of truth, one JSON object per line, serialized by the shared
+//! `acvp_harness::json` codec's
+//! [`to_compact_string`](acvp_harness::json::to_compact_string).
+//!
+//! # Intent-then-outcome durability
+//!
+//! Every server-facing step records **two** lines: first an [`Intent`] with
+//! only locally-known data (what is about to be attempted), then — after the
+//! network call — an outcome [`Event`] built from the server response
+//! ([`SessionDir::persist_intent_then`] appends both in order). The intent
+//! genuinely persists *before* the submit, because an outcome cannot: every
+//! event carries server-assigned data (the per-OE tokens/eaIds, a dfId, an
+//! sdId, the certify response) that does not exist until the response comes
+//! back. Each append is written as one buffered newline-terminated record and
+//! **fsync'd**, so durability holds against power loss, not just a process
+//! crash.
+//!
+//! On resume ([`SessionDir::load_state`]) the log replays: an outcome
+//! supersedes its preceding intent, so a completed step reconstructs cleanly;
+//! an intent with **no** following outcome is a *dangling intent* — the action
+//! may have taken effect server-side but was never confirmed — surfaced as
+//! [`SubmissionStage::Interrupted`] (verify before retrying) rather than
+//! silently re-submitted. A torn final write (a partial line with no trailing
+//! newline, the residue of a crashed append) costs only that line: it is
+//! dropped and recorded, and every earlier record stays intact and replayable.
 //!
 //! # On-disk layout
 //!
@@ -364,12 +382,164 @@ impl Event {
     }
 }
 
+// ── Intents (the pre-submit half of intent-then-outcome) ──────────────
+
+/// The intent to perform a network side-effect, appended to the log — with
+/// only **locally-known** data — *before* the submit runs.
+///
+/// Every [`Event`] records server-assigned data (a `Registered`'s per-OE
+/// tokens and eaIds, a `FileUploaded`'s dfId, a `DocUploaded`'s sdId, a
+/// `Certified`'s response), so an event cannot exist until *after* the
+/// response. An intent, carrying only what is known before the call, genuinely
+/// persists first. A matching outcome event appended after the submit
+/// supersedes it; an intent with **no** following outcome is a *dangling
+/// intent* — the action may have taken effect server-side but was never
+/// confirmed, so resume surfaces it as [`SubmissionStage::Interrupted`]
+/// (verify before retrying) instead of blindly re-submitting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Intent {
+    /// About to register the entropy source. The ACVTS module and the
+    /// operating-environment count are known before the call; the per-OE
+    /// server data (eaIds, tokens, slots) is not.
+    Register {
+        /// The ACVTS module id (0 when not yet known).
+        module_id: i64,
+        /// How many operating environments the registration declares.
+        oe_count: usize,
+    },
+    /// About to upload a data file to an OE slot (both known before the call).
+    UploadFile {
+        /// The entropy-assessment id the slot belongs to.
+        ea_id: String,
+        /// Which slot.
+        slot: Slot,
+    },
+    /// About to upload a supporting document (both known before the call).
+    UploadDoc {
+        /// The document type.
+        sd_type: SdType,
+        /// The uploaded file's name.
+        filename: String,
+    },
+    /// About to run the terminal certify step.
+    Certify {
+        /// Which certify path is being attempted.
+        mode: CertifyMode,
+    },
+}
+
+impl Intent {
+    /// A short, operator-facing description of the pending action, for the
+    /// [`SubmissionStage::Interrupted`] surface.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Register {
+                module_id,
+                oe_count,
+            } => format!("register (moduleId {module_id}, {oe_count} OE(s))"),
+            Self::UploadFile { ea_id, slot } => {
+                format!("upload {} data file for eaId {ea_id}", slot.as_str())
+            }
+            Self::UploadDoc { sd_type, filename } => {
+                format!("upload {} document {filename:?}", sd_type.wire_str())
+            }
+            Self::Certify { mode } => format!("certify ({})", mode.as_str()),
+        }
+    }
+
+    /// Serialize this intent to its JSON-lines value.
+    fn to_json(&self) -> JsonValue {
+        match self {
+            Self::Register {
+                module_id,
+                oe_count,
+            } => obj(vec![
+                ("kind", JsonValue::String("intentRegister".to_string())),
+                ("moduleId", JsonValue::Number(*module_id)),
+                ("oeCount", JsonValue::Number(i64_from_usize(*oe_count))),
+            ]),
+            Self::UploadFile { ea_id, slot } => obj(vec![
+                ("kind", JsonValue::String("intentUploadFile".to_string())),
+                ("eaId", JsonValue::String(ea_id.clone())),
+                ("slot", JsonValue::String(slot.as_str().to_string())),
+            ]),
+            Self::UploadDoc { sd_type, filename } => obj(vec![
+                ("kind", JsonValue::String("intentUploadDoc".to_string())),
+                ("sdType", JsonValue::String(sd_type.wire_str().to_string())),
+                ("filename", JsonValue::String(filename.clone())),
+            ]),
+            Self::Certify { mode } => obj(vec![
+                ("kind", JsonValue::String("intentCertify".to_string())),
+                ("mode", JsonValue::String(mode.as_str().to_string())),
+            ]),
+        }
+    }
+
+    /// Parse one intent value back from the log.
+    fn from_json(v: &JsonValue) -> Result<Self, String> {
+        match str_field(v, "kind")? {
+            "intentRegister" => Ok(Self::Register {
+                module_id: i64_field(v, "moduleId")?,
+                oe_count: usize_field(v, "oeCount")?,
+            }),
+            "intentUploadFile" => Ok(Self::UploadFile {
+                ea_id: str_field(v, "eaId")?.to_string(),
+                slot: slot_field(v)?,
+            }),
+            "intentUploadDoc" => {
+                let sd_type_str = str_field(v, "sdType")?;
+                let sd_type = SdType::from_wire(sd_type_str)
+                    .ok_or_else(|| format!("intentUploadDoc has unknown sdType {sd_type_str:?}"))?;
+                Ok(Self::UploadDoc {
+                    sd_type,
+                    filename: str_field(v, "filename")?.to_string(),
+                })
+            }
+            "intentCertify" => {
+                let mode_str = str_field(v, "mode")?;
+                let mode = CertifyMode::from_str_token(mode_str)
+                    .ok_or_else(|| format!("intentCertify has unknown mode {mode_str:?}"))?;
+                Ok(Self::Certify { mode })
+            }
+            other => Err(format!("unknown intent kind {other:?}")),
+        }
+    }
+}
+
+/// One line of the append-only log: either an [`Intent`] (pre-submit) or an
+/// [`Event`] outcome (post-submit). Serialized one JSON object per line, with
+/// the `kind` discriminator naming which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LogRecord {
+    /// A pre-submit intent (`kind` starting `intent…`).
+    Intent(Intent),
+    /// A post-submit outcome event.
+    Outcome(Event),
+}
+
+impl LogRecord {
+    /// Parse one log line's value into an intent or an outcome, dispatched on
+    /// its `kind`.
+    fn from_json(v: &JsonValue) -> Result<Self, String> {
+        match str_field(v, "kind")? {
+            "registered" | "fileUploaded" | "assessmentCaptured" | "docUploaded" | "certified" => {
+                Event::from_json(v).map(LogRecord::Outcome)
+            }
+            "intentRegister" | "intentUploadFile" | "intentUploadDoc" | "intentCertify" => {
+                Intent::from_json(v).map(LogRecord::Intent)
+            }
+            other => Err(format!("unknown log record kind {other:?}")),
+        }
+    }
+}
+
 // ── Reconstructed state ───────────────────────────────────────────────
 
-/// The coarse stage a submission has reached, derived from the events.
+/// The coarse stage a submission has reached, derived from the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubmissionStage {
-    /// No events yet.
+    /// No records yet.
     Empty,
     /// Registered (OEs known), no files uploaded.
     Registered,
@@ -379,6 +549,12 @@ pub enum SubmissionStage {
     DocsUploaded,
     /// Certified (terminal).
     Certified,
+    /// A network side-effect was begun but never confirmed — a dangling
+    /// intent (an intent with no following outcome). It may have taken effect
+    /// server-side, so it must be **verified before any retry** rather than
+    /// blindly re-submitted. The action's description is on
+    /// [`SubmissionState::interrupted`].
+    Interrupted,
 }
 
 /// The full submission state, reconstructed by replaying `events.jsonl`.
@@ -398,6 +574,15 @@ pub struct SubmissionState {
     pub docs: Vec<SupportingDoc>,
     /// The certify mode, once the submission was certified.
     pub certified: Option<CertifyMode>,
+    /// A **dangling intent** — an intent with no following matching outcome.
+    /// `Some(description)` means a network side-effect was begun but never
+    /// confirmed (it may have taken effect server-side); it must be verified
+    /// before any retry. Drives [`SubmissionStage::Interrupted`].
+    pub interrupted: Option<String>,
+    /// A recorded warning for a dropped torn (non-newline-terminated) final
+    /// log line — a partial record from a crashed append, tolerated on load
+    /// (the earlier records replay intact). `Some` carries the dropped bytes.
+    pub torn_tail: Option<String>,
 }
 
 impl SubmissionState {
@@ -411,7 +596,15 @@ impl SubmissionState {
             } => {
                 self.entropy_id = Some(entropy_id);
                 self.module_id = Some(module_id);
-                self.oes.extend(oes);
+                // Dedup by eaId (first-wins): a retried/duplicated `registered`
+                // outcome in the log must not double-load an OE. An eaId
+                // already present is left as-is; a retry that created genuinely
+                // new OEs (distinct eaIds) still folds those in.
+                for oe in oes {
+                    if !self.oes.iter().any(|existing| existing.ea_id == oe.ea_id) {
+                        self.oes.push(oe);
+                    }
+                }
             }
             Event::FileUploaded { ea_id, slot, df_id } => {
                 self.uploaded_files
@@ -439,8 +632,15 @@ impl SubmissionState {
     }
 
     /// The coarse stage this submission has reached.
+    ///
+    /// A dangling intent takes priority: [`SubmissionStage::Interrupted`] is
+    /// returned whenever [`Self::interrupted`] is set, so a resumer never
+    /// treats an unconfirmed side-effect as safely completed.
     #[must_use]
     pub fn stage(&self) -> SubmissionStage {
+        if self.interrupted.is_some() {
+            return SubmissionStage::Interrupted;
+        }
         if self.certified.is_some() {
             SubmissionStage::Certified
         } else if !self.docs.is_empty() {
@@ -538,40 +738,113 @@ impl SessionDir {
         &self.entropy_id
     }
 
-    /// Append one event line to `events.jsonl`, flushing it to the OS before
-    /// returning. This is the durability primitive: the event is on disk
-    /// before any dependent submit runs.
+    /// Append one outcome event line to `events.jsonl`, **fsync'd** to disk
+    /// before returning (durable against power loss, not just process crash).
+    ///
+    /// The record is written as a single buffered `line + "\n"` so a crash
+    /// can never separate the line from its terminating newline, and any torn
+    /// (non-newline-terminated) tail left by an earlier crashed append is
+    /// healed away first (see [`Self::heal_torn_tail`]) so a retry cannot
+    /// concatenate a valid record onto an incomplete one.
     ///
     /// # Errors
-    /// A filesystem failure opening or writing the log.
+    /// A filesystem failure opening, writing, or syncing the log.
     pub fn append_event(&self, event: &Event) -> Result<(), String> {
+        self.append_line(&json::to_compact_string(&event.to_json()))
+    }
+
+    /// Append one pre-submit [`Intent`] line to `events.jsonl`, fsync'd before
+    /// returning (same durability guarantee as [`Self::append_event`]).
+    ///
+    /// # Errors
+    /// A filesystem failure opening, writing, or syncing the log.
+    pub fn append_intent(&self, intent: &Intent) -> Result<(), String> {
+        self.append_line(&json::to_compact_string(&intent.to_json()))
+    }
+
+    /// Append one already-serialized record line, newline-terminating and
+    /// fsync'ing it, after healing any torn tail.
+    fn append_line(&self, line: &str) -> Result<(), String> {
         use std::io::Write as _;
-        let line = json::to_compact_string(&event.to_json());
         let path = self.dir.join(EVENTS_FILE);
+        // Drop any incomplete trailing record so this one cannot merge onto it.
+        Self::heal_torn_tail(&path)?;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .map_err(|e| format!("open {}: {e}", path.display()))?;
-        file.write_all(line.as_bytes())
-            .and_then(|()| file.write_all(b"\n"))
-            .map_err(|e| format!("append event to {}: {e}", path.display()))?;
+        // Single buffered write: the newline can never be separated from its
+        // line by a crash between two write calls.
+        let mut record = String::with_capacity(line.len().saturating_add(1));
+        record.push_str(line);
+        record.push('\n');
+        file.write_all(record.as_bytes())
+            .map_err(|e| format!("append record to {}: {e}", path.display()))?;
+        // Durability: the record is on disk before any dependent submit runs.
+        file.sync_all()
+            .map_err(|e| format!("sync {}: {e}", path.display()))?;
         Ok(())
     }
 
-    /// Persist `event`, then run `submit`. The event is durable on disk
-    /// **before** `submit` executes, so a crash during submit leaves a
-    /// record the resume path can act on — the persist-before-submit
-    /// invariant, made a single call so ordering cannot be transposed.
+    /// Remove a torn (non-newline-terminated) tail from the log, if any.
+    ///
+    /// A completed [`Self::append_line`] always fsyncs a newline-terminated
+    /// record, so a tail lacking a trailing newline can only be the residue of
+    /// an append that crashed mid-write — a dead partial record whose submit
+    /// never ran. It is truncated back to the end of the last complete record
+    /// so the next append starts on a clean line boundary. A missing or
+    /// already-newline-terminated log is left untouched.
+    fn heal_torn_tail(path: &Path) -> Result<(), String> {
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("read {}: {e}", path.display())),
+        };
+        if data.is_empty() || data.last() == Some(&b'\n') {
+            return Ok(());
+        }
+        // Keep everything up to and including the last newline (0 if none).
+        let keep = data
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |i| i.saturating_add(1));
+        let keep = u64::try_from(keep).map_err(|_| "session log too large to heal".to_string())?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map_err(|e| format!("open {} to heal: {e}", path.display()))?;
+        file.set_len(keep)
+            .map_err(|e| format!("truncate torn tail in {}: {e}", path.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("sync {}: {e}", path.display()))?;
+        Ok(())
+    }
+
+    /// Record the *intent* to perform a network side-effect, run `submit`,
+    /// then record its *outcome* — the honest intent-then-outcome primitive.
+    ///
+    /// The [`Intent`] (locally-known data only) is durable on disk **before**
+    /// `submit` runs; `submit` returns `(Event, R)` — the outcome event (built
+    /// from the server response) and the caller's value — and the outcome is
+    /// appended and fsync'd after. A crash between the two leaves a *dangling
+    /// intent*, which resume surfaces as [`SubmissionStage::Interrupted`] so
+    /// the interrupted action is verified rather than blindly re-submitted.
+    /// Both appends go through one call, so their order can never be transposed.
     ///
     /// # Errors
-    /// A persistence failure (before `submit` runs) or `submit`'s own error.
-    pub fn persist_then<F, R>(&self, event: &Event, submit: F) -> Result<R, String>
+    /// A persistence failure before `submit` runs; `submit`'s own error (the
+    /// intent stays on disk → resume sees `Interrupted`); or a failure
+    /// persisting the outcome after the side-effect succeeded (also surfaced —
+    /// the intent remains dangling, so resume still flags it).
+    pub fn persist_intent_then<F, R>(&self, intent: &Intent, submit: F) -> Result<R, String>
     where
-        F: FnOnce() -> Result<R, String>,
+        F: FnOnce() -> Result<(Event, R), String>,
     {
-        self.append_event(event)?;
-        submit()
+        self.append_intent(intent)?;
+        let (outcome, value) = submit()?;
+        self.append_event(&outcome)?;
+        Ok(value)
     }
 
     /// Store a "Run Successful" assessment body **verbatim** to a sidecar
@@ -580,8 +853,11 @@ impl SessionDir {
     /// floating-point values in NIST's assessment are preserved.
     ///
     /// # Errors
-    /// A filesystem failure writing the sidecar.
+    /// An unsafe `ea_id` (rejected the same way as the entropy id, so a
+    /// crafted `ea_id` cannot escape the session dir), or a filesystem failure
+    /// writing the sidecar.
     pub fn store_assessment(&self, ea_id: &str, slot: Slot, body: &str) -> Result<String, String> {
+        ensure_safe_component(ea_id, "eaId")?;
         let name = format!("assessment-{ea_id}-{}.json", slot.as_str());
         let path = self.dir.join(&name);
         std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
@@ -603,8 +879,11 @@ impl SessionDir {
     /// name, exactly as written.
     ///
     /// # Errors
-    /// A filesystem failure reading the file.
+    /// An unsafe `name` (rejected the same way as the entropy id, so a `../`
+    /// name cannot escape the session dir), or a filesystem failure reading
+    /// the file.
     pub fn read_sidecar(&self, name: &str) -> Result<String, String> {
+        ensure_safe_component(name, "sidecar name")?;
         let path = self.dir.join(name);
         std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))
     }
@@ -612,9 +891,18 @@ impl SessionDir {
     /// Replay `events.jsonl` and reconstruct the submission state. A missing
     /// log yields the empty state (nothing has happened yet).
     ///
+    /// Every complete (newline-terminated) line is replayed strictly — a
+    /// malformed complete line is a hard error naming its line number. A torn
+    /// **final** line (no trailing newline, the residue of a crashed append)
+    /// is tolerated: it is dropped and recorded in
+    /// [`SubmissionState::torn_tail`] rather than failing the load. An
+    /// [`Intent`] with no following outcome leaves the state
+    /// [`SubmissionState::interrupted`] (→ [`SubmissionStage::Interrupted`]);
+    /// an outcome supersedes its preceding intent.
+    ///
     /// # Errors
-    /// A filesystem read failure, or a malformed event line (which names the
-    /// offending line number).
+    /// A filesystem read failure, or a malformed **complete** log line (which
+    /// names the offending line number).
     pub fn load_state(&self) -> Result<SubmissionState, String> {
         let path = self.dir.join(EVENTS_FILE);
         let raw = match std::fs::read_to_string(&path) {
@@ -624,18 +912,58 @@ impl SessionDir {
             }
             Err(e) => return Err(format!("read {}: {e}", path.display())),
         };
+
+        // A non-empty body not ending in a newline has a torn final line: the
+        // residue of a crashed append (a completed append fsyncs its newline).
+        // Tolerate it — replay the complete lines, record the dropped tail.
+        let torn_tail = if raw.is_empty() || raw.ends_with('\n') {
+            None
+        } else {
+            raw.rsplit('\n').next().filter(|s| !s.trim().is_empty())
+        };
+
+        let complete_len = torn_tail.map_or(raw.len(), |tail| raw.len().saturating_sub(tail.len()));
+        let complete = raw.get(..complete_len).unwrap_or(&raw);
+
         let mut state = SubmissionState::default();
-        for (idx, line) in raw.lines().enumerate() {
+        let mut pending: Option<Intent> = None;
+        for (idx, line) in complete.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
             let value = json::parse(line)
                 .map_err(|e| format!("parse event log line {}: {e}", idx.saturating_add(1)))?;
-            let event = Event::from_json(&value)
+            let record = LogRecord::from_json(&value)
                 .map_err(|e| format!("event log line {}: {e}", idx.saturating_add(1)))?;
-            state.apply(event);
+            match record {
+                // An outcome supersedes (clears) its preceding intent.
+                LogRecord::Outcome(event) => {
+                    state.apply(event);
+                    pending = None;
+                }
+                LogRecord::Intent(intent) => pending = Some(intent),
+            }
         }
+        // A dangling intent → the interrupted operator-surface.
+        if let Some(intent) = pending {
+            state.interrupted = Some(intent.describe());
+        }
+        state.torn_tail = torn_tail.map(str::to_string);
         Ok(state)
+    }
+}
+
+/// Validate a single path component (a sidecar name or an `eaId`) the same way
+/// as an entropy id — a non-empty `[A-Za-z0-9._-]` token — so nothing from
+/// outside can escape the session directory.
+fn ensure_safe_component(value: &str, what: &str) -> Result<(), String> {
+    if is_safe_id(value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "unsafe {what} {value:?}: must be a non-empty [A-Za-z0-9._-] token \
+             (not '.', '..', or containing a path separator)"
+        ))
     }
 }
 
@@ -658,6 +986,19 @@ fn i64_field(v: &JsonValue, key: &str) -> Result<i64, String> {
     v.get(key)
         .and_then(JsonValue::as_i64)
         .ok_or_else(|| format!("event missing integer field {key:?}"))
+}
+
+/// Read a required non-negative integer field as a `usize`.
+fn usize_field(v: &JsonValue, key: &str) -> Result<usize, String> {
+    let n = i64_field(v, key)?;
+    usize::try_from(n).map_err(|_| format!("event field {key:?} is not a non-negative count: {n}"))
+}
+
+/// Render a `usize` count as an `i64` for the log (a session's OE count is
+/// tiny, far below `i64::MAX`; a pathological overflow saturates rather than
+/// wraps).
+fn i64_from_usize(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 /// Read the required `slot` field and map it to a [`Slot`].
@@ -876,52 +1217,218 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // ── Persist-before-submit ordering (recording fake) ───────────────
+    // ── Intent-then-outcome ordering (recording fake) ─────────────────
 
     #[test]
-    fn persist_then_writes_the_event_before_submit_runs() {
+    fn persist_intent_then_persists_the_intent_before_submit_and_the_outcome_after() {
         let root = temp_root("persist-order");
         let s = SessionDir::create(root_str(&root), "TIDP").unwrap();
 
-        let event = Event::FileUploaded {
+        let intent = Intent::UploadFile {
+            ea_id: "11".to_string(),
+            slot: Slot::RawNoise,
+        };
+        let outcome = Event::FileUploaded {
             ea_id: "11".to_string(),
             slot: Slot::RawNoise,
             df_id: "110".to_string(),
         };
-        let seen_on_disk_when_submit_ran = Cell::new(false);
-        // The submit closure inspects the log AT THE MOMENT it runs: the
-        // event must already be persisted.
-        s.persist_then(&event, || {
+        let intent_durable_when_submit_ran = Cell::new(false);
+        let outcome_absent_when_submit_ran = Cell::new(false);
+        // The submit closure inspects the log AT THE MOMENT it runs: the intent
+        // must already be durable (a dangling intent → Interrupted), and the
+        // outcome must not be written yet.
+        s.persist_intent_then(&intent, || {
             let st = s.load_state().unwrap();
-            seen_on_disk_when_submit_ran.set(!st.uploaded_files.is_empty());
-            Ok::<(), String>(())
+            intent_durable_when_submit_ran.set(st.stage() == SubmissionStage::Interrupted);
+            outcome_absent_when_submit_ran.set(st.uploaded_files.is_empty());
+            Ok((outcome, ()))
         })
         .unwrap();
         assert!(
-            seen_on_disk_when_submit_ran.get(),
-            "event was durable before the submit closure ran"
+            intent_durable_when_submit_ran.get(),
+            "intent was durable before the submit closure ran"
         );
+        assert!(
+            outcome_absent_when_submit_ran.get(),
+            "outcome was not written until after the submit closure ran"
+        );
+        // After the call the outcome superseded the intent — a clean upload.
+        let st = s.load_state().unwrap();
+        assert!(st.interrupted.is_none());
+        assert_eq!(st.stage(), SubmissionStage::FilesUploaded);
+        assert_eq!(st.uploaded_files.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn persist_then_persists_even_when_submit_fails() {
+    fn persist_intent_then_leaves_a_dangling_intent_when_submit_fails() {
         let root = temp_root("persist-fail");
         let s = SessionDir::create(root_str(&root), "TIDF").unwrap();
-        let event = Event::DocUploaded {
-            sd_id: 1,
+        let intent = Intent::UploadDoc {
             sd_type: SdType::PublicUseDocument,
-            access_token: "t".to_string(),
+            filename: "pud.pdf".to_string(),
         };
-        let out: Result<(), String> = s.persist_then(&event, || Err("network died".to_string()));
+        let out: Result<(), String> =
+            s.persist_intent_then(&intent, || Err("network died".to_string()));
         assert!(out.is_err());
-        // The event is durable despite the submit failure — resume sees it.
+        // The intent is durable despite the submit failure — resume sees an
+        // interrupted (unconfirmed) action, not a completed one.
         let st = SessionDir::open(root_str(&root), "TIDF")
             .unwrap()
             .load_state()
             .unwrap();
+        assert_eq!(st.stage(), SubmissionStage::Interrupted);
+        let desc = st.interrupted.unwrap();
+        assert!(desc.contains("PublicUseDocument"), "{desc}");
+        // The side-effect is NOT recorded as done — no doc folded in.
+        assert!(st.docs.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_dangling_intent_alone_yields_interrupted_on_resume() {
+        // A crash after the intent append but before the outcome leaves only
+        // the intent on disk (simulated by appending the intent alone).
+        let root = temp_root("dangling");
+        let s = SessionDir::create(root_str(&root), "TIDD").unwrap();
+        s.append_intent(&Intent::Certify {
+            mode: CertifyMode::Full,
+        })
+        .unwrap();
+        let st = SessionDir::open(root_str(&root), "TIDD")
+            .unwrap()
+            .load_state()
+            .unwrap();
+        assert_eq!(st.stage(), SubmissionStage::Interrupted);
+        assert!(st.interrupted.unwrap().contains("certify"));
+        assert!(st.certified.is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_completed_intent_and_outcome_yields_the_normal_stage() {
+        let root = temp_root("completed");
+        let s = SessionDir::create(root_str(&root), "TIDC").unwrap();
+        s.append_intent(&Intent::Register {
+            module_id: 3,
+            oe_count: 1,
+        })
+        .unwrap();
+        s.append_event(&Event::registered("TIDC", 3, &[sample_reg("11")]))
+            .unwrap();
+        let st = s.load_state().unwrap();
+        // The outcome superseded the intent — no interruption.
+        assert!(st.interrupted.is_none());
+        assert_eq!(st.stage(), SubmissionStage::Registered);
+        assert_eq!(st.oes.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Fix 1: torn final line tolerated + append cannot merge ────────
+
+    #[test]
+    fn load_state_tolerates_a_truncated_final_line_and_reports_it() {
+        let root = temp_root("torn");
+        let s = SessionDir::create(root_str(&root), "TIDT").unwrap();
+        s.append_event(&Event::registered("TIDT", 3, &[sample_reg("11")]))
+            .unwrap();
+        // Append a torn (non-newline-terminated) partial record, as a crashed
+        // append would leave.
+        let path = s.path().join(EVENTS_FILE);
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str(r#"{"kind":"fileUploaded","eaId":"11""#); // no newline
+        std::fs::write(&path, content).unwrap();
+
+        let st = s.load_state().unwrap();
+        // The complete earlier record replayed; the torn tail was dropped and
+        // recorded, not a hard error.
+        assert_eq!(st.stage(), SubmissionStage::Registered);
+        assert_eq!(st.oes.len(), 1);
+        let torn = st.torn_tail.unwrap();
+        assert!(torn.contains("fileUploaded"), "{torn}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn append_after_a_torn_line_does_not_merge_two_records() {
+        let root = temp_root("torn-append");
+        let s = SessionDir::create(root_str(&root), "TIDA").unwrap();
+        s.append_event(&Event::registered("TIDA", 3, &[sample_reg("11")]))
+            .unwrap();
+        // Leave a torn partial line (a crashed append).
+        let path = s.path().join(EVENTS_FILE);
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str(r#"{"kind":"docUpl"#); // torn, no newline
+        std::fs::write(&path, content).unwrap();
+
+        // A fresh append heals the torn tail first, so the new record lands on
+        // its own line and cannot concatenate onto the partial.
+        s.append_event(&Event::DocUploaded {
+            sd_id: 5,
+            sd_type: SdType::PublicUseDocument,
+            access_token: "t".to_string(),
+        })
+        .unwrap();
+
+        // The log now parses cleanly: registered + docUploaded, no merged line,
+        // no torn tail.
+        let st = s.load_state().unwrap();
+        assert!(st.torn_tail.is_none(), "torn tail healed");
+        assert_eq!(st.oes.len(), 1);
         assert_eq!(st.docs.len(), 1);
-        assert_eq!(st.docs[0].sd_id, 1);
+        assert_eq!(st.docs[0].sd_id, 5);
+        let raw = s.read_sidecar(EVENTS_FILE).unwrap();
+        let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 2, "{raw}");
+        for line in &lines {
+            assert!(json::parse(line).is_ok(), "each line parses: {line}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Fix 2: a duplicate registered outcome does not double-load OEs ─
+
+    #[test]
+    fn duplicate_registered_outcome_does_not_double_load_oes() {
+        let root = temp_root("dedup");
+        let s = SessionDir::create(root_str(&root), "TIDR").unwrap();
+        let regs = [sample_reg("11"), sample_reg("22")];
+        // The same registered outcome recorded twice (a retry that re-appended
+        // it) must not duplicate the OEs.
+        s.append_event(&Event::registered("TIDR", 3, &regs))
+            .unwrap();
+        s.append_event(&Event::registered("TIDR", 3, &regs))
+            .unwrap();
+        let st = s.load_state().unwrap();
+        assert_eq!(st.oes.len(), 2, "each OE once, not four");
+        assert_eq!(st.oes[0].ea_id, "11");
+        assert_eq!(st.oes[1].ea_id, "22");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Fix 10: sidecar name / eaId path validation ───────────────────
+
+    #[test]
+    fn read_sidecar_rejects_a_traversal_name() {
+        let root = temp_root("read-traversal");
+        let s = SessionDir::create(root_str(&root), "TIDX").unwrap();
+        for bad in ["../escape.json", "a/b.json", "..", "sub/dir"] {
+            assert!(s.read_sidecar(bad).is_err(), "should reject {bad:?}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn store_assessment_rejects_a_traversal_ea_id() {
+        let root = temp_root("store-traversal");
+        let s = SessionDir::create(root_str(&root), "TIDY").unwrap();
+        let err = s
+            .store_assessment("../evil", Slot::RawNoise, "{}")
+            .unwrap_err();
+        assert!(err.contains("eaId"), "{err}");
+        // A safe eaId is fine.
+        assert!(s.store_assessment("11", Slot::RawNoise, "{}").is_ok());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1002,6 +1509,38 @@ mod tests {
             let line = json::to_compact_string(&e.to_json());
             let parsed = Event::from_json(&json::parse(&line).unwrap()).unwrap();
             assert_eq!(parsed, e);
+        }
+    }
+
+    #[test]
+    fn every_intent_kind_round_trips_and_dispatches_as_an_intent() {
+        let intents = vec![
+            Intent::Register {
+                module_id: 3,
+                oe_count: 2,
+            },
+            Intent::UploadFile {
+                ea_id: "11".to_string(),
+                slot: Slot::Restart,
+            },
+            Intent::UploadDoc {
+                sd_type: SdType::PublicUseDocument,
+                filename: "pud.pdf".to_string(),
+            },
+            Intent::Certify {
+                mode: CertifyMode::AddOe,
+            },
+        ];
+        for i in intents {
+            let line = json::to_compact_string(&i.to_json());
+            let parsed = Intent::from_json(&json::parse(&line).unwrap()).unwrap();
+            assert_eq!(parsed, i);
+            // The shared log-record reader routes it to the intent arm, not an
+            // outcome (its `kind` cannot collide with an event kind).
+            assert_eq!(
+                LogRecord::from_json(&json::parse(&line).unwrap()).unwrap(),
+                LogRecord::Intent(i)
+            );
         }
     }
 }
