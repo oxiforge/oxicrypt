@@ -222,21 +222,27 @@ pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> Str
     ])
 }
 
-/// Require the ESVP two-element versioned envelope `[{esvVersion}, {payload}]`
-/// and return a reference to the payload element (index 1).
+/// Require the ESVP versioned envelope `[{esvVersion}, {payload}, …]` and
+/// return a reference to the payload element (index 1).
 ///
-/// ESV responses are **always** this envelope. This is the fail-closed
-/// esv-side check that [`parse_access_token`] and
-/// [`parse_bulk_refresh_tokens`] share; it deliberately rejects the bare
-/// `{accessToken:…}` object form that the more permissive
-/// [`acvp_harness::transport::extract_access_token`] accepts.
-fn esv_payload_element(parsed: &JsonValue) -> Result<&JsonValue, String> {
+/// ESV responses are **always** this envelope. The check is **at-least-two**
+/// elements, not exactly two: element 0 must carry a string `esvVersion`,
+/// element 1 is the payload, and any trailing elements are ignored — so an
+/// additive server-side envelope variance is tolerated while a bare
+/// `{accessToken:…}` object (or a version-less first element) is still
+/// rejected. This is the fail-closed esv-side check that
+/// [`parse_access_token`], [`parse_bulk_refresh_tokens`], and
+/// [`crate::registration::parse_registration_response`] share; it deliberately
+/// rejects the bare-object form that the more permissive
+/// [`acvp_harness::transport::extract_access_token`] accepts. Exposed
+/// `pub(crate)` so the registration parser reuses the identical validation.
+pub(crate) fn esv_payload_element(parsed: &JsonValue) -> Result<&JsonValue, String> {
     let arr = parsed
         .as_array()
         .ok_or("ESV response is not a versioned-array envelope")?;
-    if arr.len() != 2 {
+    if arr.len() < 2 {
         return Err(format!(
-            "ESV response envelope must be a two-element array, got {} element(s)",
+            "ESV response envelope must have at least two elements, got {}",
             arr.len()
         ));
     }
@@ -450,6 +456,18 @@ pub struct EsvSession {
     /// [`TOKEN_REFRESH_MARGIN_SECS`]; tunable via
     /// [`Self::with_refresh_margin_secs`] / [`Self::set_refresh_margin_secs`].
     refresh_margin_secs: u64,
+    /// Monotonic count of times [`Self::refresh`] silently fell back to a
+    /// **fresh login** (a non-window 401/403 on the embedded-token refresh;
+    /// see [`Self::refresh`]). Observable via [`Self::fallback_logins`].
+    ///
+    /// This is the caller-visible signal a fresh-login fallback happened even
+    /// on the paths that discard the refresh outcome
+    /// ([`Self::refresh_if_stale`], [`Self::authenticated_request`]): a fresh
+    /// login obtains a new **same-scope** token, but that new authorization
+    /// may not carry continuity over objects created/registered under the
+    /// previous token in the same session. The attended smoke must watch this
+    /// counter and re-verify in-flight object authorization if it is non-zero.
+    fallback_logins: u32,
 }
 
 impl EsvSession {
@@ -460,6 +478,7 @@ impl EsvSession {
             token,
             issued: std::time::Instant::now(),
             refresh_margin_secs: TOKEN_REFRESH_MARGIN_SECS,
+            fallback_logins: 0,
         }
     }
 
@@ -473,6 +492,7 @@ impl EsvSession {
                 .checked_sub(age)
                 .unwrap_or_else(std::time::Instant::now),
             refresh_margin_secs: TOKEN_REFRESH_MARGIN_SECS,
+            fallback_logins: 0,
         }
     }
 
@@ -491,6 +511,13 @@ impl EsvSession {
     /// [`Self::refresh_margin_secs`] field).
     pub fn refresh_margin_secs(&self) -> u64 {
         self.refresh_margin_secs
+    }
+
+    /// How many times [`Self::refresh`] has fallen back to a fresh login (see
+    /// the [`Self::fallback_logins`] field). Zero on a healthy session; the
+    /// attended smoke watches this to catch same-scope-continuity risk.
+    pub fn fallback_logins(&self) -> u32 {
+        self.fallback_logins
     }
 
     /// Builder: set the proactive refresh margin (seconds).
@@ -525,6 +552,15 @@ impl EsvSession {
     /// suspend-blind note on [`Self::issued`]) and the flow falls back to a
     /// **plain fresh login** (no embedded token) before surfacing an
     /// error.
+    ///
+    /// A successful fresh-login fallback increments
+    /// [`Self::fallback_logins`] so the event stays observable even through
+    /// the callers that discard it ([`Self::refresh_if_stale`],
+    /// [`Self::authenticated_request`]). The fallback obtains a new
+    /// **same-scope** token, but that new authorization may not carry
+    /// continuity over objects created under the prior token in the same
+    /// session — the attended smoke re-verifies in-flight objects when
+    /// [`Self::fallback_logins`] is non-zero.
     pub fn refresh<T: EsvTransport>(
         &mut self,
         totp_secret: &[u8],
@@ -552,6 +588,7 @@ impl EsvSession {
             })?;
             if is_success(fresh.status) {
                 self.adopt_token(&fresh.body)?;
+                self.fallback_logins = self.fallback_logins.saturating_add(1);
                 return Ok(());
             }
             return Err(format!(
@@ -802,6 +839,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_access_token_tolerates_trailing_envelope_element() {
+        // Item 5: at-least-two tolerance — a third element is additive server
+        // variance and is ignored; the payload is still element 1.
+        let body = r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-x"},{"extra":true}]"#;
+        assert_eq!(parse_access_token(body).unwrap(), "jwt-x");
+    }
+
+    #[test]
+    fn parse_access_token_rejects_single_element_envelope() {
+        // One element is below the at-least-two floor.
+        let body = r#"[{"esvVersion":"1.0"}]"#;
+        assert!(parse_access_token(body).is_err());
+    }
+
+    #[test]
     fn parse_bulk_refresh_tokens_returns_array_in_order() {
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":["t1","t2","t3"]}]"#;
         assert_eq!(
@@ -966,6 +1018,8 @@ mod tests {
         let mut session = login(SECRET, &mut t, &mut sl).unwrap();
         session.refresh(SECRET, &mut t, &mut sl).unwrap();
         assert_eq!(session.bearer(), "jwt-B");
+        // A normal (2xx) refresh is not a fallback login.
+        assert_eq!(session.fallback_logins(), 0);
         // The refresh POST went to the single-refresh path and embedded
         // the OLD token in the body.
         let refresh_call = &t.calls[1];
@@ -988,8 +1042,11 @@ mod tests {
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-C"}]"#), // fresh login
         ]);
         let mut sl = RecordingSleeper::default();
+        assert_eq!(session.fallback_logins(), 0);
         session.refresh(SECRET, &mut t, &mut sl).unwrap();
         assert_eq!(session.bearer(), "jwt-C");
+        // Item 8: the fresh-login fallback is observable via the counter.
+        assert_eq!(session.fallback_logins(), 1);
         // First call embedded the old token; the fallback carried none.
         assert_eq!(t.calls.len(), 2);
         assert_eq!(t.calls[0].path, SINGLE_REFRESH_PATH);

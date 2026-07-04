@@ -17,12 +17,21 @@
 //! is mostly *new resources over a proven transport*, not a new
 //! transport: it reuses acvp-harness's TOTP generation
 //! ([`acvp_harness::transport::totp_now`]), base64 secret decoding
-//! ([`acvp_harness::transport::decode_totp_secret`]), access-token
-//! extraction ([`acvp_harness::transport::extract_access_token`]),
-//! JSON codec ([`acvp_harness::json`]), and the proactive-margin /
-//! reactive-retry token-lifecycle decisions
-//! ([`acvp_harness::transport::token_needs_refresh`],
-//! [`acvp_harness::transport::submit_should_refresh_retry`]).
+//! ([`acvp_harness::transport::decode_totp_secret`]), the JSON codec
+//! ([`acvp_harness::json`]) and [`acvp_harness::transport::HttpResponse`]
+//! type, the ACVP-measured proactive-refresh default
+//! ([`acvp_harness::transport::TOKEN_REFRESH_MARGIN_SECS`]), and the
+//! reactive-retry decision
+//! ([`acvp_harness::transport::submit_should_refresh_retry`]).
+//!
+//! ESV deliberately does **not** reuse two acvp-harness helpers that its
+//! hardening pass replaced: the permissive `extract_access_token` (which
+//! also accepts a bare `{accessToken}` object) — ESV responses are always
+//! the versioned envelope, so [`login::parse_access_token`] is a stricter
+//! fail-closed parser — and `token_needs_refresh`, because the ESV session
+//! carries a **tunable** refresh margin (defaulting to
+//! `TOKEN_REFRESH_MARGIN_SECS`) so it can be aligned to the measured ESV
+//! token TTL at the attended smoke.
 //!
 //! ESV adds exactly one auth mechanism ACVP lacks: **bulk refresh** —
 //! a single POST that refreshes an array of per-object JWTs in one TOTP

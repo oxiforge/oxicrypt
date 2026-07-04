@@ -375,6 +375,7 @@ fn conditioning_errors(cc: &ConditioningComponent) -> Vec<CcError> {
 mod tests {
     use super::*;
     use crate::registration::ConditioningComponent;
+    use acvp_harness::json::JsonValue;
 
     fn valid() -> EntropyRegistration {
         let mut reg = EntropyRegistration::new_non_iid(
@@ -584,72 +585,120 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn constraints_match_vendored_schema() {
-        let schema = parse_vendored_schema();
+    /// Re-derive **every** transcribed constant from a schema tree, returning
+    /// `Err` on the first mismatch. Factored out of
+    /// [`constraints_match_vendored_schema`] so [`seeded_drift_is_caught`] can
+    /// feed it a deliberately-mutated schema and confirm the guard rejects it.
+    fn verify_schema_constraints(schema: &JsonValue) -> Result<(), String> {
         let items = schema
             .get("items")
-            .and_then(acvp_harness::json::JsonValue::as_array)
-            .expect("schema.items is a tuple array");
-        assert_eq!(
-            items.len(),
-            2,
-            "schema tuple has version + metadata objects"
-        );
+            .and_then(JsonValue::as_array)
+            .ok_or("schema.items is not a tuple array")?;
+        if items.len() != 2 {
+            return Err(format!(
+                "schema tuple has {} items, expected 2",
+                items.len()
+            ));
+        }
 
         // Element 0: esvVersion const.
-        assert_eq!(
-            items[0]
-                .get("properties")
-                .and_then(|p| p.get("esvVersion"))
-                .and_then(|v| v.get("const"))
-                .and_then(acvp_harness::json::JsonValue::as_str),
-            Some(crate::login::ESV_VERSION)
-        );
+        let ver = items[0]
+            .get("properties")
+            .and_then(|p| p.get("esvVersion"))
+            .and_then(|v| v.get("const"))
+            .and_then(JsonValue::as_str);
+        if ver != Some(crate::login::ESV_VERSION) {
+            return Err(format!(
+                "esvVersion const = {ver:?}, expected {:?}",
+                crate::login::ESV_VERSION
+            ));
+        }
 
         // Element 1: metadata required set + property bounds.
         let meta = &items[1];
-        assert_eq!(required_strings(meta, "required"), REQUIRED_METADATA_FIELDS);
+        if required_strings(meta, "required") != REQUIRED_METADATA_FIELDS {
+            return Err("metadata required set drifted from REQUIRED_METADATA_FIELDS".to_string());
+        }
+        let props = meta.get("properties").ok_or("metadata properties absent")?;
 
-        let props = meta.get("properties").expect("metadata properties");
-        let prop_i64 = |name: &str, key: &str| {
-            props
+        // Assert a numeric schema bound equals a transcribed constant.
+        let want_i64 = |node: &JsonValue, name: &str, key: &str, want: i64| -> Result<(), String> {
+            let got = node
                 .get(name)
                 .and_then(|p| p.get(key))
-                .and_then(acvp_harness::json::JsonValue::as_i64)
+                .and_then(JsonValue::as_i64);
+            if got == Some(want) {
+                Ok(())
+            } else {
+                Err(format!("{name}.{key} = {got:?}, expected {want}"))
+            }
         };
-        assert_eq!(
-            prop_i64("primaryNoiseSource", "maxLength"),
-            i64::try_from(PRIMARY_NOISE_SOURCE_MAX_CHARS).ok()
-        );
-        assert_eq!(
-            prop_i64("bitsPerSample", "minimum"),
-            Some(BITS_PER_SAMPLE_MIN)
-        );
-        assert_eq!(
-            prop_i64("bitsPerSample", "maximum"),
-            Some(BITS_PER_SAMPLE_MAX)
-        );
-        assert_eq!(
-            prop_i64("numberOfRestarts", "minimum"),
-            Some(RESTART_FIELD_MIN)
-        );
-        assert_eq!(
-            prop_i64("samplesPerRestart", "minimum"),
-            Some(RESTART_FIELD_MIN)
-        );
-        // hminEstimate lower bound (0.0 → normalized 0); the upper bound is
-        // schema-static 256.0 but our preflight enforces the tighter
-        // `<= bitsPerSample` (schema description + rule hMinEstimate.json).
-        assert_eq!(prop_i64("hminEstimate", "minimum"), Some(0));
-        assert_eq!(prop_i64("hminEstimate", "maximum"), Some(256));
 
-        // conditioningComponent item required set.
+        want_i64(
+            props,
+            "primaryNoiseSource",
+            "maxLength",
+            i64::try_from(PRIMARY_NOISE_SOURCE_MAX_CHARS).unwrap_or(-1),
+        )?;
+        want_i64(props, "bitsPerSample", "minimum", BITS_PER_SAMPLE_MIN)?;
+        want_i64(props, "bitsPerSample", "maximum", BITS_PER_SAMPLE_MAX)?;
+        want_i64(props, "numberOfRestarts", "minimum", RESTART_FIELD_MIN)?;
+        want_i64(props, "samplesPerRestart", "minimum", RESTART_FIELD_MIN)?;
+        // hminEstimate float bounds (0.0 / 256.0) are normalized to 0 / 256 by
+        // the float pre-pass; the preflight enforces the tighter
+        // `<= bitsPerSample` upper bound (schema description + rule
+        // hMinEstimate.json), but the schema-static 256 is still re-derived.
+        want_i64(props, "hminEstimate", "minimum", 0)?;
+        want_i64(props, "hminEstimate", "maximum", 256)?;
+
+        // conditioningComponent item required set + every numeric bound.
         let cc_items = props
             .get("conditioningComponent")
             .and_then(|c| c.get("items"))
-            .expect("conditioningComponent.items");
-        assert_eq!(required_strings(cc_items, "required"), REQUIRED_CC_FIELDS);
+            .ok_or("conditioningComponent.items absent")?;
+        if required_strings(cc_items, "required") != REQUIRED_CC_FIELDS {
+            return Err(
+                "conditioning-component required set drifted from REQUIRED_CC_FIELDS".to_string(),
+            );
+        }
+        let cc_props = cc_items
+            .get("properties")
+            .ok_or("conditioningComponent.items.properties absent")?;
+        // CC_POSITIVE_INT_MIN backs the `< 1` checks over sequencePosition /
+        // minNin / nw / nOut (sequencePosition is schema-bounded ≥1 too).
+        for name in ["sequencePosition", "minNin", "nw", "nOut"] {
+            want_i64(cc_props, name, "minimum", CC_POSITIVE_INT_MIN)?;
+        }
+        // minHin / hOut 0.0 floors: these NEWLY-asserted nodes ARE among the
+        // ones the float pre-pass normalizes (0.0 → 0), so we assert on the
+        // normalized integer token (0) deliberately. The floors back the
+        // `< 0.0` checks in `conditioning_errors` (MinHinBelowZero /
+        // HOutBelowZero).
+        want_i64(cc_props, "minHin", "minimum", 0)?;
+        want_i64(cc_props, "hOut", "minimum", 0)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn constraints_match_vendored_schema() {
+        verify_schema_constraints(&parse_vendored_schema())
+            .expect("transcribed constants match the vendored schema");
+    }
+
+    #[test]
+    fn seeded_drift_is_caught() {
+        // The pristine schema verifies clean…
+        assert!(verify_schema_constraints(&parse_vendored_schema()).is_ok());
+        // …but a seeded drift (bitsPerSample maximum 256 → 255 — the first
+        // `"maximum": 256` in the file, ahead of hminEstimate's 256.0) is
+        // rejected, proving the guard actually compares rather than no-ops.
+        let raw = include_str!("../vendor/entropy-source-metadata-schema.json");
+        let mutated = raw.replacen("\"maximum\": 256", "\"maximum\": 255", 1);
+        assert_ne!(mutated, raw, "seed replacement must change the text");
+        let normalized = mutated.replace("256.0", "256").replace("0.0", "0");
+        let schema = acvp_harness::json::parse(&normalized).expect("mutated schema parses");
+        assert!(verify_schema_constraints(&schema).is_err());
     }
 
     #[test]

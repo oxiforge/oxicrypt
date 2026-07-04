@@ -441,11 +441,11 @@ pub struct DataFileRef {
 }
 
 impl DataFileRef {
-    fn from_url(url: &str) -> Self {
-        Self {
+    fn from_url(url: &str) -> Result<Self, String> {
+        Ok(Self {
             url: url.to_string(),
-            id: url_tail(url).to_string(),
-        }
+            id: url_tail(url)?.to_string(),
+        })
     }
 }
 
@@ -471,9 +471,13 @@ pub struct OeRegistration {
     pub url: String,
     /// The entropy assessment id — the last path segment of [`Self::url`].
     pub ea_id: String,
-    /// The raw-noise data-file slot, if present.
+    /// The raw-noise data-file slot. Always `Some` when produced by
+    /// [`parse_registration_response`], which requires it (the `Option` is
+    /// retained for hand-built values); see [`parse_one_assessment`].
     pub raw_noise: Option<DataFileRef>,
-    /// The restart-test data-file slot, if present.
+    /// The restart-test data-file slot. Always `Some` when produced by
+    /// [`parse_registration_response`], which requires it (the `Option` is
+    /// retained for hand-built values); see [`parse_one_assessment`].
     pub restart: Option<DataFileRef>,
     /// Any conditioned-bits slots (empty for a vetted source).
     pub conditioned: Vec<ConditionedFileRef>,
@@ -481,10 +485,25 @@ pub struct OeRegistration {
     pub access_token: String,
 }
 
-/// The id of a resource URL: its last `/`-separated segment. Returns the
-/// whole string if it contains no `/`.
-fn url_tail(url: &str) -> &str {
-    url.rsplit('/').next().unwrap_or(url)
+/// The id of a resource URL: its last non-empty `/`-separated segment, after
+/// trimming any trailing `/`. A URL with nothing left after trimming (all
+/// slashes, or empty) is a typed error rather than a silently-empty id.
+///
+/// So `".../dataFiles/11/"` yields `"11"` (the trailing slash is trimmed),
+/// while `"/"` / `""` yield an error. A host-only URL such as
+/// `"https://host/"` trims to `"https://host"` whose last segment is the
+/// non-empty `"host"` — it is *not* an empty tail, so it does not error here
+/// (a real ESV resource URL always carries a `/{id}` path segment; the empty
+/// case this guards is a structurally-degenerate URL).
+fn url_tail(url: &str) -> Result<&str, String> {
+    let trimmed = url.trim_end_matches('/');
+    let tail = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if tail.is_empty() {
+        return Err(format!(
+            "cannot derive an id from URL {url:?}: no path segment after trimming trailing '/'"
+        ));
+    }
+    Ok(tail)
 }
 
 /// Parse a registration response into one [`OeRegistration`] per
@@ -497,18 +516,20 @@ fn url_tail(url: &str) -> &str {
 /// (objects with `rawNoiseBits` / `restartTestBits` /
 /// `conditionedBits`+`sequencePosition`), and `accessToken`.
 ///
+/// The envelope itself is validated by the shared
+/// [`crate::login::esv_payload_element`] — element 0 must be an
+/// `{esvVersion}` object — so a version-less or error-shaped array
+/// (`["error", …]`) is rejected the same way the auth parsers reject it.
+///
 /// # Errors
 /// A `String` describing the first structural problem (parse failure,
 /// missing envelope/assessment array, or a required field absent).
 pub fn parse_registration_response(body: &str) -> Result<Vec<OeRegistration>, String> {
     let parsed = json::parse(body).map_err(|e| format!("parse registration response: {e}"))?;
-    let envelope = parsed
+    let payload = crate::login::esv_payload_element(&parsed)?;
+    let assessments = payload
         .as_array()
-        .ok_or("registration response is not a versioned array")?;
-    let assessments = envelope
-        .get(1)
-        .and_then(JsonValue::as_array)
-        .ok_or("registration response has no assessment array at element 1")?;
+        .ok_or("registration response payload (element 1) is not the assessment array")?;
 
     let mut out = Vec::with_capacity(assessments.len());
     for ea in assessments {
@@ -518,6 +539,13 @@ pub fn parse_registration_response(body: &str) -> Result<Vec<OeRegistration>, St
 }
 
 /// Parse one entropy-assessment object from a registration response.
+///
+/// Fail-closed on the data-file slots: `dataFileUrls` must be present, an
+/// array, and non-empty, and it must carry both a `rawNoiseBits` and a
+/// `restartTestBits` slot (a non-IID assessment always needs both). A
+/// duplicate `rawNoiseBits` / `restartTestBits` slot is a typed error rather
+/// than a silent last-wins overwrite. Conditioned-bits slots stay optional
+/// (absent for the vetted oxicrypt path) and may repeat, one per component.
 fn parse_one_assessment(ea: &JsonValue) -> Result<OeRegistration, String> {
     let url = ea
         .get("url")
@@ -528,36 +556,52 @@ fn parse_one_assessment(ea: &JsonValue) -> Result<OeRegistration, String> {
         .and_then(JsonValue::as_str)
         .ok_or("assessment object missing string `accessToken`")?;
 
+    let slots = ea
+        .get("dataFileUrls")
+        .ok_or("assessment object missing `dataFileUrls`")?
+        .as_array()
+        .ok_or("assessment `dataFileUrls` is not an array")?;
+    if slots.is_empty() {
+        return Err("assessment `dataFileUrls` is empty".to_string());
+    }
+
     let mut raw_noise = None;
     let mut restart = None;
     let mut conditioned = Vec::new();
-    if let Some(slots) = ea.get("dataFileUrls").and_then(JsonValue::as_array) {
-        for slot in slots {
-            if let Some(u) = slot.get("rawNoiseBits").and_then(JsonValue::as_str) {
-                raw_noise = Some(DataFileRef::from_url(u));
+    for slot in slots {
+        if let Some(u) = slot.get("rawNoiseBits").and_then(JsonValue::as_str) {
+            if raw_noise.is_some() {
+                return Err("assessment carries a duplicate `rawNoiseBits` slot".to_string());
             }
-            if let Some(u) = slot.get("restartTestBits").and_then(JsonValue::as_str) {
-                restart = Some(DataFileRef::from_url(u));
+            raw_noise = Some(DataFileRef::from_url(u)?);
+        }
+        if let Some(u) = slot.get("restartTestBits").and_then(JsonValue::as_str) {
+            if restart.is_some() {
+                return Err("assessment carries a duplicate `restartTestBits` slot".to_string());
             }
-            if let Some(u) = slot.get("conditionedBits").and_then(JsonValue::as_str) {
-                let sequence_position = slot
-                    .get("sequencePosition")
-                    .and_then(JsonValue::as_i64)
-                    .ok_or("conditionedBits slot missing integer `sequencePosition`")?;
-                conditioned.push(ConditionedFileRef {
-                    url: u.to_string(),
-                    id: url_tail(u).to_string(),
-                    sequence_position,
-                });
-            }
+            restart = Some(DataFileRef::from_url(u)?);
+        }
+        if let Some(u) = slot.get("conditionedBits").and_then(JsonValue::as_str) {
+            let sequence_position = slot
+                .get("sequencePosition")
+                .and_then(JsonValue::as_i64)
+                .ok_or("conditionedBits slot missing integer `sequencePosition`")?;
+            conditioned.push(ConditionedFileRef {
+                url: u.to_string(),
+                id: url_tail(u)?.to_string(),
+                sequence_position,
+            });
         }
     }
 
+    let raw_noise = raw_noise.ok_or("assessment `dataFileUrls` has no `rawNoiseBits` slot")?;
+    let restart = restart.ok_or("assessment `dataFileUrls` has no `restartTestBits` slot")?;
+
     Ok(OeRegistration {
-        ea_id: url_tail(url).to_string(),
+        ea_id: url_tail(url)?.to_string(),
         url: url.to_string(),
-        raw_noise,
-        restart,
+        raw_noise: Some(raw_noise),
+        restart: Some(restart),
         conditioned,
         access_token: access_token.to_string(),
     })
@@ -755,20 +799,22 @@ mod tests {
 
     #[test]
     fn parse_single_oe_response_is_still_an_array_of_one() {
-        let body = r#"[{"esvVersion":"1.0"},[{"url":"x/esv/v1/entropyAssessments/7","dataFileUrls":[{"rawNoiseBits":"x/dataFiles/70"}],"accessToken":"jwt-solo"}]]"#;
+        let body = r#"[{"esvVersion":"1.0"},[{"url":"x/esv/v1/entropyAssessments/7","dataFileUrls":[{"rawNoiseBits":"x/dataFiles/70"},{"restartTestBits":"x/dataFiles/71"}],"accessToken":"jwt-solo"}]]"#;
         let oes = parse_registration_response(body).unwrap();
         assert_eq!(oes.len(), 1);
         assert_eq!(oes[0].ea_id, "7");
         assert_eq!(oes[0].raw_noise.as_ref().unwrap().id, "70");
-        assert!(oes[0].restart.is_none());
+        assert_eq!(oes[0].restart.as_ref().unwrap().id, "71");
+        assert!(oes[0].conditioned.is_empty());
     }
 
     #[test]
     fn parse_conditioned_slot_captures_sequence_position() {
-        let body = r#"[{"esvVersion":"1.0"},[{"url":"x/33","dataFileUrls":[{"conditionedBits":"x/dataFiles/91","sequencePosition":1}],"accessToken":"jwt"}]]"#;
+        // raw-noise + restart slots are required alongside the conditioned one.
+        let body = r#"[{"esvVersion":"1.0"},[{"url":"x/33","dataFileUrls":[{"rawNoiseBits":"x/dataFiles/90"},{"restartTestBits":"x/dataFiles/91"},{"conditionedBits":"x/dataFiles/92","sequencePosition":1}],"accessToken":"jwt"}]]"#;
         let oes = parse_registration_response(body).unwrap();
         assert_eq!(oes[0].conditioned.len(), 1);
-        assert_eq!(oes[0].conditioned[0].id, "91");
+        assert_eq!(oes[0].conditioned[0].id, "92");
         assert_eq!(oes[0].conditioned[0].sequence_position, 1);
     }
 
@@ -784,6 +830,90 @@ mod tests {
         let body = r#"[{"esvVersion":"1.0"},[{"url":"x/1","dataFileUrls":[]}]]"#;
         let err = parse_registration_response(body).unwrap_err();
         assert!(err.contains("accessToken"), "{err}");
+    }
+
+    // ── Item 4: envelope validation shared with the auth parsers ───────
+
+    #[test]
+    fn parse_registration_rejects_non_version_envelope() {
+        // element 0 is a string, not an {esvVersion} object — rejected the
+        // same way parse_access_token rejects a version-less envelope.
+        let body = r#"["error",[{"url":"x/1","accessToken":"j"}]]"#;
+        let err = parse_registration_response(body).unwrap_err();
+        assert!(err.contains("esvVersion"), "{err}");
+    }
+
+    #[test]
+    fn parse_registration_tolerates_trailing_envelope_element() {
+        // A trailing third element is additive server variance (item 5).
+        let body = r#"[{"esvVersion":"1.0"},[{"url":"x/7","dataFileUrls":[{"rawNoiseBits":"x/70"},{"restartTestBits":"x/71"}],"accessToken":"j"}],{"extra":true}]"#;
+        let oes = parse_registration_response(body).unwrap();
+        assert_eq!(oes.len(), 1);
+        assert_eq!(oes[0].ea_id, "7");
+    }
+
+    // ── Item 6: fail-closed data-file slots ───────────────────────────
+
+    /// A well-formed one-OE body with `slots` spliced in for the dataFileUrls.
+    fn one_oe_with_slots(slots: &str) -> String {
+        format!(
+            r#"[{{"esvVersion":"1.0"}},[{{"url":"x/7","dataFileUrls":{slots},"accessToken":"j"}}]]"#
+        )
+    }
+
+    #[test]
+    fn parse_rejects_absent_data_file_urls() {
+        let body = r#"[{"esvVersion":"1.0"},[{"url":"x/7","accessToken":"j"}]]"#;
+        let err = parse_registration_response(body).unwrap_err();
+        assert!(err.contains("dataFileUrls"), "{err}");
+    }
+
+    #[test]
+    fn parse_rejects_object_shaped_data_file_urls() {
+        let body = one_oe_with_slots(r#"{"rawNoiseBits":"x/70"}"#);
+        let err = parse_registration_response(&body).unwrap_err();
+        assert!(err.contains("not an array"), "{err}");
+    }
+
+    #[test]
+    fn parse_rejects_empty_data_file_urls() {
+        let body = one_oe_with_slots("[]");
+        let err = parse_registration_response(&body).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn parse_rejects_missing_raw_noise_slot() {
+        // restart present but no raw-noise slot → fail closed.
+        let body = one_oe_with_slots(r#"[{"restartTestBits":"x/71"}]"#);
+        let err = parse_registration_response(&body).unwrap_err();
+        assert!(err.contains("rawNoiseBits"), "{err}");
+    }
+
+    #[test]
+    fn parse_rejects_duplicate_raw_noise_bits() {
+        // Two rawNoiseBits slots → typed error, no last-wins.
+        let body = one_oe_with_slots(
+            r#"[{"rawNoiseBits":"x/70"},{"restartTestBits":"x/71"},{"rawNoiseBits":"x/72"}]"#,
+        );
+        let err = parse_registration_response(&body).unwrap_err();
+        assert!(err.contains("duplicate `rawNoiseBits`"), "{err}");
+    }
+
+    // ── Item 7: url_tail trailing-slash handling ──────────────────────
+
+    #[test]
+    fn url_tail_trims_trailing_slash_and_yields_id() {
+        assert_eq!(url_tail("x/dataFiles/11/").unwrap(), "11");
+        assert_eq!(url_tail("x/dataFiles/11").unwrap(), "11");
+        assert_eq!(url_tail("11").unwrap(), "11");
+    }
+
+    #[test]
+    fn url_tail_empty_after_trim_is_typed_error() {
+        assert!(url_tail("/").is_err());
+        assert!(url_tail("").is_err());
+        assert!(url_tail("///").is_err());
     }
 
     #[test]

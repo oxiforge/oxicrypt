@@ -223,7 +223,7 @@ modules:
       - all algorithm crates
 
   - name: esv-harness
-    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single/bulk token refresh, entropy-source registration, and offline payload preflight over acvp-harness's curl(1)/mTLS transport.
+    description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login, single/bulk token refresh, entropy-source registration, offline payload preflight, and data-file multipart upload plus processing-status polling over acvp-harness's curl(1)/mTLS transport.
     no_std: false
     entry_points:
       - "esv-harness login-body < secret.b64"
@@ -1216,7 +1216,7 @@ types:
   - name: EsvSession
     module: esv-harness
     kind: struct
-    description: Authenticated ESV session (token plus monotonic issuance instant plus tunable refresh margin); exposes bearer/elapsed_secs/needs_refresh, refresh with a fresh-login fallback on a 401/403, refresh_if_stale, authenticated_request, and refresh_margin_secs/with_refresh_margin_secs/set_refresh_margin_secs.
+    description: Authenticated ESV session (token plus monotonic issuance instant plus tunable refresh margin); exposes bearer/elapsed_secs/needs_refresh, refresh with a fresh-login fallback on a 401/403, refresh_if_stale, authenticated_request, refresh_margin_secs/with_refresh_margin_secs/set_refresh_margin_secs, and fallback_logins (a monotonic count of fresh-login fallbacks, observable across the outcome-discarding callers for the attended smoke).
 
   - name: ConditioningComponent
     module: esv-harness
@@ -1257,6 +1257,56 @@ types:
     module: esv-harness
     kind: enum
     description: One registration-payload preflight violation (field bounds, hminEstimate<=bitsPerSample, restart minimums, numberOfOEs, and conditioning sequence positions 1..=n).
+
+  - name: MultipartPart
+    module: esv-harness
+    kind: enum
+    description: One logical part of a data-file multipart body — a text Field or the borrowed binary File part (field name, filename, content type, bytes).
+
+  - name: DataFileUpload
+    module: esv-harness
+    kind: struct
+    description: A data-file upload request (ea_id/df_id/filename/bytes plus optional sample_size); new builds a raw-noise/restart upload, with_sample_size emits the capitalized DataFileSampleSize field (typed-error outside 1..=8), path/parts/to_multipart inspect or serialize the request with no transport.
+
+  - name: DataFileTarget
+    module: esv-harness
+    kind: enum
+    description: Which data-file slot an upload targets — RawNoise, Restart, or ConditionedBits{sequence_position}.
+
+  - name: ConditionedRefusalReason
+    module: esv-harness
+    kind: enum
+    description: Why a conditioned-bits upload was refused (the component is Vetted or Bijective).
+
+  - name: DataFileStatus
+    module: esv-harness
+    kind: enum
+    description: A parsed data-file processing status — the seven documented ESVP states plus a fail-closed Unrecognized(String); poll_decision maps each to a PollDecision.
+
+  - name: TerminalStatus
+    module: esv-harness
+    kind: enum
+    description: A terminal data-file outcome (RunSuccessful, RunFailed, RunCancelled, Error).
+
+  - name: PollDecision
+    module: esv-harness
+    kind: enum
+    description: The polling loop's next action for a status (WaitNotYetProcessed, WaitProcessing, Terminal(TerminalStatus), Unrecognized).
+
+  - name: PollConfig
+    module: esv-harness
+    kind: struct
+    description: Data-file polling tunables (not-yet-processed and processing waits, and the max consecutive not-yet-processed poll cap); Default is 30 s / 30 s / 20.
+
+  - name: DataFileResult
+    module: esv-harness
+    kind: struct
+    description: A data file polled to a terminal state (optional echoed id, the TerminalStatus, and on success the returned NIST assessment captured as the raw body — the second maxwell oracle).
+
+  - name: DataFileError
+    module: esv-harness
+    kind: enum
+    description: A data-file upload/poll error (sample-size out of range, conditioned-upload forbidden or missing component, unrecognized status, not-yet-processed timeout, server error, malformed response, transport failure).
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -9791,7 +9841,7 @@ functions:
 
   - name: parse_access_token
     module: esv-harness
-    description: Fail-closed parse of a single accessToken from the ESVP two-element versioned envelope; rejects the bare-object form the acvp helper accepts.
+    description: Fail-closed parse of a single accessToken from the ESVP versioned envelope (at-least-two elements, trailing extras ignored); rejects the bare-object and version-less forms the acvp helper accepts.
     signature: "pub fn parse_access_token(body: &str) -> Result<String, String>"
 
   - name: parse_bulk_refresh_tokens
@@ -9828,6 +9878,36 @@ functions:
     module: esv-harness
     description: Whether a string is a recognized ACVTS vetted-conditioning algorithm name (VETTED_ALGORITHM_NAMES).
     signature: "pub fn is_vetted_algorithm_name(name: &str) -> bool"
+
+  - name: data_file_path
+    module: esv-harness
+    description: The full server-relative data-file resource path /esv/v1/entropyAssessments/{ea_id}/dataFiles/{df_id} (upload POST and status GET).
+    signature: "pub fn data_file_path(ea_id: &str, df_id: &str) -> String"
+
+  - name: check_conditioned_upload_allowed
+    module: esv-harness
+    description: Whether a data-file upload for a target is permitted under a registration's conditioning; raw-noise/restart always allowed, conditioned-bits only for a non-vetted non-bijective component (else a typed refusal).
+    signature: "pub fn check_conditioned_upload_allowed(reg: &EntropyRegistration, target: &DataFileTarget) -> Result<(), DataFileError>"
+
+  - name: build_conditioned_upload
+    module: esv-harness
+    description: Build a conditioned-bits upload, refusing (typed error, no request produced) when the target component is vetted or bijective (ISC-107 anti-guard).
+    signature: "pub fn build_conditioned_upload(reg: &EntropyRegistration, sequence_position: i64, ea_id: &str, df_id: &str, filename: &str, bytes: Vec<u8>) -> Result<DataFileUpload, DataFileError>"
+
+  - name: classify_status
+    module: esv-harness
+    description: Classify a raw data-file status string into a DataFileStatus (case/separator-insensitive; anything unrecognized becomes Unrecognized carrying the original string).
+    signature: "pub fn classify_status(raw: &str) -> DataFileStatus"
+
+  - name: decide
+    module: esv-harness
+    description: The pure decision function — a raw status string mapped to its next PollDecision (classify_status composed with DataFileStatus::poll_decision).
+    signature: "pub fn decide(raw: &str) -> PollDecision"
+
+  - name: poll_data_file
+    module: esv-harness
+    description: Poll a data file's processing status over an EsvTransport until a terminal state, waiting the (bounded) not-yet-processed / processing intervals via the Sleeper and capturing the returned assessment on Run Successful.
+    signature: "pub fn poll_data_file<T: EsvTransport>(ea_id: &str, df_id: &str, bearer: &str, transport: &mut T, sleeper: &mut dyn Sleeper, config: &PollConfig) -> Result<DataFileResult, DataFileError>"
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)
@@ -10051,6 +10131,36 @@ constants:
     type: "&[&str]"
     value: "12 names"
     description: Recognized ACVTS vetted-conditioning algorithm names accepted for a vetted component's description (SHA2 and SHA3/SHAKE families).
+
+  - name: DATA_FILE_PART_NAME
+    module: esv-harness
+    type: "&str"
+    value: "dataFile"
+    description: Multipart part name of the data-file binary payload.
+
+  - name: DATA_FILE_SAMPLE_SIZE_FIELD
+    module: esv-harness
+    type: "&str"
+    value: "DataFileSampleSize"
+    description: Multipart text-field name declaring the file's per-sample width; sent capitalized for server v1.8 compatibility (never assume case-insensitivity).
+
+  - name: DATA_FILE_CONTENT_TYPE
+    module: esv-harness
+    type: "&str"
+    value: "application/octet-stream"
+    description: Content-Type of the dataFile multipart part.
+
+  - name: DATA_FILE_SAMPLE_SIZE_MIN
+    module: esv-harness
+    type: u8
+    value: "1"
+    description: Minimum valid DataFileSampleSize (ESVP §6.1 sample width 1..=8).
+
+  - name: DATA_FILE_SAMPLE_SIZE_MAX
+    module: esv-harness
+    type: u8
+    value: "8"
+    description: Maximum valid DataFileSampleSize — a byte-padded sample is at most one byte.
 
   - name: EK_LEN
     module: oxicrypt-ml-kem

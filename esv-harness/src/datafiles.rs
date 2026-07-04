@@ -776,19 +776,22 @@ fn neutralize_fractionals(body: &str) -> String {
     out
 }
 
-/// Require the ESVP two-element versioned envelope `[{esvVersion}, {payload}]`
-/// and return the payload element (index 1). Fail-closed, mirroring the
-/// strict check in [`crate::login`].
+/// Require the ESVP versioned envelope `[{esvVersion}, {payload}, …]` and
+/// return the payload element (index 1). Fail-closed, mirroring the strict
+/// **at-least-two** check in [`crate::login::esv_payload_element`]: element 0
+/// must carry a string `esvVersion`, element 1 is the payload, and trailing
+/// elements are ignored (additive server variance tolerated; a bare object is
+/// still rejected).
 fn payload_element(parsed: &JsonValue) -> Result<&JsonValue, DataFileError> {
     let arr = parsed
         .as_array()
         .ok_or_else(|| DataFileError::MalformedResponse {
             detail: "response is not a versioned-array envelope".to_string(),
         })?;
-    if arr.len() != 2 {
+    if arr.len() < 2 {
         return Err(DataFileError::MalformedResponse {
             detail: format!(
-                "response envelope must be a two-element array, got {} element(s)",
+                "response envelope must have at least two elements, got {}",
                 arr.len()
             ),
         });
@@ -1265,6 +1268,23 @@ mod tests {
                 message: "data file rejected".to_string()
             }
         );
+    }
+
+    #[test]
+    fn poll_tolerates_trailing_envelope_element() {
+        // Item 5: a third envelope element is ignored; the payload stays at
+        // index 1, so a Run Successful still terminates cleanly.
+        let resp = HttpResponse {
+            status: 200,
+            body: r#"[{"esvVersion":"1.0"},{"id":42,"status":"Run Successful"},{"extra":1}]"#
+                .to_string(),
+        };
+        let mut t = StubTransport::new(vec![resp]);
+        let mut sl = RecordingSleeper::default();
+        let cfg = PollConfig::default();
+        let res = poll_data_file("1", "2", "jwt", &mut t, &mut sl, &cfg).unwrap();
+        assert_eq!(res.status, TerminalStatus::RunSuccessful);
+        assert_eq!(res.id.as_deref(), Some("42"));
     }
 
     #[test]
