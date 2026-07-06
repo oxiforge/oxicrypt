@@ -138,6 +138,23 @@ pub enum CertifyError {
         /// The `eaId` of the non-IID assessment missing its restart upload.
         ea_id: i64,
     },
+    /// A certify referenced an assessment for which no [`RestartPrecondition`]
+    /// was supplied, so its IID-claim / restart-upload status is unknown. The
+    /// restart guard fails closed: an assessment of unknown status cannot be
+    /// certified. Carries the offending `eaId`.
+    MissingRestartPrecondition {
+        /// The `eaId` of the assessment with no restart precondition fact.
+        ea_id: i64,
+    },
+    /// Two [`RestartPrecondition`] facts shared an `eaId`. Distinct facts are
+    /// required so the guard cannot be masked: a conflicting duplicate (e.g. a
+    /// stale `iid_claim: true` ahead of the real `iid_claim: false`) would
+    /// otherwise be resolved first-wins and let a non-IID assessment through.
+    /// Carries the duplicated `eaId`.
+    DuplicateRestartPrecondition {
+        /// The `eaId` that appeared in more than one restart precondition.
+        ea_id: i64,
+    },
 }
 
 impl core::fmt::Display for CertifyError {
@@ -187,6 +204,14 @@ impl core::fmt::Display for CertifyError {
             Self::MissingRestartUpload { ea_id } => write!(
                 f,
                 "non-IID entropy assessment eaId {ea_id} requires a restart-test data-file upload before certify"
+            ),
+            Self::MissingRestartPrecondition { ea_id } => write!(
+                f,
+                "certify request supplied no restart precondition (iid-claim / restart-upload status) for entropy assessment eaId {ea_id}"
+            ),
+            Self::DuplicateRestartPrecondition { ea_id } => write!(
+                f,
+                "certify request supplied more than one restart precondition for eaId {ea_id}; facts must be distinct"
             ),
         }
     }
@@ -251,6 +276,31 @@ impl CertifyAssessment {
     }
 }
 
+/// The per-assessment facts the restart-upload guard needs, which do **not**
+/// live on [`CertifyAssessment`] (whose currency is `eaId`/`oeId`/token).
+///
+/// The certify orchestrator supplies one of these per referenced assessment.
+/// The guard trusts these facts, so the caller **MUST** source them faithfully:
+/// `iid_claim` is read from the assessment's verified
+/// [`crate::registration::EntropyRegistration`] (never defaulted or hardcoded —
+/// a wrong `iid_claim: true` silently disables the restart requirement) and
+/// `restart_uploaded` from the session's recorded uploads (a
+/// [`crate::session::Slot::Restart`] [`crate::session::UploadedFile`] for this
+/// `ea_id`). The certify constructors take a slice of these and enforce
+/// [`check_non_iid_restart_upload`] for every assessment; a missing fact fails
+/// closed ([`CertifyError::MissingRestartPrecondition`]) and duplicate facts for
+/// one `eaId` are rejected ([`CertifyError::DuplicateRestartPrecondition`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestartPrecondition {
+    /// The `eaId` this fact describes (matched against each assessment).
+    pub ea_id: i64,
+    /// Whether the assessment claims IID (an IID assessment has no restart
+    /// upload requirement).
+    pub iid_claim: bool,
+    /// Whether a restart-test data file has been uploaded for this `eaId`.
+    pub restart_uploaded: bool,
+}
+
 // ── Shared constraint checks ──────────────────────────────────────────
 
 /// Enforce the entropy-assessment preconditions: at least one assessment,
@@ -289,8 +339,13 @@ fn check_assessments(assessments: &[CertifyAssessment]) -> Result<(), CertifyErr
 /// deliberately removed from the registration-response *parser*
 /// (`restartTestBits` is tolerated-absent there, since the demo server's exact
 /// slot set is unproven) and re-established here — the certify-precondition
-/// layer, where both facts are known — matching the submission-lifecycle
-/// "certify precondition check" step in the design.
+/// layer, where both facts are known. It is **enforced at construction** via
+/// [`check_restart_preconditions`], which [`CertifyRequest::new`] and
+/// [`AddOeRequest::new`] call for every referenced assessment, so no caller can
+/// build a certify request that skips it. (The submission orchestrator that
+/// *invokes* those constructors with live registration + session facts is the
+/// deferred "certify precondition check" step in the design; the guard being
+/// un-skippable is what makes that step safe to add.)
 ///
 /// # Errors
 /// [`CertifyError::MissingRestartUpload`] when `!iid_claim && !restart_uploaded`.
@@ -301,6 +356,43 @@ pub fn check_non_iid_restart_upload(
 ) -> Result<(), CertifyError> {
     if !iid_claim && !restart_uploaded {
         return Err(CertifyError::MissingRestartUpload { ea_id });
+    }
+    Ok(())
+}
+
+/// Enforce the restart-upload guard for **every** referenced assessment.
+///
+/// For each assessment, the matching [`RestartPrecondition`] (by `eaId`) must be
+/// present — a missing fact fails closed with
+/// [`CertifyError::MissingRestartPrecondition`], so an assessment of unknown
+/// IID/restart status can never be certified — and then
+/// [`check_non_iid_restart_upload`] is applied. This is the seam that makes the
+/// restart guard un-skippable: it runs inside every certify constructor that
+/// references assessments.
+///
+/// # Errors
+/// [`CertifyError::DuplicateRestartPrecondition`] if two facts share an `eaId`;
+/// [`CertifyError::MissingRestartPrecondition`] for an assessment with no
+/// supplied fact; [`CertifyError::MissingRestartUpload`] for a non-IID
+/// assessment whose fact records no restart upload.
+fn check_restart_preconditions(
+    assessments: &[CertifyAssessment],
+    restart_facts: &[RestartPrecondition],
+) -> Result<(), CertifyError> {
+    // Distinct facts per eaId: without this, a conflicting duplicate would be
+    // resolved first-wins by the `find` below and could mask a non-IID
+    // assessment's missing restart upload. Reject the ambiguity outright.
+    for (i, f) in restart_facts.iter().enumerate() {
+        if restart_facts.iter().take(i).any(|g| g.ea_id == f.ea_id) {
+            return Err(CertifyError::DuplicateRestartPrecondition { ea_id: f.ea_id });
+        }
+    }
+    for a in assessments {
+        let fact = restart_facts
+            .iter()
+            .find(|f| f.ea_id == a.ea_id)
+            .ok_or(CertifyError::MissingRestartPrecondition { ea_id: a.ea_id })?;
+        check_non_iid_restart_upload(a.ea_id, fact.iid_claim, fact.restart_uploaded)?;
     }
     Ok(())
 }
@@ -386,12 +478,20 @@ impl CertifyRequest {
     /// # Errors
     /// A [`CertifyError`] for the first violated precondition: empty
     /// `entropyId`, non-positive `moduleId`, no assessments, a non-positive
-    /// `eaId`/`oeId`, or the EAR/PUD/DCA count constraints.
+    /// `eaId`/`oeId`, the EAR/PUD/DCA count constraints, or a restart-precondition
+    /// violation for a referenced assessment (missing fact, or a non-IID
+    /// assessment with no restart upload — see [`check_restart_preconditions`]).
+    ///
+    /// `restart_facts` supplies, per referenced `eaId`, the IID-claim and
+    /// restart-upload status the guard needs (see [`RestartPrecondition`]). It is
+    /// a mandatory argument, not an optional builder step, so the guard cannot be
+    /// skipped.
     pub fn new(
         entropy_id: &str,
         module_id: i64,
         assessments: Vec<CertifyAssessment>,
         docs: Vec<SupportingDoc>,
+        restart_facts: &[RestartPrecondition],
     ) -> Result<Self, CertifyError> {
         if entropy_id.is_empty() {
             return Err(CertifyError::MissingEntropyId);
@@ -401,6 +501,7 @@ impl CertifyRequest {
         }
         check_assessments(&assessments)?;
         check_supporting_doc_constraints(&docs)?;
+        check_restart_preconditions(&assessments, restart_facts)?;
         Ok(Self {
             entropy_id: entropy_id.to_string(),
             module_id,
@@ -480,12 +581,16 @@ impl AddOeRequest {
     /// `entropyCertificate`.
     ///
     /// # Errors
-    /// A [`CertifyError`] for the first violated precondition.
+    /// A [`CertifyError`] for the first violated precondition, including a
+    /// restart-precondition violation for a referenced assessment (see
+    /// [`check_restart_preconditions`]). `restart_facts` is mandatory for the
+    /// same reason as on [`CertifyRequest::new`].
     pub fn new(
         entropy_id: &str,
         entropy_certificate: &str,
         assessments: Vec<CertifyAssessment>,
         docs: Vec<SupportingDoc>,
+        restart_facts: &[RestartPrecondition],
     ) -> Result<Self, CertifyError> {
         if entropy_id.is_empty() {
             return Err(CertifyError::MissingEntropyId);
@@ -495,6 +600,7 @@ impl AddOeRequest {
         }
         check_assessments(&assessments)?;
         check_supporting_doc_constraints(&docs)?;
+        check_restart_preconditions(&assessments, restart_facts)?;
         Ok(Self {
             entropy_id: entropy_id.to_string(),
             entropy_certificate: entropy_certificate.to_string(),
@@ -635,12 +741,21 @@ mod tests {
     fn valid_docs() -> Vec<SupportingDoc> {
         vec![ear(), pud()]
     }
+    /// Restart facts for the default `one_assessment()` (eaId 11), marked IID so
+    /// no restart upload is required — the happy-path restart precondition.
+    fn iid_facts() -> Vec<RestartPrecondition> {
+        vec![RestartPrecondition {
+            ea_id: 11,
+            iid_claim: true,
+            restart_uploaded: false,
+        }]
+    }
 
     // ── Full submission happy path + wire shape ───────────────────────
 
     #[test]
     fn full_certify_builds_and_serializes() {
-        let req = CertifyRequest::new("TID-0001", 3, one_assessment(), valid_docs())
+        let req = CertifyRequest::new("TID-0001", 3, one_assessment(), valid_docs(), &iid_facts())
             .unwrap()
             .with_vendor_id(5);
         assert_eq!(req.path(), "/esv/v1/certify");
@@ -677,7 +792,8 @@ mod tests {
 
     #[test]
     fn full_certify_omits_vendor_id_when_unset() {
-        let req = CertifyRequest::new("T", 3, one_assessment(), valid_docs()).unwrap();
+        let req =
+            CertifyRequest::new("T", 3, one_assessment(), valid_docs(), &iid_facts()).unwrap();
         let v = json::parse(&req.to_wire_json()).unwrap();
         let payload = &v.as_array().unwrap()[1];
         assert!(payload.get("vendorId").is_none());
@@ -688,11 +804,11 @@ mod tests {
     #[test]
     fn full_certify_requires_module_id() {
         assert_eq!(
-            CertifyRequest::new("T", 0, one_assessment(), valid_docs()),
+            CertifyRequest::new("T", 0, one_assessment(), valid_docs(), &iid_facts()),
             Err(CertifyError::MissingModuleId)
         );
         assert_eq!(
-            CertifyRequest::new("T", -1, one_assessment(), valid_docs()),
+            CertifyRequest::new("T", -1, one_assessment(), valid_docs(), &iid_facts()),
             Err(CertifyError::MissingModuleId)
         );
     }
@@ -701,7 +817,7 @@ mod tests {
     fn full_certify_requires_oe_id_per_assessment() {
         let assessments = vec![CertifyAssessment::new(11, 0, "t")];
         assert_eq!(
-            CertifyRequest::new("T", 3, assessments, valid_docs()),
+            CertifyRequest::new("T", 3, assessments, valid_docs(), &iid_facts()),
             Err(CertifyError::MissingOeId { ea_id: 11 })
         );
     }
@@ -709,11 +825,11 @@ mod tests {
     #[test]
     fn full_certify_requires_entropy_id_and_assessments() {
         assert_eq!(
-            CertifyRequest::new("", 3, one_assessment(), valid_docs()),
+            CertifyRequest::new("", 3, one_assessment(), valid_docs(), &iid_facts()),
             Err(CertifyError::MissingEntropyId)
         );
         assert_eq!(
-            CertifyRequest::new("T", 3, vec![], valid_docs()),
+            CertifyRequest::new("T", 3, vec![], valid_docs(), &iid_facts()),
             Err(CertifyError::NoAssessments)
         );
     }
@@ -724,7 +840,7 @@ mod tests {
     fn full_certify_requires_exactly_one_ear() {
         // Zero EARs.
         assert_eq!(
-            CertifyRequest::new("T", 3, one_assessment(), vec![pud()]),
+            CertifyRequest::new("T", 3, one_assessment(), vec![pud()], &iid_facts()),
             Err(CertifyError::WrongEarCount { count: 0 })
         );
         // Two EARs.
@@ -733,7 +849,8 @@ mod tests {
                 "T",
                 3,
                 one_assessment(),
-                vec![ear(), doc(9, SdType::EntropyAssessmentReport), pud()]
+                vec![ear(), doc(9, SdType::EntropyAssessmentReport), pud()],
+                &iid_facts(),
             ),
             Err(CertifyError::WrongEarCount { count: 2 })
         );
@@ -742,7 +859,7 @@ mod tests {
     #[test]
     fn full_certify_requires_exactly_one_pud() {
         assert_eq!(
-            CertifyRequest::new("T", 3, one_assessment(), vec![ear()]),
+            CertifyRequest::new("T", 3, one_assessment(), vec![ear()], &iid_facts()),
             Err(CertifyError::WrongPudCount { count: 0 })
         );
         assert_eq!(
@@ -750,7 +867,8 @@ mod tests {
                 "T",
                 3,
                 one_assessment(),
-                vec![ear(), pud(), doc(9, SdType::PublicUseDocument)]
+                vec![ear(), pud(), doc(9, SdType::PublicUseDocument)],
+                &iid_facts(),
             ),
             Err(CertifyError::WrongPudCount { count: 2 })
         );
@@ -764,6 +882,7 @@ mod tests {
             3,
             one_assessment(),
             vec![ear(), pud(), doc(3, SdType::DataCollectionAttestation)],
+            &iid_facts(),
         );
         assert!(ok.is_ok());
         // Two DCAs is a violation.
@@ -777,7 +896,8 @@ mod tests {
                     pud(),
                     doc(3, SdType::DataCollectionAttestation),
                     doc(4, SdType::DataCollectionAttestation)
-                ]
+                ],
+                &iid_facts(),
             ),
             Err(CertifyError::TooManyAttestations { count: 2 })
         );
@@ -796,6 +916,7 @@ mod tests {
                 doc(4, SdType::Other),
                 doc(5, SdType::RandomBitGeneratorReport),
             ],
+            &iid_facts(),
         );
         assert!(ok.is_ok(), "{ok:?}");
     }
@@ -810,15 +931,27 @@ mod tests {
             CertifyAssessment::new(11, 8, "t2"),
         ];
         assert_eq!(
-            CertifyRequest::new("T", 3, dup, valid_docs()),
+            CertifyRequest::new("T", 3, dup, valid_docs(), &iid_facts()),
             Err(CertifyError::DuplicateEaId { ea_id: 11 })
         );
-        // Distinct eaIds are fine.
+        // Distinct eaIds are fine (each with a restart precondition).
         let ok = vec![
             CertifyAssessment::new(11, 7, "t1"),
             CertifyAssessment::new(22, 8, "t2"),
         ];
-        assert!(CertifyRequest::new("T", 3, ok, valid_docs()).is_ok());
+        let facts = vec![
+            RestartPrecondition {
+                ea_id: 11,
+                iid_claim: true,
+                restart_uploaded: false,
+            },
+            RestartPrecondition {
+                ea_id: 22,
+                iid_claim: true,
+                restart_uploaded: false,
+            },
+        ];
+        assert!(CertifyRequest::new("T", 3, ok, valid_docs(), &facts).is_ok());
     }
 
     #[test]
@@ -829,7 +962,7 @@ mod tests {
             CertifyAssessment::new(5, 8, "t2"),
         ];
         assert_eq!(
-            AddOeRequest::new("T", "E1", dup, valid_docs()),
+            AddOeRequest::new("T", "E1", dup, valid_docs(), &iid_facts()),
             Err(CertifyError::DuplicateEaId { ea_id: 5 })
         );
     }
@@ -850,11 +983,99 @@ mod tests {
         assert_eq!(check_non_iid_restart_upload(11, true, true), Ok(()));
     }
 
+    // ── F5: the restart guard is wired into the certify constructors ──────
+
+    /// Non-IID assessment with no restart upload is refused **at construction**
+    /// (the guard is no longer a dead function — it runs inside `new`).
+    #[test]
+    fn certify_refuses_non_iid_assessment_without_restart_upload() {
+        let facts = vec![RestartPrecondition {
+            ea_id: 11,
+            iid_claim: false,
+            restart_uploaded: false,
+        }];
+        assert_eq!(
+            CertifyRequest::new("T", 3, one_assessment(), valid_docs(), &facts),
+            Err(CertifyError::MissingRestartUpload { ea_id: 11 })
+        );
+    }
+
+    /// Non-IID assessment WITH a restart upload constructs fine.
+    #[test]
+    fn certify_accepts_non_iid_with_restart_upload() {
+        let facts = vec![RestartPrecondition {
+            ea_id: 11,
+            iid_claim: false,
+            restart_uploaded: true,
+        }];
+        assert!(CertifyRequest::new("T", 3, one_assessment(), valid_docs(), &facts).is_ok());
+    }
+
+    /// An IID assessment needs no restart upload.
+    #[test]
+    fn certify_accepts_iid_without_restart_upload() {
+        let facts = vec![RestartPrecondition {
+            ea_id: 11,
+            iid_claim: true,
+            restart_uploaded: false,
+        }];
+        assert!(CertifyRequest::new("T", 3, one_assessment(), valid_docs(), &facts).is_ok());
+    }
+
+    /// Fail-closed: an assessment with no matching restart precondition is
+    /// refused — an unknown-status assessment can never be certified. Passing an
+    /// empty fact slice must not sail through.
+    #[test]
+    fn certify_fails_closed_on_missing_restart_precondition() {
+        assert_eq!(
+            CertifyRequest::new("T", 3, one_assessment(), valid_docs(), &[]),
+            Err(CertifyError::MissingRestartPrecondition { ea_id: 11 })
+        );
+    }
+
+    /// A conflicting duplicate restart fact must not mask the guard: two facts
+    /// for eaId 11 (a stale IID-true ahead of the real non-IID-no-upload) are
+    /// rejected outright rather than resolved first-wins.
+    #[test]
+    fn certify_rejects_duplicate_restart_preconditions() {
+        let facts = vec![
+            RestartPrecondition {
+                ea_id: 11,
+                iid_claim: true,
+                restart_uploaded: false,
+            },
+            RestartPrecondition {
+                ea_id: 11,
+                iid_claim: false,
+                restart_uploaded: false,
+            },
+        ];
+        assert_eq!(
+            CertifyRequest::new("T", 3, one_assessment(), valid_docs(), &facts),
+            Err(CertifyError::DuplicateRestartPrecondition { ea_id: 11 })
+        );
+    }
+
+    /// The same guard runs on the AddOE path.
+    #[test]
+    fn add_oe_refuses_non_iid_assessment_without_restart_upload() {
+        let facts = vec![RestartPrecondition {
+            ea_id: 11,
+            iid_claim: false,
+            restart_uploaded: false,
+        }];
+        assert_eq!(
+            AddOeRequest::new("T", "E1", one_assessment(), valid_docs(), &facts),
+            Err(CertifyError::MissingRestartUpload { ea_id: 11 })
+        );
+    }
+
     // ── AddOE ─────────────────────────────────────────────────────────
 
     #[test]
     fn add_oe_builds_with_certificate_not_module() {
-        let req = AddOeRequest::new("T", "E999", one_assessment(), valid_docs()).unwrap();
+        let req =
+            AddOeRequest::new("T", "E999", one_assessment(), valid_docs(), &iid_facts()).unwrap();
         assert_eq!(req.path(), "/esv/v1/certify/addOE");
         let v = json::parse(&req.to_wire_json()).unwrap();
         let payload = &v.as_array().unwrap()[1];
@@ -870,11 +1091,11 @@ mod tests {
     #[test]
     fn add_oe_requires_certificate_and_constraints() {
         assert_eq!(
-            AddOeRequest::new("T", "", one_assessment(), valid_docs()),
+            AddOeRequest::new("T", "", one_assessment(), valid_docs(), &iid_facts()),
             Err(CertifyError::MissingEntropyCertificate)
         );
         assert_eq!(
-            AddOeRequest::new("T", "E1", one_assessment(), vec![ear()]),
+            AddOeRequest::new("T", "E1", one_assessment(), vec![ear()], &iid_facts()),
             Err(CertifyError::WrongPudCount { count: 0 })
         );
     }

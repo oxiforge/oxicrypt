@@ -214,7 +214,12 @@ confirmation at the first attended demo-server run:
 - **The restart data-file slot's presence.** The registration-response parser
   tolerates a missing `restartTestBits` slot rather than requiring it, because
   the exact per-OE slot set the demo server returns is unproven; it is tightened
-  to required only if the server confirms it.
+  to required only if the server confirms it. The certify layer does **not**
+  rely on that leniency: `CertifyRequest::new` and `AddOeRequest::new` take a
+  mandatory per-assessment restart precondition (IID claim + restart-upload
+  status) and refuse a non-IID assessment that carries no restart upload, failing
+  closed when an assessment's status is unknown — so the guard runs at
+  construction, not just at the parser.
 - **Envelope tolerance.** A trailing extra envelope element is tolerated as
   additive server variance rather than rejected.
 
