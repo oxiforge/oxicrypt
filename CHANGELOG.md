@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tools/doc-guard`: test-gate drift guard whose tests recompute the boundary/`unsafe` accounting from the workspace on disk (crate count, out-of-boundary set, `forbid(unsafe_code)` ratio, audited-exception names, exported-FFI-function count) and assert the values stated in `security-policy.md` §1/§9.2/§3.1, `AGENTS.md`, and `README.md` match (#101).
 
+### Changed
+
+- `oxicrypt-maxwell`: the periodicity screen's spectral-peak detector searches bins `>= SPECTRAL_MIN_BIN` (8), excluding the lowest bins from both the peak search and the mean-power denominator, so slow low-frequency drift no longer trips the screen; a periodic line at bin 8 or above is unaffected and the autocorrelation detector is unchanged (#102).
+
 ### Fixed
 
 - `security-policy.md`: §1 boundary accounting made explicit (29 library crates, two out-of-boundary, `oxicrypt-test-vectors` ruled in-boundary — its KAT constants compile into the power-up self-tests), resolving a latent §1-vs-§9.2 denominator contradiction; module-version field annotated as assigned-at-submission; §3.1 states the as-built 451-function FFI surface; Appendix B scoped to design/boundary rationale with release history pointed at `CHANGELOG.md`. `AGENTS.md` and `README.md` synced to the same accounting (#101).
