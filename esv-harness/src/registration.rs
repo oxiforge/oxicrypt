@@ -96,6 +96,21 @@ pub enum RegError {
         /// The metadata field whose value was NaN or infinite.
         field: &'static str,
     },
+    /// The exact `hminEstimate` ([`EntropyRegistration::hmin_exact`]) failed the
+    /// schema bound `0 <= hmin <= bitsPerSample` when serialized, so it would be
+    /// a min-entropy OVER-CLAIM on the NIST wire. The bound is enforced on the
+    /// value that actually serializes ([`crate::hmin::hmin_wire_token`]), so a
+    /// desync between the exact field and the mirrored `f64` cannot leak an
+    /// over-claim past `to_wire_json`.
+    InvalidHmin(hmin::HminError),
+    /// The `f64` `hminEstimate` path (no exact value set) fell outside the schema
+    /// bound `0.0 <= hminEstimate <= bitsPerSample` at serialization. Preflight
+    /// validates this too; enforcing it here as well means neither hmin path can
+    /// emit an over-claim, so the two pub fields are symmetric at the wire.
+    HminEstimateOutOfRange {
+        /// The `bitsPerSample` ceiling the estimate exceeded (or below 0).
+        bits_per_sample: i64,
+    },
 }
 
 impl core::fmt::Display for RegError {
@@ -116,6 +131,11 @@ impl core::fmt::Display for RegError {
             Self::NonFiniteFloat { field } => {
                 write!(f, "metadata field {field:?} is not a finite JSON number")
             }
+            Self::InvalidHmin(e) => write!(f, "hminEstimate out of range: {e}"),
+            Self::HminEstimateOutOfRange { bits_per_sample } => write!(
+                f,
+                "hminEstimate is outside 0.0..={bits_per_sample} (bitsPerSample)"
+            ),
         }
     }
 }
@@ -357,9 +377,27 @@ impl EntropyRegistration {
 
         // hminEstimate: the exact fixed-point path when set (ISC-109 —
         // integer-derived decimal, no f64 on the claim path), else the f64.
-        let hmin_wire = match self.hmin_exact {
-            Some(h) => Wire::Raw(hmin::serialize_hmin(h)),
-            None => Wire::Float(self.hmin_estimate),
+        // The exact path routes through hmin_wire_token, which enforces the
+        // schema bound `0 <= h <= bitsPerSample` on the value that ACTUALLY
+        // serializes — so an over-claim can never reach the wire even if a caller
+        // sets the pub `hmin_exact` field out of sync with the mirrored `f64`
+        // (the f64 is what preflight validates; this closes that desync).
+        let hmin_wire = if let Some(h) = self.hmin_exact {
+            Wire::Raw(
+                hmin::hmin_wire_token(h, self.bits_per_sample).map_err(RegError::InvalidHmin)?,
+            )
+        } else {
+            // Bound-enforce the estimate path on the wire too, so neither hmin
+            // field can emit an over-claim (symmetry with the exact path).
+            // bitsPerSample is 1..=256, exact in f64.
+            #[allow(clippy::cast_precision_loss)]
+            let bits = self.bits_per_sample as f64;
+            if self.hmin_estimate < 0.0 || self.hmin_estimate > bits {
+                return Err(RegError::HminEstimateOutOfRange {
+                    bits_per_sample: self.bits_per_sample,
+                });
+            }
+            Wire::Float(self.hmin_estimate)
         };
         let mut fields: Vec<(&str, Wire<'_>)> = vec![
             ("primaryNoiseSource", Wire::Str(&self.primary_noise_source)),
@@ -807,6 +845,32 @@ mod tests {
                 .and_then(crate::jsonlite::JsonLite::as_number_str),
             Some("4")
         );
+    }
+
+    #[test]
+    fn wire_body_rejects_an_over_claiming_exact_hmin() {
+        // F3: a caller sets the pub hmin_exact field directly to an over-claim
+        // (2.0 bits > bitsPerSample 1) without mirroring the preflight-validated
+        // f64. The exact path is what serializes, so to_wire_json must reject it
+        // rather than leak a min-entropy over-claim to the NIST wire.
+        let mut reg = EntropyRegistration::new_non_iid("jitter", 1, 0.5, 1000, 1000, false);
+        reg.hmin_exact = Some(MinEntropy::from_steps(512)); // 512/256 = 2.0 bits > 1
+        match reg.to_wire_json() {
+            Err(RegError::InvalidHmin(_)) => {}
+            other => panic!("expected InvalidHmin over-claim rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wire_body_rejects_an_over_claiming_estimate() {
+        // The f64 estimate path (no exact set) is bound-enforced on the wire too:
+        // an estimate above bitsPerSample is rejected, not emitted — symmetry
+        // with the exact path so neither hmin field can leak an over-claim.
+        let reg = EntropyRegistration::new_non_iid("jitter", 1, 2.0, 1000, 1000, false);
+        match reg.to_wire_json() {
+            Err(RegError::HminEstimateOutOfRange { bits_per_sample: 1 }) => {}
+            other => panic!("expected HminEstimateOutOfRange, got {other:?}"),
+        }
     }
 
     #[test]

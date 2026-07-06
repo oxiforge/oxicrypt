@@ -619,12 +619,29 @@ impl SubmissionState {
             } => {
                 self.entropy_id = Some(entropy_id);
                 self.module_id = Some(module_id);
-                // Dedup by eaId (first-wins): a retried/duplicated `registered`
-                // outcome in the log must not double-load an OE. An eaId
-                // already present is left as-is; a retry that created genuinely
-                // new OEs (distinct eaIds) still folds those in.
+                // Dedup by eaId (field-level last-wins): a retried/duplicated
+                // `registered` outcome must not double-load an OE, but the server
+                // can re-issue refreshed server-assigned fields (a fresh
+                // access_token / slot refs) for the same eaId on a resumed
+                // registration. Adopt those mutable fields rather than pinning the
+                // first — an append-only forward log never carries a
+                // deliberately-older token, so last-wins is strictly safer: an
+                // idempotent echo is a no-op, a genuine re-issue is applied. We
+                // merge FIELDS, not swap the whole record, so a subset resume
+                // response can never blank a slot ref the first registration
+                // provided. A retry that created genuinely new OEs (distinct
+                // eaIds) still folds those in.
                 for oe in oes {
-                    if !self.oes.iter().any(|existing| existing.ea_id == oe.ea_id) {
+                    if let Some(existing) = self.oes.iter_mut().find(|e| e.ea_id == oe.ea_id) {
+                        existing.access_token = oe.access_token;
+                        existing.url = oe.url;
+                        if oe.raw_noise.is_some() {
+                            existing.raw_noise = oe.raw_noise;
+                        }
+                        if oe.restart.is_some() {
+                            existing.restart = oe.restart;
+                        }
+                    } else {
                         self.oes.push(oe);
                     }
                 }
@@ -716,8 +733,28 @@ impl SessionDir {
     /// An unsafe `entropy_id`, or a filesystem failure creating the dir.
     pub fn create(sessions_root: &str, entropy_id: &str) -> Result<Self, String> {
         let dir = Self::dir_for(Path::new(sessions_root), entropy_id)?;
+        // Durability: `create_dir_all` makes every non-existent ancestor from
+        // `dir` up to the deepest existing one. Each newly-created directory's
+        // dirent lives in its parent, so record those parents (deepest first) and
+        // fsync them after — fsyncing only `dir.parent()` would miss a
+        // freshly-created sessions-root (and higher) on a first run, leaving the
+        // whole subtree loseable on power loss despite reporting success.
+        let mut new_parents: Vec<PathBuf> = Vec::new();
+        let mut level = dir.as_path();
+        while !level.exists() {
+            match level.parent() {
+                Some(parent) => {
+                    new_parents.push(parent.to_path_buf());
+                    level = parent;
+                }
+                None => break,
+            }
+        }
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("create session dir {}: {e}", dir.display()))?;
+        for parent in &new_parents {
+            Self::sync_dir(parent)?;
+        }
         Ok(Self {
             dir,
             entropy_id: entropy_id.to_string(),
@@ -785,6 +822,10 @@ impl SessionDir {
     fn append_line(&self, line: &str) -> Result<(), String> {
         use std::io::Write as _;
         let path = self.dir.join(EVENTS_FILE);
+        // The session dir needs an fsync only when THIS append creates
+        // events.jsonl (a new dirent); later appends grow the file, whose content
+        // durability is the file `sync_all` below.
+        let existed = path.exists();
         // Drop any incomplete trailing record so this one cannot merge onto it.
         Self::heal_torn_tail(&path)?;
         let mut file = std::fs::OpenOptions::new()
@@ -802,6 +843,13 @@ impl SessionDir {
         // Durability: the record is on disk before any dependent submit runs.
         file.sync_all()
             .map_err(|e| format!("sync {}: {e}", path.display()))?;
+        // On the first append (events.jsonl just created) fsync the session dir
+        // so its new dirent survives power loss too, not just a clean crash;
+        // subsequent appends leave the dirent unchanged and need only the sync
+        // above.
+        if !existed {
+            Self::sync_dir(&self.dir)?;
+        }
         Ok(())
     }
 
@@ -853,6 +901,44 @@ impl SessionDir {
             .map_err(|e| format!("truncate torn tail in {}: {e}", path.display()))?;
         file.sync_all()
             .map_err(|e| format!("sync {}: {e}", path.display()))?;
+        // No parent-dir fsync here: truncation changes the file's size (covered
+        // by the sync_all above), never its dirent.
+        Ok(())
+    }
+
+    /// fsync a directory so a newly created dirent — a fresh file inside it, or
+    /// the session directory itself — survives **power loss**, not just a clean
+    /// process crash. A file's bytes are made durable by `fsync` on the file; its
+    /// *name* is made durable only by `fsync` on the parent directory. This is
+    /// the Unix idiom `open(dir, O_RDONLY)` + `fsync`.
+    ///
+    /// # Errors
+    /// A filesystem failure opening or syncing the directory.
+    fn sync_dir(dir: &Path) -> Result<(), String> {
+        std::fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("sync dir {}: {e}", dir.display()))
+    }
+
+    /// Durably write `bytes` to `path`: create/truncate the file, `fsync` its
+    /// contents, then `fsync` the parent directory so the new dirent survives
+    /// power loss too. One call gives a fresh file full power-loss durability —
+    /// callers must NOT re-implement the file-then-dir fsync pairing (folding it
+    /// here removes an easy-to-omit second call at each site).
+    ///
+    /// # Errors
+    /// A filesystem failure creating, writing, or syncing the file or its dir.
+    fn write_durable(path: &Path, bytes: &[u8]) -> Result<(), String> {
+        use std::io::Write as _;
+        let mut file =
+            std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+        file.write_all(bytes)
+            .map_err(|e| format!("write {}: {e}", path.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("sync {}: {e}", path.display()))?;
+        if let Some(parent) = path.parent() {
+            Self::sync_dir(parent)?;
+        }
         Ok(())
     }
 
@@ -887,26 +973,32 @@ impl SessionDir {
     /// bytes are written exactly as received (never re-encoded), so any
     /// floating-point values in NIST's assessment are preserved.
     ///
+    /// The file and its parent dirent are fsync'd before returning, so the
+    /// sidecar is **durable against power loss** by the time the referencing
+    /// `AssessmentCaptured` event (which carries this return value) is appended.
+    ///
     /// # Errors
     /// An unsafe `ea_id` (rejected the same way as the entropy id, so a
     /// crafted `ea_id` cannot escape the session dir), or a filesystem failure
-    /// writing the sidecar.
+    /// writing or syncing the sidecar.
     pub fn store_assessment(&self, ea_id: &str, slot: Slot, body: &str) -> Result<String, String> {
         ensure_safe_component(ea_id, "eaId")?;
         let name = format!("assessment-{ea_id}-{}.json", slot.as_str());
         let path = self.dir.join(&name);
-        std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+        Self::write_durable(&path, body.as_bytes())?;
         Ok(name)
     }
 
     /// Store the certify response **verbatim** to `certify-response.json`,
-    /// returning the file name.
+    /// returning the file name. The file and its parent dirent are fsync'd
+    /// before returning (durable against power loss before the referencing
+    /// `Certified` event is appended).
     ///
     /// # Errors
-    /// A filesystem failure writing the file.
+    /// A filesystem failure writing or syncing the file.
     pub fn store_certify_response(&self, body: &str) -> Result<String, String> {
         let path = self.dir.join(CERTIFY_RESPONSE_FILE);
-        std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+        Self::write_durable(&path, body.as_bytes())?;
         Ok(CERTIFY_RESPONSE_FILE.to_string())
     }
 
@@ -1526,6 +1618,107 @@ mod tests {
         assert_eq!(st.oes.len(), 2, "each OE once, not four");
         assert_eq!(st.oes[0].ea_id, "11");
         assert_eq!(st.oes[1].ea_id, "22");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn duplicate_registered_outcome_adopts_the_re_issued_token_last_wins() {
+        let root = temp_root("lastwins");
+        let s = SessionDir::create(root_str(&root), "TIDLW").unwrap();
+        // First registration for eaId 11 with a stale token + slot ref.
+        let first = OeRegistration {
+            url: "https://h/esv/v1/entropyAssessments/11".to_string(),
+            ea_id: "11".to_string(),
+            raw_noise: Some(DataFileRef {
+                url: "https://h/.../dataFiles/110".to_string(),
+                id: "110".to_string(),
+            }),
+            restart: None,
+            conditioned: vec![],
+            access_token: "stale-token".to_string(),
+        };
+        // A resumed registration re-issues a fresh token + refreshed slot ref for
+        // the SAME eaId (the interrupted-registration resume path).
+        let reissued = OeRegistration {
+            url: "https://h/esv/v1/entropyAssessments/11".to_string(),
+            ea_id: "11".to_string(),
+            raw_noise: Some(DataFileRef {
+                url: "https://h/.../dataFiles/999".to_string(),
+                id: "999".to_string(),
+            }),
+            restart: None,
+            conditioned: vec![],
+            access_token: "fresh-token".to_string(),
+        };
+        s.append_event(&Event::registered("TIDLW", 3, &[first]))
+            .unwrap();
+        s.append_event(&Event::registered("TIDLW", 3, &[reissued]))
+            .unwrap();
+        let st = s.load_state().unwrap();
+        assert_eq!(st.oes.len(), 1, "one OE, not two");
+        assert_eq!(st.oes[0].ea_id, "11");
+        assert_eq!(
+            st.oes[0].access_token, "fresh-token",
+            "last-wins adopts the re-issued token, not the stale first"
+        );
+        assert_eq!(
+            st.oes[0].raw_noise.as_ref().unwrap().id,
+            "999",
+            "refreshed slot ref adopted too"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn last_wins_merge_never_blanks_a_slot_the_resume_response_omits() {
+        // A resume Registered record that carries a fresh token but OMITS the
+        // slot refs (a subset response) must adopt the new token WITHOUT losing
+        // the slot the first registration provided — field-level merge, not a
+        // struct swap that would default the missing fields.
+        let root = temp_root("lastwins-preserve");
+        let s = SessionDir::create(root_str(&root), "TIDLP").unwrap();
+        let first = OeRegistration {
+            url: "https://h/esv/v1/entropyAssessments/11".to_string(),
+            ea_id: "11".to_string(),
+            raw_noise: Some(DataFileRef {
+                url: "https://h/.../dataFiles/110".to_string(),
+                id: "110".to_string(),
+            }),
+            restart: Some(DataFileRef {
+                url: "https://h/.../dataFiles/111".to_string(),
+                id: "111".to_string(),
+            }),
+            conditioned: vec![],
+            access_token: "stale-token".to_string(),
+        };
+        let subset = OeRegistration {
+            url: "https://h/esv/v1/entropyAssessments/11".to_string(),
+            ea_id: "11".to_string(),
+            raw_noise: None,
+            restart: None,
+            conditioned: vec![],
+            access_token: "fresh-token".to_string(),
+        };
+        s.append_event(&Event::registered("TIDLP", 3, &[first]))
+            .unwrap();
+        s.append_event(&Event::registered("TIDLP", 3, &[subset]))
+            .unwrap();
+        let st = s.load_state().unwrap();
+        assert_eq!(st.oes.len(), 1);
+        assert_eq!(
+            st.oes[0].access_token, "fresh-token",
+            "the re-issued token is still adopted"
+        );
+        assert_eq!(
+            st.oes[0].raw_noise.as_ref().unwrap().id,
+            "110",
+            "the first registration's raw-noise slot is preserved, not blanked"
+        );
+        assert_eq!(
+            st.oes[0].restart.as_ref().unwrap().id,
+            "111",
+            "the first registration's restart slot is preserved, not blanked"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
