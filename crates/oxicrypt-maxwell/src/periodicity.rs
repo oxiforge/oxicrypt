@@ -24,11 +24,13 @@
 //! would be far too slow.
 //!
 //! 1. **Spectral-peak detector.** From the FFT we form the one-sided power
-//!    spectrum (`|X[k]|²`) over the non-DC bins `k = 1 ..= n/2`. We flag when the
-//!    single largest bin dominates the rest of the spectrum — its power exceeds
-//!    [`SPECTRAL_PEAK_RATIO`] times the **mean** non-DC power. A flat
-//!    (white-noise-like) spectrum has a peak-to-mean ratio near a small constant;
-//!    a strong periodic line produces a peak many times the mean.
+//!    spectrum (`|X[k]|²`) over the bins `k = SPECTRAL_MIN_BIN ..= n/2` — bin 0
+//!    is DC and the lowest few bins are excluded as slow low-frequency drift
+//!    rather than a periodic line (see [`SPECTRAL_MIN_BIN`], #102). We flag when
+//!    the single largest searched bin dominates the rest of that band — its power
+//!    exceeds [`SPECTRAL_PEAK_RATIO`] times the **mean** power over the same band.
+//!    A flat (white-noise-like) spectrum has a peak-to-mean ratio near a small
+//!    constant; a strong periodic line produces a peak many times the mean.
 //!
 //! 2. **Autocorrelation detector.** By the Wiener–Khinchin theorem the
 //!    autocorrelation is the inverse FFT of the power spectrum. We normalize it
@@ -73,6 +75,37 @@
 /// component. Tune against real pilot data (see REVIEW-NEEDED).
 pub const SPECTRAL_PEAK_RATIO: f64 = 50.0;
 
+/// Lowest spectrum bin the spectral-peak detector searches — bins below this are
+/// excluded from **both** the peak search and the mean-power denominator.
+///
+/// **Engineering choice for a screen, not a spec constant (#102).** The screen
+/// hunts a *dominant periodic line* (a stuck oscillator, an aliased clock). The
+/// lowest few bins instead capture **slow low-frequency drift** — a wandering
+/// block mean over the record — which is not a repeating period and is already
+/// covered by the autocorrelation detector when it is genuinely periodic. On
+/// real pilot data that drift concentrated in bins 1–4 and tripped the spectral
+/// ratio (peak-to-mean 145–174) despite a clean autocorrelation (~0.07), a false
+/// positive. Restricting the spectral search to bins `>= 8` measures peak-vs-mean
+/// *within the band the screen is actually about*, so drift no longer masquerades
+/// as a line. Excluding these bins from the mean as well as the peak keeps the
+/// ratio honest — leaving drift energy in the mean would deflate the ratio and
+/// mask a real high-band line.
+///
+/// **Why 8 and not 5.** The observed drift sat in bins 1–4; 8 is one octave above
+/// bin 4, a deliberate margin so drift leaking a bin or two still falls inside the
+/// excluded band. The cost of that margin — a genuine periodic *line* whose
+/// fundamental lands in bins 1–7 is now invisible to **this** detector — is
+/// covered by the autocorrelation detector, which is left in place precisely as
+/// the low-order backstop: a dominant slow line is highly self-correlated at short
+/// lags (a bin-k line peaks the normalized autocorrelation near its period
+/// `n/k <= n/2`, and often at its half-period, both within the `n/4` lag cap for
+/// `k >= 2`), so it trips [`AUTOCORR_PEAK_THRESHOLD`] even though the spectral
+/// search skips it. What the spectral floor lets through is exactly the drift case
+/// — weak, distributed low-frequency energy that is *not* a dominant line — which
+/// is the whole point. See the `low_order_periodic_line_is_caught_by_autocorr_backstop`
+/// oracle. Tune against pilot data (see REVIEW-NEEDED).
+pub const SPECTRAL_MIN_BIN: usize = 8;
+
 /// Autocorrelation detector threshold: the largest **non-zero-lag** normalized
 /// autocorrelation magnitude that is still considered "no dominant period".
 ///
@@ -105,10 +138,11 @@ pub struct PeriodicityReport {
     /// FFT size actually used (the next power of two `>= n`, or `0`/`1` for
     /// degenerate inputs that are not analyzed).
     pub fft_size: usize,
-    /// Index of the dominant non-DC spectrum bin (`0` when not meaningful).
+    /// Index of the dominant spectrum bin **within the searched band**
+    /// (`>= SPECTRAL_MIN_BIN`; `0` when the band is empty or not meaningful).
     pub peak_bin: usize,
-    /// Power of the dominant non-DC bin divided by the mean non-DC bin power.
-    /// `0.0` for a flat/degenerate spectrum.
+    /// Power of the dominant searched bin divided by the mean bin power over the
+    /// same `SPECTRAL_MIN_BIN..=n/2` band. `0.0` for a flat/degenerate spectrum.
     pub peak_to_mean_ratio: f64,
     /// Lag (in samples) of the largest non-zero-lag autocorrelation magnitude.
     pub peak_lag: usize,
@@ -328,10 +362,11 @@ pub fn screen(samples: &[u8]) -> PeriodicityReport {
     fft_in_place(&mut buf, false);
 
     // ── power spectrum ──
-    // |X[k]|² for every bin. Bin 0 is DC (≈0 after mean removal) and excluded
-    // from the peak search. By Hermitian symmetry of a real signal the spectrum
-    // is mirrored about m/2, so the one-sided search 1..=m/2 covers all distinct
-    // frequencies.
+    // |X[k]|² for every bin. Bin 0 is DC (≈0 after mean removal); bins below
+    // SPECTRAL_MIN_BIN are excluded as low-frequency drift (#102). By Hermitian
+    // symmetry of a real signal the spectrum is mirrored about m/2, so the
+    // one-sided search SPECTRAL_MIN_BIN..=m/2 covers all distinct frequencies of
+    // interest.
     let power: Vec<f64> = buf.iter().map(|c| c.norm_sq()).collect();
 
     let half = m / 2;
@@ -339,7 +374,12 @@ pub fn screen(samples: &[u8]) -> PeriodicityReport {
     let mut peak_power = 0.0f64;
     let mut sum_power = 0.0f64;
     let mut count = 0usize;
-    let mut k = 1usize;
+    // Start at SPECTRAL_MIN_BIN (not bin 1): the lowest bins carry slow
+    // low-frequency drift, not a dominant periodic line (#102). Bins below it
+    // are excluded from both the peak search and the mean below. When half <
+    // SPECTRAL_MIN_BIN (a tiny FFT) the loop is empty → count 0 → ratio 0 → no
+    // spectral flag, matching the degenerate contract.
+    let mut k = SPECTRAL_MIN_BIN;
     while k <= half {
         let p = power.get(k).copied().unwrap_or(0.0);
         sum_power += p;
@@ -592,6 +632,77 @@ mod tests {
         assert!(
             r.flagged(),
             "strong periodic component buried in noise must be flagged: {r:?}"
+        );
+    }
+
+    /// **Oracle (#102), low-frequency drift passes**: dominant white noise with a
+    /// slow mean modulation across the record (energy in the lowest bins, but no
+    /// repeating period) must NOT be flagged. This is the pilot's block-mean
+    /// drift: a large low-bin spectral peak yet a clean autocorrelation. Before
+    /// the bin-8 floor the drift bin dominated and tripped the 50x ratio; with
+    /// [`SPECTRAL_MIN_BIN`] only the flat >=8 band is searched, so it passes —
+    /// reverting the floor makes this test fail, which is the point.
+    #[test]
+    fn low_frequency_drift_below_bin8_passes() {
+        const N: usize = 4096;
+        let mut rng = SplitMix64::new(0xD1F7_0FF5);
+        let noise = rng.bytes(N);
+        let samples: Vec<u8> = noise
+            .iter()
+            .enumerate()
+            .map(|(t, &b)| {
+                // Half-cycle mean modulation over the whole record -> energy in
+                // the lowest bins, riding on dominant white noise so the
+                // autocorrelation stays clean (like the pilot's block-mean wander).
+                let ang = std::f64::consts::PI * (t as f64) / (N as f64);
+                let drift = ang.cos() * 40.0;
+                let v = 128.0 + drift + (f64::from(b) - 128.0);
+                v.clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        let r = screen(&samples);
+        assert!(
+            !r.spectral_flag,
+            "low-frequency drift (bin < {SPECTRAL_MIN_BIN}) must not trip spectral after #102: {r:?}"
+        );
+        assert!(
+            !r.flagged(),
+            "low-frequency drift must pass the screen: {r:?}"
+        );
+        // The reported peak now lands in the searched band, never a drift bin.
+        assert!(
+            r.peak_bin >= SPECTRAL_MIN_BIN,
+            "peak bin {} must be within the searched band (>= {SPECTRAL_MIN_BIN})",
+            r.peak_bin
+        );
+    }
+
+    /// **Oracle (#102 backstop), low-order line still caught**: a genuine periodic
+    /// line whose fundamental is below [`SPECTRAL_MIN_BIN`] (the bins 1–7 the
+    /// spectral floor now skips) must still be flagged — the autocorrelation
+    /// detector is the low-order backstop. This proves the bin-8 floor did not
+    /// open a hole: slow *drift* passes, but a real low-order *period* does not. A
+    /// dominant bin-6 line is exact-bin (no spectral leakage into `>= 8`), so the
+    /// spectral detector legitimately ignores it, yet its short-lag
+    /// self-correlation trips the autocorrelation detector.
+    #[test]
+    fn low_order_periodic_line_is_caught_by_autocorr_backstop() {
+        const N: usize = 4096;
+        const BIN: usize = 6; // exact FFT bin, below SPECTRAL_MIN_BIN (8)
+        let samples: Vec<u8> = (0..N)
+            .map(|t| {
+                let ang = std::f64::consts::TAU * (BIN as f64) * (t as f64) / (N as f64);
+                ((ang.cos() * 0.5 + 0.5) * 255.0).round() as u8
+            })
+            .collect();
+        let r = screen(&samples);
+        assert!(
+            r.autocorr_flag,
+            "a low-order (bin {BIN}) periodic line must trip the autocorr backstop: {r:?}"
+        );
+        assert!(
+            r.flagged(),
+            "the low-order line must still be flagged: {r:?}"
         );
     }
 
