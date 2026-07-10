@@ -842,12 +842,17 @@ fn random_range64(s: u64, state: &mut [u64; 4]) -> u64 {
 /// `data[i]`. EA shuffles `symbols` and `rawsymbols` in lockstep; we shuffle the
 /// single raw-byte array and recompute conversions per round, which is
 /// equivalent because every statistic is derived from the raw bytes.
+///
+/// Exposed `pub(crate)` so the [`crate::independence`] shuffled-baseline control
+/// reuses this exact vetted Fisher–Yates + Lemire `randomRange64` + xoshiro256**
+/// machinery (ISC-134) rather than re-transcribing an RNG; the caller supplies a
+/// per-replica `state` derived from a documented master seed.
 #[allow(
     // `i as u64` (index → range bound) and `r as usize` (draw → index) are safe:
     // dataset lengths fit usize and u64 on supported targets, and `r <= i < len`.
     clippy::cast_possible_truncation
 )]
-fn fy_shuffle(data: &mut [u8], state: &mut [u64; 4]) {
+pub(crate) fn fy_shuffle(data: &mut [u8], state: &mut [u64; 4]) {
     let len = data.len();
     if len < 2 {
         return;

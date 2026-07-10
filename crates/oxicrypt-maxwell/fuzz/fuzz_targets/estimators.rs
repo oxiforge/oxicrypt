@@ -24,6 +24,7 @@ use oxicrypt_maxwell::{
     compression::compression,
     iid_gate::iid_gate,
     iid_lrs::len_lrs_iid_test,
+    independence::analyze as independence_analyze,
     lag::lag,
     lrs::{lrs, lrs_length},
     lz78y::lz78y,
@@ -78,5 +79,12 @@ fuzz_target!(|data: &[u8]| {
     // top-level wiring is skipped for big buffers (documented in fuzz/README.md).
     if data.len() <= 512 {
         let _ = iid_gate(data, bits);
+        // --- independence analysis (2D/3D min-entropy) --------------------
+        // Drives the tuple encoder (all phases, tail truncation), the tuple-MCV
+        // histograms, the pair-suite leg (bits<=4), the shuffled-baseline
+        // control, and the claim gate — all on arbitrary small input. Gated to
+        // small inputs alongside iid_gate: the pair-suite leg runs the full §6.3
+        // predictor battery, already exercised individually above.
+        let _ = independence_analyze(data, bits, Some(0.5));
     }
 });

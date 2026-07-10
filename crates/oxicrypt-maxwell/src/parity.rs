@@ -653,6 +653,18 @@ pub fn resolve_datasets_dir(dir: Option<&Path>) -> PathBuf {
     Path::new(&home).join("repos/SP800-90B_EntropyAssessment/bin")
 }
 
+/// Compute the lowercase-hex SHA-256 of `data`, powering the validated module up
+/// with the real KAT set first (the same gated-SHA provenance path the parity
+/// harness uses). Returns `None` on a module/service error.
+///
+/// Used by the `independence` sidecar to record `input_sha256`.
+#[must_use]
+pub fn sha256_hex(data: &[u8]) -> Option<String> {
+    ensure_module_powered_up().ok()?;
+    let digest = oxicrypt_sha::sha256(data).ok()?;
+    Some(hex(&digest))
+}
+
 /// Lowercase-hex encode a digest.
 fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len().saturating_mul(2));
