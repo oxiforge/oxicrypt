@@ -898,6 +898,11 @@ fn print_independence(file: &str, r: &IndependenceReport) {
     }
 }
 
+#[allow(
+    // One CLI handler: arg parsing, provenance load, analyze, sidecar write, and
+    // exit-code decision. Splitting scatters the command contract across helpers.
+    clippy::too_many_lines
+)]
 fn cmd_independence(args: &[String]) -> ExitCode {
     // Positional <FILE> <BITS_PER_SYMBOL>, then optional flags.
     let (Some(file), Some(bits_str)) = (args.first(), args.get(1)) else {
@@ -931,6 +936,10 @@ fn cmd_independence(args: &[String]) -> ExitCode {
                     eprintln!("maxwell: --claim value must be a real number");
                     return ExitCode::FAILURE;
                 };
+                if !independence::validate_claim(h) {
+                    eprintln!("maxwell: --claim value must be a finite, positive real number");
+                    return ExitCode::FAILURE;
+                }
                 claim = Some(h);
                 i = i.saturating_add(2);
             }
@@ -994,15 +1003,23 @@ fn cmd_independence(args: &[String]) -> ExitCode {
             .map_or(0, |d| d.as_secs())
     );
     let sha = input_sha256_hex(&data);
-    match write_sidecar(&report, &run_utc, sha.as_deref(), &prov, &dir) {
-        Ok(path) => println!("  sidecar: {}", path.display()),
-        Err(e) => eprintln!(
-            "maxwell: could not write sidecar in '{}': {e}",
-            dir.display()
-        ),
-    }
+    let sidecar_ok = match write_sidecar(&report, &run_utc, sha.as_deref(), &prov, &dir) {
+        Ok(path) => {
+            println!("  sidecar: {}", path.display());
+            true
+        }
+        Err(e) => {
+            eprintln!(
+                "maxwell: could not write sidecar in '{}': {e}",
+                dir.display()
+            );
+            false
+        }
+    };
 
-    if report.exit_failure() {
+    // A run whose machine-readable evidence artifact was never written must not
+    // report success, even when the claim gate itself did not flag.
+    if report.exit_failure() || !sidecar_ok {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

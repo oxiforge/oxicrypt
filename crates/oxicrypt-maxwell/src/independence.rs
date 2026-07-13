@@ -78,7 +78,8 @@
 //! ([`INDEPENDENCE_MASTER_SEED`]) and never reads any entropy source. The analysis
 //! never panics — degenerate inputs (too short to form a tuple) return a
 //! well-defined non-flagging degenerate report, and non-finite intermediates are
-//! serialized as JSON `null` with `"degenerate": true`.
+//! serialized as JSON `null`. The sidecar `"degenerate"` field is authoritative
+//! from the report alone; a benign non-finite diagnostic value never sets it.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -644,6 +645,15 @@ fn occupancy(codes: &[u64]) -> usize {
     seen.len()
 }
 
+/// Validate a `--claim` min-entropy value: a claim must be a finite, positive
+/// real number (bits/symbol). Rejects `NaN`/`inf` — which would silently
+/// subvert the acceptance gate (`gate < NaN` is always false, `gate < inf`
+/// always true) — and non-positive values.
+#[must_use]
+pub fn validate_claim(h: f64) -> bool {
+    h.is_finite() && h > 0.0
+}
+
 /// Run the full independence analysis over `symbols` at `bits` bits/symbol,
 /// optionally gated against `claim`.
 ///
@@ -680,29 +690,9 @@ pub fn analyze(symbols: &[u8], bits: u8, claim: Option<f64>) -> IndependenceRepo
     };
 
     let degenerate = n < 3 || !mcv.h1.is_finite() || !mcv.h2.is_finite() || !mcv.h3.is_finite();
-
-    // Gate. A degenerate input (too short to form a stable tuple histogram)
-    // never flags — its bounded values are 0-entropy sentinels, not evidence.
-    let pair_term = pair_suite
-        .as_ref()
-        .map_or_else(|| mcv.h2_per_delta(), |p| p.min_per_delta);
-    let triplet_term = mcv.h3_per_delta();
-    let gate_value = pair_term.min(triplet_term);
     let advisory_only = n < PRECEDENT_MIN_SAMPLES;
 
-    let (flagged, flag_cause) = match claim {
-        Some(h) if !degenerate && gate_value < h => {
-            let cause = if pair_term <= triplet_term {
-                FlagCause::Pair
-            } else {
-                FlagCause::TripletMcv
-            };
-            (true, Some(cause))
-        }
-        _ => (false, None),
-    };
-
-    IndependenceReport {
+    let mut report = IndependenceReport {
         n,
         bits_per_symbol: bits,
         pair_alphabet,
@@ -716,11 +706,33 @@ pub fn analyze(symbols: &[u8], bits: u8, claim: Option<f64>) -> IndependenceRepo
         pair_suite,
         mcv,
         claim,
-        flagged,
-        flag_cause,
+        flagged: false,
+        flag_cause: None,
         advisory_only,
         degenerate,
+    };
+
+    // Gate. The FLAG decision uses `report.gate_value()` — the same source the
+    // displayed gate value uses — so the two can never drift. A degenerate
+    // input never flags (its bounded values are 0-entropy sentinels, not
+    // evidence); a non-finite claim (defense-in-depth against a bad CLI value
+    // that slipped past `validate_claim`) never flags.
+    if let Some(h) = claim
+        && h.is_finite()
+        && !report.degenerate
+        && report.gate_value() < h
+    {
+        let pair_term = report.pair_term();
+        let triplet_term = report.mcv.h3_per_delta();
+        report.flag_cause = Some(if pair_term <= triplet_term {
+            FlagCause::Pair
+        } else {
+            FlagCause::TripletMcv
+        });
+        report.flagged = true;
     }
+
+    report
 }
 
 // ---------------------------------------------------------------------------
@@ -748,9 +760,38 @@ fn json_opt_string(text: &str, key: &str) -> Option<String> {
     let after = text.get(at.saturating_add(needle.len())..)?;
     let colon = after.find(':')?;
     let rest = after.get(colon.saturating_add(1)..)?.trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(rest.get(..end)?.to_owned())
+    let body = rest.strip_prefix('"')?;
+    // Scan to the closing UNescaped quote, unescaping JSON string escapes so a
+    // value containing `\"` is not truncated at the backslash-quote.
+    let mut out = String::new();
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                '/' => out.push('/'),
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                'b' => out.push('\u{08}'),
+                'f' => out.push('\u{0C}'),
+                'u' => {
+                    let mut code = 0u32;
+                    for _ in 0..4 {
+                        code = code
+                            .checked_mul(16)?
+                            .checked_add(chars.next()?.to_digit(16)?)?;
+                    }
+                    out.push(char::from_u32(code)?);
+                }
+                other => out.push(other),
+            },
+            other => out.push(other),
+        }
+    }
+    None
 }
 
 /// Parse the provenance fields from a collection metadata sidecar (`--metadata`).
@@ -764,19 +805,21 @@ pub fn parse_metadata(text: &str) -> Provenance {
 }
 
 /// Serialize an `f64` for the sidecar: finite → Rust shortest-roundtrip
-/// `Display`; non-finite → JSON `null`, and the `degen` flag is set.
-fn json_f64(x: f64, degen: &mut bool) -> String {
+/// `Display`; non-finite → JSON `null`. A non-finite diagnostic value (e.g. a
+/// proximity ratio over a zero-entropy stream) is benign and does NOT mark the
+/// report degenerate — the sidecar `degenerate` field is authoritative from
+/// `IndependenceReport::degenerate` alone.
+fn json_f64(x: f64) -> String {
     if x.is_finite() {
         format!("{x}")
     } else {
-        *degen = true;
         "null".to_owned()
     }
 }
 
 /// Serialize a `[f64]` slice as a JSON array (element-wise via [`json_f64`]).
-fn json_f64_array(xs: &[f64], degen: &mut bool) -> String {
-    let parts: Vec<String> = xs.iter().map(|&x| json_f64(x, degen)).collect();
+fn json_f64_array(xs: &[f64]) -> String {
+    let parts: Vec<String> = xs.iter().map(|&x| json_f64(x)).collect();
     format!("[{}]", parts.join(", "))
 }
 
@@ -796,8 +839,9 @@ pub const SIDECAR_FILE: &str = "independence-results.json";
 /// `run_utc` and `input_sha256` are supplied by the caller (production supplies
 /// the real values; the determinism oracle supplies fixed ones so the sidecar
 /// bytes are comparable). The serialization rules are frozen: floats via Rust
-/// shortest-roundtrip `Display`, non-finite `f64` → JSON `null` with
-/// `"degenerate": true`. Returns the written path.
+/// shortest-roundtrip `Display`, non-finite `f64` → JSON `null` (the
+/// `"degenerate"` field is authoritative from the report). The sidecar
+/// directory is created if absent. Returns the written path.
 #[allow(
     // The hand-written JSON assembles many fields; splitting it would obscure the
     // 1:1 correspondence with the frozen schema.
@@ -811,6 +855,7 @@ pub fn write_sidecar(
     dir: &Path,
 ) -> std::io::Result<PathBuf> {
     let json = render_sidecar(report, run_utc, input_sha256, prov);
+    std::fs::create_dir_all(dir)?;
     let path = dir.join(SIDECAR_FILE);
     let mut f = std::fs::File::create(&path)?;
     f.write_all(json.as_bytes())?;
@@ -829,15 +874,14 @@ pub fn render_sidecar(
     input_sha256: Option<&str>,
     prov: &Provenance,
 ) -> String {
-    let mut degen = report.degenerate;
     let m = &report.mcv;
 
     // suite_1d block.
     let suite_1d_json = match &report.suite_1d {
         Some(s) => format!(
             "{{\"per_estimator\": {}, \"min\": {}}}",
-            json_f64_array(&s.per_estimator, &mut degen),
-            json_f64(s.min, &mut degen)
+            json_f64_array(&s.per_estimator),
+            json_f64(s.min)
         ),
         None => "null".to_owned(),
     };
@@ -847,13 +891,13 @@ pub fn render_sidecar(
         Some(p) => format!(
             "{{\"per_estimator_per_phase\": [{}, {}], \"min\": {}, \"min_per_delta\": {}, \
              \"structure_deficit_vs_1d\": {}, \"null_min\": {}, \"deficit_vs_null\": {}}}",
-            json_f64_array(&p.per_estimator_per_phase[0], &mut degen),
-            json_f64_array(&p.per_estimator_per_phase[1], &mut degen),
-            json_f64(p.min, &mut degen),
-            json_f64(p.min_per_delta, &mut degen),
-            json_f64(p.structure_deficit_vs_1d, &mut degen),
-            json_f64(p.null_min, &mut degen),
-            json_f64(p.deficit_vs_null, &mut degen),
+            json_f64_array(&p.per_estimator_per_phase[0]),
+            json_f64_array(&p.per_estimator_per_phase[1]),
+            json_f64(p.min),
+            json_f64(p.min_per_delta),
+            json_f64(p.structure_deficit_vs_1d),
+            json_f64(p.null_min),
+            json_f64(p.deficit_vs_null),
         ),
         None => "null".to_owned(),
     };
@@ -861,46 +905,45 @@ pub fn render_sidecar(
     // mcv block.
     let per_delta_per_phase = format!(
         "{{\"pairs\": {}, \"triplets\": {}}}",
-        json_f64_array(&m.pair_bounded_per_phase, &mut degen),
-        json_f64_array(&m.triplet_bounded_per_phase, &mut degen),
+        json_f64_array(&m.pair_bounded_per_phase),
+        json_f64_array(&m.triplet_bounded_per_phase),
     );
     let plain_block = format!(
         "{{\"h1\": {}, \"h2\": {}, \"h3\": {}}}",
-        json_f64(m.plain1, &mut degen),
-        json_f64(m.plain2, &mut degen),
-        json_f64(m.plain3, &mut degen),
+        json_f64(m.plain1),
+        json_f64(m.plain2),
+        json_f64(m.plain3),
     );
     let deficits_block = format!(
         "{{\"d2\": {}, \"d3\": {}}}",
-        json_f64(m.deficit2, &mut degen),
-        json_f64(m.deficit3, &mut degen),
+        json_f64(m.deficit2),
+        json_f64(m.deficit3),
     );
     let mcv_json = format!(
         "{{\"h1\": {}, \"h2\": {}, \"h3\": {}, \"per_delta_per_phase\": {}, \"plain\": {}, \
          \"null_mean\": {}, \"null_spread\": {}, \"deficits\": {}, \"r2_plain\": {}, \
          \"r3_plain\": {}}}",
-        json_f64(m.h1, &mut degen),
-        json_f64(m.h2, &mut degen),
-        json_f64(m.h3, &mut degen),
+        json_f64(m.h1),
+        json_f64(m.h2),
+        json_f64(m.h3),
         per_delta_per_phase,
         plain_block,
-        json_f64_array(&m.null_mean, &mut degen),
-        json_f64_array(&m.null_spread, &mut degen),
+        json_f64_array(&m.null_mean),
+        json_f64_array(&m.null_spread),
         deficits_block,
-        json_f64(m.r2_plain, &mut degen),
-        json_f64(m.r3_plain, &mut degen),
+        json_f64(m.r2_plain),
+        json_f64(m.r3_plain),
     );
 
-    let claim_json = report
-        .claim
-        .map_or_else(|| "null".to_owned(), |h| json_f64(h, &mut degen));
+    let claim_json = report.claim.map_or_else(|| "null".to_owned(), json_f64);
     let flagged_json = report.flagged.to_string();
     let flag_cause_json = report
         .flag_cause
         .map_or_else(|| "null".to_owned(), |c| format!("\"{}\"", c.token()));
 
-    // `degenerate` reflects both the report flag and any non-finite value
-    // serialized above — so it is assembled last, after every json_f64 call.
+    // `degenerate` is authoritative from the report alone; a benign non-finite
+    // diagnostic value renders as JSON `null` without marking the report
+    // degenerate (so a real FLAG is never poisoned into a "degenerate" sidecar).
     format!(
         "{{\n  \
          \"maxwell_version\": \"{ver}\",\n  \
@@ -963,7 +1006,7 @@ pub fn render_sidecar(
         flagged = flagged_json,
         flag_cause = flag_cause_json,
         advisory = report.advisory_only,
-        degenerate = degen,
+        degenerate = report.degenerate,
     )
 }
 
@@ -1317,5 +1360,78 @@ mod tests {
         assert!(r.advisory_only, "n<10M must be advisory");
         assert!(r.flagged, "gate value < 2.0 should flag");
         assert!(!r.exit_failure(), "advisory flag must not exit-fail");
+    }
+
+    // ----- review-hardening oracles (evidence-integrity edges) -----
+
+    /// `--claim` validation rejects the values that would subvert the gate:
+    /// `NaN` (gate `< NaN` always false → any data passes) and `inf` (gate
+    /// `< inf` always true → spurious flag), plus non-positive claims.
+    #[test]
+    fn validate_claim_rejects_non_finite_and_non_positive() {
+        assert!(!validate_claim(f64::NAN));
+        assert!(!validate_claim(f64::INFINITY));
+        assert!(!validate_claim(f64::NEG_INFINITY));
+        assert!(!validate_claim(0.0));
+        assert!(!validate_claim(-1.0));
+        assert!(validate_claim(0.5));
+        assert!(validate_claim(4.0));
+    }
+
+    /// Defense-in-depth: even if a non-finite claim reaches `analyze`, it never
+    /// flags (neither the always-false `NaN` nor the always-true `inf` path).
+    #[test]
+    fn non_finite_claim_never_flags() {
+        let data = concentrated_symbols(20_000, 0x1234_5678_9abc_def0);
+        for c in [f64::NAN, f64::INFINITY] {
+            let r = analyze(&data, 4, Some(c));
+            assert!(!r.flagged, "non-finite claim {c} must not flag");
+            assert!(!r.exit_failure());
+        }
+    }
+
+    /// Provenance parsing keeps a value containing escaped quotes/backslashes
+    /// intact (previously truncated at the first `\"`).
+    #[test]
+    fn metadata_parse_handles_escaped_quotes() {
+        let text = r#"{ "boundary": "rack \"A\" primary", "oe_id": "line\\1" }"#;
+        let p = parse_metadata(text);
+        assert_eq!(p.boundary.as_deref(), Some(r#"rack "A" primary"#));
+        assert_eq!(p.oe_id.as_deref(), Some(r"line\1"));
+    }
+
+    /// A real acceptance FLAG (constant stream → 0 entropy) renders the sidecar
+    /// with `degenerate:false`: the benign NaN proximity ratios must not poison
+    /// the authoritative report degenerate flag.
+    #[test]
+    fn sidecar_degenerate_is_authoritative_not_poisoned_by_nan() {
+        let data = vec![7u8; 20_000];
+        let r = analyze(&data, 4, Some(0.5));
+        assert!(r.flagged, "constant stream vs claim 0.5 must flag");
+        assert!(!r.degenerate, "constant (n>=3, finite h) is not degenerate");
+        assert!(
+            !r.mcv.r2_plain.is_finite(),
+            "constant stream yields a NaN r2_plain (the poison source)"
+        );
+        let json = render_sidecar(&r, "0", None, &Provenance::default());
+        assert!(json.contains("\"flagged\": true"), "{json}");
+        assert!(json.contains("\"degenerate\": false"), "{json}");
+        assert!(json.contains("\"r2_plain\": null"), "{json}");
+    }
+
+    /// `write_sidecar` creates a missing sidecar directory and writes the file,
+    /// so a run never silently produces no evidence artifact.
+    #[test]
+    fn sidecar_written_to_missing_dir() {
+        let data = vec![7u8; 100];
+        let r = analyze(&data, 4, None);
+        let base = std::env::temp_dir().join(format!("oxicrypt-maxwell-sc-{}", std::process::id()));
+        let dir = base.join("nested/independence");
+        let _ = std::fs::remove_dir_all(&base);
+        let path = write_sidecar(&r, "0", None, &Provenance::default(), &dir)
+            .expect("write_sidecar must create the dir and write");
+        assert!(path.exists(), "sidecar file must exist");
+        assert!(path.ends_with(SIDECAR_FILE));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
