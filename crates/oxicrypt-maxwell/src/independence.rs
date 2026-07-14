@@ -85,6 +85,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::{McvEstimate, lag, lrs, lz78y, mcv, mcv_from_mode, multi_mcw, multi_mmc};
+use std::collections::HashMap;
 
 /// The precedent's minimum sample count for a representative pairs/triplets
 /// value (jent v3.7.0 §4.1, quoted in the module doc). Below this the
@@ -182,10 +183,23 @@ pub(crate) fn tuple_codes(symbols: &[u8], bits: u8, k: usize, phase: usize) -> V
     clippy::cast_possible_truncation
 )]
 fn pair_bytes(symbols: &[u8], bits: u8, phase: usize) -> Vec<u8> {
-    tuple_codes(symbols, bits, 2, phase)
-        .into_iter()
-        .map(|c| c as u8)
-        .collect()
+    // Direct `u8` encoding — no `Vec<u64>` intermediate. `2·bits ≤ 8` (caller
+    // precondition) ⇒ each pair code fits `u8`; the `u16` shift then `as u8`
+    // reproduces `tuple_codes(.., 2, phase) as u8` byte-for-byte (the O3/O4
+    // encoder KATs assert this). `get`/`saturating_add` mirror `tuple_codes`,
+    // staying clear of the crate's `arithmetic_side_effects` wall.
+    let shift = u32::from(bits);
+    let n = symbols.len();
+    let mut out: Vec<u8> = Vec::with_capacity(tuple_count(n, 2, phase));
+    let mut i = phase;
+    while i.saturating_add(2) <= n {
+        let (Some(&hi), Some(&lo)) = (symbols.get(i), symbols.get(i.saturating_add(1))) else {
+            break;
+        };
+        out.push((u16::from(hi).wrapping_shl(shift) | u16::from(lo)) as u8);
+        i = i.saturating_add(2);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -210,23 +224,42 @@ fn plain_min_entropy(mode_count: u64, total: u64) -> f64 {
 /// confidence-bound MCV estimate (shared [`crate::mcv_from_mode`] core) and the
 /// plain-form value.
 #[allow(
-    // codes.len() fits u64 on supported targets; the count → f64 casts are the
-    // same the parity-proven MCV core performs.
-    clippy::cast_precision_loss,
-    // `c as usize`: c < alphabet = 2^(k·bits) <= 2^24 by construction, which fits
-    // usize even on 32-bit targets; the .get_mut() is a further total guard.
+    // `c as usize` (dense branch): guarded by `c < alphabet <= DENSE_ALPHABET_MAX`,
+    // so it fits usize on every supported target.
     clippy::cast_possible_truncation
 )]
 fn mcv_from_codes(codes: &[u64], alphabet: usize) -> (McvEstimate, f64) {
-    let mut hist = vec![0u64; alphabet];
-    for &c in codes {
-        // c < alphabet by construction (code < 2^(k·bits) = alphabet).
-        if let Some(slot) = hist.get_mut(c as usize) {
-            *slot = slot.saturating_add(1);
-        }
-    }
-    let mode = hist.iter().copied().max().unwrap_or(0);
+    // Mode count via a histogram, choosing storage by alphabet size. Small
+    // alphabets index a DENSE array directly (a `memset` + array writes, faster
+    // than hashing every code) — this is every pair leg and the small-`bits`
+    // triplet legs. Only a LARGE alphabet — the 8-bit triplet leg's `1<<24`
+    // (~134 MB) — uses a SPARSE `HashMap`, so we never zero a giant mostly-empty
+    // array (the #127 pathology). Both branches keep the `c < alphabet` drop
+    // guard and read `max` over the counts, so the mode — and the MCV estimate —
+    // is identical whichever path runs (the O3 bit-identity oracle exercises the
+    // dense branch; the branches share their counting logic).
+    const DENSE_ALPHABET_MAX: usize = 1 << 16; // 65_536 u64 slots = 512 KiB
     let total = codes.len() as u64;
+    let mode = if alphabet <= DENSE_ALPHABET_MAX {
+        let mut hist = vec![0u64; alphabet];
+        for &c in codes {
+            // c < alphabet by construction (code < 2^(k·bits) = alphabet).
+            if let Some(slot) = hist.get_mut(c as usize) {
+                *slot = slot.saturating_add(1);
+            }
+        }
+        hist.iter().copied().max().unwrap_or(0)
+    } else {
+        let alphabet = alphabet as u64;
+        let mut hist: HashMap<u64, u64> = HashMap::new();
+        for &c in codes {
+            if c < alphabet {
+                let slot = hist.entry(c).or_insert(0);
+                *slot = slot.saturating_add(1);
+            }
+        }
+        hist.values().copied().max().unwrap_or(0)
+    };
     (mcv_from_mode(mode, total), plain_min_entropy(mode, total))
 }
 
@@ -636,6 +669,15 @@ impl IndependenceReport {
     }
 }
 
+/// The number of disjoint `k`-tuples `tuple_codes` yields at `phase` — the closed
+/// form `⌊(n−phase)/k⌋` — without allocating the code vector just to read `.len()`.
+fn tuple_count(n: usize, k: usize, phase: usize) -> usize {
+    // `checked_div` sidesteps the crate's `arithmetic_side_effects` /
+    // `integer_division` walls (it is the checked, method-form op clippy allows)
+    // and returns 0 for the `k == 0` degenerate.
+    n.saturating_sub(phase).checked_div(k).unwrap_or(0)
+}
+
 /// Count distinct codes present in a code slice (occupancy).
 fn occupancy(codes: &[u64]) -> usize {
     let mut seen = std::collections::BTreeSet::new();
@@ -666,14 +708,13 @@ pub fn analyze(symbols: &[u8], bits: u8, claim: Option<f64>) -> IndependenceRepo
     let pair_alphabet = tuple_alphabet(bits, 2);
     let triplet_alphabet = tuple_alphabet(bits, 3);
 
-    let pair_count_per_phase = [
-        tuple_codes(symbols, bits, 2, 0).len(),
-        tuple_codes(symbols, bits, 2, 1).len(),
-    ];
+    // Tuple counts are the closed form ⌊(n−phase)/k⌋ — no need to encode the full
+    // stream just to read its length (the counts are bits-independent).
+    let pair_count_per_phase = [tuple_count(n, 2, 0), tuple_count(n, 2, 1)];
     let triplet_count_per_phase = [
-        tuple_codes(symbols, bits, 3, 0).len(),
-        tuple_codes(symbols, bits, 3, 1).len(),
-        tuple_codes(symbols, bits, 3, 2).len(),
+        tuple_count(n, 3, 0),
+        tuple_count(n, 3, 1),
+        tuple_count(n, 3, 2),
     ];
     let pair_occupancy = occupancy(&tuple_codes(symbols, bits, 2, 0));
     let triplet_occupancy = occupancy(&tuple_codes(symbols, bits, 3, 0));
@@ -1292,6 +1333,50 @@ mod tests {
             tuple_codes(&v8, bits, 3, 2),
             vec![0x234, 0x567],
             "triplet phase-2 stride/tail"
+        );
+    }
+
+    /// The closed-form `tuple_count` must equal the encoder's actual output length
+    /// across phases, tuple orders, and boundary lengths (empty / partial tail /
+    /// n < phase). Locks the arithmetic-count shortcut to the encoder it replaces
+    /// so any future off-by-one fails loudly instead of skewing the report counts.
+    #[test]
+    fn tuple_count_matches_encoder_length() {
+        let bits = 4u8;
+        for n in [0usize, 1, 2, 3, 4, 5, 8, 9, 17, 100] {
+            let data: Vec<u8> = (0..n).map(|i| (i % 13) as u8).collect();
+            for k in 1..=3usize {
+                for phase in 0..k {
+                    assert_eq!(
+                        tuple_count(n, k, phase),
+                        tuple_codes(&data, bits, k, phase).len(),
+                        "tuple_count mismatch at n={n} k={k} phase={phase}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Exercise the SPARSE branch of `mcv_from_codes` (alphabet > the dense cap)
+    /// with a hand-known mode and an out-of-range code that must be dropped —
+    /// exactly as the dense array's bounds guard would. The dense branch is
+    /// covered by `o3_internal_bit_identity` (bits = 4); this locks the other
+    /// branch so a future edit to it can't silently skew the mode or total.
+    #[test]
+    fn mcv_from_codes_sparse_branch_exact() {
+        let codes = [3u64, 3, 3, 9, 9, 999_999_999];
+        let alphabet = 1usize << 20; // > DENSE_ALPHABET_MAX → sparse; 999_999_999 dropped
+        let (est, plain) = mcv_from_codes(&codes, alphabet);
+        // mode = 3 (code 3 ×3); total = 6 (len, including the dropped code).
+        assert_eq!(
+            est,
+            mcv_from_mode(3, 6),
+            "sparse bounded MCV must be mode=3,total=6"
+        );
+        assert_eq!(
+            plain,
+            plain_min_entropy(3, 6),
+            "sparse plain min-entropy must be mode=3,total=6"
         );
     }
 

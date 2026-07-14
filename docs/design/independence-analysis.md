@@ -135,7 +135,7 @@ claim-anchored flag is a floor detector; between "consistent with the 1-D assess
      available; for wider sources the suite leg reports "unavailable — symbol width" and the
      MCV legs stand alone). Reuses the `iid_gate` non-IID `h_original` composition.
    - Tuple-MCV leg: histogram → `mode_count`/`total` → the shared `mcv_from_mode` core
-     (exposure widens to `pub(crate)`; verified present, `lib.rs:150`) — identical math to
+     (exposure widens to `pub(crate)`; verified present as `oxicrypt_maxwell::mcv_from_mode`) — identical math to
      the parity-proven `mcv()`. Plain form `−log₂(max p̂)` computed alongside.
    - Proximity ratios r₂, r₃ are computed from the **plain** form (matching the precedent's
      formula — panel C3) and always displayed next to their shuffled-baseline counterparts.
@@ -194,7 +194,7 @@ maxwell independence <FILE> <BITS_PER_SYMBOL> [--claim <H>] [--metadata <FILE>] 
   proven). Kills the "reports independence for everything" class.
 - **O3 — internal bit-identity + inherited EA parity.** The pair-MCV path must equal
   `mcv(pair_encoded_buf, 2·bits).literal` **bit-exactly** (same core; verified sound against
-  lib.rs:190-203). The pair-suite leg must equal the existing per-estimator functions run
+  `oxicrypt_maxwell::mcv` / `mcv_literal`). The pair-suite leg must equal the existing per-estimator functions run
   directly on the encoded buffer, bit-exactly (code-path consistency). Optional
   `parity`-style extension (Skip-if-absent): EA MCV on a pair-encoded reference file, ≤1e-6.
   **Triplets have no external reference (12-bit exceeds EA's wire)** — mitigated by the

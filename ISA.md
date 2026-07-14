@@ -220,6 +220,22 @@ by the commit-is-the-gate doc-sync discipline.
   parameter set (ML-DSA-44/65/87), plus the per-variant keygen→sign→verify KATs run feature-on
   and -off. Security-policy §9.2 item 4 extended with the caller note.
 
+- 2026-07-13: `oxicrypt-maxwell` `independence` allocation refactor (#127, out-of-boundary tooling,
+  branch `perf/maxwell-independence-allocations`). `mcv_from_codes`'s mode-count histogram now
+  chooses storage by alphabet size — a dense array for small alphabets (≤ 2¹⁶: every pair leg + the
+  small-`bits` triplet legs, indexed directly) and a sparse `HashMap` only for the large 8-bit-triplet
+  alphabet (2²⁴, ~134 MB) that motivated the issue; both branches keep the `c < alphabet` drop guard
+  and read `max` over the counts, so exact MCV mode counts and min-entropy are unchanged (the evidence
+  does not move). Tuple counts use the closed form ⌊(n−phase)/k⌋ (`tuple_count`) instead of encoding
+  the stream to read its length; `pair_bytes` writes `u8` directly. Correctness gate: O1–O4 green,
+  incl. `o3_internal_bit_identity` (dense branch) + new `mcv_from_codes_sparse_branch_exact` (sparse
+  branch) + `tuple_count_matches_encoder_length`. Code-review (high) triage: APPLIED the dense/sparse
+  size-threshold (finder: an unconditional `HashMap` penalized the small-alphabet legs that never had
+  the alloc problem) and the `pair_bytes`→`tuple_count` DRY; DECLINED occupancy-reuse-via-`McvLeg`-
+  threading (occupancy is already sparse over phase-0 codes — not the 134 MB pathology — so the ripple
+  across four sites + the O3 test outweighs a non-bottleneck micro-opt). No public API, SSP, self-test,
+  or boundary-accounting change (out-of-boundary crate).
+
 ## Changelog
 
 (future)
