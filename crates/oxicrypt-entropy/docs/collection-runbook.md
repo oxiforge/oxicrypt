@@ -59,6 +59,43 @@ Two boundaries are always emitted per OE:
   per-sample entropy.
 - `upper` — normal operation, the operating point.
 
+## Characterization capture (`--characterization N`)
+
+The per-OE independence and periodicity evidence (`maxwell independence`,
+`maxwell periodicity`) wants **one long uninterrupted stream** rather than the
+1M raw / restart-matrix layout. `--characterization N` captures, per boundary,
+a single contiguous run of `N` one-byte samples:
+
+```sh
+# One contiguous N-sample capture per boundary (both boundaries), e.g. N = 10M:
+collect --oe-id <oe-id> --datasets-dir <char-dir> --characterization 10000000
+```
+
+| Dataset type     | File                  | Count | Notes |
+|------------------|-----------------------|-------|-------|
+| Characterization | `characterization.bin`| `N` samples | Single contiguous run under the characterization posture: the health battery runs live and **annotates** any RCT/APT trip into `metadata.json`, but never drops a sample or stitches the run. Prefer a trip-free run for the evidence package; re-collect if trips are annotated. |
+
+The sidecar is the same versioned `metadata.json`, marked
+`"characterization": true`; its `sample_count` equals the bytes in
+`characterization.bin`. The trip annotations use the tool's default claim
+(H = 1, α = 2⁻³⁰) — they are informational; the credited entropy claim is
+**assessment-derived** downstream by `maxwell`, which takes its own `--claim`.
+
+> **Use a dedicated `--datasets-dir` for a characterization capture.** Both a
+> characterization run and a certification run write `metadata.json` into the
+> `<oe>/<timer>/<boundary>/` directory, so they must not share one. The
+> resume checkpoint keys characterization and certification on distinct
+> content hashes, but the sidecar filename is shared — keep the captures in
+> separate dataset trees.
+
+Downstream analysis (per boundary), the ISC-120 recipe:
+
+```sh
+maxwell independence <char-dir>/<oe>/<timer>/<boundary>/characterization.bin 4 \
+  --claim 0.5 --metadata <char-dir>/<oe>/<timer>/<boundary>/metadata.json
+maxwell periodicity  <char-dir>/<oe>/<timer>/<boundary>/characterization.bin
+```
+
 ## Resuming an interrupted collection
 
 Collection is **resumable**. Every completed boundary dataset is recorded in
