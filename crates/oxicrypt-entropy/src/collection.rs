@@ -66,7 +66,9 @@ use crate::h::MinEntropy;
 use crate::health::Alpha;
 use crate::raw::{CollectionPosture, RawCollector, StreamSummary};
 use crate::source::NoiseSource;
-use crate::sp800_90b::{RAW_DATA_SAMPLE_COUNT, RESTART_ROUNDS, RESTART_SAMPLES_PER_ROUND};
+use crate::sp800_90b::{
+    APT_ALPHA30_NON_BINARY, RAW_DATA_SAMPLE_COUNT, RESTART_ROUNDS, RESTART_SAMPLES_PER_ROUND,
+};
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
@@ -809,11 +811,13 @@ pub(crate) fn collect_oe<F: SourceFactory>(
 /// dataset type lives in the runbook):
 ///
 /// ```text
-/// collect --oe-id <id> --datasets-dir <dir> [--characterization <N>] [--dry-run]
+/// collect --oe-id <id> --datasets-dir <dir> [--claim <H>] [--characterization <N>] [--dry-run]
 /// ```
 ///
 /// Production counts and claim are used by default (raw + restart, both
-/// boundaries). `--characterization N` instead captures a single contiguous
+/// boundaries; H = 1). `--claim <H>` overrides the claim per OE, constrained to
+/// the non-binary APT grid rows ({0.5, 1, 2, 4, 8}); an off-grid value is a
+/// typed error. `--characterization N` instead captures a single contiguous
 /// N-sample run per boundary to `characterization.bin` (see the module docs);
 /// point it at its own `--datasets-dir`. `--dry-run` prints the plan and the
 /// resumable status without touching the noise source. This is
@@ -829,11 +833,19 @@ pub(crate) fn collect_oe<F: SourceFactory>(
 /// a collection failure.
 pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError> {
     let parsed = CliArgs::parse(args)?;
+    // A grid-validated `--claim` overrides the tool default; α is unchanged.
+    let claim = match parsed.claim {
+        Some(h) => ClaimConfig {
+            claimed_h: h,
+            alpha: Alpha::DEFAULT,
+        },
+        None => default_claim(),
+    };
     let plan = Plan {
         oe_id: parsed.oe_id,
         datasets_dir: parsed.datasets_dir,
         counts: Counts::production(),
-        claim: default_claim(),
+        claim,
         characterization: parsed.characterization,
     };
 
@@ -875,12 +887,119 @@ pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError
 /// ratified default α = 2^-30 ([`Alpha::DEFAULT`], the jent-precedent
 /// value the health layer defaults to). The real per-OE claim is set
 /// after the pilot EA assessment; this default keeps the tool runnable
-/// for a first capture.
+/// for a first capture. Override it per-OE with `--claim <H>` (grid-constrained;
+/// see [`parse_grid_claim`]).
 fn default_claim() -> ClaimConfig {
     ClaimConfig {
         claimed_h: MinEntropy::from_bits(1),
         alpha: Alpha::DEFAULT,
     }
+}
+
+/// Parses a non-negative claim value as an **exact** rational `num/den` — a
+/// plain integer (`"2"`) or a finite decimal (`"0.5"`) — with no floating
+/// point (the claim path stays float-free, mirroring [`crate::sp800_90b`]'s
+/// `SpecRatio` transcription). Rejects empty, signed, exponent, or non-digit
+/// input.
+fn parse_rational(raw: &str) -> Result<(u64, u64), CollectionError> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Err(CollectionError(String::from("--claim value is empty")));
+    }
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (s, ""),
+    };
+    // A lone "." or "" has no digits at all.
+    if int_part.is_empty() && frac_part.is_empty() {
+        return Err(CollectionError(format!("--claim {raw:?} is not a number")));
+    }
+    let all_digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+    if !all_digits(int_part) || !all_digits(frac_part) {
+        return Err(CollectionError(format!(
+            "--claim {raw:?} must be a non-negative decimal (e.g. 0.5, 1, 2)"
+        )));
+    }
+    // den = 10^(#frac digits); num = int·den + frac. Exact integer build-up.
+    let mut den: u64 = 1;
+    for _ in 0..frac_part.len() {
+        den = den.checked_mul(10).ok_or_else(|| {
+            CollectionError(format!("--claim {raw:?} has too many decimal places"))
+        })?;
+    }
+    let int_val: u64 = if int_part.is_empty() {
+        0
+    } else {
+        int_part
+            .parse()
+            .map_err(|_| CollectionError(format!("--claim {raw:?} integer part out of range")))?
+    };
+    let frac_val: u64 = if frac_part.is_empty() {
+        0
+    } else {
+        frac_part
+            .parse()
+            .map_err(|_| CollectionError(format!("--claim {raw:?} fractional part out of range")))?
+    };
+    let num = int_val
+        .checked_mul(den)
+        .and_then(|v| v.checked_add(frac_val))
+        .ok_or_else(|| CollectionError(format!("--claim {raw:?} out of range")))?;
+    Ok((num, den))
+}
+
+/// Validates a `--claim <H>` value against the **non-binary APT grid** and
+/// returns the exact injected [`MinEntropy`].
+///
+/// **Load-bearing invariant:** the collect tool's source is the raw-counter
+/// jitter source, which declares a **4-bit alphabet** (`SourceSpec::new(4)`,
+/// digitized symbols 0..15 — see `jitter::tests::spec_and_ceiling_are_the_design_values`),
+/// so `is_binary()` is false and the APT test runs on the **non-binary** table.
+/// The only valid claims are therefore exactly the non-binary APT table's H
+/// rows ({0.5, 1, 2, 4, 8} — see [`APT_ALPHA30_NON_BINARY`]; the H column is
+/// α-independent). If a binary (1-bit) source is ever added to this tool, this
+/// grid choice must become alphabet-aware — the jitter source's declared 4-bit
+/// width (asserted by `jitter::tests::spec_and_ceiling_are_the_design_values`)
+/// guards that assumption. The grid is **derived from the table**, never a
+/// hand-copied literal. An off-grid value is refused with a typed error naming
+/// the valid grid — the claim is table-borne and is **never silently rounded**
+/// to a neighbouring row (that would run the APT test at a different stringency
+/// than the operator set).
+fn parse_grid_claim(raw: &str) -> Result<MinEntropy, CollectionError> {
+    let (num, den) = parse_rational(raw)?;
+    for row in &APT_ALPHA30_NON_BINARY {
+        // row.h.num/row.h.den == num/den  ⇔  cross-multiply (u128, exact).
+        let lhs = u128::from(row.h.num).saturating_mul(u128::from(den));
+        let rhs = u128::from(row.h.den).saturating_mul(u128::from(num));
+        if lhs == rhs {
+            return MinEntropy::from_fraction_floor(u64::from(row.h.num), u64::from(row.h.den))
+                .ok_or_else(|| {
+                    CollectionError(format!("--claim {raw:?}: grid row has zero denominator"))
+                });
+        }
+    }
+    Err(CollectionError(format!(
+        "--claim {raw:?} is not an APT grid row; valid claims: {}",
+        grid_claim_list()
+    )))
+}
+
+/// Renders the valid non-binary APT grid claims as a comma-separated list for
+/// operator error messages (derived from the table — e.g. "0.5, 1, 2, 4, 8").
+fn grid_claim_list() -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for row in &APT_ALPHA30_NON_BINARY {
+        let (n, d) = (row.h.num, row.h.den);
+        let label = if d == 1 {
+            format!("{n}")
+        } else if n == 1 && d == 2 {
+            String::from("0.5")
+        } else {
+            format!("{n}/{d}")
+        };
+        parts.push(label);
+    }
+    parts.join(", ")
 }
 
 fn print_dry_run<W: Write>(plan: &Plan, out: &mut W) -> Result<(), CollectionError> {
@@ -942,11 +1061,14 @@ struct CliArgs {
     datasets_dir: PathBuf,
     dry_run: bool,
     characterization: Option<u32>,
+    /// Grid-validated per-OE min-entropy claim (`--claim <H>`); `None` uses the
+    /// tool [`default_claim`] (H = 1).
+    claim: Option<MinEntropy>,
 }
 
 /// One-line usage string (the single home for the recognized argument form).
-const USAGE: &str =
-    "usage: collect --oe-id <id> --datasets-dir <dir> [--characterization <N>] [--dry-run]";
+const USAGE: &str = "usage: collect --oe-id <id> --datasets-dir <dir> [--claim <H>] \
+     [--characterization <N>] [--dry-run]";
 
 impl CliArgs {
     fn parse(args: &[String]) -> Result<Self, CollectionError> {
@@ -954,6 +1076,7 @@ impl CliArgs {
         let mut datasets_dir: Option<PathBuf> = None;
         let mut dry_run = false;
         let mut characterization: Option<u32> = None;
+        let mut claim: Option<MinEntropy> = None;
         let mut i = 0usize;
         while let Some(arg) = args.get(i) {
             match arg.as_str() {
@@ -990,6 +1113,13 @@ impl CliArgs {
                     characterization = Some(n);
                     i = i.saturating_add(2);
                 }
+                "--claim" => {
+                    let v = args.get(i.saturating_add(1)).ok_or_else(|| {
+                        CollectionError(String::from("--claim needs a value (min-entropy H)"))
+                    })?;
+                    claim = Some(parse_grid_claim(v)?);
+                    i = i.saturating_add(2);
+                }
                 "--dry-run" => {
                     dry_run = true;
                     i = i.saturating_add(1);
@@ -1006,6 +1136,7 @@ impl CliArgs {
             datasets_dir,
             dry_run,
             characterization,
+            claim,
         })
     }
 }
@@ -1730,6 +1861,124 @@ mod tests {
             again.iter().all(|o| !o.skipped_resume),
             "a tripped capture must never be hash-skipped on re-run"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── #126: `--claim` flag, grid-constrained to the non-binary APT rows ─
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().copied().map(String::from).collect()
+    }
+
+    #[test]
+    fn claim_flag_accepts_nonbinary_grid_rows() {
+        // {0.5, 1, 2, 4, 8} bits → {128, 256, 512, 1024, 2048} steps.
+        let cases = [
+            ("0.5", 128u32),
+            ("1", 256),
+            ("2", 512),
+            ("4", 1024),
+            ("8", 2048),
+        ];
+        for (tok, steps) in cases {
+            let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", tok]);
+            let parsed = CliArgs::parse(&v).unwrap();
+            assert_eq!(
+                parsed.claim,
+                Some(MinEntropy::from_steps(steps)),
+                "grid claim {tok} must parse to {steps} steps"
+            );
+        }
+    }
+
+    #[test]
+    fn claim_flag_accepts_equivalent_decimal_forms() {
+        // Rational reduction (not string-match): trailing zeros and a leading
+        // dot map to the same grid row. 0.50 == 0.5 → 128; 1.0 == 1 → 256;
+        // 2.0 == 2 → 512; .5 == 0.5 → 128.
+        for (tok, steps) in [("0.50", 128u32), ("1.0", 256), ("2.0", 512), (".5", 128)] {
+            let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", tok]);
+            let parsed = CliArgs::parse(&v).unwrap();
+            assert_eq!(
+                parsed.claim,
+                Some(MinEntropy::from_steps(steps)),
+                "equivalent form {tok} must map to {steps} steps"
+            );
+        }
+    }
+
+    #[test]
+    fn claim_flag_rejects_off_grid_and_garbage() {
+        // ISC-14: an off-grid value is refused, NEVER rounded to a neighbour.
+        for tok in [
+            "0.6", "0.7", "3", "1.5", "0", "0.55", "5", "9", "abc", "-1", "1.0.0", ".",
+        ] {
+            let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", tok]);
+            assert!(
+                CliArgs::parse(&v).is_err(),
+                "off-grid/garbage claim {tok:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn claim_flag_missing_value_errs() {
+        let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim"]);
+        assert!(CliArgs::parse(&v).is_err());
+    }
+
+    #[test]
+    fn off_grid_error_names_the_grid() {
+        let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", "0.6"]);
+        let msg = CliArgs::parse(&v).unwrap_err().0;
+        for tok in ["0.5", "1", "2", "4", "8"] {
+            assert!(msg.contains(tok), "grid token {tok} must appear in {msg:?}");
+        }
+    }
+
+    #[test]
+    fn absent_claim_uses_default_h1() {
+        // ISC-10 / ISC-18: no --claim → default_claim() unchanged (H=1, α DEFAULT).
+        let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x"]);
+        assert_eq!(CliArgs::parse(&v).unwrap().claim, None);
+        let dc = default_claim();
+        assert_eq!(dc.claimed_h, MinEntropy::from_bits(1));
+        assert_eq!(dc.alpha.exp(), Alpha::DEFAULT.exp());
+    }
+
+    #[test]
+    fn accepted_claim_never_changes_alpha() {
+        // ISC-13: every accepted grid claim keeps α at DEFAULT (2^-30).
+        for tok in ["0.5", "1", "2", "4", "8"] {
+            let h = parse_grid_claim(tok).unwrap();
+            let cfg = ClaimConfig {
+                claimed_h: h,
+                alpha: Alpha::DEFAULT,
+            };
+            assert_eq!(cfg.alpha.exp(), 30);
+        }
+    }
+
+    #[test]
+    fn claim_recorded_in_metadata_steps() {
+        // ISC-11: a collection built with the ratified 0.5 claim records
+        // claimed_h_steps=128 in every boundary's metadata.json.
+        let dir = temp_dir("claim-meta");
+        let mut plan = small_plan(dir.clone());
+        plan.claim = ClaimConfig {
+            claimed_h: MinEntropy::from_steps(128),
+            alpha: Alpha::DEFAULT,
+        };
+        let (mut factory, _) = CountingFactory::new();
+        collect_oe(&mut factory, &plan, None).unwrap();
+        for boundary in Boundary::all() {
+            let bdir = boundary_dir(&plan, "mock-timer", boundary);
+            let meta = fs::read_to_string(bdir.join(METADATA_FILE)).unwrap();
+            assert!(
+                meta.contains("\"claimed_h_steps\":128"),
+                "metadata must record the injected claim: {meta}"
+            );
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }
