@@ -83,7 +83,7 @@
 //! sequential build (security policy R77). The feature pulls in
 //! `rayon` (hence `std`), so the crate is `#![no_std]` only when the
 //! feature is OFF; the default build graph contains no `rayon` and is
-//! the CMVP-validated single-threaded configuration. `parallel` is a
+//! the CMVP validation-target single-threaded configuration. `parallel` is a
 //! throughput option for tall-tree (`*s`) keygen and signing, not a
 //! validated path.
 

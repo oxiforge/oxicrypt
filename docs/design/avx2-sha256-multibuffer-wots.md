@@ -141,7 +141,7 @@ repeated: unsafe SIMD for a marginal/uncertain win.
 
 The *only* hosts where Option A could win are AVX2-capable CPUs **without** SHA-NI — a shrinking
 population (pre-Goldmont Atom, Haswell/Broadwell/Skylake-without-SHA, older AMD pre-Zen). For those
-hosts the CMVP-validated default already provides correct (portable scalar) SHA-256; the question
+hosts the CMVP validation-target default already provides correct (portable scalar) SHA-256; the question
 is purely throughput on legacy silicon.
 
 ### Option B — rely on SHA-NI single-stream (current state + `parallel`); do not build the multi-buffer crate
@@ -174,7 +174,7 @@ On the host class oxicrypt actually targets, Option B equals or beats Option A w
 ## Constraints / ISC invariants (any implementation must hold)
 
 - **Default build unchanged.** Any `accel-*` feature default OFF, runtime CPUID, portable fallback
-  when AVX2 absent; the CMVP-validated configuration stays the portable single-threaded build.
+  when AVX2 absent; the CMVP validation-target configuration stays the portable single-threaded build.
 - **Audited-unsafe quarantine.** All `unsafe` isolated in one dedicated `no_std` crate, fenced
   behind a `#[target_feature(enable = "avx2")]` boundary with a safe CPUID precondition and an
   `AtomicU8`-cached probe — mirroring `oxicrypt-sha-accel` / `oxicrypt-keccak-accel` exactly. This

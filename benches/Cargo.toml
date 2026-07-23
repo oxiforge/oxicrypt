@@ -15,7 +15,7 @@ workspace = true
 # Forward the `parallel` (rayon) feature to every PQ crate that has one, so
 # the benchmark harness can compare the default single-threaded build against
 # the parallel build (`cargo bench -p oxicrypt-bench --features parallel`).
-# Off by default — the default bench build mirrors the CMVP-validated config.
+# Off by default — the default bench build mirrors the CMVP validation-target config.
 default = []
 parallel = [
     "oxicrypt-lms/parallel",

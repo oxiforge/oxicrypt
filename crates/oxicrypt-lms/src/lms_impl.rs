@@ -570,7 +570,7 @@ macro_rules! lms_impl {
         ) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
             #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-            // Default (CMVP-validated, single-threaded) build: the serial
+            // Default (CMVP validation-target, single-threaded) build: the serial
             // recursive Merkle root.
             #[cfg(not(feature = "parallel"))]
             let root = tree_internals::compute_root(seed, identifier);
