@@ -106,7 +106,7 @@
 //! (fixed ρ → fixed Â → fixed ek/dk) confirm with the feature ON. The
 //! feature pulls in `rayon` (hence `std`), so the crate is
 //! `#![no_std]` only when the feature is OFF; the default build graph
-//! contains no `rayon` and is the CMVP-validated single-threaded
+//! contains no `rayon` and is the CMVP validation-target single-threaded
 //! configuration. `parallel` is a throughput option, not a validated
 //! path.
 

@@ -55,7 +55,7 @@ epic, not a single-night build.
 ## Constraints / ISC invariants (any implementation must hold)
 
 - **Default build unchanged:** `accel-*` feature default OFF, runtime CPUID, portable fallback
-  when AVX2 absent; the CMVP-validated configuration stays the portable single-threaded build.
+  when AVX2 absent; the CMVP validation-target configuration stays the portable single-threaded build.
 - **Audited-unsafe quarantine:** all `unsafe` isolated in one dedicated crate, fenced behind a
   `#[target_feature]` boundary with a safe CPUID precondition — mirroring `oxicrypt-sha-accel`.
   This adds a 5th audited in-boundary exception crate; §9.2 of the security policy and the

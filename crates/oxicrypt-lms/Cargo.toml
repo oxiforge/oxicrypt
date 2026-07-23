@@ -23,7 +23,7 @@ alloc = []
 # sequential build (R75). Pulls in `rayon`, which requires `std`, so the
 # crate becomes `std` only under this feature — the default build stays
 # provably `no_std` with no rayon in its graph. Performance build only:
-# the CMVP-validated configuration is the default single-threaded build.
+# the CMVP validation-target configuration is the default single-threaded build.
 parallel = ["alloc", "dep:rayon"]
 
 [dependencies]

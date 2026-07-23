@@ -128,7 +128,7 @@ every line of cryptographic code in the default build to be written in-tree in
 pure Rust. Dependencies are re-evaluated per-crate and must be justified in the
 Security Policy before adoption; the only third-party dependencies present are
 gated behind non-default, default-off performance features and never enter the
-CMVP-validated default build graph: the `parallel` feature on the hash-based and
+CMVP validation-target default build graph: the `parallel` feature on the hash-based and
 lattice crates pulls in `rayon` for data-parallel keygen, and the `accel-sha` /
 `accel-aes` features pull the audited CPU-intrinsic crates. All are justified in
 the Security Policy (the `parallel` rules R75/R77/R83/R84/R85 and the `accel-*`
