@@ -59,6 +59,9 @@ use oxicrypt_maxwell::compression::compression;
 use oxicrypt_maxwell::gate::{evaluate, load_inputs};
 use oxicrypt_maxwell::iid_gate::{Branch, iid_gate};
 use oxicrypt_maxwell::iid_lrs::len_lrs_iid_test;
+use oxicrypt_maxwell::independence::{
+    self, FlagCause, IndependenceReport, Provenance, analyze, parse_metadata, write_sidecar,
+};
 use oxicrypt_maxwell::lag::lag;
 use oxicrypt_maxwell::lrs::lrs;
 use oxicrypt_maxwell::lz78y::lz78y;
@@ -88,6 +91,7 @@ fn main() -> ExitCode {
         Some("apt-table") => cmd_apt_table(args.get(2..).unwrap_or(&[])),
         Some("gate") => cmd_gate(args.get(2..).unwrap_or(&[])),
         Some("periodicity") => cmd_periodicity(args.get(2..).unwrap_or(&[])),
+        Some("independence") => cmd_independence(args.get(2..).unwrap_or(&[])),
         Some("iid-permutation") => cmd_iid_permutation(args.get(2..).unwrap_or(&[])),
         Some("chi-square") => cmd_chi_square(args.get(2..).unwrap_or(&[])),
         Some("lrs-iid") => cmd_lrs_iid(args.get(2..).unwrap_or(&[])),
@@ -124,6 +128,8 @@ fn usage() {
          \x20 maxwell apt-table <ALPHA_EXP>               SP 800-90B §4.4.2 APT cutoff grids\n\
          \x20 maxwell gate --oe <DIR>                     SP 800-90B §6.3 per-OE acceptance gate\n\
          \x20 maxwell periodicity <FILE>                  FFT + autocorrelation periodicity screen\n\
+         \x20 maxwell independence <FILE> <BITS_PER_SYMBOL> [--claim H] [--metadata F] [--sidecar DIR]\n\
+         \x20                                              2D/3D min-entropy independence evidence\n\
          \x20 maxwell iid-permutation <FILE>              SP 800-90B §5.1 permutation battery (19-stat IID test)\n\
          \x20 maxwell chi-square <FILE>                   SP 800-90B §5.2 chi-square IID tests (indep + GOF)\n\
          \x20 maxwell lrs-iid <FILE>                      SP 800-90B §5.3 LRS (longest repeated substring) IID test\n\
@@ -758,6 +764,264 @@ fn cmd_periodicity(args: &[String]) -> ExitCode {
         ExitCode::FAILURE
     } else {
         println!("verdict: PASS — no dominant periodic component detected");
+        ExitCode::SUCCESS
+    }
+}
+
+/// Compute the SHA-256 of the input as lowercase hex, powering the validated
+/// module up with the real KAT set first (the parity-harness provenance path).
+/// Returns `None` on a service error — the sidecar then carries `null`.
+fn input_sha256_hex(data: &[u8]) -> Option<String> {
+    oxicrypt_maxwell::parity::sha256_hex(data)
+}
+
+/// Render one line of the pair-suite per-estimator table.
+fn print_suite_row(label: &str, per_estimator: &[f64; 7]) {
+    let cells: Vec<String> = per_estimator.iter().map(|h| format!("{h:.6}")).collect();
+    println!("    {label:<8} {}", cells.join("  "));
+}
+
+#[allow(clippy::too_many_lines)]
+fn print_independence(file: &str, r: &IndependenceReport) {
+    println!(
+        "{file}  (n={} symbols, {} bits/symbol)",
+        r.n, r.bits_per_symbol
+    );
+    println!(
+        "note: independence evidence screen — engineering choices, not spec constants; \
+         the pair/triplet view covers k<=3 (FFT half + 1-D predictors own longer-range structure)"
+    );
+    println!(
+        "  alphabets: pairs {} bins (occupancy {}), triplets {} bins (occupancy {})",
+        r.pair_alphabet, r.pair_occupancy, r.triplet_alphabet, r.triplet_occupancy
+    );
+    println!(
+        "  tuples: pairs {:?}/phase, triplets {:?}/phase (disjoint, tail dropped)",
+        r.pair_count_per_phase, r.triplet_count_per_phase
+    );
+
+    // Pair-suite leg.
+    println!(
+        "  pair-suite leg [{}]:",
+        independence::SUITE_LABELS.join("  ")
+    );
+    match (&r.suite_1d, &r.pair_suite) {
+        (Some(s1d), Some(ps)) => {
+            print_suite_row("1D", &s1d.per_estimator);
+            print_suite_row("pairP0", &ps.per_estimator_per_phase[0]);
+            print_suite_row("pairP1", &ps.per_estimator_per_phase[1]);
+            println!(
+                "    suite_min_1d = {:.6}   pair_suite_min = {:.6}   pair_suite_min/2 = {:.6}",
+                s1d.min, ps.min, ps.min_per_delta
+            );
+            println!(
+                "    structure deficit vs 1D = {:.6}   deficit vs shuffled null = {:.6}",
+                ps.structure_deficit_vs_1d, ps.deficit_vs_null
+            );
+        }
+        _ => println!(
+            "    unavailable — symbol width ({} bits > 4; pair alphabet exceeds the 8-bit wire)",
+            r.bits_per_symbol
+        ),
+    }
+
+    // Tuple-MCV leg.
+    let m = &r.mcv;
+    println!("  tuple-MCV leg (confidence-bound):");
+    println!(
+        "    H1 = {:.6}   H2 = {:.6} (per-delta {:.6})   H3 = {:.6} (per-delta {:.6})",
+        m.h1,
+        m.h2,
+        m.h2_per_delta(),
+        m.h3,
+        m.h3_per_delta()
+    );
+    println!(
+        "    pair bounded/phase = {:?}   triplet bounded/phase = {:?}",
+        m.pair_bounded_per_phase, m.triplet_bounded_per_phase
+    );
+    println!(
+        "    plain: H1 = {:.6}  H2 = {:.6}  H3 = {:.6}   r2 = {:.6}  r3 = {:.6}",
+        m.plain1, m.plain2, m.plain3, m.r2_plain, m.r3_plain
+    );
+    println!(
+        "    shuffled-baseline (K={}) null per-delta mean = [{:.6}, {:.6}, {:.6}] +/- [{:.6}, {:.6}, {:.6}]",
+        independence::K_MCV_SHUFFLES,
+        m.null_mean[0],
+        m.null_mean[1],
+        m.null_mean[2],
+        m.null_spread[0],
+        m.null_spread[1],
+        m.null_spread[2]
+    );
+    println!(
+        "    plain per-delta deficits vs null: d2 = {:.6}   d3 = {:.6}",
+        m.deficit2, m.deficit3
+    );
+
+    // Gate / verdict.
+    match r.claim {
+        Some(h) => {
+            println!(
+                "  claim = {h:.6}   gate value min(pair_term {:.6}, H3/3 {:.6}) = {:.6}",
+                r.pair_term(),
+                m.h3_per_delta(),
+                r.gate_value()
+            );
+            if r.flagged {
+                let cause = match r.flag_cause {
+                    Some(FlagCause::Pair) => "pair term below claim",
+                    Some(FlagCause::TripletMcv) => "triplet-MCV term below claim",
+                    None => "below claim",
+                };
+                if r.advisory_only {
+                    println!(
+                        "verdict: FLAGGED (advisory — n < 10,000,000 precedent minimum; exit SUCCESS): {cause}"
+                    );
+                } else {
+                    println!("verdict: FLAGGED — {cause}; acceptance evidence fails");
+                }
+            } else {
+                println!("verdict: consistent — gate value >= claim");
+            }
+        }
+        None => println!("  report-only (no --claim); exit SUCCESS"),
+    }
+    if r.advisory_only {
+        println!(
+            "  warning: n = {} < 10,000,000 — below the precedent minimum for a representative value",
+            r.n
+        );
+    }
+    if r.degenerate {
+        println!("  note: degenerate input (too short to form tuples or non-finite values)");
+    }
+}
+
+#[allow(
+    // One CLI handler: arg parsing, provenance load, analyze, sidecar write, and
+    // exit-code decision. Splitting scatters the command contract across helpers.
+    clippy::too_many_lines
+)]
+fn cmd_independence(args: &[String]) -> ExitCode {
+    // Positional <FILE> <BITS_PER_SYMBOL>, then optional flags.
+    let (Some(file), Some(bits_str)) = (args.first(), args.get(1)) else {
+        eprintln!(
+            "usage: maxwell independence <FILE> <BITS_PER_SYMBOL> [--claim <H>] [--metadata <FILE>] [--sidecar <DIR>]"
+        );
+        eprintln!(
+            "  2D/3D (pairs/triplets) min-entropy independence evidence over a raw dataset\n\
+             \x20 (one byte/sample). With --claim, FLAGs (exit FAILURE) when\n\
+             \x20 min(pair_suite_min/2, H3_mcv/3) < H; below 10,000,000 samples the flag is advisory."
+        );
+        return ExitCode::FAILURE;
+    };
+    let Ok(bits @ 1..=8) = bits_str.parse::<u8>() else {
+        eprintln!("maxwell: BITS_PER_SYMBOL must be an integer in 1..=8");
+        return ExitCode::FAILURE;
+    };
+
+    let mut claim: Option<f64> = None;
+    let mut metadata: Option<PathBuf> = None;
+    let mut sidecar_dir: Option<PathBuf> = None;
+    let mut i = 2usize;
+    while i < args.len() {
+        match args.get(i).map(String::as_str) {
+            Some("--claim") => {
+                let Some(v) = args.get(i.saturating_add(1)) else {
+                    eprintln!("maxwell: --claim requires a value");
+                    return ExitCode::FAILURE;
+                };
+                let Ok(h) = v.parse::<f64>() else {
+                    eprintln!("maxwell: --claim value must be a real number");
+                    return ExitCode::FAILURE;
+                };
+                if !independence::validate_claim(h) {
+                    eprintln!("maxwell: --claim value must be a finite, positive real number");
+                    return ExitCode::FAILURE;
+                }
+                claim = Some(h);
+                i = i.saturating_add(2);
+            }
+            Some("--metadata") => {
+                let Some(v) = args.get(i.saturating_add(1)) else {
+                    eprintln!("maxwell: --metadata requires a file path");
+                    return ExitCode::FAILURE;
+                };
+                metadata = Some(PathBuf::from(v));
+                i = i.saturating_add(2);
+            }
+            Some("--sidecar") => {
+                let Some(v) = args.get(i.saturating_add(1)) else {
+                    eprintln!("maxwell: --sidecar requires a directory path");
+                    return ExitCode::FAILURE;
+                };
+                sidecar_dir = Some(PathBuf::from(v));
+                i = i.saturating_add(2);
+            }
+            Some(other) => {
+                eprintln!("maxwell: unexpected argument '{other}'");
+                return ExitCode::FAILURE;
+            }
+            None => break,
+        }
+    }
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("maxwell: cannot read '{file}': {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Provenance copy-through from the collection metadata sidecar.
+    let prov = match &metadata {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(text) => parse_metadata(&text),
+            Err(e) => {
+                eprintln!("maxwell: cannot read metadata '{}': {e}", p.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => Provenance::default(),
+    };
+
+    let report = analyze(&data, bits, claim);
+    print_independence(file, &report);
+
+    // Sidecar (default beside the input file).
+    let dir: PathBuf = sidecar_dir.unwrap_or_else(|| {
+        Path::new(file)
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    });
+    let run_utc = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    );
+    let sha = input_sha256_hex(&data);
+    let sidecar_ok = match write_sidecar(&report, &run_utc, sha.as_deref(), &prov, &dir) {
+        Ok(path) => {
+            println!("  sidecar: {}", path.display());
+            true
+        }
+        Err(e) => {
+            eprintln!(
+                "maxwell: could not write sidecar in '{}': {e}",
+                dir.display()
+            );
+            false
+        }
+    };
+
+    // A run whose machine-readable evidence artifact was never written must not
+    // report success, even when the claim gate itself did not flag.
+    if report.exit_failure() || !sidecar_ok {
+        ExitCode::FAILURE
+    } else {
         ExitCode::SUCCESS
     }
 }

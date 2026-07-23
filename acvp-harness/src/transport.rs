@@ -596,6 +596,18 @@ impl<'a> Transport<'a> {
         }
     }
 
+    /// Reopen the underlying connection. For the s_client backend this
+    /// tears down the (typically dead) tunnel and spawns a fresh one —
+    /// one TLS handshake, hence one hardware-key touch. For the curl
+    /// backend it is a no-op: each curl request opens its own
+    /// connection, so there is no persistent tunnel to reopen.
+    fn reopen(&mut self, config: &AcvpConfig) -> Result<(), String> {
+        match self {
+            Transport::Curl(_) => Ok(()),
+            Transport::SClient(conn, _) => conn.reopen(config),
+        }
+    }
+
     fn get(&mut self, url: &str, bearer: &str) -> Result<HttpResponse, String> {
         self.dispatch("GET", url, None, bearer)
     }
@@ -945,6 +957,42 @@ pub fn token_needs_refresh(elapsed_secs: u64) -> bool {
 /// server uses for an expired/unauthorized bearer.
 pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool {
     !already_retried && (status == 401 || status == 403)
+}
+
+/// True when a transport-error string denotes a dead persistent
+/// connection (as opposed to an HTTP-level rejection or a malformed
+/// response). These are the surfaces [`SClientConnection`] emits once
+/// the underlying socket has gone away — a long local compute idling
+/// the tunnel past the socket/idle timeout is the canonical cause (the
+/// B7 broken-pipe failure class). Gates the one-shot reconnect-and-
+/// retry of the post-compute submit.
+///
+/// Both directions of socket death are covered: write-side (the request
+/// never reached the wire) and read-side (the request was sent but the
+/// response read failed). A NAT/load-balancer reaping an idle socket
+/// most often surfaces read-side — as a `Connection reset` during a
+/// read, or a `read_exact` short-read ("failed to fill whole buffer")
+/// — so those must be caught too, not just the write-side broken pipe.
+/// The read-side retry re-POSTs a `/results` body that may already have
+/// reached the server; that is safe under the same server-tolerates-
+/// re-POST-of-a-PENDING-vector-set assumption the `resubmit` recovery
+/// path already relies on (PR #83/#84).
+fn connection_is_dead(err: &str) -> bool {
+    const DEAD_MARKERS: [&str; 8] = [
+        // Write-side: request never left the harness.
+        "Broken pipe",
+        "write to s_client stdin",
+        "flush s_client stdin",
+        // Read-side clean EOF (`read` returned 0 bytes).
+        "closed connection mid-response",
+        "closed mid-chunked-body",
+        // Read-side `read_exact` hit EOF before filling the buffer.
+        "failed to fill whole buffer",
+        // Middlebox/peer socket reset or abort, either direction.
+        "Connection reset",
+        "Connection aborted",
+    ];
+    DEAD_MARKERS.iter().any(|marker| err.contains(marker))
 }
 
 /// Session-bound access token plus its issuance instant, so a long IUT
@@ -1571,6 +1619,41 @@ fn process_one_vector_set(
     let mut outcome = submit_and_mark(&session, &response_body, |body| {
         transport.post(&results_url, body, token.bearer())
     });
+    // Connection-death backstop: a long local compute can idle the
+    // persistent TLS tunnel until the socket dies, so the post-compute
+    // submit write hits a broken pipe (the B7 failure class). An
+    // OS-level socket death leaves `server_wants_close` unset, so the
+    // dispatch pre-gate never reconnects. Recover inline: reopen the
+    // tunnel (one YubiKey touch — attended sessions expect it), refresh
+    // the now-idle token over the fresh tunnel, and retry the submit
+    // once. This banks the compute in the primary flow; the separate
+    // auto-resubmit is then a true last resort. Ordered before the
+    // 401/403 refresh-retry below so a reconnected-but-unauthorized
+    // submit still gets its token-refresh retry.
+    let dead_conn_err = match &outcome {
+        SubmitOutcome::TransportError(e) if connection_is_dead(e) => Some(e.clone()),
+        _ => None,
+    };
+    if let Some(err) = dead_conn_err {
+        eprintln!(
+            "  [transport] submit failed on a dead persistent connection ({err}); \
+             reconnecting and retrying once"
+        );
+        eprintln!("  ← TOUCH YUBIKEY (reconnect handshake)");
+        log.log("submit_reconnect_retry", &err);
+        match transport.reopen(config) {
+            Ok(()) => {
+                token.refresh_if_stale(transport, config, totp_secret, log);
+                outcome = submit_and_mark(&session, &response_body, |body| {
+                    transport.post(&results_url, body, token.bearer())
+                });
+            }
+            Err(reopen_err) => {
+                eprintln!("  [transport] reconnect for submit failed: {reopen_err}");
+                log.log("submit_reconnect_error", &reopen_err);
+            }
+        }
+    }
     // Reactive backstop: if the server still rejected the bearer,
     // refresh once and retry once on the same connection.
     if let SubmitOutcome::HttpError(status) = outcome
@@ -2097,6 +2180,52 @@ mod tests {
         assert!(!submit_should_refresh_retry(500, false));
         assert!(!submit_should_refresh_retry(404, false));
         assert!(!submit_should_refresh_retry(200, false));
+    }
+
+    #[test]
+    fn connection_is_dead_detects_write_side_death() {
+        // Broken pipe on the request write — the canonical B7 surface.
+        assert!(connection_is_dead(
+            "write to s_client stdin: Broken pipe (os error 32)"
+        ));
+        assert!(connection_is_dead(
+            "flush s_client stdin: Broken pipe (os error 32)"
+        ));
+    }
+
+    #[test]
+    fn connection_is_dead_detects_read_side_death() {
+        // An idle socket reaped mid-run most often surfaces read-side:
+        // clean EOF, a short read_exact, or a peer/middlebox reset.
+        assert!(connection_is_dead(
+            "s_client closed connection mid-response"
+        ));
+        assert!(connection_is_dead("s_client closed mid-chunked-body"));
+        assert!(connection_is_dead(
+            "read response body (194434 bytes): failed to fill whole buffer"
+        ));
+        assert!(connection_is_dead(
+            "read response headers: Connection reset by peer (os error 104)"
+        ));
+        assert!(connection_is_dead(
+            "read chunk data (4096 bytes): Connection reset by peer (os error 104)"
+        ));
+        assert!(connection_is_dead(
+            "read response headers: Connection aborted (os error 103)"
+        ));
+    }
+
+    #[test]
+    fn connection_is_dead_ignores_http_and_malformed_errors() {
+        // HTTP-level and parse-level failures must NOT trigger a reconnect
+        // (retrying can't fix them, and they don't mean a dead socket).
+        assert!(!connection_is_dead("bad HTTP status code: 503"));
+        assert!(!connection_is_dead(
+            "response missing both Content-Length and chunked Transfer-Encoding"
+        ));
+        assert!(!connection_is_dead("non-UTF-8 HTTP headers: invalid utf-8"));
+        assert!(!connection_is_dead("bad chunk size: 'zz'"));
+        assert!(!connection_is_dead(""));
     }
 
     #[test]

@@ -25,9 +25,15 @@
 //! sub-tick *numerical* resolution with no *temporal* reality behind it.
 //! [`measure_adequacy`] observes actual read-to-read deltas — zero-delta
 //! fraction, minimum positive delta (the effective granularity), distinct
-//! delta variety, monotonicity violations — and
-//! [`AdequacyReport::ensure_adequate`] refuses a configuration whose
-//! observed behavior is inadequate, with a typed reason.
+//! delta variety, monotonicity violations — into an [`AdequacyReport`].
+//! Refusal policy is split by measured signal (#124): a **bare** read-to-read
+//! report is gated only by [`AdequacyReport::ensure_sound`] (monotonicity +
+//! coarseness — bare-read variety collapses on quiet invariant-counter
+//! hardware and is not evidence of inadequacy), while delta *variety*
+//! ([`AdequacyReport::ensure_varied`]) is judged on deltas measured across
+//! the consumer's operational workload. [`AdequacyReport::ensure_adequate`]
+//! applies all gates to one report and is only correct for a signal that is
+//! operational end-to-end — never hand it a bare read-to-read report.
 //!
 //! The adequacy thresholds are **engineering defaults, not SP 800-90B
 //! values** (the spec sets no timer-granularity requirement); they are
@@ -61,7 +67,14 @@ pub enum TimerError {
     /// the counter width set. The affected sample must be discarded.
     Backwards,
     /// The measured timer behavior is inadequate for jitter collection.
-    Inadequate(InadequacyReason),
+    /// Carries the typed reason and the [`AdequacyReport`] that triggered
+    /// the refusal, so callers surface the measured diagnostics.
+    Inadequate {
+        /// Why the configuration was refused.
+        reason: InadequacyReason,
+        /// The measured report that triggered the refusal.
+        report: AdequacyReport,
+    },
 }
 
 /// Why [`AdequacyReport::ensure_adequate`] refused the configuration.
@@ -126,35 +139,63 @@ pub trait TimerRead: crate::source::sealed::Sealed {
 /// engineering choices (not spec values), documented at module level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdequacyConfig {
-    /// Number of consecutive reads to sample (default 4096).
+    /// Number of consecutive bare reads to sample (default 4096; bare
+    /// reads cost nanoseconds, so a large sample is cheap).
     pub samples: u32,
+    /// Number of workload rounds for the workload-signal measurement
+    /// (default 256). Deliberately a separate, much smaller knob: each
+    /// round runs the source's full noise workload — roughly three orders
+    /// of magnitude costlier than a bare read — and the variety criterion
+    /// it feeds saturates its bounded distinct tracker (16) long before
+    /// 256 rounds. Restart-dataset collection constructs a fresh source
+    /// per round, so this knob multiplies directly into collection time.
+    pub workload_samples: u32,
     /// Maximum tolerated zero-delta fraction, in permille (default 900:
     /// a timer where more than 90% of consecutive reads are identical is
     /// too coarse for the read cost).
     pub max_zero_delta_permille: u32,
     /// Minimum distinct positive delta values observed (default 4 —
-    /// counted up to a bounded tracker capacity of 16).
+    /// counted up to a bounded tracker capacity of 16). Values below
+    /// [`MIN_DISTINCT_DELTAS_FLOOR`] are clamped up by
+    /// [`AdequacyReport::ensure_varied`]: the dead-signal refusal is a
+    /// hard property, not an operator choice.
     pub min_distinct_deltas: u32,
 }
+
+/// Hard floor on the [`AdequacyConfig::min_distinct_deltas`] bound: a
+/// measured signal with a single distinct delta is dead (the jitter
+/// source's dead-timer fixed point), and no configuration may accept it.
+pub const MIN_DISTINCT_DELTAS_FLOOR: u32 = 2;
 
 impl Default for AdequacyConfig {
     fn default() -> Self {
         Self {
             samples: 4096,
+            workload_samples: 256,
             max_zero_delta_permille: 900,
             min_distinct_deltas: 4,
         }
     }
 }
 
-/// Observed timer behavior over one adequacy measurement.
+/// Observed delta behavior over one adequacy measurement.
+///
+/// One type serves two measured signals: a **bare-read** measurement
+/// ([`measure_adequacy`] — consecutive reads, nothing between them) and a
+/// **workload-signal** measurement (the jitter source's construction-time
+/// pass, one delta per noise-workload round). Field semantics differ per
+/// signal where noted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdequacyReport {
-    /// Deltas observed (samples − 1).
+    /// Deltas observed. Bare-read measurement: `samples − 1` (consecutive
+    /// reads share endpoints). Workload measurement: one per round
+    /// (`workload_samples`).
     pub deltas: u32,
     /// Deltas equal to zero.
     pub zero_deltas: u32,
-    /// Smallest positive delta — the measured effective granularity.
+    /// Smallest positive delta. Bare-read measurement: the measured
+    /// effective granularity. Workload measurement: the shortest observed
+    /// workload duration in ticks — NOT timer granularity.
     pub min_positive_delta: Option<u64>,
     /// Distinct positive delta values observed, saturating at the bounded
     /// tracker capacity (16).
@@ -164,29 +205,167 @@ pub struct AdequacyReport {
 }
 
 impl AdequacyReport {
-    /// Refuses an inadequate configuration with a typed reason; passes an
-    /// adequate one.
+    /// Refuses a timer whose measured signal is *unsound* — non-monotonic or
+    /// too coarse — independent of delta variety.
+    ///
+    /// This is the soundness half of [`Self::ensure_adequate`]: it gates on
+    /// monotonicity (any backwards violation → [`InadequacyReason::NonMonotonic`])
+    /// then effective granularity (zero-delta fraction above the configured
+    /// permille bound → [`InadequacyReason::TooCoarse`]). It does NOT judge
+    /// delta variety, so it is the correct gate for a *bare* back-to-back
+    /// read signal, whose near-constant spacing on quiet hardware is not
+    /// evidence of an inadequate source.
+    ///
+    /// # Errors
+    ///
+    /// [`TimerError::Inadequate`] carrying [`InadequacyReason::NonMonotonic`]
+    /// (any backwards violation) or [`InadequacyReason::TooCoarse`]
+    /// (zero-delta fraction above the configured permille bound), plus the
+    /// measured report.
+    pub fn ensure_sound(&self, config: &AdequacyConfig) -> Result<(), TimerError> {
+        if self.backwards_violations > 0 {
+            return Err(TimerError::Inadequate {
+                reason: InadequacyReason::NonMonotonic,
+                report: *self,
+            });
+        }
+        // zero_deltas / deltas > max_permille / 1000, in integers:
+        let lhs = u64::from(self.zero_deltas).saturating_mul(1000);
+        let rhs = u64::from(self.deltas).saturating_mul(u64::from(config.max_zero_delta_permille));
+        if lhs > rhs {
+            return Err(TimerError::Inadequate {
+                reason: InadequacyReason::TooCoarse,
+                report: *self,
+            });
+        }
+        Ok(())
+    }
+
+    /// Refuses a timer whose measured signal shows insufficient delta
+    /// *variety* (distinct positive deltas below `min_distinct_deltas` →
+    /// [`InadequacyReason::TooUniform`]).
+    ///
+    /// This is the variety half of [`Self::ensure_adequate`]. It must be
+    /// applied ONLY to the *operational* signal — a jitter source's workload
+    /// deltas — never to bare back-to-back reads, whose spacing carries no
+    /// operational variety.
+    ///
+    /// The configured bound is clamped below at a hard floor of
+    /// [`MIN_DISTINCT_DELTAS_FLOOR`]: a signal with a single distinct delta
+    /// is a dead signal regardless of operator configuration, so the
+    /// dead-timer construction refusal cannot be tuned away.
+    ///
+    /// # Errors
+    ///
+    /// [`TimerError::Inadequate`] carrying [`InadequacyReason::TooUniform`]
+    /// and the measured report.
+    pub fn ensure_varied(&self, config: &AdequacyConfig) -> Result<(), TimerError> {
+        if self.distinct_deltas < config.min_distinct_deltas.max(MIN_DISTINCT_DELTAS_FLOOR) {
+            return Err(TimerError::Inadequate {
+                reason: InadequacyReason::TooUniform,
+                report: *self,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies all adequacy gates to ONE measured signal: soundness
+    /// ([`Self::ensure_sound`]) then variety ([`Self::ensure_varied`]).
+    ///
+    /// The signal judged here must be the *operational* one. A jitter source
+    /// measures two distinct signals and must NOT hand bare back-to-back
+    /// reads to this method: it applies [`Self::ensure_sound`] to the bare
+    /// reads (soundness is signal-independent) and this full check to its
+    /// workload deltas (the operational signal whose variety is the real
+    /// evidence).
     ///
     /// # Errors
     ///
     /// [`TimerError::Inadequate`] with [`InadequacyReason::NonMonotonic`]
     /// (any backwards violation), [`InadequacyReason::TooCoarse`]
     /// (zero-delta fraction above the configured permille bound), or
-    /// [`InadequacyReason::TooUniform`] (insufficient delta variety).
+    /// [`InadequacyReason::TooUniform`] (insufficient delta variety), each
+    /// carrying the measured report.
     pub fn ensure_adequate(&self, config: &AdequacyConfig) -> Result<(), TimerError> {
-        if self.backwards_violations > 0 {
-            return Err(TimerError::Inadequate(InadequacyReason::NonMonotonic));
-        }
-        // zero_deltas / deltas > max_permille / 1000, in integers:
-        let lhs = u64::from(self.zero_deltas).saturating_mul(1000);
-        let rhs = u64::from(self.deltas).saturating_mul(u64::from(config.max_zero_delta_permille));
-        if lhs > rhs {
-            return Err(TimerError::Inadequate(InadequacyReason::TooCoarse));
-        }
-        if self.distinct_deltas < config.min_distinct_deltas {
-            return Err(TimerError::Inadequate(InadequacyReason::TooUniform));
-        }
+        self.ensure_sound(config)?;
+        self.ensure_varied(config)?;
         Ok(())
+    }
+}
+
+/// Accumulates observed timer behavior one delta at a time into an
+/// [`AdequacyReport`].
+///
+/// Separates the adequacy bookkeeping from any particular sampling loop so a
+/// caller can drive it over *whichever* delta signal is operational: bare
+/// back-to-back reads ([`measure_adequacy`]) or the workload deltas of a
+/// jitter noise source. `record` classifies each delta exactly as the
+/// original single-loop `measure_adequacy` did; `finish` yields the report.
+pub struct AdequacyAccumulator {
+    report: AdequacyReport,
+    // Bounded distinct-positive-delta tracker (no_std, no alloc).
+    seen: [u64; 16],
+    seen_len: usize,
+}
+
+impl AdequacyAccumulator {
+    /// Creates an empty accumulator.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            report: AdequacyReport {
+                deltas: 0,
+                zero_deltas: 0,
+                min_positive_delta: None,
+                distinct_deltas: 0,
+                backwards_violations: 0,
+            },
+            seen: [0; 16],
+            seen_len: 0,
+        }
+    }
+
+    /// Records one delta measurement.
+    ///
+    /// Classification mirrors the per-read arms of [`measure_adequacy`]:
+    /// [`TimerError::Backwards`] is a monotonicity violation; `Ok(0)` or any
+    /// other [`TimerError`] is a zero delta; `Ok(d)` with `d > 0` updates the
+    /// minimum positive delta and the bounded distinct-value tracker.
+    pub fn record(&mut self, delta: Result<u64, TimerError>) {
+        match delta {
+            Err(TimerError::Backwards) => {
+                self.report.backwards_violations =
+                    self.report.backwards_violations.saturating_add(1);
+            }
+            Err(_) | Ok(0) => {
+                self.report.zero_deltas = self.report.zero_deltas.saturating_add(1);
+            }
+            Ok(d) => {
+                self.report.min_positive_delta = Some(match self.report.min_positive_delta {
+                    Some(m) if m <= d => m,
+                    _ => d,
+                });
+                let known = self.seen.iter().take(self.seen_len).any(|&s| s == d);
+                if !known && let Some(slot) = self.seen.get_mut(self.seen_len) {
+                    *slot = d;
+                    self.seen_len = self.seen_len.saturating_add(1);
+                }
+            }
+        }
+        self.report.deltas = self.report.deltas.saturating_add(1);
+    }
+
+    /// Finalizes the accumulated counters into an [`AdequacyReport`].
+    #[must_use]
+    pub fn finish(mut self) -> AdequacyReport {
+        self.report.distinct_deltas = u32::try_from(self.seen_len).unwrap_or(u32::MAX);
+        self.report
+    }
+}
+
+impl Default for AdequacyAccumulator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -194,49 +373,21 @@ impl AdequacyReport {
 ///
 /// Collects `config.samples` consecutive reads and reports zero-delta
 /// fraction, minimum positive delta, bounded distinct-delta count, and
-/// backwards violations. Pure observation — refusal policy lives in
-/// [`AdequacyReport::ensure_adequate`].
+/// backwards violations over the resulting `samples − 1` deltas. Pure
+/// observation — refusal policy lives in [`AdequacyReport::ensure_adequate`]
+/// and its split halves.
 pub fn measure_adequacy<T: TimerRead>(timer: &mut T, config: &AdequacyConfig) -> AdequacyReport {
     let width = timer.width_bits();
     let mut prev = timer.read();
-    let mut report = AdequacyReport {
-        deltas: 0,
-        zero_deltas: 0,
-        min_positive_delta: None,
-        distinct_deltas: 0,
-        backwards_violations: 0,
-    };
-    // Bounded distinct-positive-delta tracker (no_std, no alloc).
-    let mut seen: [u64; 16] = [0; 16];
-    let mut seen_len: usize = 0;
+    let mut acc = AdequacyAccumulator::new();
     let mut fed: u32 = 1;
     while fed < config.samples {
         let now = timer.read();
-        match wrapping_delta(prev, now, width) {
-            Err(TimerError::Backwards) => {
-                report.backwards_violations = report.backwards_violations.saturating_add(1);
-            }
-            Err(_) | Ok(0) => {
-                report.zero_deltas = report.zero_deltas.saturating_add(1);
-            }
-            Ok(delta) => {
-                report.min_positive_delta = Some(match report.min_positive_delta {
-                    Some(m) if m <= delta => m,
-                    _ => delta,
-                });
-                let known = seen.iter().take(seen_len).any(|&s| s == delta);
-                if !known && let Some(slot) = seen.get_mut(seen_len) {
-                    *slot = delta;
-                    seen_len = seen_len.saturating_add(1);
-                }
-            }
-        }
-        report.deltas = report.deltas.saturating_add(1);
+        acc.record(wrapping_delta(prev, now, width));
         prev = now;
         fed = fed.saturating_add(1);
     }
-    report.distinct_deltas = u32::try_from(seen_len).unwrap_or(u32::MAX);
-    report
+    acc.finish()
 }
 
 impl TimerSource {
@@ -501,10 +652,13 @@ mod tests {
             ..AdequacyConfig::default()
         };
         let r = measure_adequacy(&mut t, &cfg);
-        assert_eq!(
+        assert!(matches!(
             r.ensure_adequate(&cfg).unwrap_err(),
-            TimerError::Inadequate(InadequacyReason::TooCoarse)
-        );
+            TimerError::Inadequate {
+                reason: InadequacyReason::TooCoarse,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -517,10 +671,13 @@ mod tests {
         };
         let r = measure_adequacy(&mut t, &cfg);
         assert_eq!(r.distinct_deltas, 1);
-        assert_eq!(
+        assert!(matches!(
             r.ensure_adequate(&cfg).unwrap_err(),
-            TimerError::Inadequate(InadequacyReason::TooUniform)
-        );
+            TimerError::Inadequate {
+                reason: InadequacyReason::TooUniform,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -533,10 +690,13 @@ mod tests {
         };
         let r = measure_adequacy(&mut t, &cfg);
         assert!(r.backwards_violations > 0);
-        assert_eq!(
+        assert!(matches!(
             r.ensure_adequate(&cfg).unwrap_err(),
-            TimerError::Inadequate(InadequacyReason::NonMonotonic)
-        );
+            TimerError::Inadequate {
+                reason: InadequacyReason::NonMonotonic,
+                ..
+            }
+        ));
     }
 
     #[test]

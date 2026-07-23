@@ -87,6 +87,7 @@ pub mod compression;
 pub mod gate;
 pub mod iid_gate;
 pub mod iid_lrs;
+pub mod independence;
 pub mod lag;
 pub mod lrs;
 pub mod lz78y;
@@ -147,7 +148,12 @@ pub struct McvResult {
 ///   confidence term, so the standard error is taken as `0.0`, giving
 ///   `p_u = p_hat = 1.0` and `min_entropy = 0.0` (zero entropy, the correct
 ///   conservative answer for one observation).
-fn mcv_from_mode(mode_count: u64, total: u64) -> McvEstimate {
+///
+/// Exposed `pub(crate)` so the [`independence`] tuple-MCV leg can build its own
+/// tuple histograms (over a `2^(k·bits)` alphabet that exceeds the fixed 256-slot
+/// helpers here) and feed the shared confidence-bound core — identical math to
+/// the parity-proven [`mcv`], no re-transcription.
+pub(crate) fn mcv_from_mode(mode_count: u64, total: u64) -> McvEstimate {
     if total == 0 {
         return McvEstimate {
             mode_count: 0,

@@ -785,6 +785,11 @@ mod std_collection {
             let mut health =
                 CharacterizationHealth::new(self.claimed_h, self.is_binary, self.alpha)
                     .map_err(EntropyError::Health)?;
+            // Trip annotations are bounded: `tripped` records that a trip
+            // occurred, but at most `MAX_TRIP_ANNOTATIONS` events are retained,
+            // so a degraded source that trips on nearly every sample of a large
+            // (e.g. characterization) capture cannot grow this list without
+            // limit. The trip-free vs tripped signal stays exact.
             let mut trips: Vec<TripEvent> = Vec::new();
             let mut tripped = false;
             // Bounded buffer: never grows with `count`. Capacity is the fixed
@@ -797,8 +802,10 @@ mod std_collection {
                 let sample = self.next_bounded()?;
                 chunk.push(sample);
                 if let Some(event) = health.observe(sample, index) {
-                    trips.push(event);
                     tripped = true;
+                    if trips.len() < MAX_TRIP_ANNOTATIONS {
+                        trips.push(event);
+                    }
                 }
                 if chunk.len() >= STREAM_CHUNK_SAMPLES as usize {
                     sink.write_all(&chunk).map_err(|_| EntropyError::Io)?;
@@ -859,6 +866,15 @@ mod std_collection {
     /// this fixed size, never a 1M-element buffer.
     pub(crate) const STREAM_CHUNK_SAMPLES: u32 = 8192;
 
+    /// Maximum number of health-test trip annotations retained in a streamed
+    /// dataset's metadata. Once any trip occurs the run is flagged `tripped`
+    /// regardless, so the trip-free vs tripped signal is exact; only the count
+    /// of *retained* annotations is capped. This keeps [`RawCollector::stream_to`]
+    /// memory-bounded regardless of the sample count — a degraded source
+    /// tripping on nearly every sample of a multi-hour capture cannot grow the
+    /// trip list without limit.
+    pub(crate) const MAX_TRIP_ANNOTATIONS: usize = 4096;
+
     /// Outcome of a streaming collection ([`RawCollector::stream_to`]): the
     /// acceptance verdict, the dataset metadata (with trip annotations), and
     /// the number of sample bytes written to the sink. Carries **no** sample
@@ -899,6 +915,28 @@ mod std_collection {
             out.push_str(",\"restart_total\":");
             out.push_str(&itoa_u64(u64::from(restart_total)));
             out.push('}');
+            out
+        }
+
+        /// The dataset metadata JSON for a **characterization** streamed run,
+        /// marked with `"characterization": true`.
+        ///
+        /// A characterization capture is a single contiguous run collected
+        /// under [`CollectionPosture::Characterization`] (health battery live,
+        /// trips *annotated* into `trips`, never a reason to drop a sample).
+        /// It has no companion restart file, so — unlike
+        /// [`Self::metadata_json_with_restart`] — no `restart_total` is spliced;
+        /// instead the `"characterization": true` marker records that this
+        /// sidecar describes an unfiltered characterization dataset. The extra
+        /// key is ignored by the subset validator, which checks only the
+        /// required/declared properties.
+        pub(crate) fn metadata_json_characterization(&self) -> String {
+            let base = self.metadata.to_json();
+            // Splice `,"characterization":true` before the closing brace.
+            // `to_json` always ends in '}', so `pop` removes exactly that brace.
+            let mut out = base;
+            let _ = out.pop(); // drop trailing '}'
+            out.push_str(",\"characterization\":true}");
             out
         }
     }
@@ -1262,7 +1300,7 @@ pub(crate) use std_collection::StreamSummary;
 // memory-boundedness test; gate the re-export to test builds so non-test
 // builds carry no unused import.
 #[cfg(all(feature = "std", test))]
-pub(crate) use std_collection::STREAM_CHUNK_SAMPLES;
+pub(crate) use std_collection::{MAX_TRIP_ANNOTATIONS, STREAM_CHUNK_SAMPLES};
 
 #[cfg(test)]
 #[allow(
@@ -1555,6 +1593,30 @@ mod tests {
             let trip = dataset.metadata().trips[0];
             assert_eq!(trip.test, HealthTest::Rct);
             assert!(trip.sample_index >= 200);
+        }
+
+        #[test]
+        fn stream_to_bounds_retained_trip_annotations() {
+            // A source that dies to a constant post-startup trips RCT on nearly
+            // every subsequent sample. Over a capture far larger than the cap,
+            // the retained trip list must stay bounded (no unbounded growth /
+            // OOM on a large characterization run) while still flagging tripped.
+            let src = DiesLaterMock {
+                inner: PrngMock::new(),
+                die_after: STARTUP_MIN_SAMPLES + 8,
+            };
+            let mut c = RawCollector::new(src, MinEntropy::from_bits(2), alpha20()).unwrap();
+            c.run_startup().unwrap();
+            let n = u32::try_from(MAX_TRIP_ANNOTATIONS).unwrap() + STARTUP_MIN_SAMPLES + 20_000;
+            let mut sink = std::io::sink();
+            let summary = c
+                .stream_to(CollectionPosture::Characterization, n, None, &mut sink)
+                .unwrap();
+            // Every sample still streamed to the sink (never dropped).
+            assert_eq!(summary.bytes_written, u64::from(n));
+            // Tripped is flagged, and the retained annotations are capped.
+            assert!(!summary.metadata.trips.is_empty());
+            assert!(summary.metadata.trips.len() <= MAX_TRIP_ANNOTATIONS);
         }
 
         #[test]

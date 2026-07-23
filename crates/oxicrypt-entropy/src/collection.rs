@@ -40,13 +40,35 @@
 //! worst-case lower bound on per-sample entropy) and `upper` (normal
 //! operation). A reviewer thus sees the per-OE entropy floor and the
 //! operating point side by side.
+//!
+//! # Characterization mode (`--characterization N`)
+//!
+//! With `--characterization N` the tool instead captures, per boundary, a
+//! **single contiguous** run of N one-byte samples to `characterization.bin`
+//! under [`CollectionPosture::Characterization`] — the health battery runs
+//! live, trips are *annotated* into the metadata, and no sample is ever
+//! dropped or the run stitched. This backs the per-OE independence /
+//! periodicity evidence (`maxwell independence` / `maxwell periodicity`),
+//! which wants one long uninterrupted stream (≥10 M for the package). The
+//! sidecar is the same versioned `metadata.json`, marked
+//! `"characterization": true`. Point characterization at its **own**
+//! `--datasets-dir`: a characterization capture and a certification capture
+//! both write `metadata.json`, so they must not share a boundary directory.
+//!
+//! ```text
+//! <datasets-dir>/<oe-id>/<timer>/<boundary>/
+//!   characterization.bin   N one-byte samples (single contiguous run)
+//!   metadata.json          versioned sidecar, marked "characterization": true
+//! ```
 
 use crate::error::EntropyError;
 use crate::h::MinEntropy;
 use crate::health::Alpha;
 use crate::raw::{CollectionPosture, RawCollector, StreamSummary};
 use crate::source::NoiseSource;
-use crate::sp800_90b::{RAW_DATA_SAMPLE_COUNT, RESTART_ROUNDS, RESTART_SAMPLES_PER_ROUND};
+use crate::sp800_90b::{
+    APT_ALPHA30_NON_BINARY, RAW_DATA_SAMPLE_COUNT, RESTART_ROUNDS, RESTART_SAMPLES_PER_ROUND,
+};
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
@@ -57,6 +79,9 @@ use std::{format, vec};
 
 /// File name of the raw dataset (1,000,000 streamed samples).
 pub(crate) const RAW_FILE: &str = "raw.bin";
+/// File name of the characterization dataset (a single contiguous
+/// `--characterization N` capture; N one-byte samples).
+pub(crate) const CHARACTERIZATION_FILE: &str = "characterization.bin";
 /// File name of the restart dataset (1000 × 1000 samples).
 pub(crate) const RESTART_FILE: &str = "restart.bin";
 /// File name of the per-dataset metadata sidecar.
@@ -180,10 +205,14 @@ pub(crate) struct Plan {
     pub(crate) oe_id: String,
     /// Root under which `<oe-id>/<timer>/<boundary>/…` is written.
     pub(crate) datasets_dir: PathBuf,
-    /// Per-run sample counts.
+    /// Per-run sample counts (production certification path; ignored in
+    /// characterization mode, which uses [`Self::characterization`]).
     pub(crate) counts: Counts,
     /// Claim configuration.
     pub(crate) claim: ClaimConfig,
+    /// Characterization sample count `N` when running in `--characterization N`
+    /// mode; `None` is the default production (raw + restart) path.
+    pub(crate) characterization: Option<u32>,
 }
 
 /// An error surfaced to the tool operator (the bin boundary).
@@ -226,6 +255,11 @@ pub(crate) struct DatasetOutcome {
     /// `true` when the dataset was skipped because the checkpoint already
     /// marked it complete with a matching content hash.
     pub(crate) skipped_resume: bool,
+    /// Characterization mode only: `Some(true)` when the contiguous capture
+    /// annotated no health-test trips (the preferred, trip-free package run),
+    /// `Some(false)` when trips were annotated. `None` in the production
+    /// certification path.
+    pub(crate) characterization_trip_free: Option<bool>,
 }
 
 // ── Layout ───────────────────────────────────────────────────────────────
@@ -285,14 +319,24 @@ impl SessionStore {
 /// identical hash ⇒ skipped on resume; any spec change ⇒ different hash ⇒
 /// re-collect. (sha256 of a canonical descriptor string.)
 fn dataset_content_hash(plan: &Plan, timer_slug: &str, boundary: Boundary) -> String {
+    // Mode segment: the production (raw + restart) descriptor is byte-identical
+    // to the pre-characterization format, so existing certification datasets
+    // hash unchanged and are not forced to re-collect. Characterization uses a
+    // distinct `char|n=N` segment so the two modes never collide on resume.
+    let mode = match plan.characterization {
+        None => format!(
+            "raw={}|rounds={}|per_round={}",
+            plan.counts.raw_samples,
+            plan.counts.restart_rounds,
+            plan.counts.restart_samples_per_round,
+        ),
+        Some(n) => format!("char|n={n}"),
+    };
     let descriptor = format!(
-        "v1|oe={}|timer={}|boundary={}|raw={}|rounds={}|per_round={}|h_steps={}|alpha_exp={}",
+        "v1|oe={}|timer={}|boundary={}|{mode}|h_steps={}|alpha_exp={}",
         plan.oe_id,
         timer_slug,
         boundary.slug(),
-        plan.counts.raw_samples,
-        plan.counts.restart_rounds,
-        plan.counts.restart_samples_per_round,
         plan.claim.claimed_h.steps(),
         plan.claim.alpha.exp(),
     );
@@ -538,6 +582,53 @@ fn collect_restart<F: SourceFactory>(
     Ok(rounds_written)
 }
 
+/// Streams a single contiguous characterization capture of `count` samples to
+/// `<dir>/characterization.bin` from a fresh source, returning the run summary.
+///
+/// Uses [`CollectionPosture::Characterization`]: the health battery runs live
+/// and annotates trips into the metadata, but never drops a sample or stitches
+/// the run — the deliberate "collect unfiltered, annotate" posture the
+/// downstream independence/periodicity evidence needs. Memory-bounded (streamed
+/// in fixed chunks regardless of `count`).
+fn collect_characterization<F: SourceFactory>(
+    factory: &mut F,
+    plan: &Plan,
+    dir: &Path,
+    count: u32,
+    measured_freq: Option<u64>,
+) -> Result<StreamSummary, CollectionError> {
+    let source = factory.build().map_err(CollectionError)?;
+    let mut collector = RawCollector::new(source, plan.claim.claimed_h, plan.claim.alpha)?;
+    collector.run_startup()?;
+    let path = dir.join(CHARACTERIZATION_FILE);
+    let file =
+        File::create(&path).map_err(|e| CollectionError::io("create characterization.bin", &e))?;
+    let mut writer = BufWriter::new(file);
+    let summary = collector.stream_to(
+        CollectionPosture::Characterization,
+        count,
+        measured_freq,
+        &mut writer,
+    )?;
+    writer
+        .flush()
+        .map_err(|e| CollectionError::io("flush characterization.bin", &e))?;
+    Ok(summary)
+}
+
+/// Writes the characterization `metadata.json` (marked `"characterization":
+/// true`). The sidecar's `sample_count` equals the bytes written to
+/// `characterization.bin` (ISC-99, one byte per sample).
+fn write_characterization_metadata(
+    dir: &Path,
+    summary: &StreamSummary,
+) -> Result<(), CollectionError> {
+    let json = summary.metadata_json_characterization();
+    let path = dir.join(METADATA_FILE);
+    fs::write(&path, json).map_err(|e| CollectionError::io("write metadata.json", &e))?;
+    Ok(())
+}
+
 /// Writes the per-dataset `metadata.json`, recording the run's sample-count
 /// **consistency**: the metadata `sample_count` equals the bytes written to
 /// `raw.bin`, and the restart total recorded equals `rounds × per_round`
@@ -555,9 +646,52 @@ fn write_metadata(
     Ok(())
 }
 
-/// Collects one boundary dataset directory end-to-end: raw + restart +
-/// metadata, then refreshes the manifest. Skips (idempotently) when the
-/// checkpoint already records a matching content hash.
+/// Byte length of an existing `characterization.bin` in `dir`, or `None` when
+/// it is absent or unreadable. One byte per sample, so the length is the
+/// captured sample count — used to confirm a resumed characterization capture
+/// actually holds the requested `N` before it is skipped.
+fn characterization_capture_len(dir: &Path) -> Option<u64> {
+    fs::metadata(dir.join(CHARACTERIZATION_FILE))
+        .ok()
+        .map(|m| m.len())
+}
+
+/// Refuses to write one capture mode into a boundary directory that already
+/// holds the **other** mode's dataset.
+///
+/// Certification (`raw.bin` + `restart.bin`) and characterization
+/// (`characterization.bin`) both write the shared `metadata.json`, so mixing
+/// them in one directory would silently overwrite a sidecar and corrupt the
+/// evidence with no error surfaced. A mode never conflicts with its **own**
+/// files, so a legitimate resume or overwrite is unaffected; only a genuine
+/// cross-mode collision is rejected, with the fix (a separate `--datasets-dir`)
+/// named in the message.
+fn guard_no_conflicting_mode(
+    dir: &Path,
+    running_characterization: bool,
+) -> Result<(), CollectionError> {
+    let (conflict, other): (bool, &'static str) = if running_characterization {
+        (
+            dir.join(RAW_FILE).exists() || dir.join(RESTART_FILE).exists(),
+            "certification",
+        )
+    } else {
+        (dir.join(CHARACTERIZATION_FILE).exists(), "characterization")
+    };
+    if conflict {
+        return Err(CollectionError(format!(
+            "{}: directory already holds a {other} dataset (both modes write \
+             metadata.json); collect this capture into a separate --datasets-dir",
+            dir.display(),
+        )));
+    }
+    Ok(())
+}
+
+/// Collects one boundary dataset directory end-to-end and refreshes the
+/// manifest. In the default (certification) path that is raw + restart +
+/// metadata; in characterization mode it is one contiguous capture + its
+/// sidecar. Resumable: a matching, already-recorded dataset is skipped.
 fn collect_one_boundary<F: SourceFactory>(
     factory: &mut F,
     plan: &Plan,
@@ -569,6 +703,50 @@ fn collect_one_boundary<F: SourceFactory>(
     let hash = dataset_content_hash(plan, timer_slug, boundary);
     let dir = boundary_dir(plan, timer_slug, boundary);
 
+    // Characterization mode: one contiguous capture + its sidecar, no restart.
+    if let Some(count) = plan.characterization {
+        // Resume only when the recorded hash AND a matching on-disk capture
+        // both exist. The content hash encodes N but the file path does not,
+        // so a stale `characterization.bin` written under a different N (same
+        // shared path) must NOT be accepted as this N's capture — the length
+        // check forces a re-collect in that case.
+        if session.is_done(&hash) && characterization_capture_len(&dir) == Some(u64::from(count)) {
+            return Ok(DatasetOutcome {
+                boundary,
+                dir,
+                raw_submission: false,
+                restart_rounds_written: 0,
+                skipped_resume: true,
+                characterization_trip_free: None,
+            });
+        }
+
+        fs::create_dir_all(&dir).map_err(|e| CollectionError::io("create dataset dir", &e))?;
+        guard_no_conflicting_mode(&dir, true)?;
+
+        let summary = collect_characterization(factory, plan, &dir, count, measured_freq)?;
+        write_characterization_metadata(&dir, &summary)?;
+        write_manifest(&plan.datasets_dir)?;
+
+        // Record as done ONLY when trip-free: a tripped capture is the one the
+        // operator is told to "re-collect if needed", so it must NOT be
+        // hash-skipped on an identical re-run.
+        let trip_free = summary.metadata.trips.is_empty();
+        if trip_free {
+            session.mark_done(&hash)?;
+        }
+
+        return Ok(DatasetOutcome {
+            boundary,
+            dir,
+            raw_submission: false,
+            restart_rounds_written: 0,
+            skipped_resume: false,
+            characterization_trip_free: Some(trip_free),
+        });
+    }
+
+    // Default certification path: raw + restart.
     if session.is_done(&hash) {
         return Ok(DatasetOutcome {
             boundary,
@@ -576,10 +754,12 @@ fn collect_one_boundary<F: SourceFactory>(
             raw_submission: true,
             restart_rounds_written: 0,
             skipped_resume: true,
+            characterization_trip_free: None,
         });
     }
 
     fs::create_dir_all(&dir).map_err(|e| CollectionError::io("create dataset dir", &e))?;
+    guard_no_conflicting_mode(&dir, false)?;
 
     let raw_summary = collect_raw(factory, plan, boundary, &dir, measured_freq)?;
     let rounds = collect_restart(factory, plan, &dir, measured_freq)?;
@@ -595,6 +775,7 @@ fn collect_one_boundary<F: SourceFactory>(
         raw_submission: raw_summary.is_submission(),
         restart_rounds_written: rounds,
         skipped_resume: false,
+        characterization_trip_free: None,
     })
 }
 
@@ -630,11 +811,16 @@ pub(crate) fn collect_oe<F: SourceFactory>(
 /// dataset type lives in the runbook):
 ///
 /// ```text
-/// collect --oe-id <id> --datasets-dir <dir> [--dry-run]
+/// collect --oe-id <id> --datasets-dir <dir> [--claim <H>] [--characterization <N>] [--dry-run]
 /// ```
 ///
-/// Production counts and claim are used by default. `--dry-run` prints the
-/// plan and the resumable status without touching the noise source. This is
+/// Production counts and claim are used by default (raw + restart, both
+/// boundaries; H = 1). `--claim <H>` overrides the claim per OE, constrained to
+/// the non-binary APT grid rows ({0.5, 1, 2, 4, 8}); an off-grid value is a
+/// typed error. `--characterization N` instead captures a single contiguous
+/// N-sample run per boundary to `characterization.bin` (see the module docs);
+/// point it at its own `--datasets-dir`. `--dry-run` prints the plan and the
+/// resumable status without touching the noise source. This is
 /// the **tool boundary**: argument and IO errors are surfaced to the
 /// operator via the returned `Result` and a process exit; no panic path is
 /// introduced on the sample/health side. Output goes to the injected `out`
@@ -647,11 +833,20 @@ pub(crate) fn collect_oe<F: SourceFactory>(
 /// a collection failure.
 pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError> {
     let parsed = CliArgs::parse(args)?;
+    // A grid-validated `--claim` overrides the tool default; α is unchanged.
+    let claim = match parsed.claim {
+        Some(h) => ClaimConfig {
+            claimed_h: h,
+            alpha: Alpha::DEFAULT,
+        },
+        None => default_claim(),
+    };
     let plan = Plan {
         oe_id: parsed.oe_id,
         datasets_dir: parsed.datasets_dir,
         counts: Counts::production(),
-        claim: default_claim()?,
+        claim,
+        characterization: parsed.characterization,
     };
 
     if parsed.dry_run {
@@ -664,6 +859,12 @@ pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError
     for outcome in &outcomes {
         let status = if outcome.skipped_resume {
             "skipped (already complete)"
+        } else if let Some(trip_free) = outcome.characterization_trip_free {
+            if trip_free {
+                "characterization captured (trip-free)"
+            } else {
+                "characterization captured (trips annotated - prefer trip-free; re-collect if needed)"
+            }
         } else if outcome.raw_submission {
             "collected (raw submission-eligible)"
         } else {
@@ -683,19 +884,149 @@ pub fn run<W: Write>(args: &[String], out: &mut W) -> Result<(), CollectionError
 }
 
 /// The default production claim (conservative): H = 1 bit/sample at the
-/// recommended α = 2^-20. The real per-OE claim is set after the pilot EA
-/// assessment; this default keeps the tool runnable for a first capture.
-fn default_claim() -> Result<ClaimConfig, CollectionError> {
-    let alpha = Alpha::from_exp(crate::sp800_90b::CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN)
-        .ok_or_else(|| CollectionError(String::from("invalid default alpha")))?;
-    Ok(ClaimConfig {
+/// ratified default α = 2^-30 ([`Alpha::DEFAULT`], the jent-precedent
+/// value the health layer defaults to). The real per-OE claim is set
+/// after the pilot EA assessment; this default keeps the tool runnable
+/// for a first capture. Override it per-OE with `--claim <H>` (grid-constrained;
+/// see [`parse_grid_claim`]).
+fn default_claim() -> ClaimConfig {
+    ClaimConfig {
         claimed_h: MinEntropy::from_bits(1),
-        alpha,
-    })
+        alpha: Alpha::DEFAULT,
+    }
+}
+
+/// Parses a non-negative claim value as an **exact** rational `num/den` — a
+/// plain integer (`"2"`) or a finite decimal (`"0.5"`) — with no floating
+/// point (the claim path stays float-free, mirroring [`crate::sp800_90b`]'s
+/// `SpecRatio` transcription). Rejects empty, signed, exponent, or non-digit
+/// input.
+fn parse_rational(raw: &str) -> Result<(u64, u64), CollectionError> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Err(CollectionError(String::from("--claim value is empty")));
+    }
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (s, ""),
+    };
+    // A lone "." or "" has no digits at all.
+    if int_part.is_empty() && frac_part.is_empty() {
+        return Err(CollectionError(format!("--claim {raw:?} is not a number")));
+    }
+    let all_digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+    if !all_digits(int_part) || !all_digits(frac_part) {
+        return Err(CollectionError(format!(
+            "--claim {raw:?} must be a non-negative decimal (e.g. 0.5, 1, 2)"
+        )));
+    }
+    // den = 10^(#frac digits); num = int·den + frac. Exact integer build-up.
+    let mut den: u64 = 1;
+    for _ in 0..frac_part.len() {
+        den = den.checked_mul(10).ok_or_else(|| {
+            CollectionError(format!("--claim {raw:?} has too many decimal places"))
+        })?;
+    }
+    let int_val: u64 = if int_part.is_empty() {
+        0
+    } else {
+        int_part
+            .parse()
+            .map_err(|_| CollectionError(format!("--claim {raw:?} integer part out of range")))?
+    };
+    let frac_val: u64 = if frac_part.is_empty() {
+        0
+    } else {
+        frac_part
+            .parse()
+            .map_err(|_| CollectionError(format!("--claim {raw:?} fractional part out of range")))?
+    };
+    let num = int_val
+        .checked_mul(den)
+        .and_then(|v| v.checked_add(frac_val))
+        .ok_or_else(|| CollectionError(format!("--claim {raw:?} out of range")))?;
+    Ok((num, den))
+}
+
+/// Validates a `--claim <H>` value against the **non-binary APT grid** and
+/// returns the exact injected [`MinEntropy`].
+///
+/// **Load-bearing invariant:** the collect tool's source is the raw-counter
+/// jitter source, which declares a **4-bit alphabet** (`SourceSpec::new(4)`,
+/// digitized symbols 0..15 — see `jitter::tests::spec_and_ceiling_are_the_design_values`),
+/// so `is_binary()` is false and the APT test runs on the **non-binary** table.
+/// The only valid claims are therefore exactly the non-binary APT table's H
+/// rows ({0.5, 1, 2, 4, 8} — see [`APT_ALPHA30_NON_BINARY`]; the H column is
+/// α-independent). If a binary (1-bit) source is ever added to this tool, this
+/// grid choice must become alphabet-aware — the jitter source's declared 4-bit
+/// width (asserted by `jitter::tests::spec_and_ceiling_are_the_design_values`)
+/// guards that assumption. The grid is **derived from the table**, never a
+/// hand-copied literal. An off-grid value is refused with a typed error naming
+/// the valid grid — the claim is table-borne and is **never silently rounded**
+/// to a neighbouring row (that would run the APT test at a different stringency
+/// than the operator set).
+fn parse_grid_claim(raw: &str) -> Result<MinEntropy, CollectionError> {
+    let (num, den) = parse_rational(raw)?;
+    for row in &APT_ALPHA30_NON_BINARY {
+        // row.h.num/row.h.den == num/den  ⇔  cross-multiply (u128, exact).
+        let lhs = u128::from(row.h.num).saturating_mul(u128::from(den));
+        let rhs = u128::from(row.h.den).saturating_mul(u128::from(num));
+        if lhs == rhs {
+            return MinEntropy::from_fraction_floor(u64::from(row.h.num), u64::from(row.h.den))
+                .ok_or_else(|| {
+                    CollectionError(format!("--claim {raw:?}: grid row has zero denominator"))
+                });
+        }
+    }
+    Err(CollectionError(format!(
+        "--claim {raw:?} is not an APT grid row; valid claims: {}",
+        grid_claim_list()
+    )))
+}
+
+/// Renders the valid non-binary APT grid claims as a comma-separated list for
+/// operator error messages (derived from the table — e.g. "0.5, 1, 2, 4, 8").
+fn grid_claim_list() -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for row in &APT_ALPHA30_NON_BINARY {
+        let (n, d) = (row.h.num, row.h.den);
+        let label = if d == 1 {
+            format!("{n}")
+        } else if n == 1 && d == 2 {
+            String::from("0.5")
+        } else {
+            format!("{n}/{d}")
+        };
+        parts.push(label);
+    }
+    parts.join(", ")
 }
 
 fn print_dry_run<W: Write>(plan: &Plan, out: &mut W) -> Result<(), CollectionError> {
     let render = |out: &mut W| -> std::io::Result<()> {
+        if let Some(count) = plan.characterization {
+            writeln!(out, "collection plan (dry-run, characterization mode):")?;
+            writeln!(out, "  oe-id:        {}", plan.oe_id)?;
+            writeln!(out, "  datasets-dir: {}", plan.datasets_dir.display())?;
+            writeln!(
+                out,
+                "  characterization: {count} samples/boundary (single contiguous run)"
+            )?;
+            writeln!(out, "  boundaries:")?;
+            for boundary in Boundary::all() {
+                writeln!(out, "    - {}: {}", boundary.slug(), boundary.description())?;
+            }
+            writeln!(
+                out,
+                "  claim:        H={} steps (health annotation only; entropy claim is assessment-derived)",
+                plan.claim.claimed_h.steps()
+            )?;
+            writeln!(
+                out,
+                "  output/boundary: {CHARACTERIZATION_FILE} + {METADATA_FILE} (\"characterization\": true)"
+            )?;
+            return Ok(());
+        }
         writeln!(out, "collection plan (dry-run):")?;
         writeln!(out, "  oe-id:        {}", plan.oe_id)?;
         writeln!(out, "  datasets-dir: {}", plan.datasets_dir.display())?;
@@ -729,13 +1060,23 @@ struct CliArgs {
     oe_id: String,
     datasets_dir: PathBuf,
     dry_run: bool,
+    characterization: Option<u32>,
+    /// Grid-validated per-OE min-entropy claim (`--claim <H>`); `None` uses the
+    /// tool [`default_claim`] (H = 1).
+    claim: Option<MinEntropy>,
 }
+
+/// One-line usage string (the single home for the recognized argument form).
+const USAGE: &str = "usage: collect --oe-id <id> --datasets-dir <dir> [--claim <H>] \
+     [--characterization <N>] [--dry-run]";
 
 impl CliArgs {
     fn parse(args: &[String]) -> Result<Self, CollectionError> {
         let mut oe_id: Option<String> = None;
         let mut datasets_dir: Option<PathBuf> = None;
         let mut dry_run = false;
+        let mut characterization: Option<u32> = None;
+        let mut claim: Option<MinEntropy> = None;
         let mut i = 0usize;
         while let Some(arg) = args.get(i) {
             match arg.as_str() {
@@ -753,6 +1094,32 @@ impl CliArgs {
                     datasets_dir = Some(PathBuf::from(v));
                     i = i.saturating_add(2);
                 }
+                "--characterization" => {
+                    let v = args.get(i.saturating_add(1)).ok_or_else(|| {
+                        CollectionError(String::from(
+                            "--characterization needs a value (sample count N)",
+                        ))
+                    })?;
+                    let n: u32 = v.parse().map_err(|_| {
+                        CollectionError(format!(
+                            "--characterization value must be a positive integer, got {v:?}"
+                        ))
+                    })?;
+                    if n == 0 {
+                        return Err(CollectionError(String::from(
+                            "--characterization value must be greater than 0",
+                        )));
+                    }
+                    characterization = Some(n);
+                    i = i.saturating_add(2);
+                }
+                "--claim" => {
+                    let v = args.get(i.saturating_add(1)).ok_or_else(|| {
+                        CollectionError(String::from("--claim needs a value (min-entropy H)"))
+                    })?;
+                    claim = Some(parse_grid_claim(v)?);
+                    i = i.saturating_add(2);
+                }
                 "--dry-run" => {
                     dry_run = true;
                     i = i.saturating_add(1);
@@ -762,20 +1129,14 @@ impl CliArgs {
                 }
             }
         }
-        let oe_id = oe_id.ok_or_else(|| {
-            CollectionError(String::from(
-                "usage: collect --oe-id <id> --datasets-dir <dir> [--dry-run]",
-            ))
-        })?;
-        let datasets_dir = datasets_dir.ok_or_else(|| {
-            CollectionError(String::from(
-                "usage: collect --oe-id <id> --datasets-dir <dir> [--dry-run]",
-            ))
-        })?;
+        let oe_id = oe_id.ok_or_else(|| CollectionError(String::from(USAGE)))?;
+        let datasets_dir = datasets_dir.ok_or_else(|| CollectionError(String::from(USAGE)))?;
         Ok(Self {
             oe_id,
             datasets_dir,
             dry_run,
+            characterization,
+            claim,
         })
     }
 }
@@ -802,7 +1163,7 @@ mod jitter_factory {
             Self {
                 cpu_model: format!("oe:{oe_id}"),
                 os: std::env::consts::OS.to_string(),
-                params: String::from("raw-counter jitter, default workload"),
+                params: String::from("raw-counter jitter, delta-steered variable workload (#125)"),
             }
         }
 
@@ -933,6 +1294,64 @@ mod tests {
         }
     }
 
+    /// A source that emits varied bytes through startup, then dies to a
+    /// constant so a characterization capture annotates health trips — used to
+    /// exercise the tripped-run behavior (not marked done → re-collects).
+    #[derive(Debug)]
+    struct DyingMock {
+        state: u32,
+        emitted: u32,
+        die_after: u32,
+    }
+    impl Sealed for DyingMock {}
+    impl NoiseSource for DyingMock {
+        fn spec(&self) -> SourceSpec {
+            SourceSpec::new(8).unwrap()
+        }
+        fn max_claimable_h(&self) -> MinEntropy {
+            MinEntropy::from_bits(4)
+        }
+        fn sample(&mut self) -> Result<RawSample, SourceError> {
+            self.emitted = self.emitted.saturating_add(1);
+            if self.emitted > self.die_after {
+                return Ok(0xCC); // constant run → RCT trips
+            }
+            let mut x = self.state;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            self.state = x;
+            Ok((x & 0xFF) as u8)
+        }
+        fn metadata(&self) -> SourceMetadata<'_> {
+            SourceMetadata {
+                timer_source: Some(TimerSource::RawCounter),
+                counter_frequency_hz: Some(3_000_000_000),
+                cpu_model: "test-cpu",
+                os: "test-os",
+                collection_params: "dying mock",
+            }
+        }
+    }
+
+    /// Factory building a fresh [`DyingMock`] per call.
+    struct DyingFactory {
+        die_after: u32,
+    }
+    impl SourceFactory for DyingFactory {
+        type Source = DyingMock;
+        fn build(&mut self) -> Result<Self::Source, String> {
+            Ok(DyingMock {
+                state: 0x1234_5678,
+                emitted: 0,
+                die_after: self.die_after,
+            })
+        }
+        fn timer_slug(&self) -> &'static str {
+            "mock-timer"
+        }
+    }
+
     fn temp_dir(tag: &str) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("oxicrypt-collection-{}-{tag}", std::process::id()));
@@ -953,6 +1372,7 @@ mod tests {
                 claimed_h: MinEntropy::from_bits(2),
                 alpha: alpha20(),
             },
+            characterization: None,
         }
     }
 
@@ -1205,5 +1625,360 @@ mod tests {
     fn cli_rejects_unknown_arg() {
         let err = CliArgs::parse(&[String::from("--bogus")]).unwrap_err();
         assert!(err.0.contains("unknown argument"));
+    }
+
+    // ── ISC-120: characterization mode (--characterization N) ────────────
+
+    #[test]
+    fn cli_parses_characterization_count() {
+        let ok = CliArgs::parse(&[
+            String::from("--oe-id"),
+            String::from("x"),
+            String::from("--datasets-dir"),
+            String::from("/tmp/x"),
+            String::from("--characterization"),
+            String::from("12345"),
+        ])
+        .unwrap();
+        assert_eq!(ok.characterization, Some(12345));
+        // Absent by default (production path).
+        let prod = CliArgs::parse(&[
+            String::from("--oe-id"),
+            String::from("x"),
+            String::from("--datasets-dir"),
+            String::from("/tmp/x"),
+        ])
+        .unwrap();
+        assert_eq!(prod.characterization, None);
+    }
+
+    #[test]
+    fn cli_rejects_zero_and_nonnumeric_characterization() {
+        let base = [
+            String::from("--oe-id"),
+            String::from("x"),
+            String::from("--datasets-dir"),
+            String::from("/tmp/x"),
+        ];
+        let mut zero = base.to_vec();
+        zero.extend([String::from("--characterization"), String::from("0")]);
+        assert!(
+            CliArgs::parse(&zero)
+                .unwrap_err()
+                .0
+                .contains("greater than 0")
+        );
+
+        let mut nan = base.to_vec();
+        nan.extend([String::from("--characterization"), String::from("lots")]);
+        assert!(
+            CliArgs::parse(&nan)
+                .unwrap_err()
+                .0
+                .contains("positive integer")
+        );
+
+        let mut missing = base.to_vec();
+        missing.push(String::from("--characterization"));
+        assert!(
+            CliArgs::parse(&missing)
+                .unwrap_err()
+                .0
+                .contains("needs a value")
+        );
+    }
+
+    #[test]
+    fn characterization_mode_writes_bin_and_marked_sidecar() {
+        let dir = temp_dir("characterization");
+        let mut plan = small_plan(dir.clone());
+        let count = crate::raw::STREAM_CHUNK_SAMPLES + 321; // spans multiple chunks
+        plan.characterization = Some(count);
+        let (mut factory, _) = CountingFactory::new();
+        let outcomes = collect_oe(&mut factory, &plan, None).unwrap();
+
+        assert_eq!(outcomes.len(), 2);
+        for outcome in &outcomes {
+            // Characterization outcome is reported as such.
+            assert!(outcome.characterization_trip_free.is_some());
+            assert_eq!(outcome.restart_rounds_written, 0);
+        }
+        for boundary in Boundary::all() {
+            let bdir = boundary_dir(&plan, "mock-timer", boundary);
+            // characterization.bin: exactly `count` one-byte samples.
+            let bytes = fs::metadata(bdir.join(CHARACTERIZATION_FILE))
+                .unwrap()
+                .len();
+            assert_eq!(bytes, u64::from(count));
+            // sidecar marked characterization:true, count consistent, no restart.
+            let meta = fs::read_to_string(bdir.join(METADATA_FILE)).unwrap();
+            assert!(meta.contains("\"characterization\":true"));
+            assert!(meta.contains(&format!("\"sample_count\":{count}")));
+            assert!(!meta.contains("restart_total"));
+            // Production files are NOT produced in characterization mode.
+            assert!(!bdir.join(RAW_FILE).exists());
+            assert!(!bdir.join(RESTART_FILE).exists());
+        }
+        // Manifest checksums re-verify for the characterization files.
+        let manifest = fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap();
+        for line in manifest.lines() {
+            let (hex, rel) = line.split_once("  ").unwrap();
+            assert_eq!(sha256_file_hex(&dir.join(rel)).unwrap(), hex);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn characterization_content_hash_distinct_from_production() {
+        let dir = temp_dir("char-hash");
+        let prod = small_plan(dir.clone());
+        let mut charz = small_plan(dir.clone());
+        charz.characterization = Some(prod.counts.raw_samples);
+        let h_prod = dataset_content_hash(&prod, "mock-timer", Boundary::Lower);
+        let h_char = dataset_content_hash(&charz, "mock-timer", Boundary::Lower);
+        assert_ne!(
+            h_prod, h_char,
+            "characterization and production must never collide on resume"
+        );
+        // N is spec-sensitive.
+        let mut charz2 = charz.clone();
+        charz2.characterization = Some(charz.characterization.unwrap() + 1);
+        let h_char2 = dataset_content_hash(&charz2, "mock-timer", Boundary::Lower);
+        assert_ne!(h_char, h_char2, "characterization N changes the hash");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn characterization_refuses_to_clobber_a_certification_dir() {
+        let dir = temp_dir("char-guard");
+        // A production certification capture (raw + restart) lands first.
+        let (mut f1, _) = CountingFactory::new();
+        collect_oe(&mut f1, &small_plan(dir.clone()), None).unwrap();
+        // A characterization capture into the SAME dir must be refused (both
+        // modes write metadata.json — the guard prevents silent corruption).
+        let mut charz = small_plan(dir.clone());
+        charz.characterization = Some(2048);
+        let (mut f2, _) = CountingFactory::new();
+        let err = collect_oe(&mut f2, &charz, None).unwrap_err();
+        assert!(err.0.contains("certification"), "got: {}", err.0);
+        assert!(err.0.contains("separate --datasets-dir"), "got: {}", err.0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn certification_refuses_to_clobber_a_characterization_dir() {
+        let dir = temp_dir("cert-guard");
+        let mut charz = small_plan(dir.clone());
+        charz.characterization = Some(2048);
+        let (mut f1, _) = CountingFactory::new();
+        collect_oe(&mut f1, &charz, None).unwrap();
+        // A certification capture into the SAME dir must be refused.
+        let (mut f2, _) = CountingFactory::new();
+        let err = collect_oe(&mut f2, &small_plan(dir.clone()), None).unwrap_err();
+        assert!(err.0.contains("characterization"), "got: {}", err.0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn characterization_resumes_only_on_a_length_matching_capture() {
+        let dir = temp_dir("char-resume");
+        let a = crate::raw::STREAM_CHUNK_SAMPLES + 100;
+        let b = crate::raw::STREAM_CHUNK_SAMPLES + 900;
+        let mk = |n| {
+            let mut p = small_plan(dir.clone());
+            p.characterization = Some(n);
+            p
+        };
+
+        // 1. First N=a capture (healthy → trip-free → marked done).
+        let (mut f, _) = CountingFactory::new();
+        assert!(
+            collect_oe(&mut f, &mk(a), None)
+                .unwrap()
+                .iter()
+                .all(|o| !o.skipped_resume)
+        );
+
+        // 2. Identical re-run of N=a → skipped (hash done AND length matches).
+        let (mut f, built) = CountingFactory::new();
+        assert!(
+            collect_oe(&mut f, &mk(a), None)
+                .unwrap()
+                .iter()
+                .all(|o| o.skipped_resume)
+        );
+        assert_eq!(built.get(), 0, "matching capture must not rebuild");
+
+        // 3. N=b into the same dir overwrites the shared characterization.bin.
+        let (mut f, _) = CountingFactory::new();
+        collect_oe(&mut f, &mk(b), None).unwrap();
+
+        // 4. Re-run N=a: hash-a IS recorded, but the on-disk file now holds b
+        //    bytes — the length mismatch must force a re-collect, not a false
+        //    skip that hands back the wrong-length dataset.
+        let (mut f, built) = CountingFactory::new();
+        assert!(
+            collect_oe(&mut f, &mk(a), None)
+                .unwrap()
+                .iter()
+                .all(|o| !o.skipped_resume),
+            "stale-length capture must re-collect"
+        );
+        assert!(built.get() > 0);
+        for boundary in Boundary::all() {
+            let bdir = boundary_dir(&mk(a), "mock-timer", boundary);
+            let len = fs::metadata(bdir.join(CHARACTERIZATION_FILE))
+                .unwrap()
+                .len();
+            assert_eq!(len, u64::from(a), "re-collected file must hold N=a samples");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tripped_characterization_is_not_marked_done_and_recollects() {
+        let dir = temp_dir("char-trip");
+        let mut plan = small_plan(dir.clone());
+        plan.characterization = Some(crate::sp800_90b::STARTUP_MIN_SAMPLES + 1000);
+        let die_after = crate::sp800_90b::STARTUP_MIN_SAMPLES + 100;
+
+        // A tripped capture is reported as NOT trip-free...
+        let mut f1 = DyingFactory { die_after };
+        let first = collect_oe(&mut f1, &plan, None).unwrap();
+        assert!(
+            first
+                .iter()
+                .all(|o| o.characterization_trip_free == Some(false)),
+            "dying source must annotate trips"
+        );
+
+        // ...and is NOT recorded done, so an identical re-run re-collects
+        // (matches the emitted "re-collect if needed" guidance) rather than
+        // being falsely skipped.
+        let mut f2 = DyingFactory { die_after };
+        let again = collect_oe(&mut f2, &plan, None).unwrap();
+        assert!(
+            again.iter().all(|o| !o.skipped_resume),
+            "a tripped capture must never be hash-skipped on re-run"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── #126: `--claim` flag, grid-constrained to the non-binary APT rows ─
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().copied().map(String::from).collect()
+    }
+
+    #[test]
+    fn claim_flag_accepts_nonbinary_grid_rows() {
+        // {0.5, 1, 2, 4, 8} bits → {128, 256, 512, 1024, 2048} steps.
+        let cases = [
+            ("0.5", 128u32),
+            ("1", 256),
+            ("2", 512),
+            ("4", 1024),
+            ("8", 2048),
+        ];
+        for (tok, steps) in cases {
+            let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", tok]);
+            let parsed = CliArgs::parse(&v).unwrap();
+            assert_eq!(
+                parsed.claim,
+                Some(MinEntropy::from_steps(steps)),
+                "grid claim {tok} must parse to {steps} steps"
+            );
+        }
+    }
+
+    #[test]
+    fn claim_flag_accepts_equivalent_decimal_forms() {
+        // Rational reduction (not string-match): trailing zeros and a leading
+        // dot map to the same grid row. 0.50 == 0.5 → 128; 1.0 == 1 → 256;
+        // 2.0 == 2 → 512; .5 == 0.5 → 128.
+        for (tok, steps) in [("0.50", 128u32), ("1.0", 256), ("2.0", 512), (".5", 128)] {
+            let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", tok]);
+            let parsed = CliArgs::parse(&v).unwrap();
+            assert_eq!(
+                parsed.claim,
+                Some(MinEntropy::from_steps(steps)),
+                "equivalent form {tok} must map to {steps} steps"
+            );
+        }
+    }
+
+    #[test]
+    fn claim_flag_rejects_off_grid_and_garbage() {
+        // ISC-14: an off-grid value is refused, NEVER rounded to a neighbour.
+        for tok in [
+            "0.6", "0.7", "3", "1.5", "0", "0.55", "5", "9", "abc", "-1", "1.0.0", ".",
+        ] {
+            let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", tok]);
+            assert!(
+                CliArgs::parse(&v).is_err(),
+                "off-grid/garbage claim {tok:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn claim_flag_missing_value_errs() {
+        let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim"]);
+        assert!(CliArgs::parse(&v).is_err());
+    }
+
+    #[test]
+    fn off_grid_error_names_the_grid() {
+        let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", "0.6"]);
+        let msg = CliArgs::parse(&v).unwrap_err().0;
+        for tok in ["0.5", "1", "2", "4", "8"] {
+            assert!(msg.contains(tok), "grid token {tok} must appear in {msg:?}");
+        }
+    }
+
+    #[test]
+    fn absent_claim_uses_default_h1() {
+        // ISC-10 / ISC-18: no --claim → default_claim() unchanged (H=1, α DEFAULT).
+        let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x"]);
+        assert_eq!(CliArgs::parse(&v).unwrap().claim, None);
+        let dc = default_claim();
+        assert_eq!(dc.claimed_h, MinEntropy::from_bits(1));
+        assert_eq!(dc.alpha.exp(), Alpha::DEFAULT.exp());
+    }
+
+    #[test]
+    fn accepted_claim_never_changes_alpha() {
+        // ISC-13: every accepted grid claim keeps α at DEFAULT (2^-30).
+        for tok in ["0.5", "1", "2", "4", "8"] {
+            let h = parse_grid_claim(tok).unwrap();
+            let cfg = ClaimConfig {
+                claimed_h: h,
+                alpha: Alpha::DEFAULT,
+            };
+            assert_eq!(cfg.alpha.exp(), 30);
+        }
+    }
+
+    #[test]
+    fn claim_recorded_in_metadata_steps() {
+        // ISC-11: a collection built with the ratified 0.5 claim records
+        // claimed_h_steps=128 in every boundary's metadata.json.
+        let dir = temp_dir("claim-meta");
+        let mut plan = small_plan(dir.clone());
+        plan.claim = ClaimConfig {
+            claimed_h: MinEntropy::from_steps(128),
+            alpha: Alpha::DEFAULT,
+        };
+        let (mut factory, _) = CountingFactory::new();
+        collect_oe(&mut factory, &plan, None).unwrap();
+        for boundary in Boundary::all() {
+            let bdir = boundary_dir(&plan, "mock-timer", boundary);
+            let meta = fs::read_to_string(bdir.join(METADATA_FILE)).unwrap();
+            assert!(
+                meta.contains("\"claimed_h_steps\":128"),
+                "metadata must record the injected claim: {meta}"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 }
