@@ -570,7 +570,19 @@ macro_rules! lms_impl {
         ) -> (LmsPrivateKey, [u8; PUBLIC_KEY_LEN]) {
             #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+            // Default (CMVP-validated, single-threaded) build: the serial
+            // recursive Merkle root.
+            #[cfg(not(feature = "parallel"))]
             let root = tree_internals::compute_root(seed, identifier);
+            // Performance build (`parallel`, which implies `alloc`): reuse the
+            // R75-proven parallel leaf sweep in `build_node_table` and take the
+            // root (RFC 8554 node 1). Byte-identical to `compute_root` by
+            // construction; costs ~2·2^H·N heap (2 GiB at H25/M32), one tree at
+            // a time. Scoped to this ACVP/harness `keygen_from_parts` entry —
+            // the gated `keygen()` and `keygen_internal` stay serial, so the
+            // validated default build and the FIPS-gated path are untouched.
+            #[cfg(feature = "parallel")]
+            let root = cached_internals::build_node_table(seed, identifier)[1];
 
             let mut pk = [0u8; PUBLIC_KEY_LEN];
             pk[..4].copy_from_slice(&LMS_TYPE.to_be_bytes());
