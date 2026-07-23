@@ -33,3 +33,30 @@ crate::lms_impl::lms_impl! {
     kat_msg = b"LMS self-test message for SP 800-208 / FIPS 140-3 compliance";
     kat_name = "LMS KAT (LMS_SHA256_M32_H25 / LMOTS_SHA256_N32_W8 keygen+sign+verify round-trip, SP 800-208)";
 }
+
+// ── Parallel keyGen root determinism oracle (H = 25, pre-submission) ──
+//
+// For #129: the tall-tree counterpart to the H=15 oracle, at the largest
+// CNSA tree (2^25 leaves, W = 8 — the costliest keyGen). Asserts the
+// parallel `keygen_from_parts` root is byte-identical to the serial
+// `keygen_internal` root. Ignored by default: it allocates ~2 GiB and
+// computes 2^25 W=8 leaves twice (serial + parallel), which runs for
+// minutes. Run explicitly as the pre-ACVTS-submission gate:
+//   cargo test -p oxicrypt-lms --features parallel --release -- \
+//     --ignored parallel_keygen_from_parts_root_matches_serial_h25
+#[cfg(all(test, feature = "parallel"))]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod parallel_keygen_oracle {
+    use super::*;
+
+    #[test]
+    #[ignore = "H25: ~2 GiB and minutes — pre-ACVTS-submission oracle; run with --ignored"]
+    fn parallel_keygen_from_parts_root_matches_serial_h25() {
+        let (sk, pk_serial) = keygen_internal(&KAT_XI);
+        let (_sk, pk_parallel) = keygen_from_parts(&sk.seed, &sk.identifier);
+        assert_eq!(
+            pk_serial, pk_parallel,
+            "parallel keygen_from_parts root diverged from serial keygen at H=25"
+        );
+    }
+}

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `oxicrypt-maxwell`: `independence` analysis allocates sparsely — the tuple-MCV histogram is sized by the codes present via a `HashMap` instead of a dense `2^(k·bits)` array (the 8-bit triplet leg no longer zeros a `1<<24`-slot array per phase, ~33× per run), tuple counts use the closed form `⌊(n−phase)/k⌋` instead of encoding the stream to read its length, and pair encoding writes `u8` directly; exact MCV counts and min-entropy are unchanged (#127).
 - `oxicrypt-maxwell`: the periodicity screen's spectral-peak detector searches bins `>= SPECTRAL_MIN_BIN` (8), excluding the lowest bins from both the peak search and the mean-power denominator, so slow low-frequency drift no longer trips the screen; a periodic line at bin 8 or above is unaffected and the autocorrelation detector is unchanged (#102).
+- `oxicrypt-lms` (`parallel` feature): `keygen_from_parts` (the ACVP/harness keyGen entry) derives the Merkle root from the parallel `build_node_table` leaf sweep, so a tall-tree keyGen under `--features oxicrypt-lms/parallel` runs multi-threaded instead of single-threaded; the root is byte-identical to the serial recursive `compute_root` by construction (R75). The CMVP-validated default build and the gated `keygen()` / `keygen_internal` remain serial. A parallel-vs-serial keyGen root-equality oracle is added at H=15 and (ignored, pre-submission) H=25 (#129).
 
 ### Fixed
 

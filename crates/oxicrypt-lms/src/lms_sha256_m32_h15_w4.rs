@@ -33,3 +33,34 @@ crate::lms_impl::lms_impl! {
     kat_msg = b"LMS self-test message for SP 800-208 / FIPS 140-3 compliance";
     kat_name = "LMS KAT (LMS_SHA256_M32_H15 / LMOTS_SHA256_N32_W4 keygen+sign+verify round-trip, SP 800-208)";
 }
+
+// ── Parallel keyGen root determinism oracle (H = 15) ────────────────
+//
+// For #129: under the `parallel` feature, `keygen_from_parts` (the ACVP
+// keyGen entry) derives the Merkle root via the parallel `build_node_table`
+// leaf sweep instead of the serial recursive `compute_root`. This asserts
+// that root is byte-identical to the serial `keygen_internal` (which uses
+// `compute_root`) for the same seed — the R75 property an ACVTS keyGen
+// submission depends on, at a tall tree the H ≤ 10 oracles never reached.
+// Only meaningful under `parallel` (the default build's `keygen_from_parts`
+// is already the serial path), so feature-gated. It runs a serial
+// (`keygen_internal`) and a parallel (`keygen_from_parts`) full-tree keyGen at
+// H = 15 (2^15 leaves): a few seconds in `--release`, but ~3-4 min in a debug
+// build (dominated by the single-threaded serial reference half). Feature-gated,
+// so neither the default gate nor the pre-push hook runs it — only an explicit
+// `--features parallel` test invocation does.
+#[cfg(all(test, feature = "parallel"))]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod parallel_keygen_oracle {
+    use super::*;
+
+    #[test]
+    fn parallel_keygen_from_parts_root_matches_serial_h15() {
+        let (sk, pk_serial) = keygen_internal(&KAT_XI);
+        let (_sk, pk_parallel) = keygen_from_parts(&sk.seed, &sk.identifier);
+        assert_eq!(
+            pk_serial, pk_parallel,
+            "parallel keygen_from_parts root diverged from serial keygen at H=15"
+        );
+    }
+}
