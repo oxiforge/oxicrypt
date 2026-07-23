@@ -668,6 +668,29 @@ mod tests {
     }
 
     #[test]
+    fn anti_path_bad_escapes_controls_and_surrogates_fail_typed() {
+        // A bare unknown escape (`\q`) is not in the RFC 8259 escape set.
+        assert!(matches!(
+            parse(r#""\q""#),
+            Err(ParseError::InvalidEscape { .. })
+        ));
+        // An unescaped control character (< 0x20) is not permitted in a string.
+        assert!(matches!(
+            parse("\"a\u{01}b\""),
+            Err(ParseError::UnexpectedByte { .. })
+        ));
+        // A truncated / non-hex `\u` escape.
+        assert!(parse(r#""\uD8""#).is_err());
+        assert!(parse(r#""\uZZZZ""#).is_err());
+        // A high surrogate followed by a well-formed `\u` escape that is NOT a
+        // low surrogate (`A` = 'A', outside the 0xDC00..=0xDFFF range).
+        assert!(matches!(
+            parse(r#""\uD83DA""#),
+            Err(ParseError::InvalidEscape { .. })
+        ));
+    }
+
+    #[test]
     fn a_decimal_inside_a_string_is_left_as_text_not_a_number() {
         // The `esvVersion` "1.0" is a STRING and must stay a string — the old
         // pre-pass's whole hazard was touching decimals inside strings.

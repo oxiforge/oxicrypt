@@ -185,8 +185,11 @@ pub struct SupportingDocUpload {
     /// The optional free-text comment (the `sdComments` field). `None`
     /// omits the field entirely.
     pub comment: Option<String>,
-    /// The raw PDF bytes (guaranteed to begin with [`PDF_MAGIC`]).
-    pub bytes: Vec<u8>,
+    /// The raw PDF bytes (guaranteed to begin with [`PDF_MAGIC`]). Private so
+    /// the [`Self::new`] `%PDF-` magic-byte guard is the **only** way bytes
+    /// enter — a struct-literal or post-construction mutation cannot bypass it.
+    /// Read via [`Self::bytes`].
+    bytes: Vec<u8>,
 }
 
 impl SupportingDocUpload {
@@ -220,6 +223,14 @@ impl SupportingDocUpload {
     pub fn with_comment(mut self, comment: &str) -> Self {
         self.comment = Some(comment.to_string());
         self
+    }
+
+    /// The raw PDF payload, guaranteed (by [`Self::new`]) to begin with the
+    /// PDF signature `%PDF-`. The read-only accessor for the sealed `bytes`
+    /// field.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     /// The full server-relative resource path for this upload.
@@ -407,6 +418,23 @@ mod tests {
     fn new_refuses_an_empty_payload() {
         let err = SupportingDocUpload::new(SdType::Other, "empty.pdf", Vec::new()).unwrap_err();
         assert_eq!(err, SupportDocError::Empty);
+    }
+
+    #[test]
+    fn bytes_enter_only_through_the_guarded_constructor() {
+        // The accessor returns exactly the validated bytes the constructor
+        // accepted — and, since `bytes` is private and `new` is the only entry
+        // point, every held payload is guaranteed to lead with `%PDF-`.
+        let payload = pdf_bytes();
+        let up = SupportingDocUpload::new(SdType::Other, "o.pdf", payload.clone()).unwrap();
+        assert_eq!(up.bytes(), payload.as_slice());
+        assert!(up.bytes().starts_with(PDF_MAGIC));
+        // A non-PDF never yields an upload, so no `SupportingDocUpload` can
+        // ever hold non-PDF bytes.
+        assert!(matches!(
+            SupportingDocUpload::new(SdType::Other, "o.pdf", b"not a pdf".to_vec()),
+            Err(SupportDocError::NotPdf { .. })
+        ));
     }
 
     #[test]

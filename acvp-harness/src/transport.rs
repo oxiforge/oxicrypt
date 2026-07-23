@@ -948,7 +948,7 @@ pub const TOKEN_REFRESH_MARGIN_SECS: u64 = 20 * 60;
 
 /// Pure proactive-refresh decision — split out so the threshold logic
 /// is unit-testable without a live token.
-pub fn token_needs_refresh(elapsed_secs: u64) -> bool {
+fn token_needs_refresh(elapsed_secs: u64) -> bool {
     elapsed_secs >= TOKEN_REFRESH_MARGIN_SECS
 }
 
@@ -1891,7 +1891,7 @@ fn write_session_summary(
 ///
 /// The response is typically:
 /// `[{"acvVersion":"1.0"},{"accessToken":"...","large...":...}]`
-pub fn extract_access_token(resp: &JsonValue) -> Result<String, String> {
+fn extract_access_token(resp: &JsonValue) -> Result<String, String> {
     // Try array-of-objects shape
     if let Some(arr) = resp.as_array() {
         for item in arr {

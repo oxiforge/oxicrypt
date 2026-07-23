@@ -277,7 +277,7 @@ impl EnvelopeValue for crate::jsonlite::JsonLite {
 /// [`crate::registration::parse_registration_response`], and the data-file
 /// status poll ([`crate::datafiles::poll_data_file`]) share; it deliberately
 /// rejects the bare-object form that the more permissive
-/// [`acvp_harness::transport::extract_access_token`] accepts. Generic over
+/// `acvp_harness::transport::extract_access_token` accepts. Generic over
 /// [`EnvelopeValue`] so both the integer-only codec and the float-tolerant
 /// [`crate::jsonlite`] reader reuse the identical validation. Exposed
 /// `pub(crate)`.
@@ -309,7 +309,7 @@ pub(crate) fn esv_payload_element<V: EnvelopeValue>(parsed: &V) -> Result<&V, St
 /// **Fail-closed vs. the acvp helper:** this requires the ESVP two-element
 /// versioned envelope `[{esvVersion}, {payload}]` and reads `accessToken`
 /// from the payload element. It intentionally does **not** delegate to
-/// [`acvp_harness::transport::extract_access_token`], which also accepts a
+/// `acvp_harness::transport::extract_access_token`, which also accepts a
 /// bare `{"accessToken":"…"}` object (an ACVP-side permissiveness) — ESV
 /// responses are always the envelope, so the bare-object form is rejected.
 pub fn parse_access_token(body: &str) -> Result<String, String> {

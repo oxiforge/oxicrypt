@@ -339,7 +339,11 @@ pub struct DataFileUpload {
     /// from the assessment's `bitsPerSample`. `Some(n)` emits the
     /// `DataFileSampleSize` field; `None` omits it (matching the reference
     /// client, which sends the field only when `bits_per_sample != 0`).
-    pub sample_size: Option<u8>,
+    ///
+    /// Private so the [`Self::with_sample_size`] `1..=8` range check is the
+    /// **only** way a value enters — a struct literal cannot bypass it. Read
+    /// via [`Self::sample_size`].
+    sample_size: Option<u8>,
     /// The uploaded file's name (the `filename` of the `dataFile` part).
     pub filename: String,
     /// The raw file bytes (byte-padded 1M samples in production; the
@@ -374,6 +378,14 @@ impl DataFileUpload {
         }
         self.sample_size = Some(size);
         Ok(self)
+    }
+
+    /// The declared per-sample width (`Some(n)` when set via
+    /// [`Self::with_sample_size`], `None` otherwise). The read-only accessor
+    /// for the sealed `sample_size` field.
+    #[must_use]
+    pub fn sample_size(&self) -> Option<u8> {
+        self.sample_size
     }
 
     /// The full server-relative resource path for this upload.
@@ -1286,7 +1298,7 @@ mod tests {
     #[test]
     fn sample_size_is_omitted_when_unset() {
         let up = DataFileUpload::new("1", "2", "raw.bin", vec![0]);
-        assert!(up.sample_size.is_none());
+        assert!(up.sample_size().is_none());
         assert!(
             !up.parts()
                 .iter()

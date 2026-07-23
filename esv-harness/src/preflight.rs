@@ -487,7 +487,7 @@ pub fn effective_sample_width(bits_per_sample: i64) -> u32 {
 ///    declared, it must equal the effective width the registration implies.
 ///
 /// `declared_sample_size` is the `DataFileSampleSize` the upload would carry
-/// (see [`crate::datafiles::DataFileUpload::sample_size`]); pass `None` when
+/// (see [`crate::datafiles::DataFileUpload::sample_size()`]); pass `None` when
 /// the field is omitted.
 ///
 /// # Errors

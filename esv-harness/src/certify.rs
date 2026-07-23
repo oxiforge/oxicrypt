@@ -87,6 +87,13 @@ pub enum CertifyError {
         /// The rejected `eaId`.
         ea_id: i64,
     },
+    /// An entropy assessment carried an empty `accessToken`. The scoped JWT is
+    /// required to reference the assessment; an empty one is a fail-closed
+    /// early catch that saves a credentialed round-trip. Carries the `eaId`.
+    EmptyAssessmentAccessToken {
+        /// The `eaId` of the assessment with an empty access token.
+        ea_id: i64,
+    },
     /// The certify request referenced no entropy assessments (at least one
     /// is required).
     NoAssessments,
@@ -107,6 +114,13 @@ pub enum CertifyError {
     TooManyAttestations {
         /// The observed count.
         count: usize,
+    },
+    /// A supporting document carried an empty `accessToken`. The scoped JWT is
+    /// required to reference the document; an empty one is a fail-closed early
+    /// catch that saves a credentialed round-trip. Carries the `sdId`.
+    EmptySupportingDocAccessToken {
+        /// The `sdId` of the document with an empty access token.
+        sd_id: i64,
     },
     /// An AddOE / UpdatePUD request supplied no `entropyCertificate`.
     MissingEntropyCertificate,
@@ -171,6 +185,10 @@ impl core::fmt::Display for CertifyError {
             Self::InvalidEaId { ea_id } => {
                 write!(f, "entropy assessment eaId {ea_id} is not positive")
             }
+            Self::EmptyAssessmentAccessToken { ea_id } => write!(
+                f,
+                "entropy assessment eaId {ea_id} requires a non-empty accessToken"
+            ),
             Self::NoAssessments => {
                 f.write_str("certify request requires at least one entropy assessment")
             }
@@ -185,6 +203,10 @@ impl core::fmt::Display for CertifyError {
             Self::TooManyAttestations { count } => write!(
                 f,
                 "certify request permits at most one DataCollectionAttestation, got {count}"
+            ),
+            Self::EmptySupportingDocAccessToken { sd_id } => write!(
+                f,
+                "supporting document sdId {sd_id} requires a non-empty accessToken"
             ),
             Self::MissingEntropyCertificate => {
                 f.write_str("request requires a non-empty entropyCertificate")
@@ -319,6 +341,9 @@ fn check_assessments(assessments: &[CertifyAssessment]) -> Result<(), CertifyErr
         if a.oe_id <= 0 {
             return Err(CertifyError::MissingOeId { ea_id: a.ea_id });
         }
+        if a.access_token.is_empty() {
+            return Err(CertifyError::EmptyAssessmentAccessToken { ea_id: a.ea_id });
+        }
         if assessments.iter().take(i).any(|b| b.ea_id == a.ea_id) {
             return Err(CertifyError::DuplicateEaId { ea_id: a.ea_id });
         }
@@ -413,6 +438,21 @@ fn check_supporting_doc_constraints(docs: &[SupportingDoc]) -> Result<(), Certif
     let dca = count_of(SdType::DataCollectionAttestation);
     if dca > 1 {
         return Err(CertifyError::TooManyAttestations { count: dca });
+    }
+    for d in docs {
+        check_supporting_doc_token(d)?;
+    }
+    Ok(())
+}
+
+/// Enforce a supporting document's scoped JWT is non-empty. An empty
+/// `accessToken` cannot reference the document, so it is refused at
+/// construction (a fail-closed early catch that saves a credentialed
+/// round-trip) — shared by the multi-doc certify paths and the UpdatePUD
+/// single-doc path.
+fn check_supporting_doc_token(doc: &SupportingDoc) -> Result<(), CertifyError> {
+    if doc.access_token.is_empty() {
+        return Err(CertifyError::EmptySupportingDocAccessToken { sd_id: doc.sd_id });
     }
     Ok(())
 }
@@ -684,6 +724,7 @@ impl UpdatePudRequest {
                 sd_type: doc.sd_type,
             });
         }
+        check_supporting_doc_token(&doc)?;
         Ok(Self {
             entropy_id: entropy_id.to_string(),
             entropy_certificate: entropy_certificate.to_string(),
@@ -831,6 +872,69 @@ mod tests {
         assert_eq!(
             CertifyRequest::new("T", 3, vec![], valid_docs(), &iid_facts()),
             Err(CertifyError::NoAssessments)
+        );
+    }
+
+    #[test]
+    fn full_certify_rejects_non_positive_ea_id() {
+        // The 13th variant, previously untested: a non-positive eaId is
+        // refused at construction (the guard at check_assessments).
+        assert_eq!(
+            CertifyRequest::new(
+                "T",
+                3,
+                vec![CertifyAssessment::new(0, 7, "t")],
+                valid_docs(),
+                &iid_facts(),
+            ),
+            Err(CertifyError::InvalidEaId { ea_id: 0 })
+        );
+        assert_eq!(
+            CertifyRequest::new(
+                "T",
+                3,
+                vec![CertifyAssessment::new(-5, 7, "t")],
+                valid_docs(),
+                &iid_facts(),
+            ),
+            Err(CertifyError::InvalidEaId { ea_id: -5 })
+        );
+    }
+
+    #[test]
+    fn full_certify_rejects_empty_assessment_access_token() {
+        // An empty scoped JWT is a fail-closed early catch (saves a
+        // credentialed round-trip).
+        assert_eq!(
+            CertifyRequest::new(
+                "T",
+                3,
+                vec![CertifyAssessment::new(11, 7, "")],
+                valid_docs(),
+                &iid_facts(),
+            ),
+            Err(CertifyError::EmptyAssessmentAccessToken { ea_id: 11 })
+        );
+    }
+
+    #[test]
+    fn full_certify_rejects_empty_supporting_doc_access_token() {
+        // A supporting document with an empty scoped JWT is refused at
+        // construction, before any request reaches the wire.
+        let empty_ear = SupportingDoc {
+            sd_id: 1,
+            sd_type: SdType::EntropyAssessmentReport,
+            access_token: String::new(),
+        };
+        assert_eq!(
+            CertifyRequest::new(
+                "T",
+                3,
+                one_assessment(),
+                vec![empty_ear, pud()],
+                &iid_facts(),
+            ),
+            Err(CertifyError::EmptySupportingDocAccessToken { sd_id: 1 })
         );
     }
 
@@ -1134,6 +1238,21 @@ mod tests {
         assert_eq!(
             UpdatePudRequest::new("T", "", pud()),
             Err(CertifyError::MissingEntropyCertificate)
+        );
+    }
+
+    #[test]
+    fn update_pud_rejects_empty_access_token() {
+        // The single-doc UpdatePUD path enforces the same non-empty scoped-JWT
+        // guard as the multi-doc certify paths.
+        let empty_pud = SupportingDoc {
+            sd_id: 2,
+            sd_type: SdType::PublicUseDocument,
+            access_token: String::new(),
+        };
+        assert_eq!(
+            UpdatePudRequest::new("T", "E1", empty_pud),
+            Err(CertifyError::EmptySupportingDocAccessToken { sd_id: 2 })
         );
     }
 
