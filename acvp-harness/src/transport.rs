@@ -795,9 +795,16 @@ fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
 /// Build the ACVP registration capabilities array from handler
 /// `acvp_capabilities_filtered()` methods. When `filter_mode` is
 /// supplied it is matched against `h.mode()` — handlers whose
-/// `mode()` does not equal `Some(filter_mode)` are skipped, narrowing
-/// the registration to a single (algorithm, mode) tuple as ACVTS
-/// demo etiquette requires (one vector set per session).
+/// `mode()` does not equal `Some(filter_mode)` are skipped.
+///
+/// `filter_alg` + `filter_mode` alone no longer guarantee a single
+/// registration. Once an (algorithm, mode) pair is served by handlers
+/// for more than one ACVP revision — LMS sigGen and sigVer each serve
+/// `1.0` and `SP800-208` — that pair matches every such handler and
+/// registers one capability block per revision, i.e. several vector
+/// sets in one session. `filter_revision` is what restores the
+/// one-vector-set-per-session property ACVTS demo etiquette requires;
+/// supply it whenever the target pair has multiple revisions.
 ///
 /// `filter_paramset` is plumbed through to
 /// `acvp_capabilities_filtered`; the default trait impl ignores the

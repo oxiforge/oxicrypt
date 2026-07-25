@@ -546,7 +546,8 @@ fn print_demo_run_usage() {
     eprintln!(
         "  --mode <mode>         narrow to one mode for multi-mode algorithms (e.g. sigVer);"
     );
-    eprintln!("                        produces exactly one vector set per session");
+    eprintln!("                        one vector set per session, unless the pair serves several");
+    eprintln!("                        ACVP revisions — then add --revision (see below)");
     eprintln!("  --revision <rev>      narrow to one ACVP revision when an (algorithm, mode) pair");
     eprintln!("                        has handlers for several — LMS sigGen/sigVer each serve");
     eprintln!("                        1.0 and SP800-208; without this both register");

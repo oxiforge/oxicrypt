@@ -1954,10 +1954,16 @@ pub fn lms_sigver_capability(caps_filter: Option<&str>) -> JsonValue {
 
 /// Message lengths (bits) declared for the `SP800-208` LMS revision.
 ///
-/// Byte-aligned and deliberately spread across one hash block, a
-/// multi-block message, and a large one, so the variable-length path
-/// is exercised rather than nominally declared. LMS hashes the message,
-/// so length is not cryptographically constrained.
+/// 16, 128 and 1024 bytes: byte-aligned, spanning roughly two orders of
+/// magnitude so the variable-length path is exercised rather than
+/// nominally declared. Deliberately not characterised in hash-block
+/// terms — this one array serves every family in the grid, whose block
+/// or rate sizes differ (SHA-256 64 B, SHAKE256 136 B, SHAKE128 168 B),
+/// so no single value sits at the same block boundary for all of them.
+/// 16 B is sub-block everywhere and 1024 B is multi-block everywhere;
+/// 128 B straddles (multi-block for SHA-256, sub-rate for both SHAKEs).
+/// LMS hashes the message, so length is not cryptographically
+/// constrained.
 const LMS_SP800_208_MESSAGE_LENGTHS: &[i64] = &[128, 1024, 8192];
 
 /// Build an ACVP registration block for LMS / sigGen / `SP800-208`.
