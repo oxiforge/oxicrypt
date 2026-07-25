@@ -216,6 +216,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
     let mut totp_secret = String::new();
     let mut algorithm: Option<String> = None;
     let mut mode: Option<String> = None;
+    let mut revision: Option<String> = None;
     let mut paramset: Option<String> = None;
     // Runtime LMS capabilities filter (retires the manual caps.rs edit). Also
     // sourced from OXICRYPT_CAPS_FILTER after the arg loop; see the guard below.
@@ -290,6 +291,12 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
                 i += 1;
                 if i < args.len() {
                     mode = Some(args[i].clone());
+                }
+            }
+            "--revision" => {
+                i += 1;
+                if i < args.len() {
+                    revision = Some(args[i].clone());
                 }
             }
             "--paramset" => {
@@ -504,6 +511,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         totp_secret,
         filter_algorithm: algorithm,
         filter_mode: mode,
+        filter_revision: revision,
         // --caps-filter and --paramset are mutually exclusive (guarded above) and feed
         // the same acvp_capabilities_filtered seam, so either one populates it.
         filter_paramset: paramset.or(caps_filter),
@@ -525,6 +533,7 @@ fn print_demo_run_usage() {
     eprintln!("               (--key <key.pem> | --pkcs11-key 'pkcs11:object=...;type=private')");
     eprintln!("               [--pkcs11-module <path>] [--pkcs11-pin-source <path>]");
     eprintln!("               [--http-backend curl|s_client] [--algorithm <name>] [--mode <mode>]");
+    eprintln!("               [--revision <rev>]");
     eprintln!("               [--paramset <NAME>] [--server <url>] [--log <path>]");
     eprintln!();
     eprintln!("  --key                 file-based PEM key (default backend: curl)");
@@ -538,6 +547,9 @@ fn print_demo_run_usage() {
         "  --mode <mode>         narrow to one mode for multi-mode algorithms (e.g. sigVer);"
     );
     eprintln!("                        produces exactly one vector set per session");
+    eprintln!("  --revision <rev>      narrow to one ACVP revision when an (algorithm, mode) pair");
+    eprintln!("                        has handlers for several — LMS sigGen/sigVer each serve");
+    eprintln!("                        1.0 and SP800-208; without this both register");
     eprintln!("  --paramset <NAME>     for --algorithm SLH-DSA only: restrict to one of the 12");
     eprintln!("                        FIPS 205 §11 Table 2 paramSets (e.g. SLH-DSA-SHA2-128s);");
     eprintln!(
@@ -776,6 +788,7 @@ fn run_resubmit_cli(args: &[String]) -> std::process::ExitCode {
         totp_secret,
         filter_algorithm: None,
         filter_mode: None,
+        filter_revision: None,
         filter_paramset: None,
         query_session_url: None,
         refresh_with_token: refresh_with,

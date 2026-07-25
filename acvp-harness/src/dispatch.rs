@@ -387,7 +387,9 @@ pub fn with_default_handlers() -> Registry {
     // LMS (R62: keyGen / sigGen / sigVer, SP 800-208 / RFC 8554)
     r.register(Box::new(handlers::lms::LmsKeyGenHandler));
     r.register(Box::new(handlers::lms::LmsSigGenHandler));
+    r.register(Box::new(handlers::lms::LmsSigGenSp800208Handler));
     r.register(Box::new(handlers::lms::LmsSigVerHandler));
+    r.register(Box::new(handlers::lms::LmsSigVerSp800208Handler));
     // XMSS (R62: keyGen / sigGen / sigVer, SP 800-208 / RFC 8391)
     r.register(Box::new(handlers::xmss::XmssKeyGenHandler));
     r.register(Box::new(handlers::xmss::XmssSigGenHandler));
@@ -562,6 +564,14 @@ mod tests {
         assert!(r.find("LMS", Some("keyGen"), "1.0").is_some());
         assert!(r.find("LMS", Some("sigGen"), "1.0").is_some());
         assert!(r.find("LMS", Some("sigVer"), "1.0").is_some());
+        // LMS sigGen/sigVer also register under the SP800-208 revision, which
+        // the demo server advertises alongside 1.0 (catalog ids 218/219). Both
+        // must resolve — the registry keys on (algorithm, mode, revision).
+        assert!(r.find("LMS", Some("sigGen"), "SP800-208").is_some());
+        assert!(r.find("LMS", Some("sigVer"), "SP800-208").is_some());
+        // No keyGen under SP800-208: key generation has no message, so the
+        // server advertises the revision for the signing modes only.
+        assert!(r.find("LMS", Some("keyGen"), "SP800-208").is_none());
         // R62 XMSS (SP 800-208)
         assert!(r.find("XMSS", Some("keyGen"), "1.0").is_some());
         assert!(r.find("XMSS", Some("sigGen"), "1.0").is_some());
@@ -571,7 +581,7 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 86);
+        assert_eq!(r.len(), 88);
         assert!(!r.is_empty());
     }
 

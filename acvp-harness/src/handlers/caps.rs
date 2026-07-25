@@ -1952,6 +1952,66 @@ pub fn lms_sigver_capability(caps_filter: Option<&str>) -> JsonValue {
     ])
 }
 
+/// Message lengths (bits) declared for the `SP800-208` LMS revision.
+///
+/// Byte-aligned and deliberately spread across one hash block, a
+/// multi-block message, and a large one, so the variable-length path
+/// is exercised rather than nominally declared. LMS hashes the message,
+/// so length is not cryptographically constrained.
+const LMS_SP800_208_MESSAGE_LENGTHS: &[i64] = &[128, 1024, 8192];
+
+/// Build an ACVP registration block for LMS / sigGen / `SP800-208`.
+///
+/// The `SP800-208` counterpart to [`lms_siggen_capability`], adding the
+/// top-level `messageLength` domain that revision `1.0` lacks. The
+/// inverted key model is unchanged from revision `1.0` — the IUT still
+/// supplies its own group-level `publicKey` in the response — so this
+/// shares `handle_siggen_group`, which decodes each test's `message`
+/// with no fixed-size assumption.
+pub fn lms_siggen_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
+    obj(vec![
+        ("algorithm", str_val("LMS")),
+        ("mode", str_val("sigGen")),
+        ("revision", str_val("SP800-208")),
+        (
+            "specificCapabilities",
+            lms_specific_capabilities_filtered(caps_filter),
+        ),
+        ("messageLength", num_array(LMS_SP800_208_MESSAGE_LENGTHS)),
+    ])
+}
+
+/// Build an ACVP registration block for LMS / sigVer / `SP800-208`.
+///
+/// Distinct from [`lms_sigver_capability`] (revision `1.0`), not a
+/// relabel: per `draft-celi-acvp-lms §5` the `SP800-208` revision adds
+/// a top-level `messageLength` field — "The `messageLength` field is
+/// only applicable to LMS / sigGen / SP800-208, and LMS / sigVer /
+/// SP800-208" — which revision `1.0` does not carry. Verification
+/// itself is unchanged, so this shares `handle_sigver_group`; the
+/// handler already decodes `message` to a `Vec<u8>` with no fixed-size
+/// assumption.
+///
+/// `messageLength` sits at the TOP level of the capability object, not
+/// inside `specificCapabilities`. The registration declares
+/// `specificCapabilities` only — per the draft a registration must not
+/// carry both `capabilities` and `specificCapabilities`.
+///
+/// There is deliberately no keyGen counterpart: key generation has no
+/// message, so the server advertises `SP800-208` for sigGen/sigVer only.
+pub fn lms_sigver_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
+    obj(vec![
+        ("algorithm", str_val("LMS")),
+        ("mode", str_val("sigVer")),
+        ("revision", str_val("SP800-208")),
+        (
+            "specificCapabilities",
+            lms_specific_capabilities_filtered(caps_filter),
+        ),
+        ("messageLength", num_array(LMS_SP800_208_MESSAGE_LENGTHS)),
+    ])
+}
+
 // ── Stateful HBS: XMSS ──────────────────────────────────────────
 
 /// Build an ACVP registration block for XMSS / keyGen.
@@ -2148,6 +2208,69 @@ mod tests {
         );
         assert_eq!(lms_pairs(&lms_siggen_capability(None)).len(), 80);
         assert_eq!(lms_pairs(&lms_sigver_capability(None)).len(), 80);
+    }
+
+    #[test]
+    fn lms_sp800_208_cap_shape() {
+        for (mode, cap) in [
+            ("sigGen", lms_siggen_sp800_208_capability(None)),
+            ("sigVer", lms_sigver_sp800_208_capability(None)),
+        ] {
+            check_sp800_208_cap(mode, &cap);
+        }
+    }
+
+    /// Shared assertions for both SP800-208 LMS capability blocks.
+    fn check_sp800_208_cap(mode: &str, cap: &JsonValue) {
+        assert_eq!(obj_str_field(cap, "algorithm"), Some("LMS"));
+        assert_eq!(obj_str_field(cap, "mode"), Some(mode));
+        assert_eq!(
+            obj_str_field(cap, "revision"),
+            Some("SP800-208"),
+            "{mode} must register under the new revision, not 1.0"
+        );
+
+        // Same 80-pair grid as revision 1.0 — the revision changes the
+        // message-length dimension, not which (lmsMode, lmOtsMode) pairs exist.
+        assert_eq!(lms_pairs(cap).len(), 80);
+
+        // messageLength is TOP-level per draft-celi-acvp-lms, not nested
+        // inside specificCapabilities.
+        let JsonValue::Object(fields) = cap else {
+            panic!("capability is a JSON object");
+        };
+        let Some((_, msg_len)) = fields.iter().find(|(k, _)| k == "messageLength") else {
+            panic!("SP800-208 declares a top-level messageLength");
+        };
+        let JsonValue::Array(lengths) = msg_len else {
+            panic!("messageLength is a JSON array of integers");
+        };
+        assert!(!lengths.is_empty(), "at least one message length");
+        assert!(
+            lengths.len() > 1,
+            "declare a spread of lengths so the variable-length path is exercised"
+        );
+
+        // A registration must not carry both `capabilities` and
+        // `specificCapabilities`; the server rejects that outright.
+        assert!(
+            !fields.iter().any(|(k, _)| k == "capabilities"),
+            "specificCapabilities and capabilities are mutually exclusive"
+        );
+
+        // The matching revision-1.0 block must NOT sprout a messageLength.
+        let v1 = if mode == "sigGen" {
+            lms_siggen_capability(None)
+        } else {
+            lms_sigver_capability(None)
+        };
+        let JsonValue::Object(v1_fields) = v1 else {
+            panic!("capability is a JSON object");
+        };
+        assert!(
+            !v1_fields.iter().any(|(k, _)| k == "messageLength"),
+            "messageLength applies only to the SP800-208 revision ({mode})"
+        );
     }
 
     #[test]

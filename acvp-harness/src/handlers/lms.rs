@@ -84,6 +84,35 @@ impl AlgorithmHandler for LmsSigGenHandler {
     }
 }
 
+/// LMS SigGen dispatcher for the `SP800-208` revision.
+///
+/// Sits alongside [`LmsSigGenHandler`] (revision `1.0`) in the
+/// `(algorithm, mode, revision)` registry — the server advertises both.
+/// The revision adds a `messageLength` domain; the signing work and the
+/// inverted key model are unchanged, so the group handler is shared.
+pub struct LmsSigGenSp800208Handler;
+
+impl AlgorithmHandler for LmsSigGenSp800208Handler {
+    fn algorithm(&self) -> &'static str {
+        "LMS"
+    }
+    fn mode(&self) -> Option<&'static str> {
+        Some("sigGen")
+    }
+    fn revision(&self) -> &'static str {
+        "SP800-208"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::lms_siggen_sp800_208_capability(None))
+    }
+    fn acvp_capabilities_filtered(&self, caps_filter: Option<&str>) -> Option<JsonValue> {
+        Some(super::caps::lms_siggen_sp800_208_capability(caps_filter))
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_siggen_group(group)
+    }
+}
+
 // ── SigVer handler ──────────────────────────────────────────────────
 
 /// LMS SigVer dispatcher.
@@ -104,6 +133,39 @@ impl AlgorithmHandler for LmsSigVerHandler {
     }
     fn acvp_capabilities_filtered(&self, caps_filter: Option<&str>) -> Option<JsonValue> {
         Some(super::caps::lms_sigver_capability(caps_filter))
+    }
+    fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
+        handle_sigver_group(group)
+    }
+}
+
+/// LMS SigVer dispatcher for the `SP800-208` revision.
+///
+/// The registry keys on `(algorithm, mode, revision)`, so this sits
+/// alongside [`LmsSigVerHandler`] (revision `1.0`) rather than
+/// replacing it — the server advertises both.
+///
+/// The `SP800-208` revision differs only in declaring a `messageLength`
+/// domain (variable-length messages); the verification work is
+/// identical, so the group handler is shared. `handle_sigver_group`
+/// decodes `message` per test case with no fixed-length assumption.
+pub struct LmsSigVerSp800208Handler;
+
+impl AlgorithmHandler for LmsSigVerSp800208Handler {
+    fn algorithm(&self) -> &'static str {
+        "LMS"
+    }
+    fn mode(&self) -> Option<&'static str> {
+        Some("sigVer")
+    }
+    fn revision(&self) -> &'static str {
+        "SP800-208"
+    }
+    fn acvp_capabilities(&self) -> Option<JsonValue> {
+        Some(super::caps::lms_sigver_sp800_208_capability(None))
+    }
+    fn acvp_capabilities_filtered(&self, caps_filter: Option<&str>) -> Option<JsonValue> {
+        Some(super::caps::lms_sigver_sp800_208_capability(caps_filter))
     }
     fn handle_group(&self, group: &JsonValue) -> Result<JsonValue, DispatchError> {
         handle_sigver_group(group)

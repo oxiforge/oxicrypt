@@ -120,6 +120,14 @@ pub struct AcvpConfig {
     /// algorithm name has multiple mode-specific handlers and ACVTS
     /// demo etiquette requires one vector set per session.
     pub filter_mode: Option<String>,
+    /// Optional: only register handlers whose `revision()` matches this
+    /// string. Needed once one `(algorithm, mode)` pair is served by
+    /// more than one handler — LMS sigGen/sigVer each have a `1.0` and
+    /// an `SP800-208` handler, and without this filter a single
+    /// `--algorithm LMS --mode sigVer` run would register both,
+    /// producing two vector sets in one session and re-grading coverage
+    /// that already passed.
+    pub filter_revision: Option<String>,
     /// Optional: when set, restrict an `acvp_capabilities_filtered`-
     /// aware handler (currently only the SLH-DSA family) to a single
     /// parameter set, producing one vector set per session per
@@ -799,6 +807,7 @@ fn build_capabilities(
     registry: &Registry,
     filter_alg: Option<&str>,
     filter_mode: Option<&str>,
+    filter_revision: Option<&str>,
     filter_paramset: Option<&str>,
 ) -> Vec<JsonValue> {
     let mut caps = Vec::new();
@@ -810,6 +819,11 @@ fn build_capabilities(
         }
         if let Some(mode_name) = filter_mode
             && h.mode() != Some(mode_name)
+        {
+            return;
+        }
+        if let Some(rev) = filter_revision
+            && h.revision() != rev
         {
             return;
         }
@@ -1113,6 +1127,7 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
             &registry,
             config.filter_algorithm.as_deref(),
             config.filter_mode.as_deref(),
+            config.filter_revision.as_deref(),
             config.filter_paramset.as_deref(),
         );
         if caps.is_empty() {
@@ -2497,5 +2512,50 @@ mod tests {
         assert_eq!(session.read_status().unwrap(), session::STATUS_PENDING);
         assert_eq!(session.read_response().unwrap(), response_body);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `--revision` must isolate one handler when an (algorithm, mode)
+    /// pair is served by several. LMS sigGen/sigVer each have a `1.0`
+    /// and an `SP800-208` handler; registering both in one session
+    /// would produce two vector sets and re-grade passed coverage.
+    #[test]
+    fn build_capabilities_revision_filter_isolates_one_registration() {
+        let _ = crate::ensure_initialized();
+        let registry = crate::dispatch::with_default_handlers();
+
+        let revision_of = |caps: &[JsonValue]| -> Vec<String> {
+            caps.iter()
+                .filter_map(|c| match c {
+                    JsonValue::Object(f) => f
+                        .iter()
+                        .find(|(k, _)| k == "revision")
+                        .and_then(|(_, v)| v.as_str())
+                        .map(str::to_string),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        for mode in ["sigGen", "sigVer"] {
+            // No revision filter: both LMS revisions register.
+            let both = build_capabilities(&registry, Some("LMS"), Some(mode), None, None);
+            assert_eq!(
+                both.len(),
+                2,
+                "{mode}: 1.0 and SP800-208 both register without a revision filter"
+            );
+
+            // With the filter: exactly one, and the right one.
+            for want in ["1.0", "SP800-208"] {
+                let caps = build_capabilities(&registry, Some("LMS"), Some(mode), Some(want), None);
+                assert_eq!(caps.len(), 1, "{mode}/{want}: exactly one registration");
+                assert_eq!(revision_of(&caps), vec![want.to_string()]);
+            }
+        }
+
+        // A revision no handler serves yields nothing rather than
+        // silently falling back to every revision.
+        let none = build_capabilities(&registry, Some("LMS"), Some("sigVer"), Some("9.9"), None);
+        assert!(none.is_empty(), "unknown revision must match no handler");
     }
 }
