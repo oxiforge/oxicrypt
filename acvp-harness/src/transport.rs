@@ -810,6 +810,22 @@ fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
 /// `acvp_capabilities_filtered`; the default trait impl ignores the
 /// filter, so non-SLH-DSA handlers behave identically whether or not
 /// `--paramset` was supplied.
+/// The distinct `revision` values present in a built capability array,
+/// in first-seen order. Used to detect a scope that spans revisions.
+fn distinct_revisions(caps: &[JsonValue]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in caps {
+        if let JsonValue::Object(fields) = c
+            && let Some((_, v)) = fields.iter().find(|(k, _)| k == "revision")
+            && let Some(rev) = v.as_str()
+            && !out.iter().any(|seen| seen == rev)
+        {
+            out.push(rev.to_string());
+        }
+    }
+    out
+}
+
 fn build_capabilities(
     registry: &Registry,
     filter_alg: Option<&str>,
@@ -1139,6 +1155,29 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         );
         if caps.is_empty() {
             return Err("no handlers returned ACVP capabilities".to_string());
+        }
+        // A scoped (algorithm, mode) selection that still spans several ACVP
+        // revisions is almost certainly not what the operator meant: it emits
+        // one vector set per revision, re-grading coverage that already passed.
+        // Refuse it and name the revisions rather than silently doubling the
+        // session — the surprise is expensive when the extra set is a
+        // tall-tree sigGen. Checked here, before Transport::open, so the
+        // failure costs no login and no YubiKey touch. Only fires when both
+        // --algorithm and --mode are set: an unfiltered sweep is a different,
+        // deliberate mode and is left alone.
+        if config.filter_revision.is_none()
+            && config.filter_algorithm.is_some()
+            && config.filter_mode.is_some()
+        {
+            let revs = distinct_revisions(&caps);
+            if revs.len() > 1 {
+                return Err(format!(
+                    "this (algorithm, mode) is served by {} ACVP revisions ({}) and would \
+                     register one vector set each; pass --revision <rev> to pick one",
+                    revs.len(),
+                    revs.join(", ")
+                ));
+            }
         }
         eprintln!(
             "[transport] built {} capability registration(s)",
@@ -2564,5 +2603,78 @@ mod tests {
         // silently falling back to every revision.
         let none = build_capabilities(&registry, Some("LMS"), Some("sigVer"), Some("9.9"), None);
         assert!(none.is_empty(), "unknown revision must match no handler");
+    }
+
+    /// The failure the CLI's `--revision requires --mode` guard prevents.
+    ///
+    /// `--revision` narrows to a revision, not to a vector set: it keeps every
+    /// handler serving that revision, across modes. LMS sigGen and sigVer both
+    /// serve `SP800-208`, so a revision-only (or algorithm+revision) scope
+    /// still registers two capability blocks — two vector sets in one session.
+    /// Only adding the mode pins a single handler.
+    #[test]
+    fn revision_alone_does_not_narrow_to_one_vector_set() {
+        let _ = crate::ensure_initialized();
+        let r = crate::dispatch::with_default_handlers();
+
+        assert_eq!(
+            build_capabilities(&r, None, None, Some("SP800-208"), None).len(),
+            2,
+            "revision alone matches every handler serving it"
+        );
+        assert_eq!(
+            build_capabilities(&r, Some("LMS"), None, Some("SP800-208"), None).len(),
+            2,
+            "algorithm + revision is still both LMS modes — this is why the CLI \
+             guard demands --mode rather than --algorithm"
+        );
+        for mode in ["sigGen", "sigVer"] {
+            assert_eq!(
+                build_capabilities(&r, Some("LMS"), Some(mode), Some("SP800-208"), None).len(),
+                1,
+                "algorithm + mode + revision pins exactly one handler"
+            );
+        }
+    }
+
+    /// `distinct_revisions` is what decides whether a scoped selection is
+    /// ambiguous, so pin it directly: it dedups, preserves first-seen order,
+    /// and tolerates entries without a revision field.
+    #[test]
+    fn distinct_revisions_dedups_in_first_seen_order() {
+        let cap = |rev: Option<&str>| {
+            let mut f = vec![("algorithm".to_string(), JsonValue::String("LMS".into()))];
+            if let Some(r) = rev {
+                f.push(("revision".to_string(), JsonValue::String(r.into())));
+            }
+            JsonValue::Object(f)
+        };
+
+        assert_eq!(
+            distinct_revisions(&[cap(Some("SP800-208")), cap(Some("1.0")), cap(Some("1.0"))]),
+            vec!["SP800-208".to_string(), "1.0".to_string()]
+        );
+        assert_eq!(
+            distinct_revisions(&[cap(Some("1.0"))]),
+            vec!["1.0".to_string()]
+        );
+        assert!(distinct_revisions(&[cap(None)]).is_empty());
+        assert!(distinct_revisions(&[]).is_empty());
+    }
+
+    /// The regression the ambiguity check exists to catch: adding a second
+    /// revision for an (algorithm, mode) pair silently doubled the vector
+    /// sets of the long-standing `--algorithm LMS --mode sigVer` invocation.
+    #[test]
+    fn scoped_lms_sigver_spans_two_revisions() {
+        let _ = crate::ensure_initialized();
+        let r = crate::dispatch::with_default_handlers();
+        let caps = build_capabilities(&r, Some("LMS"), Some("sigVer"), None, None);
+        assert_eq!(caps.len(), 2, "both revisions match without --revision");
+        assert_eq!(
+            distinct_revisions(&caps).len(),
+            2,
+            "and they differ by revision"
+        );
     }
 }
