@@ -122,11 +122,14 @@ pub struct AcvpConfig {
     pub filter_mode: Option<String>,
     /// Optional: only register handlers whose `revision()` matches this
     /// string. Needed once one `(algorithm, mode)` pair is served by
-    /// more than one handler — LMS sigGen/sigVer each have a `1.0` and
-    /// an `SP800-208` handler, and without this filter a single
-    /// `--algorithm LMS --mode sigVer` run would register both,
-    /// producing two vector sets in one session and re-grading coverage
-    /// that already passed.
+    /// more than one handler — LMS sigGen and sigVer each have a `1.0`
+    /// and an `SP800-208` handler.
+    ///
+    /// Omitting it on such a pair no longer registers both silently:
+    /// `run_demo` refuses a capability set containing the same
+    /// `(algorithm, mode)` under two revisions (see `revision_duplicate`)
+    /// before opening the transport. This field is how the caller then
+    /// says which revision was meant.
     pub filter_revision: Option<String>,
     /// Optional: when set, restrict an `acvp_capabilities_filtered`-
     /// aware handler (currently only the SLH-DSA family) to a single
@@ -841,6 +844,47 @@ fn build_capabilities(
     caps
 }
 
+/// A registration that duplicates another's `(algorithm, mode)` while
+/// differing in `revision`, if any: returns `(algorithm, mode, revisions)`.
+///
+/// This is the ambiguity worth refusing. Several *modes* registering at
+/// once is ordinary — `--algorithm ECDSA` without `--mode` has always
+/// produced one vector set per mode, and that is visible from what was
+/// typed. Two registrations of the *same* logical service differing only
+/// by revision is not visible from what was typed, and is what appeared
+/// the moment LMS gained `SP800-208` handlers beside its `1.0` ones.
+fn revision_duplicate(caps: &[JsonValue]) -> Option<(String, String, Vec<String>)> {
+    let field = |c: &JsonValue, k: &str| -> Option<String> {
+        match c {
+            JsonValue::Object(f) => f
+                .iter()
+                .find(|(key, _)| key == k)
+                .and_then(|(_, v)| v.as_str())
+                .map(str::to_string),
+            _ => None,
+        }
+    };
+
+    let mut seen: Vec<(String, String, Vec<String>)> = Vec::new();
+    for c in caps {
+        let Some(alg) = field(c, "algorithm") else {
+            continue;
+        };
+        let mode = field(c, "mode").unwrap_or_else(|| "-".to_string());
+        let Some(rev) = field(c, "revision") else {
+            continue;
+        };
+        if let Some(entry) = seen.iter_mut().find(|(a, m, _)| a == &alg && m == &mode) {
+            if !entry.2.iter().any(|r| r == &rev) {
+                entry.2.push(rev);
+            }
+        } else {
+            seen.push((alg, mode, vec![rev]));
+        }
+    }
+    seen.into_iter().find(|(_, _, revs)| revs.len() > 1)
+}
+
 // ── Session transcript log ────────────────────────────────────────
 
 /// Append an event to the transcript log.
@@ -1139,6 +1183,28 @@ pub fn run_demo(config: &AcvpConfig) -> Result<(), String> {
         );
         if caps.is_empty() {
             return Err("no handlers returned ACVP capabilities".to_string());
+        }
+        // Registering the same (algorithm, mode) twice under different
+        // revisions is never what was asked for: it emits a vector set per
+        // revision, re-grading coverage that already passed. Refuse it and
+        // name the revisions. Checked here, before Transport::open, so the
+        // failure costs no login and no YubiKey touch.
+        //
+        // Deliberately keyed on the duplicate rather than on a registration
+        // count: several *modes* registering at once is ordinary and long-
+        // standing (`--algorithm ECDSA` without `--mode`), and is evident
+        // from what was typed. Keying on the duplicate also keeps the
+        // remedy correct for a mode-less algorithm that gains a second
+        // revision -- there the fix is `--revision`, and demanding `--mode`
+        // would be a dead end, since a mode-less handler matches no
+        // `--mode` value and would register nothing at all.
+        if let Some((alg, mode, revs)) = revision_duplicate(&caps) {
+            return Err(format!(
+                "{alg} (mode {mode}) is registered under {} ACVP revisions ({}) and would \
+                 produce one vector set each; pass --revision <rev> to pick one",
+                revs.len(),
+                revs.join(", ")
+            ));
         }
         eprintln!(
             "[transport] built {} capability registration(s)",
@@ -2564,5 +2630,96 @@ mod tests {
         // silently falling back to every revision.
         let none = build_capabilities(&registry, Some("LMS"), Some("sigVer"), Some("9.9"), None);
         assert!(none.is_empty(), "unknown revision must match no handler");
+    }
+
+    /// `revision_duplicate` is what decides whether a selection is
+    /// ambiguous, so pin it directly.
+    #[test]
+    fn revision_duplicate_finds_same_service_under_two_revisions() {
+        let cap = |alg: &str, mode: Option<&str>, rev: &str| {
+            let mut f = vec![("algorithm".to_string(), JsonValue::String(alg.into()))];
+            if let Some(m) = mode {
+                f.push(("mode".to_string(), JsonValue::String(m.into())));
+            }
+            f.push(("revision".to_string(), JsonValue::String(rev.into())));
+            JsonValue::Object(f)
+        };
+
+        // The defect: same (algorithm, mode), two revisions.
+        let hit = revision_duplicate(&[
+            cap("LMS", Some("sigVer"), "1.0"),
+            cap("LMS", Some("sigVer"), "SP800-208"),
+        ]);
+        let Some((alg, mode, revs)) = hit else {
+            panic!("a same-service revision split must be reported");
+        };
+        assert_eq!((alg.as_str(), mode.as_str()), ("LMS", "sigVer"));
+        assert_eq!(revs, vec!["1.0".to_string(), "SP800-208".to_string()]);
+
+        // Several modes at one revision is ordinary, not a duplicate.
+        assert!(
+            revision_duplicate(&[
+                cap("LMS", Some("sigGen"), "SP800-208"),
+                cap("LMS", Some("sigVer"), "SP800-208"),
+            ])
+            .is_none(),
+            "distinct modes are not a revision duplicate"
+        );
+
+        // A mode-less algorithm splitting on revision is still a duplicate --
+        // the case where demanding --mode would be a dead end.
+        assert!(
+            revision_duplicate(&[cap("SHA3-256", None, "1.0"), cap("SHA3-256", None, "2.0")])
+                .is_some(),
+            "mode-less algorithms must be caught too"
+        );
+
+        assert!(revision_duplicate(&[cap("LMS", Some("sigVer"), "1.0")]).is_none());
+        assert!(revision_duplicate(&[]).is_none());
+    }
+
+    /// The regression the check exists to catch: adding a second revision
+    /// for an (algorithm, mode) pair silently doubled the long-standing
+    /// `--algorithm LMS --mode sigVer` invocation.
+    #[test]
+    fn scoped_lms_sigver_spans_two_revisions() {
+        let _ = crate::ensure_initialized();
+        let r = crate::dispatch::with_default_handlers();
+        let caps = build_capabilities(&r, Some("LMS"), Some("sigVer"), None, None);
+        assert_eq!(caps.len(), 2, "both revisions match without --revision");
+        assert!(
+            revision_duplicate(&caps).is_some(),
+            "and they are the same service under two revisions"
+        );
+    }
+
+    /// `--revision` narrows to a revision, not to a vector set: it keeps
+    /// every handler serving that revision, across modes. Only adding the
+    /// mode pins a single handler.
+    #[test]
+    fn revision_alone_does_not_narrow_to_one_vector_set() {
+        let _ = crate::ensure_initialized();
+        let r = crate::dispatch::with_default_handlers();
+
+        let both = build_capabilities(&r, Some("LMS"), None, Some("SP800-208"), None);
+        assert_eq!(
+            both.len(),
+            2,
+            "algorithm + revision is still both LMS modes"
+        );
+        assert!(
+            revision_duplicate(&both).is_none(),
+            "but they differ by mode, which is ordinary and stays permitted"
+        );
+
+        for mode in ["sigGen", "sigVer"] {
+            let caps = build_capabilities(&r, Some("LMS"), Some(mode), Some("SP800-208"), None);
+            assert_eq!(
+                caps.len(),
+                1,
+                "algorithm + mode + revision pins one handler"
+            );
+            assert!(revision_duplicate(&caps).is_none());
+        }
     }
 }
