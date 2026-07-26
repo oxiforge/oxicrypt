@@ -14,10 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-25
+
 ### Added
 
 - `acvp-harness`: LMS `sigGen` and `sigVer` registration under the ACVP `SP800-208` revision, alongside the existing `1.0` handlers — a distinct catalog service carrying a top-level `messageLength` domain (variable-length messages) that revision `1.0` does not have; there is no `keyGen` counterpart because key generation has no message. Verification and signing are unchanged: both group handlers already decode each test's `message` without a fixed-size assumption, so the same code paths serve both revisions. `LMS / sigVer / SP800-208` graded passed on the ACVTS demo server (320 cases across all 80 (lmsMode, lmOtsMode) pairs at 128/1024/8192-bit messages) (#143).
-- `acvp-harness`: `--revision <rev>` filter for `demo-run`, narrowing registration to one ACVP revision when an `(algorithm, mode)` pair is served by handlers for several. Without it, `--algorithm LMS --mode sigVer` registers every matching revision, producing multiple vector sets in a single session and re-grading coverage that already passed (#143).
+- `acvp-harness`: `--revision <rev>` filter for `demo-run`, narrowing registration to one ACVP revision when an `(algorithm, mode)` pair is served by handlers for several. It is how the caller says which revision was meant once a pair serves more than one — `--algorithm LMS --mode sigVer` matches both, which is refused rather than registered twice (see Fixed) (#143).
 - `oxicrypt-entropy` (`collection` feature): `collect --claim <H>` — sets the per-OE min-entropy claim, constrained to the non-binary APT grid rows ({0.5, 1, 2, 4, 8}, derived from `APT_ALPHA30_NON_BINARY`); an off-grid or unparseable value is refused with a typed error naming the valid grid (never silently rounded to a neighbouring row), the claim is recorded in the dataset `metadata.json` (`claimed_h_steps`), and absence keeps the tool default (H = 1). α is unchanged. Out-of-boundary tooling; the validated library surface is unchanged (#126).
 - `oxicrypt-entropy` (`collection` feature): `collect --characterization <N>` mode — captures, per boundary, a single contiguous `N`-sample run to `characterization.bin` under the characterization posture (health battery live, trips annotated, never dropped or stitched), with the versioned `metadata.json` sidecar marked `"characterization": true`. Backs the per-OE `maxwell independence` / `maxwell periodicity` evidence (ISC-120). Out-of-boundary tooling; the validated library surface and public entry point are unchanged.
 - `oxicrypt-maxwell`: `independence` subcommand — 2D/3D (pairs/triplets) min-entropy independence evidence for the per-OE entropy assessment (ISC-121). Three legs: the full literal §6.3 estimator battery on the disjoint-pair stream at both phase offsets (`pair_suite_min/2`), confidence-bound tuple-MCV on pairs and triplets (multi-phase, triplets MCV-only), and a deterministic K=10 shuffled-baseline null; a claim-anchored FLAG (advisory-only below the 10 M precedent minimum), an `independence-results.json` sidecar, and pre-registered O1–O4 oracles (`docs/estimator-parity-tolerances.md`). Out-of-boundary analysis tool; no EA analog (evidence subcommand).
@@ -316,7 +318,8 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/oxiforge/oxicrypt/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/oxiforge/oxicrypt/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/oxiforge/oxicrypt/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/oxiforge/oxicrypt/compare/v0.17.0...v0.18.0
