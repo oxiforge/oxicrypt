@@ -467,28 +467,6 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
         }
     }
 
-    // --revision narrows registration to one ACVP revision, but on its own it
-    // does not narrow to one vector set: it keeps EVERY handler at that
-    // revision, across modes. LMS sigGen and sigVer both serve SP800-208, so
-    // `--algorithm LMS --revision SP800-208` — which reads as "grade LMS under
-    // the new revision" — registers both and emits two vector sets in one
-    // session, against demo etiquette and re-grading already-passed coverage.
-    // The failure is expensive, not merely untidy: sigVer is minutes while a
-    // full-grid sigGen is an overnight tall-tree keygen run, so the surprise
-    // costs hours of compute. --algorithm alone is NOT sufficient (it does not
-    // separate the two modes); require --mode, which is what actually pins a
-    // single handler once a revision is shared.
-    if let Some(rev) = revision.as_deref()
-        && mode.is_none()
-    {
-        eprintln!(
-            "oxicrypt acvp-harness demo-run: --revision {rev:?} requires --mode (e.g. --mode \
-             sigVer) so the registration scopes to a single vector set; a revision alone matches \
-             every handler serving it"
-        );
-        return std::process::ExitCode::from(2);
-    }
-
     // Default backend: curl for software keys, s_client for hardware keys.
     // (The NIST ACVTS demo CDN filters curl's TLS fingerprint when curl
     // signs CertVerify via PKCS#11 — observed 2026-04-26. s_client's
