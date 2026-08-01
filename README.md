@@ -162,6 +162,15 @@ KAT-on/off + determinism oracles per crate (Security Policy).
 | `accel-sha` | `oxicrypt-sha` | runtime-detected x86_64 SHA-NI SHA-256 (portable fallback when absent) | `oxicrypt-sha-accel` |
 | `accel-aes` | `oxicrypt-aes` | runtime-detected x86_64 AES-NI block cipher (portable fallback when absent) | `oxicrypt-aes-accel` |
 
+**Entropy-side measurements.** Conditioned-output throughput and the cost of a
+full SP 800-90B assessment are recorded in
+[`docs/entropy-performance.md`](docs/entropy-performance.md), with the reference
+platform and the benchmarks that produce them. The headline: the two `iid_gate`
+branches are more than two orders of magnitude apart, a non-IID assessment
+running to tens of minutes. The IID figure is a best case rather than a typical
+one — the §5.1 permutation battery exits early once its statistics are decided,
+so it has no stated upper bound.
+
 **Performance build** — enable all throughput options at once:
 
 ```sh

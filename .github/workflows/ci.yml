@@ -48,6 +48,12 @@ jobs:
         run: rustup toolchain install stable --profile minimal --component clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # `--all-targets` silently skips targets whose `required-features` are
+      # unsatisfied, so the `entropy-bench` bench and example targets are not
+      # linted by the line above. That feature must stay off workspace-wide —
+      # it enables `raw-counter` for every `--workspace` command — so the only
+      # way to lint those targets is a separate invocation that opts in.
+      - run: cargo clippy -p oxicrypt-bench --features entropy-bench --all-targets -- -D warnings
 
   test:
     name: cargo test

@@ -17,6 +17,23 @@ workspace = true
 # the parallel build (`cargo bench -p oxicrypt-bench --features parallel`).
 # Off by default — the default bench build mirrors the CMVP validation-target config.
 default = []
+# The entropy/maxwell benches are OPT-IN, and that is load-bearing rather than
+# tidiness. Cargo unifies features across a single invocation, so a
+# non-optional `oxicrypt-entropy = { features = ["raw-counter"] }` here would
+# enable raw-counter for EVERY `--workspace` command — re-arming the live
+# jitter tests that `scripts/git-hooks/pre-push` deliberately excludes (their
+# verdict on a virtualized counter is load-dependent), making
+# `raw_counter_unavailable_without_feature` assert nothing, and overriding
+# `esv-harness`'s explicit `default-features = false` so an audited-unsafe
+# crate lands in its binary. Behind an optional dep + `required-features`, the
+# default workspace graph is untouched.
+#
+#     cargo bench -p oxicrypt-bench --features entropy-bench
+entropy-bench = [
+    "dep:oxicrypt-entropy",
+    "dep:oxicrypt-maxwell",
+    "oxicrypt-entropy/raw-counter",
+]
 parallel = [
     "oxicrypt-lms/parallel",
     "oxicrypt-ml-kem/parallel",
@@ -41,6 +58,13 @@ oxicrypt-ml-kem = { path = "../crates/oxicrypt-ml-kem" }
 oxicrypt-ml-dsa = { path = "../crates/oxicrypt-ml-dsa" }
 oxicrypt-slh-dsa = { path = "../crates/oxicrypt-slh-dsa" }
 oxicrypt-xmss = { path = "../crates/oxicrypt-xmss" }
+# Optional — see the `entropy-bench` feature above for why this must not be a
+# plain dependency. `raw-counter` is required by the bench itself, not
+# incidental: `NoiseSource` is sealed and the mock sources are
+# `#[cfg(test)]`-only, so the real jitter source is the only one a bench can
+# construct, and it is also the only one that measures what ISC-88 asks about.
+oxicrypt-entropy = { path = "../crates/oxicrypt-entropy", optional = true }
+oxicrypt-maxwell = { path = "../crates/oxicrypt-maxwell", optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
@@ -90,3 +114,17 @@ harness = false
 [[bench]]
 name = "xmss"
 harness = false
+
+[[bench]]
+name = "conditioned_output"
+harness = false
+required-features = ["entropy-bench"]
+
+[[bench]]
+name = "maxwell"
+harness = false
+required-features = ["entropy-bench"]
+
+[[example]]
+name = "gen_noniid"
+required-features = ["entropy-bench"]
