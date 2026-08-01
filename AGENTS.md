@@ -118,8 +118,26 @@ optimization for iteration, never a correctness shortcut:
   sign-off — and never on a change to the maxwell entropy estimators, parity table, or IID gate,
   because the excluded tests (including the EA parity oracle) are exactly what validate that code, so
   `quick` would hide the regression it should catch.
-- The full **default** profile is the gate. The pre-push hook and CI always run it; never reach for
-  `quick` (or `--no-verify`) to get a push past the gate faster.
+- The full **default** profile is the gate. The pre-push hook always runs it; never reach for
+  `quick` (or `--no-verify`) to get a push past the gate faster. **CI runs the default profile but
+  not at full strength** — see the SP 800-90B reference datasets below.
+
+### SP 800-90B reference datasets
+
+`oxicrypt-maxwell`'s parity table, every per-estimator anchor and the assessed-assembly parity read
+the **EA v1.1.8 bundle** — the 11 `.bin` files from `usnistgov/SP800-90B_EntropyAssessment`.
+Resolution order is `$OXICRYPT_EA_DATA`, then `~/repos/SP800-90B_EntropyAssessment/bin`.
+
+Without them the suite does not fail; it *skips*, and a skip prints to stderr, which is discarded on
+a passing test. So an unprovisioned checkout produces a green run that compared nothing.
+`parity::tests::ea_dataset_suite_is_provisioned` exists to stop that: it fails in milliseconds
+naming exactly what is absent or unreadable. It is deliberately **not** in the `quick` exclusion
+list, so the fast inner loop refuses to be green without the data too.
+
+`OXICRYPT_EA_DATA_OPTIONAL=1` downgrades the completeness check to a warning. Setting it forfeits
+the parity evidence claim entirely — a run under that flag must never be cited as tests-pass
+evidence. CI sets it, because the runner has no bundle; whether to provision one there is tracked
+in the issue tracker.
 
 ## Documentation sync
 

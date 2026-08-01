@@ -69,7 +69,28 @@ jobs:
       # --doc step keeps doctest coverage identical. The same pair
       # lives in scripts/git-hooks/pre-push.
       - uses: taiki-e/install-action@nextest
+      # CI does NOT validate SP 800-90B estimator parity. The EA v1.1.8
+      # reference datasets are not provisioned on the runner, and every
+      # EA-anchored test in oxicrypt-maxwell skips when its dataset is absent —
+      # so this job has always run the parity story against nothing and reported
+      # success. Setting the flag makes that pre-existing fact explicit here
+      # rather than hidden in silent skips; it does not change what CI covers.
+      # The full-strength gate is local, where the bundle lives (#137, #153).
       - run: cargo nextest run --workspace
+        env:
+          OXICRYPT_EA_DATA_OPTIONAL: "1"
+      # The gate's own warning goes to stderr, which nextest discards on a
+      # passing test — so without this the caveat above would be invisible in
+      # every green run, which is the failure mode #137 exists to kill.
+      - name: Record the parity coverage caveat
+        if: always()
+        run: |
+          echo "### SP 800-90B estimator parity: NOT validated by CI" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The EA v1.1.8 reference datasets are not provisioned on this runner, so the" >> "$GITHUB_STEP_SUMMARY"
+          echo "parity table, every per-estimator anchor and the assessed-assembly parity ran" >> "$GITHUB_STEP_SUMMARY"
+          echo "against no data. A green test job is not evidence of estimator parity." >> "$GITHUB_STEP_SUMMARY"
+          echo "The full-strength gate is local; see #137 and #153." >> "$GITHUB_STEP_SUMMARY"
       - run: cargo test --workspace --doc
 
   build:

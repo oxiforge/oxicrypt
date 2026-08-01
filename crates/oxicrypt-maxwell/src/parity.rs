@@ -1310,6 +1310,31 @@ pub fn run_parity(dir: &Path) -> Vec<DatasetResult> {
     REFERENCE_TABLE.iter().map(|r| check_one(r, dir)).collect()
 }
 
+/// Reference datasets that are not **readable** in `dir`, by name, in table
+/// order.
+///
+/// Every EA-anchored test in this crate reads its data from
+/// [`resolve_datasets_dir`] and treats an absent file as a skip, so an
+/// unprovisioned checkout runs the entire parity story against nothing and
+/// reports success. This is what the provisioning gate asserts on.
+///
+/// The probe is `File::open`, not `Path::is_file`. A file whose metadata is
+/// visible but whose contents are not — mode `000`, a broken ACL, a dangling
+/// mount — satisfies `is_file()` while every consumer's `fs::read` fails, and
+/// the consumers swallow `PermissionDenied` exactly as readily as `NotFound`
+/// (`collision.rs`'s `fs::read(..).ok()?`, `iid_gate.rs`'s
+/// `let Ok(data) = .. else { continue }`). Probing with the weaker predicate
+/// would let an unreadable-but-present bundle pass the gate and leave the whole
+/// suite comparing nothing — the very state this exists to catch.
+#[must_use]
+pub fn missing_datasets(dir: &Path) -> Vec<&'static str> {
+    REFERENCE_TABLE
+        .iter()
+        .filter(|r| std::fs::File::open(dir.join(r.file)).is_err())
+        .map(|r| r.name)
+        .collect()
+}
+
 /// Whether the caller has accepted a partial dataset suite by setting
 /// `OXICRYPT_EA_DATA_OPTIONAL=1`.
 ///
@@ -1402,13 +1427,32 @@ impl Verdict {
     // Tests panic on parity failures and assert exact structural invariants.
     clippy::panic,
     clippy::unwrap_used,
-    clippy::expect_used
+    clippy::expect_used,
+    // The parity gate prints its per-dataset evidence table to stderr, matching
+    // the estimator test modules' convention.
+    clippy::print_stderr
 )]
 mod tests {
     use super::*;
 
-    /// Full parity table against `OXICRYPT_EA_DATA` (or the default path).
-    /// Absent files SKIP; present files must pass both tracks within 1e-6.
+    /// The standing full-suite parity gate: every estimator in the reference
+    /// table against all 11 EA v1.1.8 datasets, both tracks, within 1e-6.
+    ///
+    /// **Absence is a failure, not a skip.** This test previously treated an
+    /// absent dataset as an accepted outcome, which made it indistinguishable
+    /// from a run that compared nothing: an empty dataset directory produced
+    /// 11 SKIPs, zero failures, and a green `test result: ok`. A gate that can
+    /// pass vacuously is not a gate, and this one guards the estimator parity
+    /// the whole entropy assessment rests on. The completeness assertion below
+    /// is its positive control — it fails unless all 11 datasets were actually
+    /// compared.
+    ///
+    /// The datasets are the EA v1.1.8 bundle and live at
+    /// `$OXICRYPT_EA_DATA`, or `~/repos/SP800-90B_EntropyAssessment/bin` by
+    /// default (see [`resolve_datasets_dir`]). A checkout without them can set
+    /// `OXICRYPT_EA_DATA_OPTIONAL=1` to downgrade the completeness assertion to
+    /// a printed warning — deliberately an explicit act, so an unprovisioned
+    /// environment cannot silently masquerade as a passing gate.
     #[test]
     fn parity_table_within_tolerance() {
         // The §5 IID battery is declared only for these three short datasets.
@@ -1416,9 +1460,26 @@ mod tests {
 
         let dir = resolve_datasets_dir(None);
         let results = run_parity(&dir);
-        // Present files must pass both tracks; a failure is fatal. Datasets that
-        // are simply absent on this host SKIP, which is an accepted outcome (the
-        // all-SKIP verdict conveys it) — so no assertion fires on absence.
+
+        // Evidence FIRST — one line per dataset plus the tally. This has to
+        // precede every assertion below: a genuine parity failure is exactly
+        // when the per-estimator delta table matters, and printing it after the
+        // panic would mean the one case worth diagnosing produces no table at
+        // all.
+        let verdict = Verdict::tally(&results);
+        for r in &results {
+            eprintln!("{}", r.line());
+        }
+        eprintln!(
+            "parity gate: {} passed, {} skipped, {} failed of {} datasets in {}",
+            verdict.passed,
+            verdict.skipped,
+            verdict.failed,
+            REFERENCE_TABLE.len(),
+            dir.display()
+        );
+
+        // Present files must pass both tracks; a failure is fatal.
         for r in &results {
             if let Outcome::Fail { reason } = &r.outcome {
                 panic!("dataset {} FAILED parity: {reason}", r.name);
@@ -1440,6 +1501,123 @@ mod tests {
                 );
             }
         }
+
+        // The positive control. Without it the three assertions above are all
+        // vacuously satisfiable by comparing nothing at all.
+        let missing: Vec<&str> = results
+            .iter()
+            .filter(|r| matches!(r.outcome, Outcome::Skip { .. }))
+            .map(|r| r.name)
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        assert!(
+            datasets_optional(),
+            "parity gate did not run at full strength: {} of {} datasets were absent from {} \
+             and were NOT compared ({}). Provision the EA v1.1.8 bundle there, point \
+             OXICRYPT_EA_DATA at it, or set OXICRYPT_EA_DATA_OPTIONAL=1 to accept a partial run.",
+            missing.len(),
+            REFERENCE_TABLE.len(),
+            dir.display(),
+            missing.join(", ")
+        );
+        eprintln!(
+            "WARNING: OXICRYPT_EA_DATA_OPTIONAL=1 — the parity gate compared only {} of {} \
+             datasets. This run is NOT evidence of full-suite parity.",
+            verdict.passed,
+            REFERENCE_TABLE.len()
+        );
+    }
+
+    /// The provisioning gate: fail fast, and in one place, when the EA v1.1.8
+    /// bundle is not fully present.
+    ///
+    /// This exists because the skip-on-absence pattern is not confined to the
+    /// parity table. **33 such arms across 15 files** resolve their data through
+    /// [`resolve_datasets_dir`] and return quietly when the file is missing: the
+    /// per-estimator anchors in `chi_square`, `collision`, `compression`,
+    /// `iid_lrs`, `lag`, `lib`, `lrs`, `lz78y`, `markov`, `multi_mcw`,
+    /// `multi_mmc` and `permutation`, and
+    /// `iid_gate::assessed_assembly_matches_ea_on_multi_bit_datasets` — which
+    /// even counts what it checked into a local and then only *prints* when the
+    /// count is zero. On an unprovisioned host every one of them passes having
+    /// compared nothing, and that ~20-minute assembly parity finishes in
+    /// milliseconds.
+    ///
+    /// Rather than rewrite 33 call sites, this single fast test states the
+    /// precondition they all share: it fails in milliseconds naming exactly what
+    /// is absent, instead of leaving a green suite that proved nothing. The
+    /// individual skips then become harmless, because the suite as a whole
+    /// refuses to be green without the data.
+    ///
+    /// Two fixture routes are covered. The EA bundle resolves through
+    /// [`resolve_datasets_dir`]; the IID-gate oracles (`oracle_iid.bin`,
+    /// `oracle_noniid.bin`) are git-tracked under `tests/data/` and read by a
+    /// separate `data_path()` helper in `iid_gate`, `iid_lrs` and `permutation`.
+    /// Those are normally present in any checkout, but their `else` arms swallow
+    /// permission errors and partial checkouts just as readily, so they are
+    /// asserted here too — and unlike the EA bundle they are **not** covered by
+    /// the opt-out, because a checkout that lacks its own tracked fixtures is
+    /// broken rather than unprovisioned.
+    ///
+    /// What this gate does NOT check is dataset *identity* — only presence.
+    /// `REFERENCE_TABLE` carries a SHA-256 per row and
+    /// [`check_one`] verifies it, so wrong-but-present content fails downstream
+    /// in every anchor rather than passing green; hashing 11 files here would
+    /// duplicate that for no additional coverage.
+    #[test]
+    fn ea_dataset_suite_is_provisioned() {
+        // Internal positive control. `missing_datasets` filters `REFERENCE_TABLE`,
+        // so an empty table would report nothing missing and this test would pass
+        // having checked nothing — the very failure it exists to prevent.
+        assert_eq!(
+            REFERENCE_TABLE.len(),
+            11,
+            "reference table must carry all 11 EA v1.1.8 datasets for this gate to mean anything"
+        );
+
+        // The crate's own tracked fixtures, on the second route. No opt-out:
+        // a checkout missing these is broken, not merely unprovisioned.
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("data");
+        for name in ["oracle_iid.bin", "oracle_noniid.bin"] {
+            let path = fixtures.join(name);
+            // Open, not `is_file` — same reason as `missing_datasets`: the
+            // consumers swallow PermissionDenied as readily as NotFound.
+            assert!(
+                std::fs::File::open(&path).is_ok(),
+                "tracked test fixture missing or unreadable: {}. The IID-gate, iid_lrs and \
+                 permutation oracles read this through their own data_path() helper and skip \
+                 silently when it is unreadable, so its absence would go unnoticed.",
+                path.display()
+            );
+        }
+
+        let dir = resolve_datasets_dir(None);
+        let missing = missing_datasets(&dir);
+        if missing.is_empty() {
+            return;
+        }
+        assert!(
+            datasets_optional(),
+            "EA reference datasets missing from {}: {} of {} absent ({}). \
+             Every EA-anchored test in this crate skips silently on absence, so without them \
+             the parity table, the per-estimator anchors and the assessed-assembly parity all \
+             pass having compared nothing. Provision the EA v1.1.8 bundle there, point \
+             OXICRYPT_EA_DATA at it, or set OXICRYPT_EA_DATA_OPTIONAL=1 to accept that.",
+            dir.display(),
+            missing.len(),
+            REFERENCE_TABLE.len(),
+            missing.join(", ")
+        );
+        eprintln!(
+            "WARNING: OXICRYPT_EA_DATA_OPTIONAL=1 — {} of {} EA datasets absent. \
+             Every EA-anchored test in this crate is running against partial data or none.",
+            missing.len(),
+            REFERENCE_TABLE.len()
+        );
     }
 
     // Asserts a fixed structural invariant per estimator column plus the §5

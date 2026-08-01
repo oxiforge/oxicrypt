@@ -102,6 +102,24 @@ OXICRYPT_PUSH_NEXTEST=full        git push    # run all of nextest
 
 The override is announced in the hook's output and writes no stamp unless it ran everything. Unlike the automatic scoping it does **not** check whether maxwell's inputs changed — `no-maxwell` excludes those tests whatever you touched, so use it knowing that, and let a full nextest run gate what lands on `main`.
 
+### SP 800-90B reference datasets (required for a meaningful test run)
+
+The `oxicrypt-maxwell` entropy-estimator tests compare against the NIST EA v1.1.8 reference outputs
+and need that project's 11 `.bin` datasets:
+
+```
+git clone https://github.com/usnistgov/SP800-90B_EntropyAssessment ~/repos/SP800-90B_EntropyAssessment
+```
+
+They are looked up at `$OXICRYPT_EA_DATA`, falling back to
+`~/repos/SP800-90B_EntropyAssessment/bin`. Without them the estimator tests **skip rather than
+fail**, so the suite goes green having compared nothing — `parity::tests::ea_dataset_suite_is_provisioned`
+fails fast to tell you that has happened, naming what is missing.
+
+If you genuinely cannot provision them, `OXICRYPT_EA_DATA_OPTIONAL=1` downgrades that check to a
+warning. A run under that flag forfeits the parity evidence claim and must not be offered as
+tests-pass evidence on a PR touching the estimators.
+
 ## Private-name containment (opt-in)
 
 Some strings must not reach a public repository and also cannot be written into one: an employer's name, a client path, an internal hostname. A pattern committed to the repo would publish the very name it exists to suppress, and would match its own source file, so it could never pass.
