@@ -1909,7 +1909,7 @@ mod tests {
 
     #[test]
     fn claim_flag_rejects_off_grid_and_garbage() {
-        // ISC-14: an off-grid value is refused, NEVER rounded to a neighbour.
+        // ISC-26: an off-grid value is refused, NEVER rounded to a neighbour.
         for tok in [
             "0.6", "0.7", "3", "1.5", "0", "0.55", "5", "9", "abc", "-1", "1.0.0", ".",
         ] {
@@ -1938,7 +1938,7 @@ mod tests {
 
     #[test]
     fn absent_claim_uses_default_h1() {
-        // ISC-10 / ISC-18: no --claim → default_claim() unchanged (H=1, α DEFAULT).
+        // ISC-26 / ISC-25: no --claim → default_claim() unchanged (H=1, α DEFAULT).
         let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x"]);
         assert_eq!(CliArgs::parse(&v).unwrap().claim, None);
         let dc = default_claim();
@@ -1948,7 +1948,7 @@ mod tests {
 
     #[test]
     fn accepted_claim_never_changes_alpha() {
-        // ISC-13: every accepted grid claim keeps α at DEFAULT (2^-30).
+        // ISC-25: every accepted grid claim keeps α at DEFAULT (2^-30).
         for tok in ["0.5", "1", "2", "4", "8"] {
             let h = parse_grid_claim(tok).unwrap();
             let cfg = ClaimConfig {
@@ -1961,7 +1961,7 @@ mod tests {
 
     #[test]
     fn claim_recorded_in_metadata_steps() {
-        // ISC-11: a collection built with the ratified 0.5 claim records
+        // ISC-26 / ISC-14: a collection built with the ratified 0.5 claim records
         // claimed_h_steps=128 in every boundary's metadata.json.
         let dir = temp_dir("claim-meta");
         let mut plan = small_plan(dir.clone());
