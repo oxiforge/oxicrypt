@@ -26,7 +26,6 @@
 //! gating coverage.
 //!
 //! Built 2026-05-04 as Method 4 of the ACVTS server-provenance audit.
-//! See `~/carakastan/Projects/OxiCrypt/MEMORY/WORK/20260504-140107_acvts-server-provenance-audit/`.
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
