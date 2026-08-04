@@ -445,6 +445,214 @@ mod tests {
         );
     }
 
+    // ----- citation-presence: the mechanism behind #158 (#157 family 2) -----
+    //
+    // Several criteria assert conformance to a specific normative resolution.
+    // The claim's entire content is "we satisfy resolution X" — so if X is never
+    // named in any document here, a reviewer cannot check the claim against the
+    // resolution and the criterion cannot be falsified.
+    //
+    // WHICH resolutions the criteria should name is a normative judgment tracked
+    // in #158, not a code change. This is only the mechanism that stops the set
+    // growing, and it makes the current gap visible instead of leaving it to be
+    // rediscovered.
+
+    /// Resolutions cited by a criterion that are, as of #158, named nowhere in
+    /// the repository. Listed rather than silently tolerated: the assertion below
+    /// requires this set to be EXACT, so citing one of these fails the test until
+    /// it is removed here — the list cannot quietly become permanent.
+    ///
+    /// #158 reported three cases. Sweeping every criterion found **five**:
+    /// `D.K R5` and `D.K R15` are also cited and unresolved — `D.K R15` by
+    /// ISC-125, the criterion whose α claim the guards above assert — and
+    /// `D.K R1` is cited by ISC-123 in longhand ("IG D.K Resolution-1"), a form
+    /// the first version of this parser dropped, so the very criterion the check
+    /// exists to catch was invisible to it.
+    const KNOWN_UNCITED: &[&str] = &["D.J AC6", "D.K R1", "D.K R15", "D.K R22", "D.K R5"];
+
+    /// How many distinct resolutions the criteria cite. Pinned rather than
+    /// bounded: a threshold is cleared by a deletion, and a citation silently
+    /// disappearing is one of the two failures this guard exists to catch.
+    const EXPECTED_CITATIONS: usize = 7;
+
+    /// Every `<letter>.<letter> R<n>` / `AC<n>` resolution cited in the ISA.
+    ///
+    /// The input is normalised first, because the shorthand is not the only form
+    /// in use: ISC-123 cites "IG D.K Resolution-1" in longhand, whose token
+    /// carries no digit and was silently dropped — the criterion the check exists
+    /// to catch, invisible to the check. A comma or extra spacing between the
+    /// section and the resolution is tolerated for the same reason: each is one
+    /// reflow away from becoming a silent false negative.
+    fn cited_resolutions(isa: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let normalised = isa
+            .replace("Resolution-", "R")
+            .replace("Resolution ", "R")
+            .replace("Resolution", "R");
+        let isa = normalised.replace(", R", " R").replace(",  R", " R");
+        let isa = isa.as_str();
+        for line in isa.lines() {
+            let bytes: Vec<char> = line.chars().collect();
+            for (i, w) in bytes.windows(3).enumerate() {
+                // Shape: `X.Y ` where both are uppercase ASCII letters.
+                if w[0].is_ascii_uppercase() && w[1] == '.' && w[2].is_ascii_uppercase() {
+                    let rest: String = bytes.iter().skip(i.saturating_add(3)).collect();
+                    let tail = rest.trim_start_matches(' ');
+                    if tail.len() == rest.len() {
+                        continue; // section and token must be separated
+                    }
+                    let token: String = tail
+                        .chars()
+                        .take_while(char::is_ascii_alphanumeric)
+                        .collect();
+                    let is_res = (token.starts_with('R') || token.starts_with("AC"))
+                        && token.len() > 1
+                        && token
+                            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+                            .chars()
+                            .all(|c| c.is_ascii_digit())
+                        && token.chars().any(|c| c.is_ascii_digit());
+                    if is_res {
+                        out.insert(format!("{}.{} {token}", w[0], w[2]));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every `.rs` file under `dir`, recursively.
+    fn collect_rs(dir: &Path, out: &mut String) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs")
+                && let Ok(t) = fs::read_to_string(&path)
+            {
+                out.push_str(&t);
+            }
+        }
+    }
+
+    /// A criterion citing a normative resolution must name it somewhere a
+    /// reviewer can reach: the Security Policy, or a source file.
+    #[test]
+    fn every_cited_resolution_is_named_somewhere_a_reviewer_can_reach() {
+        let isa = read_doc("ISA.md");
+        let policy = read_doc("docs/security-policy/security-policy.md");
+        let cited = cited_resolutions(&isa);
+
+        // Positive control on the extractor's SHAPE, against a synthetic fixture
+        // rather than the live ISA. Asserting only "it matched something real"
+        // cannot detect narrowing: every citation in the ISA today is `D.J`/`D.K`,
+        // so restricting the parser to `D` would keep the live count identical
+        // while making every other resolution family permanently invisible.
+        let probe = cited_resolutions(
+            "- [ ] X: per IG A.B R1 and Z.Y AC12 and D.K Resolution-7, but not D.KR5 or D.K Rx",
+        );
+        for expect in ["A.B R1", "Z.Y AC12", "D.K R7"] {
+            assert!(
+                probe.contains(expect),
+                "citation parser missed {expect:?} in the shape fixture: {probe:?}"
+            );
+        }
+        for reject in ["D.K R5", "D.K Rx"] {
+            assert!(
+                !probe.contains(reject),
+                "citation parser accepted the near-miss {reject:?}: {probe:?}"
+            );
+        }
+
+        // And the live extraction is pinned exactly, not by a threshold that one
+        // deletion clears. A moving number is the whole point of this guard.
+        assert_eq!(
+            cited.len(),
+            EXPECTED_CITATIONS,
+            "the set of resolutions cited by criteria changed: {cited:?}. If a criterion \
+             gained or lost a citation, update EXPECTED_CITATIONS and KNOWN_UNCITED together."
+        );
+
+        // Source text, so a resolution argued in a crate doc counts as named.
+        // Recursive: a non-recursive read misses `src/bin/*.rs`.
+        //
+        // `tools/` is deliberately NOT in this corpus, and the exclusion is
+        // load-bearing rather than incidental: this guard's own source names most
+        // of the resolutions it checks, so including it would let every citation
+        // resolve against the guard's own comments — a check certifying itself.
+        let mut sources = String::new();
+        for krate in workspace_crates() {
+            collect_rs(
+                &repo_root().join("crates").join(&krate).join("src"),
+                &mut sources,
+            );
+        }
+
+        // Boundary-checked, not a bare `contains`: "D.K R1" is a substring of
+        // "D.K R14", so a single-digit resolution would false-PASS off an
+        // unrelated one — turning a silently-missed citation into a silently
+        // resolved one, which is worse. Same hazard as `2⁻³` inside `2⁻³⁰`.
+        let names = |hay: &str, needle: &str| -> bool {
+            hay.match_indices(needle).any(|(i, _)| {
+                let rest = &hay[i.saturating_add(needle.len())..];
+                rest.chars()
+                    .next()
+                    .is_none_or(|c| !c.is_ascii_alphanumeric())
+            })
+        };
+        // The source half of the corpus resolves nothing today — every citation
+        // that resolves does so from the policy — so without this it could be
+        // permanently empty (a renamed `src`, a swallowed read error) and no
+        // assertion would notice half the stated corpus had gone inert.
+        assert!(
+            sources.contains("SP 800-90B"),
+            "the crate-source corpus is empty or unreadable ({} bytes) — half the \
+             \"policy or a source file\" claim would be silently inert",
+            sources.len()
+        );
+
+        let unresolved: BTreeSet<String> = cited
+            .iter()
+            .filter(|r| !names(&policy, r) && !names(&sources, r))
+            .cloned()
+            .collect();
+        let known: BTreeSet<String> = KNOWN_UNCITED.iter().map(|r| (*r).to_owned()).collect();
+
+        let newly_unresolved: Vec<&String> = unresolved.difference(&known).collect();
+        assert!(
+            newly_unresolved.is_empty(),
+            "criteria cite normative resolutions that are named nowhere in this repository, \
+             so the claims cannot be checked against the resolutions: {newly_unresolved:?}. \
+             Either cite them in the Security Policy or amend the criteria (see #158)."
+        );
+
+        // The allow-list must be exact, and the two ways an entry can go stale are
+        // reported separately — they call for opposite actions, and a single
+        // message would state something false for one of them. Telling a
+        // contributor a resolution is "now cited" when they in fact DELETED the
+        // citation is the reverse of what happened, on exactly the remedy the
+        // forward message recommends.
+        let no_longer_cited: Vec<&String> = known.iter().filter(|r| !cited.contains(*r)).collect();
+        assert!(
+            no_longer_cited.is_empty(),
+            "no criterion cites these any more, so the claim lost its normative content: \
+             {no_longer_cited:?}. Confirm that was intended, then remove them from \
+             KNOWN_UNCITED."
+        );
+        let now_resolved: Vec<&String> = known
+            .iter()
+            .filter(|r| cited.contains(*r) && !unresolved.contains(*r))
+            .collect();
+        assert!(
+            now_resolved.is_empty(),
+            "these resolutions are now named in the policy or a source, and must be \
+             removed from KNOWN_UNCITED: {now_resolved:?}"
+        );
+    }
+
     #[test]
     fn policy_states_the_as_built_accounting() {
         let a = accounting();
