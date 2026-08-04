@@ -21,7 +21,7 @@
     clippy::indexing_slicing
 )]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -651,6 +651,149 @@ mod tests {
             "these resolutions are now named in the policy or a source, and must be \
              removed from KNOWN_UNCITED: {now_resolved:?}"
         );
+    }
+
+    // ----- banned-phrase: the mechanism behind #159 (#157 family 3) -----
+    //
+    // The Security Policy ships unresolved drafting text — a forward reference to
+    // wiring that has not landed, and a question not yet put to the CST lab. This
+    // is the document a CST lab and a CMVP reviewer read.
+    //
+    // Resolving them is the content decision in #159, and one of the two blocks
+    // on an external answer. This is the mechanism, and it pins the census PER
+    // MARKER so the set cannot change shape quietly.
+
+    /// Drafting markers that must not accumulate in current-state policy prose,
+    /// with the number of occurrences currently open for each.
+    ///
+    /// Pinned per marker, not as a total. A bare total is satisfied by
+    /// substitution — delete a `TODO`, add a `[design pending]`, and the sum is
+    /// unchanged — which is the failure this crate already rejects elsewhere:
+    /// `AUDITED_EXCEPTIONS` exists so a `forbid(unsafe_code)` swap "fails by
+    /// name, not just by count". The same standard applies here.
+    ///
+    /// `[MARK` is in the list because the policy uses a second convention for the
+    /// same thing (`**[MARK: …confirm placement with the CST lab…]**`), which a
+    /// `TODO`/`pending]` sweep does not see.
+    const OPEN_MARKERS: &[(&str, usize)] = &[
+        ("TODO", 7),
+        ("TBD", 0),
+        ("FIXME", 0),
+        ("XXX", 0),
+        ("pending]", 8),
+        ("[MARK", 1),
+    ];
+
+    /// A frozen-history line: a row whose first cell is an ISO date.
+    ///
+    /// This crate deliberately asserts current-state statements only, so a
+    /// historical row quoting a past TODO must not trip the check. The shape is
+    /// a real date, not "starts with 20" — the looser form also freezes
+    /// `| 2048 | RSA legacy | TODO: … |`, and over-exemption is the exploitable
+    /// direction: a marker hidden in a skipped row is invisible, while a row
+    /// wrongly counted merely fails loudly.
+    fn is_frozen_history(line: &str) -> bool {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix('|') else {
+            return false;
+        };
+        let cell = rest.trim_start();
+        let bytes: Vec<char> = cell.chars().take(10).collect();
+        bytes.len() == 10
+            && bytes[4] == '-'
+            && bytes[7] == '-'
+            && bytes
+                .iter()
+                .enumerate()
+                .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+    }
+
+    /// The line with inline code spans removed.
+    ///
+    /// The policy's front matter documents what a `TODO` marker means, and that
+    /// sentence must not count as an unresolved item — but skipping the whole
+    /// LINE is far too broad. It exempts any line that merely cites the
+    /// convention, anywhere in a 3,500-line document, including the other markers
+    /// on it. Stripping the backticked span keeps the documentation exempt while
+    /// leaving every bare marker on the same line visible.
+    fn without_code_spans(line: &str) -> String {
+        let mut out = String::new();
+        let mut in_span = false;
+        for c in line.chars() {
+            if c == '`' {
+                in_span = !in_span;
+            } else if !in_span {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// The policy must not accumulate unresolved drafting text.
+    #[test]
+    fn policy_carries_no_new_unresolved_drafting_markers() {
+        let policy = read_doc("docs/security-policy/security-policy.md");
+
+        // Positive control on BOTH carve-outs, against a synthetic fixture rather
+        // than the live document. Asserting only that the frozen predicate
+        // "matched a lot of rows" cannot detect mis-scoping: deleting the
+        // carve-out entirely changes today's census by zero, because the one
+        // dated row carrying a marker is exempt for another reason. So the
+        // predicate is exercised on inputs that must and must not match.
+        assert!(
+            is_frozen_history("| 2026-07-03 | draft-N | resolved an earlier TODO |"),
+            "frozen-history predicate no longer recognises a dated change-log row"
+        );
+        assert!(
+            !is_frozen_history("| 2048 | RSA legacy | TODO: decide whether to claim this |"),
+            "frozen-history predicate freezes a non-date table row — a marker hidden \
+             there would be invisible"
+        );
+        assert!(
+            !is_frozen_history("Ordinary prose mentioning 2026-07-03 and a TODO."),
+            "frozen-history predicate matches prose"
+        );
+        assert_eq!(
+            without_code_spans("the `TODO` convention; TODO: name the libc"),
+            "the  convention; TODO: name the libc",
+            "code-span stripping must exempt the documented convention while leaving \
+             a bare marker on the same line visible"
+        );
+
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut sites: Vec<String> = Vec::new();
+        for (i, line) in policy.lines().enumerate() {
+            if is_frozen_history(line) {
+                continue;
+            }
+            let scanned = without_code_spans(line);
+            for (marker, _) in OPEN_MARKERS {
+                // Every occurrence, not one per line: line 2791 already carries
+                // two `[seeding-integration pending]`, so a per-line count makes
+                // a second marker on an already-marked line free.
+                let n = scanned.matches(marker).count();
+                if n > 0 {
+                    *counts.entry(marker).or_insert(0) += n;
+                    sites.push(format!("line {} [{marker}] x{n}", i.saturating_add(1)));
+                }
+            }
+        }
+
+        for (marker, expected) in OPEN_MARKERS {
+            let found = counts.get(marker).copied().unwrap_or(0);
+            assert_eq!(
+                found,
+                *expected,
+                "the policy's `{marker}` census changed: found {found}, pinned {expected}.\n  \
+                 An INCREASE is a regression — this document is read by a CST lab.\n  \
+                 A DECREASE is only progress if the item was resolved: name the issue or \
+                 decision that closed it when you lower the pin. Rewording a marker into \
+                 unmarked prose, or moving it into a dated table row, lowers this number \
+                 without resolving anything — and the item then becomes invisible to this \
+                 check permanently. See #159.\n  Sites:\n    {}",
+                sites.join("\n    ")
+            );
+        }
     }
 
     #[test]
