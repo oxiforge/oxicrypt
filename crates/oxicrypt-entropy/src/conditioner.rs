@@ -47,7 +47,12 @@
 //! specific source on the specific operational environment (the
 //! pipeline enforces the source's design ceiling structurally; binding
 //! the claim to an assessment is the integrator's documented
-//! obligation).
+//! obligation). That bound must come from the **non-IID track over
+//! sequential raw data**: the credit accounting adds `n · H` over `n`
+//! samples, which holds only if the per-sample figure is
+//! dependence-aware. An IID-track estimate is conditioned on an
+//! independence assumption this source does not establish, and
+//! crediting it per-sample would overstate the total.
 //!
 //! # Statelessness
 //!
