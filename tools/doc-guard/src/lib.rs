@@ -165,6 +165,286 @@ mod tests {
         }
     }
 
+    // ----- claim-versus-code: ISC-125, the α parameter (#157) -----
+    //
+    // A group of criteria are satisfied by a sentence in the policy and by
+    // nothing else. A probe can confirm the sentence is present, but nothing
+    // detects when the code drifts away from what the sentence asserts — the
+    // claim and its enforcement are separate, and only the claim is checked.
+    //
+    // ISC-125 had already diverged when this was written: the policy called α
+    // "the cutoff-generating parameter … not the observed false-positive rate",
+    // while the crate doc described it only as a "False-positive probability" —
+    // the reading the policy explicitly rules out. Both documents were current
+    // and nothing compared them.
+
+    /// The integer ASSIGNED on the line containing `needle`.
+    ///
+    /// Deliberately not "the last digit run on the line": a trailing comment
+    /// (`exp: 40 }; // was 30`) would then parse 30, and the guard would assert
+    /// against a value nobody wrote — silently, because the mis-parsed value is
+    /// the plausible old one. The comment is stripped first, only the text AFTER
+    /// the needle is considered, and finding anything other than exactly one
+    /// integer there is a failure rather than a guess.
+    fn assigned_u32(src: &str, needle: &str) -> u32 {
+        let line = src
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("no line containing {needle:?}"));
+        let code = line.split("//").next().unwrap_or(line);
+        let rhs = code
+            .split_once(needle)
+            .unwrap_or_else(|| panic!("needle vanished from {line:?}"))
+            .1;
+        let runs: Vec<String> = rhs
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            runs.len(),
+            1,
+            "expected exactly one integer after {needle:?} on {line:?}, found {runs:?} — \
+             refusing to guess which one the code uses"
+        );
+        runs[0].parse().expect("integer")
+    }
+
+    /// Doc-comment markers stripped and whitespace collapsed.
+    ///
+    /// A claim wrapped across `///` lines is invisible to a literal `contains`,
+    /// and rustfmt rewrapping a line would silently exempt it from the check —
+    /// the same shape as a guard that parses its own source line-by-line and
+    /// stops matching when the declaration moves. Comparing normalised text
+    /// makes the assertion about the sentence, not its line breaks.
+    fn normalized(text: &str) -> String {
+        let stripped: String = text
+            .lines()
+            .map(|l| {
+                let t = l.trim_start();
+                t.strip_prefix("//!")
+                    .or_else(|| t.strip_prefix("///"))
+                    .or_else(|| t.strip_prefix("//"))
+                    .unwrap_or(l)
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The paragraph of `doc` containing `marker`.
+    ///
+    /// Claims must be asserted against CURRENT-STATE prose. This crate's module
+    /// docs say frozen history — dated decision rows, changelog entries — is
+    /// deliberately not checked, but a bare `policy.contains("2⁻²⁰")` is
+    /// satisfied by any of its 6 occurrences, two of which sit in a dated
+    /// decision table. Deleting the live sentence would then still pass.
+    fn paragraph_containing<'a>(doc: &'a str, marker: &str) -> &'a str {
+        doc.split("\n\n")
+            .find(|p| p.contains(marker))
+            .unwrap_or_else(|| panic!("no paragraph containing {marker:?}"))
+    }
+
+    /// ISC-125, the claim-versus-CODE half: α's default and permitted range are
+    /// recomputed from the source and asserted against the policy's current-state
+    /// paragraph. Changing `Alpha::DEFAULT` without touching the policy fails
+    /// here rather than silently making the document wrong.
+    #[test]
+    fn policy_states_the_alpha_values_the_code_implements() {
+        let health = read_doc("crates/oxicrypt-entropy/src/health.rs");
+        let spec = read_doc("crates/oxicrypt-entropy/src/sp800_90b.rs");
+        let policy = read_doc("docs/security-policy/security-policy.md");
+        let claim_para = paragraph_containing(&policy, "cutoff-generating parameter");
+
+        let default_exp = assigned_u32(&health, "pub const DEFAULT: Self = Self { exp:");
+        let min_exp = assigned_u32(
+            &spec,
+            "pub const CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN: u32 =",
+        );
+        let max_exp = assigned_u32(
+            &spec,
+            "pub const CONTINUOUS_ALPHA_EXP_RECOMMENDED_MAX: u32 =",
+        );
+
+        // Plausibility, without restating the range this test exists to read from
+        // disk: a hardcoded `20..=40` here would fail on a legitimate spec change
+        // at the guard rather than at the claim.
+        // Bound all three, not just their ordering. A mis-parsed `min_exp` of 3
+        // ordered below max would otherwise sail through, and 2⁻³ is a security
+        // parameter nobody intends. 64 is a generous ceiling on any α exponent a
+        // spec revision could plausibly recommend — wide enough not to fight a
+        // legitimate change, narrow enough to catch a parse that lost a digit.
+        assert!(
+            (20..=64).contains(&min_exp)
+                && (min_exp..=64).contains(&max_exp)
+                && (min_exp..=max_exp).contains(&default_exp),
+            "parsed implausible α constants: default={default_exp}, range={min_exp}..={max_exp}"
+        );
+
+        let superscript = |n: u32| -> String {
+            n.to_string()
+                .chars()
+                .map(|c| match c {
+                    '0' => '⁰',
+                    '1' => '¹',
+                    '2' => '²',
+                    '3' => '³',
+                    '4' => '⁴',
+                    '5' => '⁵',
+                    '6' => '⁶',
+                    '7' => '⁷',
+                    '8' => '⁸',
+                    '9' => '⁹',
+                    other => other,
+                })
+                .collect()
+        };
+
+        // A bare `contains` is prefix-matchable: "2⁻³" is a substring of "2⁻³⁰",
+        // so a code change to exp 3 would be "found" in a policy that says 30.
+        // Require the match to end at a non-superscript-digit boundary.
+        let states = |hay: &str, needle: &str| -> bool {
+            hay.match_indices(needle).any(|(i, _)| {
+                let rest = &hay[i.saturating_add(needle.len())..];
+                rest.chars()
+                    .next()
+                    .is_none_or(|c| !"⁰¹²³⁴⁵⁶⁷⁸⁹".contains(c))
+            })
+        };
+
+        let default_claim = format!("α = 2⁻{}", superscript(default_exp));
+        assert!(
+            states(claim_para, &default_claim),
+            "the policy's α paragraph does not state the default the code implements \
+             ({default_claim:?}); Alpha::DEFAULT is exp={default_exp}"
+        );
+        let min_claim = format!("2⁻{}", superscript(min_exp));
+        assert!(
+            states(claim_para, &min_claim),
+            "the policy's α paragraph does not state the recommended minimum the code \
+             enforces ({min_claim:?}); CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN is {min_exp}"
+        );
+
+        // The range's upper bound is asserted against the CRATE DOC only: the
+        // policy does not state it anywhere, and inventing a policy sentence to
+        // assert against would be the guard writing its own answer.
+        let range_claim = format!("{min_exp}..={max_exp}");
+        assert!(
+            health.contains(&range_claim),
+            "the crate doc no longer states the permitted α range {range_claim:?} that \
+             CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN/MAX define"
+        );
+    }
+
+    /// ISC-125, the meaning half. The policy draws a distinction — α is the
+    /// cutoff-generating parameter, NOT the observed false-positive rate — and
+    /// the crate doc must carry it rather than the reading the policy rules out.
+    ///
+    /// Asserted on BOTH surfaces, so drift in either direction fails; one surface
+    /// alone would be a sentence matching itself. The whole clause is pinned
+    /// rather than two fragments, and the ruled-out reading is asserted ABSENT as
+    /// a standalone claim — a doc can contain both fragments while asserting the
+    /// opposite, so fragment-presence alone would accept a contradiction.
+    #[test]
+    fn alpha_means_the_same_thing_in_the_policy_and_the_crate_doc() {
+        /// The distinction itself, as the policy states it.
+        const CLAUSE: &str = "the probability that a healthy source producing exactly its claimed min-entropy H \
+             trips the test";
+        /// The reading the policy explicitly rules out. Present as a bare
+        /// description of α, it asserts what the policy denies.
+        const RULED_OUT: &str = "False-positive probability for the continuous health tests";
+
+        let policy = read_doc("docs/security-policy/security-policy.md");
+        let health = read_doc("crates/oxicrypt-entropy/src/health.rs");
+        let claim_para = paragraph_containing(&policy, "cutoff-generating parameter");
+
+        assert!(
+            normalized(claim_para).contains("not the observed false-positive rate"),
+            "the policy's α paragraph no longer rules out the false-positive reading"
+        );
+        let claim_norm = normalized(claim_para);
+        let health_norm = normalized(&health);
+        assert!(
+            claim_norm.contains(CLAUSE),
+            "the policy no longer defines α as {CLAUSE:?}"
+        );
+        assert!(
+            health_norm.contains("cutoff-generating") && health_norm.contains(CLAUSE),
+            "crates/oxicrypt-entropy/src/health.rs no longer carries the ISC-125 α \
+             distinction. The policy says α is the cutoff-generating parameter — {CLAUSE} — \
+             and NOT the observed false-positive rate. Update both surfaces together."
+        );
+        assert!(
+            !health_norm.contains(RULED_OUT),
+            "crates/oxicrypt-entropy/src/health.rs describes α as {RULED_OUT:?}, the reading \
+             the policy explicitly rules out"
+        );
+    }
+
+    /// ISC-125 across **every** surface that documents α, not just the two the
+    /// original divergence named.
+    ///
+    /// Fixing `health.rs` alone left the same reading live one file away — eight
+    /// sites across three crates still called α a "false-positive probability",
+    /// including `sp800_90b.rs`, the file the guard above parses. A criterion
+    /// reported as fixed while its own defect persists next door is the thing
+    /// this whole check family exists to prevent, so the phrasing is denied
+    /// repo-wide rather than corrected once.
+    #[test]
+    fn no_source_surface_calls_alpha_a_false_positive_probability() {
+        /// The ruled-out reading. The Security Policy says α is the
+        /// cutoff-generating parameter and NOT the observed false-positive rate;
+        /// any doc describing it as a false-positive probability asserts what the
+        /// policy denies.
+        const RULED_OUT: &str = "false-positive probability";
+
+        let mut offenders: Vec<String> = Vec::new();
+        let mut scanned = 0usize;
+        for krate in workspace_crates() {
+            let src = repo_root().join("crates").join(&krate).join("src");
+            let Ok(entries) = fs::read_dir(&src) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let Ok(text) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                scanned = scanned.saturating_add(1);
+                for (i, line) in text.lines().enumerate() {
+                    // The one legitimate use is the sentence that names the
+                    // reading in order to rule it out.
+                    if line.to_lowercase().contains(RULED_OUT)
+                        && !line.contains("would assert the reading")
+                    {
+                        offenders.push(format!(
+                            "{krate}/src/{}:{}",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            i.saturating_add(1)
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Positive control: a scan that read nothing would report clean.
+        assert!(
+            scanned > 20,
+            "scanned only {scanned} source files — the sweep is not reaching the workspace"
+        );
+        assert!(
+            offenders.is_empty(),
+            "these surfaces describe α as a {RULED_OUT:?}, the reading the Security Policy \
+             explicitly rules out (ISC-125). α is the cutoff-generating parameter — the \
+             probability that a healthy source at exactly its claimed H trips the test — not \
+             the observed false-positive rate:\n    {}",
+            offenders.join("\n    ")
+        );
+    }
+
     #[test]
     fn policy_states_the_as_built_accounting() {
         let a = accounting();

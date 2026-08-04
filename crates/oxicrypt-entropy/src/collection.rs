@@ -194,7 +194,7 @@ impl Counts {
 pub(crate) struct ClaimConfig {
     /// Injected min-entropy claim per sample.
     pub(crate) claimed_h: MinEntropy,
-    /// Health-test false-positive probability.
+    /// Health-test cutoff-generating parameter α.
     pub(crate) alpha: Alpha,
 }
 

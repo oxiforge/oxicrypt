@@ -17,7 +17,9 @@
 //! ```
 //!
 //! where `qbinom(q, n, p)` is the smallest integer `k` such that the binomial
-//! CDF `P(X ≤ k; n, p) ≥ q` and `α = 2⁻ᵃ` is the false-positive probability.
+//! CDF `P(X ≤ k; n, p) ≥ q` and `α = 2⁻ᵃ` is the cutoff-generating parameter
+//! (the probability that a source at exactly its claimed H trips the test —
+//! not the observed false-positive rate; see the Security Policy on ISC-125).
 //! `W` is **1024 for binary data** and **512 for non-binary data** (§4.4.2).
 //!
 //! ## CDF via the regularized incomplete beta function

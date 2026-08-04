@@ -106,12 +106,14 @@ pub const RESTART_SANITY_EXPERIMENTS: u32 = 2000;
 
 // ─── §4.3 Requirements for Health Tests ─────────────────────────────────────
 
-/// §4.3 item 3: recommended false-positive probability lower bound exponent —
+/// §4.3 item 3: recommended lower bound on the exponent of the
+/// cutoff-generating parameter α —
 /// "recommended to be between 2⁻²⁰ and 2⁻⁴⁰" (α = 2⁻ᵃ; this is the smallest
 /// recommended `a`). Lower probabilities (larger `a`) are acceptable.
 pub const CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN: u32 = 20;
 
-/// §4.3 item 3: recommended false-positive probability upper bound exponent
+/// §4.3 item 3: recommended upper bound on the exponent of the
+/// cutoff-generating parameter α
 /// (see [`CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN`]).
 pub const CONTINUOUS_ALPHA_EXP_RECOMMENDED_MAX: u32 = 40;
 

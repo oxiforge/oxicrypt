@@ -59,7 +59,7 @@ pub struct EntropyPipeline<S: NoiseSource> {
 
 impl<S: NoiseSource> EntropyPipeline<S> {
     /// Constructs a pipeline, injecting the claimed min-entropy per sample
-    /// and the health-test false-positive probability.
+    /// and the health-test cutoff-generating parameter α.
     ///
     /// # Errors
     ///
@@ -241,7 +241,7 @@ impl<S: NoiseSource> EntropyPipeline<S> {
         self.claimed_h
     }
 
-    /// The health-test false-positive probability in use.
+    /// The health-test cutoff-generating parameter α in use.
     #[must_use]
     pub const fn alpha(&self) -> Alpha {
         self.alpha

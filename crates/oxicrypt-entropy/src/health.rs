@@ -36,9 +36,18 @@ use crate::sp800_90b::{
     AptTable2Row, CONTINUOUS_ALPHA_EXP_RECOMMENDED_MAX, CONTINUOUS_ALPHA_EXP_RECOMMENDED_MIN,
 };
 
-/// False-positive probability for the continuous health tests, restricted
+/// The cutoff-generating parameter for the continuous health tests, restricted
 /// to the power-of-two set α = 2⁻ᵃ with `a` in the SP 800-90B §4.3 item 3
 /// recommended range 20..=40.
+///
+/// **α is the probability that a healthy source producing exactly its claimed
+/// min-entropy H trips the test — it is not the observed false-positive rate.**
+/// The distinction is load-bearing and is the one the Security Policy draws:
+/// because the claimed H is deliberately conservative relative to the assessed
+/// min-entropy, the operational false-positive rate is far below α. Describing
+/// α here as simply a false-positive probability would assert the reading the
+/// policy explicitly rules out, which is why `doc-guard` asserts both surfaces
+/// carry this distinction.
 ///
 /// The default is 2⁻³⁰, following the dominant certified jitter-entropy
 /// lineage (jent v3.7.0 §6.1.37/§6.1.44, design digest of 2026-06-12)
@@ -49,7 +58,7 @@ pub struct Alpha {
 }
 
 impl Alpha {
-    /// Default false-positive probability: α = 2⁻³⁰ (cert-lineage precedent).
+    /// Default cutoff-generating parameter: α = 2⁻³⁰ (cert-lineage precedent).
     pub const DEFAULT: Self = Self { exp: 30 };
 
     /// α = 2⁻ᵃ for `exp = a`. Returns `None` outside the §4.3 item 3
@@ -173,7 +182,7 @@ pub struct AdaptiveProportionTest {
 
 impl AdaptiveProportionTest {
     /// Creates the test for claim `h`, alphabet shape `is_binary`, at
-    /// false-positive probability `alpha`.
+    /// cutoff-generating parameter `alpha`.
     ///
     /// # Errors
     ///

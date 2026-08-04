@@ -285,7 +285,7 @@ impl<S: NoiseSource> core::fmt::Debug for RawCollector<S> {
 
 impl<S: NoiseSource> RawCollector<S> {
     /// Constructs a collector, injecting the claimed min-entropy per sample
-    /// and the health-test false-positive probability — the same claim-ceiling,
+    /// and the health-test cutoff-generating parameter α — the same claim-ceiling,
     /// sample-width, and health-monitor checks as
     /// [`crate::pipeline::EntropyPipeline::new`], minus the conditioner
     /// derivation (there is none).
