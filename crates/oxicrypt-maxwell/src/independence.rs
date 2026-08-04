@@ -236,15 +236,23 @@ fn plain_min_entropy(mode_count: u64, total: u64) -> f64 {
     -p.log2()
 }
 
-/// Histogram a tuple-code slice over its `alphabet` and return both the
-/// confidence-bound MCV estimate (shared [`crate::mcv_from_mode`] core) and the
-/// plain-form value.
+/// Histogram a tuple-code slice over its `alphabet` and return the
+/// confidence-bound MCV estimate (shared [`crate::mcv_from_mode`] core), the
+/// plain-form value, and the **occupancy** — the number of distinct codes
+/// present, which is the histogram's own nonzero-slot count.
+///
+/// Occupancy is returned from here rather than recomputed by a caller because
+/// this histogram already holds it. The alternative — walking the codes again
+/// into a set — costs a second pass over data that has just been counted, and
+/// obtaining the codes to walk costs a third encoding of the input.
 #[allow(
-    // `c as usize` (dense branch): guarded by `c < alphabet <= DENSE_ALPHABET_MAX`,
-    // so it fits usize on every supported target.
+    // `c as usize` (dense branch): the array is `alphabet` long and indexing is
+    // via `get_mut`, so an out-of-range value is dropped rather than truncated
+    // into a wrong slot. Input wider than the declared width is refused by
+    // `analyze` before any encoding, so out-of-range codes do not arise here.
     clippy::cast_possible_truncation
 )]
-fn mcv_from_codes(codes: &[u64], alphabet: usize) -> (McvEstimate, f64) {
+fn mcv_from_codes(codes: &[u64], alphabet: usize) -> (McvEstimate, f64, usize) {
     // Mode count via a histogram, choosing storage by alphabet size. Small
     // alphabets index a DENSE array directly (a `memset` + array writes, faster
     // than hashing every code) — this is every pair leg and the small-`bits`
@@ -256,7 +264,11 @@ fn mcv_from_codes(codes: &[u64], alphabet: usize) -> (McvEstimate, f64) {
     // dense branch; the branches share their counting logic).
     const DENSE_ALPHABET_MAX: usize = 1 << 16; // 65_536 u64 slots = 512 KiB
     let total = codes.len() as u64;
-    let mode = if alphabet <= DENSE_ALPHABET_MAX {
+    // Occupancy is read off the same histogram as the mode, so the two can
+    // never disagree about which codes were counted. The dense branch counts
+    // nonzero slots; the sparse branch's map holds an entry only for a code it
+    // saw, so its length is that count directly.
+    let (mode, occupancy) = if alphabet <= DENSE_ALPHABET_MAX {
         let mut hist = vec![0u64; alphabet];
         for &c in codes {
             // c < alphabet by construction (code < 2^(k·bits) = alphabet).
@@ -264,7 +276,10 @@ fn mcv_from_codes(codes: &[u64], alphabet: usize) -> (McvEstimate, f64) {
                 *slot = slot.saturating_add(1);
             }
         }
-        hist.iter().copied().max().unwrap_or(0)
+        (
+            hist.iter().copied().max().unwrap_or(0),
+            hist.iter().filter(|&&count| count > 0).count(),
+        )
     } else {
         let alphabet = alphabet as u64;
         let mut hist: HashMap<u64, u64> = HashMap::new();
@@ -274,9 +289,13 @@ fn mcv_from_codes(codes: &[u64], alphabet: usize) -> (McvEstimate, f64) {
                 *slot = slot.saturating_add(1);
             }
         }
-        hist.values().copied().max().unwrap_or(0)
+        (hist.values().copied().max().unwrap_or(0), hist.len())
     };
-    (mcv_from_mode(mode, total), plain_min_entropy(mode, total))
+    (
+        mcv_from_mode(mode, total),
+        plain_min_entropy(mode, total),
+        occupancy,
+    )
 }
 
 /// The tuple alphabet size `2^(k·bits)`, saturating (never panics).
@@ -291,19 +310,28 @@ fn tuple_alphabet(bits: u8, k: usize) -> usize {
 }
 
 /// Per-phase bounded (confidence-bound MCV min-entropy) and plain values for the
-/// `k`-tuples of `symbols`. Returns `(bounded_per_phase, plain_per_phase)`, each
-/// of length `k` (one entry per phase offset `0..k`).
-fn tuple_mcv_per_phase(symbols: &[u8], bits: u8, k: usize) -> (Vec<f64>, Vec<f64>) {
+/// `k`-tuples of `symbols`, plus the **phase-0 occupancy**.
+///
+/// Returns `(bounded_per_phase, plain_per_phase, phase0_occupancy)`. The two
+/// vectors have length `k` (one entry per phase offset `0..k`); the occupancy is
+/// a single value because the report carries phase 0 only — every phase is
+/// histogrammed here regardless, so it is taken from the phase-0 histogram as it
+/// passes rather than recomputed.
+fn tuple_mcv_per_phase(symbols: &[u8], bits: u8, k: usize) -> (Vec<f64>, Vec<f64>, usize) {
     let alphabet = tuple_alphabet(bits, k);
     let mut bounded = Vec::with_capacity(k);
     let mut plain = Vec::with_capacity(k);
+    let mut phase0_occupancy = 0usize;
     for phase in 0..k {
         let codes = tuple_codes(symbols, bits, k, phase);
-        let (b, p) = mcv_from_codes(&codes, alphabet);
+        let (b, p, occ) = mcv_from_codes(&codes, alphabet);
+        if phase == 0 {
+            phase0_occupancy = occ;
+        }
         bounded.push(b.min_entropy);
         plain.push(p);
     }
-    (bounded, plain)
+    (bounded, plain, phase0_occupancy)
 }
 
 /// Minimum over a slice, ignoring nothing (an empty slice yields `+∞`).
@@ -355,6 +383,16 @@ pub struct McvLeg {
     pub r2_plain: f64,
     /// Plain proximity ratio `(plain₃/3) / plain₁`.
     pub r3_plain: f64,
+    /// Distinct pair codes present at **phase 0** — occupancy.
+    ///
+    /// Read off the phase-0 pair histogram specifically, not off whichever
+    /// phase produced [`Self::h2`]: `h2` is the minimum over both pair phases,
+    /// so naming it here would describe a different quantity than the one
+    /// returned.
+    pub pair_occupancy: usize,
+    /// Distinct triplet codes present at **phase 0** — occupancy, on the same
+    /// phase-0 basis as [`Self::pair_occupancy`].
+    pub triplet_occupancy: usize,
 }
 
 impl McvLeg {
@@ -388,9 +426,9 @@ fn draw_replica(rng_state: &mut [u64; 4]) -> [u64; 4] {
 
 /// Plain per-delta triple `[pd₁, pd₂, pd₃]` (min over phases) for `symbols`.
 fn plain_per_delta(symbols: &[u8], bits: u8) -> [f64; 3] {
-    let (_, p1) = tuple_mcv_per_phase(symbols, bits, 1);
-    let (_, p2) = tuple_mcv_per_phase(symbols, bits, 2);
-    let (_, p3) = tuple_mcv_per_phase(symbols, bits, 3);
+    let (_, p1, _) = tuple_mcv_per_phase(symbols, bits, 1);
+    let (_, p2, _) = tuple_mcv_per_phase(symbols, bits, 2);
+    let (_, p3, _) = tuple_mcv_per_phase(symbols, bits, 3);
     [min_over(&p1), min_over(&p2) / 2.0, min_over(&p3) / 3.0]
 }
 
@@ -402,9 +440,9 @@ fn plain_per_delta(symbols: &[u8], bits: u8) -> [f64; 3] {
 /// control).
 #[must_use]
 pub fn mcv_leg(symbols: &[u8], bits: u8, k_shuffles: usize) -> McvLeg {
-    let (b1, p1) = tuple_mcv_per_phase(symbols, bits, 1);
-    let (b2, p2) = tuple_mcv_per_phase(symbols, bits, 2);
-    let (b3, p3) = tuple_mcv_per_phase(symbols, bits, 3);
+    let (b1, p1, _) = tuple_mcv_per_phase(symbols, bits, 1);
+    let (b2, p2, pair_occupancy) = tuple_mcv_per_phase(symbols, bits, 2);
+    let (b3, p3, triplet_occupancy) = tuple_mcv_per_phase(symbols, bits, 3);
 
     let h1 = min_over(&b1);
     let h2 = min_over(&b2);
@@ -445,6 +483,8 @@ pub fn mcv_leg(symbols: &[u8], bits: u8, k_shuffles: usize) -> McvLeg {
         deficit3,
         r2_plain,
         r3_plain,
+        pair_occupancy,
+        triplet_occupancy,
     }
 }
 
@@ -700,15 +740,6 @@ fn tuple_count(n: usize, k: usize, phase: usize) -> usize {
     n.saturating_sub(phase).checked_div(k).unwrap_or(0)
 }
 
-/// Count distinct codes present in a code slice (occupancy).
-fn occupancy(codes: &[u64]) -> usize {
-    let mut seen = std::collections::BTreeSet::new();
-    for &c in codes {
-        seen.insert(c);
-    }
-    seen.len()
-}
-
 /// Validate a `--claim` min-entropy value: a claim must be a finite, positive
 /// real number (bits/symbol). Rejects `NaN`/`inf` — which would silently
 /// subvert the acceptance gate (`gate < NaN` is always false, `gate < inf`
@@ -837,10 +868,12 @@ pub fn analyze(
         tuple_count(n, 3, 1),
         tuple_count(n, 3, 2),
     ];
-    let pair_occupancy = occupancy(&tuple_codes(symbols, bits, 2, 0));
-    let triplet_occupancy = occupancy(&tuple_codes(symbols, bits, 3, 0));
-
+    // Occupancy comes off the histograms `mcv_leg` already builds. Computing it
+    // here would mean encoding the phase-0 pair and triplet streams a second
+    // time, purely to count distinct values the histogram had already seen.
     let mcv = mcv_leg(symbols, bits, K_MCV_SHUFFLES);
+    let pair_occupancy = mcv.pair_occupancy;
+    let triplet_occupancy = mcv.triplet_occupancy;
 
     let available = suite_available(bits);
     let (suite_1d, pair_suite) = if available {
@@ -1387,7 +1420,7 @@ mod tests {
 
         // Pair-MCV bit-identity (phase 0), bounded track.
         let codes = tuple_codes(&data, bits, 2, 0);
-        let (bounded, _) = mcv_from_codes(&codes, tuple_alphabet(bits, 2));
+        let (bounded, _, _) = mcv_from_codes(&codes, tuple_alphabet(bits, 2));
         let encoded = pair_bytes(&data, bits, 0);
         let via_mcv = mcv(&encoded, 8).literal;
         assert_eq!(
@@ -1490,7 +1523,7 @@ mod tests {
     fn mcv_from_codes_sparse_branch_exact() {
         let codes = [3u64, 3, 3, 9, 9, 999_999_999];
         let alphabet = 1usize << 20; // > DENSE_ALPHABET_MAX → sparse; 999_999_999 dropped
-        let (est, plain) = mcv_from_codes(&codes, alphabet);
+        let (est, plain, _) = mcv_from_codes(&codes, alphabet);
         // mode = 3 (code 3 ×3); total = 6 (len, including the dropped code).
         assert_eq!(
             est,
@@ -1502,6 +1535,96 @@ mod tests {
             plain_min_entropy(3, 6),
             "sparse plain min-entropy must be mode=3,total=6"
         );
+    }
+
+    /// Occupancy read off the histogram must equal a straight distinct-count of
+    /// the same codes, on BOTH storage branches.
+    ///
+    /// Nothing asserted occupancy before this test existed: the value was
+    /// produced by a separate `BTreeSet` walk that no oracle compared against
+    /// anything, so the suite would have passed with it broken. The two
+    /// branches are exercised by alphabet size, and each case carries a
+    /// non-vacuity control — a distinct count equal to the code count would
+    /// make the assertion true for the wrong reason.
+    #[test]
+    fn occupancy_matches_distinct_count() {
+        for &alphabet_bits in &[8usize, 20usize] {
+            let alphabet = 1usize << alphabet_bits;
+            let codes: Vec<u64> = vec![7, 7, 7, 11, 11, 42, 42, 42, 42, 200];
+            let expected: usize = {
+                let mut v = codes.clone();
+                v.sort_unstable();
+                v.dedup();
+                v.len()
+            };
+            let (_, _, occ) = mcv_from_codes(&codes, alphabet);
+            assert_eq!(
+                occ, expected,
+                "alphabet 2^{alphabet_bits}: occupancy must equal the distinct-code count"
+            );
+            // Non-vacuity: repeats exist, so occupancy must be strictly below
+            // the code count. Without this the assertion would also hold for an
+            // implementation that returned `codes.len()`.
+            assert!(
+                occ < codes.len(),
+                "alphabet 2^{alphabet_bits}: fixture must contain repeats, else the test proves nothing"
+            );
+        }
+    }
+
+    /// The occupancy reaching the report is phase 0's, threaded through
+    /// `tuple_mcv_per_phase` → `mcv_leg` → `analyze` rather than recomputed.
+    ///
+    /// Both tuple orders are checked. At `bits = 4` the triplet phases can be
+    /// equal to one another, so a triplet-only wrong-phase regression would be
+    /// invisible without an explicit assertion that the phases differ — the
+    /// pair half alone does not cover it.
+    #[test]
+    fn analyze_reports_phase0_occupancy() {
+        let data = concentrated_symbols(4_096, 0x5151_5151_5151_5151);
+        let bits = 4u8;
+        let report = analyze(&data, bits, None).expect("in-range fixture must analyze");
+
+        let pair0 = {
+            let (_, _, occ) =
+                mcv_from_codes(&tuple_codes(&data, bits, 2, 0), tuple_alphabet(bits, 2));
+            occ
+        };
+        let triplet0 = {
+            let (_, _, occ) =
+                mcv_from_codes(&tuple_codes(&data, bits, 3, 0), tuple_alphabet(bits, 3));
+            occ
+        };
+        assert_eq!(
+            report.pair_occupancy, pair0,
+            "report must carry the PHASE 0 pair occupancy"
+        );
+        assert_eq!(
+            report.triplet_occupancy, triplet0,
+            "report must carry the PHASE 0 triplet occupancy"
+        );
+
+        // Phase discrimination: if any other phase happens to share phase 0's
+        // occupancy, this fixture cannot detect a wrong-phase read, and the
+        // assertions above would pass on a broken implementation.
+        let pair1 = {
+            let (_, _, occ) =
+                mcv_from_codes(&tuple_codes(&data, bits, 2, 1), tuple_alphabet(bits, 2));
+            occ
+        };
+        assert_ne!(
+            pair0, pair1,
+            "fixture must distinguish pair phases, else a wrong-phase read is invisible"
+        );
+        for phase in 1..3 {
+            let (_, _, occ) =
+                mcv_from_codes(&tuple_codes(&data, bits, 3, phase), tuple_alphabet(bits, 3));
+            assert_ne!(
+                triplet0, occ,
+                "fixture must distinguish triplet phase 0 from phase {phase}, \
+                 else a wrong-phase read is invisible"
+            );
+        }
     }
 
     /// O4 determinism: the report AND the rendered sidecar bytes are bit-identical
