@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tripping a debug assertion (exit 101, no verdict) or, in release, drawing the
   §3.1.4.3 cutoff over symbols the data never contained. A non-finite `H_I` is
   rejected at parse (#154).
+- `maxwell independence` refuses a dataset containing a sample wider than the declared
+  `BITS_PER_SYMBOL` instead of assessing it, matching the NIST EA v1.1.8 reference. The
+  tuple encoder does not mask, so an over-wide sample produced a code outside the
+  `2^(k·bits)` alphabet which the histogram discarded while the denominator still
+  counted it — the reported min-entropy was computed over a fraction of the data (93%
+  of samples discarded at 4 bits/symbol over full-range bytes) and inflated by an
+  arbitrary amount. `independence::analyze` now returns `Result` and the CLI exits
+  non-zero, naming the widest sample and the index of the first offender; a refused run
+  writes no evidence sidecar. A *narrower* observed width warns and continues (#152).
 
 ## [0.20.0] - 2026-07-25
 

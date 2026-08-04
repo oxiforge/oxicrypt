@@ -1082,7 +1082,31 @@ fn cmd_independence(args: &[String]) -> ExitCode {
         None => Provenance::default(),
     };
 
-    let report = analyze(&data, bits, claim);
+    // ISC-145: match EA v1.1.8 on input validation. A sample wider than the
+    // declared width is a hard error with no assessment — the estimators would
+    // drop it from the histogram while still counting it in the denominator, so
+    // the reported min-entropy would be computed over a fraction of the data.
+    // Refusing is fail-closed and, unlike masking, does not silently reinterpret
+    // the operator's dataset.
+    let report = match analyze(&data, bits, claim) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("maxwell: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // A *narrower* observed width is not an error: EA warns and continues, and a
+    // legitimately narrow source (a 1-bit noise source declared at 8) is common.
+    // It is still worth saying, because a declaration wider than the data inflates
+    // the tuple alphabet and thins every histogram.
+    if report.observed_bits_per_symbol < bits {
+        eprintln!(
+            "maxwell: warning — declared {bits} bits/symbol but no sample needs more than {}; \
+             the assessment proceeds over the declared {bits}-bit alphabet, which is wider than \
+             the data occupies.",
+            report.observed_bits_per_symbol
+        );
+    }
     print_independence(file, &report);
 
     // Sidecar (default beside the input file).

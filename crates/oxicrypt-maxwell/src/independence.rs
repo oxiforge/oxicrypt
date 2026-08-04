@@ -136,7 +136,23 @@ pub const SUITE_LABELS: [&str; 7] = [
 /// code is big-endian: `code = Σⱼ sⱼ << ((k−1−j)·bits)` — pair code
 /// `(s₀ << bits) | s₁`, triplet code `(s₀ << 2·bits) | (s₁ << bits) | s₂`. The
 /// alphabet is `2^(k·bits)`; the largest shift is `(k−1)·bits ≤ 2·8 = 16 < 64`,
-/// so every shift is in range for `u64` and no code exceeds `2^24`.
+/// so every shift is in range for `u64`.
+///
+/// # Precondition
+///
+/// **Every symbol must satisfy `s < 2^bits`.** This function does not mask, so a
+/// wider symbol produces a code outside the `2^(k·bits)` alphabet, which
+/// [`mcv_from_codes`] then drops from its histogram while still counting it in
+/// the denominator — inflating the min-entropy by an arbitrary amount. The
+/// precondition is enforced at the [`analyze`] boundary, which refuses such input
+/// with [`IndependenceError::SymbolExceedsDeclaredWidth`] rather than assessing
+/// it; callers reaching this function directly are responsible for it.
+///
+/// Given that precondition the largest code is `2^(k·bits) − 1`, i.e. `2^24 − 1`
+/// at `k = 3, bits = 8` and smaller for every other combination. (An earlier
+/// version of this comment asserted "no code exceeds `2^24`" unconditionally,
+/// which was true only at `bits = 8` and only because a wider symbol cannot exist
+/// there — precisely the case that hid #152.)
 ///
 /// Deterministic; never panics (checked shifts, `.get()` access, saturating
 /// index arithmetic).
@@ -611,6 +627,12 @@ pub struct IndependenceReport {
     pub n: usize,
     /// Source bits per symbol (`1..=8`).
     pub bits_per_symbol: u8,
+    /// Bits actually needed by the widest sample present.
+    ///
+    /// Never greater than `bits_per_symbol` — a wider sample is refused by
+    /// [`analyze`]. When it is *smaller*, the declaration is wider than the data
+    /// warrants; EA warns and continues in that case, and the caller should too.
+    pub observed_bits_per_symbol: u8,
     /// Pair alphabet `2^(2·bits)`.
     pub pair_alphabet: usize,
     /// Triplet alphabet `2^(3·bits)`.
@@ -696,15 +718,114 @@ pub fn validate_claim(h: f64) -> bool {
     h.is_finite() && h > 0.0
 }
 
+/// Smallest `bits` for which every symbol satisfies `s < 2^bits`.
+///
+/// Empty input and all-zero input both report `1`: one bit is the narrowest
+/// meaningful declaration, and reporting `0` would make an all-zero dataset look
+/// like a width violation of every declaration.
+#[must_use]
+pub fn observed_symbol_width(symbols: &[u8]) -> u8 {
+    let max = symbols.iter().copied().max().unwrap_or(0);
+    // 8 - leading_zeros is the bit length of `max`; floored at 1.
+    let width = 8u32.saturating_sub(max.leading_zeros());
+    u8::try_from(width.max(1)).unwrap_or(8)
+}
+
+/// Why an independence analysis was refused before it began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IndependenceError {
+    /// A sample is too wide for the declared `bits_per_symbol`.
+    ///
+    /// EA v1.1.8 treats this as a hard error and performs no assessment. So does
+    /// this crate: [`tuple_codes`] does not mask, so a wider symbol packs into a
+    /// code outside the `2^(k·bits)` alphabet, which the histogram drops while
+    /// the denominator still counts it. The resulting min-entropy is computed
+    /// over a fraction of the data — at `bits = 4` over full-range bytes, 93% of
+    /// it — and is inflated by an arbitrary amount. Masking instead would
+    /// silently reinterpret the operator's data, which is worse for evidence
+    /// provenance than refusing.
+    SymbolExceedsDeclaredWidth {
+        /// The widest symbol present.
+        max_symbol: u8,
+        /// Bits needed for that symbol.
+        observed_bits: u8,
+        /// The **effective** declared width — `bits` after the `1..=8` clamp
+        /// [`analyze`] applies, not the raw argument. A library caller passing `0`
+        /// sees `1` here; the CLI validates `1..=8` before calling, so the two
+        /// coincide there.
+        declared_bits: u8,
+        /// Index of the first offending symbol, for locating it in the dataset.
+        first_index: usize,
+        /// How many symbols exceed the declaration.
+        count: usize,
+    },
+}
+
+impl core::fmt::Display for IndependenceError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Self::SymbolExceedsDeclaredWidth {
+                max_symbol,
+                observed_bits,
+                declared_bits,
+                first_index,
+                count,
+            } => write!(
+                f,
+                "{count} sample(s) exceed the declared {declared_bits} bits/symbol \
+                 (widest is {max_symbol}, needing {observed_bits} bits; first at index \
+                 {first_index}). No assessment was performed: the estimators would drop every \
+                 out-of-range sample from the histogram while still counting it in the total, \
+                 inflating the min-entropy. Declare {observed_bits} bits/symbol, or supply data \
+                 that fits {declared_bits}."
+            ),
+        }
+    }
+}
+
+impl core::error::Error for IndependenceError {}
+
 /// Run the full independence analysis over `symbols` at `bits` bits/symbol,
 /// optionally gated against `claim`.
 ///
 /// Deterministic and panic-free. Inputs too short to form a triplet
 /// (`n < 3`) return a degenerate, non-flagging report.
-#[must_use]
-pub fn analyze(symbols: &[u8], bits: u8, claim: Option<f64>) -> IndependenceReport {
+///
+/// # Errors
+///
+/// Returns [`IndependenceError::SymbolExceedsDeclaredWidth`] when any sample is
+/// too wide for `bits`, matching EA v1.1.8, which refuses rather than assessing.
+/// A *narrower* observed width is not an error — EA warns and continues, and so
+/// does this crate: the observed width is reported in
+/// [`IndependenceReport::observed_bits_per_symbol`] for the caller to surface.
+pub fn analyze(
+    symbols: &[u8],
+    bits: u8,
+    claim: Option<f64>,
+) -> Result<IndependenceReport, IndependenceError> {
     let n = symbols.len();
     let bits = bits.clamp(1, 8);
+
+    // Refuse before doing any work: an assessment over silently-dropped samples
+    // is worse than no assessment, because it looks like a result.
+    let observed_bits = observed_symbol_width(symbols);
+    if observed_bits > bits {
+        let limit = 1u16.wrapping_shl(u32::from(bits));
+        let over: Vec<usize> = symbols
+            .iter()
+            .enumerate()
+            .filter(|&(_, &s)| u16::from(s) >= limit)
+            .map(|(i, _)| i)
+            .collect();
+        return Err(IndependenceError::SymbolExceedsDeclaredWidth {
+            max_symbol: symbols.iter().copied().max().unwrap_or(0),
+            observed_bits,
+            declared_bits: bits,
+            first_index: over.first().copied().unwrap_or(0),
+            count: over.len(),
+        });
+    }
     let pair_alphabet = tuple_alphabet(bits, 2);
     let triplet_alphabet = tuple_alphabet(bits, 3);
 
@@ -736,6 +857,7 @@ pub fn analyze(symbols: &[u8], bits: u8, claim: Option<f64>) -> IndependenceRepo
     let mut report = IndependenceReport {
         n,
         bits_per_symbol: bits,
+        observed_bits_per_symbol: observed_bits,
         pair_alphabet,
         triplet_alphabet,
         pair_count_per_phase,
@@ -773,7 +895,7 @@ pub fn analyze(symbols: &[u8], bits: u8, claim: Option<f64>) -> IndependenceRepo
         report.flagged = true;
     }
 
-    report
+    Ok(report)
 }
 
 // ---------------------------------------------------------------------------
@@ -995,6 +1117,7 @@ pub fn render_sidecar(
          \"timer_source\": {timer},\n  \
          \"n\": {n},\n  \
          \"bits_per_symbol\": {bits},\n  \
+         \"observed_bits_per_symbol\": {obs_bits},\n  \
          \"tuple_mode\": \"disjoint\",\n  \
          \"phases\": {{\"pairs\": 2, \"triplets\": 3}},\n  \
          \"estimator_labels\": {labels},\n  \
@@ -1023,6 +1146,7 @@ pub fn render_sidecar(
         timer = json_opt(prov.timer_source.as_deref()),
         n = report.n,
         bits = report.bits_per_symbol,
+        obs_bits = report.observed_bits_per_symbol,
         labels = format_labels(),
         pair_alph = report.pair_alphabet,
         trip_alph = report.triplet_alphabet,
@@ -1386,8 +1510,8 @@ mod tests {
     fn o4_determinism_bit_exact() {
         let data = concentrated_symbols(20_000, 0x2020_2020_2020_2020);
         let bits = 4u8;
-        let a = analyze(&data, bits, Some(0.5));
-        let b = analyze(&data, bits, Some(0.5));
+        let a = analyze(&data, bits, Some(0.5)).expect("fixture fits 4 bits");
+        let b = analyze(&data, bits, Some(0.5)).expect("fixture fits 4 bits");
         assert_eq!(a, b, "report must be bit-identical across runs");
 
         let prov = Provenance {
@@ -1410,13 +1534,137 @@ mod tests {
         }
     }
 
+    // ----- ISC-145: input-width validation (EA v1.1.8 parity) -----
+
+    /// The defect: at `bits = 4` a full-range byte packs into a code outside the
+    /// `2^(k*bits)` alphabet, which the histogram drops while `total` still counts
+    /// it — min-entropy computed over a fraction of the data. EA refuses; so do we.
+    #[test]
+    fn analyze_refuses_a_symbol_wider_than_the_declaration() {
+        let mut data = concentrated_symbols(4_096, 0x0f0f_0f0f_0f0f_0f0f);
+        data[100] = 0xC8; // needs 8 bits, declared 4
+        let err = analyze(&data, 4, Some(0.5)).expect_err("a wide symbol must be refused");
+        match err {
+            IndependenceError::SymbolExceedsDeclaredWidth {
+                max_symbol,
+                observed_bits,
+                declared_bits,
+                first_index,
+                count,
+            } => {
+                assert_eq!(max_symbol, 0xC8);
+                assert_eq!(observed_bits, 8);
+                assert_eq!(declared_bits, 4);
+                assert_eq!(first_index, 100, "must locate the offending sample");
+                assert_eq!(count, 1, "exactly one sample is out of range");
+            }
+        }
+        // The message must name the remedy, not just the fault.
+        let text = err.to_string();
+        assert!(text.contains("No assessment was performed"), "{text}");
+        assert!(text.contains("Declare 8 bits/symbol"), "{text}");
+    }
+
+    /// The boundary must be inclusive: `2^bits - 1` fits, `2^bits` does not. An
+    /// off-by-one here would either refuse valid data or re-admit the defect.
+    #[test]
+    fn analyze_width_boundary_is_inclusive() {
+        for bits in 1u8..=8 {
+            let max_ok = u8::try_from((1u16 << bits) - 1).expect("fits u8");
+            let ok = vec![max_ok; 64];
+            assert!(
+                analyze(&ok, bits, None).is_ok(),
+                "symbol {max_ok} must fit {bits} bits"
+            );
+            if bits < 8 {
+                let too_wide = u8::try_from(1u16 << bits).expect("fits u8");
+                let bad = vec![too_wide; 64];
+                let err = analyze(&bad, bits, None)
+                    .expect_err("symbol {too_wide} must not fit {bits} bits");
+                // `is_err()` alone would pass for the wrong reason: the enum is
+                // `#[non_exhaustive]`, so a future variant would satisfy it. Assert
+                // the variant AND every field, at every width — the fields carry the
+                // operator to the offending sample and are otherwise pinned by only
+                // one fixture, at one width, with one offender.
+                let IndependenceError::SymbolExceedsDeclaredWidth {
+                    max_symbol,
+                    observed_bits,
+                    declared_bits,
+                    first_index,
+                    count,
+                } = err;
+                assert_eq!(max_symbol, too_wide, "widest sample at bits={bits}");
+                assert_eq!(
+                    observed_bits,
+                    bits.saturating_add(1),
+                    "2^bits needs exactly one more bit than bits"
+                );
+                assert_eq!(declared_bits, bits);
+                assert_eq!(first_index, 0, "every sample is out of range here");
+                assert_eq!(count, 64, "all 64 samples are out of range");
+            }
+        }
+    }
+
+    /// `count` and `first_index` are only meaningful when there is more than one
+    /// offender and the first is not at index 0 — a single-offender fixture cannot
+    /// tell `first()` from `last()`, nor `over.len()` from a hardcoded 1.
+    #[test]
+    fn analyze_reports_the_first_of_several_offenders() {
+        let mut data = vec![3u8; 512];
+        data[100] = 0x10; // needs 5 bits
+        data[400] = 0xC8; // needs 8 bits, and is the widest
+        let err = analyze(&data, 4, None).expect_err("two wide samples must be refused");
+        let IndependenceError::SymbolExceedsDeclaredWidth {
+            max_symbol,
+            observed_bits,
+            declared_bits,
+            first_index,
+            count,
+        } = err;
+        assert_eq!(max_symbol, 0xC8, "the widest, not the first");
+        assert_eq!(observed_bits, 8, "the width of the widest sample");
+        assert_eq!(declared_bits, 4);
+        assert_eq!(first_index, 100, "the FIRST offender, not the last");
+        assert_eq!(count, 2, "both offenders counted");
+    }
+
+    /// A narrower source is not an error — EA warns and continues — and the
+    /// observed width is reported so the caller can say so.
+    #[test]
+    fn analyze_accepts_and_reports_a_narrower_source() {
+        let data = vec![1u8; 4_096]; // needs 1 bit
+        let r = analyze(&data, 8, None).expect("a narrow source must be accepted");
+        assert_eq!(r.bits_per_symbol, 8, "the declaration is honoured");
+        assert_eq!(r.observed_bits_per_symbol, 1, "the observation is reported");
+        assert!(
+            r.observed_bits_per_symbol < r.bits_per_symbol,
+            "this is the case the CLI warns about"
+        );
+    }
+
+    /// Empty and all-zero both report 1: reporting 0 would make an all-zero
+    /// dataset look like a width violation of every possible declaration.
+    #[test]
+    fn observed_symbol_width_floors_at_one() {
+        assert_eq!(observed_symbol_width(&[]), 1);
+        assert_eq!(observed_symbol_width(&[0, 0, 0]), 1);
+        assert_eq!(observed_symbol_width(&[1]), 1);
+        assert_eq!(observed_symbol_width(&[2]), 2);
+        assert_eq!(observed_symbol_width(&[15]), 4);
+        assert_eq!(observed_symbol_width(&[16]), 5);
+        assert_eq!(observed_symbol_width(&[255]), 8);
+        // An all-zero dataset must therefore be analysable at any declaration.
+        assert!(analyze(&[0u8; 64], 1, None).is_ok());
+    }
+
     // ----- degenerate + metadata parsing -----
 
     /// Degenerate (too short to form a triplet) is non-flagging and marked.
     #[test]
     fn degenerate_short_input() {
         for s in [vec![], vec![1u8], vec![1u8, 2]] {
-            let r = analyze(&s, 4, Some(0.5));
+            let r = analyze(&s, 4, Some(0.5)).expect("fixture fits 4 bits");
             assert!(r.degenerate, "n={} must be degenerate", s.len());
             assert!(!r.flagged, "degenerate must not flag");
             assert!(!r.exit_failure(), "degenerate must not exit-fail");
@@ -1441,7 +1689,7 @@ mod tests {
     fn advisory_below_precedent_minimum() {
         // Concentrated data: gate value ≈ 0.99, so a claim of 2.0 flags.
         let data = concentrated_symbols(20_000, 0x5555_5555_5555_5555);
-        let r = analyze(&data, 4, Some(2.0));
+        let r = analyze(&data, 4, Some(2.0)).expect("fixture fits 4 bits");
         assert!(r.advisory_only, "n<10M must be advisory");
         assert!(r.flagged, "gate value < 2.0 should flag");
         assert!(!r.exit_failure(), "advisory flag must not exit-fail");
@@ -1469,7 +1717,7 @@ mod tests {
     fn non_finite_claim_never_flags() {
         let data = concentrated_symbols(20_000, 0x1234_5678_9abc_def0);
         for c in [f64::NAN, f64::INFINITY] {
-            let r = analyze(&data, 4, Some(c));
+            let r = analyze(&data, 4, Some(c)).expect("fixture fits 4 bits");
             assert!(!r.flagged, "non-finite claim {c} must not flag");
             assert!(!r.exit_failure());
         }
@@ -1491,7 +1739,7 @@ mod tests {
     #[test]
     fn sidecar_degenerate_is_authoritative_not_poisoned_by_nan() {
         let data = vec![7u8; 20_000];
-        let r = analyze(&data, 4, Some(0.5));
+        let r = analyze(&data, 4, Some(0.5)).expect("fixture fits 4 bits");
         assert!(r.flagged, "constant stream vs claim 0.5 must flag");
         assert!(!r.degenerate, "constant (n>=3, finite h) is not degenerate");
         assert!(
@@ -1509,7 +1757,7 @@ mod tests {
     #[test]
     fn sidecar_written_to_missing_dir() {
         let data = vec![7u8; 100];
-        let r = analyze(&data, 4, None);
+        let r = analyze(&data, 4, None).expect("fixture fits 4 bits");
         let base = std::env::temp_dir().join(format!("oxicrypt-maxwell-sc-{}", std::process::id()));
         let dir = base.join("nested/independence");
         let _ = std::fs::remove_dir_all(&base);

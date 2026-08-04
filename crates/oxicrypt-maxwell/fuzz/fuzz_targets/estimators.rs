@@ -85,6 +85,23 @@ fuzz_target!(|data: &[u8]| {
         // control, and the claim gate — all on arbitrary small input. Gated to
         // small inputs alongside iid_gate: the pair-suite leg runs the full §6.3
         // predictor battery, already exercised individually above.
+        // Raw first: with arbitrary bytes and a small `bits` this now usually
+        // takes the width refusal, which is itself a path worth fuzzing.
         let _ = independence_analyze(data, bits, Some(0.5));
+        // Then masked into the declared width, so the analysis body keeps being
+        // fuzzed. Without this the refusal added in #152 would quietly become the
+        // only path this target reaches, and the encoder/histogram/suite coverage
+        // described above would be lost while the target still looked green.
+        let mask = u8::try_from((1u16.wrapping_shl(u32::from(bits))).saturating_sub(1))
+            .unwrap_or(u8::MAX);
+        let masked: Vec<u8> = data.iter().map(|&s| s & mask).collect();
+        // Asserted, not discarded: this is now the ONLY call that reaches the
+        // analysis body, so if the mask or the `bits` derivation ever drifts, both
+        // calls take the refusal and the coverage described above silently vanishes
+        // while libFuzzer still reports green.
+        assert!(
+            independence_analyze(&masked, bits, Some(0.5)).is_ok(),
+            "masked input must fit the declared width"
+        );
     }
 });

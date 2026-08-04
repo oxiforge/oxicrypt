@@ -65,9 +65,34 @@
 //!
 //! Datasets are raw bytes, **one symbol per byte**. For `bits_per_symbol < 8`
 //! the EA datasets already store each symbol masked into the low bits of its
-//! byte; the implementation does not re-mask (and so a value exceeding the
-//! declared alphabet would simply be counted as its own symbol). `L` is the
-//! byte count.
+//! byte; the implementation does not re-mask. `L` is the byte count.
+//!
+//! **An over-wide symbol is not harmless, and this paragraph used to say it was**
+//! ("would simply be counted as its own symbol"). What actually happens differs by
+//! track, and none of the three outcomes is benign:
+//!
+//! - **Literal track** — densifies over the *observed* values, so an over-wide
+//!   symbol enlarges the alphabet and is counted as its own symbol. That inflates
+//!   the reported min-entropy: 4096 samples drawn from `0..16` with `0xC8` planted
+//!   every 37th measure `H_original = 3.7346` at `bits_per_symbol = 4`, against
+//!   `3.3025` for the same data masked into 4 bits — **+0.43 bits, +13%** — with no
+//!   warning and no value that looks out of range.
+//! - **Bitstring track** — does not densify at all. `to_bitstring` emits only
+//!   `(s >> (bits-1-j)) & 1` for `j < bits`, so `0xC8` at `bits = 4` silently
+//!   becomes `0x8`: the assessment is of masked data. That is the "silently
+//!   reinterpret the operator's dataset" behaviour [`independence`] refuses
+//!   precisely because it is worse for evidence provenance than refusing. It feeds
+//!   `H_bitstring`, and so `min(H_original, H_bitstring × word_size)` in
+//!   [`iid_gate`].
+//! - **Tuple path ([`independence`])** — packs into a *fixed* `2^(k·bits)`
+//!   alphabet, so an over-wide symbol produces a code outside it, which the
+//!   histogram discards while the denominator still counts it: a min-entropy over
+//!   a fraction of the data. This one is **refused outright**, matching EA v1.1.8.
+//!
+//! The convention above is therefore a genuine precondition of the §6.3
+//! estimators, not a nicety: they do not enforce it, and violating it perturbs the
+//! numbers quietly in both directions. Only [`independence`] currently checks;
+//! whether the §6.3 entry points should refuse too is tracked as #169.
 //!
 //! # Provenance
 //!
