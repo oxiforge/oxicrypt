@@ -201,37 +201,38 @@ External contributors who don't have access to the skill can request maintainer 
 
 The workspace version lives in `Cargo.toml` under `[workspace.package].version`.
 
-### Internal builds
+### Internal builds — retired
 
-After every PR squash-merge, the merged commit gets tagged `vX.Y.Z.A` where:
+Per-merge `vX.Y.Z.A` tags are **no longer created**. Four exist (`v0.0.0.1` … `v0.1.0.1`), all from 2026-04-27, and none since; the convention was documented for three months after it stopped being practised.
 
-- `X.Y.Z` is the current value of `[workspace.package].version`
-- `A` is one greater than the highest existing `.A` for this `X.Y.Z` (resets to `1` when `X.Y.Z` changes)
+It solved a problem the project no longer has. Its stated purpose was identifying which build is newest among several internal artifacts without parsing the commit log — `git describe` answers that better and for free:
 
-Use `scripts/tag-next-build.sh` to compute and apply the tag automatically.
+```
+$ git describe --tags HEAD
+vX.Y.Z-18-gc7eaabd      # 18 commits past the vX.Y.Z tag, at commit c7eaabd
+```
 
-The `.A` segment is git-tag-only; `Cargo.toml` does **not** carry a fourth version component (semver doesn't allow it). The `.A` exists so we can identify which build is newest among several internal artifacts without parsing commit log.
+`Cargo.toml` never carried a fourth component and still does not; semver has no place for one.
 
 ### Releases
 
-Releases are deliberate, separate acts:
+Releases are deliberate, separate acts. **Every version literal is bumped by `scripts/bump-version.sh`, not by hand** — there are three of them plus the changelog heading, and editing them individually is how they drift apart:
 
-1. Decide the release version `vX.Y.Z` per [semver](https://semver.org/)
-2. Bump `[workspace.package].version` in `Cargo.toml` on a `chore/release-X.Y.Z` PR if the value is stale
-3. After the release PR squash-merges, tag the merge commit with `vX.Y.Z` (no `.A` suffix)
-4. Push the tag: `git push origin vX.Y.Z`
-5. Create the GitHub release from the tag
-6. After the release lands, the next post-release internal build resets `.A` to `1`
+1. Decide the release version `X.Y.Z` per [semver](https://semver.org/). Note that `0.x` is not a lesser kind of version: cargo treats a `0.x` **minor** bump as incompatible, so the pre-1.0 track already carries the "may break you" contract that a major bump carries above 1.0.
+2. On a `chore/release-X.Y.Z` branch, run `./scripts/bump-version.sh X.Y.Z`. It rewrites `Cargo.toml`, `docs/llm-api-manifest/llm-api.yaml` and `lama.yaml`, renames the changelog's `## [Unreleased]` heading to `## [X.Y.Z] - YYYY-MM-DD`, and refuses to finish if any stale literal survives.
+3. Open the PR, merge it signature-preserving.
+4. Tag the merge commit `vX.Y.Z` — annotated **and signed** — then `git push origin vX.Y.Z`.
+5. Create the GitHub release from the tag.
 
-When the project starts publishing to crates.io (currently `publish = false` in `Cargo.toml`), release tags become the publishing trigger.
+When the project starts publishing to crates.io (currently `publish = false` in `Cargo.toml`), release tags become the publishing trigger. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
 
 ### Tag scheme summary
 
 | Kind | Format | Cargo.toml | Pushed to crates.io |
 |---|---|---|---|
-| Internal build | `vX.Y.Z.A` | unchanged | no |
 | Release | `vX.Y.Z` | matches | yes (when `publish = true`) |
 | Release-stabilization branch | `release/X.Y` | unchanged on the branch | no |
+| ~~Internal build~~ | ~~`vX.Y.Z.A`~~ | — | retired, see above |
 
 ## Rationale
 
