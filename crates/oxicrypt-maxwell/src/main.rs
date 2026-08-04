@@ -49,6 +49,7 @@
     clippy::print_stderr
 )]
 
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -68,10 +69,12 @@ use oxicrypt_maxwell::lz78y::lz78y;
 use oxicrypt_maxwell::markov::markov;
 use oxicrypt_maxwell::multi_mcw::multi_mcw;
 use oxicrypt_maxwell::multi_mmc::multi_mmc;
-use oxicrypt_maxwell::parity::{Verdict, resolve_datasets_dir, run_parity};
+use oxicrypt_maxwell::parity::{
+    Outcome, Verdict, datasets_optional, resolve_datasets_dir, run_parity,
+};
 use oxicrypt_maxwell::periodicity::screen;
 use oxicrypt_maxwell::permutation::{PERMS, permutation_stats, permutation_test};
-use oxicrypt_maxwell::restart::restart_analysis;
+use oxicrypt_maxwell::restart::{RestartResult, alphabet_size, restart_analysis};
 use oxicrypt_maxwell::{McvEstimate, mcv};
 
 fn main() -> ExitCode {
@@ -613,10 +616,102 @@ fn cmd_parity(args: &[String]) -> ExitCode {
         v.passed, v.skipped, v.failed
     );
 
-    if v.ok() {
+    let absent: Vec<&str> = results
+        .iter()
+        .filter(|r| matches!(r.outcome, Outcome::Skip { .. }))
+        .map(|r| r.name)
+        .collect();
+
+    let (accepted, evidence, line) =
+        parity_verdict(&v, results.len(), &absent, datasets_optional());
+    println!("{line}");
+    if !evidence {
+        // Also on stderr: the opt-out is process environment, not a per-invocation
+        // act, so a caller that reads only the exit code can be silently running
+        // against a disarmed gate. The stream a script is most likely to surface
+        // must carry the words too.
+        eprintln!("{line}");
+    }
+    if accepted {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// Decide the closing verdict for a parity run: `(accepted, is_evidence, line)`.
+///
+/// `accepted` drives the exit code; `is_evidence` is the stronger property the
+/// Security Policy's parity claim rests on. **They are not the same**: an opted-out
+/// partial run is accepted (exit zero) and is explicitly *not* evidence. Nothing
+/// anywhere may infer coverage from the exit code alone — that is why this returns
+/// both and why the line always says which it is.
+///
+/// Pure and separated from [`cmd_parity`] so every quadrant is reachable by a test.
+/// Driving them through the binary would need a provisioned EA v1.1.8 bundle for
+/// the PASS case, which CI does not have (#153) — the branch carrying the CMVP
+/// claim would then be the one branch never probed.
+#[must_use]
+fn parity_verdict(
+    v: &Verdict,
+    total: usize,
+    absent: &[&str],
+    optional: bool,
+) -> (bool, bool, String) {
+    if !v.ok() {
+        // Deliberately does NOT say the datasets "disagreed beyond the tolerance":
+        // `Outcome::Fail` also covers a provenance/digest mismatch, an unreadable
+        // file, and a module power-up failure — cases where no numeric comparison
+        // ran at all. The per-dataset FAIL lines above carry the actual reason.
+        return (
+            false,
+            false,
+            format!(
+                "verdict: FAIL — {} of {total} datasets did not match the EA v{} reference \
+                 (see the FAIL lines above for each reason); {} absent; NOT parity evidence",
+                v.failed,
+                oxicrypt_maxwell::parity::EA_TOOL_VERSION,
+                v.skipped
+            ),
+        );
+    }
+    if v.full_strength() {
+        return (
+            true,
+            true,
+            format!(
+                "verdict: PASS — all {total} datasets compared within {:.0e} bits, full-strength; \
+                 this run is parity evidence",
+                oxicrypt_maxwell::parity::PARITY_TOLERANCE_BITS
+            ),
+        );
+    }
+    if optional {
+        (
+            true,
+            false,
+            format!(
+                "verdict: PARTIAL — {} of {total} datasets compared; NOT parity evidence. \
+                 Accepted because OXICRYPT_EA_DATA_OPTIONAL=1 is set in this process environment. \
+                 Absent: {}",
+                v.passed,
+                absent.join(", ")
+            ),
+        )
+    } else {
+        (
+            false,
+            false,
+            format!(
+                "verdict: INCOMPLETE — {} of {total} datasets compared, {} absent; \
+                 NOT parity evidence. Point --datasets or $OXICRYPT_EA_DATA at the EA v{} bundle, \
+                 or set OXICRYPT_EA_DATA_OPTIONAL=1 to accept a partial run. Absent: {}",
+                v.passed,
+                v.skipped,
+                oxicrypt_maxwell::parity::EA_TOOL_VERSION,
+                absent.join(", ")
+            ),
+        )
     }
 }
 
@@ -1268,6 +1363,14 @@ fn cmd_restart(args: &[String]) -> ExitCode {
         eprintln!("maxwell: H_I must be a real number");
         return ExitCode::FAILURE;
     };
+    // `nan` and `inf` parse successfully as f64 and pass a `< 0.0` test, so the
+    // nonnegativity check alone let a non-finite H_I reach the analysis, where
+    // every comparison against it is false and the validation gate rejects the
+    // data without being able to say why.
+    if !h_i.is_finite() {
+        eprintln!("maxwell: H_I ({h_i}) must be finite");
+        return ExitCode::FAILURE;
+    }
     if h_i < 0.0 {
         eprintln!("maxwell: H_I ({h_i}) must be nonnegative");
         return ExitCode::FAILURE;
@@ -1287,6 +1390,16 @@ fn cmd_restart(args: &[String]) -> ExitCode {
             "maxwell: restart data must be exactly {expected} samples ({RESTART_DIM}x{RESTART_DIM}); got {}",
             data.len()
         );
+        return ExitCode::FAILURE;
+    }
+
+    // `restart_analysis`'s `# Panics` section says the CLI rejects degenerate
+    // matrices before calling. It did not: a constant 1,000,000-byte matrix — what
+    // a stuck noise source produces — reached `simulate_bound` and tripped its
+    // debug assert (exit 101, no verdict), while release builds silently computed
+    // a cutoff from `k_effective > k`. These two checks make that sentence true.
+    if let Some(reason) = restart_input_rejection(alphabet_size(&data), h_i) {
+        eprintln!("maxwell: {reason}");
         return ExitCode::FAILURE;
     }
 
@@ -1333,8 +1446,107 @@ fn cmd_restart(args: &[String]) -> ExitCode {
     );
     println!("min(H_r, H_c, H_I): {:.17}", r.min_entropy);
 
-    // Reporting tool: exit success once computed (verdict is in the output).
-    ExitCode::SUCCESS
+    let (accepted, lines) = restart_verdict(&r);
+    for line in &lines {
+        println!("{line}");
+    }
+    if accepted {
+        ExitCode::SUCCESS
+    } else {
+        for line in &lines {
+            eprintln!("{line}");
+        }
+        ExitCode::FAILURE
+    }
+}
+
+/// Print the closing verdict for a restart analysis and report whether the data
+/// is accepted as §3.1.4.2 validation evidence.
+///
+/// Split out from [`cmd_restart`] so the exit decision is reachable by a test:
+/// driving it through the binary would mean a 1,000,000-sample analysis, which
+/// runs for minutes and cannot sit in the suite.
+///
+/// The convention is `cmd_gate`'s and ISC-146's — a printed FAILED is a non-zero
+/// exit. Restart analysis is a CMVP submission artifact, so a caller scripting
+/// the evidence run must not have to parse stdout to learn it was rejected.
+///
+/// `validation_passed` already subsumes `sanity_passed` (§3.1.4.2 requires the
+/// sanity check to have held), so it alone is the decision; the bullets below
+/// exist to name *which* check rejected the data, and each is predicated on its
+/// own condition rather than on the combined verdict.
+/// Why a restart matrix must be refused before analysis, or `None` to proceed.
+///
+/// [`restart_analysis`]'s `# Panics` section states that the CLI rejects
+/// degenerate matrices before calling. It did not: a constant 1,000,000-byte
+/// matrix — what a stuck noise source produces — reached `simulate_bound` and
+/// tripped its debug assert (exit 101, no verdict at all), while a release build
+/// silently computed a cutoff from `k_effective > k`. These two checks make that
+/// sentence true, and live here rather than inline so both are testable without a
+/// 1,000,000-sample analysis.
+#[must_use]
+fn restart_input_rejection(alphabet: usize, h_i: f64) -> Option<String> {
+    if alphabet <= 1 {
+        return Some(format!(
+            "restart matrix has {alphabet} distinct symbol(s); the §3.1.4.3 cutoff is undefined \
+             for an alphabet of one. A constant matrix is itself the finding — the noise source \
+             produced no variation."
+        ));
+    }
+    // `k_effective = ceil(2^H_I)` must fit inside the observed alphabet, or the
+    // Monte-Carlo cutoff is drawn over symbols the data never contained.
+    let k_effective = 2.0_f64.powf(h_i).ceil();
+    // `alphabet_size` counts distinct u8 values, so it is at most 256 and the
+    // widening through u16 is lossless — no precision cast on the comparison.
+    let alphabet_f = f64::from(u16::try_from(alphabet).unwrap_or(u16::MAX));
+    if k_effective > alphabet_f {
+        return Some(format!(
+            "H_I {h_i} implies at least {k_effective:.0} equiprobable symbols, but the matrix \
+             contains only {alphabet}; the §3.1.4.3 cutoff would be drawn over symbols the data \
+             never contained. Lower H_I, or supply data over a wider alphabet."
+        ));
+    }
+    None
+}
+
+#[must_use]
+fn restart_verdict(r: &RestartResult) -> (bool, Vec<String>) {
+    if r.validation_passed {
+        return (
+            true,
+            vec![
+                "verdict: PASS — §3.1.4.3 sanity and the §3.1.4.2 validation gate both hold"
+                    .to_owned(),
+            ],
+        );
+    }
+
+    let mut lines =
+        vec!["verdict: FAIL — the following restart check(s) rejected the data:".to_owned()];
+    if !r.sanity_passed {
+        lines.push(format!(
+            "  - §3.1.4.3 restart sanity check: X_max {} exceeds the cutoff {}",
+            r.x_max, r.x_cutoff
+        ));
+    }
+    let h_min = r.h_r.min(r.h_c);
+    // The literal complement of the gate (`min_rc >= h_i / 2.0`), spelled through
+    // `partial_cmp` so the incomparable case is explicit rather than hidden in a
+    // negation. `h_min < h_i / 2.0` would NOT be the complement: under a NaN both
+    // it and the gate are false, printing a FAIL header with no cause beneath it —
+    // a verdict that names nothing. `cmd_restart` now rejects a non-finite H_I at
+    // parse, so this is belt and braces; it stays because the header must never be
+    // causeless.
+    if !matches!(
+        h_min.partial_cmp(&(r.h_i / 2.0)),
+        Some(Ordering::Greater | Ordering::Equal)
+    ) {
+        lines.push(format!(
+            "  - §3.1.4.2 validation gate: min(H_r, H_c) = {h_min:.17} is below H_I/2 = {:.17}",
+            r.h_i / 2.0
+        ));
+    }
+    (false, lines)
 }
 
 /// Render a PASS/FAIL tick for the §5 sub-test verdict lines.
@@ -1348,3 +1560,223 @@ fn verdict_mark(pass: bool) -> &'static str {
 /// drives any special-case display branch.
 #[allow(dead_code)]
 const COMPRESSION_INDEX: usize = 18;
+
+#[cfg(test)]
+#[allow(
+    // Tests assert exact verdict decisions on constructed results.
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used
+)]
+mod tests {
+    use super::*;
+
+    // ---- maxwell parity: all four quadrants of the verdict ----
+
+    fn verdict(passed: usize, skipped: usize, failed: usize) -> Verdict {
+        Verdict {
+            passed,
+            skipped,
+            failed,
+        }
+    }
+
+    /// The branch that carries the Security Policy's parity claim. It is
+    /// unreachable in CI (no EA bundle, #153), so without this it would be the
+    /// one branch never probed.
+    #[test]
+    fn parity_verdict_full_run_is_accepted_and_is_evidence() {
+        let (accepted, evidence, line) = parity_verdict(&verdict(11, 0, 0), 11, &[], false);
+        assert!(accepted, "a full-strength run must exit zero: {line}");
+        assert!(
+            evidence,
+            "a full-strength run is the parity evidence: {line}"
+        );
+        assert!(line.contains("PASS") && line.contains("this run is parity evidence"));
+    }
+
+    /// The defect #154 closes: nothing compared, yet reported as success.
+    #[test]
+    fn parity_verdict_all_skip_is_rejected() {
+        let (accepted, evidence, line) = parity_verdict(&verdict(0, 11, 0), 11, &["a", "b"], false);
+        assert!(!accepted, "an all-skip run must exit non-zero: {line}");
+        assert!(!evidence);
+        assert!(line.contains("INCOMPLETE") && line.contains("NOT parity evidence"));
+        assert!(
+            line.contains("a, b"),
+            "must name the absent datasets: {line}"
+        );
+    }
+
+    /// Accepted and NOT evidence are different properties; the opt-out separates
+    /// them. Nothing may infer coverage from the exit code alone.
+    #[test]
+    fn parity_verdict_opt_out_is_accepted_but_is_not_evidence() {
+        let (accepted, evidence, line) = parity_verdict(&verdict(3, 8, 0), 11, &["a"], true);
+        assert!(accepted, "the opt-out accepts a partial run: {line}");
+        assert!(
+            !evidence,
+            "an opted-out partial run must never be evidence: {line}"
+        );
+        assert!(line.contains("PARTIAL") && line.contains("NOT parity evidence"));
+    }
+
+    /// A failure outranks the opt-out: opting into a partial suite must not
+    /// launder a dataset that actually disagreed.
+    #[test]
+    fn parity_verdict_failure_outranks_the_opt_out() {
+        let (accepted, evidence, line) = parity_verdict(&verdict(9, 1, 1), 11, &["a"], true);
+        assert!(!accepted, "a failed dataset must exit non-zero: {line}");
+        assert!(!evidence);
+        assert!(line.contains("FAIL"));
+    }
+
+    /// `Outcome::Fail` also covers provenance mismatch, an unreadable file, and
+    /// module power-up failure — the line must not assert a numeric disagreement
+    /// that may never have been computed.
+    #[test]
+    fn parity_verdict_failure_line_does_not_assert_a_cause_it_cannot_know() {
+        let (_, _, line) = parity_verdict(&verdict(0, 10, 1), 11, &[], false);
+        assert!(
+            !line.contains("disagreed"),
+            "FAIL line must not name a cause it cannot know: {line}"
+        );
+        assert!(
+            line.contains("see the FAIL lines above"),
+            "FAIL line must defer to the per-dataset reasons: {line}"
+        );
+        assert!(
+            line.contains("10 absent"),
+            "FAIL line must not silently drop the skips: {line}"
+        );
+    }
+
+    /// An empty result set has nothing skipped, which `skipped == 0` alone would
+    /// call full-strength — ISC-146's defect re-armed behind a future filter flag.
+    #[test]
+    fn parity_verdict_empty_run_is_not_full_strength() {
+        let v = verdict(0, 0, 0);
+        assert!(!v.complete(), "an empty run compared nothing");
+        assert!(!v.full_strength());
+        let (accepted, evidence, line) = parity_verdict(&v, 0, &[], false);
+        assert!(!accepted, "a run over zero datasets must not pass: {line}");
+        assert!(!evidence);
+    }
+
+    // ---- maxwell restart ----
+
+    /// The panic this closes: a constant matrix reached `simulate_bound` and
+    /// tripped `debug_assert!(k > 1)`, exiting 101 with no verdict.
+    #[test]
+    fn restart_rejects_a_degenerate_alphabet() {
+        let reason = restart_input_rejection(1, 0.9).expect("alphabet of one must be refused");
+        assert!(reason.contains("distinct symbol"), "{reason}");
+        assert!(
+            restart_input_rejection(0, 0.9).is_some(),
+            "an empty alphabet must be refused too"
+        );
+    }
+
+    /// The other half: `k_effective = ceil(2^H_I)` must fit inside the alphabet.
+    #[test]
+    fn restart_rejects_an_initial_entropy_the_alphabet_cannot_support() {
+        let reason = restart_input_rejection(2, 7.0).expect("H_I 7.0 needs 128 symbols, not 2");
+        assert!(
+            reason.contains("128") && reason.contains("only 2"),
+            "{reason}"
+        );
+        // The boundary must be inclusive: ceil(2^0.9) == 2 fits an alphabet of 2.
+        assert!(
+            restart_input_rejection(2, 0.9).is_none(),
+            "k_effective == alphabet must be accepted, not refused"
+        );
+        assert!(
+            restart_input_rejection(256, 8.0).is_none(),
+            "a full byte alphabet must support H_I = 8"
+        );
+    }
+
+    /// A restart result that passes everything, as the baseline to mutate.
+    fn accepted_result() -> RestartResult {
+        RestartResult {
+            alpha: 0.000_009_9,
+            x_r: 10,
+            x_c: 10,
+            x_max: 10,
+            x_cutoff: 20,
+            sanity_passed: true,
+            perm_passed: true,
+            chi_square_passed: true,
+            lrs_passed: true,
+            is_iid: true,
+            h_r: 7.5,
+            h_c: 7.5,
+            h_i: 7.0,
+            validation_passed: true,
+            min_entropy: 7.0,
+        }
+    }
+
+    #[test]
+    fn restart_verdict_accepts_a_passing_analysis() {
+        let (accepted, lines) = restart_verdict(&accepted_result());
+        assert!(accepted);
+        assert!(lines.iter().any(|l| l.contains("PASS")), "{lines:?}");
+    }
+
+    /// The defect this closes: `cmd_restart` printed FAILED and returned SUCCESS.
+    #[test]
+    fn restart_verdict_rejects_a_failed_validation_gate() {
+        let mut r = accepted_result();
+        r.validation_passed = false;
+        r.h_r = 1.0;
+        r.h_c = 1.0;
+        let (accepted, lines) = restart_verdict(&r);
+        assert!(!accepted);
+        assert!(
+            lines.iter().any(|l| l.contains("§3.1.4.2 validation gate")),
+            "must name the entropy cause: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("§3.1.4.3 restart sanity")),
+            "sanity held; that bullet must stay silent: {lines:?}"
+        );
+    }
+
+    /// A sanity failure forces `validation_passed` false upstream. The verdict
+    /// must reject it and must NOT also claim the entropy comparison failed.
+    #[test]
+    fn restart_verdict_names_only_the_cause_that_fired() {
+        let mut r = accepted_result();
+        r.sanity_passed = false;
+        r.validation_passed = false;
+        r.x_max = 99;
+        // H_r/H_c stay healthy: min = 7.5 >= H_I/2 = 3.5.
+        let (accepted, lines) = restart_verdict(&r);
+        assert!(!accepted);
+        assert!(
+            lines.iter().any(|l| l.contains("§3.1.4.3 restart sanity")),
+            "must name the sanity cause: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("§3.1.4.2 validation gate")),
+            "entropy comparison held; asserting it failed would be false: {lines:?}"
+        );
+    }
+
+    /// A FAIL header with no cause under it names nothing. Both predicates are
+    /// false under a NaN H_I, which is why the entropy bullet is written as the
+    /// literal complement of the gate.
+    #[test]
+    fn restart_verdict_fail_header_always_has_a_cause() {
+        let mut r = accepted_result();
+        r.validation_passed = false;
+        r.h_i = f64::NAN;
+        let (accepted, lines) = restart_verdict(&r);
+        assert!(!accepted);
+        assert!(
+            lines.len() > 1,
+            "FAIL header must never stand alone: {lines:?}"
+        );
+    }
+}

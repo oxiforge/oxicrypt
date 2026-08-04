@@ -212,7 +212,13 @@ fn transpose(matrix: &[u8], rows: usize, cols: usize) -> Vec<u8> {
 }
 
 /// Distinct symbol count of the matrix (EA `data.alph_size`).
-fn alphabet_size(matrix: &[u8]) -> usize {
+///
+/// Public so the CLI can enforce [`restart_analysis`]'s degenerate-input
+/// precondition before calling, which its `# Panics` section states the CLI does.
+/// One definition, one home: a second distinct-count in `main.rs` could drift
+/// from the one the analysis actually uses.
+#[must_use]
+pub fn alphabet_size(matrix: &[u8]) -> usize {
     let mut seen = [false; 256];
     let mut n = 0usize;
     for &b in matrix {

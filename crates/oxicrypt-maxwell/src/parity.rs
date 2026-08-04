@@ -1310,6 +1310,25 @@ pub fn run_parity(dir: &Path) -> Vec<DatasetResult> {
     REFERENCE_TABLE.iter().map(|r| check_one(r, dir)).collect()
 }
 
+/// Whether the caller has accepted a partial dataset suite by setting
+/// `OXICRYPT_EA_DATA_OPTIONAL=1`.
+///
+/// Deliberately an opt-out rather than an opt-in: the default must be that an
+/// incomplete suite fails, so an environment without the EA bundle cannot
+/// masquerade as a passing gate.
+///
+/// **It is process environment, not a per-invocation act.** An export in a shell
+/// rc, a CI profile, or a `.env` disarms the completeness check for every
+/// subsequent run, and a caller reading only the exit code sees nothing. Every
+/// check that honours it therefore says in words — on both stdout and stderr —
+/// that the run is not evidence, and no claim anywhere may rest on the exit code
+/// alone. See `docs/security-policy/security-policy.md`, which states the
+/// evidence-producing invocation explicitly rather than deriving it from an exit.
+#[must_use]
+pub fn datasets_optional() -> bool {
+    std::env::var("OXICRYPT_EA_DATA_OPTIONAL").is_ok_and(|v| v == "1")
+}
+
 /// Aggregate verdict across a set of dataset results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Verdict {
@@ -1341,9 +1360,40 @@ impl Verdict {
     }
 
     /// True when no dataset failed (skips are acceptable).
+    ///
+    /// This is a statement about the datasets that were *compared*, not about
+    /// coverage: an all-skip run has nothing to fail and so is `ok()`. Any
+    /// caller producing evidence must pair this with [`Verdict::complete`] —
+    /// see [`Verdict::full_strength`].
     #[must_use]
     pub fn ok(&self) -> bool {
         self.failed == 0
+    }
+
+    /// True when every reference dataset was actually compared — nothing skipped,
+    /// and at least one dataset reached a comparison.
+    ///
+    /// The second clause is not redundant. `skipped == 0` alone is satisfied by an
+    /// empty result set, which would report "all 0 datasets compared" as a
+    /// full-strength pass — ISC-146's exact defect, re-armed. `run_parity` always
+    /// maps the fixed 11-entry table so it is unreachable today; it is the first
+    /// thing a future `--only`/filter flag would break.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.skipped == 0 && self.passed.saturating_add(self.failed) > 0
+    }
+
+    /// True when the run is usable as evidence: everything was compared and
+    /// nothing failed.
+    ///
+    /// [`Verdict::ok`] alone cannot carry that meaning, because a run that
+    /// compared nothing reports zero failures. This is the predicate the CLI
+    /// branches on (`maxwell parity`'s verdict), so that an operator pointed at
+    /// an unprovisioned directory gets a different exit code from one who ran
+    /// the full table.
+    #[must_use]
+    pub fn full_strength(&self) -> bool {
+        self.ok() && self.complete()
     }
 }
 

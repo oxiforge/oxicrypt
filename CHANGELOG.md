@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `maxwell parity` no longer exits zero when it compared nothing: an all-skip or
+  partially-skipped run is a failure unless `OXICRYPT_EA_DATA_OPTIONAL=1` is set for that
+  invocation, and the closing verdict states in words whether the run is parity evidence
+  (#154).
+- `maxwell restart` no longer prints a FAILED verdict and exits zero; a rejected
+  §3.1.4.3 sanity check or §3.1.4.2 validation gate now exits non-zero, matching
+  `maxwell gate` (#154).
+- `maxwell restart` refuses a degenerate restart matrix — an alphabet of one, or an
+  `H_I` implying more equiprobable symbols than the matrix contains — instead of
+  tripping a debug assertion (exit 101, no verdict) or, in release, drawing the
+  §3.1.4.3 cutoff over symbols the data never contained. A non-finite `H_I` is
+  rejected at parse (#154).
+
 ## [0.20.0] - 2026-07-25
 
 ### Added
