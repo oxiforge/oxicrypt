@@ -48,6 +48,63 @@
 #   depends on an untracked file is already outside ci.yml's world.
 #   The file keeps the most recent 32 digests.
 #
+# nextest scoping (added 2026-08-04):
+#
+#   READ THIS BEFORE THE WORD "TESTS" MISLEADS YOU. Three of this
+#   hook's steps execute tests, and they are NOT interchangeable:
+#
+#     [3/4a] cargo nextest run --workspace   <- the only scoped one
+#     [3/4b] cargo test --workspace --doc    <- always runs
+#     [3/4c] the release construction guard  <- always runs
+#
+#   Everything below scopes 3a and 3a ONLY. When this hook says a
+#   push "skipped the nextest suite" it means exactly 3a; doctests
+#   and the release guard ran. Nothing here ever means "no tests
+#   ran", and no message in this file should be written to suggest
+#   it — a future reader deciding whether a push was tested must be
+#   able to answer from the wording alone.
+#
+#   Why 3a and nothing else: `cargo nextest run --workspace` is
+#   ~1245s of a ~21-minute cycle, and one EA-anchored test in
+#   oxicrypt-maxwell exceeds 1140s of that. Every other gate in this
+#   hook, tests included, costs ~7s together. So the choice was never
+#   "gates or no gates" — it is how much of 3a a push has to run.
+#
+#     A. The push changes no Rust at all (docs, hooks, CI config):
+#        nothing 3a runs can observe it, so 3a is skipped.
+#     B. The push changes Rust, but nothing oxicrypt-maxwell is built
+#        from: maxwell's tests cannot behave differently, so nextest
+#        runs without that one package. Maxwell is built from itself
+#        plus oxicrypt-module, oxicrypt-sha, oxicrypt-test-vectors and
+#        oxicrypt-zeroize — change any of those, or the lockfile or
+#        toolchain, and this tier does not apply.
+#     C. Anything else, or any doubt: the full cycle.
+#
+#   Tiers A and B are automatic and conservative — they answer "can
+#   this push possibly change a test's verdict?" and never "is this
+#   push important?". A deliberate choice is the separate lever:
+#
+#     OXICRYPT_PUSH_NEXTEST=skip      skip the nextest suite (doctests and the release guard still run)
+#     OXICRYPT_PUSH_NEXTEST=no-maxwell   run nextest without maxwell
+#     OXICRYPT_PUSH_NEXTEST=full      run all of nextest
+#
+#   The override is per-invocation and announced in the output, so a
+#   reduced run is never mistaken for a full one in scrollback. It is
+#   how an operator says "not on this push" — a mid-stack rebase, a
+#   docs fix on a Rust branch, a WIP push to a feature branch — while
+#   all of nextest still gates whatever lands on main.
+#
+#   Only a genuinely full run writes a stamp: the stamp asserts the
+#   full cycle passed, and a reduced run — automatic or chosen — must
+#   never be able to satisfy a later full one.
+#
+#   The tiering is fail-closed in both directions. The closure list
+#   below is a list of what is INSIDE; a changed crate directory that
+#   is not in the known workspace inventory is treated as inside it,
+#   so adding a crate cannot silently widen the skip. Any unresolvable
+#   base, deleted-ref edge case, or unrecognised path falls through
+#   to C.
+#
 # Bypass:
 #   git push --no-verify
 #   Use sparingly. Document the reason in the commit body or PR
@@ -263,42 +320,117 @@ if [[ -f "$stamp_file" ]] && grep -qx "$state_digest" "$stamp_file"; then
 fi
 
 # Rust-relevance check (added 2026-06-12): the cargo gates can only be
-# affected by Rust-relevant paths. If nothing being pushed — commits
-# relative to each remote ref (merge-base with origin/main for new
-# branches) plus any uncommitted tracked changes — touches one, run
-# only the cheap fmt gate and skip clippy/test/build. A push that
-# changes only docs, hooks, or CI config validates in seconds. The
-# skipped path does NOT write a stamp (the stamp asserts all four
-# gates passed). Any doubt (unresolvable base, deleted ref edge cases)
-# falls through to the full cycle — the safe default.
-rust_re='^(crates|benches|acvp-harness|oxi|tools|playground)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/'
-rust_relevant=false
+# affected by Rust-relevant paths. If nothing being pushed touches one,
+# the nextest suite has nothing to validate — see the tier table in the
+# header. Any doubt (unresolvable base, deleted ref edge cases) falls
+# through to the full cycle — the safe default.
+rust_re='^(crates|benches|acvp-harness|esv-harness|oxi|tools|playground)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/'
+force_full=false
 # Relevance is judged on what is being PUSHED (ref diffs below), not on
 # uncommitted worktree changes — local dirt never reaches the remote, and
 # this clone deliberately carries a long-lived dirty caps.rs that would
 # otherwise defeat the skip forever. (The stamp digest, by contrast, DOES
 # include worktree dirt — the stamp asserts what the gates tested.)
+#
+# The base is merge-base(local, origin/main), NOT the old remote sha
+# (corrected 2026-08-04). A rebase rewrites the branch onto a newer main,
+# so remote_sha..local spans everything the base moved over: measured on a
+# two-file docs-and-hooks branch rebased over three merged PRs, that diff
+# was 19 files of which 16 were Rust — none of them the branch's, all of
+# them already gated and merged. Judging relevance on the old remote tip
+# means the escape stops working the moment a branch is rebased, which is
+# every branch after the first in a merge sequence. merge-base asks the
+# question that was always meant: what does THIS branch change?
 changed_files=""
 for pair in "${ref_pairs[@]:-}"; do
     [[ -z "$pair" ]] && continue
     local_sha="${pair%% *}"
     remote_sha="${pair##* }"
     [[ "$local_sha" =~ ^0+$ ]] && continue   # ref deletion — nothing to gate
-    if [[ "$remote_sha" =~ ^0+$ ]]; then
-        base="$(git merge-base "$local_sha" origin/main 2>/dev/null)" || { rust_relevant=true; break; }
-    else
+    base="$(git merge-base "$local_sha" origin/main 2>/dev/null)" || base=""
+    # Fall back to the remote sha only when merge-base cannot answer; an
+    # unresolvable base on a new ref forces the full cycle.
+    if [[ -z "$base" ]]; then
+        if [[ "$remote_sha" =~ ^0+$ ]]; then force_full=true; break; fi
         base="$remote_sha"
     fi
-    diff_out="$(git diff --name-only "$base" "$local_sha" 2>/dev/null)" || { rust_relevant=true; break; }
+    diff_out="$(git diff --name-only "$base" "$local_sha" 2>/dev/null)" || { force_full=true; break; }
     changed_files+="$diff_out"$'\n'
 done
 
-if [[ "$rust_relevant" == "false" ]] && ! grep -qE "$rust_re" <<<"$changed_files"; then
-    echo "pre-push: no Rust-relevant paths in this push — running fmt only, skipping clippy/test/build."
-    echo "pre-push [1/1]: cargo fmt --all -- --check"
-    cargo fmt --all -- --check
-    echo "pre-push: fmt clean; non-Rust push validated (no stamp written)."
-    exit 0
+# --- Tier A: nothing Rust-relevant. Skip the nextest suite; every other gate still runs.
+run_nextest=true
+nextest_scope=""
+skip_reason=""
+scope_reason=""
+# Nothing is announced until the override below has had its say: a tier
+# line printed first and contradicted second reads as two decisions, and
+# scrollback is where someone later reconstructs what a push actually ran.
+if [[ "$force_full" == "false" ]] && ! grep -qE "$rust_re" <<<"$changed_files"; then
+    run_nextest=false
+    skip_reason="no Rust-relevant paths in this push"
+fi
+
+# --- Tier B: Rust-relevant, but oxicrypt-maxwell's dependency closure is
+# untouched, so its tests (which carry the entire EA-anchored tail) cannot
+# change verdict. Closure derived from `cargo metadata` on 2026-08-04:
+# oxicrypt-maxwell itself plus oxicrypt-module, oxicrypt-sha,
+# oxicrypt-test-vectors, oxicrypt-zeroize. Cargo manifests, the lockfile,
+# the toolchain pin and .cargo config are in it too — a codegen or toolchain
+# change moves floating-point results, which is exactly what a <=1e-6 parity
+# bound is sensitive to.
+#
+# Fail-closed on an unknown crate: `known_crates_re` is the workspace
+# inventory as it stood when this was written. A changed crates/<name>/ path
+# outside that inventory is a crate this list has never seen, so it is
+# treated as inside the closure. Adding a crate therefore costs a full cycle
+# until someone extends the inventory — it can never silently widen a skip.
+maxwell_closure_re='^crates/oxicrypt-(maxwell|module|sha|test-vectors|zeroize)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/'
+known_crates_re='^crates/oxicrypt-(aes|aes-accel|cmac|dh|drbg|ecdh|ecdsa|eddsa|entropy|ffi|hmac|integrity|kdf|keccak-accel|lms|maxwell|ml-dsa|ml-kem|module|rsa|sha|sha-accel|slh-dsa|test-vectors|timer|tls-kdf|xmss|xof|zeroize)/'
+if [[ "$run_nextest" == "true" && "$force_full" == "false" ]]; then
+    unknown_crate=false
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        [[ "$f" == crates/* ]] || continue
+        grep -qE "$known_crates_re" <<<"$f" || unknown_crate=true
+    done <<<"$changed_files"
+
+    if [[ "$unknown_crate" == "true" ]]; then
+        scope_reason="a changed crates/ path is outside the known workspace inventory"
+    elif ! grep -qE "$maxwell_closure_re" <<<"$changed_files"; then
+        nextest_scope="-E not package(oxicrypt-maxwell)"
+        scope_reason="nothing oxicrypt-maxwell is built from changed"
+    fi
+fi
+
+# --- Explicit operator override. Announced loudly, and it can only ever
+# NARROW what a stamp records: none/no-maxwell write no stamp, and `full`
+# runs everything a full cycle runs. An unrecognised value is refused
+# rather than silently ignored — a typo that fell through to the default
+# would look exactly like the override having been honoured.
+case "${OXICRYPT_PUSH_NEXTEST:-}" in
+    "")          ;;
+    skip)        run_nextest=false; nextest_scope=""; scope_reason=""
+                 skip_reason="OXICRYPT_PUSH_NEXTEST=skip (operator choice)" ;;
+    no-maxwell)  run_nextest=true;  nextest_scope="-E not package(oxicrypt-maxwell)"
+                 scope_reason="OXICRYPT_PUSH_NEXTEST=no-maxwell (operator choice)" ;;
+    full)        run_nextest=true;  nextest_scope=""; scope_reason=""; skip_reason="" ;;
+    *)           echo "pre-push: FAILED — OXICRYPT_PUSH_NEXTEST='${OXICRYPT_PUSH_NEXTEST}' is not one of skip|no-maxwell|full." >&2
+                 exit 1 ;;
+esac
+
+# One decision line, printed after everything that could change it. It names
+# what nextest will do and why, in that order, so a reader of scrollback
+# never has to work out which of two announcements won.
+if [[ "$run_nextest" == "false" ]]; then
+    echo "pre-push: nextest will be SKIPPED — ${skip_reason}. Every other gate, doctests and the release guard included, still runs."
+elif [[ -n "$nextest_scope" ]]; then
+    echo "pre-push: nextest will run WITHOUT oxicrypt-maxwell — ${scope_reason}."
+    echo "pre-push:   (maxwell carries the EA-anchored tail; all of nextest runs when its inputs change)"
+elif [[ -n "${scope_reason:-}" ]]; then
+    echo "pre-push: nextest will run IN FULL — ${scope_reason}."
+else
+    echo "pre-push: nextest will run IN FULL."
 fi
 
 echo "pre-push [1/4]: cargo fmt --all -- --check"
@@ -307,8 +439,23 @@ cargo fmt --all -- --check
 echo "pre-push [2/4]: cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-echo "pre-push [3/4a]: cargo nextest run --workspace"
-cargo nextest run --workspace
+if [[ "$run_nextest" == "true" ]]; then
+    if [[ -n "$nextest_scope" ]]; then
+        echo "pre-push [3/4a]: cargo nextest run --workspace -E 'not package(oxicrypt-maxwell)'"
+        nextest_out=$(cargo nextest run --workspace -E 'not package(oxicrypt-maxwell)' 2>&1) || {
+            echo "$nextest_out" >&2; exit 1; }
+        echo "$nextest_out"
+        # Fail closed on a filter that selected nothing: a nextest expression
+        # that matches no test exits 0, which reads exactly like a pass.
+        grep -Eq "[1-9][0-9]* tests run" <<<"$nextest_out" \
+            || { echo "pre-push [3/4a] FAILED: the scoped test run selected no tests" >&2; exit 1; }
+    else
+        echo "pre-push [3/4a]: cargo nextest run --workspace"
+        cargo nextest run --workspace
+    fi
+else
+    echo "pre-push [3/4a]: SKIPPED — ${skip_reason:-no Rust-relevant paths in this push}."
+fi
 
 echo "pre-push [3/4b]: cargo test --workspace --doc"
 cargo test --workspace --doc
@@ -335,7 +482,17 @@ echo "pre-push [4/4]: cargo build --workspace --release"
 cargo build --workspace --release
 
 # Record the gated state; keep the most recent 32 digests.
-{ [[ -f "$stamp_file" ]] && cat "$stamp_file"; echo "$state_digest"; } \
-    | tail -32 > "$stamp_file.tmp" && mv "$stamp_file.tmp" "$stamp_file"
-
-echo "pre-push: all four gates passed (state ${state_digest:0:12}… stamped)."
+#
+# ONLY a full run stamps. The stamp is read as "all four gates passed on
+# this exact state", and a later push that hits it skips everything — so a
+# reduced run must never be able to satisfy one. A tier-A or tier-B pass is
+# real, and it is also narrower than what the stamp claims.
+if [[ "$run_nextest" == "true" && -z "$nextest_scope" ]]; then
+    { [[ -f "$stamp_file" ]] && cat "$stamp_file"; echo "$state_digest"; } \
+        | tail -32 > "$stamp_file.tmp" && mv "$stamp_file.tmp" "$stamp_file"
+    echo "pre-push: all four gates passed (state ${state_digest:0:12}… stamped)."
+elif [[ "$run_nextest" == "true" ]]; then
+    echo "pre-push: gates passed; nextest ran without oxicrypt-maxwell (no stamp written)."
+else
+    echo "pre-push: gates passed; nextest was skipped (doctests and the release guard ran) (no stamp written)."
+fi

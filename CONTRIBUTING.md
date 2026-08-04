@@ -77,6 +77,31 @@ All of these must be clean before opening a PR. They run on your local machine u
 
 If a gate fails, fix the underlying issue rather than bypassing. The gate is the contract.
 
+### How much of the nextest suite a push runs
+
+The pre-push hook always runs fmt, Clippy, **doctests**, the **release construction guard** and the release build — together about seven seconds on a warm target directory. None of those are ever skipped. The one expensive gate is `cargo nextest run --workspace`, and only that gate is scoped to what the push can actually affect:
+
+| Your push changes | `cargo nextest run` |
+|---|---|
+| no Rust at all (docs, hooks, CI config) | skipped — no test can observe it |
+| Rust, but nothing `oxicrypt-maxwell` is built from | runs without that one package |
+| `oxicrypt-maxwell`, or `oxicrypt-module` / `oxicrypt-sha` / `oxicrypt-test-vectors` / `oxicrypt-zeroize`, or `Cargo.lock` / `Cargo.toml` / the toolchain pin / `.cargo/` | runs in full |
+| a crate the hook's inventory does not recognise | runs in full |
+
+`oxicrypt-maxwell` carries the SP 800-90B estimator tests anchored to the NIST EA reference datasets. One of them exceeds 1140s of a ~1245s suite run, so excluding that package when nothing it is built from changed is most of the difference between a 21-minute push and a fast one. The scoping is conservative: it asks whether a test's verdict *could* change, never whether a push looks important, and anything it cannot resolve runs the full suite.
+
+Only a full run records a pass in the stamp cache. A scoped run is a real pass over a smaller set, and must not be able to satisfy a later push that needs the full one.
+
+To decide for yourself on a given push:
+
+```bash
+OXICRYPT_PUSH_NEXTEST=skip        git push    # skip the nextest suite (doctests + release guard still run)
+OXICRYPT_PUSH_NEXTEST=no-maxwell  git push    # nextest without oxicrypt-maxwell
+OXICRYPT_PUSH_NEXTEST=full        git push    # run all of nextest
+```
+
+The override is announced in the hook's output and writes no stamp unless it ran everything. Unlike the automatic scoping it does **not** check whether maxwell's inputs changed — `no-maxwell` excludes those tests whatever you touched, so use it knowing that, and let a full nextest run gate what lands on `main`.
+
 ## Private-name containment (opt-in)
 
 Some strings must not reach a public repository and also cannot be written into one: an employer's name, a client path, an internal hostname. A pattern committed to the repo would publish the very name it exists to suppress, and would match its own source file, so it could never pass.
