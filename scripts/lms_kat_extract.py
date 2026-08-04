@@ -27,24 +27,21 @@ Pass via argv: `python3 lms_kat_extract.py sha256_m32`.
 Source: usnistgov/ACVP-Server @ 112690e8 (pinned 2026-05-16).
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-ACVP_ROOT = Path.home() / "repos" / "usnistgov-ACVP-Server" / "gen-val" / "json-files"
-DATA_DIR = (
-    Path.home()
-    / "carakastan"
-    / "Projects"
-    / "OxiCrypt"
-    / "oxicrypt"
-    / ".worktrees"
-    / "lms-expansion"
-    / "crates"
-    / "oxicrypt-lms"
-    / "tests"
-    / "data"
-)
+# Local clone of usnistgov/ACVP-Server holding the gen-val JSON fixtures.
+# Set ACVP_SERVER_ROOT to wherever that repository is checked out.
+ACVP_ROOT = Path(
+    os.environ.get("ACVP_SERVER_ROOT", Path.home() / "ACVP-Server")
+) / "gen-val" / "json-files"
+
+# Repo root, derived from this script's own location so the tool runs from any
+# checkout. Override with OXICRYPT_ROOT when running against a worktree.
+REPO_ROOT = Path(os.environ.get("OXICRYPT_ROOT", Path(__file__).resolve().parents[1]))
+DATA_DIR = REPO_ROOT / "crates" / "oxicrypt-lms" / "tests" / "data"
 
 LMS_MODE_RE = re.compile(r"^LMS_(SHA256|SHAKE)_M(\d+)_H(\d+)$")
 LMOTS_MODE_RE = re.compile(r"^LMOTS_(SHA256|SHAKE)_N(\d+)_W(\d+)$")

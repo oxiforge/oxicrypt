@@ -563,7 +563,9 @@ fn push_str(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
 }
 
-// ── Boundary validation + generation (ISC-98 hardening) ───────────────
+// ── Boundary validation + generation ─────────────────────────────────
+// Hardening of the ISC-98 upload path. No criterion covers it: the wire
+// shape ISC-98 pins is unaffected by a malformed multipart boundary.
 
 /// True if `b` is an RFC 2046 `bchars` character (the set a multipart
 /// boundary may use, including the space that a boundary must not *end*
@@ -1404,7 +1406,10 @@ mod tests {
         ));
     }
 
-    // ── Fix 9: filename header-injection + collision (ISC-98/102) ─────
+    // ── Filename header-injection and collision ───────────────────────
+    // Hardening of the ISC-98 and ISC-102 upload paths. Those criteria pin
+    // the field name and the PDF-only rule; neither covers CRLF forging in
+    // a Content-Disposition header, so this is uncovered by design.
 
     #[test]
     fn filename_with_crlf_is_rejected_as_a_header_injection() {

@@ -9,20 +9,13 @@ Per-(N, W) derived constants come from RFC 8554 §A.1 directly (no
 runtime computation — the values are fixed by the family).
 """
 import sys
+import os
 from pathlib import Path
 
-SRC_DIR = (
-    Path.home()
-    / "carakastan"
-    / "Projects"
-    / "OxiCrypt"
-    / "oxicrypt"
-    / ".worktrees"
-    / "lms-expansion"
-    / "crates"
-    / "oxicrypt-lms"
-    / "src"
-)
+# Repo root, derived from this script's own location so the tool runs from any
+# checkout. Override with OXICRYPT_ROOT when running against a worktree.
+REPO_ROOT = Path(os.environ.get("OXICRYPT_ROOT", Path(__file__).resolve().parents[1]))
+SRC_DIR = REPO_ROOT / "crates" / "oxicrypt-lms" / "src"
 
 # (N, W) → (U, V, P, LS) per RFC 8554 §A.1 + RFC 8708 §3.1/§4.1.
 UV_TABLE = {

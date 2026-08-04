@@ -36,3 +36,7 @@ acvts-demo/
 # Contains internal paths and organizational metadata.
 llm-project-manifest.yaml
 .worktrees/
+
+# Python bytecode caches — never tracked (a .pyc embeds absolute build paths).
+__pycache__/
+*.py[cod]

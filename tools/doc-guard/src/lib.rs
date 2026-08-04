@@ -262,4 +262,107 @@ mod tests {
             assert!(listed, "README crate tree: `{name}` row missing");
         }
     }
+
+    /// Every `ISC-N` cited anywhere in the tree resolves to a criterion defined
+    /// in `ISA.md`.
+    ///
+    /// The repository previously carried a placeholder ISA whose IDs collided
+    /// with the numbering the code actually cited, so a citation resolved
+    /// against the authoritative file to an unrelated criterion with nothing to
+    /// signal the mismatch. Nothing checked, which is why it survived.
+    ///
+    /// Files are read as bytes and scanned lossily rather than as UTF-8 text: a
+    /// committed `.pyc` once carried a leaked path, and a scan that skips binary
+    /// content reports clean while the worst instance sits in history.
+    #[test]
+    fn every_cited_isc_resolves_in_the_isa() {
+        fn collect(dir: &Path, out: &mut Vec<(String, u32)>) {
+            for entry in fs::read_dir(dir)
+                .expect("readable dir")
+                .filter_map(Result::ok)
+            {
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name == ".git" || name == "target" || name == "vendor" {
+                    continue;
+                }
+                if path.is_dir() {
+                    collect(&path, out);
+                } else if name != "ISA.md" {
+                    let bytes = fs::read(&path).unwrap_or_default();
+                    let text = String::from_utf8_lossy(&bytes);
+                    let mut rest: &str = &text;
+                    while let Some(i) = rest.find("ISC-") {
+                        rest = &rest[i + 4..];
+                        let digits: String =
+                            rest.chars().take_while(char::is_ascii_digit).collect();
+                        if let Ok(n) = digits.parse::<u32>() {
+                            out.push((path.display().to_string(), n));
+                        }
+                    }
+                }
+            }
+        }
+
+        let isa = read_doc("ISA.md");
+        let defined: BTreeSet<u32> = isa
+            .lines()
+            .filter_map(|l| {
+                l.strip_prefix("- [x] ISC-")
+                    .or_else(|| l.strip_prefix("- [ ] ISC-"))
+            })
+            .filter_map(|r| {
+                let d: String = r.chars().take_while(char::is_ascii_digit).collect();
+                d.parse().ok()
+            })
+            .collect();
+
+        let mut cited = Vec::new();
+        collect(&repo_root(), &mut cited);
+
+        // Anti-vacuity: a walk that found nothing would make the assertion below
+        // trivially true. These bounds are deliberately loose — they exist to
+        // catch a broken walk, not to pin a count that legitimately moves.
+        // A bolded ID makes PAI's `parseCriteriaList()` return zero criteria for
+        // the WHOLE file, silently. A count threshold does not catch a single
+        // bolded line, so assert the shape directly.
+        let bolded: Vec<&str> = isa
+            .lines()
+            .filter(|l| l.starts_with("- [") && l.contains("] **ISC-"))
+            .collect();
+        assert!(
+            bolded.is_empty(),
+            "criterion IDs must be bare `- [ ] ISC-N:` — a bolded ID parses to \
+             zero criteria for the whole file:\n  {}",
+            bolded.join("\n  ")
+        );
+
+        assert!(
+            defined.len() > 100,
+            "ISA.md defines only {} criteria — the parser found almost nothing, \
+             which usually means an ID was bolded",
+            defined.len()
+        );
+        assert!(
+            cited.len() > 50,
+            "found only {} ISC citations in the tree — the walk is broken, so \
+             `all cited resolve` would pass having checked nothing",
+            cited.len()
+        );
+
+        let mut unresolved: Vec<String> = cited
+            .iter()
+            .filter(|(_, n)| !defined.contains(n))
+            .map(|(f, n)| format!("ISC-{n} cited in {f}"))
+            .collect();
+        unresolved.sort();
+        unresolved.dedup();
+        assert!(
+            unresolved.is_empty(),
+            "these citations resolve to no criterion in ISA.md — add the criterion \
+             or correct the citation:\n  {}",
+            unresolved.join("\n  ")
+        );
+    }
 }

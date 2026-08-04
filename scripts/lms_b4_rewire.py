@@ -22,11 +22,14 @@ Modes:
   python lms_b4_rewire.py rewire                # rewrite svc_sign/svc_verify in 80 per-pair files (in place)
 """
 from __future__ import annotations
+import os
 
 import sys
 from pathlib import Path
 
-WORKTREE = Path("/home/rick/carakastan/Projects/OxiCrypt/oxicrypt/.worktrees/lms-expansion")
+# Repo root, derived from this script's own location so the tool runs from any
+# checkout. Override with OXICRYPT_ROOT when running against a worktree.
+WORKTREE = Path(os.environ.get("OXICRYPT_ROOT", Path(__file__).resolve().parents[1]))
 LMS_SRC = WORKTREE / "crates" / "oxicrypt-lms" / "src"
 
 FAMILY_ORDER = [
