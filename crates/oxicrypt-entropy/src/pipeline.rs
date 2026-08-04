@@ -520,6 +520,161 @@ mod tests {
         p.sample().unwrap();
     }
 
+    /// A source that emits healthy PRNG bytes until switched, then emits a fixed
+    /// value on demand. Lets a test build a partial RCT run, pass a healthy
+    /// on-demand battery, and then continue the same run — which is what
+    /// distinguishes a replaced monitor from a carried-over one.
+    ///
+    /// The switch is a `Cell` read through the existing `source()` accessor, so
+    /// this needs no `source_mut` on the pipeline — a test must not widen the
+    /// production API to observe itself.
+    #[derive(Debug)]
+    struct ScriptedMock {
+        prng: PrngMock,
+        stuck: core::cell::Cell<Option<u8>>,
+        last_prng_sample: core::cell::Cell<Option<u8>>,
+    }
+    impl ScriptedMock {
+        fn new() -> Self {
+            Self {
+                prng: PrngMock::new(),
+                stuck: core::cell::Cell::new(None),
+                last_prng_sample: core::cell::Cell::new(None),
+            }
+        }
+    }
+    impl Sealed for ScriptedMock {}
+    impl NoiseSource for ScriptedMock {
+        fn spec(&self) -> SourceSpec {
+            self.prng.spec()
+        }
+        fn max_claimable_h(&self) -> MinEntropy {
+            self.prng.max_claimable_h()
+        }
+        fn sample(&mut self) -> Result<RawSample, SourceError> {
+            if let Some(v) = self.stuck.get() {
+                self.prng.emitted += 1;
+                return Ok(v);
+            }
+            let sampled = self.prng.sample();
+            if let Ok(v) = sampled {
+                self.last_prng_sample.set(Some(v));
+            }
+            sampled
+        }
+        fn metadata(&self) -> SourceMetadata<'_> {
+            self.prng.metadata()
+        }
+    }
+
+    /// Feed the same value until the RCT trips, returning how many it took.
+    /// `None` means it never tripped within `limit`.
+    fn samples_until_rct_trip(p: &mut EntropyPipeline<ScriptedMock>, limit: u32) -> Option<u32> {
+        // "First error" is not the same as "RCT trip". Today only the RCT is
+        // reachable first (cutoff 11, far short of the APT's 512-sample window),
+        // but that is one constant away from silently measuring something else
+        // while both sides stay equal — so assert the cause, not merely a failure.
+        (1..=limit).find(|_| {
+            if let Err(e) = p.sample() {
+                assert!(
+                    matches!(e, EntropyError::Health(_)),
+                    "the run must end at a health-test trip, got {e:?}"
+                );
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    /// ISC-49 — restart tests begin from clean health-test state.
+    ///
+    /// `on_demand_runs_from_clean_state` asserts the emitted-sample count and
+    /// nothing else; its own comment promised to "verify the continuous monitor
+    /// was REPLACED by the fresh one" and then did not. A reader checking coverage
+    /// by reading comments would conclude this was covered.
+    ///
+    /// Sample accounting cannot show replacement — the comment says as much. The
+    /// observable difference is RCT run-count carryover, so this measures it
+    /// **differentially** rather than against a hardcoded cutoff: the number of
+    /// identical samples needed to trip the RCT after an on-demand test must equal
+    /// the number needed from a clean monitor. If the continuous monitor were
+    /// carried over, the run already in progress would count toward the cutoff and
+    /// the trip would arrive earlier.
+    ///
+    /// **Scope, stated rather than implied:** this proves whole-object replacement
+    /// of the monitor, which is what `run_battery` does (`self.monitor = fresh`),
+    /// and a mutation discarding that assignment fails here by name. It does NOT
+    /// separately probe the APT half of the monitor's state; a contrived mutation
+    /// that reset the RCT while carrying the APT window across would survive. That
+    /// probe was attempted and abandoned deliberately: the APT's target is the
+    /// FIRST sample of each 512-sample window, so a differential fixture needs
+    /// window-alignment control this mock does not have, and the attempt tripped
+    /// in one configuration and not the other. A test that cannot be made
+    /// deterministic is worse than a documented gap.
+    #[test]
+    fn on_demand_replaces_the_continuous_monitor() {
+        const LIMIT: u32 = 4096;
+
+        // Baseline: from a clean monitor, how many identical samples trip the RCT?
+        let mut clean =
+            EntropyPipeline::new(ScriptedMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
+        clean.run_startup().unwrap();
+        // Precondition the measurement depends on and did not assert: the last
+        // sample before the run must differ from the stuck value, or the run
+        // starts at 2 and both counts shift. Deterministic today, asserted anyway.
+        assert_ne!(
+            clean.source().last_prng_sample.get(),
+            Some(0xA5),
+            "the stuck value must not continue a run the PRNG already started"
+        );
+        clean.source().stuck.set(Some(0xA5));
+        let baseline = samples_until_rct_trip(&mut clean, LIMIT)
+            .expect("a constant source must trip the RCT within the limit");
+
+        // ABSOLUTE anchor, not just a differential one. `after == baseline` alone
+        // is blind to any mutation that moves BOTH sides equally — installing the
+        // fresh monitor with the wrong claim, the wrong alpha, or an inverted
+        // is_binary() all keep the two counts equal while silently weakening the
+        // continuous health test for the rest of the pipeline's life. Pinning the
+        // baseline to the SP 800-90B §4.4.1 RCT cutoff for this pipeline's own
+        // configuration (H = 2 bits, alpha = 2^-20) closes that whole family:
+        // C = 1 + ceil(20 / 2) = 11.
+        assert_eq!(
+            baseline, 11,
+            "the on-demand battery must install a monitor for the pipeline's own \
+             claim: H=2 bits at alpha=2^-20 gives an RCT cutoff of 1 + ceil(20/2) = 11"
+        );
+
+        // Now build a partial run of the SAME value, run the on-demand battery on
+        // healthy samples, and continue the run.
+        let mut p =
+            EntropyPipeline::new(ScriptedMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
+        p.run_startup().unwrap();
+        p.source().stuck.set(Some(0xA5));
+        // Half the baseline, so the partial run is real but cannot itself trip.
+        #[allow(clippy::integer_division)]
+        let partial = baseline / 2;
+        for _ in 0..partial {
+            p.sample().unwrap();
+        }
+        // Healthy again, so the battery passes and installs a fresh monitor.
+        p.source().stuck.set(None);
+        p.on_demand_test().unwrap();
+        assert!(p.is_operational());
+
+        p.source().stuck.set(Some(0xA5));
+        let after = samples_until_rct_trip(&mut p, LIMIT)
+            .expect("a constant source must still trip the RCT");
+        assert_eq!(
+            after,
+            baseline,
+            "the on-demand battery must install a FRESH monitor: a carried-over \
+             monitor would trip after {} samples, not {baseline}",
+            baseline.saturating_sub(partial)
+        );
+    }
+
     #[test]
     fn on_demand_before_startup_is_refused() {
         let mut p = healthy_pipeline();

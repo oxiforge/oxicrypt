@@ -359,8 +359,14 @@ mod tests {
 
     /// A small, fast cutoff round count for the synthetic fixtures.
     const TEST_ROUNDS: usize = 2000;
-    /// A small permutation budget — the synthetic fixtures reach a stable
+    /// A small permutation budget — most synthetic fixtures reach a stable
     /// verdict in far fewer than the spec PERMS.
+    ///
+    /// **These are not the spec verdicts.** §5.1 verdicts genuinely flip between
+    /// this budget and [`permutation::PERMS`] on identical data: the symmetric
+    /// fixture below reports `perm=false` at 200 and `perm=true` at 500 and above.
+    /// Never generalise a claim about §5.1's sensitivity from a run at this
+    /// budget — doing so is what produced a false "uncatchable" residual here.
     const TEST_PERMS: usize = 200;
 
     /// Build a near-uniform `n x n` matrix over `k` symbols using a simple
@@ -510,5 +516,229 @@ mod tests {
         assert_eq!(r.x_r, 1, "each distinct symbol once per row");
         assert_eq!(r.x_c, 1, "each distinct symbol once per column");
         assert_eq!(r.x_max, 1);
+    }
+    // ----- ISC-83 / ISC-83.1: the §5 battery verdicts on rows AND columns -----
+    //
+    // `perm_passed` / `chi_square_passed` / `lrs_passed` are computed as
+    // `row && col`, stored in the result, and — before this — asserted nowhere.
+    // Restart data is a CMVP submission artifact and its IID verdict is the number
+    // a reviewer reads.
+
+    /// Deterministic pseudo-random matrix, no RNG dependency.
+    fn pseudo_random_matrix(n: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        (0..n * n)
+            .map(|_| {
+                state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = state;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                u8::try_from((z ^ (z >> 31)) & 0xFF).unwrap_or(0)
+            })
+            .collect()
+    }
+
+    /// Positive control for the three verdicts: without this, a mutation forcing
+    /// any of them to `false` would be invisible — every other verdict fixture
+    /// here expects `false`.
+    #[test]
+    fn restart_iid_verdicts_are_true_on_iid_data() {
+        let n = 32;
+        let m = pseudo_random_matrix(n, 0x1234_5678_9abc_def0);
+        let r = restart_analysis(&m, 8, 1.0, n, n, TEST_ROUNDS, TEST_PERMS);
+        assert!(r.perm_passed, "§5.1 permutation must pass on IID data");
+        assert!(r.chi_square_passed, "§5.2 chi-square must pass on IID data");
+        assert!(r.lrs_passed, "§5.3 LRS must pass on IID data");
+        assert!(
+            r.is_iid,
+            "is_iid must be the conjunction of the three verdicts"
+        );
+    }
+
+    /// ISC-83.1 — the COLUMN half specifically.
+    ///
+    /// The fixture was **measured, not assumed**. A constant column at `n = 32`
+    /// was the obvious choice and is wrong: a contiguous run in the column stream
+    /// is necessarily a period-`n` pattern in the row stream, and at `n = 32` the
+    /// §5.1 permutation test catches it on the rows too, which would prove nothing
+    /// about columns. Sweeping `n` and the column pattern found that `n = 100`
+    /// with a two-valued column separates them cleanly: the row stream passes all
+    /// three §5 tests and the column stream fails all three.
+    ///
+    /// The row stream is asserted to pass each test individually, so the combined
+    /// verdict being false can only come from the transposed data. Deleting any
+    /// `&& cdata` half flips this test and nothing else.
+    #[test]
+    fn restart_iid_verdicts_evaluate_the_transposed_column_data() {
+        let n = 100;
+        let mut m = pseudo_random_matrix(n, 0x0f1e_2d3c_4b5a_6978);
+        for i in 0..n {
+            if let Some(slot) = m.get_mut(i.saturating_mul(n)) {
+                *slot = if i % 2 == 0 { 0x41 } else { 0x42 };
+            }
+        }
+
+        // Positive control: the row stream alone is IID by all three §5 tests, so
+        // any failure below is attributable to the columns.
+        assert!(
+            run_permutation_iid(&m, TEST_PERMS),
+            "row stream must pass §5.1 alone, or this proves nothing about columns"
+        );
+        assert!(
+            chi_square_tests(&m).passed,
+            "row stream must pass §5.2 alone"
+        );
+        assert!(
+            len_lrs_iid_test(&m).passed,
+            "row stream must pass §5.3 alone"
+        );
+
+        // Yet the combined verdict is not IID — the column half did the work.
+        let r = restart_analysis(&m, 8, 1.0, n, n, TEST_ROUNDS, TEST_PERMS);
+        assert!(
+            !r.perm_passed,
+            "§5.1 must fail: the column stream is not IID"
+        );
+        assert!(
+            !r.chi_square_passed,
+            "§5.2 must fail: the column stream is not IID"
+        );
+        assert!(
+            !r.lrs_passed,
+            "§5.3 must fail: the column stream is not IID"
+        );
+        assert!(!r.is_iid, "the conjunction must be false");
+    }
+
+    /// ISC-83 — the ROW half specifically, the mirror of the column test.
+    ///
+    /// Deleting the column halves is caught by the test above; deleting the ROW
+    /// halves was not caught by anything, and it is the more consequential side: a
+    /// defect confined to one restart's own sequence is a row-wise defect, which
+    /// is exactly what §5-on-rows exists to catch.
+    ///
+    /// The fixture is the column fixture **transposed**. Because `cdata` is the
+    /// transpose of `rdata`, transposing the input swaps the two roles exactly: the
+    /// stream that passed all three §5 tests is now the column data, and the one
+    /// that failed them is now the row data. No new tuning was needed.
+    #[test]
+    fn restart_iid_verdicts_evaluate_the_row_data() {
+        let n = 100;
+        let mut m = pseudo_random_matrix(n, 0x0f1e_2d3c_4b5a_6978);
+        for i in 0..n {
+            if let Some(slot) = m.get_mut(i.saturating_mul(n)) {
+                *slot = if i % 2 == 0 { 0x41 } else { 0x42 };
+            }
+        }
+        let t = transpose(&m, n, n);
+
+        // Positive control, mirrored: the COLUMN stream of `t` (which is `m`)
+        // passes all three §5 tests, so any failure is attributable to the rows.
+        let back = transpose(&t, n, n);
+        assert!(
+            run_permutation_iid(&back, TEST_PERMS),
+            "column stream must pass §5.1 alone, or this proves nothing about rows"
+        );
+        assert!(
+            chi_square_tests(&back).passed,
+            "column stream passes §5.2 alone"
+        );
+        assert!(
+            len_lrs_iid_test(&back).passed,
+            "column stream passes §5.3 alone"
+        );
+
+        let r = restart_analysis(&t, 8, 1.0, n, n, TEST_ROUNDS, TEST_PERMS);
+        assert!(!r.perm_passed, "§5.1 must fail: the row stream is not IID");
+        assert!(
+            !r.chi_square_passed,
+            "§5.2 must fail: the row stream is not IID"
+        );
+        assert!(!r.lrs_passed, "§5.3 must fail: the row stream is not IID");
+        assert!(!r.is_iid, "the conjunction must be false");
+    }
+
+    /// `is_iid` must be the conjunction of the three §5 verdicts, asserted on a
+    /// fixture where they are **not** all equal.
+    ///
+    /// Run at the spec [`permutation::PERMS`] budget rather than [`TEST_PERMS`],
+    /// and that is the whole point. At 200 shuffles this fixture reports
+    /// `perm=false`, which makes `is_iid` and `perm_passed` agree and leaves a
+    /// `perm_passed`-for-conjunction substitution undetectable — a residual this
+    /// test previously documented as *uncatchable*. That claim was wrong: at 500
+    /// shuffles and above the same fixture reports `perm=true, chi=false,
+    /// lrs=true`, so `is_iid` must be false while `perm_passed` is true, and the
+    /// substitution fails here. The under-powered budget, not the battery, was the
+    /// obstacle. Measured 500/1000/2000/5000/10000 — identical verdicts, and
+    /// ~2.4s at every budget, because the permutation test exits early once the
+    /// counters settle.
+    #[test]
+    fn restart_is_iid_is_the_conjunction_of_the_three_verdicts() {
+        let n = 100;
+        let mut m = pseudo_random_matrix(n, 0x0f1e_2d3c_4b5a_6978);
+        // Symmetrize: cdata == rdata, so the verdicts are the row stream's own.
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if let Some(&v) = m.get(i.saturating_mul(n).saturating_add(j))
+                    && let Some(slot) = m.get_mut(j.saturating_mul(n).saturating_add(i))
+                {
+                    *slot = v;
+                }
+            }
+        }
+        let r = restart_analysis(&m, 8, 1.0, n, n, TEST_ROUNDS, crate::permutation::PERMS);
+        // Fixture guard: this only tests the conjunction if the verdicts differ,
+        // AND only closes the perm substitution if perm is the one that is true.
+        assert!(
+            r.perm_passed && !r.chi_square_passed && r.lrs_passed,
+            "fixture must be mixed with perm TRUE, got perm={} chi={} lrs={}",
+            r.perm_passed,
+            r.chi_square_passed,
+            r.lrs_passed
+        );
+        assert_eq!(
+            r.is_iid,
+            r.perm_passed && r.chi_square_passed && r.lrs_passed,
+            "is_iid must be the conjunction, not any single verdict"
+        );
+        assert!(
+            !r.is_iid,
+            "a mixed verdict is not IID — and perm_passed alone would say it is"
+        );
+    }
+
+    /// `H_r` and `H_c` are **provably equal** on this IID path, and the test says
+    /// so rather than leaving a reader to infer that `min(H_r, H_c)` is doing
+    /// work. §6.1 MCV depends only on the symbol frequency multiset, and the
+    /// transpose is a permutation of the matrix, so the multiset — and therefore
+    /// the mode, and therefore the estimate — is identical. Measured across five
+    /// unrelated fixtures before being asserted.
+    #[test]
+    fn restart_row_and_column_mcv_are_equal_by_construction() {
+        let n = 32;
+        for seed in [0x1111_2222_3333_4444u64, 0xdead_beef_cafe_babe] {
+            let m = pseudo_random_matrix(n, seed);
+            let r = restart_analysis(&m, 8, 1.0, n, n, TEST_ROUNDS, TEST_PERMS);
+            assert!(
+                (r.h_r - r.h_c).abs() < f64::EPSILON,
+                "MCV over a permutation of the same symbols must be identical: \
+                 h_r={} h_c={}",
+                r.h_r,
+                r.h_c
+            );
+        }
+        // Positive control: the equality must hold on a MEANINGFUL value, not on
+        // a degenerate one. Two NaNs would fail the comparison above (NaN is not
+        // less than EPSILON) but two zeros would satisfy it while proving nothing.
+        let m = pseudo_random_matrix(n, 0x5555_6666_7777_8888);
+        let r = restart_analysis(&m, 8, 1.0, n, n, TEST_ROUNDS, TEST_PERMS);
+        assert!(
+            r.h_r > 1.0 && r.h_r.is_finite(),
+            "the equality must be asserted on a real estimate, got h_r={}",
+            r.h_r
+        );
+        // Asserting min(H_r, H_c) == H_r separately would be entailed by the
+        // equality and add nothing; the consequence for the §3.1.4.2 gate is
+        // recorded in the security policy instead.
     }
 }

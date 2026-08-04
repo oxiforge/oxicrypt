@@ -19,6 +19,13 @@
 #   iid_gate::tests::noniid_routed_value_is_suite_minimum  ~71s  100k-sample SP 800-90B §6.3 suite
 #   iid_gate::tests::periodic_synthetic_routes_to_noniid   ~70s  100k-sample non-IID routing
 #
+# Measured 2026-08-04 and deliberately NOT excluded:
+#   restart::tests::restart_iid_verdicts_evaluate_the_transposed_column_data  ~8.7s
+# It is the longest test remaining in `quick` and the critical path of the
+# oxicrypt-maxwell lib suite (2.2s without it, 8.8s with), but 8.7s is an order of
+# magnitude below the three exclusions above. Recorded so the next person facing
+# the standing instruction below has the measurement rather than the guess.
+#
 # Add any future long-running test to the filter below to keep `quick` quick.
 # (The ~460s `#[ignore]`-d full-shuffle test is already excluded from every
 # profile by default; run it explicitly with `--run-ignored all`.)
