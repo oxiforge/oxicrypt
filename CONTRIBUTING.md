@@ -77,6 +77,49 @@ All of these must be clean before opening a PR. They run on your local machine u
 
 If a gate fails, fix the underlying issue rather than bypassing. The gate is the contract.
 
+## Private-name containment (opt-in)
+
+Some strings must not reach a public repository and also cannot be written into one: an employer's name, a client path, an internal hostname. A pattern committed to the repo would publish the very name it exists to suppress, and would match its own source file, so it could never pass.
+
+The `pre-push` hook therefore reads a deny-list that lives **outside version control**, in your own clone:
+
+| | |
+|---|---|
+| Location | `$OXICRYPT_CONTAINMENT_DENY` if set, otherwise `.git/containment-deny` |
+| Format | One extended regex per line; `#` comments and blank lines ignored |
+| Absent | The check is **skipped**, loudly, and the push proceeds |
+
+`.git/` is never tracked, so the file needs no `.gitignore` entry and cannot be committed by accident. Nobody adopts anyone else's list, and no list is ever shared.
+
+Create it with your editor rather than a heredoc — typing the patterns at a shell prompt puts them in `~/.bash_history`, which is one of the channels this exists to protect:
+
+```sh
+$EDITOR "$(git rev-parse --git-dir)/containment-deny"
+```
+
+One extended regex per line, for example `/home/yourname/` or `internal\.example\.corp`.
+
+If you use linked worktrees, note that `git rev-parse --git-dir` resolves to `.git/worktrees/<name>`, so each worktree has its own list and a new one starts empty.
+
+Properties worth knowing, because each exists for a reason:
+
+- **It scans binaries.** The leak that prompted this was found in a committed `.pyc`, where no text review would have surfaced it. A scanner that skips binary files reports clean while the worst instance sits in a compiled artefact.
+- **It scans the commits being pushed, not your checked-out tree.** `git push origin other:main`, and a secret added in one commit and removed in the next, both reach the remote while `HEAD` is clean.
+- **It scans paths as well as content.** A private name can appear only in a filename, which a content search never sees.
+- **It runs before the tag short-circuit and the stamp cache.** Both of those skip the expensive cargo gates for states that cannot have changed the build — but a state gated before you wrote your deny-list has never been checked against it. A leak check that a cache can skip is not a leak check.
+- **It never prints the pattern or the matched text** — only the deny-list *line number* and the files that matched. Echoing the string would write it into scrollback, CI logs, and shell history, reproducing the leak while reporting it. Note that a matching **filename** is printed, so a path that is itself sensitive will appear.
+- **An invalid regex is a hard failure, not a skip.** `git grep` exits 128 on a bad pattern, which an ordinary `if` reads as "no match" — so a typo would disable that pattern for good while the hook reported success.
+
+The hook runs a positive control, with the same flags as the real scan, before trusting a clean result: a string known to be present must match, so a broken scanner fails loudly instead of passing silently.
+
+When a pattern matches, the hook names the deny-list line number. To find the content locally without the hook ever echoing the string:
+
+```sh
+git grep -n -E -f <(sed -n '<LINE>p' "$(git rev-parse --git-dir)/containment-deny")
+```
+
+This prevents **new** leaks in what you push. It says nothing about what is already in history; that is a separate sweep.
+
 ## Pull request flow
 
 ```

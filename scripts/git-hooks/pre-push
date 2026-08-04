@@ -81,6 +81,164 @@ while IFS=' ' read -r _local_ref local_sha remote_ref remote_sha; do
     ref_pairs+=("$local_sha $remote_sha")
 done
 
+# ---------------------------------------------------------------------------
+# Private-name containment (#161).
+#
+# Five tracked files once carried absolute developer-machine paths into this
+# repository and nothing detected them — no test, no hook, no CI job — and one
+# was a committed .pyc where no text review would have surfaced it.
+#
+# The generic half (host-path SHAPES) is an ordinary doc-guard test that rides
+# `cargo nextest run --workspace`. This is the other half: private NAMES, which
+# cannot be spelled in a public repository without leaking the thing they
+# protect. A committed pattern would publish the name it exists to suppress and
+# would match its own source file, so it could never pass.
+#
+# The list is therefore per-clone: $OXICRYPT_CONTAINMENT_DENY if set, else
+# $GIT_DIR/containment-deny. One extended regex per line; `#` comments and blank
+# lines ignored.
+#
+# This runs after stdin is parsed (it needs the pushed shas) but BEFORE the
+# tag-only short-circuit and the stamp cache. Both of those skip the expensive
+# cargo gates for states that cannot have changed the build — but a state gated
+# before a contributor wrote their deny-list has never been checked against it,
+# and a tag push still publishes content. A leak check a cache can skip is not a
+# leak check.
+#
+# It scans the COMMITS BEING PUSHED, not the checked-out tree. `git push
+# origin other:main` and a secret added in one commit and removed in the next
+# both reach the remote while HEAD's tree is clean.
+#
+# Known limit: this prevents new leaks in what is pushed. It says nothing about
+# what is already in history.
+# ---------------------------------------------------------------------------
+deny_file="${OXICRYPT_CONTAINMENT_DENY:-$(git rev-parse --git-dir)/containment-deny}"
+
+# The deny-list must not live in the work tree. It holds the private strings; a
+# later `git add -A` would commit them, and the self-match that would expose
+# that only fires on the NEXT push — after the commit exists.
+deny_abs="$(cd "$(dirname "$deny_file")" 2>/dev/null && pwd -P || true)/$(basename "$deny_file")"
+work_top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+git_dir_abs="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
+if [[ -n "$work_top" && "$deny_abs" == "$work_top"/* && "$deny_abs" != "$git_dir_abs"/* ]]; then
+    echo "pre-push: FAILED — the deny-list must live outside the work tree." >&2
+    echo "  It holds the strings it protects; inside the tree, 'git add -A' commits them." >&2
+    echo "  Use \$GIT_DIR/containment-deny (the default) or a path outside the repo." >&2
+    exit 1
+fi
+
+if [[ ! -f "$deny_file" ]]; then
+    # Loud, so an absent list is never mistaken for a pass — but the PATH is not
+    # printed. A contributor who set OXICRYPT_CONTAINMENT_DENY to something like
+    # ~/clients/<name>/deny.txt would otherwise have that name echoed into
+    # scrollback and CI logs by the very check meant to protect it.
+    echo "pre-push: private-name check SKIPPED — no deny-list found (path not shown)."
+    echo "pre-push:   (opt-in; see CONTRIBUTING.md § Private-name containment)"
+else
+    # Build the revision set actually being pushed. Scanning HEAD would miss both
+    # `git push origin other:main` and an add-then-remove inside the range.
+    deny_revs=()
+    for pair in "${ref_pairs[@]:-}"; do
+        read -r _l _r <<<"$pair"
+        [[ "$_l" =~ ^0+$ ]] && continue          # ref deletion pushes no content
+        if [[ "$_r" =~ ^0+$ ]]; then
+            # New remote ref: bound by what the remote already has.
+            base="$(git merge-base "$_l" origin/main 2>/dev/null || true)"
+            range=$([[ -n "$base" ]] && echo "$base..$_l" || echo "$_l")
+        else
+            range="$_r..$_l"
+        fi
+        rev_count_before="${#deny_revs[@]}"
+        while IFS= read -r rev; do
+            [[ -n "$rev" ]] && deny_revs+=("$rev")
+        done < <(git rev-list "$range" 2>/dev/null || true)
+        # An empty range means the remote already has these commits — but the ref
+        # is still being published, so scan its tip rather than nothing. Falling
+        # back to HEAD here would scan a tree unrelated to what is being pushed.
+        if [[ "${#deny_revs[@]}" -eq "$rev_count_before" ]]; then
+            deny_revs+=("$_l")
+        fi
+    done
+    # No refs on stdin (manual invocation, edge cases): fall back to HEAD rather
+    # than scanning nothing, and say so.
+    if [[ "${#deny_revs[@]}" -eq 0 ]]; then
+        deny_revs=("HEAD")
+        echo "pre-push: private-name check — no pushed revisions enumerated; scanning HEAD."
+    fi
+    # Bound the work, visibly. A silent cap would read as full coverage.
+    if [[ "${#deny_revs[@]}" -gt 200 ]]; then
+        echo "pre-push: private-name check — ${#deny_revs[@]} revisions in range; scanning the newest 200."
+        deny_revs=("${deny_revs[@]:0:200}")
+    fi
+
+    # Positive control, with the SAME flags as the real scan (notably -a). A
+    # control that excludes binaries certifies nothing about a scan that includes
+    # them, and a grep matching nothing looks exactly like a grep finding nothing.
+    if ! git grep -a -q -E -e 'oxicrypt' "${deny_revs[@]}" -- . 2>/dev/null; then
+        echo "pre-push: FAILED — containment scanner is broken." >&2
+        echo "  The positive control was not found in the pushed revisions, so a" >&2
+        echo "  clean result from this scanner would mean nothing." >&2
+        exit 1
+    fi
+
+    deny_hits=0
+    deny_seen=0
+    deny_ran=0
+    deny_lineno=0
+    while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+        deny_lineno=$((deny_lineno + 1))
+        pattern="${pattern%$'\r'}"          # a CRLF list would be silently inert
+        [[ "$pattern" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+        deny_seen=$((deny_seen + 1))
+        # Capture the status explicitly. `git grep` exits 128 on an invalid ERE —
+        # which an `if` reads as "no match", so a hand-written typo would disable
+        # that pattern forever while the hook reported success. 0 = matched,
+        # 1 = clean, anything else = the pattern never ran.
+        set +e
+        matches="$(git grep -a -l -E -e "$pattern" "${deny_revs[@]}" -- . 2>/dev/null)"
+        rc=$?
+        set -e
+        if [[ "$rc" -ge 2 ]]; then
+            echo "pre-push: FAILED — deny-list line $deny_lineno is not a valid regex." >&2
+            echo "  git grep exited $rc, so that pattern was never applied." >&2
+            echo "  (The line's text is not printed — it is the private string.)" >&2
+            exit 1
+        fi
+        deny_ran=$((deny_ran + 1))
+        # Paths too, not just content. A private name can appear ONLY in a
+        # filename — docs/<client>-migration.md — which a content grep never sees.
+        path_hits=""
+        for rev in "${deny_revs[@]}"; do
+            if hits="$(git ls-tree -r --name-only "$rev" 2>/dev/null | grep -E -e "$pattern" || true)"; then
+                [[ -n "$hits" ]] && path_hits+="${rev}: ${hits}"$'\n'
+            fi
+        done
+        if [[ -n "$path_hits" ]]; then
+            deny_hits=$((deny_hits + 1))
+            echo "pre-push: FAILED — deny-list line $deny_lineno matched a PATH." >&2
+            echo "$path_hits" | head -20 | sed 's/^/    /' >&2
+        fi
+        if [[ "$rc" -eq 0 ]]; then
+            deny_hits=$((deny_hits + 1))
+            echo "pre-push: FAILED — deny-list line $deny_lineno matched." >&2
+            # Files are named; the pattern and the matched text never are.
+            # Echoing them would write the private string into scrollback, CI
+            # logs and shell history — reproducing the leak while reporting it.
+            echo "$matches" | head -20 | sed 's/^/    /' >&2
+            extra=$(($(echo "$matches" | wc -l) - 20))
+            [[ "$extra" -gt 0 ]] && echo "    (+$extra more)" >&2
+        fi
+    done < "$deny_file"
+
+    if [[ "$deny_hits" -gt 0 ]]; then
+        echo "  Remove the content, then push again." >&2
+        echo "  To locate it locally without this hook echoing it:" >&2
+        echo "    git grep -n -E -f <(sed -n '<LINE>p' \"\$deny_file\")" >&2
+        exit 1
+    fi
+    echo "pre-push: private-name check passed ($deny_ran/$deny_seen pattern(s) applied over ${#deny_revs[@]} revision(s))."
+fi
+
 if [[ "$saw_ref" == "true" && "$tag_only" == "true" ]]; then
     echo "pre-push: tag-only push detected — skipping four-gate cycle."
     exit 0
