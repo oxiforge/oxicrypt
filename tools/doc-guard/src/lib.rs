@@ -101,6 +101,13 @@ mod tests {
     /// The policy's file name inside its repository.
     const POLICY_FILE: &str = "security-policy.md";
 
+    /// Every file withheld from this repository, by name. The Security Policy,
+    /// and the jitter-entropy concept mapping — an annex whose columns cite the
+    /// policy's own rule numbering, moved with it 2026-08-05. The containment
+    /// sweep denies all of them; only `POLICY_FILE` is resolved at runtime,
+    /// because only the policy has assertions that depend on its content.
+    const WITHHELD_FILES: [&str; 2] = ["security-policy.md", "jent-concept-mapping.md"];
+
     /// The default sibling-clone location, relative to `$HOME`. Cloning
     /// `oxiforge/oxicrypt-policy` there needs no further configuration.
     const POLICY_REPO_REL: &str = "repos/oxicrypt-policy";
@@ -392,7 +399,7 @@ mod tests {
                     continue;
                 }
                 let rel = rel_of(&path);
-                if name == POLICY_FILE {
+                if WITHHELD_FILES.iter().any(|w| *w == name) {
                     named.push(rel.clone());
                 }
                 // Read every file, exempting nothing here: the exemption is an
@@ -435,9 +442,9 @@ mod tests {
         );
         assert!(
             named.is_empty(),
-            "the Security Policy is withheld from this repository, but a file named \
-             `{POLICY_FILE}` is present: {named:?}. If this is the real document, remove it — \
-             it belongs in the private policy repository. See docs/security-policy/README.md."
+            "these files are withheld from this repository ({WITHHELD_FILES:?}), but one is \
+             present: {named:?}. If this is the real document, remove it — it belongs in the \
+             private policy repository. See docs/security-policy/README.md."
         );
         assert!(
             unreadable.is_empty(),

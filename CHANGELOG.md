@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `docs/jent-concept-mapping.md` is withheld alongside the Security Policy. It maps jitter-entropy lineage vocabulary to oxicrypt's as-built names for a reviewer already fluent in that lineage, and two of its three columns cite the Security Policy's own rule numbering — so most of it read as references a public reader could not follow. The middle column describes the as-built entropy source, which is public and documented in `oxicrypt-entropy`'s rustdoc; nothing is withheld here for its own sake. `docs/security-policy/README.md` says where it went, and the containment guards deny it by name alongside the policy.
 - The FIPS 140-3 Security Policy is no longer tracked in this repository. It is held privately and disclosed per person; `docs/security-policy/README.md` takes its place at the path, explaining what the document contains, why non-publication rather than a license is the instrument, the honest bounds of that protection, how to request access, and which assertions a clone without it does not run. The 14 `.rs` sources whose rustdoc points at policy sections keep their pointers, as do `crates/oxicrypt-ffi/include/oxicrypt.h` and `crates/oxicrypt-maxwell/Cargo.toml`: all are prose references inside comments rather than links, and the directory they name now serves the README that explains where the document went.
 
 ### Added

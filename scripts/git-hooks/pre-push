@@ -369,16 +369,17 @@ fi
 
 sp_named="$(for rev in "${sp_revs[@]}"; do
     git ls-tree -r --name-only "$rev" 2>/dev/null \
-        | grep -E '(^|/)security-policy\.md$' | sed "s|^|${rev}: |" || true
+        | grep -E '(^|/)(security-policy|jent-concept-mapping)\.md$' | sed "s|^|${rev}: |" || true
 done)"
 sp_phrased="$(git grep -a -l -F -e "$sp_phrase" "${sp_revs[@]}" -- . "${sp_exempt_paths[@]}" 2>/dev/null || true)"
 
 if [[ -n "$sp_named" || -n "$sp_phrased" ]]; then
     {
-        echo "pre-push: FAILED — the Security Policy is being pushed."
-        echo "  That document is withheld from this repository by design; see"
-        echo "  docs/security-policy/README.md. It belongs in the private policy repo."
-        [[ -n "$sp_named" ]]   && { echo "  Files named security-policy.md:"; echo "$sp_named"   | head -20 | sed 's/^/    /'; }
+        echo "pre-push: FAILED — a withheld document is being pushed."
+        echo "  The Security Policy and its annexes are withheld from this repository by"
+        echo "  design; see docs/security-policy/README.md. They belong in the private"
+        echo "  policy repository."
+        [[ -n "$sp_named" ]]   && { echo "  Withheld files by name:"; echo "$sp_named"   | head -20 | sed 's/^/    /'; }
         [[ -n "$sp_phrased" ]] && { echo "  Files carrying policy prose:";    echo "$sp_phrased" | head -20 | sed 's/^/    /'; }
         echo "  Remove it from the commits being pushed, then push again."
     } >&2

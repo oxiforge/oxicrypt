@@ -4,6 +4,12 @@ Documentation elsewhere in this tree points at `security-policy.md` sections (§
 accounting, §3.1 FFI surface, §9.2 `forbid(unsafe_code)` accounting, and the IG conformance
 judgments). **That document is not here, and its absence is deliberate.**
 
+`jent-concept-mapping.md` — a table mapping jitter-entropy lineage vocabulary to oxicrypt's
+as-built names — was withheld alongside it on 2026-08-05, for a narrower reason: two of its three
+columns cite the Security Policy's own rule numbering, so most of it read as dead references to
+anyone without that document. The code it describes is public and is documented in
+`oxicrypt-entropy`'s own rustdoc.
+
 ## Why
 
 oxicrypt's source is open under Apache-2.0 OR MIT. The FIPS 140-3 Security Policy is not, because
