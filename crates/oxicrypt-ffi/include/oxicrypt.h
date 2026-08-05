@@ -130,6 +130,32 @@ extern "C" {
 #endif // __cplusplus
 
 /*
+ Return the LAMA API manifest as a NUL-terminated UTF-8 string with
+ static lifetime.
+
+ This is the shared-library half of LAMA discovery: an agent that has
+ loaded the `.so` / `.dylib` / `.dll` resolves this symbol and reads the
+ manifest describing every `oxi_*` entry point, rather than inferring
+ the API from the header. The specification fixes both the name and the
+ signature — `const char *lama_manifest(void)` — so this is the one
+ exported symbol in this crate that does **not** carry the `oxi_`
+ prefix: a name an agent has to guess would defeat the purpose.
+
+ See <https://github.com/lamaspec/lama/blob/main/SPEC.md> §"Discovery".
+
+ The returned pointer is valid for the lifetime of the loaded library
+ and must not be freed. The manifest is metadata about the binary, not
+ a service it provides, so this requires no initialisation and is
+ callable before [`oxi_init`] and regardless of module state.
+
+ # Safety
+
+ No pointers in; always safe to call. The caller must treat the result
+ as read-only and must not free it.
+ */
+const char *lama_manifest(void);
+
+/*
  Initialise the FIPS module with the given algorithm profile,
  running all power-up KATs.
 

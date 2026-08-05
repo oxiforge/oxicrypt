@@ -10,7 +10,10 @@
 //! # Symbol prefix
 //!
 //! Every function exported by this crate uses the `oxi_` prefix
-//! (e.g. `oxi_init`, `oxi_sha256`). The prefix is short, namespaced,
+//! (e.g. `oxi_init`, `oxi_sha256`), with one deliberate exception:
+//! [`lama_manifest`], whose name and signature are fixed by the LAMA
+//! specification so a consuming agent can resolve it without guessing.
+//! It performs no cryptographic work. The prefix is short, namespaced,
 //! and consistent — see `docs/c-api-design.md` for the design
 //! rationale.
 //!
@@ -193,6 +196,40 @@ fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
 /// `fips-integrity-sign` can locate and update them.
 #[used]
 static _SLOT_REF: &oxicrypt_integrity::IntegritySlot = &oxicrypt_integrity::FIPS_INTEGRITY_SLOT;
+
+/// The LAMA manifest, embedded at compile time and NUL-terminated so it
+/// can be handed to C without an allocation or a runtime file read.
+static LAMA_MANIFEST: &str = concat!(
+    include_str!("../../../docs/llm-api-manifest/llm-api.yaml"),
+    "\0"
+);
+
+/// Return the LAMA API manifest as a NUL-terminated UTF-8 string with
+/// static lifetime.
+///
+/// This is the shared-library half of LAMA discovery: an agent that has
+/// loaded the `.so` / `.dylib` / `.dll` resolves this symbol and reads the
+/// manifest describing every `oxi_*` entry point, rather than inferring
+/// the API from the header. The specification fixes both the name and the
+/// signature — `const char *lama_manifest(void)` — so this is the one
+/// exported symbol in this crate that does **not** carry the `oxi_`
+/// prefix: a name an agent has to guess would defeat the purpose.
+///
+/// See <https://github.com/lamaspec/lama/blob/main/SPEC.md> §"Discovery".
+///
+/// The returned pointer is valid for the lifetime of the loaded library
+/// and must not be freed. The manifest is metadata about the binary, not
+/// a service it provides, so this requires no initialisation and is
+/// callable before [`oxi_init`] and regardless of module state.
+///
+/// # Safety
+///
+/// No pointers in; always safe to call. The caller must treat the result
+/// as read-only and must not free it.
+#[unsafe(no_mangle)]
+pub extern "C" fn lama_manifest() -> *const core::ffi::c_char {
+    LAMA_MANIFEST.as_ptr().cast::<core::ffi::c_char>()
+}
 
 /// Initialise the FIPS module with the given algorithm profile,
 /// running all power-up KATs.
@@ -19963,4 +20000,55 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_decrypt_sha256(
     };
     unsafe { *out_actual_len = actual };
     R::Ok as c_int
+}
+
+#[cfg(test)]
+mod lama_tests {
+    use super::LAMA_MANIFEST;
+
+    /// The embedded manifest must not contain either integrity-slot magic.
+    ///
+    /// This crate now carries a ~500 KB document inside an artifact whose
+    /// integrity slot is located by scanning the on-disk bytes for a
+    /// header/footer magic pair. A second match anywhere in the file makes
+    /// `find_slot_offset` return `MultipleSlotsFound`, a hard failure — so an
+    /// arbitrary embedded document is a surface worth guarding rather than
+    /// assuming away.
+    ///
+    /// It holds structurally today: both magics lead with `0xfc` / `0xfd`,
+    /// which are not legal UTF-8 lead bytes, and the manifest is valid UTF-8.
+    /// The test exists so a future change to either the magics or the
+    /// embedding says so out loud.
+    #[test]
+    fn embedded_manifest_carries_neither_integrity_magic() {
+        let bytes = LAMA_MANIFEST.as_bytes();
+        let hdr = &oxicrypt_integrity::SLOT_HEADER_MAGIC;
+        let ftr = &oxicrypt_integrity::SLOT_FOOTER_MAGIC;
+        assert!(
+            !bytes.windows(hdr.len()).any(|w| w == hdr),
+            "embedded LAMA manifest contains SLOT_HEADER_MAGIC"
+        );
+        assert!(
+            !bytes.windows(ftr.len()).any(|w| w == ftr),
+            "embedded LAMA manifest contains SLOT_FOOTER_MAGIC"
+        );
+
+        // Positive control: the same scan finds a sequence that IS present, so
+        // a silently broken search cannot pass as a clean result.
+        let present = b"lama: ";
+        assert!(
+            bytes.windows(present.len()).any(|w| w == present),
+            "the scan found nothing at all — the probe is broken, not the manifest"
+        );
+    }
+
+    /// The manifest is NUL-terminated exactly once, at the end.
+    #[test]
+    fn embedded_manifest_is_nul_terminated_once() {
+        let bytes = LAMA_MANIFEST.as_bytes();
+        // The first NUL must be the last byte: an interior one would truncate
+        // the document silently for any C consumer calling strlen.
+        assert_eq!(bytes.iter().position(|b| *b == 0), Some(bytes.len() - 1));
+        assert_eq!(bytes.last(), Some(&0u8));
+    }
 }

@@ -33,3 +33,11 @@ oxicrypt-sha = { path = "../oxicrypt-sha" }
 oxicrypt-xof = { path = "../oxicrypt-xof" }
 oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
 rayon = { version = "1", optional = true }
+
+[package.metadata.lama]
+# Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
+# per-crate table: cargo strips [workspace] when it packages a member, so a
+# workspace-level copy never reaches the registry. Version-pinned rather than
+# branch-pinned so the manifest an agent fetches matches the crate it found.
+manifest = "https://raw.githubusercontent.com/oxiforge/oxicrypt/v0.20.0/docs/llm-api-manifest/llm-api.yaml"
+spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"

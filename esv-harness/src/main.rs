@@ -130,7 +130,26 @@ fn run() -> Result<(), String> {
     }
 }
 
+/// The LAMA manifest, embedded at compile time so `--lama` needs no
+/// external file at runtime (SPEC.md §"Discovery", requirement 1).
+const LAMA_MANIFEST: &str = include_str!("../../docs/llm-api-manifest/llm-api.yaml");
+
 fn main() -> ExitCode {
+    // ── LAMA manifest ───────────────────────────────────────────────
+    // `--lama` prints the compile-time-embedded YAML manifest and exits,
+    // ahead of `run()` and therefore ahead of the flag-shaped-argument
+    // guard, which would otherwise reject it as an unknown subcommand.
+    // See https://github.com/lamaspec/lama/blob/main/SPEC.md §"Discovery".
+    if std::env::args().any(|a| a == "--lama") {
+        print!("{LAMA_MANIFEST}");
+        // Requirement 2: the embedded manifest carries the exact build.
+        // A top-level key keeps the output a single YAML document.
+        // Quoted: a short SHA is often all digits (~5% of commits), and YAML
+        // would then parse it as an integer — with a leading zero, as octal.
+        println!("build_commit: \"{}\"", env!("OXICRYPT_COMMIT"));
+        return ExitCode::SUCCESS;
+    }
+
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

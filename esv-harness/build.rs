@@ -1,4 +1,4 @@
-//! Build script for the ACVP harness binary.
+//! Build script for the ESV harness binary.
 //!
 //! Stamps the current git commit hash so the `--lama` manifest output
 //! can identify the exact build. The LAMA YAML itself is embedded via

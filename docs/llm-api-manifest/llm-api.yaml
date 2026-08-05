@@ -13644,6 +13644,21 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: lama_manifest
+    module: oxicrypt-ffi
+    description: Return the LAMA API manifest as a NUL-terminated UTF-8 string with static lifetime, for shared-library discovery.
+    signature: pub extern "C" fn lama_manifest() -> *const core::ffi::c_char
+    returns:
+      type: '*const c_char'
+      description: Pointer to a static NUL-terminated UTF-8 YAML document; valid for the lifetime of the loaded library and never freed by the caller.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: "none \u2014 callable outside the module state machine"
+
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Error types (consolidated)

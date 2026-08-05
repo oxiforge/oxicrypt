@@ -36,6 +36,11 @@ fn main() -> ExitCode {
             "{}",
             include_str!("../../docs/llm-api-manifest/llm-api.yaml")
         );
+        // Requirement 2: the embedded manifest carries the exact build.
+        // A top-level key keeps the output a single YAML document.
+        // Quoted: a short SHA is often all digits (~5% of commits), and YAML
+        // would then parse it as an integer — with a leading zero, as octal.
+        println!("build_commit: \"{}\"", env!("OXICRYPT_COMMIT"));
         return ExitCode::SUCCESS;
     }
 

@@ -82,6 +82,37 @@ bump_one "$CARGO" "^version = \"${old//./\\.}\"" "[workspace.package] version"
 bump_one "$LLM"   "^  version: \"${old//./\\.}\"" "llm-api manifest version"
 bump_one "$LAMA"  "^  version: \"${old//./\\.}\"" "lama manifest version"
 
+# Per-crate registry-discovery pointers. Every publishable crate carries a
+# [package.metadata.lama] table whose `manifest` URL is pinned to the release
+# tag, so an agent that found the crate on a registry fetches the manifest for
+# that crate rather than whatever `main` happens to hold. Cargo strips
+# [workspace] when packaging a member, so these cannot be factored out.
+# `grep -r`, not `git grep`: an untracked new crate is invisible to git and
+# would keep a stale pin while the final guard below still reported clean.
+lama_ptr_files="$(grep -rlF "oxicrypt/v${old}/docs/llm-api-manifest" \
+    --include=Cargo.toml . 2>/dev/null | sed 's|^\./||' | sort || true)"
+if [[ -n "$lama_ptr_files" ]]; then
+    # Pre-pass: validate EVERY file before writing ANY. An assertion inside
+    # the write loop is honest but leaves a half-bumped tree when it fires,
+    # and there is no rollback.
+    while IFS= read -r f; do
+        hits="$(grep -cF "oxicrypt/v${old}/docs/llm-api-manifest" "$f")"
+        [[ "$hits" -eq 1 ]] \
+            || die "lama registry pointer: matched $hits times in $f (need exactly 1) — refusing to write anything"
+    done <<< "$lama_ptr_files"
+
+    n=0
+    while IFS= read -r f; do
+        perl -i -pe "s|oxicrypt/v\Q$old\E/docs/llm-api-manifest|oxicrypt/v$new/docs/llm-api-manifest|" "$f"
+        grep -qF "oxicrypt/v${new}/docs/llm-api-manifest" "$f" \
+            || die "lama registry pointer: rewrite did not take in $f"
+        n=$((n + 1))
+    done <<< "$lama_ptr_files"
+    echo "  ok  $n crate manifest(s)  (lama registry pointer)"
+else
+    echo "  --  no [package.metadata.lama] pointers carrying v$old found"
+fi
+
 # Changelog: rename the Unreleased heading and open a fresh one above it.
 if grep -q '^## \[Unreleased\]' "$CHANGELOG"; then
     stamp="${date_stamp:-$(date +%F)}"

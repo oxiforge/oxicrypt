@@ -361,7 +361,8 @@ The module exposes a C ABI for non-Rust consumers via the
 header lives at
 [`crates/oxicrypt-ffi/include/oxicrypt.h`](crates/oxicrypt-ffi/include/oxicrypt.h).
 
-All exported symbols use the `oxi_` prefix. Status codes are
+All exported symbols use the `oxi_` prefix, except `lama_manifest`,
+whose name is fixed by the LAMA specification. Status codes are
 `OxiResult` discriminants (0 = `Ok`; non-zero values are distinct
 failure modes — see `crates/oxicrypt-ffi/src/error.rs`). All AES-256
 modes (GCM, CBC, CTR, CCM, KW, KWP) and CMAC-AES-256 share a single
@@ -499,12 +500,16 @@ HTML reports are generated in `target/criterion/`.
 
 oxicrypt ships a [LAMA](https://github.com/lamaspec/lama) manifest so
 AI coding agents can discover and correctly use the library without
-hallucinating function names or missing constraints. Four discovery
-vectors are supported:
+hallucinating function names or missing constraints. All five discovery
+vectors the specification defines are supported:
 
 - **`lama.yaml`** at the repository root — capabilities summary for fast triage
-- **`--lama` flag** on the ACVP harness binary — full manifest for the exact build
-- **`[workspace.metadata.lama]`** in `Cargo.toml` — pointer for crates.io discovery
+- **`--lama` flag** on `oxi`, `acvp-harness` and `esv-harness` — the full manifest for
+  the exact build, stamped with its git commit, printed before any initialisation
+- **`lama_manifest()`** exported by the `oxicrypt-ffi` cdylib — the same manifest for
+  C consumers, resolved as `const char *lama_manifest(void)`
+- **`[package.metadata.lama]`** in every publishable crate — pointer for crates.io
+  discovery, version-pinned to the release tag
 - **Full manifest** at `docs/llm-api-manifest/llm-api.yaml` — every function, type,
   constraint, and pitfall
 
