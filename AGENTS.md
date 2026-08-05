@@ -204,6 +204,24 @@ crate — directly or by reference — do all that apply:
    item. The pre-commit hook enforces `llm-api.yaml` on any `pub fn|struct|enum|const|type|trait`
    change under `crates/*/src/`. Conform both to the LAMA spec; the root file stays a concise
    capabilities + manifest pointer — never a milestone/coverage/status board. **No human names in LAMA.**
+
+   **Coverage rule — what the manifest describes, and what it deliberately does not.** Stated here
+   because without it nothing distinguishes a deliberate exclusion from an oversight, which is how
+   five crates came to carry a `modules:` entry and no members at all.
+
+   - Every workspace crate gets a `modules:` entry. A crate carrying `publish = false` is
+     out-of-boundary tooling and gets no `types:` / `functions:` / `constants:` members —
+     `oxicrypt-maxwell` is the only one today.
+   - Every publishable crate's public API surface appears in `llm-api.yaml`, with two standing
+     exclusions: gateless `*_internal` variants, which exist for the harness rather than for callers,
+     and `*_self_test` functions with their `KATS` constants, which are power-up machinery no caller
+     invokes directly.
+   - `oxicrypt-test-vectors` is test-support data, not API. It gets a `modules:` entry recording that,
+     and no members.
+   - Serialization follows the spec: block style for every multi-element collection, flow style only
+     for single-element arrays; `types[].kind` uses only `struct` / `enum` / `alias` / `trait` /
+     `opaque`; `error_variants` nests under `returns:`; `constants:` holds constants alone —
+     an entry with a `signature:` is a function and belongs in `functions:`.
 5. **Release history (`changelog-gem`).** `CHANGELOG.md` follows Keep-a-Changelog with a standing
    `## [Unreleased]` section. Every PR that changes user-facing behavior adds its line under
    `[Unreleased]` **in that same PR**, citing its issue/PR number (`… (#N)`) and closing the issue via
