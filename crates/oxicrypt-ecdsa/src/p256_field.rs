@@ -351,7 +351,7 @@ fn mont_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
         // Any residual carry beyond t[8] would indicate
         // `t > 2^(64*9)`, which is impossible since the running value
         // is bounded by `p^2 + p · 2^256 < 2^513 < 2^576 = 2^(64·9)`.
-        debug_assert!(carry == 0);
+        debug_assert_eq!(carry, 0);
     }
 
     // -------- 3) Conditional final subtraction of p --------

@@ -324,7 +324,7 @@ fn mont_mul(a: &[u64; 6], b: &[u64; 6]) -> [u64; 6] {
             carry = sum >> 64;
             k += 1;
         }
-        debug_assert!(carry == 0);
+        debug_assert_eq!(carry, 0);
     }
 
     let r = [t[6], t[7], t[8], t[9], t[10], t[11]];

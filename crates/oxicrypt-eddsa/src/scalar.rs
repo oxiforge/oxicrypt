@@ -242,7 +242,7 @@ fn wide_mul<const M: usize, const N: usize, const MN: usize>(
     a: &[u32; M],
     b: &[u32; N],
 ) -> [u32; MN] {
-    debug_assert!(MN == M + N);
+    debug_assert_eq!(MN, M + N);
     let mut out = [0u32; MN];
     for i in 0..M {
         let ai = u64::from(a[i]);
@@ -353,7 +353,7 @@ pub fn reduce_wide(x_bytes: &[u8; 64]) -> Scalar {
     cond_sub_l_9(&mut r);
 
     // Result fits in the low 8 limbs; top limb must be zero.
-    debug_assert!(r[8] == 0);
+    debug_assert_eq!(r[8], 0);
     let mut limbs = [0u32; 8];
     limbs.copy_from_slice(&r[..8]);
     Scalar { limbs }
@@ -391,7 +391,7 @@ pub fn muladd(a: &Scalar, b: &Scalar, c: &Scalar) -> Scalar {
     // discarding — proof: `a,b,c ≤ L − 1` in the signing use case, so
     // `a·b + c ≤ (L−1)^2 + (L−1) = L² − L < L·2^253 < 2^506`, well
     // under 2^512 and carry is always 0 here.
-    debug_assert!(carry == 0);
+    debug_assert_eq!(carry, 0);
 
     // Re-serialize to bytes and run the wide reduction.
     let mut wide = [0u8; 64];

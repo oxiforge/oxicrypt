@@ -96,6 +96,6 @@ mod tests {
     #[test]
     fn ordering_is_numeric() {
         assert!(MinEntropy::from_bits(2) < MinEntropy::from_bits(3));
-        assert!(MinEntropy::from_steps(512) == MinEntropy::from_bits(2));
+        assert_eq!(MinEntropy::from_steps(512), MinEntropy::from_bits(2));
     }
 }

@@ -100,7 +100,7 @@ pub(crate) fn to_mont(a: i16) -> i16 {
 /// Returns 0 if equal, non-zero otherwise. Timing is independent
 /// of the values.
 pub(crate) fn ct_bytes_eq(a: &[u8], b: &[u8]) -> u8 {
-    debug_assert!(a.len() == b.len());
+    debug_assert_eq!(a.len(), b.len());
     let mut diff = 0u8;
     let len = if a.len() < b.len() { a.len() } else { b.len() };
     for i in 0..len {

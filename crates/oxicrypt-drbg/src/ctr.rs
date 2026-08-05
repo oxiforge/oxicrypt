@@ -141,7 +141,7 @@ impl CipherFactory for Aes128Factory {
     const DRBG_SERVICE: Service = Service::CtrDrbgAes128;
     type Cipher = Aes128Key;
     fn from_key(key: &[u8]) -> Self::Cipher {
-        debug_assert!(key.len() == Self::KEY_LEN);
+        debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = [0u8; 16];
         k.copy_from_slice(&key[..16]);
         Aes128Key::new_internal(&k)
@@ -154,7 +154,7 @@ impl CipherFactory for Aes192Factory {
     const DRBG_SERVICE: Service = Service::CtrDrbgAes192;
     type Cipher = Aes192Key;
     fn from_key(key: &[u8]) -> Self::Cipher {
-        debug_assert!(key.len() == Self::KEY_LEN);
+        debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = [0u8; 24];
         k.copy_from_slice(&key[..24]);
         Aes192Key::new_internal(&k)
@@ -167,7 +167,7 @@ impl CipherFactory for Aes256Factory {
     const DRBG_SERVICE: Service = Service::CtrDrbgAes256;
     type Cipher = Aes256Key;
     fn from_key(key: &[u8]) -> Self::Cipher {
-        debug_assert!(key.len() == Self::KEY_LEN);
+        debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = [0u8; 32];
         k.copy_from_slice(&key[..32]);
         Aes256Key::new_internal(&k)
@@ -479,7 +479,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
     ///
     /// `provided_data` must be exactly `SEED_LEN` bytes long.
     fn update(&mut self, provided_data: &[u8]) {
-        debug_assert!(provided_data.len() == F::SEED_LEN);
+        debug_assert_eq!(provided_data.len(), F::SEED_LEN);
         let cipher = F::from_key(&self.key[..F::KEY_LEN]);
         let mut temp = [0u8; MAX_SEED_LEN];
         let mut produced = 0usize;
@@ -608,7 +608,7 @@ impl<F: CipherFactory> Drop for CtrDrbg<F> {
 
 /// BCC — SP 800-90A §10.3.3. `data` length must be a multiple of 16.
 fn bcc<B: BlockCipher>(cipher: &B, data: &[u8]) -> [u8; OUTLEN] {
-    debug_assert!(data.len() % OUTLEN == 0);
+    debug_assert_eq!(data.len() % OUTLEN, 0);
     let mut chaining = [0u8; OUTLEN];
     let mut i = 0usize;
     while i < data.len() {

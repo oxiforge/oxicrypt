@@ -294,7 +294,7 @@ impl U1024 {
 /// [`crate::mont1024::MontCtx1024::pow_public_u1024`] for
 /// Fermat-style inversion instead (`q^(p−2) mod p`).
 pub fn modinv_odd(a: &U1024, m: &U1024) -> Option<U1024> {
-    debug_assert!(m.is_odd() == 1);
+    debug_assert_eq!(m.is_odd(), 1);
     if a.is_zero() == 1 {
         return None;
     }

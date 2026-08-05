@@ -333,7 +333,7 @@ fn mont_mul(a: &[u64; 6], b: &[u64; 6]) -> [u64; 6] {
             carry = sum >> 64;
             k += 1;
         }
-        debug_assert!(carry == 0);
+        debug_assert_eq!(carry, 0);
     }
 
     // -------- 3) Conditional final subtraction of p --------

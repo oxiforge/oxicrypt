@@ -149,7 +149,7 @@ impl U1536 {
 /// public `λ(n)`. See [`crate::bigint1024::modinv_odd`] for the full
 /// design rationale and top-bit-set limitation caveat.
 pub fn modinv_odd(a: &U1536, m: &U1536) -> Option<U1536> {
-    debug_assert!(m.is_odd() == 1);
+    debug_assert_eq!(m.is_odd(), 1);
     if a.is_zero() == 1 {
         return None;
     }

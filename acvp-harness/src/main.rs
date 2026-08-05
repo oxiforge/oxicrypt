@@ -333,7 +333,7 @@ fn run_demo_cli(args: &[String]) -> std::process::ExitCode {
                         Err(e) => {
                             eprintln!(
                                 "oxicrypt acvp-harness demo-run: cannot read --refresh-with-file {:?}: {e}",
-                                &args[i]
+                                args[i]
                             );
                             return std::process::ExitCode::from(2);
                         }
@@ -691,7 +691,7 @@ fn run_resubmit_cli(args: &[String]) -> std::process::ExitCode {
                         Err(e) => {
                             eprintln!(
                                 "oxicrypt acvp-harness resubmit: cannot read --refresh-with-file {:?}: {e}",
-                                &args[i]
+                                args[i]
                             );
                             return std::process::ExitCode::from(2);
                         }
