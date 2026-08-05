@@ -21,7 +21,7 @@ git config core.hooksPath scripts/git-hooks
 The hook enforces two checks on every commit (see `scripts/git-hooks/pre-commit` for full rationale):
 
 1. **LAMA manifest sync** — if a commit changes `pub fn|struct|enum|const|type|trait|static|union|mod` lines under `crates/*/src/`, `docs/llm-api-manifest/llm-api.yaml` must also be staged.
-2. **Security policy sync** — if any file under `crates/*/src/` is staged, `docs/security-policy/security-policy.md` must also be staged.
+2. **Security policy sync** — if any file under `crates/*/src/` is staged, the Security Policy must have been modified since the last commit. That document is withheld from this repository (see `docs/security-policy/README.md`), so git cannot stage it and the check is on mtime instead. **If you do not have the Security Policy, this check is skipped entirely** — it never blocks you on a document you cannot read.
 
 The hook can be bypassed with `git commit --no-verify`. **Bypasses must be explained in the commit body** — either "internal change, no manifest delta" or "no security-policy gem surfaced, <reason>". Undocumented `--no-verify` is a contribution-flow violation.
 
@@ -119,6 +119,21 @@ fails fast to tell you that has happened, naming what is missing.
 If you genuinely cannot provision them, `OXICRYPT_EA_DATA_OPTIONAL=1` downgrades that check to a
 warning. A run under that flag forfeits the parity evidence claim and must not be offered as
 tests-pass evidence on a PR touching the estimators.
+
+### The Security Policy (you almost certainly do not have it — that is fine)
+
+The FIPS 140-3 Security Policy is withheld from this repository and held privately;
+[`docs/security-policy/README.md`](docs/security-policy/README.md) explains why and how to request
+access. **You need it for nothing.** `cargo test --workspace` passes without it and without any
+configuration: the five `doc-guard` tests that assert the document's stated numerals against the
+workspace skip, and `doc_guard::tests::security_policy_is_provisioned` passes with a note saying so.
+
+That gate only *fails* if your checkout claims to have the document — `$OXICRYPT_SECURITY_POLICY` is
+set, or the sibling clone directory exists — and it is not readable. If you want it silent in a
+scripted environment, set `OXICRYPT_SECURITY_POLICY_OPTIONAL=1`.
+
+The pre-commit hook's gem-capture check works the same way: with no policy on disk it is skipped and
+says so, and never blocks you on a document you cannot read.
 
 ## Private-name containment (opt-in)
 

@@ -11,8 +11,9 @@
 #            invisible until an external consumer trips over it.
 #
 # Check 2 — Security policy (warm-context gem capture)
-#   Trigger: any file under `crates/*/src/` is staged.
-#   Require: `docs/security-policy/security-policy.md` to be staged too.
+#   Trigger: any file under `crates/*/src/` is staged, AND the Security
+#            Policy is provisioned on this machine.
+#   Require: the policy to have been MODIFIED since the last commit.
 #   Why:     CLAUDE.md's "Insight capture at every commit" rule states
 #            that every code commit should be a forcing function for
 #            capturing CMVP gems — compiler-enforced invariants,
@@ -21,6 +22,20 @@
 #            A gem deferred is usually a gem lost. If there really is no
 #            gem to capture (typo fix, reformat, pure refactor), state
 #            so in the commit body and bypass.
+#
+#   The policy is NOT tracked in this repository — it is withheld from
+#   the public tree and lives in a private one (see
+#   docs/security-policy/README.md). Git cannot stage a file it does not
+#   track, so the old "is it staged?" test is unavailable and the signal
+#   is mtime instead: newer than the last commit means it was revisited.
+#   `touch` satisfies it, which is fine — as with `--no-verify`, the
+#   hook's purpose is to force the thought, not to make skipping the
+#   thought impossible.
+#
+#   When the policy is NOT provisioned — the normal case for an outside
+#   contributor, who has no access to it — check 2 is skipped entirely
+#   and says so. It never blocks a contributor on a document they cannot
+#   read.
 #
 # Bypass:
 #   git commit --no-verify
@@ -39,8 +54,30 @@ set -euo pipefail
 
 API_PATHS_REGEX='^crates/[^/]+/src/.*\.rs$'
 MANIFEST_PATH='docs/llm-api-manifest/llm-api.yaml'
-POLICY_PATH='docs/security-policy/security-policy.md'
 PUB_ITEMS_REGEX='^[+-]pub (fn|struct|enum|const|type|trait|static|union|mod )'
+
+# Resolve the withheld Security Policy the same way `tools/doc-guard` does:
+# $OXICRYPT_SECURITY_POLICY (a file, or a directory holding it), else the
+# default private sibling clone. Kept in step with
+# `doc_guard::tests::resolve_policy` — two resolution orders for one document
+# would drift. The precedence matches; two edge cases do not, and neither is
+# worth contorting either side over: with $HOME unset the Rust side falls back
+# to "." while `set -u` aborts this hook, and a trailing newline in the
+# environment value survives in Rust and is stripped by $(...) here.
+resolve_policy() {
+    local value="${OXICRYPT_SECURITY_POLICY:-}"
+    if [[ -n "$value" ]]; then
+        if [[ -d "$value" ]]; then
+            printf '%s/security-policy.md' "$value"
+        else
+            printf '%s' "$value"
+        fi
+        return
+    fi
+    printf '%s/repos/oxicrypt-policy/security-policy.md' "$HOME"
+}
+
+POLICY_PATH=$(resolve_policy)
 
 staged_rs=$(git diff --cached --name-only --diff-filter=ACMR \
             | grep -E "$API_PATHS_REGEX" || true)
@@ -50,7 +87,9 @@ staged_all=$(git diff --cached --name-only)
 
 require_manifest=0
 require_policy=0
+policy_undetermined=0
 pub_hits=""
+policy_skip_note=""
 
 # Check 1: pub-item surface touched → require LLM API manifest.
 if [[ -f "$MANIFEST_PATH" ]]; then
@@ -65,10 +104,52 @@ if [[ -f "$MANIFEST_PATH" ]]; then
     fi
 fi
 
-# Check 2: any crate source touched → require security policy review.
-if [[ -f "$POLICY_PATH" ]] \
-   && ! echo "$staged_all" | grep -qxF "$POLICY_PATH"; then
-    require_policy=1
+# Check 2: any crate source touched → require the security policy to have been
+# revisited since the last commit.
+if [[ -r "$POLICY_PATH" && -f "$POLICY_PATH" ]]; then
+    # GNU and BSD `stat` share no mtime flag; macOS 14+/aarch64 is a Tested
+    # platform per docs/building.md, and a CST-lab reviewer on a Mac is exactly
+    # the provisioned population this branch runs for. Under `set -e` an
+    # unguarded `stat -c` would abort the hook with a raw usage error and none
+    # of the explanatory output below.
+    policy_time=$(stat -c %Y "$POLICY_PATH" 2>/dev/null \
+                  || stat -f %m "$POLICY_PATH" 2>/dev/null \
+                  || true)
+    head_time=$(git log -1 --format=%ct 2>/dev/null || true)
+    # Both must be bare integers before they reach `(( ))`. GNU `stat -f` is
+    # --file-system and prints `  File: "..."` on stdout while erroring on
+    # stderr, so a fallback that fires on the wrong platform yields a multi-word
+    # string; under `set -u` the arithmetic then dies on an "unbound variable"
+    # that names a word from the output, which is an unreadable way to fail.
+    [[ "$policy_time" =~ ^[0-9]+$ ]] || policy_time=""
+    [[ "$head_time"   =~ ^[0-9]+$ ]] || head_time=""
+    if [[ -z "$head_time" || -z "$policy_time" ]]; then
+        # Fail open, but never silently: a check that disappears without a word
+        # is the exact failure the provisioning gate exists to prevent, and it
+        # would be no better one file over.
+        policy_undetermined=1
+    elif (( policy_time <= head_time )); then
+        require_policy=1
+    fi
+else
+    policy_skip_note="$POLICY_PATH"
+fi
+
+if [[ -n "$policy_skip_note" ]]; then
+    {
+        echo "pre-commit: security-policy gem check SKIPPED — the policy is not"
+        echo "  provisioned at $policy_skip_note"
+        echo "  It is withheld from this repository; see docs/security-policy/README.md."
+    } >&2
+fi
+
+if [[ $policy_undetermined -eq 1 ]]; then
+    {
+        echo "pre-commit: security-policy gem check COULD NOT RUN — the policy is"
+        echo "  present at $POLICY_PATH but its modification time or the last commit"
+        echo "  time could not be read. Passing rather than blocking, but this commit"
+        echo "  was NOT checked for gem capture."
+    } >&2
 fi
 
 if [[ $require_manifest -eq 0 && $require_policy -eq 0 ]]; then
@@ -91,15 +172,18 @@ fi
         echo ""
     fi
     if [[ $require_policy -eq 1 ]]; then
-        echo "[ENFORCED] $POLICY_PATH not staged."
+        echo "[ENFORCED] $POLICY_PATH not modified since the last commit."
         echo "  Crate sources changed. CLAUDE.md's \"Insight capture at"
         echo "  every commit\" rule asks you to pause and consider whether"
         echo "  the change surfaced a CMVP gem — a compiler-enforced"
         echo "  invariant, a zeroization composition, a conformance"
         echo "  rationale, a design-by-construction argument that an"
         echo "  auditor would need to accept the claim. If yes, capture it"
-        echo "  as a prose paragraph in the same commit, while the context"
-        echo "  is warm."
+        echo "  as a prose paragraph while the context is warm, and commit"
+        echo "  it in the policy repository."
+        echo ""
+        echo "  The policy is not tracked here, so this is an mtime check"
+        echo "  rather than a staged check. Editing it satisfies the hook."
         echo ""
     fi
     echo "Reminder — these targets are NOT enforced but may also apply:"

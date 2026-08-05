@@ -18,8 +18,9 @@ security parameters), the three CPU-intrinsic acceleration crates `oxicrypt-sha-
 equivalence proven by KAT + cross-path oracle), and `oxicrypt-timer` (read-only CPU timer/counter
 intrinsics for the entropy source). Separately,
 `oxicrypt-ffi` sits **outside** the boundary to offer a C ABI, where `unsafe extern "C"` is an
-unavoidable requirement of exposing the module to C callers. (See `docs/security-policy/security-policy.md`
-for the authoritative unsafe-code accounting.) It
+unavoidable requirement of exposing the module to C callers. (See the Security Policy — withheld from this
+repository, see `docs/security-policy/README.md` — for the authoritative unsafe-code accounting;
+`tools/doc-guard` asserts it against the workspace on every test run.) It
 defines a formal module boundary with power-up self-tests, and ships an ACVP test harness — targeting
 **CAVP algorithm validation** and **CMVP module validation** through an accredited CST laboratory.
 
@@ -34,7 +35,8 @@ text before shipping further work. This is load-bearing: it is the standard the 
   doc-sync pattern and the `SECURITY.md` fixed/fill-in template this crate adopts by reference.
 - **LAMA spec:** <https://github.com/lamaspec/lama> — the API-manifest format `lama.yaml` and
   `docs/llm-api-manifest/` conform to. oxicrypt is the LAMA reference adoption.
-- **Security policy (in-repo):** `docs/security-policy/security-policy.md`
+- **Security policy (withheld — private repo):** `docs/security-policy/README.md` explains where it
+  lives and how to request access; resolved at `$OXICRYPT_SECURITY_POLICY`
 - **LAMA manifests (in-repo):** root `lama.yaml` (discovery summary) + `docs/llm-api-manifest/llm-api.yaml` (full)
 - **ACVP harness (in-repo):** `acvp-harness/`
 
@@ -48,8 +50,9 @@ At the start of every session — or after a context reset — read these in ord
 1. **`ISA.md`** (this repo) — the Ideal State Artifact: the authoritative design contract and system of
    record. Read its Problem / Vision / Principles / Constraints / Out of Scope before changing any
    boundary. Each ISC is a verifiable end-state; IDs are permanent (never renumbered).
-2. **`docs/security-policy/security-policy.md`** — the CMVP Security Policy draft: approved services,
-   SSPs, self-tests, state machine, side-channel posture. The security-design home.
+2. **The CMVP Security Policy** — approved services, SSPs, self-tests, state machine, side-channel
+   posture. The security-design home. Withheld from this repository; see
+   `docs/security-policy/README.md`.
 3. **`docs/llm-api-manifest/llm-api.yaml`** — the full LAMA manifest describing the public API surface.
 
 ## Canonical homes
@@ -63,7 +66,7 @@ picking a home or copying the fact into several places.
 | Fact | Canonical home | Everything else |
 |------|----------------|-----------------|
 | **Design contract** — Problem, Vision, Principles, Constraints, Criteria, Out of Scope | **`ISA.md`** | pointer only |
-| **CMVP security claims** — approved services, SSPs, self-tests, state machine, side-channel posture | **`docs/security-policy/security-policy.md`** | rustdoc/README carry a pointer |
+| **CMVP security claims** — approved services, SSPs, self-tests, state machine, side-channel posture | **the Security Policy** (withheld — `docs/security-policy/README.md`) | rustdoc/README carry a pointer |
 | **Public API surface** (per crate) | **`docs/llm-api-manifest/llm-api.yaml`** | the full LAMA manifest |
 | **API-discovery summary** | **root `lama.yaml`** — concise capabilities + manifest pointer, conformant to the LAMA spec; no milestone/coverage/status | pointer only |
 | **Compliance target** (FIPS 140-3 IG revision) | **`ISA.md`** + `docs/security-policy/` | never restated as an inline constant |
@@ -139,6 +142,41 @@ the parity evidence claim entirely — a run under that flag must never be cited
 evidence. CI sets it, because the runner has no bundle; whether to provision one there is tracked
 in the issue tracker.
 
+### The Security Policy is not in this repository
+
+The FIPS 140-3 Security Policy is withheld from the public tree and held in a private repository;
+`docs/security-policy/README.md` explains why and how to request access. Its protection is
+non-publication rather than a license, and the bounds of that are stated honestly there.
+
+Resolution order is `$OXICRYPT_SECURITY_POLICY` — the file itself, or a directory containing
+`security-policy.md` — then `~/repos/oxicrypt-policy/security-policy.md`.
+
+This is the same *shape* as the EA datasets above, with one deliberate difference. The five
+`tools/doc-guard` tests that assert the policy's numerals against the workspace *skip* when it is
+unreachable, so an ordinary clone runs green with no configuration — and a skip prints to a stream
+a passing test discards, so the skip alone is not the safety net.
+`doc_guard::tests::security_policy_is_provisioned` is; but unlike the EA gate it fires on **claimed**
+provisioning, not on absence. The EA datasets are public and fetchable, so failing on absence there
+is right. This document cannot be obtained by an outside contributor at all, and failing on its
+absence would put back — as a single failure — the hard failures that removing it from the tree
+exists to prevent.
+
+A checkout claims the policy in exactly two ways: `$OXICRYPT_SECURITY_POLICY` is set, or the sibling
+clone directory is on disk. Either one with the document unreadable **fails**, because that is a
+maintainer's own checkout going quiet. Neither one passes with a note.
+`OXICRYPT_SECURITY_POLICY_OPTIONAL=1` withdraws the claim explicitly. The residual is stated rather
+than hidden: deleting the clone directory outright silences the gate on the maintainer's machine.
+
+Two further guards have no EA analogue. `the_security_policy_is_not_in_the_public_tree` is the
+inverse check — it fails if the document reappears here under any name, because publication is the
+one direction that cannot be undone. Because the `pre-push` Tier A escape skips `nextest` when a
+push touches no Rust-relevant path — and `docs/` is exactly such a path — that same containment
+scan is duplicated in `scripts/git-hooks/pre-push`, ahead of the tag short-circuit and the stamp
+cache, on the same reasoning the deny-list scan already uses: a leak check a cache can skip is not
+a leak check. Neither says anything about git history.
+`policy_resolution_precedence_holds` pins the resolution order itself, since a resolver that
+resolved nothing would be indistinguishable from a clean skip.
+
 ## Documentation sync
 
 At each commit boundary, refresh documentation while the context is fresh. oxicrypt adopts the
@@ -149,12 +187,15 @@ crate — directly or by reference — do all that apply:
 1. **Rustdoc.** Update the `lib.rs` header and affected item docs of every crate changed or referenced
    so the approved-services, SSP, self-test, and gating sections match the code. Run
    `cargo doc --workspace --no-deps` and resolve new warnings in touched crates.
-2. **CMVP Security Policy (`cmvp-gem`).** Update `docs/security-policy/security-policy.md` for any change
+2. **CMVP Security Policy (`cmvp-gem`).** Update the Security Policy — withheld from this repository,
+   see `docs/security-policy/README.md` — for any change
    to approved services, SSPs, self-tests, state-machine behavior, or side-channel posture. This document
    follows the **NIST-dictated CMVP Security Policy format** — it is unique to oxicrypt and deliberately
    does *not* follow the org `SECURITY.md` template (despite the similar name); do not reshape it to match
    other repos. The pre-commit hook (`scripts/git-hooks/pre-commit`) enforces it by requiring the policy to
-   be staged alongside any change under `crates/*/src/`. When a change surfaces no new claim, bypass with
+   have been modified since the last commit, alongside any change under `crates/*/src/`. Git cannot stage a
+   file it does not track, so the signal is mtime rather than staged-ness; when the policy is not
+   provisioned at all — the normal case for an outside contributor — the check is skipped and says so. When a change surfaces no new claim, bypass with
    `git commit --no-verify` and state the rationale in the commit body ("pure refactor, no new invariant").
 3. **README.** Update `README.md` when a commit changes user-facing status — algorithm coverage, build
    instructions, workspace layout, project phase.
@@ -177,7 +218,8 @@ crate — directly or by reference — do all that apply:
 insight a NIST/CST reviewer would need to accept a claim — a compiler guarantee that enforces a security
 property, a composition pattern that extends coverage transitively, a rationale for why a zeroization or
 self-test approach is complete, or an intentional conformance divergence? If yes, write it into
-`docs/security-policy/security-policy.md` as prose in the same commit. Insights surface during code work,
+the Security Policy as prose in the same commit — it lives in the private policy repository, so that is
+a commit there rather than here. Insights surface during code work,
 not policy work — so this runs at every commit gate. A gem deferred is usually a gem lost.
 
 ## Doc-sync reconciliation — the commit IS the gate

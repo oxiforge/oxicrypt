@@ -1,24 +1,49 @@
 //! Drift guard for the repository's boundary / `unsafe` accounting.
 //!
 //! Three documentation surfaces state numerals that restate facts about the
-//! workspace as built: `docs/security-policy/security-policy.md` (§1 boundary
-//! accounting, §9.2 `forbid(unsafe_code)` accounting, §3.1 FFI surface size),
-//! `AGENTS.md` (project-context paragraph), and `README.md` (architecture
-//! header and crate tree). Hand-maintained numerals drift when crates are
-//! added; the tests here recompute every numeral from the workspace on disk
-//! and assert the documented values match, so the drift is caught by the
-//! ordinary test gate instead of a reviewer.
+//! workspace as built: the FIPS 140-3 Security Policy (§1 boundary accounting,
+//! §9.2 `forbid(unsafe_code)` accounting, §3.1 FFI surface size), `AGENTS.md`
+//! (project-context paragraph), and `README.md` (architecture header and crate
+//! tree). Hand-maintained numerals drift when crates are added; the tests here
+//! recompute every numeral from the workspace on disk and assert the documented
+//! values match, so the drift is caught by the ordinary test gate instead of a
+//! reviewer.
 //!
 //! Frozen history — `CHANGELOG.md` entries, dated Appendix B rows, dated
 //! `ISA.md` decision entries — records what was true at its date and is
 //! deliberately not checked. Only current-state statements are asserted.
+//!
+//! # The Security Policy is not in this repository
+//!
+//! The Security Policy is withheld from the public tree and lives in a separate
+//! private repository; `docs/security-policy/README.md` explains why and how to
+//! request access. The five guards that assert its content therefore resolve it
+//! at runtime and **skip** when it is unreachable, so an ordinary clone runs
+//! green with no configuration at all.
+//!
+//! A skip prints to stderr, which a passing test discards, so the skip alone
+//! cannot be the safety net. [`security_policy_is_provisioned`] is — but it
+//! keys on *claimed* provisioning rather than on absence, and that departure
+//! from the EA-dataset precedent this otherwise mirrors is deliberate. The EA
+//! datasets are public, so failing on absence is right there. This document is
+//! not obtainable by an outside contributor at any price, and failing on its
+//! absence would reintroduce as one failure exactly the hard failures that
+//! removing it from the tree exists to prevent. See that test for the full
+//! state table.
+//!
+//! [`security_policy_is_provisioned`]: tests::security_policy_is_provisioned
 
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing
+    clippy::indexing_slicing,
+    // A guard that could not run announces itself on stderr, and the
+    // provisioning gate states that a run under the opt-out is not evidence —
+    // the same convention, for the same reason, as the EA parity gate in
+    // `oxicrypt-maxwell`.
+    clippy::print_stderr
 )]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -64,6 +89,361 @@ mod tests {
     fn read_doc(rel: &str) -> String {
         let path = repo_root().join(rel);
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    }
+
+    // ----- the withheld Security Policy -----
+    //
+    // The policy is not tracked here. It is resolved at runtime from a private
+    // sibling clone, exactly as `oxicrypt-maxwell` resolves the EA v1.1.8
+    // dataset bundle, and every guard that asserts its content skips when it is
+    // unreachable so a public clone runs green.
+
+    /// The policy's file name inside its repository.
+    const POLICY_FILE: &str = "security-policy.md";
+
+    /// The default sibling-clone location, relative to `$HOME`. Cloning
+    /// `oxiforge/oxicrypt-policy` there needs no further configuration.
+    const POLICY_REPO_REL: &str = "repos/oxicrypt-policy";
+
+    /// The in-tree path the policy used to occupy. Retained only as the thing
+    /// the containment guard forbids — deliberately **not** a resolution
+    /// fallback, since a fallback would make the containment guard's failure
+    /// mode reachable and silent at the same time.
+    const POLICY_IN_TREE: &str = "docs/security-policy/security-policy.md";
+
+    /// Resolve the Security Policy from an environment value and a home
+    /// directory. Split out from [`security_policy_path`] so the precedence can
+    /// be exercised against synthetic inputs rather than only against whatever
+    /// this machine happens to have provisioned.
+    ///
+    /// `$OXICRYPT_SECURITY_POLICY` may name the file itself or a directory
+    /// containing it: pointing it at the clone directory is the mistake a reader
+    /// of the variable's name will make, and accepting both costs one branch.
+    fn resolve_policy(env: Option<&str>, home: &str) -> PathBuf {
+        if let Some(value) = env.filter(|v| !v.is_empty()) {
+            let path = PathBuf::from(value);
+            return if path.is_dir() {
+                path.join(POLICY_FILE)
+            } else {
+                path
+            };
+        }
+        Path::new(home).join(POLICY_REPO_REL).join(POLICY_FILE)
+    }
+
+    /// Where the Security Policy is expected on this machine.
+    fn security_policy_path() -> PathBuf {
+        let env = std::env::var("OXICRYPT_SECURITY_POLICY").ok();
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        resolve_policy(env.as_deref(), &home)
+    }
+
+    /// The Security Policy's text, or `None` when it is not provisioned.
+    ///
+    /// `read_to_string`, not `File::open`: opening a *directory* succeeds on
+    /// Linux and fails only on read, so an `is_ok()` probe would report a
+    /// mis-resolved directory path as provisioned and every guard would then
+    /// fail on empty content instead of skipping.
+    fn read_policy() -> Option<String> {
+        fs::read_to_string(security_policy_path()).ok()
+    }
+
+    /// Whether the caller has accepted losing the policy assertions by setting
+    /// `OXICRYPT_SECURITY_POLICY_OPTIONAL=1`.
+    ///
+    /// An opt-out rather than an opt-in, for the same reason as
+    /// `OXICRYPT_EA_DATA_OPTIONAL`: the default must be that an unprovisioned
+    /// checkout says so, or an environment without the document masquerades as
+    /// a passing gate.
+    fn policy_optional() -> bool {
+        std::env::var("OXICRYPT_SECURITY_POLICY_OPTIONAL").is_ok_and(|v| v == "1")
+    }
+
+    /// Announce a guard that could not run. Stderr is discarded on a passing
+    /// test, which is precisely why [`security_policy_is_provisioned`] exists —
+    /// this line is for someone reading a `--nocapture` run, not the safety net.
+    fn skip_without_policy(guard: &str) {
+        eprintln!(
+            "SKIP {guard}: the Security Policy is not provisioned at {}. It is withheld from \
+             this repository — see docs/security-policy/README.md.",
+            security_policy_path().display()
+        );
+    }
+
+    /// The resolution precedence holds, checked against inputs whose shape is
+    /// known rather than against this machine's provisioning.
+    ///
+    /// Without this, `resolve_policy` could quietly lose its directory branch or
+    /// its environment branch and every other test here would be unaffected:
+    /// they all pass when the policy is unreachable, so a resolver that resolved
+    /// nothing would read exactly like a clean skip.
+    #[test]
+    fn policy_resolution_precedence_holds() {
+        // A real directory and a real file, so the `is_dir` branch is exercised
+        // rather than assumed.
+        let dir = repo_root();
+        let file = dir.join("README.md");
+        assert!(dir.is_dir() && file.is_file(), "fixture paths must exist");
+
+        assert_eq!(
+            resolve_policy(Some(&dir.display().to_string()), "/nonexistent-home"),
+            dir.join(POLICY_FILE),
+            "a directory in $OXICRYPT_SECURITY_POLICY must gain the file name"
+        );
+        assert_eq!(
+            resolve_policy(Some(&file.display().to_string()), "/nonexistent-home"),
+            file,
+            "a file in $OXICRYPT_SECURITY_POLICY must be used as given"
+        );
+        assert_eq!(
+            resolve_policy(Some(""), "/home/example"),
+            Path::new("/home/example")
+                .join(POLICY_REPO_REL)
+                .join(POLICY_FILE),
+            "an empty $OXICRYPT_SECURITY_POLICY must fall through, not resolve to \"\""
+        );
+        assert_eq!(
+            resolve_policy(None, "/home/example"),
+            Path::new("/home/example")
+                .join(POLICY_REPO_REL)
+                .join(POLICY_FILE),
+            "the default is the private sibling clone"
+        );
+        assert_ne!(
+            resolve_policy(None, "/home/example"),
+            repo_root().join(POLICY_IN_TREE),
+            "the in-tree path must never be a resolution target"
+        );
+    }
+
+    /// A checkout that *claims* the Security Policy must actually have it.
+    ///
+    /// This gate deliberately does **not** mirror `ea_dataset_suite_is_provisioned`
+    /// in its default, and the difference is the whole design. The EA datasets are
+    /// public and anyone can fetch them, so failing by default is right: absence is
+    /// always a fixable mistake. The Security Policy is withheld — an outside
+    /// contributor cannot obtain it at any price, and making a bare clone fail
+    /// `cargo test --workspace` would simply reintroduce, as one failure, the five
+    /// hard failures that removing the document from the tree exists to prevent.
+    ///
+    /// So the gate fires on *claimed* provisioning rather than on absence. A
+    /// checkout asserts a relationship to the policy in exactly two ways: setting
+    /// `$OXICRYPT_SECURITY_POLICY`, or having the sibling clone directory on disk.
+    /// Either one, with the document unreadable, is a misconfiguration on a machine
+    /// that is supposed to be running the full set — and that is worth failing over,
+    /// because it is the maintainer's own checkout going quiet. Neither one is an
+    /// ordinary public clone, which passes and says so.
+    ///
+    /// | State | Outcome |
+    /// |---|---|
+    /// | policy readable | pass, all five guards assert |
+    /// | `$OXICRYPT_SECURITY_POLICY` set, unreadable | **fail** — a named path that is wrong |
+    /// | env unset, clone directory present, file unreadable | **fail** — the clone is there, the document is not |
+    /// | env unset, no clone directory | pass with a warning — no claim was made |
+    /// | `OXICRYPT_SECURITY_POLICY_OPTIONAL=1` | pass with a warning — claim withdrawn explicitly |
+    ///
+    /// The residual is stated rather than hidden: deleting the clone directory
+    /// outright silences the gate. That is the price of not failing every public
+    /// clone, and it is the maintainer's own machine, not a contributor's.
+    #[test]
+    fn security_policy_is_provisioned() {
+        // Internal positive control, and it has to be stronger than "the name
+        // appears in this file". Deleting a `#[test]` attribute leaves the
+        // function present and this control satisfied; the guard then never runs
+        // while the gate reports the precondition met. So each name must carry
+        // BOTH the attribute immediately above it and the skip call that makes it
+        // a policy guard at all — a guard that stopped skipping-on-absence is no
+        // longer one of the five this gate speaks for.
+        //
+        // `#[ignore]` on a guard is NOT caught here and cannot be: it is a
+        // one-token edit that leaves the source shape intact. `cargo clippy
+        // --all-targets -- -D warnings` catches an outright removed `#[test]`
+        // via dead_code; nothing catches `#[ignore]` but review.
+        const GUARDED: [&str; 5] = [
+            "policy_states_the_alpha_values_the_code_implements",
+            "alpha_means_the_same_thing_in_the_policy_and_the_crate_doc",
+            "every_cited_resolution_is_named_somewhere_a_reviewer_can_reach",
+            "policy_carries_no_new_unresolved_drafting_markers",
+            "policy_states_the_as_built_accounting",
+        ];
+        let own_source = read_doc("tools/doc-guard/src/lib.rs");
+        for guard in GUARDED {
+            assert!(
+                own_source.contains(&format!("#[test]\n    fn {guard}()")),
+                "the guarded-test list names `{guard}`, which is not a `#[test]` in this file"
+            );
+            assert!(
+                own_source.contains(&format!("skip_without_policy(\"{guard}\")")),
+                "`{guard}` does not skip on an absent policy, so this gate no longer speaks \
+                 for it — remove it from GUARDED or restore the skip"
+            );
+        }
+
+        let path = security_policy_path();
+        match fs::read_to_string(&path) {
+            Ok(_) => return,
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                // Present but unreadable — permissions, a symlink loop, invalid
+                // UTF-8. Reporting this as "not provisioned" would tell the
+                // operator to clone a repository they already have.
+                panic!(
+                    "the Security Policy at {} exists but could not be read: {e}. The {} \
+                     guards asserting its content did not run.",
+                    path.display(),
+                    GUARDED.len()
+                );
+            }
+            Err(_) => {}
+        }
+
+        // Did this checkout claim to have the document?
+        let env_set = std::env::var("OXICRYPT_SECURITY_POLICY").is_ok_and(|v| !v.is_empty());
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let clone_dir_present = Path::new(&home).join(POLICY_REPO_REL).is_dir();
+        let claimed = env_set || clone_dir_present;
+
+        assert!(
+            !claimed || policy_optional(),
+            "the Security Policy is missing from {}, but this checkout claims to have it ({}). \
+             The {} guards that assert its content ({}) all skip silently without it, so this \
+             run says nothing about the document a CST lab reads. Fix the path, or set \
+             OXICRYPT_SECURITY_POLICY_OPTIONAL=1 to accept the loss. See \
+             docs/security-policy/README.md.",
+            path.display(),
+            if env_set {
+                "$OXICRYPT_SECURITY_POLICY is set"
+            } else {
+                "the sibling clone directory exists"
+            },
+            GUARDED.len(),
+            GUARDED.join(", ")
+        );
+        eprintln!(
+            "NOTE: the Security Policy was not found at {}. It is withheld from this repository \
+             (docs/security-policy/README.md), so this is expected in an ordinary clone. The {} \
+             guards asserting its content did not run; this run is not evidence about that \
+             document.",
+            path.display(),
+            GUARDED.len()
+        );
+    }
+
+    /// The Security Policy must not reappear in the public tree.
+    ///
+    /// The inverse of every other check here: those assert a document says what
+    /// the code does, this asserts a document is absent. An accidental `cp` back
+    /// into the tree is otherwise invisible until it is published, and
+    /// publication is the one direction that cannot be undone.
+    ///
+    /// Two detectors, and the limit of both is stated rather than implied. The
+    /// file-name sweep catches a copy restored at any path; the phrase sweep
+    /// catches one restored under a different name. A copy that was *reflowed*
+    /// as it was moved evades both — this guard is a backstop against accident,
+    /// not an adversary. It also says nothing about git history, where the
+    /// document still is until the path excision lands.
+    #[test]
+    fn the_security_policy_is_not_in_the_public_tree() {
+        /// A phrase the policy states on one line and nothing else in this tree
+        /// does. Already present in this file (it is the clause
+        /// `alpha_means_the_same_thing_in_the_policy_and_the_crate_doc` pins),
+        /// so using it as a detector publishes nothing that was not already
+        /// here. `health.rs` carries the same clause wrapped across `///` lines,
+        /// which a literal scan does not match — deliberately, since markdown
+        /// would not wrap it.
+        const POLICY_PHRASE: &str =
+            "the probability that a healthy source producing exactly its claimed min-entropy H";
+        /// The files legitimately carrying the phrase literally: this guard, and
+        /// the `pre-push` hook that duplicates it for pushes this test does not
+        /// run on. Both are detectors, not policy prose. Kept as an exact
+        /// expected set rather than a skip list — see the assertion below.
+        const PHRASE_EXEMPT: [&str; 2] =
+            ["scripts/git-hooks/pre-push", "tools/doc-guard/src/lib.rs"];
+
+        // `vendor/` is NOT skipped. It is tracked, committed content that ships
+        // on the public flip — unlike `target/`, which is build output. A copy
+        // landing there would be published like any other.
+        fn walk(
+            dir: &Path,
+            root: &Path,
+            named: &mut Vec<String>,
+            phrased: &mut Vec<String>,
+            unreadable: &mut Vec<String>,
+        ) {
+            let rel_of = |p: &Path| p.strip_prefix(root).unwrap_or(p).display().to_string();
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(e) => {
+                    // Never silent. An unreadable directory contributes nothing
+                    // to either detector, which is the same clean-looking result
+                    // as containment holding.
+                    unreadable.push(format!("{} ({e})", rel_of(dir)));
+                    return;
+                }
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name == ".git" || name == "target" {
+                    continue;
+                }
+                if path.is_dir() {
+                    walk(&path, root, named, phrased, unreadable);
+                    continue;
+                }
+                let rel = rel_of(&path);
+                if name == POLICY_FILE {
+                    named.push(rel.clone());
+                }
+                // Read every file, exempting nothing here: the exemption is an
+                // expected-set assertion on the result, so that a walk which
+                // reaches no files cannot look like a clean one.
+                match fs::read(&path) {
+                    Ok(bytes) => {
+                        if String::from_utf8_lossy(&bytes).contains(POLICY_PHRASE) {
+                            phrased.push(rel);
+                        }
+                    }
+                    Err(e) => unreadable.push(format!("{rel} ({e})")),
+                }
+            }
+        }
+
+        let root = repo_root();
+        let mut named = Vec::new();
+        let mut phrased = Vec::new();
+        let mut unreadable = Vec::new();
+        walk(&root, &root, &mut named, &mut phrased, &mut unreadable);
+        phrased.sort(); // readdir order is not stable across filesystems
+
+        // Positive control — and it must be a property of THE WALK, not a
+        // parallel read. An earlier version asserted the phrase was present by
+        // reading the exempt file directly through `read_doc`, which resolves
+        // independently: pointing the walk at a non-existent root left that
+        // assertion passing and the test reporting a clean tree in 0.00s. So the
+        // expected set is asserted against the walk's OWN output. A walk that
+        // read nothing now fails; so does a reworded phrase; so does one file
+        // too many.
+        let expected: Vec<String> = PHRASE_EXEMPT.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(
+            phrased, expected,
+            "the phrase sweep must find exactly the files that legitimately carry the detector \
+             phrase — the guards themselves — and nothing else. Anything EXTRA is Security \
+             Policy prose in the public tree; move it back to the private policy repository. \
+             Anything MISSING means the sweep is broken (a reworded phrase, a renamed guard, or \
+             a walk reaching no files), and a broken sweep reports containment holding."
+        );
+        assert!(
+            named.is_empty(),
+            "the Security Policy is withheld from this repository, but a file named \
+             `{POLICY_FILE}` is present: {named:?}. If this is the real document, remove it — \
+             it belongs in the private policy repository. See docs/security-policy/README.md."
+        );
+        assert!(
+            unreadable.is_empty(),
+            "these paths could not be read, so neither detector examined them and the sweep's \
+             clean result does not cover them: {unreadable:?}"
+        );
     }
 
     /// Every library crate under `crates/` (a directory holding a `Cargo.toml`).
@@ -251,9 +631,12 @@ mod tests {
     /// here rather than silently making the document wrong.
     #[test]
     fn policy_states_the_alpha_values_the_code_implements() {
+        let Some(policy) = read_policy() else {
+            skip_without_policy("policy_states_the_alpha_values_the_code_implements");
+            return;
+        };
         let health = read_doc("crates/oxicrypt-entropy/src/health.rs");
         let spec = read_doc("crates/oxicrypt-entropy/src/sp800_90b.rs");
-        let policy = read_doc("docs/security-policy/security-policy.md");
         let claim_para = paragraph_containing(&policy, "cutoff-generating parameter");
 
         let default_exp = assigned_u32(&health, "pub const DEFAULT: Self = Self { exp:");
@@ -354,7 +737,10 @@ mod tests {
         /// description of α, it asserts what the policy denies.
         const RULED_OUT: &str = "False-positive probability for the continuous health tests";
 
-        let policy = read_doc("docs/security-policy/security-policy.md");
+        let Some(policy) = read_policy() else {
+            skip_without_policy("alpha_means_the_same_thing_in_the_policy_and_the_crate_doc");
+            return;
+        };
         let health = read_doc("crates/oxicrypt-entropy/src/health.rs");
         let claim_para = paragraph_containing(&policy, "cutoff-generating parameter");
 
@@ -542,8 +928,15 @@ mod tests {
     /// reviewer can reach: the Security Policy, or a source file.
     #[test]
     fn every_cited_resolution_is_named_somewhere_a_reviewer_can_reach() {
+        // Skipped wholesale rather than split. The parser fixture below is the
+        // positive control FOR the unresolved-set assertion, and a control that
+        // ran while the thing it controls did not would report a health this
+        // guard had not established.
+        let Some(policy) = read_policy() else {
+            skip_without_policy("every_cited_resolution_is_named_somewhere_a_reviewer_can_reach");
+            return;
+        };
         let isa = read_doc("ISA.md");
-        let policy = read_doc("docs/security-policy/security-policy.md");
         let cited = cited_resolutions(&isa);
 
         // Positive control on the extractor's SHAPE, against a synthetic fixture
@@ -732,7 +1125,10 @@ mod tests {
     /// The policy must not accumulate unresolved drafting text.
     #[test]
     fn policy_carries_no_new_unresolved_drafting_markers() {
-        let policy = read_doc("docs/security-policy/security-policy.md");
+        let Some(policy) = read_policy() else {
+            skip_without_policy("policy_carries_no_new_unresolved_drafting_markers");
+            return;
+        };
 
         // Positive control on BOTH carve-outs, against a synthetic fixture rather
         // than the live document. Asserting only that the frozen predicate
@@ -798,8 +1194,11 @@ mod tests {
 
     #[test]
     fn policy_states_the_as_built_accounting() {
+        let Some(policy) = read_policy() else {
+            skip_without_policy("policy_states_the_as_built_accounting");
+            return;
+        };
         let a = accounting();
-        let policy = read_doc("docs/security-policy/security-policy.md");
 
         let boundary_sentence = format!("Of the {} library crates", a.total);
         assert!(

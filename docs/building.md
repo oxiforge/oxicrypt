@@ -91,6 +91,12 @@ and are not available on `no_std`-only targets.
 
 ## Running tests
 
+The full suite needs nothing beyond the toolchain. Two documents it can assert against are
+optional and absent by default — the SP 800-90B reference datasets and the withheld Security Policy
+(see [`../CONTRIBUTING.md`](../CONTRIBUTING.md) and
+[`security-policy/README.md`](security-policy/README.md)) — and the tests that need them skip and
+say so rather than failing.
+
 ```bash
 # Full test suite
 cargo test --workspace
@@ -173,6 +179,6 @@ oxicrypt/
     acvp-gen/             KAT constant generator
   vendor/nist/            Vendored NIST test vectors (pinned commit)
   docs/
-    security-policy/      SP 800-140Br1 draft security policy
+    security-policy/      Explains where the Security Policy lives (withheld)
     cavp-mapping/         CAVP vector traceability documents
 ```

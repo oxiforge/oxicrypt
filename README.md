@@ -306,9 +306,10 @@ cargo doc --workspace --no-deps
 open target/doc/oxicrypt_module/index.html
 ```
 
-**Security Policy (draft).** [`docs/security-policy/security-policy.md`](docs/security-policy/security-policy.md)
-follows the SP 800-140Br1 Annex A section order. Sections that still need a
-human decision are marked `TODO`.
+**Security Policy (draft).** Withheld from this repository and held privately —
+[`docs/security-policy/README.md`](docs/security-policy/README.md) explains why, what it
+contains, and how to request access. It follows the SP 800-140Br1 Annex A section
+order.
 
 **CAVP traceability.** [`docs/cavp-mapping/`](docs/cavp-mapping/) maps every
 KAT back to its published NIST source document with SHA-256 hashes of the

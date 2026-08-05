@@ -296,6 +296,96 @@ else
     echo "pre-push: private-name check passed ($deny_ran/$deny_seen pattern(s) applied over ${#deny_revs[@]} revision(s))."
 fi
 
+# ---------------------------------------------------------------------------
+# Security Policy containment.
+#
+# `doc_guard::tests::the_security_policy_is_not_in_the_public_tree` is the real
+# check, but it only runs inside `cargo nextest run --workspace` — and the Tier A
+# escape below skips nextest when nothing Rust-relevant is pushed. `docs/` is not
+# in `rust_re`, so restoring the withheld Security Policy is precisely a push that
+# skips the guard protecting against it:
+#
+#     cp <policy> docs/security-policy/ && git commit && git push
+#
+# pre-commit does not run doc-guard, the push touches only a .md under docs/,
+# Tier A fires, nextest never runs, and a 3,560-line certification-package
+# document reaches the remote. The stamp cache and OXICRYPT_PUSH_NEXTEST=skip
+# skip it for the same reason.
+#
+# So it is duplicated here, on the same terms and in the same position as the
+# deny-list scan above: before the tag-only short-circuit and before the stamp
+# cache, scanning the COMMITS BEING PUSHED rather than the checked-out tree. The
+# reasoning is the one already written for the deny-list — a leak check a cache
+# can skip is not a leak check — and publication is the one direction that cannot
+# be undone.
+#
+# Same known limit as the deny-list: this prevents new leaks in what is pushed. It
+# says nothing about what is already in history.
+# ---------------------------------------------------------------------------
+# The detector phrase, and the tracked files that legitimately carry it: the
+# doc-guard test and this hook. Both are detectors, not policy prose. These
+# mirror the constants in tools/doc-guard/src/lib.rs; the phrase is already
+# public in that file, so naming it here publishes nothing new. Missing this
+# file from the exempt set makes every clean push fail — the containment guard
+# on the other side caught exactly that when this scan was added.
+sp_phrase='the probability that a healthy source producing exactly its claimed min-entropy H'
+sp_exempt_paths=(':!tools/doc-guard/src/lib.rs' ':!scripts/git-hooks/pre-push')
+
+sp_revs=()
+for pair in "${ref_pairs[@]:-}"; do
+    read -r _l _r <<<"$pair"
+    [[ "$_l" =~ ^0+$ ]] && continue
+    if [[ "$_r" =~ ^0+$ ]]; then
+        base="$(git merge-base "$_l" origin/main 2>/dev/null || true)"
+        range=$([[ -n "$base" ]] && echo "$base..$_l" || echo "$_l")
+    else
+        range="$_r..$_l"
+    fi
+    before="${#sp_revs[@]}"
+    while IFS= read -r rev; do
+        [[ -n "$rev" ]] && sp_revs+=("$rev")
+    done < <(git rev-list "$range" 2>/dev/null || true)
+    [[ "${#sp_revs[@]}" -eq "$before" ]] && sp_revs+=("$_l")
+done
+if [[ "${#sp_revs[@]}" -eq 0 ]]; then
+    sp_revs=("HEAD")
+    echo "pre-push: security-policy containment — no pushed revisions enumerated; scanning HEAD."
+fi
+if [[ "${#sp_revs[@]}" -gt 200 ]]; then
+    echo "pre-push: security-policy containment — ${#sp_revs[@]} revisions in range; scanning the newest 200."
+    sp_revs=("${sp_revs[@]:0:200}")
+fi
+
+# Positive control, with the same flags as the real scan. The exempt file carries
+# the phrase in every revision, so a scanner that finds nothing here is broken —
+# and a broken scanner's clean result is indistinguishable from containment.
+if ! git grep -a -q -F -e "$sp_phrase" "${sp_revs[@]}" -- . 2>/dev/null; then
+    echo "pre-push: FAILED — security-policy containment scanner is broken." >&2
+    echo "  The detector phrase was not found in the pushed revisions, so a clean" >&2
+    echo "  result from this scan would mean nothing. Either the guards no longer" >&2
+    echo "  carry it, or the scan is not reaching the tree." >&2
+    exit 1
+fi
+
+sp_named="$(for rev in "${sp_revs[@]}"; do
+    git ls-tree -r --name-only "$rev" 2>/dev/null \
+        | grep -E '(^|/)security-policy\.md$' | sed "s|^|${rev}: |" || true
+done)"
+sp_phrased="$(git grep -a -l -F -e "$sp_phrase" "${sp_revs[@]}" -- . "${sp_exempt_paths[@]}" 2>/dev/null || true)"
+
+if [[ -n "$sp_named" || -n "$sp_phrased" ]]; then
+    {
+        echo "pre-push: FAILED — the Security Policy is being pushed."
+        echo "  That document is withheld from this repository by design; see"
+        echo "  docs/security-policy/README.md. It belongs in the private policy repo."
+        [[ -n "$sp_named" ]]   && { echo "  Files named security-policy.md:"; echo "$sp_named"   | head -20 | sed 's/^/    /'; }
+        [[ -n "$sp_phrased" ]] && { echo "  Files carrying policy prose:";    echo "$sp_phrased" | head -20 | sed 's/^/    /'; }
+        echo "  Remove it from the commits being pushed, then push again."
+    } >&2
+    exit 1
+fi
+echo "pre-push: security-policy containment passed (${#sp_revs[@]} revision(s))."
+
 if [[ "$saw_ref" == "true" && "$tag_only" == "true" ]]; then
     echo "pre-push: tag-only push detected — skipping four-gate cycle."
     exit 0

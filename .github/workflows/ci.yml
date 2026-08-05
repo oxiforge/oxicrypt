@@ -76,9 +76,20 @@ jobs:
       # success. Setting the flag makes that pre-existing fact explicit here
       # rather than hidden in silent skips; it does not change what CI covers.
       # The full-strength gate is local, where the bundle lives (#137, #153).
+      # The Security Policy is likewise absent here: it is withheld from this
+      # repository entirely (docs/security-policy/README.md), so the runner has
+      # no route to it and never will. The five doc-guard tests asserting its
+      # numerals against the workspace therefore skip.
+      #
+      # The flag is not strictly required — the provisioning gate fires only on a
+      # checkout that CLAIMS the document, and the runner claims nothing, so a
+      # bare job would pass anyway. It is set for the same reason as the line
+      # above it: to state the coverage gap in the workflow rather than leave it
+      # resting on the incidental absence of a directory.
       - run: cargo nextest run --workspace
         env:
           OXICRYPT_EA_DATA_OPTIONAL: "1"
+          OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
       # The gate's own warning goes to stderr, which nextest discards on a
       # passing test — so without this the caveat above would be invisible in
       # every green run, which is the failure mode #137 exists to kill.
@@ -91,6 +102,14 @@ jobs:
           echo "parity table, every per-estimator anchor and the assessed-assembly parity ran" >> "$GITHUB_STEP_SUMMARY"
           echo "against no data. A green test job is not evidence of estimator parity." >> "$GITHUB_STEP_SUMMARY"
           echo "The full-strength gate is local; see #137 and #153." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Security Policy assertions: NOT run by CI" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The FIPS 140-3 Security Policy is withheld from this repository, so the five" >> "$GITHUB_STEP_SUMMARY"
+          echo "doc-guard tests that assert its stated numerals against the workspace as built" >> "$GITHUB_STEP_SUMMARY"
+          echo "skipped. Boundary-accounting drift is still caught here by the equivalent" >> "$GITHUB_STEP_SUMMARY"
+          echo "AGENTS.md and README.md assertions, which need no policy and did run." >> "$GITHUB_STEP_SUMMARY"
+          echo "See docs/security-policy/README.md." >> "$GITHUB_STEP_SUMMARY"
       - run: cargo test --workspace --doc
 
   build:
