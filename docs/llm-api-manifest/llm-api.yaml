@@ -37,7 +37,7 @@ library:
       data processed through approved services. Does not claim
       side-channel resistance at Level 1; discloses and validates timing
       behavior via dudect methodology.
-    side_channel_posture: validated
+    side_channel_posture: "disclosed; no side-channel resistance claimed at Level 1, timing behavior validated via dudect"
     zeroization: "volatile-on-drop (all CSP-holding types via oxicrypt-zeroize: SHA-1/SHA-2 streaming state, Keccak sponge, HMAC ipad/opad state, AES round-key schedules, DRBG state, private-key types)"
 
 # ─────────────────────────────────────────────────────────────────────
