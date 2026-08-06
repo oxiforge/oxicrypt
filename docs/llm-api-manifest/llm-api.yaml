@@ -37,7 +37,7 @@ library:
       data processed through approved services. Does not claim
       side-channel resistance at Level 1; discloses and validates timing
       behavior via dudect methodology.
-    side_channel_posture: validated
+    side_channel_posture: "disclosed; no side-channel resistance claimed at Level 1, timing behavior validated via dudect"
     zeroization: "volatile-on-drop (all CSP-holding types via oxicrypt-zeroize: SHA-1/SHA-2 streaming state, Keccak sponge, HMAC ipad/opad state, AES round-key schedules, DRBG state, private-key types)"
 
 # ─────────────────────────────────────────────────────────────────────
@@ -304,6 +304,27 @@ modules:
     description: NIST-derived known-answer-test constants consumed by the power-up self-tests; test-support data rather than callable API, so no API surface is described here.
     no_std: true
     depends_on: []
+  - name: oxi
+    description: Command-line front end to the module, installed with `cargo install oxi` and self-describing via `oxi --lama`; a binary crate with no public Rust items, so no API surface is described here.
+    no_std: false
+    depends_on:
+    - oxicrypt-module
+
+  - name: doc-guard
+    description: Out-of-boundary test crate asserting documentation claims against the workspace as built; publish = false, so no API surface is described here.
+    no_std: false
+    depends_on: []
+
+  - name: ct-validation
+    description: Out-of-boundary dudect-style timing-variation harness; publish = false, so no API surface is described here.
+    no_std: false
+    depends_on: []
+
+  - name: oxicrypt-bench
+    description: Out-of-boundary Criterion benchmark suite; publish = false, so no API surface is described here.
+    no_std: false
+    depends_on: []
+
 
 
 
@@ -359,6 +380,54 @@ families:
 # ─────────────────────────────────────────────────────────────────────
 # Types
 # ─────────────────────────────────────────────────────────────────────
+
+  - name: xof-hasher-new
+    description: Extendable-output and SP 800-185 hasher constructors, one per variant.
+    applies_to: functions
+
+  - name: xof-hasher-update
+    description: Extendable-output hasher absorb methods taking a message slice.
+    applies_to: functions
+
+  - name: xof-hasher-finalize-into
+    description: SP 800-185 hasher finalizers writing into a caller-sized output buffer.
+    applies_to: functions
+
+  - name: slh-dsa-keygen
+    description: SLH-DSA key generation, one per FIPS 205 parameter set.
+    applies_to: functions
+
+  - name: slh-dsa-sign
+    description: SLH-DSA signature generation, one per FIPS 205 parameter set.
+    applies_to: functions
+
+  - name: slh-dsa-verify
+    description: SLH-DSA signature verification, one per FIPS 205 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-keygen
+    description: ML-KEM key generation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-encapsulate
+    description: ML-KEM encapsulation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-decapsulate
+    description: ML-KEM decapsulation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-dsa-keygen
+    description: ML-DSA key generation, one per FIPS 204 parameter set.
+    applies_to: functions
+
+  - name: ml-dsa-sign
+    description: ML-DSA signature generation, one per FIPS 204 parameter set.
+    applies_to: functions
+
+  - name: ml-dsa-verify
+    description: ML-DSA signature verification, one per FIPS 204 parameter set.
+    applies_to: functions
 
 types:
   - name: State
@@ -445,10 +514,16 @@ types:
         description: Service blocked by the active algorithm profile.
       - name: NotImplemented
         description: Service is in the Service enum but implementation is a stub.
+      - name: Uninstantiated
+        description: generate or reseed was called before instantiate succeeded on this DRBG handle.
+      - name: ReseedRequired
+        description: reseed_counter reached the SP 800-90A Table 3 reseed-interval bound.
       - name: NullPointer
         description: Caller passed a NULL pointer where one is required.
       - name: BufferTooSmall
         description: Caller-allocated output buffer is smaller than the documented minimum.
+      - name: OutputTooLong
+        description: Requested output exceeds the family's bound (HKDF-Expand 255*HashLen per RFC 5869 section 2.3; HMAC_DRBG generate 2^19 bits per SP 800-90A Table 3).
       - name: NotBlockAligned
         description: Input length is not aligned to the cipher block size.
       - name: InvalidIvLength
@@ -1253,275 +1328,6 @@ types:
     kind: struct
     description: Pipeline skeleton bound to one NoiseSource and one validated min-entropy claim; health-test and conditioning stages attach as they land.
 
-  - name: HttpResponse
-    module: acvp-harness
-    kind: struct
-    description: Harness transport HTTP response (status plus body string); exposed as the ESV harness transport-seam return type.
-    fields:
-      - name: status
-        type: u16
-        description: HTTP status code.
-      - name: body
-        type: String
-        description: Response body as a string.
-
-  # ── esv-harness (ESVP client; out-of-boundary tooling) ──────────────
-
-  - name: EsvTransport
-    module: esv-harness
-    kind: trait
-    description: One-call-per-request ESVP HTTP transport seam (method/path/body/bearer); a live impl wraps acvp-harness's curl(1)/mTLS transport, unit tests supply a recording stub.
-
-  - name: Sleeper
-    module: esv-harness
-    kind: trait
-    description: Injectable wait driving the TOTP-window-reuse retry; ThreadSleeper backs it with std::thread::sleep, tests record durations without blocking.
-
-  - name: ThreadSleeper
-    module: esv-harness
-    kind: struct
-    description: Production Sleeper backed by std::thread::sleep.
-
-  - name: EsvSession
-    module: esv-harness
-    kind: struct
-    description: Authenticated ESV session (token plus monotonic issuance instant plus tunable refresh margin); exposes bearer/elapsed_secs/needs_refresh, refresh with a fresh-login fallback on a 401/403, refresh_if_stale, authenticated_request, refresh_margin_secs/with_refresh_margin_secs/set_refresh_margin_secs, and fallback_logins (a monotonic count of fresh-login fallbacks, observable across the outcome-discarding callers for the attended smoke).
-
-  - name: ConditioningComponent
-    module: esv-harness
-    kind: struct
-    description: One entropy-source conditioning component; the vetted and vetted_sha2_256 constructors enforce D2 (a CAVP validationNumber and a recognized ACVTS algorithm name).
-
-  - name: EntropyRegistration
-    module: esv-harness
-    kind: struct
-    description: SP 800-90B entropy-source metadata payload; new_non_iid bakes iidClaim=false and physical=false, set_hmin_exact records an exact fixed-point min-entropy claim (rendered as an exact decimal on the wire, mirrored into the f64 hmin_estimate for the preflight bound), to_wire_json serializes the versioned envelope and fails typed on a non-finite float field.
-
-  - name: DataFileRef
-    module: esv-harness
-    kind: struct
-    description: A registration-returned data-file slot (server URL plus its trailing numeric id).
-
-  - name: ConditionedFileRef
-    module: esv-harness
-    kind: struct
-    description: A conditioned-bits data-file slot with its conditioning sequence position (present only for non-vetted conditioning).
-
-  - name: OeRegistration
-    module: esv-harness
-    kind: struct
-    description: One operating environment's registration result (eaId, raw-noise/restart/conditioned data-file slots, and the per-OE scoped JWT).
-
-  - name: RegError
-    module: esv-harness
-    kind: enum
-    description: Fail-typed registration-construction guard (missing CAVP validationNumber, unknown vetted-algorithm name, or a non-finite float field).
-
-  - name: CcError
-    module: esv-harness
-    kind: enum
-    description: One conditioning-component preflight violation (positive-integer bounds, float finiteness/sign, and vetted/non-vetted validationNumber and bijectiveClaim applicability).
-
-  - name: PreflightError
-    module: esv-harness
-    kind: enum
-    description: One registration-payload preflight violation (field bounds, hminEstimate<=bitsPerSample, restart minimums, numberOfOEs, and conditioning sequence positions 1..=n).
-
-  - name: DataFileKind
-    module: esv-harness
-    kind: enum
-    description: Which data-file slot a file fills for the file preflight — RawNoise or Restart (the vetted oxicrypt path uploads no conditioned file, ISC-107).
-
-  - name: FilePreflightError
-    module: esv-harness
-    kind: enum
-    description: One data-file preflight violation (WrongSampleCount off the 1,000,000 one-byte-per-sample size, SampleValueTooWide past the effective min(bitsPerSample,8) width, RestartDimensionsMismatch off the 1000x1000 layout, or SampleSizeInconsistent between the declared DataFileSampleSize and the registration).
-
-  - name: MultipartPart
-    module: esv-harness
-    kind: enum
-    description: One logical part of a data-file multipart body — a text Field or the borrowed binary File part (field name, filename, content type, bytes).
-
-  - name: DataFileUpload
-    module: esv-harness
-    kind: struct
-    description: A data-file upload request (ea_id/df_id/filename/bytes plus optional sample_size); new builds a raw-noise/restart upload, with_sample_size emits the capitalized DataFileSampleSize field (typed-error outside 1..=8), path/parts inspect the request and to_multipart serializes it (fallible — invalid or colliding boundary is a typed MultipartError).
-
-  - name: DataFileTarget
-    module: esv-harness
-    kind: enum
-    description: Which data-file slot an upload targets — RawNoise, Restart, or ConditionedBits{sequence_position}.
-
-  - name: ConditionedRefusalReason
-    module: esv-harness
-    kind: enum
-    description: Why a conditioned-bits upload was refused (the component is Vetted or Bijective).
-
-  - name: DataFileStatus
-    module: esv-harness
-    kind: enum
-    description: A parsed data-file processing status — the seven documented ESVP states plus a fail-closed Unrecognized(String); poll_decision maps each to a PollDecision.
-
-  - name: TerminalStatus
-    module: esv-harness
-    kind: enum
-    description: A terminal data-file outcome (RunSuccessful, RunFailed, RunCancelled, Error).
-
-  - name: PollDecision
-    module: esv-harness
-    kind: enum
-    description: The polling loop's next action for a status (WaitNotYetProcessed, WaitProcessing, Terminal(TerminalStatus), Unrecognized).
-
-  - name: PollConfig
-    module: esv-harness
-    kind: struct
-    description: Data-file polling tunables — not-yet-processed and processing waits, the max consecutive not-yet-processed cap, a global max_total_polls ceiling (catches an alternating-status livelock), and a max_consecutive_transient_failures budget (a transport error or unparseable body is transient, reset by a well-formed response); Default is 30 s / 30 s / 20 / 240 / 3.
-
-  - name: DataFileResult
-    module: esv-harness
-    kind: struct
-    description: A data file polled to a terminal state (optional echoed id, the TerminalStatus, and on success the returned NIST assessment captured as the raw body — the second maxwell oracle).
-
-  - name: DataFileError
-    module: esv-harness
-    kind: enum
-    description: A data-file upload/poll error (sample-size out of range, conditioned-upload forbidden or missing component, unrecognized status, not-yet-processed timeout, total-poll timeout, transient-failure budget exhausted, token-provider failure, server error, malformed response, transport failure).
-
-  - name: MultipartError
-    module: esv-harness
-    kind: enum
-    description: A multipart serialization error — an invalid RFC 2046 boundary (empty/over-70/disallowed char/trailing space), a part name/filename carrying a CR/LF/control character (header-injection guard), or a boundary that collides with a part body or filename.
-
-  # ── esv-harness hmin (exact hminEstimate serialization) ────────────
-
-  - name: HminError
-    module: esv-harness
-    kind: enum
-    description: Why an hminEstimate cannot be serialized for a payload — AboveBitsPerSample (the claim exceeds bitsPerSample) or NegativeBitsPerSample.
-
-  # ── esv-harness jsonlite (float-tolerant status-body reader) ────────
-
-  - name: JsonLite
-    module: esv-harness
-    kind: enum
-    description: A JSON value with numbers kept as their raw source token (never interpreted), so an ESV status body carrying fractional/e-notation min-entropy is read losslessly where the integer-only acvp_harness::json codec cannot; accessors as_array/as_object/as_str/as_number_str/as_bool/is_null/get (first-wins) and get_unique (rejects a duplicate key, for the strict status-envelope read).
-
-  - name: ParseError
-    module: esv-harness
-    kind: enum
-    description: A jsonlite parse failure (unexpected EOF/byte, invalid escape, invalid number, invalid UTF-8, depth exceeded, trailing data).
-
-  - name: DuplicateKey
-    module: esv-harness
-    kind: struct
-    description: A duplicate-key rejection from JsonLite::get_unique — a key required to be unique appeared more than once.
-
-  # ── esv-harness supporting docs (ESVP §6.2) ────────────────────────
-
-  - name: SdType
-    module: esv-harness
-    kind: enum
-    description: ESVP §6.2 supporting-document type; wire_str/from_wire map each variant (EntropyAssessmentReport, PublicUseDocument, DataCollectionAttestation, RandomBitGeneratorReport, Other) to/from its exact wire string.
-
-  - name: SupportDocError
-    module: esv-harness
-    kind: enum
-    description: A supporting-document construction guard failure — the payload is not a PDF (no %PDF- signature at offset 0) or is empty.
-
-  - name: SupportingDocUpload
-    module: esv-harness
-    kind: struct
-    description: A supporting-document upload request; new enforces a fail-closed PDF-only content check (%PDF- magic), with_comment attaches the optional sdComments field, parts/to_multipart inspect or (fallibly) serialize the multipart body over the shared serialize_multipart encoder.
-
-  - name: SupportingDoc
-    module: esv-harness
-    kind: struct
-    description: A successfully-uploaded supporting document (sdId, sdType carried from the request, and the scoped JWT) — exactly what a certify request references.
-
-  # ── esv-harness certify (ESVP §7) ──────────────────────────────────
-
-  - name: CertifyError
-    module: esv-harness
-    kind: enum
-    description: A certify-request construction violation (missing entropyId/moduleId/oeId/entropyCertificate, non-positive eaId, no assessments, duplicate eaId, wrong EAR/PUD count, too many DCAs, non-PUD updatePUD doc, non-numeric registration eaId, or a non-IID assessment missing its restart-test upload).
-
-  - name: CertifyAssessment
-    module: esv-harness
-    kind: struct
-    description: One entropy-assessment reference in a certify request (the ESV eaId, the ACVTS oeId, the scoped JWT); from_registration bridges an OeRegistration with the ACVTS oeId.
-
-  - name: CertifyRequest
-    module: esv-harness
-    kind: struct
-    description: A full §7.1 certify submission; new enforces every precondition (entropyId, positive moduleId, ≥1 assessment with positive eaId/oeId, exactly-one EAR + exactly-one PUD + at-most-one DCA), with_vendor_id/with_limit_to_single_module tune optional fields, to_wire_json serializes the versioned envelope.
-
-  - name: AddOeRequest
-    module: esv-harness
-    kind: struct
-    description: A §7.2 AddOE certify request (append OEs to an existing certificate); like CertifyRequest but keyed on entropyCertificate instead of moduleId, same assessment/supporting-doc preconditions.
-
-  - name: UpdatePudRequest
-    module: esv-harness
-    kind: struct
-    description: A §7.3 UpdatePUD certify request (attach a new Public Use Document to an existing certificate); new requires a non-empty entropyId/entropyCertificate and a PublicUseDocument supporting document.
-
-  # ── esv-harness session store (resumable per-submission dir) ───────
-
-  - name: Slot
-    module: esv-harness
-    kind: enum
-    description: Which data-file slot an upload targeted (RawNoise, Restart, Conditioned); as_str/from_str_token round-trip the on-disk token.
-
-  - name: CertifyMode
-    module: esv-harness
-    kind: enum
-    description: Which certify path completed a submission (Full §7.1 or AddOe §7.2); as_str/from_str_token round-trip the on-disk token.
-
-  - name: SlotRef
-    module: esv-harness
-    kind: struct
-    description: A data-file slot reference recorded from registration (its URL and id).
-
-  - name: OeRecord
-    module: esv-harness
-    kind: struct
-    description: One operating environment's registration record tracked in a session (eaId, url, raw-noise/restart slots, scoped JWT); from_registration captures the trackable fields of an OeRegistration.
-
-  - name: UploadedFile
-    module: esv-harness
-    kind: struct
-    description: A recorded data-file upload (eaId, slot, dfId).
-
-  - name: CapturedAssessment
-    module: esv-harness
-    kind: struct
-    description: A captured Run Successful assessment sidecar (eaId, slot, the stored file name).
-
-  - name: Intent
-    module: esv-harness
-    kind: enum
-    description: The pre-submit half of intent-then-outcome — a network side-effect a submission is about to attempt, appended with only locally-known data before the call (Register, UploadFile, UploadDoc, Certify); describe() gives an operator-facing summary. An outcome Event appended after supersedes it; an intent with no following outcome is a dangling intent (SubmissionStage::Interrupted).
-
-  - name: Event
-    module: esv-harness
-    kind: enum
-    description: The post-submit outcome appended to events.jsonl after its network call, built from the server response (Registered, FileUploaded, AssessmentCaptured, DocUploaded, Certified); to_json/from_json round-trip via the shared codec.
-
-  - name: SubmissionStage
-    module: esv-harness
-    kind: enum
-    description: The coarse stage a submission has reached (Empty, Registered, FilesUploaded, DocsUploaded, Certified, or Interrupted for a dangling intent that must be verified before retrying), derived from the replayed log.
-
-  - name: SubmissionState
-    module: esv-harness
-    kind: struct
-    description: The full submission state reconstructed by replaying events.jsonl (entropyId, moduleId, OEs deduped by eaId, uploaded files, captured assessments, docs, certify mode, an interrupted dangling-intent description, and a torn-tail warning); stage() reports the coarse SubmissionStage.
-
-  - name: SessionDir
-    module: esv-harness
-    kind: struct
-    description: Handle to a <sessions-root>/<entropyId>/ submission directory (entropyId validated as a safe filename token); create/open, append_intent/append_event (single buffered newline-terminated fsync'd write, healing any torn tail) and persist_intent_then (append the intent, run the submit, append its outcome), store_assessment/store_certify_response/read_sidecar (verbatim, path-component-validated), load_state replays the log tolerating a torn final line and surfacing a dangling intent.
-
   - name: OxiRsaPrivateKey2048
     kind: opaque
     module: oxicrypt-ffi
@@ -1723,6 +1529,9 @@ functions:
     module: oxicrypt-module
     description: Returns the active algorithm restriction profile.
     signature: "pub fn active_profile() -> AlgorithmProfile"
+    returns:
+      type: AlgorithmProfile
+      description: "The profile set by initialize_with_profile, or Unrestricted when the module was initialized without one."
 
   - name: require_operational
     module: oxicrypt-module
@@ -2351,6 +2160,7 @@ functions:
 
   - name: "Shake128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a streaming SHAKE128 extendable-output hasher.
     signature: "pub fn Shake128::new() -> Result<Self, Error>"
     parameters: []
@@ -2387,6 +2197,7 @@ functions:
 
   - name: "Shake128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Feed data into the XOF absorb phase; canonical for the xof-streaming-hasher family.
     signature: "pub fn update(&mut self, data: &[u8])"
     parameters:
@@ -2498,6 +2309,7 @@ functions:
 
   - name: "Shake256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a streaming SHAKE256 XOF. update/finalize/squeeze identical to Shake128."
     signature: "pub fn Shake256::new() -> Result<Self, Error>"
     returns:
@@ -2510,6 +2322,7 @@ functions:
 
   - name: "CShake128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a streaming cSHAKE128 XOF with function-name N and customization S (SP 800-185 §3); reduces to plain SHAKE128 when both are empty.
     signature: "pub fn CShake128::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2555,6 +2368,7 @@ functions:
 
   - name: "CShake256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a streaming cSHAKE256 XOF with N and S. update/finalize/squeeze identical to Shake128."
     signature: "pub fn CShake256::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2569,6 +2383,7 @@ functions:
 
   - name: "Kmac128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a KMAC128 keyed MAC with key and customization string S (SP 800-185 §4), followed by update* then finalize_into for a fixed-length tag.
     signature: "pub fn Kmac128::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2613,6 +2428,7 @@ functions:
 
   - name: "Kmac128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Feed message data into the KMAC computation; legal only before finalize_into / finalize.
     signature: "pub fn update(&mut self, data: &[u8])"
     parameters:
@@ -2635,6 +2451,7 @@ functions:
 
   - name: "Kmac128::finalize_into"
     module: oxicrypt-xof
+    family: xof-hasher-finalize-into
     description: Bind the output length L = tag.len()*8 into the computation, then finalize and write exactly tag.len() bytes into tag; canonical for the xof-fixed-hasher finalize_into shape.
     signature: "pub fn finalize_into(&mut self, tag: &mut [u8])"
     parameters:
@@ -2676,6 +2493,7 @@ functions:
 
   - name: "Kmac256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a KMAC256 keyed MAC with key and S. update/finalize_into identical to Kmac128."
     signature: "pub fn Kmac256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2688,6 +2506,7 @@ functions:
 
   - name: "KmacXof128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a KMACXOF128 extendable-output keyed MAC with key and S (SP 800-185 §4.3.1), new(key,s)/update/finalize/squeeze; output length is not bound in.
     signature: "pub fn KmacXof128::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2725,6 +2544,7 @@ functions:
 
   - name: "KmacXof256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a KMACXOF256 XOF keyed MAC with key and S. update/finalize/squeeze identical to Shake128."
     signature: "pub fn KmacXof256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2739,6 +2559,7 @@ functions:
 
   - name: "TupleHash128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a TupleHash128 instance with customization string S (SP 800-185 §5); each update() adds one tuple element, finalize_into binds the output length.
     signature: "pub fn TupleHash128::new(s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2777,6 +2598,7 @@ functions:
 
   - name: "TupleHash128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Add ONE tuple element (encode_string-framed); element boundaries are significant, so ("AB","C") differs from ("A","BC").
     signature: "pub fn update(&mut self, element: &[u8])"
     parameters:
@@ -2806,6 +2628,7 @@ functions:
 
   - name: "TupleHash128::finalize_into"
     module: oxicrypt-xof
+    family: xof-hasher-finalize-into
     description: "Bind the output length and write the TupleHash into `out`."
     signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
     parameters:
@@ -2835,6 +2658,7 @@ functions:
 
   - name: "TupleHash256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a TupleHash256 instance with S. update (one element per call)/finalize_into identical to TupleHash128."
     signature: "pub fn TupleHash256::new(s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2847,6 +2671,7 @@ functions:
 
   - name: "TupleHashXof128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a TupleHashXOF128 instance with S (SP 800-185 §5.3.1)."
     signature: "pub fn TupleHashXof128::new(s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2859,6 +2684,7 @@ functions:
 
   - name: "TupleHashXof256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a TupleHashXOF256 instance with S. update (one element per call)/finalize/squeeze identical to TupleHashXof128."
     signature: "pub fn TupleHashXof256::new(s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2873,6 +2699,7 @@ functions:
 
   - name: "ParallelHash128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a ParallelHash128 instance with block size B (bytes) and customization string S (SP 800-185 §6), followed by update* then finalize_into.
     signature: "pub fn ParallelHash128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2924,6 +2751,7 @@ functions:
 
   - name: "ParallelHash128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Feed data into the hasher, internally buffering up to B bytes and flushing each complete B-byte block to the inner SHAKE; any chunking yields the same result.
     signature: "pub fn update(&mut self, data: &[u8])"
     parameters:
@@ -2946,6 +2774,7 @@ functions:
 
   - name: "ParallelHash128::finalize_into"
     module: oxicrypt-xof
+    family: xof-hasher-finalize-into
     description: "Flush the trailing partial block, bind the output length, and write the hash into `out`."
     signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
     parameters:
@@ -2975,6 +2804,7 @@ functions:
 
   - name: "ParallelHash256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a ParallelHash256 instance with block size B and S. update/finalize_into identical to ParallelHash128."
     signature: "pub fn ParallelHash256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2987,6 +2817,7 @@ functions:
 
   - name: "ParallelHashXof128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a ParallelHashXOF128 instance with block size B and S (SP 800-185 §6.3.1). update then finalize then squeeze for arbitrary-length output."
     signature: "pub fn ParallelHashXof128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2999,6 +2830,7 @@ functions:
 
   - name: "ParallelHashXof256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a ParallelHashXOF256 instance with block size B and S. update/finalize/squeeze identical to ParallelHashXof128."
     signature: "pub fn ParallelHashXof256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -4942,27 +4774,32 @@ functions:
 
   - name: keygen
     module: oxicrypt-ml-kem
+    family: ml-kem-keygen
     signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1568], [u8; 3168]), Error>"
     description: Generate an ML-KEM-1024 key pair; d and z must each be 32 bytes of fresh randomness from an approved DRBG (SP 800-90A).
     parameters:
       - name: d
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for K-PKE key generation."
       - name: z
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for implicit-rejection seed."
     returns:
       type: "Result<([u8; 1568], [u8; 3168]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-1024 blocked by active profile.
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 blocked by active profile.
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     preconditions:
       - description: Module must be Operational.
       - description: d and z must each be 32 bytes of fresh random data from an approved DRBG.
@@ -4980,27 +4817,32 @@ functions:
 
   - name: encapsulate
     module: oxicrypt-ml-kem
+    family: ml-kem-encapsulate
     signature: "pub fn encapsulate(ek: &[u8; 1568], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1568]), Error>"
     description: Encapsulate a shared secret against an ML-KEM-1024 encapsulation key; m must be 32 bytes of fresh randomness from an approved DRBG.
     parameters:
       - name: ek
         type: "&[u8; 1568]"
+        constraints:
+          size: 1568
         direction: in
         description: "Encapsulation key (from keygen)."
       - name: m
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for encapsulation."
     returns:
       type: "Result<([u8; 32], [u8; 1568]), Error>"
       description: "(shared_secret, ciphertext)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-1024 blocked by active profile.
-      - name: InvalidInput
-        condition: Invalid encapsulation key or randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 blocked by active profile.
+        - name: InvalidInput
+          condition: Invalid encapsulation key or randomness.
     preconditions:
       - description: Module must be Operational.
       - description: ek must be a valid 1568-byte encapsulation key from keygen.
@@ -5019,25 +4861,30 @@ functions:
 
   - name: decapsulate
     module: oxicrypt-ml-kem
+    family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 3168], ct: &[u8; 1568]) -> Result<[u8; 32], Error>"
     description: Decapsulate a shared secret from an ML-KEM-1024 ciphertext using implicit rejection; an invalid ciphertext yields a constant-time pseudorandom key.
     parameters:
       - name: dk
         type: "&[u8; 3168]"
+        constraints:
+          size: 3168
         direction: in
         description: "Decapsulation key (from keygen)."
       - name: ct
         type: "&[u8; 1568]"
+        constraints:
+          size: 1568
         direction: in
         description: "Ciphertext (from encapsulate)."
     returns:
       type: "Result<[u8; 32], Error>"
       description: "32-byte shared secret."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-1024 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: dk must be a valid 3168-byte decapsulation key from keygen.
@@ -5058,27 +4905,32 @@ functions:
 
   - name: "ml_kem_512::keygen"
     module: oxicrypt-ml-kem
+    family: ml-kem-keygen
     signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 800], [u8; 1632]), Error>"
     description: Generate an ML-KEM-512 key pair (FIPS 203 §6.1, k=2); d and z are 32-byte caller-supplied randomness, NOT interchangeable.
     parameters:
       - name: d
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for K-PKE key generation."
       - name: z
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for implicit-rejection seed."
     returns:
       type: "Result<([u8; 800], [u8; 1632]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-512 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5089,25 +4941,30 @@ functions:
 
   - name: "ml_kem_512::encapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-encapsulate
     signature: "pub fn encapsulate(ek: &[u8; 800], m: &[u8; 32]) -> Result<([u8; 32], [u8; 768]), Error>"
     description: Encapsulate a shared secret against an ML-KEM-512 encapsulation key (FIPS 203 §6.2, k=2); m is 32-byte caller-supplied randomness from an approved DRBG.
     parameters:
       - name: ek
         type: "&[u8; 800]"
+        constraints:
+          size: 800
         direction: in
         description: "Encapsulation key (from ml_kem_512::keygen)."
       - name: m
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for encapsulation."
     returns:
       type: "Result<([u8; 32], [u8; 768]), Error>"
       description: "(shared_secret, ciphertext)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-512 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5118,25 +4975,30 @@ functions:
 
   - name: "ml_kem_512::decapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 1632], ct: &[u8; 768]) -> Result<[u8; 32], Error>"
     description: "Decapsulate a shared secret from an ML-KEM-512 ciphertext (FIPS 203 §6.3, k=2) using implicit rejection: constant-time pseudorandom output on malformed ciphertext."
     parameters:
       - name: dk
         type: "&[u8; 1632]"
+        constraints:
+          size: 1632
         direction: in
         description: "Decapsulation key (from ml_kem_512::keygen)."
       - name: ct
         type: "&[u8; 768]"
+        constraints:
+          size: 768
         direction: in
         description: "Ciphertext (from ml_kem_512::encapsulate)."
     returns:
       type: "Result<[u8; 32], Error>"
       description: "32-byte shared secret (valid or pseudorandom by design)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-512 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5149,27 +5011,32 @@ functions:
 
   - name: "ml_kem_768::keygen"
     module: oxicrypt-ml-kem
+    family: ml-kem-keygen
     signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1184], [u8; 2400]), Error>"
     description: Generate an ML-KEM-768 key pair (FIPS 203 §6.1, k=3); d and z are 32-byte caller-supplied randomness, NOT interchangeable.
     parameters:
       - name: d
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for K-PKE key generation."
       - name: z
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for implicit-rejection seed."
     returns:
       type: "Result<([u8; 1184], [u8; 2400]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-768 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5180,25 +5047,30 @@ functions:
 
   - name: "ml_kem_768::encapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-encapsulate
     signature: "pub fn encapsulate(ek: &[u8; 1184], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1088]), Error>"
     description: Encapsulate a shared secret against an ML-KEM-768 encapsulation key (FIPS 203 §6.2, k=3); m is 32-byte caller-supplied randomness from an approved DRBG.
     parameters:
       - name: ek
         type: "&[u8; 1184]"
+        constraints:
+          size: 1184
         direction: in
         description: "Encapsulation key (from ml_kem_768::keygen)."
       - name: m
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for encapsulation."
     returns:
       type: "Result<([u8; 32], [u8; 1088]), Error>"
       description: "(shared_secret, ciphertext)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-768 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5209,25 +5081,30 @@ functions:
 
   - name: "ml_kem_768::decapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 2400], ct: &[u8; 1088]) -> Result<[u8; 32], Error>"
     description: "Decapsulate a shared secret from an ML-KEM-768 ciphertext (FIPS 203 §6.3, k=3) using implicit rejection: constant-time pseudorandom output on malformed ciphertext."
     parameters:
       - name: dk
         type: "&[u8; 2400]"
+        constraints:
+          size: 2400
         direction: in
         description: "Decapsulation key (from ml_kem_768::keygen)."
       - name: ct
         type: "&[u8; 1088]"
+        constraints:
+          size: 1088
         direction: in
         description: "Ciphertext (from ml_kem_768::encapsulate)."
     returns:
       type: "Result<[u8; 32], Error>"
       description: "32-byte shared secret (valid or pseudorandom by design)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-768 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5240,23 +5117,26 @@ functions:
 
   - name: keygen
     module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
     signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 2592], [u8; 4896]), Error>"
     description: Generate an ML-DSA-87 key pair; xi must be 32 bytes of fresh randomness from an approved DRBG (SP 800-90A).
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for key generation (FIPS 204 keygen seed)."
     returns:
       type: "Result<([u8; 2592], [u8; 4896]), Error>"
       description: "(public_key, secret_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-87 blocked by active profile.
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 blocked by active profile.
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5274,11 +5154,14 @@ functions:
 
   - name: sign
     module: oxicrypt-ml-dsa
+    family: ml-dsa-sign
     signature: "pub fn sign(sk: &[u8; 4896], message: &[u8], ctx: &[u8]) -> Result<[u8; 4627], Error>"
     description: External ML-DSA.Sign (FIPS 204 §5.2 Algorithm 2), framing M' = 0x00 || |ctx| || ctx || M (pure ML-DSA); signs deterministically with Fiat-Shamir-with-aborts.
     parameters:
       - name: sk
         type: "&[u8; 4896]"
+        constraints:
+          size: 4896
         direction: in
         description: "Secret key (from keygen)."
       - name: message
@@ -5292,13 +5175,13 @@ functions:
     returns:
       type: "Result<[u8; 4627], Error>"
       description: "4627-byte ML-DSA-87 signature."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-87 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255, invalid secret key, or rejection loop exceeded limit.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255, invalid secret key, or rejection loop exceeded limit.
     preconditions:
       - description: Module must be Operational.
       - description: sk must be a valid 4896-byte secret key from keygen.
@@ -5318,11 +5201,14 @@ functions:
 
   - name: verify
     module: oxicrypt-ml-dsa
+    family: ml-dsa-verify
     signature: "pub fn verify(pk: &[u8; 2592], message: &[u8], ctx: &[u8], sig: &[u8; 4627]) -> Result<(), Error>"
     description: External ML-DSA.Verify (FIPS 204 §5.2 Algorithm 3), framing M' = 0x00 || |ctx| || ctx || M; Ok(()) if valid, Err(InvalidInput) if not, public-data only. ctx must match the sign-time value.
     parameters:
       - name: pk
         type: "&[u8; 2592]"
+        constraints:
+          size: 2592
         direction: in
         description: "Public key (from keygen)."
       - name: message
@@ -5335,18 +5221,20 @@ functions:
         description: "Application-supplied context string, at most 255 bytes (FIPS 204 §5.2 limit)."
       - name: sig
         type: "&[u8; 4627]"
+        constraints:
+          size: 4627
         direction: in
         description: "Signature to verify (from sign)."
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if signature is valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-87 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or signature verification failed.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or signature verification failed.
     preconditions:
       - description: Module must be Operational.
       - description: pk must be a valid 2592-byte public key from keygen.
@@ -5368,23 +5256,26 @@ functions:
 
   - name: "ml_dsa_44::keygen"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
     signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 1312], [u8; 2560]), Error>"
     description: Generate an ML-DSA-44 key pair (FIPS 204 §6.1); xi is a 32-byte caller-supplied DRBG seed.
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: 32-byte keygen seed.
     returns:
       type: "Result<([u8; 1312], [u8; 2560]), Error>"
       description: "(public_key, secret_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5395,11 +5286,14 @@ functions:
 
   - name: "ml_dsa_44::sign"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-sign
     signature: "pub fn sign(sk: &[u8; 2560], message: &[u8], ctx: &[u8]) -> Result<[u8; 2420], Error>"
     description: External ML-DSA.Sign (FIPS 204 §5.2 Algorithm 2) for ML-DSA-44, framing M' = 0x00 || |ctx| || ctx || M; signs deterministically.
     parameters:
       - name: sk
         type: "&[u8; 2560]"
+        constraints:
+          size: 2560
         direction: in
         description: ML-DSA-44 secret key.
       - name: message
@@ -5413,13 +5307,13 @@ functions:
     returns:
       type: "Result<[u8; 2420], Error>"
       description: "2420-byte ML-DSA-44 signature."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-44 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or rejection loop exceeded limit.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or rejection loop exceeded limit.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -5430,11 +5324,14 @@ functions:
 
   - name: "ml_dsa_44::verify"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-verify
     signature: "pub fn verify(pk: &[u8; 1312], message: &[u8], ctx: &[u8], sig: &[u8; 2420]) -> Result<(), Error>"
     description: External ML-DSA.Verify (FIPS 204 §5.2 Algorithm 3) for ML-DSA-44, framing M' = 0x00 || |ctx| || ctx || M; Ok(()) on valid, Err(InvalidInput) on invalid. ctx must match the sign-time value.
     parameters:
       - name: pk
         type: "&[u8; 1312]"
+        constraints:
+          size: 1312
         direction: in
         description: ML-DSA-44 public key.
       - name: message
@@ -5447,18 +5344,20 @@ functions:
         description: Context byte string (must match sign-time).
       - name: sig
         type: "&[u8; 2420]"
+        constraints:
+          size: 2420
         direction: in
         description: ML-DSA-44 signature.
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) otherwise."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-44 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or signature verification failed.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or signature verification failed.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5471,23 +5370,26 @@ functions:
 
   - name: "ml_dsa_65::keygen"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
     signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 1952], [u8; 4032]), Error>"
     description: Generate an ML-DSA-65 key pair (FIPS 204 §6.1); xi is a 32-byte caller-supplied DRBG seed.
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: 32-byte keygen seed.
     returns:
       type: "Result<([u8; 1952], [u8; 4032]), Error>"
       description: "(public_key, secret_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5498,11 +5400,14 @@ functions:
 
   - name: "ml_dsa_65::sign"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-sign
     signature: "pub fn sign(sk: &[u8; 4032], message: &[u8], ctx: &[u8]) -> Result<[u8; 3309], Error>"
     description: External ML-DSA.Sign (FIPS 204 §5.2 Algorithm 2) for ML-DSA-65, framing M' = 0x00 || |ctx| || ctx || M; signs deterministically.
     parameters:
       - name: sk
         type: "&[u8; 4032]"
+        constraints:
+          size: 4032
         direction: in
         description: ML-DSA-65 secret key.
       - name: message
@@ -5516,13 +5421,13 @@ functions:
     returns:
       type: "Result<[u8; 3309], Error>"
       description: "3309-byte ML-DSA-65 signature."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-65 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or rejection loop exceeded limit.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or rejection loop exceeded limit.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -5533,11 +5438,14 @@ functions:
 
   - name: "ml_dsa_65::verify"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-verify
     signature: "pub fn verify(pk: &[u8; 1952], message: &[u8], ctx: &[u8], sig: &[u8; 3309]) -> Result<(), Error>"
     description: External ML-DSA.Verify (FIPS 204 §5.2 Algorithm 3) for ML-DSA-65, framing M' = 0x00 || |ctx| || ctx || M.
     parameters:
       - name: pk
         type: "&[u8; 1952]"
+        constraints:
+          size: 1952
         direction: in
         description: ML-DSA-65 public key.
       - name: message
@@ -5550,18 +5458,20 @@ functions:
         description: Context byte string (must match sign-time).
       - name: sig
         type: "&[u8; 3309]"
+        constraints:
+          size: 3309
         direction: in
         description: ML-DSA-65 signature.
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) otherwise."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-65 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or signature verification failed.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or signature verification failed.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5579,16 +5489,18 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte secret seed for the Merkle tree."
     returns:
       type: "Result<(LmsPrivateKey, [u8; 56]), Error>"
       description: "(private_key, public_key)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5620,13 +5532,13 @@ functions:
     returns:
       type: "Result<[u8; 2508], Error>"
       description: "2508-byte LMS signature: q (4) || LMOTS sig (2404) || LMS type (4) || auth path (10 × 32 = 320) minus padding overlaps."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
-      - name: InvalidInput
-        condition: Key exhausted (leaf_index >= 1024).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
+        - name: InvalidInput
+          condition: Key exhausted (leaf_index >= 1024).
     preconditions:
       - description: Module must be Operational.
       - description: key.leaf_index < 1024 (key not exhausted).
@@ -5659,6 +5571,8 @@ functions:
     parameters:
       - name: public_key
         type: "&[u8; 56]"
+        constraints:
+          size: 56
         direction: in
         description: "56-byte LMS public key."
       - name: message
@@ -5667,18 +5581,20 @@ functions:
         description: "Original message."
       - name: signature
         type: "&[u8; 2508]"
+        constraints:
+          size: 2508
         direction: in
         description: "2508-byte LMS signature."
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
-      - name: InvalidInput
-        condition: Signature verification failed or malformed inputs.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
+        - name: InvalidInput
+          condition: Signature verification failed or malformed inputs.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5700,16 +5616,18 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte secret seed for the Merkle tree (from an approved DRBG)."
     returns:
       type: "Result<(LmsSigningKey, [u8; 56]), Error>"
       description: "(cached_signing_key, public_key)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5735,11 +5653,11 @@ functions:
     returns:
       type: "Result<LmsSigningKey, Error>"
       description: "Cached signing key over the same key state."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5764,13 +5682,13 @@ functions:
     returns:
       type: "Result<[u8; 2508], Error>"
       description: "2508-byte LMS signature, byte-identical to the uncached sign."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
-      - name: InvalidInput
-        condition: Key exhausted (leaf_index >= 1024).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
+        - name: InvalidInput
+          condition: Key exhausted (leaf_index >= 1024).
     preconditions:
       - description: Module must be Operational.
       - description: Wrapped key not exhausted.
@@ -5805,16 +5723,18 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte secret seed (derives SK_SEED, SK_PRF, PUB_SEED)."
     returns:
       type: "Result<(XmssPrivateKey, [u8; 68]), Error>"
       description: "(private_key, public_key)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: XMSS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: XMSS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5846,13 +5766,13 @@ functions:
     returns:
       type: "Result<[u8; 2500], Error>"
       description: "2500-byte XMSS signature: idx (4) || r (32) || WOTS+ sig (67 × 32 = 2144) || auth path (10 × 32 = 320)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: XMSS blocked by active profile.
-      - name: InvalidInput
-        condition: Key exhausted (leaf_index >= 1024).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: XMSS blocked by active profile.
+        - name: InvalidInput
+          condition: Key exhausted (leaf_index >= 1024).
     preconditions:
       - description: Module must be Operational.
       - description: key.leaf_index < 1024 (key not exhausted).
@@ -5877,6 +5797,8 @@ functions:
     parameters:
       - name: public_key
         type: "&[u8; 68]"
+        constraints:
+          size: 68
         direction: in
         description: "68-byte XMSS public key."
       - name: message
@@ -5885,18 +5807,20 @@ functions:
         description: "Original message."
       - name: signature
         type: "&[u8; 2500]"
+        constraints:
+          size: 2500
         direction: in
         description: "2500-byte XMSS signature."
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: XMSS blocked by active profile.
-      - name: InvalidInput
-        condition: Signature verification failed or malformed inputs.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: XMSS blocked by active profile.
+        - name: InvalidInput
+          condition: Signature verification failed or malformed inputs.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5914,6 +5838,7 @@ functions:
 
   - name: keygen
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     description: "Generate an SLH-DSA-SHA2-256s key pair (stateless). xi must be 96 bytes of fresh randomness (SK.seed || SK.prf || PK.seed)."
     parameters:
       - name: xi
@@ -5923,13 +5848,13 @@ functions:
     returns:
       type: "Result<([u8; 64], [u8; 128]), Error>"
       description: "Public key (64 B) and secret key (128 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 96 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 96 bytes.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5942,6 +5867,7 @@ functions:
 
   - name: sign
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 29792], Error>"
     description: "External slh_sign (FIPS 205 §9.2 Algorithm 22) for SLH-DSA-SHA2-256s, deterministic (opt_rand = PK.seed)."
     parameters:
@@ -5960,13 +5886,13 @@ functions:
     returns:
       type: "Result<[u8; 29792], Error>"
       description: "29792-byte SLH-DSA signature (R || FORS sig || HT sig)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: sk is not 128 bytes or ctx.len() > 255.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: sk is not 128 bytes or ctx.len() > 255.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5981,6 +5907,7 @@ functions:
 
   - name: verify
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify (FIPS 205 §9.3 Algorithm 24) for SLH-DSA-SHA2-256s."
     parameters:
@@ -6003,13 +5930,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: Signature verification failed, malformed inputs, or ctx.len() > 255.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: Signature verification failed, malformed inputs, or ctx.len() > 255.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -6024,6 +5951,7 @@ functions:
 
   - name: "slh_dsa_sha2_128s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHA2-128s key pair (stateless, Unrestricted profile only). xi must be 48 bytes (SK.seed || SK.prf || PK.seed)."
     parameters:
@@ -6034,19 +5962,20 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 64]), Error>"
       description: "Public key (32 B) and secret key (64 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 48 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 48 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_128s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 7856], Error>"
     description: "External slh_sign (FIPS 205 §9.2 Algorithm 22) for SLH-DSA-SHA2-128s, deterministic."
     parameters:
@@ -6069,6 +5998,7 @@ functions:
 
   - name: "slh_dsa_sha2_128s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify (FIPS 205 §9.3 Algorithm 24) for SLH-DSA-SHA2-128s."
     parameters:
@@ -6097,6 +6027,7 @@ functions:
 
   - name: "slh_dsa_sha2_128f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHA2-128f (fast) key pair: shorter tree depth, larger signatures. xi must be 48 bytes (SK.seed || SK.prf || PK.seed)."
     parameters:
@@ -6107,19 +6038,20 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 64]), Error>"
       description: "Public key (32 B) and secret key (64 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 48 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 48 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_128f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 17088], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-128f."
     parameters:
@@ -6142,6 +6074,7 @@ functions:
 
   - name: "slh_dsa_sha2_128f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-128f."
     parameters:
@@ -6170,6 +6103,7 @@ functions:
 
   - name: "slh_dsa_sha2_192s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHA2-192s (slow, 192-bit security) key pair. xi must be 72 bytes."
     parameters:
@@ -6180,19 +6114,20 @@ functions:
     returns:
       type: "Result<([u8; 48], [u8; 96]), Error>"
       description: "Public key (48 B) and secret key (96 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 72 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 72 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_192s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 16224], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-192s."
     parameters:
@@ -6215,6 +6150,7 @@ functions:
 
   - name: "slh_dsa_sha2_192s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-192s."
     parameters:
@@ -6243,6 +6179,7 @@ functions:
 
   - name: "slh_dsa_sha2_192f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHA2-192f (fast) key pair. xi must be 72 bytes."
     parameters:
@@ -6253,19 +6190,20 @@ functions:
     returns:
       type: "Result<([u8; 48], [u8; 96]), Error>"
       description: "Public key (48 B) and secret key (96 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 72 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 72 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_192f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 35664], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-192f."
     parameters:
@@ -6288,6 +6226,7 @@ functions:
 
   - name: "slh_dsa_sha2_192f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-192f."
     parameters:
@@ -6316,6 +6255,7 @@ functions:
 
   - name: "slh_dsa_sha2_256f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
     description: "Generate an SLH-DSA-SHA2-256f (fast, 256-bit security) key pair: larger and faster signatures. xi must be 96 bytes."
     parameters:
@@ -6326,19 +6266,20 @@ functions:
     returns:
       type: "Result<([u8; 64], [u8; 128]), Error>"
       description: "Public key (64 B) and secret key (128 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 96 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 96 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_256f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 49856], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-256f."
     parameters:
@@ -6361,6 +6302,7 @@ functions:
 
   - name: "slh_dsa_sha2_256f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-256f."
     parameters:
@@ -6389,6 +6331,7 @@ functions:
 
   - name: "slh_dsa_shake_128s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHAKE-128s key pair: 7856-byte signatures. xi must be 48 bytes (SK.seed || SK.prf || PK.seed)."
     parameters:
@@ -6403,6 +6346,7 @@ functions:
 
   - name: "slh_dsa_shake_128s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 7856], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-128s."
     parameters:
@@ -6425,6 +6369,7 @@ functions:
 
   - name: "slh_dsa_shake_128s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-128s."
     parameters:
@@ -6453,6 +6398,7 @@ functions:
 
   - name: "slh_dsa_shake_128f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHAKE-128f (fast, 128-bit security) key pair: 17088-byte signatures. xi must be 48 bytes."
     parameters:
@@ -6467,6 +6413,7 @@ functions:
 
   - name: "slh_dsa_shake_128f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 17088], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-128f."
     parameters:
@@ -6489,6 +6436,7 @@ functions:
 
   - name: "slh_dsa_shake_128f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-128f."
     parameters:
@@ -6517,6 +6465,7 @@ functions:
 
   - name: "slh_dsa_shake_192s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHAKE-192s (192-bit security) key pair: 16224-byte signatures. xi must be 72 bytes."
     parameters:
@@ -6531,6 +6480,7 @@ functions:
 
   - name: "slh_dsa_shake_192s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 16224], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-192s."
     parameters:
@@ -6553,6 +6503,7 @@ functions:
 
   - name: "slh_dsa_shake_192s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-192s."
     parameters:
@@ -6581,6 +6532,7 @@ functions:
 
   - name: "slh_dsa_shake_192f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHAKE-192f (fast, 192-bit security) key pair: 35664-byte signatures. xi must be 72 bytes."
     parameters:
@@ -6595,6 +6547,7 @@ functions:
 
   - name: "slh_dsa_shake_192f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 35664], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-192f."
     parameters:
@@ -6617,6 +6570,7 @@ functions:
 
   - name: "slh_dsa_shake_192f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-192f."
     parameters:
@@ -6645,6 +6599,7 @@ functions:
 
   - name: "slh_dsa_shake_256s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
     description: "Generate an SLH-DSA-SHAKE-256s (256-bit security) key pair: 29792-byte signatures. xi must be 96 bytes."
     parameters:
@@ -6659,6 +6614,7 @@ functions:
 
   - name: "slh_dsa_shake_256s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 29792], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-256s."
     parameters:
@@ -6681,6 +6637,7 @@ functions:
 
   - name: "slh_dsa_shake_256s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-256s."
     parameters:
@@ -6709,6 +6666,7 @@ functions:
 
   - name: "slh_dsa_shake_256f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
     description: "Generate an SLH-DSA-SHAKE-256f (fast, 256-bit security) key pair: 49856-byte signatures. xi must be 96 bytes."
     parameters:
@@ -6723,6 +6681,7 @@ functions:
 
   - name: "slh_dsa_shake_256f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 49856], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-256f."
     parameters:
@@ -6745,6 +6704,7 @@ functions:
 
   - name: "slh_dsa_shake_256f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-256f."
     parameters:
@@ -12332,188 +12292,6 @@ functions:
 
   # ── acvp-harness transport primitives (out-of-boundary tooling; ESV harness seam) ──
 
-  - name: totp_now
-    module: acvp-harness
-    description: Generate the current 8-digit HMAC-SHA-256 TOTP code (RFC 6238, 30-second step, T0=0) from a raw secret, matching the NIST demo-server expectation.
-    signature: "pub fn totp_now(secret: &[u8]) -> Result<String, String>"
-
-  - name: totp_at
-    module: acvp-harness
-    description: Generate the deterministic 8-digit HMAC-SHA-256 TOTP code for a specific 30-second time counter; used for fixture tests.
-    signature: "pub fn totp_at(secret: &[u8], counter: u64) -> Result<String, String>"
-
-  - name: decode_totp_secret
-    module: acvp-harness
-    description: Decode a base64 (RFC 4648 §4) TOTP shared secret to raw bytes.
-    signature: "pub fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String>"
-
-  - name: extract_access_token
-    module: acvp-harness
-    description: Extract a string accessToken from an ACVP/ESV versioned-array or flat-object login/refresh response.
-    signature: "pub fn extract_access_token(resp: &JsonValue) -> Result<String, String>"
-
-  - name: token_needs_refresh
-    module: acvp-harness
-    description: Proactive-refresh decision; true once a session token's age reaches TOKEN_REFRESH_MARGIN_SECS.
-    signature: "pub fn token_needs_refresh(elapsed_secs: u64) -> bool"
-
-  - name: submit_should_refresh_retry
-    module: acvp-harness
-    description: Reactive-retry decision; true for a single refresh-and-retry only on an unretried 401 or 403.
-    signature: "pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool"
-
-  - name: to_compact_string
-    module: acvp-harness
-    description: Serialize a JsonValue to compact single-line JSON (no indentation), the encoder the esv-harness session store writes events.jsonl with.
-    signature: "pub fn to_compact_string(value: &JsonValue) -> String"
-
-  # ── esv-harness ESVP builders / parsers / flows (out-of-boundary tooling) ──
-
-  - name: build_login_body
-    module: esv-harness
-    description: Build the ESVP login body [{esvVersion},{password:<totp>}].
-    signature: "pub fn build_login_body(totp_code: &str) -> String"
-
-  - name: build_single_refresh_body
-    module: esv-harness
-    description: Build the single-token refresh body embedding the current token [{esvVersion},{password,accessToken:<old>}].
-    signature: "pub fn build_single_refresh_body(totp_code: &str, access_token: &str) -> String"
-
-  - name: build_bulk_refresh_body
-    module: esv-harness
-    description: Build the bulk-refresh body carrying an ordered accessToken array [{esvVersion},{password,accessToken:[...]}].
-    signature: "pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> String"
-
-  - name: parse_access_token
-    module: esv-harness
-    description: Fail-closed parse of a single accessToken from the ESVP versioned envelope (at-least-two elements, trailing extras ignored); rejects the bare-object and version-less forms the acvp helper accepts.
-    signature: "pub fn parse_access_token(body: &str) -> Result<String, String>"
-
-  - name: parse_bulk_refresh_tokens
-    module: esv-harness
-    description: Parse the ordered accessToken array from a bulk-refresh response, erroring when the returned count differs from the number of tokens submitted.
-    signature: "pub fn parse_bulk_refresh_tokens(body: &str, expected: usize) -> Result<Vec<String>, String>"
-
-  - name: is_totp_window_reuse
-    module: esv-harness
-    description: True for the transient "TOTP Window has already been used" 403 the NIST reference client retries after a 10 s wait.
-    signature: "pub fn is_totp_window_reuse(status: u16, body: &str) -> bool"
-
-  - name: login
-    module: esv-harness
-    description: Perform an ESVP login over an EsvTransport (retrying a TOTP-window-reuse 403 via the Sleeper) and return the authenticated EsvSession.
-    signature: "pub fn login<T: EsvTransport>(totp_secret: &[u8], transport: &mut T, sleeper: &mut dyn Sleeper) -> Result<EsvSession, String>"
-
-  - name: bulk_refresh
-    module: esv-harness
-    description: Bulk-refresh an ordered array of per-object JWTs in one TOTP touch, returning exactly as many refreshed tokens as were submitted.
-    signature: "pub fn bulk_refresh<T: EsvTransport>(totp_secret: &[u8], access_tokens: &[String], transport: &mut T, sleeper: &mut dyn Sleeper) -> Result<Vec<String>, String>"
-
-  - name: parse_registration_response
-    module: esv-harness
-    description: Parse an ESVP registration response into one OeRegistration per operating environment (data-file slots plus the per-OE scoped JWT).
-    signature: "pub fn parse_registration_response(body: &str) -> Result<Vec<OeRegistration>, String>"
-
-  - name: preflight
-    module: esv-harness
-    description: Offline validation of a registration payload against the vendored NIST metadata schema plus the vetted/non-vetted conditioning rules; returns every violation found.
-    signature: "pub fn preflight(reg: &EntropyRegistration) -> Result<(), Vec<PreflightError>>"
-
-  - name: is_vetted_algorithm_name
-    module: esv-harness
-    description: Whether a string is a recognized ACVTS vetted-conditioning algorithm name (VETTED_ALGORITHM_NAMES).
-    signature: "pub fn is_vetted_algorithm_name(name: &str) -> bool"
-
-  - name: preflight_data_file
-    module: esv-harness
-    description: Offline validation of a data file on disk against the ESV wire constraints (exactly 1,000,000 one-byte-per-sample symbols, symbols within the effective min(bitsPerSample,8) width, the 1000x1000 restart layout for a restart file, and DataFileSampleSize consistency), checked against the module's own SP 800-90B constants; returns every violation found.
-    signature: "pub fn preflight_data_file(bytes: &[u8], kind: DataFileKind, reg: &EntropyRegistration, declared_sample_size: Option<u8>) -> Result<(), Vec<FilePreflightError>>"
-
-  - name: effective_sample_width
-    module: esv-harness
-    description: The effective per-sample width min(bitsPerSample, 8) clamped into 1..=8 (a byte-padded sample holds at most eight bits).
-    signature: "pub fn effective_sample_width(bits_per_sample: i64) -> u32"
-
-  - name: data_file_path
-    module: esv-harness
-    description: The full server-relative data-file resource path /esv/v1/entropyAssessments/{ea_id}/dataFiles/{df_id} (upload POST and status GET).
-    signature: "pub fn data_file_path(ea_id: &str, df_id: &str) -> String"
-
-  - name: check_conditioned_upload_allowed
-    module: esv-harness
-    description: Whether a data-file upload for a target is permitted under a registration's conditioning; raw-noise/restart always allowed, conditioned-bits only for a non-vetted non-bijective component (else a typed refusal).
-    signature: "pub fn check_conditioned_upload_allowed(reg: &EntropyRegistration, target: &DataFileTarget) -> Result<(), DataFileError>"
-
-  - name: build_conditioned_upload
-    module: esv-harness
-    description: Build a conditioned-bits upload, refusing (typed error, no request produced) when the target component is vetted or bijective (ISC-107 anti-guard).
-    signature: "pub fn build_conditioned_upload(reg: &EntropyRegistration, sequence_position: i64, ea_id: &str, df_id: &str, filename: &str, bytes: Vec<u8>) -> Result<DataFileUpload, DataFileError>"
-
-  - name: classify_status
-    module: esv-harness
-    description: Classify a raw data-file status string into a DataFileStatus (case/separator-insensitive; anything unrecognized becomes Unrecognized carrying the original string).
-    signature: "pub fn classify_status(raw: &str) -> DataFileStatus"
-
-  - name: decide
-    module: esv-harness
-    description: The pure decision function — a raw status string mapped to its next PollDecision (classify_status composed with DataFileStatus::poll_decision).
-    signature: "pub fn decide(raw: &str) -> PollDecision"
-
-  - name: poll_data_file
-    module: esv-harness
-    description: Poll a data file's processing status over an EsvTransport until a terminal state; a token_provider yields a fresh bearer per request (for a poll outliving the JWT TTL), the loop is bounded by the consecutive not-yet-processed cap, a global total-poll cap, and a consecutive-transient-failure budget that also absorbs a valid-JSON-but-not-envelope body (a JSON 502), status/id are read with the duplicate-rejecting accessor (a repeated key is a fatal MalformedResponse), the status body is read with the float-tolerant jsonlite reader, and the returned assessment is captured verbatim on Run Successful.
-    signature: "pub fn poll_data_file<T: EsvTransport>(ea_id: &str, df_id: &str, token_provider: &mut dyn FnMut() -> Result<String, String>, transport: &mut T, sleeper: &mut dyn Sleeper, config: &PollConfig) -> Result<DataFileResult, DataFileError>"
-
-  - name: fixed_token
-    module: esv-harness
-    description: Adapt a fixed bearer into the token provider poll_data_file takes, for a poll needing no in-flight refresh.
-    signature: "pub fn fixed_token(token: &str) -> impl FnMut() -> Result<String, String> + '_"
-
-  - name: serialize_multipart
-    module: esv-harness
-    description: The single multipart/form-data encoder shared by the data-file and supporting-document uploads; validates the boundary (RFC 2046), rejects a CR/LF/control character in any part name/filename (header-injection guard) and backslash-escapes quotes, and scans every part body and filename for the delimiter, failing closed on an invalid boundary, an injected header, or a collision.
-    signature: "pub fn serialize_multipart(parts: &[MultipartPart<'_>], boundary: &str) -> Result<(String, Vec<u8>), MultipartError>"
-
-  - name: validate_boundary
-    module: esv-harness
-    description: Validate a multipart boundary against RFC 2046 §5.1.1 (1..=70 bchars, last char not a space).
-    signature: "pub fn validate_boundary(boundary: &str) -> Result<(), MultipartError>"
-
-  - name: generate_boundary
-    module: esv-harness
-    description: Generate a multipart boundary provably absent from every part body and filename (a fixed base plus an incrementing decimal suffix; terminates because each span is finite).
-    signature: "pub fn generate_boundary(parts: &[MultipartPart<'_>]) -> String"
-
-  - name: parse_supporting_doc_response
-    module: esv-harness
-    description: Parse a supporting-document upload response (versioned envelope) into a SupportingDoc, requiring status success; the sdType is threaded in from the upload request.
-    signature: "pub fn parse_supporting_doc_response(body: &str, sd_type: SdType) -> Result<SupportingDoc, String>"
-
-  - name: check_non_iid_restart_upload
-    module: esv-harness
-    description: Certify precondition — a non-IID assessment must have a restart-test data-file upload recorded before certify (an IID assessment has none); the iid claim and restart-upload record are passed explicitly since CertifyAssessment carries neither. Typed MissingRestartUpload when a non-IID assessment lacks its restart upload.
-    signature: "pub fn check_non_iid_restart_upload(ea_id: i64, iid_claim: bool, restart_uploaded: bool) -> Result<(), CertifyError>"
-
-  - name: jsonlite::parse
-    module: esv-harness
-    description: Parse a JSON document into a JsonLite, keeping numbers as raw source tokens (full RFC 8259 grammar incl. frac/exp; strict on malformed numerals, trailing data, depth, and truncation).
-    signature: "pub fn parse(input: &str) -> Result<JsonLite, ParseError>"
-
-  - name: serialize_hmin
-    module: esv-harness
-    description: Serialize a fixed-point min-entropy (oxicrypt-entropy MinEntropy, 1/256-bit steps) to its exact decimal JSON-number token with pure integer arithmetic — no f64 on the claim path; a whole-bit value renders as a bare integer, a fractional one with trailing zeros stripped. No bounds check (see hmin_wire_token).
-    signature: "pub fn serialize_hmin(h: MinEntropy) -> String"
-
-  - name: hmin_within_bits
-    module: esv-harness
-    description: Whether a fixed-point min-entropy is within the schema bound 0 <= h <= bits_per_sample, checked in exact integer steps.
-    signature: "pub fn hmin_within_bits(h: MinEntropy, bits_per_sample: i64) -> bool"
-
-  - name: hmin_wire_token
-    module: esv-harness
-    description: Serialize a fixed-point min-entropy to its exact decimal token after enforcing the schema bound 0 <= h <= bits_per_sample; a typed HminError on an over-claim or a negative ceiling.
-    signature: "pub fn hmin_wire_token(h: MinEntropy, bits_per_sample: i64) -> Result<String, HminError>"
-
   - name: oxi_rsa_2048_private_key_new_generate
     module: oxicrypt-ffi
     description: Allocate a new RSA-2048 private-key handle, generating a keypair via FIPS 186-5 §A.1.1 / §B.3.1 prime sampling on the caller's DRBG and running the IG 10.3.A PCT on the CRT path before returning. e must be an odd prime in [65537, 2^64) (in practice 65537); failures collapse to OxiResult::InvalidInput = 5.
@@ -13354,6 +13132,8 @@ functions:
       description: Running FIPS 180-4 hash value H, H[0] first; advanced by exactly one block on success and untouched on failure.
     - name: block
       type: '&[u8; 64]'
+      constraints:
+        size: 64
       direction: in
       description: One 64-byte message block.
     returns:
@@ -13433,14 +13213,20 @@ functions:
     parameters:
     - name: x
       type: '&[u8; 16]'
+      constraints:
+        size: 16
       direction: in
       description: First GCM field element in GCM bit order, bit 7 of byte 0 being the highest coefficient.
     - name: y
       type: '&[u8; 16]'
+      constraints:
+        size: 16
       direction: in
       description: Second GCM field element in the same bit order.
     - name: out
       type: '&mut [u8; 16]'
+      constraints:
+        size: 16
       direction: out
       description: Product in GCM bit order on success; untouched on failure.
     returns:
@@ -13474,6 +13260,8 @@ functions:
         valid_range: 10, 12 or 14
     - name: block
       type: '&mut [u8; 16]'
+      constraints:
+        size: 16
       direction: inout
       description: Plaintext block on entry, ciphertext block on success; untouched on failure.
     returns:
@@ -13508,6 +13296,8 @@ functions:
         valid_range: 10, 12 or 14
     - name: block
       type: '&mut [u8; 16]'
+      constraints:
+        size: 16
       direction: inout
       description: Ciphertext block on entry, plaintext block on success; untouched on failure.
     returns:
@@ -13553,6 +13343,8 @@ functions:
     parameters:
     - name: mac
       type: '&[u8; 32]'
+      constraints:
+        size: 32
       direction: in
       description: MAC bytes to encode.
     returns:
@@ -13571,10 +13363,14 @@ functions:
     parameters:
     - name: a
       type: '&[u8; 32]'
+      constraints:
+        size: 32
       direction: in
       description: First MAC.
     - name: b
       type: '&[u8; 32]'
+      constraints:
+        size: 32
       direction: in
       description: Second MAC.
     returns:
@@ -13748,6 +13544,127 @@ error_types:
 # Constants
 # ─────────────────────────────────────────────────────────────────────
 
+  - name: OxiResult
+    module: oxicrypt-ffi
+    description: "C ABI status code returned by every oxi_* function, with Ok as 0 and every non-zero value a distinct failure mode whose discriminant is fixed by #[repr(C)] and banded by source crate."
+    variants:
+      - name: Ok
+        value: 0
+        description: The call succeeded.
+        recoverable: true
+        user_action: None; the operation completed and any output buffer is valid.
+      - name: NotOperational
+        value: 1
+        description: A service was called while the module was not in the Operational state.
+        recoverable: true
+        user_action: Call oxi_init() and check it returns Ok before calling any other oxi_* function.
+      - name: SelfTestFailed
+        value: 2
+        description: A power-up known-answer test returned incorrect output during oxi_init().
+        recoverable: false
+        user_action: >-
+          The module is in the terminal Error state and no service will run.
+          The binary may be corrupted or its integrity slot unsigned; verify it
+          with fips-integrity-sign --verify and reinstall from a published
+          release artifact.
+      - name: ConditionalTestFailed
+        value: 3
+        description: A conditional self-test (DRBG continuous RNG test, or a pairwise consistency test during key generation) failed.
+        recoverable: true
+        user_action: Retry the operation with fresh entropy; if it repeats, treat the entropy source as failed and stop using the module.
+      - name: AlreadyInitialized
+        value: 4
+        description: oxi_init() was called more than once in this process.
+        recoverable: true
+        user_action: Remove the duplicate call; the first init's outcome is authoritative and no state changed.
+      - name: InvalidInput
+        value: 5
+        description: An input was not a valid domain element, such as an out-of-range scalar or a point not on the curve.
+        recoverable: true
+        user_action: Check the encoding and length of each input against the function's parameter constraints; this is raised before any cryptographic comparison.
+      - name: AlgorithmRestricted
+        value: 6
+        description: The requested service is blocked by the algorithm profile active in this process.
+        recoverable: false
+        user_action: Restart the process and select a profile that permits the service; the active profile cannot be changed in place.
+      - name: NotImplemented
+        value: 7
+        description: The service exists in the Service enum but its implementation is a stub in this build.
+        recoverable: false
+        user_action: Use a different service; no version of this build provides it.
+      - name: Uninstantiated
+        value: 8
+        description: generate or reseed was called on a DRBG handle before instantiate had succeeded on it.
+        recoverable: true
+        user_action: Call the matching instantiate function on this handle and check it returns Ok, then retry.
+      - name: ReseedRequired
+        value: 9
+        description: The handle's reseed_counter reached the SP 800-90A Table 3 reseed-interval bound.
+        recoverable: true
+        user_action: Call reseed with fresh entropy on this handle; generate will not return further output until it succeeds.
+      - name: NullPointer
+        value: 10
+        description: A NULL pointer was passed where the function requires a valid one.
+        recoverable: true
+        user_action: Pass a valid pointer for every parameter the signature does not document as optional.
+      - name: BufferTooSmall
+        value: 11
+        description: A caller-allocated output buffer is smaller than the documented minimum for the operation.
+        recoverable: true
+        user_action: Allocate at least the size named in the function's parameter constraints and retry; nothing was written.
+      - name: OutputTooLong
+        value: 12
+        description: "The requested output length exceeds its family's bound: HKDF-Expand above 255*HashLen bytes (RFC 5869 section 2.3), or HMAC_DRBG generate above 2^19 bits per request (SP 800-90A Table 3)."
+        recoverable: true
+        user_action: Request fewer bytes in one call, and issue multiple calls if more output is needed.
+      - name: NotBlockAligned
+        value: 20
+        description: An input length is not a multiple of the cipher block size where the mode requires alignment.
+        recoverable: true
+        user_action: Pad the input to a multiple of 16 bytes, or use a mode that does not require block alignment.
+      - name: InvalidIvLength
+        value: 21
+        description: The IV length does not match the mode's specification.
+        recoverable: true
+        user_action: Supply an IV of exactly the length the mode requires; AES-GCM requires 12 bytes.
+      - name: TagMismatch
+        value: 22
+        description: "A cryptographic verification ran cleanly and disagreed with the claimed value, covering AEAD tag and signature verification alike, and distinct from InvalidInput which is raised before any comparison happens."
+        recoverable: false
+        user_action: >-
+          Treat the message as inauthentic and discard it. Any AEAD plaintext
+          output buffer holds UNDEFINED contents and must not be read.
+      - name: LengthMismatch
+        value: 23
+        description: An input and output buffer length pair disagree where the mode requires them to be equal.
+        recoverable: true
+        user_action: Size the output buffer to match the input length exactly.
+      - name: InvalidNonceLength
+        value: 24
+        description: The nonce length does not match the mode's specification.
+        recoverable: true
+        user_action: Supply a nonce of exactly the length the mode requires.
+      - name: InvalidTagLength
+        value: 25
+        description: The tag length does not match the mode's specification.
+        recoverable: true
+        user_action: Request a tag length the mode permits.
+      - name: InvalidPayloadLength
+        value: 26
+        description: The payload length exceeds the mode's allowed maximum.
+        recoverable: true
+        user_action: Split the payload across multiple operations, each within the mode's maximum.
+      - name: InvalidAadLength
+        value: 27
+        description: The additional-authenticated-data length exceeds the mode's allowed maximum.
+        recoverable: true
+        user_action: Reduce the AAD to within the mode's maximum.
+      - name: Internal
+        value: 255
+        description: A should-never-happen case reached the catch-all arm.
+        recoverable: false
+        user_action: Report this with the calling sequence; reaching Internal indicates a defect in the module, not in the call.
+
 constants:
   - name: SHAKE128_RATE
     module: oxicrypt-xof
@@ -13790,200 +13707,6 @@ constants:
     type: usize
     value: "64"
     description: "ECDSA P-256 signature: r (32 bytes) || s (32 bytes)."
-
-  - name: TOKEN_REFRESH_MARGIN_SECS
-    module: acvp-harness
-    type: u64
-    value: "1200"
-    description: Session-token age (20 minutes) at which the harness proactively refreshes the 30-minute-TTL token before the next dependent request.
-
-  # ── esv-harness (ESVP client; out-of-boundary tooling) ──────────────
-
-  - name: ESV_VERSION
-    module: esv-harness
-    type: "&str"
-    value: "1.0"
-    description: The only ESVP version the NIST ESV servers support.
-
-  - name: LOGIN_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/login"
-    description: ESVP login endpoint, full server-relative path; the transport base is host-only, so the reference config's /esv/v1 ServerURL must not be used verbatim as the base.
-
-  - name: SINGLE_REFRESH_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/login"
-    description: Single-token refresh endpoint; a same-scope re-login at LOGIN_PATH per the ESVP digest.
-
-  - name: BULK_REFRESH_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/login/refresh"
-    description: ESVP bulk-refresh endpoint, full server-relative path.
-
-  - name: TOTP_REUSE_RETRY_CAP
-    module: esv-harness
-    type: u8
-    value: "3"
-    description: Maximum "TOTP Window has already been used" 403 retries before a typed error (the reference client loops unbounded).
-
-  - name: BITS_PER_SAMPLE_MIN
-    module: esv-harness
-    type: i64
-    value: "1"
-    description: Minimum bitsPerSample (vendored NIST metadata schema).
-
-  - name: BITS_PER_SAMPLE_MAX
-    module: esv-harness
-    type: i64
-    value: "256"
-    description: Maximum bitsPerSample (vendored NIST metadata schema).
-
-  - name: PRIMARY_NOISE_SOURCE_MAX_CHARS
-    module: esv-harness
-    type: usize
-    value: "64"
-    description: Maximum primaryNoiseSource length in characters (vendored NIST metadata schema).
-
-  - name: RESTART_FIELD_MIN
-    module: esv-harness
-    type: i64
-    value: "1"
-    description: Minimum numberOfRestarts / samplesPerRestart (vendored NIST metadata schema).
-
-  - name: CC_POSITIVE_INT_MIN
-    module: esv-harness
-    type: i64
-    value: "1"
-    description: Minimum for a conditioning component's minNin / nw / nOut (vendored NIST metadata schema).
-
-  - name: VETTED_SHA2_256_NAME
-    module: esv-harness
-    type: "&str"
-    value: "SHA2-256"
-    description: Exact ACVTS algorithm name for the vetted SHA2-256 conditioning component.
-
-  - name: REQUIRED_METADATA_FIELDS
-    module: esv-harness
-    type: "&[&str]"
-    value: "8 fields"
-    description: Metadata object's required fields in schema order (primaryNoiseSource, iidClaim, bitsPerSample, hminEstimate, physical, numberOfRestarts, samplesPerRestart, additionalNoiseSources).
-
-  - name: REQUIRED_CC_FIELDS
-    module: esv-harness
-    type: "&[&str]"
-    value: "8 fields"
-    description: Conditioning component's required fields in schema order (sequencePosition, vetted, description, minNin, minHin, nw, nOut, hOut).
-
-  - name: VETTED_ALGORITHM_NAMES
-    module: esv-harness
-    type: "&[&str]"
-    value: "12 names"
-    description: Recognized ACVTS vetted-conditioning algorithm names accepted for a vetted component's description (SHA2 and SHA3/SHAKE families).
-
-  - name: DATA_FILE_PART_NAME
-    module: esv-harness
-    type: "&str"
-    value: "dataFile"
-    description: Multipart part name of the data-file binary payload.
-
-  - name: DATA_FILE_SAMPLE_SIZE_FIELD
-    module: esv-harness
-    type: "&str"
-    value: "DataFileSampleSize"
-    description: Multipart text-field name declaring the file's per-sample width; sent capitalized for server v1.8 compatibility (never assume case-insensitivity).
-
-  - name: DATA_FILE_CONTENT_TYPE
-    module: esv-harness
-    type: "&str"
-    value: "application/octet-stream"
-    description: Content-Type of the dataFile multipart part.
-
-  - name: DATA_FILE_SAMPLE_SIZE_MIN
-    module: esv-harness
-    type: u8
-    value: "1"
-    description: Minimum valid DataFileSampleSize (ESVP §6.1 sample width 1..=8).
-
-  - name: DATA_FILE_SAMPLE_SIZE_MAX
-    module: esv-harness
-    type: u8
-    value: "8"
-    description: Maximum valid DataFileSampleSize — a byte-padded sample is at most one byte.
-
-  - name: SUPPORTING_DOC_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/supportingDocumentation"
-    description: ESVP §6.2 supporting-documentation upload endpoint, full server-relative path.
-
-  - name: SD_FILE_PART_NAME
-    module: esv-harness
-    type: "&str"
-    value: "sdFile"
-    description: Multipart part name of the supporting-document PDF payload.
-
-  - name: SD_TYPE_FIELD
-    module: esv-harness
-    type: "&str"
-    value: "sdType"
-    description: Multipart text-field name carrying the supporting-document classification.
-
-  - name: SD_COMMENTS_FIELD
-    module: esv-harness
-    type: "&str"
-    value: "sdComments"
-    description: Multipart text-field name carrying the optional supporting-document comment.
-
-  - name: SD_CONTENT_TYPE
-    module: esv-harness
-    type: "&str"
-    value: "application/pdf"
-    description: Content-Type of the sdFile multipart part — PDF only (ESVP §6.2).
-
-  - name: PDF_MAGIC
-    module: esv-harness
-    type: "&[u8]"
-    value: "%PDF-"
-    description: PDF file signature the supporting-document upload fail-closed content check requires at offset 0.
-
-  - name: CERTIFY_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/certify"
-    description: ESVP §7.1 full-submission certify endpoint, full server-relative path.
-
-  - name: CERTIFY_ADD_OE_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/certify/addOE"
-    description: ESVP §7.2 AddOE certify endpoint (append operating environments to an existing certificate).
-
-  - name: CERTIFY_UPDATE_PUD_PATH
-    module: esv-harness
-    type: "&str"
-    value: "/esv/v1/certify/updatePUD"
-    description: ESVP §7.3 UpdatePUD certify endpoint (attach a new Public Use Document).
-
-  - name: DEFAULT_LIMIT_TO_SINGLE_MODULE
-    module: esv-harness
-    type: bool
-    value: "true"
-    description: Default for a certify payload's limitEntropyAssessmentToSingleModule (the reference client's default).
-
-  - name: EVENTS_FILE
-    module: esv-harness
-    type: "&str"
-    value: "events.jsonl"
-    description: File name of the session store's append-only JSON-lines event log (source of truth).
-
-  - name: CERTIFY_RESPONSE_FILE
-    module: esv-harness
-    type: "&str"
-    value: "certify-response.json"
-    description: File name of the session store's stored-verbatim certify response.
 
   - name: EK_LEN
     module: oxicrypt-ml-kem
@@ -14099,19 +13822,19 @@ constants:
   - name: FIPS_INTEGRITY_KEY
     module: oxicrypt-integrity
     type: '[u8; 32]'
-    value: '*b"pqclib-fips-140-3-integrity-key!"'
+    value: '*b"oxicrypt-fips140-3-integrity-key"'
     description: Fixed, publicly known 32-byte HMAC key used for the module-binary integrity check.
 
   - name: SLOT_HEADER_MAGIC
     module: oxicrypt-integrity
     type: '[u8; 16]'
-    value: 0xfc followed by the ASCII bytes PQCLIB_FIPS_HDR
+    value: 0xfc followed by the ASCII bytes OXICRYPT_FIPS_H
     description: Header magic marking the start of the embedded integrity slot.
 
   - name: SLOT_FOOTER_MAGIC
     module: oxicrypt-integrity
     type: '[u8; 16]'
-    value: 0xfd followed by the ASCII bytes PQCLIB_FIPS_FTR
+    value: 0xfd followed by the ASCII bytes OXICRYPT_FIPS_F
     description: Footer magic marking the end of the embedded integrity slot.
 
   - name: SLOT_SIZE

@@ -280,7 +280,7 @@ fn point_add(p1: &Point, p2: &Point) -> Point {
 /// test. The exact bytes don't matter — the PCT only needs
 /// sign-then-verify to round-trip — but pinning them makes the
 /// PCT code path deterministic given a fixed DRBG seed.
-const PCT_PROBE_MSG: &[u8] = b"pqclib-ecdsa-p256-pct";
+const PCT_PROBE_MSG: &[u8] = b"oxicrypt-ecdsa-p256-pct";
 
 /// A P-256 ECDSA private key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.

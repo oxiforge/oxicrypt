@@ -1,0 +1,91 @@
+# acvp-harness — LAMA manifest (DRAFT)
+#
+# Drives algorithm validation sessions: authentication, vector-set retrieval, response submission and verdict collection.
+#
+# Extracted from oxicrypt's manifest, which describes the cryptographic
+# module a consumer links against. This crate is a protocol client that
+# drives validation rather than part of that surface, and it is on the
+# never-published roster, so no consumer can name it in a Cargo.toml.
+# Draft: not published, and no root lama.yaml summary exists yet.
+
+lama: '0.1'
+library:
+  name: acvp-harness
+  version: 0.21.0
+  description: ACVP protocol client for NIST's Automated Cryptographic Validation Test System.
+  repository: https://github.com/oxiforge/oxicrypt
+  license: Apache-2.0 OR MIT
+  languages:
+  - rust
+  minimum_toolchain: rust 1.95
+modules:
+- name: acvp-harness
+  description: ACVP protocol harness and transport client; 78 handlers dispatch NIST ACVP vector sets
+    offline or online against the demo server.
+  no_std: false
+  entry_points:
+  - acvp-harness dispatch <prompt.json> <response.json>
+  - acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>
+  - acvp-harness demo-run --cert <cert> --key <key> --totp-secret <hex>
+  - acvp-harness resubmit <tsId> <vsId> --cert <cert> --key <key> --totp-secret <hex>
+  depends_on:
+  - oxicrypt-module
+  - oxicrypt-sha
+  - oxicrypt-hmac
+  - oxicrypt-aes
+  - oxicrypt-drbg
+  - all algorithm crates
+types:
+- name: HttpResponse
+  module: acvp-harness
+  kind: struct
+  description: Harness transport HTTP response (status plus body string); exposed as the ESV harness transport-seam
+    return type.
+  fields:
+  - name: status
+    type: u16
+    description: HTTP status code.
+  - name: body
+    type: String
+    description: Response body as a string.
+functions:
+- name: totp_now
+  module: acvp-harness
+  description: Generate the current 8-digit HMAC-SHA-256 TOTP code (RFC 6238, 30-second step, T0=0) from
+    a raw secret, matching the NIST demo-server expectation.
+  signature: 'pub fn totp_now(secret: &[u8]) -> Result<String, String>'
+- name: totp_at
+  module: acvp-harness
+  description: Generate the deterministic 8-digit HMAC-SHA-256 TOTP code for a specific 30-second time
+    counter; used for fixture tests.
+  signature: 'pub fn totp_at(secret: &[u8], counter: u64) -> Result<String, String>'
+- name: decode_totp_secret
+  module: acvp-harness
+  description: Decode a base64 (RFC 4648 §4) TOTP shared secret to raw bytes.
+  signature: 'pub fn decode_totp_secret(s: &str) -> Result<Vec<u8>, String>'
+- name: extract_access_token
+  module: acvp-harness
+  description: Extract a string accessToken from an ACVP/ESV versioned-array or flat-object login/refresh
+    response.
+  signature: 'pub fn extract_access_token(resp: &JsonValue) -> Result<String, String>'
+- name: token_needs_refresh
+  module: acvp-harness
+  description: Proactive-refresh decision; true once a session token's age reaches TOKEN_REFRESH_MARGIN_SECS.
+  signature: 'pub fn token_needs_refresh(elapsed_secs: u64) -> bool'
+- name: submit_should_refresh_retry
+  module: acvp-harness
+  description: Reactive-retry decision; true for a single refresh-and-retry only on an unretried 401 or
+    403.
+  signature: 'pub fn submit_should_refresh_retry(status: u16, already_retried: bool) -> bool'
+- name: to_compact_string
+  module: acvp-harness
+  description: Serialize a JsonValue to compact single-line JSON (no indentation), the encoder the esv-harness
+    session store writes events.jsonl with.
+  signature: 'pub fn to_compact_string(value: &JsonValue) -> String'
+constants:
+- name: TOKEN_REFRESH_MARGIN_SECS
+  module: acvp-harness
+  type: u64
+  value: '1200'
+  description: Session-token age (20 minutes) at which the harness proactively refreshes the 30-minute-TTL
+    token before the next dependent request.

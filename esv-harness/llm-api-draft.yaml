@@ -1,0 +1,626 @@
+# esv-harness — LAMA manifest (DRAFT)
+#
+# Drives entropy-source validation submissions: session login, data-file upload, conditioning-component declaration and certification.
+#
+# Extracted from oxicrypt's manifest, which describes the cryptographic
+# module a consumer links against. This crate is a protocol client that
+# drives validation rather than part of that surface, and it is on the
+# never-published roster, so no consumer can name it in a Cargo.toml.
+# Draft: not published, and no root lama.yaml summary exists yet.
+
+lama: '0.1'
+library:
+  name: esv-harness
+  version: 0.21.0
+  description: ESV protocol client for NIST's Entropy Source Validation server.
+  repository: https://github.com/oxiforge/oxicrypt
+  license: Apache-2.0 OR MIT
+  languages:
+  - rust
+  minimum_toolchain: rust 1.95
+modules:
+- name: esv-harness
+  description: ESV protocol client for SP 800-90B entropy-source validation; builds and drives ESVP login,
+    single/bulk token refresh, entropy-source registration, offline payload preflight, data-file multipart
+    upload plus bounded processing-status polling, supporting-document upload, certify request builders,
+    and a resumable per-submission session store, over acvp-harness's curl(1)/mTLS transport.
+  no_std: false
+  entry_points:
+  - esv-harness login-body < secret.b64
+  - esv-harness bulk-refresh-body <jwt>... < secret.b64
+  depends_on:
+  - acvp-harness
+types:
+- name: EsvTransport
+  module: esv-harness
+  kind: trait
+  description: One-call-per-request ESVP HTTP transport seam (method/path/body/bearer); a live impl wraps
+    acvp-harness's curl(1)/mTLS transport, unit tests supply a recording stub.
+- name: Sleeper
+  module: esv-harness
+  kind: trait
+  description: Injectable wait driving the TOTP-window-reuse retry; ThreadSleeper backs it with std::thread::sleep,
+    tests record durations without blocking.
+- name: ThreadSleeper
+  module: esv-harness
+  kind: struct
+  description: Production Sleeper backed by std::thread::sleep.
+- name: EsvSession
+  module: esv-harness
+  kind: struct
+  description: Authenticated ESV session (token plus monotonic issuance instant plus tunable refresh margin);
+    exposes bearer/elapsed_secs/needs_refresh, refresh with a fresh-login fallback on a 401/403, refresh_if_stale,
+    authenticated_request, refresh_margin_secs/with_refresh_margin_secs/set_refresh_margin_secs, and fallback_logins
+    (a monotonic count of fresh-login fallbacks, observable across the outcome-discarding callers for
+    the attended smoke).
+- name: ConditioningComponent
+  module: esv-harness
+  kind: struct
+  description: One entropy-source conditioning component; the vetted and vetted_sha2_256 constructors
+    enforce D2 (a CAVP validationNumber and a recognized ACVTS algorithm name).
+- name: EntropyRegistration
+  module: esv-harness
+  kind: struct
+  description: SP 800-90B entropy-source metadata payload; new_non_iid bakes iidClaim=false and physical=false,
+    set_hmin_exact records an exact fixed-point min-entropy claim (rendered as an exact decimal on the
+    wire, mirrored into the f64 hmin_estimate for the preflight bound), to_wire_json serializes the versioned
+    envelope and fails typed on a non-finite float field.
+- name: DataFileRef
+  module: esv-harness
+  kind: struct
+  description: A registration-returned data-file slot (server URL plus its trailing numeric id).
+- name: ConditionedFileRef
+  module: esv-harness
+  kind: struct
+  description: A conditioned-bits data-file slot with its conditioning sequence position (present only
+    for non-vetted conditioning).
+- name: OeRegistration
+  module: esv-harness
+  kind: struct
+  description: One operating environment's registration result (eaId, raw-noise/restart/conditioned data-file
+    slots, and the per-OE scoped JWT).
+- name: RegError
+  module: esv-harness
+  kind: enum
+  description: Fail-typed registration-construction guard (missing CAVP validationNumber, unknown vetted-algorithm
+    name, or a non-finite float field).
+- name: CcError
+  module: esv-harness
+  kind: enum
+  description: One conditioning-component preflight violation (positive-integer bounds, float finiteness/sign,
+    and vetted/non-vetted validationNumber and bijectiveClaim applicability).
+- name: PreflightError
+  module: esv-harness
+  kind: enum
+  description: One registration-payload preflight violation (field bounds, hminEstimate<=bitsPerSample,
+    restart minimums, numberOfOEs, and conditioning sequence positions 1..=n).
+- name: DataFileKind
+  module: esv-harness
+  kind: enum
+  description: Which data-file slot a file fills for the file preflight — RawNoise or Restart (the vetted
+    oxicrypt path uploads no conditioned file, ISC-107).
+- name: FilePreflightError
+  module: esv-harness
+  kind: enum
+  description: One data-file preflight violation (WrongSampleCount off the 1,000,000 one-byte-per-sample
+    size, SampleValueTooWide past the effective min(bitsPerSample,8) width, RestartDimensionsMismatch
+    off the 1000x1000 layout, or SampleSizeInconsistent between the declared DataFileSampleSize and the
+    registration).
+- name: MultipartPart
+  module: esv-harness
+  kind: enum
+  description: One logical part of a data-file multipart body — a text Field or the borrowed binary File
+    part (field name, filename, content type, bytes).
+- name: DataFileUpload
+  module: esv-harness
+  kind: struct
+  description: A data-file upload request (ea_id/df_id/filename/bytes plus optional sample_size); new
+    builds a raw-noise/restart upload, with_sample_size emits the capitalized DataFileSampleSize field
+    (typed-error outside 1..=8), path/parts inspect the request and to_multipart serializes it (fallible
+    — invalid or colliding boundary is a typed MultipartError).
+- name: DataFileTarget
+  module: esv-harness
+  kind: enum
+  description: Which data-file slot an upload targets — RawNoise, Restart, or ConditionedBits{sequence_position}.
+- name: ConditionedRefusalReason
+  module: esv-harness
+  kind: enum
+  description: Why a conditioned-bits upload was refused (the component is Vetted or Bijective).
+- name: DataFileStatus
+  module: esv-harness
+  kind: enum
+  description: A parsed data-file processing status — the seven documented ESVP states plus a fail-closed
+    Unrecognized(String); poll_decision maps each to a PollDecision.
+- name: TerminalStatus
+  module: esv-harness
+  kind: enum
+  description: A terminal data-file outcome (RunSuccessful, RunFailed, RunCancelled, Error).
+- name: PollDecision
+  module: esv-harness
+  kind: enum
+  description: The polling loop's next action for a status (WaitNotYetProcessed, WaitProcessing, Terminal(TerminalStatus),
+    Unrecognized).
+- name: PollConfig
+  module: esv-harness
+  kind: struct
+  description: Data-file polling tunables — not-yet-processed and processing waits, the max consecutive
+    not-yet-processed cap, a global max_total_polls ceiling (catches an alternating-status livelock),
+    and a max_consecutive_transient_failures budget (a transport error or unparseable body is transient,
+    reset by a well-formed response); Default is 30 s / 30 s / 20 / 240 / 3.
+- name: DataFileResult
+  module: esv-harness
+  kind: struct
+  description: A data file polled to a terminal state (optional echoed id, the TerminalStatus, and on
+    success the returned NIST assessment captured as the raw body — the second maxwell oracle).
+- name: DataFileError
+  module: esv-harness
+  kind: enum
+  description: A data-file upload/poll error (sample-size out of range, conditioned-upload forbidden or
+    missing component, unrecognized status, not-yet-processed timeout, total-poll timeout, transient-failure
+    budget exhausted, token-provider failure, server error, malformed response, transport failure).
+- name: MultipartError
+  module: esv-harness
+  kind: enum
+  description: A multipart serialization error — an invalid RFC 2046 boundary (empty/over-70/disallowed
+    char/trailing space), a part name/filename carrying a CR/LF/control character (header-injection guard),
+    or a boundary that collides with a part body or filename.
+- name: HminError
+  module: esv-harness
+  kind: enum
+  description: Why an hminEstimate cannot be serialized for a payload — AboveBitsPerSample (the claim
+    exceeds bitsPerSample) or NegativeBitsPerSample.
+- name: JsonLite
+  module: esv-harness
+  kind: enum
+  description: A JSON value with numbers kept as their raw source token (never interpreted), so an ESV
+    status body carrying fractional/e-notation min-entropy is read losslessly where the integer-only acvp_harness::json
+    codec cannot; accessors as_array/as_object/as_str/as_number_str/as_bool/is_null/get (first-wins) and
+    get_unique (rejects a duplicate key, for the strict status-envelope read).
+- name: ParseError
+  module: esv-harness
+  kind: enum
+  description: A jsonlite parse failure (unexpected EOF/byte, invalid escape, invalid number, invalid
+    UTF-8, depth exceeded, trailing data).
+- name: DuplicateKey
+  module: esv-harness
+  kind: struct
+  description: A duplicate-key rejection from JsonLite::get_unique — a key required to be unique appeared
+    more than once.
+- name: SdType
+  module: esv-harness
+  kind: enum
+  description: ESVP §6.2 supporting-document type; wire_str/from_wire map each variant (EntropyAssessmentReport,
+    PublicUseDocument, DataCollectionAttestation, RandomBitGeneratorReport, Other) to/from its exact wire
+    string.
+- name: SupportDocError
+  module: esv-harness
+  kind: enum
+  description: A supporting-document construction guard failure — the payload is not a PDF (no %PDF- signature
+    at offset 0) or is empty.
+- name: SupportingDocUpload
+  module: esv-harness
+  kind: struct
+  description: A supporting-document upload request; new enforces a fail-closed PDF-only content check
+    (%PDF- magic), with_comment attaches the optional sdComments field, parts/to_multipart inspect or
+    (fallibly) serialize the multipart body over the shared serialize_multipart encoder.
+- name: SupportingDoc
+  module: esv-harness
+  kind: struct
+  description: A successfully-uploaded supporting document (sdId, sdType carried from the request, and
+    the scoped JWT) — exactly what a certify request references.
+- name: CertifyError
+  module: esv-harness
+  kind: enum
+  description: A certify-request construction violation (missing entropyId/moduleId/oeId/entropyCertificate,
+    non-positive eaId, no assessments, duplicate eaId, wrong EAR/PUD count, too many DCAs, non-PUD updatePUD
+    doc, non-numeric registration eaId, or a non-IID assessment missing its restart-test upload).
+- name: CertifyAssessment
+  module: esv-harness
+  kind: struct
+  description: One entropy-assessment reference in a certify request (the ESV eaId, the ACVTS oeId, the
+    scoped JWT); from_registration bridges an OeRegistration with the ACVTS oeId.
+- name: CertifyRequest
+  module: esv-harness
+  kind: struct
+  description: A full §7.1 certify submission; new enforces every precondition (entropyId, positive moduleId,
+    ≥1 assessment with positive eaId/oeId, exactly-one EAR + exactly-one PUD + at-most-one DCA), with_vendor_id/with_limit_to_single_module
+    tune optional fields, to_wire_json serializes the versioned envelope.
+- name: AddOeRequest
+  module: esv-harness
+  kind: struct
+  description: A §7.2 AddOE certify request (append OEs to an existing certificate); like CertifyRequest
+    but keyed on entropyCertificate instead of moduleId, same assessment/supporting-doc preconditions.
+- name: UpdatePudRequest
+  module: esv-harness
+  kind: struct
+  description: A §7.3 UpdatePUD certify request (attach a new Public Use Document to an existing certificate);
+    new requires a non-empty entropyId/entropyCertificate and a PublicUseDocument supporting document.
+- name: Slot
+  module: esv-harness
+  kind: enum
+  description: Which data-file slot an upload targeted (RawNoise, Restart, Conditioned); as_str/from_str_token
+    round-trip the on-disk token.
+- name: CertifyMode
+  module: esv-harness
+  kind: enum
+  description: Which certify path completed a submission (Full §7.1 or AddOe §7.2); as_str/from_str_token
+    round-trip the on-disk token.
+- name: SlotRef
+  module: esv-harness
+  kind: struct
+  description: A data-file slot reference recorded from registration (its URL and id).
+- name: OeRecord
+  module: esv-harness
+  kind: struct
+  description: One operating environment's registration record tracked in a session (eaId, url, raw-noise/restart
+    slots, scoped JWT); from_registration captures the trackable fields of an OeRegistration.
+- name: UploadedFile
+  module: esv-harness
+  kind: struct
+  description: A recorded data-file upload (eaId, slot, dfId).
+- name: CapturedAssessment
+  module: esv-harness
+  kind: struct
+  description: A captured Run Successful assessment sidecar (eaId, slot, the stored file name).
+- name: Intent
+  module: esv-harness
+  kind: enum
+  description: The pre-submit half of intent-then-outcome — a network side-effect a submission is about
+    to attempt, appended with only locally-known data before the call (Register, UploadFile, UploadDoc,
+    Certify); describe() gives an operator-facing summary. An outcome Event appended after supersedes
+    it; an intent with no following outcome is a dangling intent (SubmissionStage::Interrupted).
+- name: Event
+  module: esv-harness
+  kind: enum
+  description: The post-submit outcome appended to events.jsonl after its network call, built from the
+    server response (Registered, FileUploaded, AssessmentCaptured, DocUploaded, Certified); to_json/from_json
+    round-trip via the shared codec.
+- name: SubmissionStage
+  module: esv-harness
+  kind: enum
+  description: The coarse stage a submission has reached (Empty, Registered, FilesUploaded, DocsUploaded,
+    Certified, or Interrupted for a dangling intent that must be verified before retrying), derived from
+    the replayed log.
+- name: SubmissionState
+  module: esv-harness
+  kind: struct
+  description: The full submission state reconstructed by replaying events.jsonl (entropyId, moduleId,
+    OEs deduped by eaId, uploaded files, captured assessments, docs, certify mode, an interrupted dangling-intent
+    description, and a torn-tail warning); stage() reports the coarse SubmissionStage.
+- name: SessionDir
+  module: esv-harness
+  kind: struct
+  description: Handle to a <sessions-root>/<entropyId>/ submission directory (entropyId validated as a
+    safe filename token); create/open, append_intent/append_event (single buffered newline-terminated
+    fsync'd write, healing any torn tail) and persist_intent_then (append the intent, run the submit,
+    append its outcome), store_assessment/store_certify_response/read_sidecar (verbatim, path-component-validated),
+    load_state replays the log tolerating a torn final line and surfacing a dangling intent.
+functions:
+- name: build_login_body
+  module: esv-harness
+  description: Build the ESVP login body [{esvVersion},{password:<totp>}].
+  signature: 'pub fn build_login_body(totp_code: &str) -> String'
+- name: build_single_refresh_body
+  module: esv-harness
+  description: Build the single-token refresh body embedding the current token [{esvVersion},{password,accessToken:<old>}].
+  signature: 'pub fn build_single_refresh_body(totp_code: &str, access_token: &str) -> String'
+- name: build_bulk_refresh_body
+  module: esv-harness
+  description: Build the bulk-refresh body carrying an ordered accessToken array [{esvVersion},{password,accessToken:[...]}].
+  signature: 'pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> String'
+- name: parse_access_token
+  module: esv-harness
+  description: Fail-closed parse of a single accessToken from the ESVP versioned envelope (at-least-two
+    elements, trailing extras ignored); rejects the bare-object and version-less forms the acvp helper
+    accepts.
+  signature: 'pub fn parse_access_token(body: &str) -> Result<String, String>'
+- name: parse_bulk_refresh_tokens
+  module: esv-harness
+  description: Parse the ordered accessToken array from a bulk-refresh response, erroring when the returned
+    count differs from the number of tokens submitted.
+  signature: 'pub fn parse_bulk_refresh_tokens(body: &str, expected: usize) -> Result<Vec<String>, String>'
+- name: is_totp_window_reuse
+  module: esv-harness
+  description: True for the transient "TOTP Window has already been used" 403 the NIST reference client
+    retries after a 10 s wait.
+  signature: 'pub fn is_totp_window_reuse(status: u16, body: &str) -> bool'
+- name: login
+  module: esv-harness
+  description: Perform an ESVP login over an EsvTransport (retrying a TOTP-window-reuse 403 via the Sleeper)
+    and return the authenticated EsvSession.
+  signature: 'pub fn login<T: EsvTransport>(totp_secret: &[u8], transport: &mut T, sleeper: &mut dyn Sleeper)
+    -> Result<EsvSession, String>'
+- name: bulk_refresh
+  module: esv-harness
+  description: Bulk-refresh an ordered array of per-object JWTs in one TOTP touch, returning exactly as
+    many refreshed tokens as were submitted.
+  signature: 'pub fn bulk_refresh<T: EsvTransport>(totp_secret: &[u8], access_tokens: &[String], transport:
+    &mut T, sleeper: &mut dyn Sleeper) -> Result<Vec<String>, String>'
+- name: parse_registration_response
+  module: esv-harness
+  description: Parse an ESVP registration response into one OeRegistration per operating environment (data-file
+    slots plus the per-OE scoped JWT).
+  signature: 'pub fn parse_registration_response(body: &str) -> Result<Vec<OeRegistration>, String>'
+- name: preflight
+  module: esv-harness
+  description: Offline validation of a registration payload against the vendored NIST metadata schema
+    plus the vetted/non-vetted conditioning rules; returns every violation found.
+  signature: 'pub fn preflight(reg: &EntropyRegistration) -> Result<(), Vec<PreflightError>>'
+- name: is_vetted_algorithm_name
+  module: esv-harness
+  description: Whether a string is a recognized ACVTS vetted-conditioning algorithm name (VETTED_ALGORITHM_NAMES).
+  signature: 'pub fn is_vetted_algorithm_name(name: &str) -> bool'
+- name: preflight_data_file
+  module: esv-harness
+  description: Offline validation of a data file on disk against the ESV wire constraints (exactly 1,000,000
+    one-byte-per-sample symbols, symbols within the effective min(bitsPerSample,8) width, the 1000x1000
+    restart layout for a restart file, and DataFileSampleSize consistency), checked against the module's
+    own SP 800-90B constants; returns every violation found.
+  signature: 'pub fn preflight_data_file(bytes: &[u8], kind: DataFileKind, reg: &EntropyRegistration,
+    declared_sample_size: Option<u8>) -> Result<(), Vec<FilePreflightError>>'
+- name: effective_sample_width
+  module: esv-harness
+  description: The effective per-sample width min(bitsPerSample, 8) clamped into 1..=8 (a byte-padded
+    sample holds at most eight bits).
+  signature: 'pub fn effective_sample_width(bits_per_sample: i64) -> u32'
+- name: data_file_path
+  module: esv-harness
+  description: The full server-relative data-file resource path /esv/v1/entropyAssessments/{ea_id}/dataFiles/{df_id}
+    (upload POST and status GET).
+  signature: 'pub fn data_file_path(ea_id: &str, df_id: &str) -> String'
+- name: check_conditioned_upload_allowed
+  module: esv-harness
+  description: Whether a data-file upload for a target is permitted under a registration's conditioning;
+    raw-noise/restart always allowed, conditioned-bits only for a non-vetted non-bijective component (else
+    a typed refusal).
+  signature: 'pub fn check_conditioned_upload_allowed(reg: &EntropyRegistration, target: &DataFileTarget)
+    -> Result<(), DataFileError>'
+- name: build_conditioned_upload
+  module: esv-harness
+  description: Build a conditioned-bits upload, refusing (typed error, no request produced) when the target
+    component is vetted or bijective (ISC-107 anti-guard).
+  signature: 'pub fn build_conditioned_upload(reg: &EntropyRegistration, sequence_position: i64, ea_id:
+    &str, df_id: &str, filename: &str, bytes: Vec<u8>) -> Result<DataFileUpload, DataFileError>'
+- name: classify_status
+  module: esv-harness
+  description: Classify a raw data-file status string into a DataFileStatus (case/separator-insensitive;
+    anything unrecognized becomes Unrecognized carrying the original string).
+  signature: 'pub fn classify_status(raw: &str) -> DataFileStatus'
+- name: decide
+  module: esv-harness
+  description: The pure decision function — a raw status string mapped to its next PollDecision (classify_status
+    composed with DataFileStatus::poll_decision).
+  signature: 'pub fn decide(raw: &str) -> PollDecision'
+- name: poll_data_file
+  module: esv-harness
+  description: Poll a data file's processing status over an EsvTransport until a terminal state; a token_provider
+    yields a fresh bearer per request (for a poll outliving the JWT TTL), the loop is bounded by the consecutive
+    not-yet-processed cap, a global total-poll cap, and a consecutive-transient-failure budget that also
+    absorbs a valid-JSON-but-not-envelope body (a JSON 502), status/id are read with the duplicate-rejecting
+    accessor (a repeated key is a fatal MalformedResponse), the status body is read with the float-tolerant
+    jsonlite reader, and the returned assessment is captured verbatim on Run Successful.
+  signature: 'pub fn poll_data_file<T: EsvTransport>(ea_id: &str, df_id: &str, token_provider: &mut dyn
+    FnMut() -> Result<String, String>, transport: &mut T, sleeper: &mut dyn Sleeper, config: &PollConfig)
+    -> Result<DataFileResult, DataFileError>'
+- name: fixed_token
+  module: esv-harness
+  description: Adapt a fixed bearer into the token provider poll_data_file takes, for a poll needing no
+    in-flight refresh.
+  signature: 'pub fn fixed_token(token: &str) -> impl FnMut() -> Result<String, String> + ''_'
+- name: serialize_multipart
+  module: esv-harness
+  description: The single multipart/form-data encoder shared by the data-file and supporting-document
+    uploads; validates the boundary (RFC 2046), rejects a CR/LF/control character in any part name/filename
+    (header-injection guard) and backslash-escapes quotes, and scans every part body and filename for
+    the delimiter, failing closed on an invalid boundary, an injected header, or a collision.
+  signature: 'pub fn serialize_multipart(parts: &[MultipartPart<''_>], boundary: &str) -> Result<(String,
+    Vec<u8>), MultipartError>'
+- name: validate_boundary
+  module: esv-harness
+  description: Validate a multipart boundary against RFC 2046 §5.1.1 (1..=70 bchars, last char not a space).
+  signature: 'pub fn validate_boundary(boundary: &str) -> Result<(), MultipartError>'
+- name: generate_boundary
+  module: esv-harness
+  description: Generate a multipart boundary provably absent from every part body and filename (a fixed
+    base plus an incrementing decimal suffix; terminates because each span is finite).
+  signature: 'pub fn generate_boundary(parts: &[MultipartPart<''_>]) -> String'
+- name: parse_supporting_doc_response
+  module: esv-harness
+  description: Parse a supporting-document upload response (versioned envelope) into a SupportingDoc,
+    requiring status success; the sdType is threaded in from the upload request.
+  signature: 'pub fn parse_supporting_doc_response(body: &str, sd_type: SdType) -> Result<SupportingDoc,
+    String>'
+- name: check_non_iid_restart_upload
+  module: esv-harness
+  description: Certify precondition — a non-IID assessment must have a restart-test data-file upload recorded
+    before certify (an IID assessment has none); the iid claim and restart-upload record are passed explicitly
+    since CertifyAssessment carries neither. Typed MissingRestartUpload when a non-IID assessment lacks
+    its restart upload.
+  signature: 'pub fn check_non_iid_restart_upload(ea_id: i64, iid_claim: bool, restart_uploaded: bool)
+    -> Result<(), CertifyError>'
+- name: jsonlite::parse
+  module: esv-harness
+  description: Parse a JSON document into a JsonLite, keeping numbers as raw source tokens (full RFC 8259
+    grammar incl. frac/exp; strict on malformed numerals, trailing data, depth, and truncation).
+  signature: 'pub fn parse(input: &str) -> Result<JsonLite, ParseError>'
+- name: serialize_hmin
+  module: esv-harness
+  description: Serialize a fixed-point min-entropy (oxicrypt-entropy MinEntropy, 1/256-bit steps) to its
+    exact decimal JSON-number token with pure integer arithmetic — no f64 on the claim path; a whole-bit
+    value renders as a bare integer, a fractional one with trailing zeros stripped. No bounds check (see
+    hmin_wire_token).
+  signature: 'pub fn serialize_hmin(h: MinEntropy) -> String'
+- name: hmin_within_bits
+  module: esv-harness
+  description: Whether a fixed-point min-entropy is within the schema bound 0 <= h <= bits_per_sample,
+    checked in exact integer steps.
+  signature: 'pub fn hmin_within_bits(h: MinEntropy, bits_per_sample: i64) -> bool'
+- name: hmin_wire_token
+  module: esv-harness
+  description: Serialize a fixed-point min-entropy to its exact decimal token after enforcing the schema
+    bound 0 <= h <= bits_per_sample; a typed HminError on an over-claim or a negative ceiling.
+  signature: 'pub fn hmin_wire_token(h: MinEntropy, bits_per_sample: i64) -> Result<String, HminError>'
+constants:
+- name: ESV_VERSION
+  module: esv-harness
+  type: '&str'
+  value: '1.0'
+  description: The only ESVP version the NIST ESV servers support.
+- name: LOGIN_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/login
+  description: ESVP login endpoint, full server-relative path; the transport base is host-only, so the
+    reference config's /esv/v1 ServerURL must not be used verbatim as the base.
+- name: SINGLE_REFRESH_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/login
+  description: Single-token refresh endpoint; a same-scope re-login at LOGIN_PATH per the ESVP digest.
+- name: BULK_REFRESH_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/login/refresh
+  description: ESVP bulk-refresh endpoint, full server-relative path.
+- name: TOTP_REUSE_RETRY_CAP
+  module: esv-harness
+  type: u8
+  value: '3'
+  description: Maximum "TOTP Window has already been used" 403 retries before a typed error (the reference
+    client loops unbounded).
+- name: BITS_PER_SAMPLE_MIN
+  module: esv-harness
+  type: i64
+  value: '1'
+  description: Minimum bitsPerSample (vendored NIST metadata schema).
+- name: BITS_PER_SAMPLE_MAX
+  module: esv-harness
+  type: i64
+  value: '256'
+  description: Maximum bitsPerSample (vendored NIST metadata schema).
+- name: PRIMARY_NOISE_SOURCE_MAX_CHARS
+  module: esv-harness
+  type: usize
+  value: '64'
+  description: Maximum primaryNoiseSource length in characters (vendored NIST metadata schema).
+- name: RESTART_FIELD_MIN
+  module: esv-harness
+  type: i64
+  value: '1'
+  description: Minimum numberOfRestarts / samplesPerRestart (vendored NIST metadata schema).
+- name: CC_POSITIVE_INT_MIN
+  module: esv-harness
+  type: i64
+  value: '1'
+  description: Minimum for a conditioning component's minNin / nw / nOut (vendored NIST metadata schema).
+- name: VETTED_SHA2_256_NAME
+  module: esv-harness
+  type: '&str'
+  value: SHA2-256
+  description: Exact ACVTS algorithm name for the vetted SHA2-256 conditioning component.
+- name: REQUIRED_METADATA_FIELDS
+  module: esv-harness
+  type: '&[&str]'
+  value: 8 fields
+  description: Metadata object's required fields in schema order (primaryNoiseSource, iidClaim, bitsPerSample,
+    hminEstimate, physical, numberOfRestarts, samplesPerRestart, additionalNoiseSources).
+- name: REQUIRED_CC_FIELDS
+  module: esv-harness
+  type: '&[&str]'
+  value: 8 fields
+  description: Conditioning component's required fields in schema order (sequencePosition, vetted, description,
+    minNin, minHin, nw, nOut, hOut).
+- name: VETTED_ALGORITHM_NAMES
+  module: esv-harness
+  type: '&[&str]'
+  value: 12 names
+  description: Recognized ACVTS vetted-conditioning algorithm names accepted for a vetted component's
+    description (SHA2 and SHA3/SHAKE families).
+- name: DATA_FILE_PART_NAME
+  module: esv-harness
+  type: '&str'
+  value: dataFile
+  description: Multipart part name of the data-file binary payload.
+- name: DATA_FILE_SAMPLE_SIZE_FIELD
+  module: esv-harness
+  type: '&str'
+  value: DataFileSampleSize
+  description: Multipart text-field name declaring the file's per-sample width; sent capitalized for server
+    v1.8 compatibility (never assume case-insensitivity).
+- name: DATA_FILE_CONTENT_TYPE
+  module: esv-harness
+  type: '&str'
+  value: application/octet-stream
+  description: Content-Type of the dataFile multipart part.
+- name: DATA_FILE_SAMPLE_SIZE_MIN
+  module: esv-harness
+  type: u8
+  value: '1'
+  description: Minimum valid DataFileSampleSize (ESVP §6.1 sample width 1..=8).
+- name: DATA_FILE_SAMPLE_SIZE_MAX
+  module: esv-harness
+  type: u8
+  value: '8'
+  description: Maximum valid DataFileSampleSize — a byte-padded sample is at most one byte.
+- name: SUPPORTING_DOC_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/supportingDocumentation
+  description: ESVP §6.2 supporting-documentation upload endpoint, full server-relative path.
+- name: SD_FILE_PART_NAME
+  module: esv-harness
+  type: '&str'
+  value: sdFile
+  description: Multipart part name of the supporting-document PDF payload.
+- name: SD_TYPE_FIELD
+  module: esv-harness
+  type: '&str'
+  value: sdType
+  description: Multipart text-field name carrying the supporting-document classification.
+- name: SD_COMMENTS_FIELD
+  module: esv-harness
+  type: '&str'
+  value: sdComments
+  description: Multipart text-field name carrying the optional supporting-document comment.
+- name: SD_CONTENT_TYPE
+  module: esv-harness
+  type: '&str'
+  value: application/pdf
+  description: Content-Type of the sdFile multipart part — PDF only (ESVP §6.2).
+- name: PDF_MAGIC
+  module: esv-harness
+  type: '&[u8]'
+  value: '%PDF-'
+  description: PDF file signature the supporting-document upload fail-closed content check requires at
+    offset 0.
+- name: CERTIFY_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/certify
+  description: ESVP §7.1 full-submission certify endpoint, full server-relative path.
+- name: CERTIFY_ADD_OE_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/certify/addOE
+  description: ESVP §7.2 AddOE certify endpoint (append operating environments to an existing certificate).
+- name: CERTIFY_UPDATE_PUD_PATH
+  module: esv-harness
+  type: '&str'
+  value: /esv/v1/certify/updatePUD
+  description: ESVP §7.3 UpdatePUD certify endpoint (attach a new Public Use Document).
+- name: DEFAULT_LIMIT_TO_SINGLE_MODULE
+  module: esv-harness
+  type: bool
+  value: 'true'
+  description: Default for a certify payload's limitEntropyAssessmentToSingleModule (the reference client's
+    default).
+- name: EVENTS_FILE
+  module: esv-harness
+  type: '&str'
+  value: events.jsonl
+  description: File name of the session store's append-only JSON-lines event log (source of truth).
+- name: CERTIFY_RESPONSE_FILE
+  module: esv-harness
+  type: '&str'
+  value: certify-response.json
+  description: File name of the session store's stored-verbatim certify response.

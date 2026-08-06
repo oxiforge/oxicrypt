@@ -5,7 +5,7 @@ lama: "0.1"
 library:
   name: oxicrypt
   version: "0.21.0"
-  description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module with NIST-approved classical and post-quantum algorithms."
+  description: "Pure-Rust FIPS 140-3 Level 1 cryptographic module implementing NIST-approved algorithms with a formal module boundary and power-up self-tests."
   repository: "https://github.com/oxiforge/oxicrypt"
   homepage: "https://oxicrypt.dev"
   license: "Apache-2.0 OR MIT"
@@ -13,10 +13,9 @@ library:
     - rust
     - c
   minimum_toolchain: "rust 1.95"
-  no_std: true
   security:
-    certification: "FIPS 140-3 Level 1 (targeting)"
-    side_channel_posture: "disclosed"
+    certification: "FIPS 140-3 Level 1 (targeting, pre-validation)"
+    side_channel_posture: "disclosed; no side-channel resistance claimed at Level 1, timing behavior validated via dudect"
     zeroization: "volatile-on-drop for all CSP-holding types (via oxicrypt-zeroize)"
     algorithm_profiles:
       - name: "Unrestricted"

@@ -138,10 +138,15 @@ use oxicrypt_module::{KatEntry, SelfTestFailure};
 /// self-test.
 ///
 /// The key material is the UTF-8 bytes of the ASCII literal
-/// `"oxicrypt-fips-140-3-integrity-key!"` (32 bytes) — not a secret,
+/// `"oxicrypt-fips140-3-integrity-key"` (32 bytes) — not a secret,
 /// just a stable value that is trivially auditable from the source
 /// tree.
-pub const FIPS_INTEGRITY_KEY: [u8; 32] = *b"pqclib-fips-140-3-integrity-key!";
+///
+/// The literal is exactly 32 bytes, which is what fixes its spelling:
+/// `"oxicrypt-fips-140-3-integrity-key!"` would read more naturally
+/// but is 34. `integrity_key_matches_its_documented_literal` asserts
+/// the constant against the text above, so the two cannot drift.
+pub const FIPS_INTEGRITY_KEY: [u8; 32] = *b"oxicrypt-fips140-3-integrity-key";
 
 /// Header magic for the embedded integrity slot. 16 bytes.
 ///
@@ -150,14 +155,14 @@ pub const FIPS_INTEGRITY_KEY: [u8; 32] = *b"pqclib-fips-140-3-integrity-key!";
 /// the scanner short-circuit on a byte that rarely occurs in text
 /// sections.
 pub const SLOT_HEADER_MAGIC: [u8; 16] = [
-    0xfc, b'P', b'Q', b'C', b'L', b'I', b'B', b'_', b'F', b'I', b'P', b'S', b'_', b'H', b'D', b'R',
+    0xfc, b'O', b'X', b'I', b'C', b'R', b'Y', b'P', b'T', b'_', b'F', b'I', b'P', b'S', b'_', b'H',
 ];
 
 /// Footer magic for the embedded integrity slot. 16 bytes. Paired
 /// with [`SLOT_HEADER_MAGIC`]; the scanner requires both to appear at
 /// the correct relative offsets before accepting a candidate slot.
 pub const SLOT_FOOTER_MAGIC: [u8; 16] = [
-    0xfd, b'P', b'Q', b'C', b'L', b'I', b'B', b'_', b'F', b'I', b'P', b'S', b'_', b'F', b'T', b'R',
+    0xfd, b'O', b'X', b'I', b'C', b'R', b'Y', b'P', b'T', b'_', b'F', b'I', b'P', b'S', b'_', b'F',
 ];
 
 /// Size in bytes of the embedded integrity slot.
@@ -491,6 +496,88 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use std::path::{Path, PathBuf};
+
+    /// The doc comment on `FIPS_INTEGRITY_KEY` names the key's literal.
+    /// Before this test existed the two disagreed twice over: the doc named
+    /// an `oxicrypt-` prefix while the constant carried `pqclib-`, and the
+    /// literal it named was 34 bytes, which could not have compiled as
+    /// `[u8; 32]`. A doc naming the wrong key for the IG 10.3.A integrity
+    /// check is the kind of discrepancy a CST lab reads.
+    ///
+    /// Asserting the constant against a literal repeated in the test would
+    /// prove nothing about the prose, so this reads the doc comment out of
+    /// the source and compares what it *claims* against what is compiled.
+    #[test]
+    fn integrity_key_matches_its_documented_literal() {
+        let src = include_str!("lib.rs");
+        let Some(doc_start) =
+            src.find("/// Fixed, publicly known HMAC key used for the software integrity")
+        else {
+            panic!("key doc comment not found — was it reworded?");
+        };
+        let Some(decl) = src[doc_start..].find("pub const FIPS_INTEGRITY_KEY") else {
+            panic!("key declaration not found after its doc comment");
+        };
+        let doc = &src[doc_start..doc_start + decl];
+
+        // The doc states the literal in backticks and its length in parens.
+        let Some(quoted_start) = doc.find("`\"") else {
+            panic!("doc states no quoted literal");
+        };
+        let rest = &doc[quoted_start + 2..];
+        let Some(quote_end) = rest.find('"') else {
+            panic!("unterminated literal in doc");
+        };
+        let quoted = &rest[..quote_end];
+        assert_eq!(
+            quoted.as_bytes(),
+            &FIPS_INTEGRITY_KEY[..],
+            "doc comment names {quoted:?} but the constant is {:?}",
+            core::str::from_utf8(&FIPS_INTEGRITY_KEY).unwrap()
+        );
+
+        let Some(len_end) = doc.find(" bytes)") else {
+            panic!("doc states no byte count");
+        };
+        let head = &doc[..len_end];
+        let Some(paren) = head.rfind('(') else {
+            panic!("stated length has no opening paren");
+        };
+        let Ok(stated_len) = head[paren + 1..].trim().parse::<usize>() else {
+            panic!("stated length is not a number");
+        };
+        assert_eq!(
+            stated_len,
+            FIPS_INTEGRITY_KEY.len(),
+            "doc claims {stated_len} bytes; the constant is {}",
+            FIPS_INTEGRITY_KEY.len()
+        );
+    }
+
+    /// The slot magics are matched against on-disk bytes of signed binaries,
+    /// so their length is load-bearing: a 15-byte tail plus the sentinel is
+    /// what makes the slot 16 bytes wide. Rotating the project name through
+    /// them is only safe while the lengths hold.
+    #[test]
+    fn slot_magics_are_sixteen_bytes_and_distinctly_sentinelled() {
+        assert_eq!(SLOT_HEADER_MAGIC.len(), 16);
+        assert_eq!(SLOT_FOOTER_MAGIC.len(), 16);
+        assert_eq!(SLOT_HEADER_MAGIC[0], 0xfc);
+        assert_eq!(SLOT_FOOTER_MAGIC[0], 0xfd);
+        assert_ne!(
+            SLOT_HEADER_MAGIC, SLOT_FOOTER_MAGIC,
+            "header and footer must differ or the scanner cannot orient a slot"
+        );
+        for (name, m) in [
+            ("header", &SLOT_HEADER_MAGIC),
+            ("footer", &SLOT_FOOTER_MAGIC),
+        ] {
+            assert!(
+                m[1..].iter().all(u8::is_ascii_graphic),
+                "{name} magic tail must stay ASCII so it is greppable in a binary"
+            );
+        }
+    }
 
     /// Builds a fake "binary" blob containing exactly one integrity
     /// slot with the MAC field zeroed, surrounded by filler bytes.
