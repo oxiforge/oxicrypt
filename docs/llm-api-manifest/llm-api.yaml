@@ -14446,19 +14446,19 @@ constants:
   - name: FIPS_INTEGRITY_KEY
     module: oxicrypt-integrity
     type: '[u8; 32]'
-    value: '*b"pqclib-fips-140-3-integrity-key!"'
+    value: '*b"oxicrypt-fips140-3-integrity-key"'
     description: Fixed, publicly known 32-byte HMAC key used for the module-binary integrity check.
 
   - name: SLOT_HEADER_MAGIC
     module: oxicrypt-integrity
     type: '[u8; 16]'
-    value: 0xfc followed by the ASCII bytes PQCLIB_FIPS_HDR
+    value: 0xfc followed by the ASCII bytes OXICRYPT_FIPS_H
     description: Header magic marking the start of the embedded integrity slot.
 
   - name: SLOT_FOOTER_MAGIC
     module: oxicrypt-integrity
     type: '[u8; 16]'
-    value: 0xfd followed by the ASCII bytes PQCLIB_FIPS_FTR
+    value: 0xfd followed by the ASCII bytes OXICRYPT_FIPS_F
     description: Footer magic marking the end of the embedded integrity slot.
 
   - name: SLOT_SIZE

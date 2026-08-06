@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The integrity key, the slot magics, and the self-test message constants no longer carry the `pqclib` project name.** `FIPS_INTEGRITY_KEY` is now `oxicrypt-fips140-3-integrity-key`, the slot magics are `0xfc OXICRYPT_FIPS_H` / `0xfd OXICRYPT_FIPS_F`, the two RSA power-up KAT messages and the three pairwise-consistency probe messages are `oxicrypt`-prefixed, and the pinned RSA signatures are regenerated to match. **Any binary signed with the previous key or magics will fail its power-up integrity check and must be re-signed** — `fips-integrity-sign --sign` is the same command as before. Rotating these after validation would require re-validation under IG 10.3.A, so this is the last point at which the change costs a re-sign and a test run rather than a submission (#193).
+- The `FIPS_INTEGRITY_KEY` doc comment named a key the module did not use: it stated an `oxicrypt-` prefix against a `pqclib-` constant, and the literal it named was 34 bytes where the type is `[u8; 32]`, so its own arithmetic disproved it. The doc now states the compiled literal, and a test reads the doc comment out of the source and asserts both the literal and its stated byte count against the constant, so the two cannot drift apart again (#193).
+
 ## [0.21.0] - 2026-08-06
 
 ### Removed

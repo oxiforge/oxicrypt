@@ -201,7 +201,7 @@ pub fn verify(
 /// test. The exact bytes don't matter — the PCT only needs
 /// sign-then-verify to round-trip — but pinning them makes the PCT
 /// code path deterministic given a fixed seed.
-const PCT_PROBE_MSG: &[u8] = b"pqclib-ed25519-pct";
+const PCT_PROBE_MSG: &[u8] = b"oxicrypt-ed25519-pct";
 
 /// An Ed25519 private key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
