@@ -107,9 +107,12 @@
 #
 # Bypass:
 #   git push --no-verify
-#   Use sparingly. Document the reason in the commit body or PR
-#   description so reviewers see the rationale (matching the
-#   pre-commit hook's bypass convention).
+#   Use sparingly — never to get a failing gate out of the way — and
+#   always document the reason in the commit body or PR description.
+#   A bypass here is always worth stating: it asserts the four gates
+#   would have passed, which is a factual claim a reviewer can check
+#   against the diff, and one nothing else re-tests while ci.yml is
+#   paused.
 #
 # Activation:
 #   git config core.hooksPath scripts/git-hooks

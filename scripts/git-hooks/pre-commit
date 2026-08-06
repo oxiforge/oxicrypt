@@ -14,14 +14,15 @@
 #   Trigger: any file under `crates/*/src/` is staged, AND the Security
 #            Policy is provisioned on this machine.
 #   Require: the policy to have been MODIFIED since the last commit.
-#   Why:     CLAUDE.md's "Insight capture at every commit" rule states
+#   Why:     AGENTS.md's "Insight capture (the gem)" rule states
 #            that every code commit should be a forcing function for
 #            capturing CMVP gems — compiler-enforced invariants,
 #            zeroization composition, conformance rationale, design-by-
 #            construction arguments — while the working context is warm.
 #            A gem deferred is usually a gem lost. If there really is no
-#            gem to capture (typo fix, reformat, pure refactor), state
-#            so in the commit body and bypass.
+#            gem to capture (typo fix, reformat, pure refactor), just
+#            bypass — no note in the commit body is expected. See Bypass
+#            below for why this check and check 1 differ.
 #
 #   The policy is NOT tracked in this repository — it is withheld from
 #   the public tree and lives in a private one (see
@@ -39,11 +40,27 @@
 #
 # Bypass:
 #   git commit --no-verify
-#   ALWAYS explain in the commit body — either "change is internal, no
-#   manifest delta" or "no gem surfaced, <reason>". The --no-verify
-#   loophole is fine as long as its use is documented; the hook's
-#   purpose is to force the thought, not to make the thought impossible
-#   to skip.
+#
+#   The two checks want different things from a bypass, because the
+#   bypasses assert different things.
+#
+#   Check 1 (manifest): explain it in the commit body — "change is
+#   internal, no manifest delta". That is a factual claim about the
+#   diff, and a reviewer can check it against the hunks.
+#
+#   Check 2 (policy): write nothing. A note there would record only
+#   that no gem surfaced — a negative nobody can verify or act on
+#   later. Requiring one buys no history and puts an unverifiable
+#   line on the majority of maintainer commits. (Maintainers, not
+#   contributors: the check is skipped entirely when the policy is
+#   not provisioned, which is every outside clone.)
+#
+#   This block is the canonical home for that rationale. AGENTS.md,
+#   CONTRIBUTING.md and the PR template state the rule and point
+#   here rather than restating the argument.
+#
+#   Either way the --no-verify loophole is fine; the hook's purpose is
+#   to force the thought, not to make the thought impossible to skip.
 #
 # Portability:
 #   The hook no-ops when neither target exists in this repo, so it can
@@ -173,8 +190,8 @@ fi
     fi
     if [[ $require_policy -eq 1 ]]; then
         echo "[ENFORCED] $POLICY_PATH not modified since the last commit."
-        echo "  Crate sources changed. CLAUDE.md's \"Insight capture at"
-        echo "  every commit\" rule asks you to pause and consider whether"
+        echo "  Crate sources changed. AGENTS.md's \"Insight capture"
+        echo "  (the gem)\" rule asks you to pause and consider whether"
         echo "  the change surfaced a CMVP gem — a compiler-enforced"
         echo "  invariant, a zeroization composition, a conformance"
         echo "  rationale, a design-by-construction argument that an"
@@ -191,8 +208,15 @@ fi
     echo "  README.md     (only if the crate map or project phase changed)"
     echo ""
     echo "To bypass:  git commit --no-verify"
-    echo "and state the reason in the commit body (e.g. \"pure refactor,"
-    echo "no pub-item semantics changed, no new invariant surfaced\")."
+    if [[ $require_manifest -eq 1 ]]; then
+        echo "  State a manifest bypass in the commit body (e.g. \"internal"
+        echo "  change, no manifest delta\") — that is a factual claim about"
+        echo "  the diff, and a reviewer can check it against the hunks."
+    fi
+    if [[ $require_policy -eq 1 ]]; then
+        echo "  A policy bypass needs no note. It would record only that no"
+        echo "  gem surfaced — a negative nobody can verify or act on later."
+    fi
 } >&2
 
 exit 1

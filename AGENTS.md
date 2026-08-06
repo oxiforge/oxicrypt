@@ -251,14 +251,18 @@ crate — directly or by reference — do all that apply:
    other repos. The pre-commit hook (`scripts/git-hooks/pre-commit`) enforces it by requiring the policy to
    have been modified since the last commit, alongside any change under `crates/*/src/`. Git cannot stage a
    file it does not track, so the signal is mtime rather than staged-ness; when the policy is not
-   provisioned at all — the normal case for an outside contributor — the check is skipped and says so. When a change surfaces no new claim, bypass with
-   `git commit --no-verify` and state the rationale in the commit body ("pure refactor, no new invariant").
+   provisioned at all — the normal case for an outside contributor — the check is skipped and says so. When a
+   change surfaces no new claim, bypass with `git commit --no-verify` and write nothing about it in the commit
+   body; no note is expected here, unlike the manifest check in step 4. Rationale for the asymmetry:
+   the `Bypass` block in `scripts/git-hooks/pre-commit`.
 3. **README.** Update `README.md` when a commit changes user-facing status — algorithm coverage, build
    instructions, workspace layout, project phase.
 4. **LAMA manifests (`lama-gem`).** Update root `lama.yaml` (concise discovery summary) and
    `docs/llm-api-manifest/llm-api.yaml` (full) for any add/remove/rename/signature-change of a public
    item. The pre-commit hook enforces `llm-api.yaml` on any `pub fn|struct|enum|const|type|trait`
-   change under `crates/*/src/`. Conform both to the LAMA spec; the root file stays a concise
+   change under `crates/*/src/`. Bypassing that check with `git commit --no-verify` **does** require a
+   line in the commit body ("internal change, no manifest delta") — unlike the policy check in step 2.
+   Conform both to the LAMA spec; the root file stays a concise
    capabilities + manifest pointer — never a milestone/coverage/status board. **No human names in LAMA.**
 
    **Coverage rule — what the manifest describes, and what it deliberately does not.** Stated here

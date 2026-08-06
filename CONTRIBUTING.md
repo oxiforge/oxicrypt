@@ -43,7 +43,7 @@ The hook enforces two checks on every commit (see `scripts/git-hooks/pre-commit`
 1. **LAMA manifest sync** — if a commit changes `pub fn|struct|enum|const|type|trait|static|union|mod` lines under `crates/*/src/`, `docs/llm-api-manifest/llm-api.yaml` must also be staged.
 2. **Security policy sync** — if any file under `crates/*/src/` is staged, the Security Policy must have been modified since the last commit. That document is withheld from this repository (see `docs/security-policy/README.md`), so git cannot stage it and the check is on mtime instead. **If you do not have the Security Policy, this check is skipped entirely** — it never blocks you on a document you cannot read.
 
-The hook can be bypassed with `git commit --no-verify`. **Bypasses must be explained in the commit body** — either "internal change, no manifest delta" or "no security-policy gem surfaced, <reason>". Undocumented `--no-verify` is a contribution-flow violation.
+The hook can be bypassed with `git commit --no-verify`. The two checks differ in what a bypass is worth recording. **A manifest-sync bypass must be explained in the commit body** — "internal change, no manifest delta". **A security-policy bypass needs no note**; it is the normal case. Bypassing the manifest check silently is a contribution-flow violation; the rationale for the asymmetry is in the hook header cited above.
 
 ## Branch naming
 
