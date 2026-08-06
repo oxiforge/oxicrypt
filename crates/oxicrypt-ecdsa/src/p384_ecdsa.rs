@@ -220,7 +220,7 @@ fn point_add(p1: &Point384, p2: &Point384) -> Point384 {
 // ------------------------------------------------------------------
 
 /// Fixed probe message for the IG 10.3.A pairwise consistency test.
-const PCT_PROBE_MSG: &[u8] = b"pqclib-ecdsa-p384-pct";
+const PCT_PROBE_MSG: &[u8] = b"oxicrypt-ecdsa-p384-pct";
 
 /// A P-384 ECDSA private key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
