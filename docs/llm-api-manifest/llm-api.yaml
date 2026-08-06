@@ -1777,6 +1777,9 @@ functions:
     module: oxicrypt-module
     description: Returns the active algorithm restriction profile.
     signature: "pub fn active_profile() -> AlgorithmProfile"
+    returns:
+      type: AlgorithmProfile
+      description: "The profile set by initialize_with_profile, or Unrestricted when the module was initialized without one."
 
   - name: require_operational
     module: oxicrypt-module
