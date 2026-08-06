@@ -262,18 +262,28 @@ crate — directly or by reference — do all that apply:
    capabilities + manifest pointer — never a milestone/coverage/status board. **No human names in LAMA.**
 
    **Coverage rule — what the manifest describes, and what it deliberately does not.** Stated here
-   because without it nothing distinguishes a deliberate exclusion from an oversight, which is how
-   five crates came to carry a `modules:` entry and no members at all.
+   because without it nothing distinguishes a deliberate exclusion from an oversight.
 
-   - Every workspace crate gets a `modules:` entry. A crate carrying `publish = false` is
-     out-of-boundary tooling and gets no `types:` / `functions:` / `constants:` members —
-     `oxicrypt-maxwell` is the only one today.
+   - **Every workspace crate gets a `modules:` entry; only crates on the crates.io roster get
+     members.** No exceptions list, deliberately: an absent crate is then always a defect rather
+     than possibly an intention, which is what makes the rule checkable. #174 is why — a publishable
+     crate with 14 public items was simply missing, and nothing distinguished that from a deliberate
+     omission. A crate carrying its own `publish = false` states in its `description:` that it is
+     out-of-boundary tooling and carries no members.
    - Every publishable crate's public API surface appears in `llm-api.yaml`, with two standing
      exclusions: gateless `*_internal` variants, which exist for the harness rather than for callers,
      and `*_self_test` functions with their `KATS` constants, which are power-up machinery no caller
      invokes directly.
-   - `oxicrypt-test-vectors` is test-support data, not API. It gets a `modules:` entry recording that,
-     and no members.
+   - Two crates on the roster carry no members, each for a stated reason in its `description:`.
+     `oxicrypt-test-vectors` is test-support data rather than API. `oxi` is a binary with no public
+     Rust items at all, so there is nothing a `functions:` entry could describe — its interface is a
+     CLI, which this schema has no slot for, and inventing `functions:` entries for CLI verbs would
+     hand an agent a `signature:` for a call site that does not exist.
+   - The never-published protocol clients keep their own draft manifests beside them —
+     `acvp-harness/llm-api-draft.yaml` and `esv-harness/llm-api-draft.yaml`. They describe real
+     library surfaces and would need manifests of their own if either is ever split out, so the work
+     is kept rather than deleted; it simply does not belong in a manifest describing the module a
+     consumer links against.
    - Serialization follows the spec: block style for every multi-element collection, flow style only
      for single-element arrays; `types[].kind` uses only `struct` / `enum` / `alias` / `trait` /
      `opaque`; `error_variants` nests under `returns:`; `constants:` holds constants alone —
