@@ -1,0 +1,21 @@
+# Provenance for scripts/lama-validate.ts
+#
+# That file is a VENDORED, BYTE-IDENTICAL copy of the LAMA specification's
+# conformance linter. It is not maintained here. Fixes and new rules belong
+# upstream; this repository re-vendors the result.
+#
+# Vendored rather than referenced because the two repositories have different
+# visibility, so a sibling-clone or submodule reference would work on the
+# author's machine and break for everyone else. A copy is honest about that,
+# provided its origin is recorded and its integrity is checked — which is what
+# this file and scripts/check-lama-manifests.sh are for.
+#
+# To re-vendor: copy tools/lama-validate.ts from the upstream revision, then
+# update all three fields below. The checksum is verified on every push.
+
+upstream_repo   = https://github.com/lamaspec/lama
+upstream_path   = tools/lama-validate.ts
+upstream_commit = 3b7cacc0d2a36fa24444ce8759b10dfddef05d06
+upstream_date   = 2026-08-06
+sha256          = ef064f97b12f65e940b5def2478118b3e2600bf41fc35e6ecc3b941138ce50c1
+bytes           = 6951

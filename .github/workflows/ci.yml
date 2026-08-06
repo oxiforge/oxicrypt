@@ -122,6 +122,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
 
+  # LAMA manifest conformance (#175). The cloud mirror of the same
+  # check the pre-push hook runs locally, kept here for the parity
+  # the header describes. Not a cargo step: it runs a vendored
+  # TypeScript linter, so it needs a bun runtime rather than a
+  # toolchain, and it is deliberately NOT a doc-guard test — that
+  # would make `cargo test` fail for anyone without bun installed,
+  # which is an unreasonable thing to ask of a Rust contributor.
+  lama:
+    name: LAMA manifest conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: ./scripts/check-lama-manifests.sh
+
   # Non-default feature configs — the local pre-push hook tests
   # default features only, so this job is cloud CI's unique
   # coverage: the rayon `parallel` path (incl. the golden-pin

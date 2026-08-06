@@ -337,7 +337,14 @@ sp_exempt_paths=(':!tools/doc-guard/src/lib.rs' ':!scripts/git-hooks/pre-push')
 sp_revs=()
 for pair in "${ref_pairs[@]:-}"; do
     read -r _l _r <<<"$pair"
-    [[ "$_l" =~ ^0+$ ]] && continue
+    # An empty local sha is not a revision. It arises when this loop runs over
+    # an empty ref_pairs array — `"${ref_pairs[@]:-}"` yields one empty element
+    # — which is what a manual invocation with nothing on stdin produces. The
+    # empty string then fell through to the fallback below and was appended as
+    # if it were a revision, so the array was never empty, the HEAD fallback
+    # never fired, and the positive control failed against a nonexistent rev.
+    # The hook could not be run by hand at all (#198).
+    [[ -z "$_l" || "$_l" =~ ^0+$ ]] && continue
     if [[ "$_r" =~ ^0+$ ]]; then
         base="$(git merge-base "$_l" origin/main 2>/dev/null || true)"
         range=$([[ -n "$base" ]] && echo "$base..$_l" || echo "$_l")
@@ -351,13 +358,30 @@ for pair in "${ref_pairs[@]:-}"; do
     [[ "${#sp_revs[@]}" -eq "$before" ]] && sp_revs+=("$_l")
 done
 if [[ "${#sp_revs[@]}" -eq 0 ]]; then
-    sp_revs=("HEAD")
-    echo "pre-push: security-policy containment — no pushed revisions enumerated; scanning HEAD."
+    if [[ "$saw_ref" == "true" ]]; then
+        # Refs were supplied but enumerated to nothing: an up-to-date push, or
+        # a deletion. There is no tree being published, so there is nothing to
+        # contain — and the control would fail for want of anything to find,
+        # which reads as a broken guard rather than an empty push (#198).
+        echo "pre-push: security-policy containment — no revisions to scan (branch up to date)."
+        sp_revs=()
+    else
+        sp_revs=("HEAD")
+        echo "pre-push: security-policy containment — no pushed revisions enumerated; scanning HEAD."
+    fi
 fi
 if [[ "${#sp_revs[@]}" -gt 200 ]]; then
     echo "pre-push: security-policy containment — ${#sp_revs[@]} revisions in range; scanning the newest 200."
     sp_revs=("${sp_revs[@]:0:200}")
 fi
+
+# An empty revision set must not reach the scan. Under `set -u` the array
+# expands to no arguments at all, which silently turns a history scan into a
+# working-tree scan — a different check wearing the same name, and one that
+# would report success for a push carrying nothing.
+if [[ "${#sp_revs[@]}" -eq 0 ]]; then
+    echo "pre-push: security-policy containment — nothing to scan; skipping."
+else
 
 # Positive control, with the same flags as the real scan. The exempt file carries
 # the phrase in every revision, so a scanner that finds nothing here is broken —
@@ -389,6 +413,7 @@ if [[ -n "$sp_named" || -n "$sp_phrased" ]]; then
     exit 1
 fi
 echo "pre-push: security-policy containment passed (${#sp_revs[@]} revision(s))."
+fi
 
 # ---------------------------------------------------------------------------
 # Publishability of internal dependencies (#196).
@@ -458,6 +483,109 @@ else
     if ! scripts/check-internal-deps.sh; then
         echo "pre-push: FAILED — internal dependencies are not publishable." >&2
         exit 1
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# LAMA manifest conformance (#175).
+#
+# Placed here for the same reasons as the internal-dependency check above: it
+# costs a fraction of a second, it reads the revisions being pushed rather than
+# the working tree, and it sits above the tag-only short-circuit and the stamp
+# cache so a docs-only push cannot slip past it. `docs/` is not in `rust_re`, so
+# a manifest edit is exactly the push that skips the four gates.
+#
+# pre-commit already requires the manifest to be STAGED alongside a public-item
+# change. It has never checked that the content conforms, so a manifest could be
+# dutifully updated into narrative prose that defeats the purpose of having one.
+#
+# Not part of the four gates: it is not a compile or test step, and it runs a
+# TypeScript linter rather than cargo.
+# ---------------------------------------------------------------------------
+if [[ ! -x scripts/check-lama-manifests.sh ]]; then
+    echo "pre-push: FAILED — scripts/check-lama-manifests.sh is missing or not executable." >&2
+    echo "pre-push:   A guard that silently disappears is the failure it exists to prevent." >&2
+    exit 1
+fi
+
+# The linter needs a bun runtime, which a Rust contributor has no reason to
+# have installed. Blocking every such push on it would be disproportionate;
+# skipping silently would let a non-conformant manifest through unremarked. So
+# the answer depends on what is being pushed: a push that touches no manifest
+# is announced as skipped, and a push that touches one is refused, because that
+# is precisely the push this check exists for.
+# `grep -q` is deliberately avoided below. Under `pipefail` it exits on its
+# first match, the upstream `git diff` takes SIGPIPE, and the pipeline reports
+# 141 — so a successful match can read as a failed test, which here would mean
+# concluding no manifest was touched precisely when one was. The file list is
+# captured first and matched without a pipeline.
+lama_re='(^|/)(lama\.yaml|llm-api[a-z-]*\.yaml)$'
+lama_touched=false
+if [[ "$saw_ref" == "true" ]]; then
+    for pair in "${ref_pairs[@]}"; do
+        read -r _l _r <<<"$pair"
+        [[ "$_l" =~ ^0+$ ]] && continue
+        if [[ "$_r" =~ ^0+$ ]]; then
+            base="$(git merge-base "$_l" origin/main 2>/dev/null || true)"
+            dr=$([[ -n "$base" ]] && echo "$base..$_l" || echo "$_l")
+        else
+            dr="$_r..$_l"
+        fi
+        lama_files="$(git diff --name-only "$dr" 2>/dev/null || true)"
+        if [[ -n "$lama_files" ]] && printf '%s\n' "$lama_files" | grep -Ec "$lama_re" >/dev/null; then
+            lama_touched=true
+            break
+        fi
+    done
+else
+    lama_files="$(git diff --name-only HEAD 2>/dev/null || true)"
+    if [[ -n "$lama_files" ]] && printf '%s\n' "$lama_files" | grep -Ec "$lama_re" >/dev/null; then
+        lama_touched=true
+    fi
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+    if [[ "$lama_touched" == "true" ]]; then
+        echo "pre-push: FAILED — this push edits a LAMA manifest and bun is not installed." >&2
+        echo "pre-push:   The conformance linter cannot run, so the manifest cannot be" >&2
+        echo "pre-push:   checked. Install bun (https://bun.sh) and push again." >&2
+        exit 1
+    fi
+    echo "pre-push: LAMA conformance SKIPPED — bun is not installed and no manifest is being pushed."
+else
+    if [[ "$saw_ref" == "true" ]]; then
+        lama_checked=0
+        for pair in "${ref_pairs[@]}"; do
+            lama_sha="${pair%% *}"
+            [[ "$lama_sha" =~ ^0+$ ]] && continue   # ref deletion — nothing to gate
+
+            # A revision predating this guard has nothing to check. Skipping is
+            # correct, and it is announced so the skip is never read as a pass.
+            if ! git cat-file -e "$lama_sha:scripts/check-lama-manifests.sh" 2>/dev/null; then
+                echo "pre-push: LAMA conformance SKIPPED for ${lama_sha:0:12} — the revision predates the guard."
+                continue
+            fi
+            if ! scripts/check-lama-manifests.sh "$lama_sha"; then
+                echo "pre-push: FAILED — LAMA manifests are not conformant in ${lama_sha:0:12}." >&2
+                exit 1
+            fi
+            lama_checked=$((lama_checked + 1))
+        done
+        if [[ "$lama_checked" -eq 0 ]]; then
+            # Every revision was skipped. Reporting that as "passed" would put
+            # the word next to a count of zero and read as success at a glance,
+            # which is how a gate that checked nothing gets mistaken for one
+            # that approved everything.
+            echo "pre-push: LAMA conformance — no revisions checked (all skipped)."
+        else
+            echo "pre-push: LAMA conformance passed ($lama_checked revision(s))."
+        fi
+    else
+        echo "pre-push: LAMA conformance — no pushed refs enumerated; checking the working tree."
+        if ! scripts/check-lama-manifests.sh; then
+            echo "pre-push: FAILED — LAMA manifests are not conformant." >&2
+            exit 1
+        fi
     fi
 fi
 

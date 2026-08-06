@@ -292,6 +292,33 @@ crate — directly or by reference — do all that apply:
      for single-element arrays; `types[].kind` uses only `struct` / `enum` / `alias` / `trait` /
      `opaque`; `error_variants` nests under `returns:`; `constants:` holds constants alone —
      an entry with a `signature:` is a function and belongs in `functions:`.
+
+   **Conformance is checked mechanically, at every push.** `scripts/check-lama-manifests.sh` runs
+   the LAMA conformance linter over every manifest in the tree and fails on any finding; the
+   pre-push hook calls it against the revisions being pushed. Run it by hand any time:
+
+   ```bash
+   ./scripts/check-lama-manifests.sh          # working tree
+   ./scripts/check-lama-manifests.sh <rev>    # a specific revision
+   ```
+
+   Three things worth knowing about it.
+
+   It runs the linter in **strict** mode, so a warning fails the push. Four of the six LAMA rules
+   are advisory upstream and never move an exit code, and those four are the narrative-creep rules
+   — a gate on the default contract would enforce two rules while appearing to enforce six. These
+   manifests are at zero findings and are held there.
+
+   The linter itself is **vendored, not maintained here**: `scripts/lama-validate.ts` is a
+   byte-identical copy of the upstream file recorded in `scripts/lama-validate.provenance`, and its
+   checksum is verified on every run. Fixes and new rules go upstream first, then get re-vendored
+   by copying the file and updating all three provenance fields. A local edit to the vendored copy
+   fails the check by design — a linter quietly weakened in-tree reports no findings, which is
+   indistinguishable from conformance.
+
+   It checks **prose conformance, not coverage**. A manifest can pass here with every rule clear
+   and still omit an entire crate; that is what the coverage rule above is for, and it is not
+   mechanised. A green run must never be read as "the manifest is complete."
 5. **Release history (`changelog-gem`).** `CHANGELOG.md` follows Keep-a-Changelog with a standing
    `## [Unreleased]` section. Every PR that changes user-facing behavior adds its line under
    `[Unreleased]` **in that same PR**, citing its issue/PR number (`… (#N)`) and closing the issue via
