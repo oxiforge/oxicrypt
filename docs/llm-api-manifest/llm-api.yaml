@@ -360,6 +360,54 @@ families:
 # Types
 # ─────────────────────────────────────────────────────────────────────
 
+  - name: xof-hasher-new
+    description: Extendable-output and SP 800-185 hasher constructors, one per variant.
+    applies_to: functions
+
+  - name: xof-hasher-update
+    description: Extendable-output hasher absorb methods taking a message slice.
+    applies_to: functions
+
+  - name: xof-hasher-finalize-into
+    description: SP 800-185 hasher finalizers writing into a caller-sized output buffer.
+    applies_to: functions
+
+  - name: slh-dsa-keygen
+    description: SLH-DSA key generation, one per FIPS 205 parameter set.
+    applies_to: functions
+
+  - name: slh-dsa-sign
+    description: SLH-DSA signature generation, one per FIPS 205 parameter set.
+    applies_to: functions
+
+  - name: slh-dsa-verify
+    description: SLH-DSA signature verification, one per FIPS 205 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-keygen
+    description: ML-KEM key generation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-encapsulate
+    description: ML-KEM encapsulation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-kem-decapsulate
+    description: ML-KEM decapsulation, one per FIPS 203 parameter set.
+    applies_to: functions
+
+  - name: ml-dsa-keygen
+    description: ML-DSA key generation, one per FIPS 204 parameter set.
+    applies_to: functions
+
+  - name: ml-dsa-sign
+    description: ML-DSA signature generation, one per FIPS 204 parameter set.
+    applies_to: functions
+
+  - name: ml-dsa-verify
+    description: ML-DSA signature verification, one per FIPS 204 parameter set.
+    applies_to: functions
+
 types:
   - name: State
     module: oxicrypt-module
@@ -2357,6 +2405,7 @@ functions:
 
   - name: "Shake128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a streaming SHAKE128 extendable-output hasher.
     signature: "pub fn Shake128::new() -> Result<Self, Error>"
     parameters: []
@@ -2393,6 +2442,7 @@ functions:
 
   - name: "Shake128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Feed data into the XOF absorb phase; canonical for the xof-streaming-hasher family.
     signature: "pub fn update(&mut self, data: &[u8])"
     parameters:
@@ -2504,6 +2554,7 @@ functions:
 
   - name: "Shake256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a streaming SHAKE256 XOF. update/finalize/squeeze identical to Shake128."
     signature: "pub fn Shake256::new() -> Result<Self, Error>"
     returns:
@@ -2516,6 +2567,7 @@ functions:
 
   - name: "CShake128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a streaming cSHAKE128 XOF with function-name N and customization S (SP 800-185 §3); reduces to plain SHAKE128 when both are empty.
     signature: "pub fn CShake128::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2561,6 +2613,7 @@ functions:
 
   - name: "CShake256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a streaming cSHAKE256 XOF with N and S. update/finalize/squeeze identical to Shake128."
     signature: "pub fn CShake256::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2575,6 +2628,7 @@ functions:
 
   - name: "Kmac128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a KMAC128 keyed MAC with key and customization string S (SP 800-185 §4), followed by update* then finalize_into for a fixed-length tag.
     signature: "pub fn Kmac128::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2619,6 +2673,7 @@ functions:
 
   - name: "Kmac128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Feed message data into the KMAC computation; legal only before finalize_into / finalize.
     signature: "pub fn update(&mut self, data: &[u8])"
     parameters:
@@ -2641,6 +2696,7 @@ functions:
 
   - name: "Kmac128::finalize_into"
     module: oxicrypt-xof
+    family: xof-hasher-finalize-into
     description: Bind the output length L = tag.len()*8 into the computation, then finalize and write exactly tag.len() bytes into tag; canonical for the xof-fixed-hasher finalize_into shape.
     signature: "pub fn finalize_into(&mut self, tag: &mut [u8])"
     parameters:
@@ -2682,6 +2738,7 @@ functions:
 
   - name: "Kmac256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a KMAC256 keyed MAC with key and S. update/finalize_into identical to Kmac128."
     signature: "pub fn Kmac256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2694,6 +2751,7 @@ functions:
 
   - name: "KmacXof128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a KMACXOF128 extendable-output keyed MAC with key and S (SP 800-185 §4.3.1), new(key,s)/update/finalize/squeeze; output length is not bound in.
     signature: "pub fn KmacXof128::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2731,6 +2789,7 @@ functions:
 
   - name: "KmacXof256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a KMACXOF256 XOF keyed MAC with key and S. update/finalize/squeeze identical to Shake128."
     signature: "pub fn KmacXof256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2745,6 +2804,7 @@ functions:
 
   - name: "TupleHash128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a TupleHash128 instance with customization string S (SP 800-185 §5); each update() adds one tuple element, finalize_into binds the output length.
     signature: "pub fn TupleHash128::new(s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2783,6 +2843,7 @@ functions:
 
   - name: "TupleHash128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Add ONE tuple element (encode_string-framed); element boundaries are significant, so ("AB","C") differs from ("A","BC").
     signature: "pub fn update(&mut self, element: &[u8])"
     parameters:
@@ -2812,6 +2873,7 @@ functions:
 
   - name: "TupleHash128::finalize_into"
     module: oxicrypt-xof
+    family: xof-hasher-finalize-into
     description: "Bind the output length and write the TupleHash into `out`."
     signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
     parameters:
@@ -2841,6 +2903,7 @@ functions:
 
   - name: "TupleHash256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a TupleHash256 instance with S. update (one element per call)/finalize_into identical to TupleHash128."
     signature: "pub fn TupleHash256::new(s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2853,6 +2916,7 @@ functions:
 
   - name: "TupleHashXof128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a TupleHashXOF128 instance with S (SP 800-185 §5.3.1)."
     signature: "pub fn TupleHashXof128::new(s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2865,6 +2929,7 @@ functions:
 
   - name: "TupleHashXof256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a TupleHashXOF256 instance with S. update (one element per call)/finalize/squeeze identical to TupleHashXof128."
     signature: "pub fn TupleHashXof256::new(s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2879,6 +2944,7 @@ functions:
 
   - name: "ParallelHash128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: Create a ParallelHash128 instance with block size B (bytes) and customization string S (SP 800-185 §6), followed by update* then finalize_into.
     signature: "pub fn ParallelHash128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     parameters:
@@ -2930,6 +2996,7 @@ functions:
 
   - name: "ParallelHash128::update"
     module: oxicrypt-xof
+    family: xof-hasher-update
     description: Feed data into the hasher, internally buffering up to B bytes and flushing each complete B-byte block to the inner SHAKE; any chunking yields the same result.
     signature: "pub fn update(&mut self, data: &[u8])"
     parameters:
@@ -2952,6 +3019,7 @@ functions:
 
   - name: "ParallelHash128::finalize_into"
     module: oxicrypt-xof
+    family: xof-hasher-finalize-into
     description: "Flush the trailing partial block, bind the output length, and write the hash into `out`."
     signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
     parameters:
@@ -2981,6 +3049,7 @@ functions:
 
   - name: "ParallelHash256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a ParallelHash256 instance with block size B and S. update/finalize_into identical to ParallelHash128."
     signature: "pub fn ParallelHash256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -2993,6 +3062,7 @@ functions:
 
   - name: "ParallelHashXof128::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a ParallelHashXOF128 instance with block size B and S (SP 800-185 §6.3.1). update then finalize then squeeze for arbitrary-length output."
     signature: "pub fn ParallelHashXof128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -3005,6 +3075,7 @@ functions:
 
   - name: "ParallelHashXof256::new"
     module: oxicrypt-xof
+    family: xof-hasher-new
     description: "Create a ParallelHashXOF256 instance with block size B and S. update/finalize/squeeze identical to ParallelHashXof128."
     signature: "pub fn ParallelHashXof256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
@@ -4948,6 +5019,7 @@ functions:
 
   - name: keygen
     module: oxicrypt-ml-kem
+    family: ml-kem-keygen
     signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1568], [u8; 3168]), Error>"
     description: Generate an ML-KEM-1024 key pair; d and z must each be 32 bytes of fresh randomness from an approved DRBG (SP 800-90A).
     parameters:
@@ -4986,6 +5058,7 @@ functions:
 
   - name: encapsulate
     module: oxicrypt-ml-kem
+    family: ml-kem-encapsulate
     signature: "pub fn encapsulate(ek: &[u8; 1568], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1568]), Error>"
     description: Encapsulate a shared secret against an ML-KEM-1024 encapsulation key; m must be 32 bytes of fresh randomness from an approved DRBG.
     parameters:
@@ -5025,6 +5098,7 @@ functions:
 
   - name: decapsulate
     module: oxicrypt-ml-kem
+    family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 3168], ct: &[u8; 1568]) -> Result<[u8; 32], Error>"
     description: Decapsulate a shared secret from an ML-KEM-1024 ciphertext using implicit rejection; an invalid ciphertext yields a constant-time pseudorandom key.
     parameters:
@@ -5064,6 +5138,7 @@ functions:
 
   - name: "ml_kem_512::keygen"
     module: oxicrypt-ml-kem
+    family: ml-kem-keygen
     signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 800], [u8; 1632]), Error>"
     description: Generate an ML-KEM-512 key pair (FIPS 203 §6.1, k=2); d and z are 32-byte caller-supplied randomness, NOT interchangeable.
     parameters:
@@ -5095,6 +5170,7 @@ functions:
 
   - name: "ml_kem_512::encapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-encapsulate
     signature: "pub fn encapsulate(ek: &[u8; 800], m: &[u8; 32]) -> Result<([u8; 32], [u8; 768]), Error>"
     description: Encapsulate a shared secret against an ML-KEM-512 encapsulation key (FIPS 203 §6.2, k=2); m is 32-byte caller-supplied randomness from an approved DRBG.
     parameters:
@@ -5124,6 +5200,7 @@ functions:
 
   - name: "ml_kem_512::decapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 1632], ct: &[u8; 768]) -> Result<[u8; 32], Error>"
     description: "Decapsulate a shared secret from an ML-KEM-512 ciphertext (FIPS 203 §6.3, k=2) using implicit rejection: constant-time pseudorandom output on malformed ciphertext."
     parameters:
@@ -5155,6 +5232,7 @@ functions:
 
   - name: "ml_kem_768::keygen"
     module: oxicrypt-ml-kem
+    family: ml-kem-keygen
     signature: "pub fn keygen(d: &[u8; 32], z: &[u8; 32]) -> Result<([u8; 1184], [u8; 2400]), Error>"
     description: Generate an ML-KEM-768 key pair (FIPS 203 §6.1, k=3); d and z are 32-byte caller-supplied randomness, NOT interchangeable.
     parameters:
@@ -5186,6 +5264,7 @@ functions:
 
   - name: "ml_kem_768::encapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-encapsulate
     signature: "pub fn encapsulate(ek: &[u8; 1184], m: &[u8; 32]) -> Result<([u8; 32], [u8; 1088]), Error>"
     description: Encapsulate a shared secret against an ML-KEM-768 encapsulation key (FIPS 203 §6.2, k=3); m is 32-byte caller-supplied randomness from an approved DRBG.
     parameters:
@@ -5215,6 +5294,7 @@ functions:
 
   - name: "ml_kem_768::decapsulate"
     module: oxicrypt-ml-kem
+    family: ml-kem-decapsulate
     signature: "pub fn decapsulate(dk: &[u8; 2400], ct: &[u8; 1088]) -> Result<[u8; 32], Error>"
     description: "Decapsulate a shared secret from an ML-KEM-768 ciphertext (FIPS 203 §6.3, k=3) using implicit rejection: constant-time pseudorandom output on malformed ciphertext."
     parameters:
@@ -5246,6 +5326,7 @@ functions:
 
   - name: keygen
     module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
     signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 2592], [u8; 4896]), Error>"
     description: Generate an ML-DSA-87 key pair; xi must be 32 bytes of fresh randomness from an approved DRBG (SP 800-90A).
     parameters:
@@ -5280,6 +5361,7 @@ functions:
 
   - name: sign
     module: oxicrypt-ml-dsa
+    family: ml-dsa-sign
     signature: "pub fn sign(sk: &[u8; 4896], message: &[u8], ctx: &[u8]) -> Result<[u8; 4627], Error>"
     description: External ML-DSA.Sign (FIPS 204 §5.2 Algorithm 2), framing M' = 0x00 || |ctx| || ctx || M (pure ML-DSA); signs deterministically with Fiat-Shamir-with-aborts.
     parameters:
@@ -5324,6 +5406,7 @@ functions:
 
   - name: verify
     module: oxicrypt-ml-dsa
+    family: ml-dsa-verify
     signature: "pub fn verify(pk: &[u8; 2592], message: &[u8], ctx: &[u8], sig: &[u8; 4627]) -> Result<(), Error>"
     description: External ML-DSA.Verify (FIPS 204 §5.2 Algorithm 3), framing M' = 0x00 || |ctx| || ctx || M; Ok(()) if valid, Err(InvalidInput) if not, public-data only. ctx must match the sign-time value.
     parameters:
@@ -5374,6 +5457,7 @@ functions:
 
   - name: "ml_dsa_44::keygen"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
     signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 1312], [u8; 2560]), Error>"
     description: Generate an ML-DSA-44 key pair (FIPS 204 §6.1); xi is a 32-byte caller-supplied DRBG seed.
     parameters:
@@ -5401,6 +5485,7 @@ functions:
 
   - name: "ml_dsa_44::sign"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-sign
     signature: "pub fn sign(sk: &[u8; 2560], message: &[u8], ctx: &[u8]) -> Result<[u8; 2420], Error>"
     description: External ML-DSA.Sign (FIPS 204 §5.2 Algorithm 2) for ML-DSA-44, framing M' = 0x00 || |ctx| || ctx || M; signs deterministically.
     parameters:
@@ -5436,6 +5521,7 @@ functions:
 
   - name: "ml_dsa_44::verify"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-verify
     signature: "pub fn verify(pk: &[u8; 1312], message: &[u8], ctx: &[u8], sig: &[u8; 2420]) -> Result<(), Error>"
     description: External ML-DSA.Verify (FIPS 204 §5.2 Algorithm 3) for ML-DSA-44, framing M' = 0x00 || |ctx| || ctx || M; Ok(()) on valid, Err(InvalidInput) on invalid. ctx must match the sign-time value.
     parameters:
@@ -5477,6 +5563,7 @@ functions:
 
   - name: "ml_dsa_65::keygen"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-keygen
     signature: "pub fn keygen(xi: &[u8; 32]) -> Result<([u8; 1952], [u8; 4032]), Error>"
     description: Generate an ML-DSA-65 key pair (FIPS 204 §6.1); xi is a 32-byte caller-supplied DRBG seed.
     parameters:
@@ -5504,6 +5591,7 @@ functions:
 
   - name: "ml_dsa_65::sign"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-sign
     signature: "pub fn sign(sk: &[u8; 4032], message: &[u8], ctx: &[u8]) -> Result<[u8; 3309], Error>"
     description: External ML-DSA.Sign (FIPS 204 §5.2 Algorithm 2) for ML-DSA-65, framing M' = 0x00 || |ctx| || ctx || M; signs deterministically.
     parameters:
@@ -5539,6 +5627,7 @@ functions:
 
   - name: "ml_dsa_65::verify"
     module: oxicrypt-ml-dsa
+    family: ml-dsa-verify
     signature: "pub fn verify(pk: &[u8; 1952], message: &[u8], ctx: &[u8], sig: &[u8; 3309]) -> Result<(), Error>"
     description: External ML-DSA.Verify (FIPS 204 §5.2 Algorithm 3) for ML-DSA-65, framing M' = 0x00 || |ctx| || ctx || M.
     parameters:
@@ -5920,6 +6009,7 @@ functions:
 
   - name: keygen
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     description: "Generate an SLH-DSA-SHA2-256s key pair (stateless). xi must be 96 bytes of fresh randomness (SK.seed || SK.prf || PK.seed)."
     parameters:
       - name: xi
@@ -5948,6 +6038,7 @@ functions:
 
   - name: sign
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 29792], Error>"
     description: "External slh_sign (FIPS 205 §9.2 Algorithm 22) for SLH-DSA-SHA2-256s, deterministic (opt_rand = PK.seed)."
     parameters:
@@ -5987,6 +6078,7 @@ functions:
 
   - name: verify
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify (FIPS 205 §9.3 Algorithm 24) for SLH-DSA-SHA2-256s."
     parameters:
@@ -6030,6 +6122,7 @@ functions:
 
   - name: "slh_dsa_sha2_128s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHA2-128s key pair (stateless, Unrestricted profile only). xi must be 48 bytes (SK.seed || SK.prf || PK.seed)."
     parameters:
@@ -6053,6 +6146,7 @@ functions:
 
   - name: "slh_dsa_sha2_128s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 7856], Error>"
     description: "External slh_sign (FIPS 205 §9.2 Algorithm 22) for SLH-DSA-SHA2-128s, deterministic."
     parameters:
@@ -6075,6 +6169,7 @@ functions:
 
   - name: "slh_dsa_sha2_128s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify (FIPS 205 §9.3 Algorithm 24) for SLH-DSA-SHA2-128s."
     parameters:
@@ -6103,6 +6198,7 @@ functions:
 
   - name: "slh_dsa_sha2_128f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHA2-128f (fast) key pair: shorter tree depth, larger signatures. xi must be 48 bytes (SK.seed || SK.prf || PK.seed)."
     parameters:
@@ -6126,6 +6222,7 @@ functions:
 
   - name: "slh_dsa_sha2_128f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 17088], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-128f."
     parameters:
@@ -6148,6 +6245,7 @@ functions:
 
   - name: "slh_dsa_sha2_128f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-128f."
     parameters:
@@ -6176,6 +6274,7 @@ functions:
 
   - name: "slh_dsa_sha2_192s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHA2-192s (slow, 192-bit security) key pair. xi must be 72 bytes."
     parameters:
@@ -6199,6 +6298,7 @@ functions:
 
   - name: "slh_dsa_sha2_192s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 16224], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-192s."
     parameters:
@@ -6221,6 +6321,7 @@ functions:
 
   - name: "slh_dsa_sha2_192s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-192s."
     parameters:
@@ -6249,6 +6350,7 @@ functions:
 
   - name: "slh_dsa_sha2_192f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHA2-192f (fast) key pair. xi must be 72 bytes."
     parameters:
@@ -6272,6 +6374,7 @@ functions:
 
   - name: "slh_dsa_sha2_192f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 35664], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-192f."
     parameters:
@@ -6294,6 +6397,7 @@ functions:
 
   - name: "slh_dsa_sha2_192f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-192f."
     parameters:
@@ -6322,6 +6426,7 @@ functions:
 
   - name: "slh_dsa_sha2_256f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
     description: "Generate an SLH-DSA-SHA2-256f (fast, 256-bit security) key pair: larger and faster signatures. xi must be 96 bytes."
     parameters:
@@ -6345,6 +6450,7 @@ functions:
 
   - name: "slh_dsa_sha2_256f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 49856], Error>"
     description: "External slh_sign for SLH-DSA-SHA2-256f."
     parameters:
@@ -6367,6 +6473,7 @@ functions:
 
   - name: "slh_dsa_sha2_256f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHA2-256f."
     parameters:
@@ -6395,6 +6502,7 @@ functions:
 
   - name: "slh_dsa_shake_128s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHAKE-128s key pair: 7856-byte signatures. xi must be 48 bytes (SK.seed || SK.prf || PK.seed)."
     parameters:
@@ -6409,6 +6517,7 @@ functions:
 
   - name: "slh_dsa_shake_128s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 7856], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-128s."
     parameters:
@@ -6431,6 +6540,7 @@ functions:
 
   - name: "slh_dsa_shake_128s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-128s."
     parameters:
@@ -6459,6 +6569,7 @@ functions:
 
   - name: "slh_dsa_shake_128f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 32], [u8; 64]), Error>"
     description: "Generate an SLH-DSA-SHAKE-128f (fast, 128-bit security) key pair: 17088-byte signatures. xi must be 48 bytes."
     parameters:
@@ -6473,6 +6584,7 @@ functions:
 
   - name: "slh_dsa_shake_128f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 17088], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-128f."
     parameters:
@@ -6495,6 +6607,7 @@ functions:
 
   - name: "slh_dsa_shake_128f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-128f."
     parameters:
@@ -6523,6 +6636,7 @@ functions:
 
   - name: "slh_dsa_shake_192s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHAKE-192s (192-bit security) key pair: 16224-byte signatures. xi must be 72 bytes."
     parameters:
@@ -6537,6 +6651,7 @@ functions:
 
   - name: "slh_dsa_shake_192s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 16224], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-192s."
     parameters:
@@ -6559,6 +6674,7 @@ functions:
 
   - name: "slh_dsa_shake_192s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-192s."
     parameters:
@@ -6587,6 +6703,7 @@ functions:
 
   - name: "slh_dsa_shake_192f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 48], [u8; 96]), Error>"
     description: "Generate an SLH-DSA-SHAKE-192f (fast, 192-bit security) key pair: 35664-byte signatures. xi must be 72 bytes."
     parameters:
@@ -6601,6 +6718,7 @@ functions:
 
   - name: "slh_dsa_shake_192f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 35664], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-192f."
     parameters:
@@ -6623,6 +6741,7 @@ functions:
 
   - name: "slh_dsa_shake_192f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-192f."
     parameters:
@@ -6651,6 +6770,7 @@ functions:
 
   - name: "slh_dsa_shake_256s::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
     description: "Generate an SLH-DSA-SHAKE-256s (256-bit security) key pair: 29792-byte signatures. xi must be 96 bytes."
     parameters:
@@ -6665,6 +6785,7 @@ functions:
 
   - name: "slh_dsa_shake_256s::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 29792], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-256s."
     parameters:
@@ -6687,6 +6808,7 @@ functions:
 
   - name: "slh_dsa_shake_256s::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-256s."
     parameters:
@@ -6715,6 +6837,7 @@ functions:
 
   - name: "slh_dsa_shake_256f::keygen"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-keygen
     signature: "pub fn keygen(xi: &[u8]) -> Result<([u8; 64], [u8; 128]), Error>"
     description: "Generate an SLH-DSA-SHAKE-256f (fast, 256-bit security) key pair: 49856-byte signatures. xi must be 96 bytes."
     parameters:
@@ -6729,6 +6852,7 @@ functions:
 
   - name: "slh_dsa_shake_256f::sign"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-sign
     signature: "pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; 49856], Error>"
     description: "External slh_sign for SLH-DSA-SHAKE-256f."
     parameters:
@@ -6751,6 +6875,7 @@ functions:
 
   - name: "slh_dsa_shake_256f::verify"
     module: oxicrypt-slh-dsa
+    family: slh-dsa-verify
     signature: "pub fn verify(pk: &[u8], message: &[u8], ctx: &[u8], signature: &[u8]) -> Result<(), Error>"
     description: "External slh_verify for SLH-DSA-SHAKE-256f."
     parameters:
