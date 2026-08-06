@@ -379,6 +379,11 @@ cargo build --release -p oxicrypt-ffi
 #   target/release/liboxicrypt_ffi.a    (staticlib — static linking)
 ```
 
+Building **from a git clone** requires symlink support in your checkout — the
+crate reaches the LAMA manifest through one. See
+[CONTRIBUTING.md § One-time setup](CONTRIBUTING.md#one-time-setup). This does not
+apply to the crate as published on crates.io, where the file is a normal file.
+
 Sign both artifacts with `fips-integrity-sign` before use in a
 FIPS-validated context (the embedded HMAC-SHA-256 slot is populated
 in place):

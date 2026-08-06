@@ -16,6 +16,22 @@ Beyond a Rust toolchain, the hooks need **`jq`** on `PATH` (`scripts/check-inter
 only consumer). Without it that check exits 2 naming the missing tool rather than reporting a
 workspace defect, but the push is still refused.
 
+**Your checkout must support symlinks.** Four crates embed the LAMA manifest and reach the canonical
+`docs/llm-api-manifest/llm-api.yaml` through a symlink in their own package root, because
+`cargo package` ships only what lies inside that root and materialises the symlink's content into
+the published tarball. If git checks those out as plain text files — the default on Windows without
+`core.symlinks`, and the reason this is worth stating — `include_str!` embeds the *target path*
+instead of the manifest, and nothing about the build reports a problem:
+
+```bash
+git config core.symlinks true   # then re-checkout, e.g. `git checkout -- .`
+```
+
+`doc-guard`'s `embedded_lama_manifests_are_the_manifest` fails loudly in that state, comparing each
+embedded copy byte-for-byte against the canonical file, so `cargo test` tells you rather than
+`cargo publish` shipping it. Consumers of the **published** crates are unaffected — a tarball
+contains no symlinks.
+
 After cloning, activate the doc-sync pre-commit hook:
 
 ```bash
