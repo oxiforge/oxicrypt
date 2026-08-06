@@ -4956,13 +4956,13 @@ functions:
     returns:
       type: "Result<([u8; 1568], [u8; 3168]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-1024 blocked by active profile.
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 blocked by active profile.
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     preconditions:
       - description: Module must be Operational.
       - description: d and z must each be 32 bytes of fresh random data from an approved DRBG.
@@ -4994,13 +4994,13 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 1568]), Error>"
       description: "(shared_secret, ciphertext)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-1024 blocked by active profile.
-      - name: InvalidInput
-        condition: Invalid encapsulation key or randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 blocked by active profile.
+        - name: InvalidInput
+          condition: Invalid encapsulation key or randomness.
     preconditions:
       - description: Module must be Operational.
       - description: ek must be a valid 1568-byte encapsulation key from keygen.
@@ -5033,11 +5033,11 @@ functions:
     returns:
       type: "Result<[u8; 32], Error>"
       description: "32-byte shared secret."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-1024 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-1024 blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: dk must be a valid 3168-byte decapsulation key from keygen.
@@ -5072,13 +5072,13 @@ functions:
     returns:
       type: "Result<([u8; 800], [u8; 1632]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-512 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5103,11 +5103,11 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 768]), Error>"
       description: "(shared_secret, ciphertext)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-512 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5132,11 +5132,11 @@ functions:
     returns:
       type: "Result<[u8; 32], Error>"
       description: "32-byte shared secret (valid or pseudorandom by design)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-512 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-512 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5163,13 +5163,13 @@ functions:
     returns:
       type: "Result<([u8; 1184], [u8; 2400]), Error>"
       description: "(encapsulation_key, decapsulation_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-768 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5194,11 +5194,11 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 1088]), Error>"
       description: "(shared_secret, ciphertext)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-768 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5223,11 +5223,11 @@ functions:
     returns:
       type: "Result<[u8; 32], Error>"
       description: "32-byte shared secret (valid or pseudorandom by design)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-KEM-768 blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-KEM-768 blocked by active profile.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5250,13 +5250,13 @@ functions:
     returns:
       type: "Result<([u8; 2592], [u8; 4896]), Error>"
       description: "(public_key, secret_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-87 blocked by active profile.
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 blocked by active profile.
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5292,13 +5292,13 @@ functions:
     returns:
       type: "Result<[u8; 4627], Error>"
       description: "4627-byte ML-DSA-87 signature."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-87 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255, invalid secret key, or rejection loop exceeded limit.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255, invalid secret key, or rejection loop exceeded limit.
     preconditions:
       - description: Module must be Operational.
       - description: sk must be a valid 4896-byte secret key from keygen.
@@ -5340,13 +5340,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if signature is valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-87 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or signature verification failed.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-87 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or signature verification failed.
     preconditions:
       - description: Module must be Operational.
       - description: pk must be a valid 2592-byte public key from keygen.
@@ -5378,13 +5378,13 @@ functions:
     returns:
       type: "Result<([u8; 1312], [u8; 2560]), Error>"
       description: "(public_key, secret_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5413,13 +5413,13 @@ functions:
     returns:
       type: "Result<[u8; 2420], Error>"
       description: "2420-byte ML-DSA-44 signature."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-44 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or rejection loop exceeded limit.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or rejection loop exceeded limit.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -5452,13 +5452,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) otherwise."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-44 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or signature verification failed.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-44 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or signature verification failed.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5481,13 +5481,13 @@ functions:
     returns:
       type: "Result<([u8; 1952], [u8; 4032]), Error>"
       description: "(public_key, secret_key)"
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
-      - name: InvalidInput
-        condition: Invalid or insufficient randomness.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile (not in CNSA 1.0 or CNSA 2.0).
+        - name: InvalidInput
+          condition: Invalid or insufficient randomness.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5516,13 +5516,13 @@ functions:
     returns:
       type: "Result<[u8; 3309], Error>"
       description: "3309-byte ML-DSA-65 signature."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-65 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or rejection loop exceeded limit.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or rejection loop exceeded limit.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -5555,13 +5555,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) otherwise."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: ML-DSA-65 blocked by active profile.
-      - name: InvalidInput
-        condition: ctx.len() > 255 or signature verification failed.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: ML-DSA-65 blocked by active profile.
+        - name: InvalidInput
+          condition: ctx.len() > 255 or signature verification failed.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -5584,11 +5584,11 @@ functions:
     returns:
       type: "Result<(LmsPrivateKey, [u8; 56]), Error>"
       description: "(private_key, public_key)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5620,13 +5620,13 @@ functions:
     returns:
       type: "Result<[u8; 2508], Error>"
       description: "2508-byte LMS signature: q (4) || LMOTS sig (2404) || LMS type (4) || auth path (10 × 32 = 320) minus padding overlaps."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
-      - name: InvalidInput
-        condition: Key exhausted (leaf_index >= 1024).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
+        - name: InvalidInput
+          condition: Key exhausted (leaf_index >= 1024).
     preconditions:
       - description: Module must be Operational.
       - description: key.leaf_index < 1024 (key not exhausted).
@@ -5672,13 +5672,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
-      - name: InvalidInput
-        condition: Signature verification failed or malformed inputs.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
+        - name: InvalidInput
+          condition: Signature verification failed or malformed inputs.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5705,11 +5705,11 @@ functions:
     returns:
       type: "Result<(LmsSigningKey, [u8; 56]), Error>"
       description: "(cached_signing_key, public_key)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5735,11 +5735,11 @@ functions:
     returns:
       type: "Result<LmsSigningKey, Error>"
       description: "Cached signing key over the same key state."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5764,13 +5764,13 @@ functions:
     returns:
       type: "Result<[u8; 2508], Error>"
       description: "2508-byte LMS signature, byte-identical to the uncached sign."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: LMS blocked by active profile.
-      - name: InvalidInput
-        condition: Key exhausted (leaf_index >= 1024).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: LMS blocked by active profile.
+        - name: InvalidInput
+          condition: Key exhausted (leaf_index >= 1024).
     preconditions:
       - description: Module must be Operational.
       - description: Wrapped key not exhausted.
@@ -5810,11 +5810,11 @@ functions:
     returns:
       type: "Result<(XmssPrivateKey, [u8; 68]), Error>"
       description: "(private_key, public_key)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: XMSS blocked by active profile.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: XMSS blocked by active profile.
     preconditions:
       - description: Module must be Operational.
       - description: xi must be 32 bytes of fresh random data from an approved DRBG.
@@ -5846,13 +5846,13 @@ functions:
     returns:
       type: "Result<[u8; 2500], Error>"
       description: "2500-byte XMSS signature: idx (4) || r (32) || WOTS+ sig (67 × 32 = 2144) || auth path (10 × 32 = 320)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: XMSS blocked by active profile.
-      - name: InvalidInput
-        condition: Key exhausted (leaf_index >= 1024).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: XMSS blocked by active profile.
+        - name: InvalidInput
+          condition: Key exhausted (leaf_index >= 1024).
     preconditions:
       - description: Module must be Operational.
       - description: key.leaf_index < 1024 (key not exhausted).
@@ -5890,13 +5890,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: XMSS blocked by active profile.
-      - name: InvalidInput
-        condition: Signature verification failed or malformed inputs.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: XMSS blocked by active profile.
+        - name: InvalidInput
+          condition: Signature verification failed or malformed inputs.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5923,13 +5923,13 @@ functions:
     returns:
       type: "Result<([u8; 64], [u8; 128]), Error>"
       description: "Public key (64 B) and secret key (128 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 96 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 96 bytes.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -5960,13 +5960,13 @@ functions:
     returns:
       type: "Result<[u8; 29792], Error>"
       description: "29792-byte SLH-DSA signature (R || FORS sig || HT sig)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: sk is not 128 bytes or ctx.len() > 255.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: sk is not 128 bytes or ctx.len() > 255.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -6003,13 +6003,13 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: "Ok(()) if valid, Err(InvalidInput) if invalid."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: Signature verification failed, malformed inputs, or ctx.len() > 255.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: Signature verification failed, malformed inputs, or ctx.len() > 255.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -6034,13 +6034,13 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 64]), Error>"
       description: "Public key (32 B) and secret key (64 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 48 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 48 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
@@ -6107,13 +6107,13 @@ functions:
     returns:
       type: "Result<([u8; 32], [u8; 64]), Error>"
       description: "Public key (32 B) and secret key (64 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 48 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 48 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
@@ -6180,13 +6180,13 @@ functions:
     returns:
       type: "Result<([u8; 48], [u8; 96]), Error>"
       description: "Public key (48 B) and secret key (96 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 72 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 72 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
@@ -6253,13 +6253,13 @@ functions:
     returns:
       type: "Result<([u8; 48], [u8; 96]), Error>"
       description: "Public key (48 B) and secret key (96 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 72 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 72 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
@@ -6326,13 +6326,13 @@ functions:
     returns:
       type: "Result<([u8; 64], [u8; 128]), Error>"
       description: "Public key (64 B) and secret key (128 B)."
-    error_variants:
-      - name: NotOperational
-        condition: Module not initialized.
-      - name: AlgorithmRestricted
-        condition: SLH-DSA blocked by active profile.
-      - name: InvalidInput
-        condition: xi is not 96 bytes.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: xi is not 96 bytes.
     thread_safety: thread-safe
     security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
     profiles: [Unrestricted]
