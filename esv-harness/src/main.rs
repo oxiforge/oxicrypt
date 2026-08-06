@@ -132,7 +132,7 @@ fn run() -> Result<(), String> {
 
 /// The LAMA manifest, embedded at compile time so `--lama` needs no
 /// external file at runtime (SPEC.md §"Discovery", requirement 1).
-const LAMA_MANIFEST: &str = include_str!("../../docs/llm-api-manifest/llm-api.yaml");
+const LAMA_MANIFEST: &str = include_str!("../llm-api.yaml");
 
 fn main() -> ExitCode {
     // ── LAMA manifest ───────────────────────────────────────────────

@@ -6,7 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+# ACVP protocol client: operational validation tooling, not a product. Kept off
+# crates.io, so nothing published may depend on it.
+publish = false
 
 [lints]
 workspace = true
@@ -16,26 +18,26 @@ name = "acvp-harness"
 path = "src/main.rs"
 
 [dependencies]
-oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
-oxicrypt-cmac = { path = "../crates/oxicrypt-cmac" }
-oxicrypt-dh = { path = "../crates/oxicrypt-dh" }
-oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
-oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
-oxicrypt-ecdsa = { path = "../crates/oxicrypt-ecdsa" }
-oxicrypt-eddsa = { path = "../crates/oxicrypt-eddsa" }
-oxicrypt-module = { path = "../crates/oxicrypt-module" }
-oxicrypt-rsa = { path = "../crates/oxicrypt-rsa" }
-oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
-oxicrypt-xof = { path = "../crates/oxicrypt-xof" }
-oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
-oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
-oxicrypt-tls-kdf = { path = "../crates/oxicrypt-tls-kdf" }
-oxicrypt-integrity = { path = "../crates/oxicrypt-integrity" }
-oxicrypt-ml-kem = { path = "../crates/oxicrypt-ml-kem" }
-oxicrypt-ml-dsa = { path = "../crates/oxicrypt-ml-dsa" }
-oxicrypt-slh-dsa = { path = "../crates/oxicrypt-slh-dsa" }
-oxicrypt-lms = { path = "../crates/oxicrypt-lms" }
-oxicrypt-xmss = { path = "../crates/oxicrypt-xmss" }
+oxicrypt-aes = { workspace = true }
+oxicrypt-cmac = { workspace = true }
+oxicrypt-dh = { workspace = true }
+oxicrypt-drbg = { workspace = true }
+oxicrypt-ecdh = { workspace = true }
+oxicrypt-ecdsa = { workspace = true }
+oxicrypt-eddsa = { workspace = true }
+oxicrypt-module = { workspace = true }
+oxicrypt-rsa = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-xof = { workspace = true }
+oxicrypt-hmac = { workspace = true }
+oxicrypt-kdf = { workspace = true }
+oxicrypt-tls-kdf = { workspace = true }
+oxicrypt-integrity = { workspace = true }
+oxicrypt-ml-kem = { workspace = true }
+oxicrypt-ml-dsa = { workspace = true }
+oxicrypt-slh-dsa = { workspace = true }
+oxicrypt-lms = { workspace = true }
+oxicrypt-xmss = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

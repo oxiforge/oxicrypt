@@ -9,12 +9,12 @@ publish = false
 description = "dudect-style constant-time validation harness for oxicrypt"
 
 [dependencies]
-oxicrypt-rsa = { path = "../../crates/oxicrypt-rsa" }
-oxicrypt-ecdsa = { path = "../../crates/oxicrypt-ecdsa" }
-oxicrypt-ecdh = { path = "../../crates/oxicrypt-ecdh" }
-oxicrypt-eddsa = { path = "../../crates/oxicrypt-eddsa" }
-oxicrypt-drbg = { path = "../../crates/oxicrypt-drbg" }
-oxicrypt-module = { path = "../../crates/oxicrypt-module" }
+oxicrypt-rsa = { workspace = true }
+oxicrypt-ecdsa = { workspace = true }
+oxicrypt-ecdh = { workspace = true }
+oxicrypt-eddsa = { workspace = true }
+oxicrypt-drbg = { workspace = true }
+oxicrypt-module = { workspace = true }
 
 [lib]
 name = "ct_validation"

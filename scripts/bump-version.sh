@@ -82,6 +82,24 @@ bump_one "$CARGO" "^version = \"${old//./\\.}\"" "[workspace.package] version"
 bump_one "$LLM"   "^  version: \"${old//./\\.}\"" "llm-api manifest version"
 bump_one "$LAMA"  "^  version: \"${old//./\\.}\"" "lama manifest version"
 
+# [workspace.dependencies] carries one `version = "X"` per internal crate, so a
+# packaged member records a registry requirement rather than a bare path (#196).
+# These are the only `, version = "..."` occurrences in the tree; they all move
+# together or `cargo package` records a version that was never published.
+bump_dep_versions() { # $1=file  $2=human name
+    local file="$1" what="$2" hits
+    hits="$(grep -cE ", version = \"${old//./\\.}\" \}" "$file" || true)"
+    [[ "$hits" -gt 0 ]] || die "$what: no dependency version literals matched in $file — refusing to report success"
+    perl -i -pe "s/, version = \"\Q$old\E\" \}/, version = \"$new\" }/g" "$file"
+    local after
+    after="$(grep -cE ", version = \"${new//./\\.}\" \}" "$file" || true)"
+    [[ "$after" -eq "$hits" ]] || die "$what: rewrote $after of $hits literals in $file"
+    echo "  ok  $file  ($what, $hits literal(s))"
+}
+
+bump_dep_versions "$CARGO" "[workspace.dependencies] versions"
+bump_dep_versions "esv-harness/Cargo.toml" "esv-harness explicit dependency version"
+
 # Per-crate registry-discovery pointers. Every publishable crate carries a
 # [package.metadata.lama] table whose `manifest` URL is pinned to the release
 # tag, so an agent that found the crate on a registry fetches the manifest for

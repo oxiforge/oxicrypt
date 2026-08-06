@@ -387,6 +387,77 @@ if [[ -n "$sp_named" || -n "$sp_phrased" ]]; then
 fi
 echo "pre-push: security-policy containment passed (${#sp_revs[@]} revision(s))."
 
+# ---------------------------------------------------------------------------
+# Publishability of internal dependencies (#196).
+#
+# Deliberately placed here, above the tag-only short-circuit and the stamp
+# cache: it costs a fraction of a second, and a release tag is exactly the push
+# that most needs it — the version literals it checks are what `bump-version.sh`
+# has just rewritten. Skipping it for a cached state would also mean a manifest
+# edit that changes no Rust never gets checked.
+#
+# Not part of the four gates because it is not a compile or test step; it reads
+# the workspace's declared structure through `cargo metadata --offline`.
+# ---------------------------------------------------------------------------
+if [[ ! -x scripts/check-internal-deps.sh ]]; then
+    echo "pre-push: FAILED — scripts/check-internal-deps.sh is missing or not executable." >&2
+    echo "pre-push:   A guard that silently disappears is the failure it exists to prevent." >&2
+    exit 1
+fi
+
+# Scan the COMMITS BEING PUSHED, not the checked-out tree — the same discipline
+# as the two containment checks above, and for the same reason: `git push
+# origin other:main` and `git push origin v1.2.3` both send a tree that is not
+# HEAD, so a working-tree check would validate whatever happens to be checked
+# out and pass a defect straight to the remote.
+#
+# Each pushed tip is examined in a throwaway detached worktree. `cargo metadata`
+# needs a real directory to read, and a worktree is cheap because nothing is
+# built — no target dir is touched.
+check_deps_wt=""
+cleanup_check_deps_wt() {
+    [[ -n "$check_deps_wt" && -d "$check_deps_wt" ]] || return 0
+    git worktree remove --force "$check_deps_wt" >/dev/null 2>&1 || rm -rf "$check_deps_wt"
+    check_deps_wt=""
+}
+trap cleanup_check_deps_wt EXIT
+
+if [[ "$saw_ref" == "true" ]]; then
+    dep_checked=0
+    for pair in "${ref_pairs[@]}"; do
+        dep_sha="${pair%% *}"
+        [[ "$dep_sha" =~ ^0+$ ]] && continue   # ref deletion — nothing to gate
+
+        # A revision predating this guard has nothing to check. Skipping is
+        # correct, and it is announced so the skip is never mistaken for a pass.
+        if ! git cat-file -e "$dep_sha:scripts/check-internal-deps.sh" 2>/dev/null; then
+            echo "pre-push: internal-dependency check SKIPPED for ${dep_sha:0:12} — the revision predates the guard."
+            continue
+        fi
+
+        check_deps_wt="$(mktemp -d)"
+        if ! git worktree add -q --detach "$check_deps_wt" "$dep_sha" 2>/dev/null; then
+            echo "pre-push: FAILED — could not create a worktree for ${dep_sha:0:12}; the check could not run." >&2
+            exit 1
+        fi
+        if ! "$check_deps_wt/scripts/check-internal-deps.sh"; then
+            echo "pre-push: FAILED — internal dependencies are not publishable in ${dep_sha:0:12}." >&2
+            exit 1
+        fi
+        cleanup_check_deps_wt
+        dep_checked=$((dep_checked + 1))
+    done
+    echo "pre-push: internal-dependency check passed ($dep_checked revision(s))."
+else
+    # No refs on stdin — a manual invocation. Fall back to the working tree so
+    # the hook can be exercised by hand, and say which tree was read.
+    echo "pre-push: internal-dependency check — no pushed refs enumerated; checking the working tree."
+    if ! scripts/check-internal-deps.sh; then
+        echo "pre-push: FAILED — internal dependencies are not publishable." >&2
+        exit 1
+    fi
+fi
+
 if [[ "$saw_ref" == "true" && "$tag_only" == "true" ]]; then
     echo "pre-push: tag-only push detected — skipping four-gate cycle."
     exit 0

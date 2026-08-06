@@ -12,10 +12,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-oxicrypt-drbg = { path = "../oxicrypt-drbg" }
-oxicrypt-module = { path = "../oxicrypt-module" }
-oxicrypt-sha = { path = "../oxicrypt-sha" }
-oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+oxicrypt-drbg = { workspace = true }
+oxicrypt-module = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

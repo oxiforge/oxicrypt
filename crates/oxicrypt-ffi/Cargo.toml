@@ -18,25 +18,25 @@ workspace = true
 cbindgen = "0.29"
 
 [dependencies]
-oxicrypt-module = { path = "../oxicrypt-module" }
-oxicrypt-integrity = { path = "../oxicrypt-integrity" }
-oxicrypt-sha = { path = "../oxicrypt-sha" }
-oxicrypt-hmac = { path = "../oxicrypt-hmac" }
-oxicrypt-aes = { path = "../oxicrypt-aes" }
-oxicrypt-cmac = { path = "../oxicrypt-cmac" }
-oxicrypt-drbg = { path = "../oxicrypt-drbg" }
-oxicrypt-ecdsa = { path = "../oxicrypt-ecdsa" }
-oxicrypt-eddsa = { path = "../oxicrypt-eddsa" }
-oxicrypt-ecdh = { path = "../oxicrypt-ecdh" }
-oxicrypt-dh = { path = "../oxicrypt-dh" }
-oxicrypt-rsa = { path = "../oxicrypt-rsa" }
-oxicrypt-ml-dsa = { path = "../oxicrypt-ml-dsa" }
-oxicrypt-ml-kem = { path = "../oxicrypt-ml-kem" }
-oxicrypt-slh-dsa = { path = "../oxicrypt-slh-dsa" }
-oxicrypt-lms = { path = "../oxicrypt-lms" }
-oxicrypt-xmss = { path = "../oxicrypt-xmss" }
-oxicrypt-kdf = { path = "../oxicrypt-kdf" }
-oxicrypt-tls-kdf = { path = "../oxicrypt-tls-kdf" }
+oxicrypt-module = { workspace = true }
+oxicrypt-integrity = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-hmac = { workspace = true }
+oxicrypt-aes = { workspace = true }
+oxicrypt-cmac = { workspace = true }
+oxicrypt-drbg = { workspace = true }
+oxicrypt-ecdsa = { workspace = true }
+oxicrypt-eddsa = { workspace = true }
+oxicrypt-ecdh = { workspace = true }
+oxicrypt-dh = { workspace = true }
+oxicrypt-rsa = { workspace = true }
+oxicrypt-ml-dsa = { workspace = true }
+oxicrypt-ml-kem = { workspace = true }
+oxicrypt-slh-dsa = { workspace = true }
+oxicrypt-lms = { workspace = true }
+oxicrypt-xmss = { workspace = true }
+oxicrypt-kdf = { workspace = true }
+oxicrypt-tls-kdf = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

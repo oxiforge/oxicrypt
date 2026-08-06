@@ -32,9 +32,9 @@ collection = ["std", "raw-counter"]
 rand-core = ["dep:rand_core"]
 
 [dependencies]
-oxicrypt-sha = { path = "../oxicrypt-sha" }
-oxicrypt-timer = { path = "../oxicrypt-timer", optional = true }
-oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
+oxicrypt-sha = { workspace = true }
+oxicrypt-timer = { workspace = true, optional = true }
+oxicrypt-zeroize = { workspace = true }
 # no_std rand_core compat (default-off; see the `rand-core` feature above).
 rand_core = { version = "0.9", optional = true, default-features = false }
 

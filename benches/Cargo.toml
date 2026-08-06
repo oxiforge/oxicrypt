@@ -6,7 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+# Criterion benchmarks — nothing depends on this crate and it is not a product.
+# Kept off crates.io, like the other in-repo tooling.
+publish = false
 
 [lints]
 workspace = true
@@ -43,28 +45,28 @@ parallel = [
 ]
 
 [dependencies]
-oxicrypt-module = { path = "../crates/oxicrypt-module" }
-oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
-oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
-oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
-oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
-oxicrypt-ecdsa = { path = "../crates/oxicrypt-ecdsa" }
-oxicrypt-eddsa = { path = "../crates/oxicrypt-eddsa" }
-oxicrypt-ecdh = { path = "../crates/oxicrypt-ecdh" }
-oxicrypt-rsa = { path = "../crates/oxicrypt-rsa" }
-oxicrypt-kdf = { path = "../crates/oxicrypt-kdf" }
-oxicrypt-lms = { path = "../crates/oxicrypt-lms" }
-oxicrypt-ml-kem = { path = "../crates/oxicrypt-ml-kem" }
-oxicrypt-ml-dsa = { path = "../crates/oxicrypt-ml-dsa" }
-oxicrypt-slh-dsa = { path = "../crates/oxicrypt-slh-dsa" }
-oxicrypt-xmss = { path = "../crates/oxicrypt-xmss" }
+oxicrypt-module = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-hmac = { workspace = true }
+oxicrypt-aes = { workspace = true }
+oxicrypt-drbg = { workspace = true }
+oxicrypt-ecdsa = { workspace = true }
+oxicrypt-eddsa = { workspace = true }
+oxicrypt-ecdh = { workspace = true }
+oxicrypt-rsa = { workspace = true }
+oxicrypt-kdf = { workspace = true }
+oxicrypt-lms = { workspace = true }
+oxicrypt-ml-kem = { workspace = true }
+oxicrypt-ml-dsa = { workspace = true }
+oxicrypt-slh-dsa = { workspace = true }
+oxicrypt-xmss = { workspace = true }
 # Optional — see the `entropy-bench` feature above for why this must not be a
 # plain dependency. `raw-counter` is required by the bench itself, not
 # incidental: `NoiseSource` is sealed and the mock sources are
 # `#[cfg(test)]`-only, so the real jitter source is the only one a bench can
 # construct, and it is also the only one that measures what ISC-88 asks about.
-oxicrypt-entropy = { path = "../crates/oxicrypt-entropy", optional = true }
-oxicrypt-maxwell = { path = "../crates/oxicrypt-maxwell", optional = true }
+oxicrypt-entropy = { workspace = true, optional = true }
+oxicrypt-maxwell = { workspace = true, optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]

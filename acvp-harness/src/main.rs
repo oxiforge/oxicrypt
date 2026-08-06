@@ -155,10 +155,7 @@ fn main() -> std::process::ExitCode {
     if std::env::args().any(|a| a == "--lama") {
         // The YAML is embedded at compile time via include_str!.
         // The git commit is stamped by build.rs via cargo:rustc-env.
-        print!(
-            "{}",
-            include_str!("../../docs/llm-api-manifest/llm-api.yaml")
-        );
+        print!("{}", include_str!("../llm-api.yaml"));
         // Requirement 2: the embedded manifest carries the exact build.
         // A top-level key keeps the output a single YAML document.
         // Quoted: a short SHA is often all digits (~5% of commits), and YAML

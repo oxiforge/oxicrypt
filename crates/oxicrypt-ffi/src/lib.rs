@@ -199,10 +199,7 @@ static _SLOT_REF: &oxicrypt_integrity::IntegritySlot = &oxicrypt_integrity::FIPS
 
 /// The LAMA manifest, embedded at compile time and NUL-terminated so it
 /// can be handed to C without an allocation or a runtime file read.
-static LAMA_MANIFEST: &str = concat!(
-    include_str!("../../../docs/llm-api-manifest/llm-api.yaml"),
-    "\0"
-);
+static LAMA_MANIFEST: &str = concat!(include_str!("../llm-api.yaml"), "\0");
 
 /// Return the LAMA API manifest as a NUL-terminated UTF-8 string with
 /// static lifetime.

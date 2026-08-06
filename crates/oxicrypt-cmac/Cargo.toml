@@ -12,8 +12,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-oxicrypt-aes = { path = "../oxicrypt-aes" }
-oxicrypt-module = { path = "../oxicrypt-module" }
+oxicrypt-aes = { workspace = true }
+oxicrypt-module = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

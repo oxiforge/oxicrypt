@@ -214,12 +214,9 @@ fn cached_siggen_emits_every_requested_case_within_budget() {
 /// `usnistgov/ACVP-Server @ 112690e8` — an answer external to the code
 /// under test. Same fixtures `oxicrypt-lms/tests/nist_kat_all_pairs.rs`
 /// consumes; included here so the harness test is self-contained.
-const NIST_KAT_PK: &[u8] =
-    include_bytes!("../../crates/oxicrypt-lms/tests/data/lms_sha256_m32_h5_w4_sigver_pk.bin");
-const NIST_KAT_MSG: &[u8] =
-    include_bytes!("../../crates/oxicrypt-lms/tests/data/lms_sha256_m32_h5_w4_sigver_msg.bin");
-const NIST_KAT_SIG: &[u8] =
-    include_bytes!("../../crates/oxicrypt-lms/tests/data/lms_sha256_m32_h5_w4_sigver_sig.bin");
+const NIST_KAT_PK: &[u8] = include_bytes!("data/lms_sha256_m32_h5_w4_sigver_pk.bin");
+const NIST_KAT_MSG: &[u8] = include_bytes!("data/lms_sha256_m32_h5_w4_sigver_msg.bin");
+const NIST_KAT_SIG: &[u8] = include_bytes!("data/lms_sha256_m32_h5_w4_sigver_sig.bin");
 
 #[test]
 fn cached_siggen_output_verifies_under_nist_grounded_verify() {

@@ -12,11 +12,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-oxicrypt-module = { path = "../oxicrypt-module" }
-oxicrypt-test-vectors = { path = "../oxicrypt-test-vectors" }
-oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
-oxicrypt-sha-accel = { path = "../oxicrypt-sha-accel", optional = true }
-oxicrypt-keccak-accel = { path = "../oxicrypt-keccak-accel", optional = true }
+oxicrypt-module = { workspace = true }
+oxicrypt-test-vectors = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
+oxicrypt-sha-accel = { workspace = true, optional = true }
+oxicrypt-keccak-accel = { workspace = true, optional = true }
 
 [features]
 # CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI), default OFF.

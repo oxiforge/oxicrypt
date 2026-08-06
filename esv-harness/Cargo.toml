@@ -6,7 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+# ESV protocol client: operational validation tooling, not a product. Kept off
+# crates.io, like acvp-harness, which it depends on.
+publish = false
 
 [lints]
 workspace = true
@@ -20,14 +22,23 @@ path = "src/main.rs"
 # JSON, and session primitives — new resources over a proven transport, not a
 # new transport. Zero third-party dependencies (workspace policy); acvp-harness
 # transitively provides oxicrypt-hmac for TOTP.
-acvp-harness = { path = "../acvp-harness" }
+acvp-harness = { workspace = true }
 # The module's own SP 800-90B scaffolding: the fixed-point min-entropy type
 # (`h::MinEntropy`, steps of 1/256 bit) the `hmin` module serializes exactly,
 # and the cited raw-data / restart sample-count constants the file preflight
 # validates against — used rather than re-transcribed so the harness cannot
-# drift from the module's real H scale and file dimensions. Default features
-# only (no `std`/`collection`): just the core type + `pub const`s are needed.
-oxicrypt-entropy = { path = "../crates/oxicrypt-entropy", default-features = false }
+# drift from the module's real H scale and file dimensions. Only the core type
+# and the `pub const`s are needed — no `std`, no `collection`.
+#
+# Declared explicitly rather than inherited from [workspace.dependencies], and
+# the version literal is therefore a second site `scripts/bump-version.sh` must
+# move. `default-features = false` currently disables nothing, because
+# oxicrypt-entropy declares `default = []`; it is kept as the standing opt-out
+# for the day that changes. It cannot be expressed through inheritance —
+# `{ workspace = true, default-features = false }` is a hard cargo error
+# ("cannot override workspace's default-features"), so opting out at all means
+# staying out of the table.
+oxicrypt-entropy = { path = "../crates/oxicrypt-entropy", default-features = false, version = "0.20.0" }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

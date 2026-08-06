@@ -72,9 +72,65 @@ picking a home or copying the fact into several places.
 | **Compliance target** (FIPS 140-3 IG revision) | **`ISA.md`** + `docs/security-policy/` | never restated as an inline constant |
 | **Release history** — what shipped, when, under which tag | **git tags + `CHANGELOG.md`** | README/lama.yaml carry a pointer, never a milestone table |
 | **Release version** | **git tags** | `lama.yaml` / `README.md` stamped at release from the tag |
+| **Internal dependency version requirement** | **root `Cargo.toml` `[workspace.dependencies]`** — one `{ path, version }` entry per internal crate | members declare `{ workspace = true }`. One member (`esv-harness`) cannot inherit and states its own version; see below |
 | **Pending work** — concrete, scoped deliverables | **GitHub Issues** (`tier:` labels) | closed via `Closes #N`; `ROADMAP.md` holds not-yet-deliverable work |
 | **Forward-looking, not-yet-a-deliverable work** | **`ROADMAP.md`** (Ideas / Designs / Features) | becomes GitHub issue(s) when scoped, then removed |
 | **Design-of-record** — design-first epics | **`docs/design/*.md`** | `ROADMAP.md` Designs carries a one-line pointer |
+
+### Internal dependencies and packaging
+
+A path-only dependency cannot be packaged: `cargo package` strips the path and records a registry
+requirement, which needs a version. Internal crates therefore carry both, declared once in
+`[workspace.dependencies]`.
+
+- **Normal and build dependencies** on an internal crate: `name = { workspace = true }`, plus
+  `optional = true` where it applies.
+- **Dev-dependencies** on an internal crate: leave them `{ path = "..." }` with **no version**. Cargo
+  drops a path-only dev-dependency when packaging; adding a version makes it a real registry
+  requirement that cannot be satisfied on a first publish, and `oxicrypt-sha` ↔ `oxicrypt-keccak-accel`
+  is a cycle.
+- A member that needs `default-features = false` keeps its own declaration with an explicit `version`
+  — an inherited dependency cannot turn default features back off. One such case exists
+  (`esv-harness` → `oxicrypt-entropy`).
+- `playground/` is outside the workspace, so `workspace = true` does not resolve there.
+
+`scripts/check-internal-deps.sh` asserts the two bullets above, and a third case: a path dependency
+pointing outside the workspace must carry a version, since nothing can supply one for it. The
+pre-push hook runs it above the tag-only short-circuit and the stamp cache, against **the revisions
+being pushed** rather than the checked-out tree — `git push origin other:main` sends a tree that is
+not `HEAD`. It reads `cargo metadata` rather than the manifest text, so every TOML spelling —
+sub-tables, multi-line inline tables, unspaced values, renames — arrives normalised, and a newly
+added crate is covered the moment it joins the workspace.
+
+What it does **not** cover: whether a crate can actually be *built* from its packaged copy. That
+needs `cargo package` without `--no-verify`, which cannot run until the dependencies exist on
+crates.io.
+
+### Embedded files must live inside the package root
+
+`cargo publish` uploads a tarball of the package directory, and that tarball is the whole world for
+a crates.io consumer — the registry never fetches from GitHub, and `repository` in the manifest is a
+link for humans, not a build input. So an `include_str!`/`include_bytes!` path that reaches outside
+the package root compiles here and fails for everyone downstream. A published version is immutable,
+so that cannot be corrected in place; only a new version fixes it.
+
+The canonical LAMA manifest stays at `docs/llm-api-manifest/llm-api.yaml`. The four crates that
+embed it — `oxicrypt-ffi`, `oxi`, `acvp-harness`, `esv-harness`, each exposing a runtime `--lama`
+surface — reach it through a **symlink in their own package root** and embed
+`include_str!("../llm-api.yaml")`. `cargo package` materialises the symlink's *content* into the
+tarball, so there is one copy in git and a real file for every consumer. The other 31 crates need no
+copy: their discovery is the `[package.metadata.lama]` URL, which is metadata rather than code.
+
+`doc-guard` asserts both halves — no embed escapes its package root (workspace-wide, not scoped to
+the crates.io roster, since a roster-conditional rule changes meaning when a `publish` flag moves),
+and each embedded manifest is byte-identical to the canonical file. The second one matters because
+git on Windows without `core.symlinks` checks a symlink out as a text file containing the target
+path, which would otherwise be embedded and published as the manifest with no error anywhere.
+
+`jq` is required (`scripts/check-internal-deps.sh` is the only consumer).
+
+`scripts/bump-version.sh` moves these version literals; its stale-literal guard fails the release if
+one survives.
 
 ## Issue tracking, roadmap & design docs
 

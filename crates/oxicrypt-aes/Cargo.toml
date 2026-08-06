@@ -12,9 +12,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-oxicrypt-module = { path = "../oxicrypt-module" }
-oxicrypt-zeroize = { path = "../oxicrypt-zeroize" }
-oxicrypt-aes-accel = { path = "../oxicrypt-aes-accel", optional = true }
+oxicrypt-module = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
+oxicrypt-aes-accel = { workspace = true, optional = true }
 
 [features]
 # CPU-intrinsic AES block acceleration (x86_64 AES-NI), default OFF.

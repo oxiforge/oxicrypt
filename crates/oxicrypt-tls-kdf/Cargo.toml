@@ -12,9 +12,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-oxicrypt-module = { path = "../oxicrypt-module" }
-oxicrypt-kdf = { path = "../oxicrypt-kdf" }
-oxicrypt-hmac = { path = "../oxicrypt-hmac" }
+oxicrypt-module = { workspace = true }
+oxicrypt-kdf = { workspace = true }
+oxicrypt-hmac = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

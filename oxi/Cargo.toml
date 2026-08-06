@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish = false
+publish.workspace = true
 description = "Command-line interface for oxicrypt — hash, HMAC, encrypt, and generate random bytes."
 
 [[bin]]
@@ -14,11 +14,11 @@ name = "oxi"
 path = "src/main.rs"
 
 [dependencies]
-oxicrypt-module = { path = "../crates/oxicrypt-module" }
-oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
-oxicrypt-hmac = { path = "../crates/oxicrypt-hmac" }
-oxicrypt-aes = { path = "../crates/oxicrypt-aes" }
-oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
+oxicrypt-module = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-hmac = { workspace = true }
+oxicrypt-aes = { workspace = true }
+oxicrypt-drbg = { workspace = true }
 
 [lints]
 workspace = true

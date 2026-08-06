@@ -12,6 +12,10 @@ oxicrypt uses **GitHub Flow + on-demand release branches**:
 
 ## One-time setup
 
+Beyond a Rust toolchain, the hooks need **`jq`** on `PATH` (`scripts/check-internal-deps.sh` is its
+only consumer). Without it that check exits 2 naming the missing tool rather than reporting a
+workspace defect, but the push is still refused.
+
 After cloning, activate the doc-sync pre-commit hook:
 
 ```bash

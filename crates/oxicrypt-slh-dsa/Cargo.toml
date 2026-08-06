@@ -26,9 +26,9 @@ default = []
 parallel = ["dep:rayon"]
 
 [dependencies]
-oxicrypt-module = { path = "../oxicrypt-module" }
-oxicrypt-sha = { path = "../oxicrypt-sha" }
-oxicrypt-xof = { path = "../oxicrypt-xof" }
+oxicrypt-module = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-xof = { workspace = true }
 rayon = { version = "1", optional = true }
 
 [package.metadata.lama]

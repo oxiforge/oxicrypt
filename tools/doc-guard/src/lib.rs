@@ -1402,4 +1402,163 @@ mod tests {
             unresolved.join("\n  ")
         );
     }
+
+    // ----- packaging: embedded files must live inside the package -----
+
+    /// The crates that embed the LAMA manifest, each through a symlink in its
+    /// own package root. Every one exposes a runtime `--lama` surface, which is
+    /// why it needs the bytes rather than the `[package.metadata.lama]` URL the
+    /// other crates carry.
+    const LAMA_EMBEDDERS: [&str; 4] = ["crates/oxicrypt-ffi", "oxi", "acvp-harness", "esv-harness"];
+
+    /// Every `.rs` file in the workspace, excluding build artefacts.
+    fn workspace_rs_files() -> Vec<PathBuf> {
+        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.filter_map(Result::ok) {
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if path.is_dir() {
+                    if !matches!(name.as_ref(), "target" | ".git") {
+                        walk(&path, out);
+                    }
+                } else if name.ends_with(".rs") {
+                    out.push(path);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&repo_root(), &mut out);
+        out.sort();
+        out
+    }
+
+    /// The package root owning `file` — the nearest ancestor with a Cargo.toml.
+    fn owning_package_root(file: &Path) -> Option<PathBuf> {
+        let mut dir = file.parent()?;
+        let root = repo_root();
+        loop {
+            if dir.join("Cargo.toml").is_file() {
+                return Some(dir.to_path_buf());
+            }
+            if dir == root {
+                return None;
+            }
+            dir = dir.parent()?;
+        }
+    }
+
+    /// `include_str!` and `include_bytes!` embed a file at compile time, and
+    /// `cargo package` only ships what lies inside the package root. A path
+    /// reaching outside it compiles here and fails for every consumer of the
+    /// published crate — and because a published version is immutable, that
+    /// failure cannot be corrected in place.
+    ///
+    /// The rule is deliberately unconditional rather than scoped to the crates
+    /// currently destined for crates.io. A roster-conditional rule changes
+    /// meaning when a `publish` flag moves, which is exactly how `oxi` acquired
+    /// a latent packaging blocker the moment it joined the roster.
+    #[test]
+    fn embedded_files_live_inside_their_package_root() {
+        let files = workspace_rs_files();
+        assert!(
+            files.len() > 100,
+            "walked only {} .rs files — the walk is broken and a clean result would mean nothing",
+            files.len()
+        );
+
+        let mut escapes = Vec::new();
+        let mut embeds = 0usize;
+        for file in &files {
+            let src = fs::read_to_string(file).unwrap_or_default();
+            for (macro_name, rest) in src
+                .match_indices("include_str!")
+                .map(|(i, _)| ("include_str!", &src[i..]))
+                .chain(
+                    src.match_indices("include_bytes!")
+                        .map(|(i, _)| ("include_bytes!", &src[i..])),
+                )
+            {
+                let Some(open) = rest.find('"') else { continue };
+                let Some(close) = rest[open + 1..].find('"') else {
+                    continue;
+                };
+                let rel = &rest[open + 1..open + 1 + close];
+                embeds += 1;
+                let Some(pkg_root) = owning_package_root(file) else {
+                    continue;
+                };
+                // Resolve textually: the target may not exist on a checkout
+                // without symlink support, and that case belongs to the other
+                // test rather than being silently skipped here.
+                let mut resolved = file.parent().unwrap().to_path_buf();
+                for part in Path::new(rel).components() {
+                    match part {
+                        std::path::Component::ParentDir => {
+                            resolved.pop();
+                        }
+                        std::path::Component::Normal(p) => resolved.push(p),
+                        _ => {}
+                    }
+                }
+                if !resolved.starts_with(&pkg_root) {
+                    escapes.push(format!(
+                        "{}: {macro_name}(\"{rel}\") escapes {}",
+                        file.strip_prefix(repo_root()).unwrap().display(),
+                        pkg_root.strip_prefix(repo_root()).unwrap().display()
+                    ));
+                }
+            }
+        }
+        assert!(
+            embeds > 0,
+            "found no include_str!/include_bytes! calls at all — the scan is broken"
+        );
+        assert!(
+            escapes.is_empty(),
+            "these embeds reach outside their package root, so `cargo package` ships a crate that \
+             cannot build. Put a symlink in the package root and embed through it:\n  {}",
+            escapes.join("\n  ")
+        );
+    }
+
+    /// The embedded manifests must be the manifest.
+    ///
+    /// Each embedder reaches the canonical `docs/llm-api-manifest/llm-api.yaml`
+    /// through a symlink in its own package root. Git on Windows checks a
+    /// symlink out as a plain text file containing the target path unless
+    /// `core.symlinks` is enabled — so `include_str!` would embed the string
+    /// `../docs/llm-api-manifest/llm-api.yaml` as the manifest, and
+    /// `cargo package` would publish that, immutably, with no error anywhere.
+    /// Comparing bytes against the canonical file is what makes that loud.
+    #[test]
+    fn embedded_lama_manifests_are_the_manifest() {
+        let canonical = read_doc("docs/llm-api-manifest/llm-api.yaml");
+        assert!(
+            canonical.starts_with("lama:"),
+            "the canonical manifest does not start with `lama:` — this test's own reference is \
+             wrong, so every comparison below is meaningless"
+        );
+
+        for crate_dir in LAMA_EMBEDDERS {
+            let path = repo_root().join(crate_dir).join("llm-api.yaml");
+            let embedded = fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "{crate_dir}/llm-api.yaml is unreadable ({e}). It should be a symlink to \
+                     docs/llm-api-manifest/llm-api.yaml."
+                )
+            });
+            assert!(
+                embedded == canonical,
+                "{crate_dir}/llm-api.yaml differs from the canonical manifest ({} bytes vs {}). \
+                 On a checkout without symlink support this file holds the target path instead of \
+                 the manifest, and publishing it would embed that string.",
+                embedded.len(),
+                canonical.len()
+            );
+        }
+    }
 }
