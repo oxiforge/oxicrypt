@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-06
+
 ### Removed
 
 - `docs/jent-concept-mapping.md` is withheld alongside the Security Policy. It maps jitter-entropy lineage vocabulary to oxicrypt's as-built names for a reviewer already fluent in that lineage, and two of its three columns cite the Security Policy's own rule numbering — so most of it read as references a public reader could not follow. The middle column describes the as-built entropy source, which is public and documented in `oxicrypt-entropy`'s rustdoc; nothing is withheld here for its own sake. `docs/security-policy/README.md` says where it went, and the containment guards deny it by name alongside the policy.
