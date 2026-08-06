@@ -5970,7 +5970,11 @@ functions:
         - name: InvalidInput
           condition: xi is not 48 bytes.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_128s::sign"
@@ -5991,9 +5995,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string, at most 255 bytes.
-    returns: { type: "Result<[u8; 7856], Error>", description: "7856-byte SLH-DSA-SHA2-128s signature." }
+    returns:
+      type: Result<[u8; 7856], Error>
+      description: 7856-byte SLH-DSA-SHA2-128s signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_128s::verify"
@@ -6018,9 +6028,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 7856-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHA2-128f (FIPS 205 §11; n=16, h=66, d=22, a=6, k=33) ──
@@ -6046,7 +6062,11 @@ functions:
         - name: InvalidInput
           condition: xi is not 48 bytes.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_128f::sign"
@@ -6067,9 +6087,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 17088], Error>", description: "17088-byte signature." }
+    returns:
+      type: Result<[u8; 17088], Error>
+      description: 17088-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_128f::verify"
@@ -6094,9 +6120,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 17088-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHA2-192s (FIPS 205 §11; n=24, h=63, d=7, a=14, k=17) ──
@@ -6122,7 +6154,11 @@ functions:
         - name: InvalidInput
           condition: xi is not 72 bytes.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_192s::sign"
@@ -6143,9 +6179,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 16224], Error>", description: "16224-byte signature." }
+    returns:
+      type: Result<[u8; 16224], Error>
+      description: 16224-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_192s::verify"
@@ -6170,9 +6212,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 16224-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHA2-192f (FIPS 205 §11; n=24, h=66, d=22, a=8, k=33) ──
@@ -6198,7 +6246,11 @@ functions:
         - name: InvalidInput
           condition: xi is not 72 bytes.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_192f::sign"
@@ -6219,9 +6271,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 35664], Error>", description: "35664-byte signature." }
+    returns:
+      type: Result<[u8; 35664], Error>
+      description: 35664-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_192f::verify"
@@ -6246,9 +6304,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 35664-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHA2-256f (FIPS 205 §11; n=32, h=68, d=17, a=9, k=35) ──
@@ -6274,7 +6338,11 @@ functions:
         - name: InvalidInput
           condition: xi is not 96 bytes.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_256f::sign"
@@ -6295,9 +6363,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 49856], Error>", description: "49856-byte signature." }
+    returns:
+      type: Result<[u8; 49856], Error>
+      description: 49856-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_sha2_256f::verify"
@@ -6322,9 +6396,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 49856-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHAKE-128s (FIPS 205 §11; n=16, h=63, d=7, a=12, k=14) ──
@@ -6339,9 +6419,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 48 bytes of fresh randomness.
-    returns: { type: "Result<([u8; 32], [u8; 64]), Error>", description: "Public key (32 B) and secret key (64 B)." }
+    returns:
+      type: Result<([u8; 32], [u8; 64]), Error>
+      description: Public key (32 B) and secret key (64 B).
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_128s::sign"
@@ -6362,9 +6448,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 7856], Error>", description: "7856-byte signature." }
+    returns:
+      type: Result<[u8; 7856], Error>
+      description: 7856-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_128s::verify"
@@ -6389,9 +6481,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 7856-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHAKE-128f (FIPS 205 §11; n=16, h=66, d=22, a=6, k=33) ──
@@ -6406,9 +6504,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 48 bytes of fresh randomness.
-    returns: { type: "Result<([u8; 32], [u8; 64]), Error>", description: "Public key (32 B) and secret key (64 B)." }
+    returns:
+      type: Result<([u8; 32], [u8; 64]), Error>
+      description: Public key (32 B) and secret key (64 B).
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_128f::sign"
@@ -6429,9 +6533,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 17088], Error>", description: "17088-byte signature." }
+    returns:
+      type: Result<[u8; 17088], Error>
+      description: 17088-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_128f::verify"
@@ -6456,9 +6566,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 17088-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHAKE-192s (FIPS 205 §11; n=24, h=63, d=7, a=14, k=17) ──
@@ -6473,9 +6589,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 72 bytes of fresh randomness.
-    returns: { type: "Result<([u8; 48], [u8; 96]), Error>", description: "Public key (48 B) and secret key (96 B)." }
+    returns:
+      type: Result<([u8; 48], [u8; 96]), Error>
+      description: Public key (48 B) and secret key (96 B).
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_192s::sign"
@@ -6496,9 +6618,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 16224], Error>", description: "16224-byte signature." }
+    returns:
+      type: Result<[u8; 16224], Error>
+      description: 16224-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_192s::verify"
@@ -6523,9 +6651,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 16224-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHAKE-192f (FIPS 205 §11; n=24, h=66, d=22, a=8, k=33) ──
@@ -6540,9 +6674,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 72 bytes of fresh randomness.
-    returns: { type: "Result<([u8; 48], [u8; 96]), Error>", description: "Public key (48 B) and secret key (96 B)." }
+    returns:
+      type: Result<([u8; 48], [u8; 96]), Error>
+      description: Public key (48 B) and secret key (96 B).
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_192f::sign"
@@ -6563,9 +6703,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 35664], Error>", description: "35664-byte signature." }
+    returns:
+      type: Result<[u8; 35664], Error>
+      description: 35664-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_192f::verify"
@@ -6590,9 +6736,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 35664-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHAKE-256s (FIPS 205 §11; n=32, h=64, d=8, a=14, k=22) ──
@@ -6607,9 +6759,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 96 bytes of fresh randomness.
-    returns: { type: "Result<([u8; 64], [u8; 128]), Error>", description: "Public key (64 B) and secret key (128 B)." }
+    returns:
+      type: Result<([u8; 64], [u8; 128]), Error>
+      description: Public key (64 B) and secret key (128 B).
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_256s::sign"
@@ -6630,9 +6788,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 29792], Error>", description: "29792-byte signature." }
+    returns:
+      type: Result<[u8; 29792], Error>
+      description: 29792-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_256s::verify"
@@ -6657,9 +6821,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 29792-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── SLH-DSA-SHAKE-256f (FIPS 205 §11; n=32, h=68, d=17, a=9, k=35) ──
@@ -6674,9 +6844,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 96 bytes of fresh randomness.
-    returns: { type: "Result<([u8; 64], [u8; 128]), Error>", description: "Public key (64 B) and secret key (128 B)." }
+    returns:
+      type: Result<([u8; 64], [u8; 128]), Error>
+      description: Public key (64 B) and secret key (128 B).
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_256f::sign"
@@ -6697,9 +6873,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: Context string.
-    returns: { type: "Result<[u8; 49856], Error>", description: "49856-byte signature." }
+    returns:
+      type: Result<[u8; 49856], Error>
+      description: 49856-byte signature.
     thread_safety: thread-safe
-    security: { constant_time: true, handles_secrets: true, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   - name: "slh_dsa_shake_256f::verify"
@@ -6724,9 +6906,15 @@ functions:
         type: "&[u8]"
         direction: in
         description: 49856-byte signature.
-    returns: { type: "Result<(), Error>", description: "Ok if valid, Err(InvalidInput) if invalid." }
+    returns:
+      type: Result<(), Error>
+      description: Ok if valid, Err(InvalidInput) if invalid.
     thread_safety: thread-safe
-    security: { constant_time: false, handles_secrets: false, fips_approved: true, fips_gate: Operational }
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
     profiles: [Unrestricted]
 
   # ── C ABI (oxicrypt-ffi) ──────────────────────────────────────────
@@ -6743,7 +6931,12 @@ functions:
         description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput, 2 = SelfTestFailed, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: SelfTestFailed
+          condition: A power-up known-answer test returned incorrect output during oxi_init.
     preconditions: []
     postconditions:
       - description: Module is in Operational state with the selected profile (on Ok).
@@ -6799,7 +6992,14 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha512
     module: oxicrypt-ffi
@@ -6818,7 +7018,14 @@ functions:
         description: Output buffer, must be >= 64 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha224
     module: oxicrypt-ffi
@@ -6839,7 +7046,14 @@ functions:
         description: Output buffer, must be >= 28 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha384
     module: oxicrypt-ffi
@@ -6860,7 +7074,14 @@ functions:
         description: Output buffer, must be >= 48 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha512_224
     module: oxicrypt-ffi
@@ -6881,7 +7102,14 @@ functions:
         description: Output buffer, must be >= 28 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha512_256
     module: oxicrypt-ffi
@@ -6902,7 +7130,14 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   # SHA-3 family (FIPS 202); one-shot entry points only.
 
@@ -6925,7 +7160,14 @@ functions:
         description: Output buffer, must be >= 28 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha3_256
     module: oxicrypt-ffi
@@ -6946,7 +7188,14 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha3_384
     module: oxicrypt-ffi
@@ -6967,7 +7216,14 @@ functions:
         description: Output buffer, must be >= 48 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_sha3_512
     module: oxicrypt-ffi
@@ -6988,7 +7244,14 @@ functions:
         description: Output buffer, must be >= 64 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha256
     module: oxicrypt-ffi
@@ -7015,7 +7278,14 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha384
     module: oxicrypt-ffi
@@ -7042,7 +7312,14 @@ functions:
         description: Output buffer, must be >= 48 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha512
     module: oxicrypt-ffi
@@ -7069,7 +7346,14 @@ functions:
         description: Output buffer, must be >= 64 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha3_224
     module: oxicrypt-ffi
@@ -7096,7 +7380,14 @@ functions:
         description: Output buffer, must be >= 28 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha3_256
     module: oxicrypt-ffi
@@ -7123,7 +7414,14 @@ functions:
         description: Output buffer, must be >= 32 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha3_384
     module: oxicrypt-ffi
@@ -7150,7 +7448,14 @@ functions:
         description: Output buffer, must be >= 48 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hmac_sha3_512
     module: oxicrypt-ffi
@@ -7177,7 +7482,14 @@ functions:
         description: Output buffer, must be >= 64 bytes.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   # HKDF (RFC 5869, SP 800-56C Rev. 2 §4.1) — two-step extract / expand; PRK passed as raw bytes between calls.
 
@@ -7207,7 +7519,14 @@ functions:
         description: Output buffer, must be >= 32 bytes; receives the 32-byte PRK.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hkdf_sha256_expand
     module: oxicrypt-ffi
@@ -7238,7 +7557,16 @@ functions:
         description: Output length; capped at 255*32 = 8160 bytes by RFC 5869 §2.3.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 12 = OutputTooLong, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hkdf_sha384_extract
     module: oxicrypt-ffi
@@ -7266,7 +7594,14 @@ functions:
         description: Output buffer, must be >= 48 bytes; receives the 48-byte PRK.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hkdf_sha384_expand
     module: oxicrypt-ffi
@@ -7297,7 +7632,16 @@ functions:
         description: Output length; capped at 255*48 = 12240 bytes by RFC 5869 §2.3.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 12 = OutputTooLong, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hkdf_sha512_extract
     module: oxicrypt-ffi
@@ -7325,7 +7669,14 @@ functions:
         description: Output buffer, must be >= 64 bytes; receives the 64-byte PRK.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_hkdf_sha512_expand
     module: oxicrypt-ffi
@@ -7356,7 +7707,16 @@ functions:
         description: Output length; capped at 255*64 = 16320 bytes by RFC 5869 §2.3.
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 12 = OutputTooLong, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   # TLS 1.3 KDF (RFC 8446 §7.1) — HKDF-Expand-Label and Derive-Secret for the SHA-256 and SHA-384 ciphersuite hashes.
 
@@ -7397,7 +7757,14 @@ functions:
         direction: in
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_tls13_hkdf_expand_label_sha384
     module: oxicrypt-ffi
@@ -7436,7 +7803,14 @@ functions:
         direction: in
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_tls13_derive_secret_sha256
     module: oxicrypt-ffi
@@ -7474,7 +7848,14 @@ functions:
         direction: in
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   - name: oxi_tls13_derive_secret_sha384
     module: oxicrypt-ffi
@@ -7512,7 +7893,14 @@ functions:
         direction: in
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
 
   # AES-256-GCM with opaque OxiAes256Key handle; one-shot only.
 
@@ -7531,7 +7919,14 @@ functions:
         description: "32-byte AES-256 key material."
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 1 = NotOperational, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: true
@@ -7592,7 +7987,14 @@ functions:
         description: 16-byte tag
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 21 = InvalidIvLength, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidIvLength
+          condition: The supplied IV length is not the length this mode requires.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: true
@@ -7637,7 +8039,16 @@ functions:
         description: 16-byte tag
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 21 = InvalidIvLength, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidIvLength
+          condition: The supplied IV length is not the length this mode requires.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -7672,7 +8083,16 @@ functions:
         description: input_len writable bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: NotBlockAligned
+          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: true
@@ -7707,7 +8127,16 @@ functions:
         description: input_len writable bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: NotBlockAligned
+          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: true
@@ -7742,7 +8171,12 @@ functions:
         description: len writable bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: true
@@ -7791,7 +8225,16 @@ functions:
         description: pt_len + tlen writable bytes; layout C || T
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 21 = InvalidIvLength, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidIvLength
+          condition: The supplied IV length is not the length this mode requires.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: true
@@ -7842,7 +8285,18 @@ functions:
         description: ct_len - tlen writable bytes; UNDEFINED on TagMismatch (zeroised by upstream)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 21 = InvalidIvLength, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: InvalidIvLength
+          condition: The supplied IV length is not the length this mode requires.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -7871,7 +8325,12 @@ functions:
         description: 16-byte tag
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -7901,7 +8360,16 @@ functions:
         description: pt_len + 8 writable bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: NotBlockAligned
+          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -7931,7 +8399,18 @@ functions:
         description: ct_len - 8 writable bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: NotBlockAligned
+          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -7961,7 +8440,14 @@ functions:
         description: ((pt_len+7)/8)*8 + 8 writable bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -7996,7 +8482,18 @@ functions:
         description: Recovered plaintext length on success; unmodified on non-Ok
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 10 = NullPointer, 20 = NotBlockAligned, 23 = LengthMismatch, 6 = AlgorithmRestricted, ...)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: NotBlockAligned
+          condition: The input length is not a multiple of the cipher block size where the mode requires alignment.
+        - name: LengthMismatch
+          condition: The input and output buffer lengths are inconsistent with each other.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8020,7 +8517,16 @@ functions:
         description: Output buffer >= 65 bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on out-of-range scalar, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8054,7 +8560,16 @@ functions:
         description: Output buffer >= 64 bytes; receives r(32) || s(32)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on r=0/s=0/scalar-out-of-range, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8084,7 +8599,16 @@ functions:
         description: 64-byte signature (r || s)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok valid signature, 22 = TagMismatch invalid signature, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: false
@@ -8106,7 +8630,16 @@ functions:
         description: Output buffer >= 97 bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on out-of-range scalar, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8140,7 +8673,16 @@ functions:
         description: Output buffer >= 96 bytes; receives r(48) || s(48)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on r=0/s=0/scalar-out-of-range, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8170,7 +8712,16 @@ functions:
         description: 96-byte signature (r || s)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok valid signature, 22 = TagMismatch invalid signature, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: false
@@ -8196,7 +8747,16 @@ functions:
         description: Receives a heap-allocated handle on success; caller MUST free with oxi_ecdsa_p256_private_key_free
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or PCT fail, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -8237,7 +8797,12 @@ functions:
         description: 65-byte uncompressed SEC1 public key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -8271,7 +8836,16 @@ functions:
         description: 64-byte signature buffer (r || s)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or retry exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -8294,7 +8868,16 @@ functions:
         description: Receives a heap-allocated handle on success; caller MUST free with oxi_ecdsa_p384_private_key_free
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or PCT fail, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -8335,7 +8918,12 @@ functions:
         description: 97-byte uncompressed SEC1 public key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -8369,7 +8957,16 @@ functions:
         description: 96-byte signature buffer (r || s)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault or retry exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -8393,7 +8990,14 @@ functions:
         description: Output buffer >= 32 bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8422,7 +9026,16 @@ functions:
         description: Output buffer >= 64 bytes; receives R(32) || S(32)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8452,7 +9065,16 @@ functions:
         description: 64-byte signature (R || S)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok valid signature, 22 = TagMismatch invalid signature, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: false
@@ -8482,7 +9104,16 @@ functions:
         description: Output buffer >= 32 bytes; receives the raw shared-secret x-coordinate
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical d or peer-key validation failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8510,7 +9141,16 @@ functions:
         description: Output buffer >= 48 bytes; receives the raw shared-secret x-coordinate
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical d or peer-key validation failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8537,7 +9177,16 @@ functions:
         description: 65-byte SEC1 uncompressed public key 0x04 || X(32) || Y(32) of d * G
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / sampling exhaustion / IG 10.3.A PCT mismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -8564,7 +9213,16 @@ functions:
         description: 97-byte SEC1 uncompressed public key 0x04 || X(48) || Y(48) of d * G
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -8594,7 +9252,16 @@ functions:
         description: Output buffer >= 384 bytes; receives the raw shared secret Z (big-endian)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on non-canonical x, peer-key validation failure, or Z==1, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: true
       handles_secrets: true
@@ -8621,7 +9288,16 @@ functions:
         description: 384-byte big-endian public key y = 2^x mod p
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG-uninstantiated or rejection-sampling exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -8657,7 +9333,16 @@ functions:
         description: 256-byte signature, big-endian
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verify failure, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -8690,7 +9375,16 @@ functions:
         description: 256-byte signature, big-endian
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -8723,7 +9417,16 @@ functions:
         description: 384-byte signature, big-endian
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -8756,7 +9459,16 @@ functions:
         description: 384-byte signature, big-endian
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -8789,7 +9501,16 @@ functions:
         description: 512-byte signature, big-endian
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -8822,7 +9543,16 @@ functions:
         description: 512-byte signature, big-endian
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 10 = NullPointer, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -8849,7 +9579,14 @@ functions:
         description: 4896-byte secret key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -8887,7 +9624,16 @@ functions:
         description: 4627-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput if ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -8925,7 +9671,16 @@ functions:
         description: 4627-byte ML-DSA-87 signature
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: false
@@ -8952,7 +9707,14 @@ functions:
         description: 2560-byte secret key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -8990,7 +9752,16 @@ functions:
         description: 2420-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput if ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9028,7 +9799,16 @@ functions:
         description: 2420-byte ML-DSA-44 signature
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: false
@@ -9055,7 +9835,14 @@ functions:
         description: 4032-byte secret key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9093,7 +9880,16 @@ functions:
         description: 3309-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput if ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9131,7 +9927,16 @@ functions:
         description: 3309-byte ML-DSA-65 signature
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: false
@@ -9162,7 +9967,16 @@ functions:
         description: 3168-byte decapsulation key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on rare K-PKE NTT decode failure, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9193,7 +10007,14 @@ functions:
         description: 1568-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9220,7 +10041,14 @@ functions:
         description: 32-byte shared secret buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -9251,7 +10079,16 @@ functions:
         description: 1632-byte decapsulation key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on rare K-PKE NTT decode failure, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9282,7 +10119,14 @@ functions:
         description: 768-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9309,7 +10153,14 @@ functions:
         description: 32-byte shared secret buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -9340,7 +10191,16 @@ functions:
         description: 2400-byte decapsulation key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on rare K-PKE NTT decode failure, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9371,7 +10231,14 @@ functions:
         description: 1088-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9398,7 +10265,14 @@ functions:
         description: 32-byte shared secret buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -9425,7 +10299,14 @@ functions:
         description: 128-byte secret key buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9465,7 +10346,16 @@ functions:
         description: 29 792-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -9505,7 +10395,14 @@ functions:
         description: 29 792-byte signature
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -9531,8 +10428,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 64-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_128s_sign
     module: oxicrypt-ffi
@@ -9563,8 +10472,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 7 856-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on ctx_len > 255, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_128s_verify
     module: oxicrypt-ffi
@@ -9595,8 +10518,20 @@ functions:
         type: const uint8_t *
         direction: in
         description: 7 856-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_128f_keygen
     module: oxicrypt-ffi
@@ -9615,8 +10550,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 64-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_128f_sign
     module: oxicrypt-ffi
@@ -9647,8 +10594,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 17 088-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_128f_verify
     module: oxicrypt-ffi
@@ -9679,8 +10640,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 17 088-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_192s_keygen
     module: oxicrypt-ffi
@@ -9699,8 +10668,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 96-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_192s_sign
     module: oxicrypt-ffi
@@ -9731,8 +10712,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 16 224-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_192s_verify
     module: oxicrypt-ffi
@@ -9763,8 +10758,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 16 224-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_192f_keygen
     module: oxicrypt-ffi
@@ -9783,8 +10786,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 96-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_192f_sign
     module: oxicrypt-ffi
@@ -9815,8 +10830,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 35 664-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_192f_verify
     module: oxicrypt-ffi
@@ -9847,8 +10876,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 35 664-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_256f_keygen
     module: oxicrypt-ffi
@@ -9867,8 +10904,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 128-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_256f_sign
     module: oxicrypt-ffi
@@ -9899,8 +10948,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 49 856-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_sha2_256f_verify
     module: oxicrypt-ffi
@@ -9931,8 +10994,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 49 856-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   # ── SHAKE family — byte counts identical to SHA-2 at same (n, level, s/f); internal hash family differs.
 
@@ -9953,8 +11024,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 64-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_128s_sign
     module: oxicrypt-ffi
@@ -9985,8 +11068,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 7 856-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_128s_verify
     module: oxicrypt-ffi
@@ -10017,8 +11114,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 7 856-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_128f_keygen
     module: oxicrypt-ffi
@@ -10037,8 +11142,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 64-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_128f_sign
     module: oxicrypt-ffi
@@ -10069,8 +11186,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 17 088-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_128f_verify
     module: oxicrypt-ffi
@@ -10101,8 +11232,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 17 088-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_192s_keygen
     module: oxicrypt-ffi
@@ -10121,8 +11260,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 96-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_192s_sign
     module: oxicrypt-ffi
@@ -10153,8 +11304,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 16 224-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_192s_verify
     module: oxicrypt-ffi
@@ -10185,8 +11350,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 16 224-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_192f_keygen
     module: oxicrypt-ffi
@@ -10205,8 +11378,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 96-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_192f_sign
     module: oxicrypt-ffi
@@ -10237,8 +11422,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 35 664-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_192f_verify
     module: oxicrypt-ffi
@@ -10269,8 +11468,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 35 664-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_256s_keygen
     module: oxicrypt-ffi
@@ -10289,8 +11496,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 128-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_256s_sign
     module: oxicrypt-ffi
@@ -10321,8 +11540,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 29 792-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_256s_verify
     module: oxicrypt-ffi
@@ -10353,8 +11586,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 29 792-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_256f_keygen
     module: oxicrypt-ffi
@@ -10373,8 +11614,20 @@ functions:
         type: uint8_t *
         direction: out
         description: 128-byte secret key buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_256f_sign
     module: oxicrypt-ffi
@@ -10405,8 +11658,22 @@ functions:
         type: uint8_t *
         direction: out
         description: 49 856-byte signature buffer
-    returns: { type: int, description: "OxiResult discriminant." }
-    security: { constant_time: false, handles_secrets: true, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: true
 
   - name: oxi_slh_dsa_shake_256f_verify
     module: oxicrypt-ffi
@@ -10437,8 +11704,16 @@ functions:
         type: const uint8_t *
         direction: in
         description: 49 856-byte signature
-    returns: { type: int, description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure)." }
-    security: { constant_time: false, handles_secrets: false, fips_approved: true }
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   # ── LMS per-pair family ─────────────────────────────────────────
   # Generic oxi_lms_* baseline (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) plus 240 per-pair fns over the full SP 800-208 §A.3 grid (80 pairs × {keygen, sign, verify}).
@@ -10464,7 +11739,14 @@ functions:
         description: 56-byte LMS public key
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10500,7 +11782,16 @@ functions:
         description: 2508-byte LMS signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput when key is exhausted (1024 signatures issued), 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10532,7 +11823,14 @@ functions:
         description: 2508-byte LMS signature
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -10559,7 +11857,14 @@ functions:
         description: 68-byte XMSS public key
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10595,7 +11900,16 @@ functions:
         description: 2500-byte XMSS signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput when key is exhausted (1024 signatures issued), 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10627,7 +11941,14 @@ functions:
         description: 2500-byte XMSS signature
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 22 = TagMismatch on any verification failure, 1 = NotOperational, 6 = AlgorithmRestricted)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: TagMismatch
+          condition: The cryptographic verification ran cleanly and the result disagreed with the claimed value.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
     security:
       constant_time: false
       handles_secrets: false
@@ -10645,7 +11966,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer if out_handle is NULL)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10708,7 +12032,16 @@ functions:
         description: Personalization length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on length-bound, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10744,7 +12077,14 @@ functions:
         description: Additional input length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 5 = InvalidInput on length-bound, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10780,7 +12120,18 @@ functions:
         description: Number of pseudorandom bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 9 = ReseedRequired, 12 = OutputTooLong, 5 = InvalidInput on additional_input length-bound, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10801,7 +12152,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer if out_handle is NULL)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10864,7 +12218,16 @@ functions:
         description: Personalization length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_instantiate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10900,7 +12263,14 @@ functions:
         description: Additional input length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_reseed."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10936,7 +12306,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -10954,7 +12335,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer if out_handle is NULL)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11017,7 +12401,16 @@ functions:
         description: Personalization length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_instantiate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11053,7 +12446,14 @@ functions:
         description: Additional input length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_reseed."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11089,7 +12489,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11110,7 +12521,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer if out_handle is NULL)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11173,7 +12587,16 @@ functions:
         description: Personalization length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_instantiate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11209,7 +12632,14 @@ functions:
         description: Additional input length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_reseed."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11245,7 +12675,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hmac_drbg_sha256_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11263,7 +12704,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11326,7 +12770,16 @@ functions:
         description: Personalization length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_instantiate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11362,7 +12815,14 @@ functions:
         description: Additional input length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_reseed."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11398,7 +12858,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11416,7 +12887,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11479,7 +12953,16 @@ functions:
         description: Personalization length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_instantiate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11515,7 +12998,14 @@ functions:
         description: Additional input length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_reseed."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11551,7 +13041,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_hash_drbg_sha256_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11573,7 +13074,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11618,7 +13122,16 @@ functions:
         description: Must be exactly 32 bytes (SEED_LEN)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on length-mismatch, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11663,7 +13176,16 @@ functions:
         description: Personalization length in bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on combined-length > MAX_DF_INPUT, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11690,7 +13212,14 @@ functions:
         description: Must be exactly 32 bytes
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 5 = InvalidInput on length-mismatch, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11726,7 +13255,14 @@ functions:
         description: Additional input length
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 5 = InvalidInput on combined-length overflow, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11762,7 +13298,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 9 = ReseedRequired, 12 = OutputTooLong, 5 = InvalidInput on AI length-mismatch, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11798,7 +13345,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 8 = Uninstantiated, 9 = ReseedRequired, 12 = OutputTooLong, 5 = InvalidInput on combined-length overflow, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11816,7 +13374,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11861,7 +13422,16 @@ functions:
         description: Must be exactly 40 bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_no_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11906,7 +13476,16 @@ functions:
         description: Personalization length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11933,7 +13512,14 @@ functions:
         description: Must be exactly 40 bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_no_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -11969,7 +13555,14 @@ functions:
         description: Additional input length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12005,7 +13598,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_no_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12041,7 +13645,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12059,7 +13674,10 @@ functions:
         description: Receives heap-allocated opaque handle pointer on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12104,7 +13722,16 @@ functions:
         description: Must be exactly 48 bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_no_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12149,7 +13776,16 @@ functions:
         description: Personalization length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_instantiate_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12176,7 +13812,14 @@ functions:
         description: Must be exactly 48 bytes
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_no_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12212,7 +13855,14 @@ functions:
         description: Additional input length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_reseed_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12248,7 +13898,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_no_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12284,7 +13945,18 @@ functions:
         description: Bytes to produce (≤ 65536)
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_ctr_drbg_aes128_generate_df."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: Uninstantiated
+          condition: generate or reseed was called before instantiate succeeded on this handle.
+        - name: ReseedRequired
+          condition: The reseed counter reached the SP 800-90A Table 3 reseed interval and fresh entropy is required before further output.
+        - name: OutputTooLong
+          condition: The requested output length exceeds the maximum this construction permits.
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12313,7 +13985,16 @@ functions:
         description: Receives handle on success; caller MUST free with oxi_rsa_2048_private_key_free
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / PCT fail / prime retry exhaustion, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12354,7 +14035,12 @@ functions:
         description: 256-byte big-endian modulus buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -12377,7 +14063,12 @@ functions:
         description: Receives the public exponent
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational on finalised handle, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -12408,7 +14099,16 @@ functions:
         description: 256-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on Bellcore fault / internal corruption, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12444,7 +14144,16 @@ functions:
         description: 256-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / Bellcore fault / internal corruption, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12493,7 +14202,16 @@ functions:
         description: 256-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on DRBG fault / oversized message / malformed modulus, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: false
@@ -12538,7 +14256,16 @@ functions:
         description: Receives recovered plaintext length on success
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 5 = InvalidInput on Manger-collapsed decode failure / Bellcore fault / out_max_len < 190, 1 = NotOperational, 6 = AlgorithmRestricted, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12565,7 +14292,16 @@ functions:
         description: Receives handle on success
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_private_key_new_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12606,7 +14342,12 @@ functions:
         description: 384-byte big-endian modulus buffer
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -12629,7 +14370,12 @@ functions:
         description: Receives the public exponent
     returns:
       type: int
-      description: "OxiResult discriminant (0 = Ok, 1 = NotOperational, 10 = NullPointer)."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -12660,7 +14406,16 @@ functions:
         description: 384-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_sign_pkcs1_v15_sha256."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12696,7 +14451,16 @@ functions:
         description: 384-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_sign_pss_sha256."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12745,7 +14509,16 @@ functions:
         description: 384-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_oaep_encrypt_sha256."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: false
@@ -12790,7 +14563,16 @@ functions:
         description: Recovered plaintext length
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_oaep_decrypt_sha256."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12817,7 +14599,16 @@ functions:
         description: Receives handle
     returns:
       type: int
-      description: "OxiResult discriminant; same encoding as oxi_rsa_2048_private_key_new_generate."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: true
@@ -12858,7 +14649,12 @@ functions:
         description: 512-byte buffer
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -12881,7 +14677,12 @@ functions:
         description: Receives the exponent
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: false
@@ -12912,7 +14713,16 @@ functions:
         description: 512-byte signature buffer
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12948,7 +14758,16 @@ functions:
         description: 512-byte signature
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
@@ -12997,7 +14816,16 @@ functions:
         description: 512-byte ciphertext buffer
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: false
       handles_secrets: false
@@ -13042,7 +14870,16 @@ functions:
         description: Recovered length
     returns:
       type: int
-      description: "OxiResult discriminant."
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit this service.
+        - name: NullPointer
+          condition: A pointer argument that the call requires was NULL.
     security:
       constant_time: true
       handles_secrets: true
