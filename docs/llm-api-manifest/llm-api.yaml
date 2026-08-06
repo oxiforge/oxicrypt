@@ -5028,10 +5028,14 @@ functions:
     parameters:
       - name: d
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for K-PKE key generation."
       - name: z
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for implicit-rejection seed."
     returns:
@@ -5067,10 +5071,14 @@ functions:
     parameters:
       - name: ek
         type: "&[u8; 1568]"
+        constraints:
+          size: 1568
         direction: in
         description: "Encapsulation key (from keygen)."
       - name: m
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for encapsulation."
     returns:
@@ -5107,10 +5115,14 @@ functions:
     parameters:
       - name: dk
         type: "&[u8; 3168]"
+        constraints:
+          size: 3168
         direction: in
         description: "Decapsulation key (from keygen)."
       - name: ct
         type: "&[u8; 1568]"
+        constraints:
+          size: 1568
         direction: in
         description: "Ciphertext (from encapsulate)."
     returns:
@@ -5147,10 +5159,14 @@ functions:
     parameters:
       - name: d
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for K-PKE key generation."
       - name: z
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for implicit-rejection seed."
     returns:
@@ -5179,10 +5195,14 @@ functions:
     parameters:
       - name: ek
         type: "&[u8; 800]"
+        constraints:
+          size: 800
         direction: in
         description: "Encapsulation key (from ml_kem_512::keygen)."
       - name: m
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for encapsulation."
     returns:
@@ -5209,10 +5229,14 @@ functions:
     parameters:
       - name: dk
         type: "&[u8; 1632]"
+        constraints:
+          size: 1632
         direction: in
         description: "Decapsulation key (from ml_kem_512::keygen)."
       - name: ct
         type: "&[u8; 768]"
+        constraints:
+          size: 768
         direction: in
         description: "Ciphertext (from ml_kem_512::encapsulate)."
     returns:
@@ -5241,10 +5265,14 @@ functions:
     parameters:
       - name: d
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for K-PKE key generation."
       - name: z
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for implicit-rejection seed."
     returns:
@@ -5273,10 +5301,14 @@ functions:
     parameters:
       - name: ek
         type: "&[u8; 1184]"
+        constraints:
+          size: 1184
         direction: in
         description: "Encapsulation key (from ml_kem_768::keygen)."
       - name: m
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for encapsulation."
     returns:
@@ -5303,10 +5335,14 @@ functions:
     parameters:
       - name: dk
         type: "&[u8; 2400]"
+        constraints:
+          size: 2400
         direction: in
         description: "Decapsulation key (from ml_kem_768::keygen)."
       - name: ct
         type: "&[u8; 1088]"
+        constraints:
+          size: 1088
         direction: in
         description: "Ciphertext (from ml_kem_768::encapsulate)."
     returns:
@@ -5335,6 +5371,8 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte randomness for key generation (FIPS 204 keygen seed)."
     returns:
@@ -5370,6 +5408,8 @@ functions:
     parameters:
       - name: sk
         type: "&[u8; 4896]"
+        constraints:
+          size: 4896
         direction: in
         description: "Secret key (from keygen)."
       - name: message
@@ -5415,6 +5455,8 @@ functions:
     parameters:
       - name: pk
         type: "&[u8; 2592]"
+        constraints:
+          size: 2592
         direction: in
         description: "Public key (from keygen)."
       - name: message
@@ -5427,6 +5469,8 @@ functions:
         description: "Application-supplied context string, at most 255 bytes (FIPS 204 §5.2 limit)."
       - name: sig
         type: "&[u8; 4627]"
+        constraints:
+          size: 4627
         direction: in
         description: "Signature to verify (from sign)."
     returns:
@@ -5466,6 +5510,8 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: 32-byte keygen seed.
     returns:
@@ -5494,6 +5540,8 @@ functions:
     parameters:
       - name: sk
         type: "&[u8; 2560]"
+        constraints:
+          size: 2560
         direction: in
         description: ML-DSA-44 secret key.
       - name: message
@@ -5530,6 +5578,8 @@ functions:
     parameters:
       - name: pk
         type: "&[u8; 1312]"
+        constraints:
+          size: 1312
         direction: in
         description: ML-DSA-44 public key.
       - name: message
@@ -5542,6 +5592,8 @@ functions:
         description: Context byte string (must match sign-time).
       - name: sig
         type: "&[u8; 2420]"
+        constraints:
+          size: 2420
         direction: in
         description: ML-DSA-44 signature.
     returns:
@@ -5572,6 +5624,8 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: 32-byte keygen seed.
     returns:
@@ -5600,6 +5654,8 @@ functions:
     parameters:
       - name: sk
         type: "&[u8; 4032]"
+        constraints:
+          size: 4032
         direction: in
         description: ML-DSA-65 secret key.
       - name: message
@@ -5636,6 +5692,8 @@ functions:
     parameters:
       - name: pk
         type: "&[u8; 1952]"
+        constraints:
+          size: 1952
         direction: in
         description: ML-DSA-65 public key.
       - name: message
@@ -5648,6 +5706,8 @@ functions:
         description: Context byte string (must match sign-time).
       - name: sig
         type: "&[u8; 3309]"
+        constraints:
+          size: 3309
         direction: in
         description: ML-DSA-65 signature.
     returns:
@@ -5677,6 +5737,8 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte secret seed for the Merkle tree."
     returns:
@@ -5757,6 +5819,8 @@ functions:
     parameters:
       - name: public_key
         type: "&[u8; 56]"
+        constraints:
+          size: 56
         direction: in
         description: "56-byte LMS public key."
       - name: message
@@ -5765,6 +5829,8 @@ functions:
         description: "Original message."
       - name: signature
         type: "&[u8; 2508]"
+        constraints:
+          size: 2508
         direction: in
         description: "2508-byte LMS signature."
     returns:
@@ -5798,6 +5864,8 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte secret seed for the Merkle tree (from an approved DRBG)."
     returns:
@@ -5903,6 +5971,8 @@ functions:
     parameters:
       - name: xi
         type: "&[u8; 32]"
+        constraints:
+          size: 32
         direction: in
         description: "32-byte secret seed (derives SK_SEED, SK_PRF, PUB_SEED)."
     returns:
@@ -5975,6 +6045,8 @@ functions:
     parameters:
       - name: public_key
         type: "&[u8; 68]"
+        constraints:
+          size: 68
         direction: in
         description: "68-byte XMSS public key."
       - name: message
@@ -5983,6 +6055,8 @@ functions:
         description: "Original message."
       - name: signature
         type: "&[u8; 2500]"
+        constraints:
+          size: 2500
         direction: in
         description: "2500-byte XMSS signature."
     returns:
@@ -13488,6 +13562,8 @@ functions:
       description: Running FIPS 180-4 hash value H, H[0] first; advanced by exactly one block on success and untouched on failure.
     - name: block
       type: '&[u8; 64]'
+      constraints:
+        size: 64
       direction: in
       description: One 64-byte message block.
     returns:
@@ -13567,14 +13643,20 @@ functions:
     parameters:
     - name: x
       type: '&[u8; 16]'
+      constraints:
+        size: 16
       direction: in
       description: First GCM field element in GCM bit order, bit 7 of byte 0 being the highest coefficient.
     - name: y
       type: '&[u8; 16]'
+      constraints:
+        size: 16
       direction: in
       description: Second GCM field element in the same bit order.
     - name: out
       type: '&mut [u8; 16]'
+      constraints:
+        size: 16
       direction: out
       description: Product in GCM bit order on success; untouched on failure.
     returns:
@@ -13608,6 +13690,8 @@ functions:
         valid_range: 10, 12 or 14
     - name: block
       type: '&mut [u8; 16]'
+      constraints:
+        size: 16
       direction: inout
       description: Plaintext block on entry, ciphertext block on success; untouched on failure.
     returns:
@@ -13642,6 +13726,8 @@ functions:
         valid_range: 10, 12 or 14
     - name: block
       type: '&mut [u8; 16]'
+      constraints:
+        size: 16
       direction: inout
       description: Ciphertext block on entry, plaintext block on success; untouched on failure.
     returns:
@@ -13687,6 +13773,8 @@ functions:
     parameters:
     - name: mac
       type: '&[u8; 32]'
+      constraints:
+        size: 32
       direction: in
       description: MAC bytes to encode.
     returns:
@@ -13705,10 +13793,14 @@ functions:
     parameters:
     - name: a
       type: '&[u8; 32]'
+      constraints:
+        size: 32
       direction: in
       description: First MAC.
     - name: b
       type: '&[u8; 32]'
+      constraints:
+        size: 32
       direction: in
       description: Second MAC.
     returns:
