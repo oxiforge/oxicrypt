@@ -445,10 +445,16 @@ types:
         description: Service blocked by the active algorithm profile.
       - name: NotImplemented
         description: Service is in the Service enum but implementation is a stub.
+      - name: Uninstantiated
+        description: generate or reseed was called before instantiate succeeded on this DRBG handle.
+      - name: ReseedRequired
+        description: reseed_counter reached the SP 800-90A Table 3 reseed-interval bound.
       - name: NullPointer
         description: Caller passed a NULL pointer where one is required.
       - name: BufferTooSmall
         description: Caller-allocated output buffer is smaller than the documented minimum.
+      - name: OutputTooLong
+        description: Requested output exceeds the family's bound (HKDF-Expand 255*HashLen per RFC 5869 section 2.3; HMAC_DRBG generate 2^19 bits per SP 800-90A Table 3).
       - name: NotBlockAligned
         description: Input length is not aligned to the cipher block size.
       - name: InvalidIvLength
@@ -13747,6 +13753,127 @@ error_types:
 # ─────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────
+
+  - name: OxiResult
+    module: oxicrypt-ffi
+    description: "C ABI status code returned by every oxi_* function, with Ok as 0 and every non-zero value a distinct failure mode whose discriminant is fixed by #[repr(C)] and banded by source crate."
+    variants:
+      - name: Ok
+        value: 0
+        description: The call succeeded.
+        recoverable: true
+        user_action: None; the operation completed and any output buffer is valid.
+      - name: NotOperational
+        value: 1
+        description: A service was called while the module was not in the Operational state.
+        recoverable: true
+        user_action: Call oxi_init() and check it returns Ok before calling any other oxi_* function.
+      - name: SelfTestFailed
+        value: 2
+        description: A power-up known-answer test returned incorrect output during oxi_init().
+        recoverable: false
+        user_action: >-
+          The module is in the terminal Error state and no service will run.
+          The binary may be corrupted or its integrity slot unsigned; verify it
+          with fips-integrity-sign --verify and reinstall from a published
+          release artifact.
+      - name: ConditionalTestFailed
+        value: 3
+        description: A conditional self-test (DRBG continuous RNG test, or a pairwise consistency test during key generation) failed.
+        recoverable: true
+        user_action: Retry the operation with fresh entropy; if it repeats, treat the entropy source as failed and stop using the module.
+      - name: AlreadyInitialized
+        value: 4
+        description: oxi_init() was called more than once in this process.
+        recoverable: true
+        user_action: Remove the duplicate call; the first init's outcome is authoritative and no state changed.
+      - name: InvalidInput
+        value: 5
+        description: An input was not a valid domain element, such as an out-of-range scalar or a point not on the curve.
+        recoverable: true
+        user_action: Check the encoding and length of each input against the function's parameter constraints; this is raised before any cryptographic comparison.
+      - name: AlgorithmRestricted
+        value: 6
+        description: The requested service is blocked by the algorithm profile active in this process.
+        recoverable: false
+        user_action: Restart the process and select a profile that permits the service; the active profile cannot be changed in place.
+      - name: NotImplemented
+        value: 7
+        description: The service exists in the Service enum but its implementation is a stub in this build.
+        recoverable: false
+        user_action: Use a different service; no version of this build provides it.
+      - name: Uninstantiated
+        value: 8
+        description: generate or reseed was called on a DRBG handle before instantiate had succeeded on it.
+        recoverable: true
+        user_action: Call the matching instantiate function on this handle and check it returns Ok, then retry.
+      - name: ReseedRequired
+        value: 9
+        description: The handle's reseed_counter reached the SP 800-90A Table 3 reseed-interval bound.
+        recoverable: true
+        user_action: Call reseed with fresh entropy on this handle; generate will not return further output until it succeeds.
+      - name: NullPointer
+        value: 10
+        description: A NULL pointer was passed where the function requires a valid one.
+        recoverable: true
+        user_action: Pass a valid pointer for every parameter the signature does not document as optional.
+      - name: BufferTooSmall
+        value: 11
+        description: A caller-allocated output buffer is smaller than the documented minimum for the operation.
+        recoverable: true
+        user_action: Allocate at least the size named in the function's parameter constraints and retry; nothing was written.
+      - name: OutputTooLong
+        value: 12
+        description: "The requested output length exceeds its family's bound: HKDF-Expand above 255*HashLen bytes (RFC 5869 section 2.3), or HMAC_DRBG generate above 2^19 bits per request (SP 800-90A Table 3)."
+        recoverable: true
+        user_action: Request fewer bytes in one call, and issue multiple calls if more output is needed.
+      - name: NotBlockAligned
+        value: 20
+        description: An input length is not a multiple of the cipher block size where the mode requires alignment.
+        recoverable: true
+        user_action: Pad the input to a multiple of 16 bytes, or use a mode that does not require block alignment.
+      - name: InvalidIvLength
+        value: 21
+        description: The IV length does not match the mode's specification.
+        recoverable: true
+        user_action: Supply an IV of exactly the length the mode requires; AES-GCM requires 12 bytes.
+      - name: TagMismatch
+        value: 22
+        description: "A cryptographic verification ran cleanly and disagreed with the claimed value, covering AEAD tag and signature verification alike, and distinct from InvalidInput which is raised before any comparison happens."
+        recoverable: false
+        user_action: >-
+          Treat the message as inauthentic and discard it. Any AEAD plaintext
+          output buffer holds UNDEFINED contents and must not be read.
+      - name: LengthMismatch
+        value: 23
+        description: An input and output buffer length pair disagree where the mode requires them to be equal.
+        recoverable: true
+        user_action: Size the output buffer to match the input length exactly.
+      - name: InvalidNonceLength
+        value: 24
+        description: The nonce length does not match the mode's specification.
+        recoverable: true
+        user_action: Supply a nonce of exactly the length the mode requires.
+      - name: InvalidTagLength
+        value: 25
+        description: The tag length does not match the mode's specification.
+        recoverable: true
+        user_action: Request a tag length the mode permits.
+      - name: InvalidPayloadLength
+        value: 26
+        description: The payload length exceeds the mode's allowed maximum.
+        recoverable: true
+        user_action: Split the payload across multiple operations, each within the mode's maximum.
+      - name: InvalidAadLength
+        value: 27
+        description: The additional-authenticated-data length exceeds the mode's allowed maximum.
+        recoverable: true
+        user_action: Reduce the AAD to within the mode's maximum.
+      - name: Internal
+        value: 255
+        description: A should-never-happen case reached the catch-all arm.
+        recoverable: false
+        user_action: Report this with the calling sequence; reaching Internal indicates a defect in the module, not in the call.
 
 constants:
   - name: SHAKE128_RATE
