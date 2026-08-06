@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Prebuilt C libraries are published as release attachments: `.so`/`.dylib`/`.dll`, `.a`/`.lib` and `oxicrypt.h` for linux x86_64/aarch64, macOS x86_64/aarch64 and windows x86_64, each with its integrity slot signed, a `BUILD-PROVENANCE.txt` recording the toolchain and integrity MACs, and a SHA-256 checksum. Consuming the module from C no longer requires a Rust toolchain, and the artifact a user links is the one that was built here rather than one they compiled themselves (#205).
+
 ## [0.21.0] - 2026-08-06
 
 ### Removed
