@@ -118,7 +118,7 @@ tools/acvp-gen/         KAT constant generator from vendored vectors
 tools/doc-guard/        Test-gate drift guard: doc-stated boundary/unsafe accounting vs the workspace as built
 tools/quickstarts/      Compiles the quickstart examples carried in the LAMA manifest
 esv-harness/            ESV protocol client for SP 800-90B entropy-source validation submissions
-oxi/                    Command-line interface — hash, HMAC, encrypt, generate random bytes
+oxi/                    Command-line interface (crate `oxicrypt-cli`) — hash, HMAC, encrypt, generate random bytes
 ```
 
 The cryptographic boundary encompasses the `oxicrypt-*` crates compiled into a
@@ -461,16 +461,16 @@ services to the terminal:
 
 ```bash
 # Hash stdin with SHA-256
-echo -n "abc" | cargo run -p oxi -- hash sha256
+echo -n "abc" | cargo run -p oxicrypt-cli -- hash sha256
 
 # HMAC-SHA-256 with a hex key
-echo -n "msg" | cargo run -p oxi -- hmac sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
+echo -n "msg" | cargo run -p oxicrypt-cli -- hmac sha256 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
 
 # Generate 32 random bytes from HMAC_DRBG-SHA-256
-cargo run -p oxi -- rand 32
+cargo run -p oxicrypt-cli -- rand 32
 
 # Dump the LAMA manifest
-cargo run -p oxi -- --lama
+cargo run -p oxicrypt-cli -- --lama
 ```
 
 ## Runnable examples

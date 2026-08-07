@@ -304,7 +304,7 @@ modules:
     description: NIST-derived known-answer-test constants consumed by the power-up self-tests; test-support data rather than callable API, so no API surface is described here.
     no_std: true
     depends_on: []
-  - name: oxi
+  - name: oxicrypt-cli
     description: Command-line front end to the module, installed with `cargo install oxi` and self-describing via `oxi --lama`; a binary crate with no public Rust items, so no API surface is described here.
     no_std: false
     depends_on:
