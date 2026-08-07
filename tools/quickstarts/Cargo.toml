@@ -42,5 +42,6 @@ oxicrypt-ecdh = { workspace = true }
 oxicrypt-eddsa = { workspace = true }
 oxicrypt-hmac = { workspace = true }
 oxicrypt-module = { workspace = true }
+oxicrypt-kdf = { workspace = true }
 oxicrypt-sha = { workspace = true }
 oxicrypt-xof = { workspace = true }

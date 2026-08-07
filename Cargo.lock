@@ -872,6 +872,7 @@ dependencies = [
  "oxicrypt-ecdh",
  "oxicrypt-eddsa",
  "oxicrypt-hmac",
+ "oxicrypt-kdf",
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-xof",

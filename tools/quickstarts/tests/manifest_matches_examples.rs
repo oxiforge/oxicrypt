@@ -29,6 +29,7 @@ const PAIRS: &[(&str, &str)] = &[
     ("Random number generation", "random_number_generation"),
     ("Digital signatures", "digital_signatures"),
     ("Key agreement", "key_agreement"),
+    ("Key derivation", "key_derivation"),
 ];
 
 fn repo_root() -> PathBuf {
