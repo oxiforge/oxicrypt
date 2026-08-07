@@ -43,7 +43,13 @@
 
 set -uo pipefail
 
-cd "$(git rev-parse --show-toplevel)" || exit 1
+toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+# `cd ""` succeeds, so testing cd's status alone would not catch a failed
+# rev-parse; the emptiness has to be tested directly.
+if [[ -z "$toplevel" ]] || ! cd "$toplevel"; then
+    echo "check-lama-manifests: FAILED — not inside a git repository." >&2
+    exit 1
+fi
 
 rev="${1:-}"
 linter='scripts/lama-validate.ts'
@@ -109,6 +115,65 @@ if [[ "${#manifests[@]}" -eq 0 ]]; then
     echo "  is clean. A search that matches nothing reports no findings." >&2
     exit 1
 fi
+
+# --- control 1b: every root file's manifest: pointer was discovered ----------
+# Discovery is name-based, so it approves whatever it happens to match and is
+# silent about what it does not. Renaming the full manifest to a name outside
+# the pattern — llm-api.v2.yaml, api.yaml, lama.yml — leaves the root file
+# pointing at a document this check never reads, while the remaining files
+# still match and the run still reports success. Control 1 cannot catch that:
+# the set is not empty, it is merely wrong.
+#
+# The root file names its manifest. Resolving that pointer and asserting it is
+# in the checked set closes the gap and needs no second list to maintain.
+for root in "${manifests[@]}"; do
+    [[ "$(basename "$root")" == "lama.yaml" ]] || continue
+    if [[ -n "$rev" ]]; then
+        root_body="$(git show "$rev:$root" 2>/dev/null || true)"
+    else
+        root_body="$(cat "$root" 2>/dev/null || true)"
+    fi
+    # `manifest: path/to/file.yaml`, quoted or bare, relative to the repo root.
+    #
+    # Anchored at column 0 because that is where the root file writes the key,
+    # and an unanchored match would let a nested `manifest:` under some other
+    # mapping shadow the real pointer.
+    #
+    # The trailing comment and trailing whitespace have to come off before the
+    # comparison. A perfectly valid `manifest: x.yaml  # the full one` would
+    # otherwise fail to match any discovered path, and the failure would tell
+    # the author their manifest had been renamed out of the discovery pattern —
+    # sending them to fix something that is not wrong. A guard that cries wolf
+    # gets disabled, so a false refusal is not a cheap kind of error to make.
+    pointer="$(printf '%s\n' "$root_body" \
+        | sed -n 's/^manifest:[[:space:]]*//p' \
+        | sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' \
+        | tr -d '"'"'" | head -1)"
+    [[ -n "$pointer" ]] || continue
+    pointer="${pointer#./}"
+
+    # A root file that points at itself would satisfy the check while leaving
+    # the full manifest unread — the control implementing itself out of a job.
+    if [[ "$pointer" == "$root" ]]; then
+        echo "check-lama-manifests: FAILED — $root's manifest: points at itself." >&2
+        echo "  The root file is a discovery summary; the pointer must name the" >&2
+        echo "  full manifest, or nothing verifies that the full manifest was read." >&2
+        exit 1
+    fi
+    found=false
+    for m in "${manifests[@]}"; do
+        [[ "$m" == "$pointer" ]] && { found=true; break; }
+    done
+    if [[ "$found" != "true" ]]; then
+        echo "check-lama-manifests: FAILED — $root points at a manifest this check did not read." >&2
+        echo "  pointer:    $pointer" >&2
+        echo "  discovered: ${manifests[*]}" >&2
+        echo "  Discovery matches on filename, so a manifest renamed outside that" >&2
+        echo "  pattern is silently skipped while the run still reports success." >&2
+        echo "  Either restore the name, or widen the pattern in this script." >&2
+        exit 1
+    fi
+done
 
 # --- materialise the revision's copies, if reading a revision ----------------
 workdir=''

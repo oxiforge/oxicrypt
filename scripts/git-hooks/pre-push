@@ -524,14 +524,44 @@ lama_touched=false
 if [[ "$saw_ref" == "true" ]]; then
     for pair in "${ref_pairs[@]}"; do
         read -r _l _r <<<"$pair"
-        [[ "$_l" =~ ^0+$ ]] && continue
+        [[ -z "$_l" || "$_l" =~ ^0+$ ]] && continue
+        lama_files=''
+        lama_ok=true
         if [[ "$_r" =~ ^0+$ ]]; then
             base="$(git merge-base "$_l" origin/main 2>/dev/null || true)"
-            dr=$([[ -n "$base" ]] && echo "$base..$_l" || echo "$_l")
+            if [[ -n "$base" ]]; then
+                lama_files="$(git diff --name-only "$base..$_l" 2>/dev/null)" || lama_ok=false
+            else
+                # No merge base — a new or orphan branch. Two wrong answers to
+                # avoid here, both of which return a truthful reply to the
+                # wrong question and so cannot be caught by the fail-closed
+                # guard below.
+                #
+                # `git diff <sha>` compares that commit against the WORKING
+                # TREE, and returns empty whenever they agree.
+                #
+                # `git diff-tree <sha>` compares the TIP against its parents,
+                # so a branch whose manifest changed in its first commit of
+                # three reports nothing — and a merge commit tip prints nothing
+                # at all.
+                #
+                # The question is what the whole push carries, so enumerate
+                # every commit reachable from the tip that no remote already
+                # has. With no remotes that is the entire history, which is
+                # correct: all of it is new to the remote.
+                lama_files="$(git log --name-only --pretty=format: "$_l" --not --remotes 2>/dev/null)" || lama_ok=false
+            fi
         else
-            dr="$_r..$_l"
+            lama_files="$(git diff --name-only "$_r..$_l" 2>/dev/null)" || lama_ok=false
         fi
-        lama_files="$(git diff --name-only "$dr" 2>/dev/null || true)"
+        # Fail closed. If the range could not be computed — a shallow clone, or
+        # a remote sha this clone does not have — the honest answer is "assume
+        # a manifest is in play", because the alternative silently downgrades a
+        # refusal to a skip.
+        if [[ "$lama_ok" != "true" ]]; then
+            lama_touched=true
+            break
+        fi
         if [[ -n "$lama_files" ]] && printf '%s\n' "$lama_files" | grep -Ec "$lama_re" >/dev/null; then
             lama_touched=true
             break
@@ -561,7 +591,36 @@ else
 
             # A revision predating this guard has nothing to check. Skipping is
             # correct, and it is announced so the skip is never read as a pass.
+            #
+            # But absence of the guard has two causes and only one is benign.
+            # A revision that DELETES it is also missing it, and would earn the
+            # same reassuring "predates the guard" line while removing the check
+            # and passing. So distinguish them: if the guard exists on the
+            # branch this revision descends from, its absence here is a removal,
+            # not history.
             if ! git cat-file -e "$lama_sha:scripts/check-lama-manifests.sh" 2>/dev/null; then
+                guard_base="$(git merge-base "$lama_sha" origin/main 2>/dev/null || true)"
+                if [[ -z "$guard_base" ]]; then
+                    # Without a merge base the two causes cannot be told apart,
+                    # and the benign reading is the dangerous one: it prints a
+                    # reassuring line and lets a guard-removing push through.
+                    # origin/main is absent on a --single-branch clone, a
+                    # remote not named origin, or a default branch not named
+                    # main, so this is reachable rather than theoretical.
+                    # "Cannot decide" is reported as a refusal, not a skip.
+                    echo "pre-push: FAILED — ${lama_sha:0:12} does not carry scripts/check-lama-manifests.sh," >&2
+                    echo "pre-push:   and no merge base with origin/main is available to tell whether" >&2
+                    echo "pre-push:   that is a revision predating the guard or one removing it." >&2
+                    echo "pre-push:   Fetch origin/main so the two can be distinguished." >&2
+                    exit 1
+                fi
+                if git cat-file -e "$guard_base:scripts/check-lama-manifests.sh" 2>/dev/null; then
+                    echo "pre-push: FAILED — ${lama_sha:0:12} removes scripts/check-lama-manifests.sh." >&2
+                    echo "pre-push:   The guard exists at the merge base, so this is a deletion" >&2
+                    echo "pre-push:   rather than a revision that predates it. Restore it, or" >&2
+                    echo "pre-push:   remove the hook stage in the same change." >&2
+                    exit 1
+                fi
                 echo "pre-push: LAMA conformance SKIPPED for ${lama_sha:0:12} — the revision predates the guard."
                 continue
             fi
