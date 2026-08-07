@@ -1508,6 +1508,11 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: Ok(()) if all KATs pass.
+      error_variants:
+        - name: AlreadyInitialized
+          condition: Called more than once in the process lifetime.
+        - name: SelfTestFailed
+          condition: Any KatEntry::run() returned Err.
     thread_safety: not-thread-safe
     side_effects:
       - description: Sets global module state and algorithm profile. Once per process.
@@ -1524,6 +1529,9 @@ functions:
     returns:
       type: "Result<(), Error>"
       description: Ok if allowed, Err(AlgorithmRestricted) if blocked.
+      error_variants:
+        - name: AlgorithmRestricted
+          condition: The service is not permitted under the active profile.
 
   - name: active_profile
     module: oxicrypt-module
@@ -2033,6 +2041,9 @@ functions:
     signature: "pub fn HmacSha1::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha1, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2046,6 +2057,9 @@ functions:
     signature: "pub fn HmacSha224::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha224, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2059,6 +2073,9 @@ functions:
     signature: "pub fn HmacSha384::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha384, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2072,6 +2089,9 @@ functions:
     signature: "pub fn HmacSha512::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha512, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2085,6 +2105,9 @@ functions:
     signature: "pub fn HmacSha512_224::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha512_224, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2098,6 +2121,9 @@ functions:
     signature: "pub fn HmacSha512_256::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha512_256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2111,6 +2137,9 @@ functions:
     signature: "pub fn HmacSha3_224::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha3_224, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2124,6 +2153,9 @@ functions:
     signature: "pub fn HmacSha3_256::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha3_256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2137,6 +2169,9 @@ functions:
     signature: "pub fn HmacSha3_384::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha3_384, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2150,6 +2185,9 @@ functions:
     signature: "pub fn HmacSha3_512::new(key: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<HmacSha3_512, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2314,6 +2352,9 @@ functions:
     signature: "pub fn Shake256::new() -> Result<Self, Error>"
     returns:
       type: "Result<Shake256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2373,6 +2414,9 @@ functions:
     signature: "pub fn CShake256::new(n: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<CShake256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2498,6 +2542,9 @@ functions:
     signature: "pub fn Kmac256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<Kmac256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2549,6 +2596,9 @@ functions:
     signature: "pub fn KmacXof256::new(key: &[u8], s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<KmacXof256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -2663,6 +2713,9 @@ functions:
     signature: "pub fn TupleHash256::new(s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<TupleHash256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2676,6 +2729,9 @@ functions:
     signature: "pub fn TupleHashXof128::new(s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<TupleHashXof128, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2689,6 +2745,9 @@ functions:
     signature: "pub fn TupleHashXof256::new(s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<TupleHashXof256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2809,6 +2868,9 @@ functions:
     signature: "pub fn ParallelHash256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<ParallelHash256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2822,6 +2884,9 @@ functions:
     signature: "pub fn ParallelHashXof128::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<ParallelHashXof128, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2835,6 +2900,9 @@ functions:
     signature: "pub fn ParallelHashXof256::new(block_size: usize, s: &[u8]) -> Result<Self, Error>"
     returns:
       type: "Result<ParallelHashXof256, Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2887,6 +2955,9 @@ functions:
     signature: "pub fn shake256<const OUT_LEN: usize>(data: &[u8]) -> Result<[u8; OUT_LEN], Error>"
     returns:
       type: "Result<[u8; OUT_LEN], Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2933,6 +3004,9 @@ functions:
     signature: "pub fn cshake256<const OUT_LEN: usize>(data: &[u8], n: &[u8], s: &[u8]) -> Result<[u8; OUT_LEN], Error>"
     returns:
       type: "Result<[u8; OUT_LEN], Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: false
@@ -2985,6 +3059,9 @@ functions:
     signature: "pub fn kmac256<const TAG_LEN: usize>(key: &[u8], data: &[u8], s: &[u8]) -> Result<[u8; TAG_LEN], Error>"
     returns:
       type: "Result<[u8; TAG_LEN], Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -3031,6 +3108,9 @@ functions:
     signature: "pub fn kmacxof256<const OUT_LEN: usize>(key: &[u8], data: &[u8], s: &[u8]) -> Result<[u8; OUT_LEN], Error>"
     returns:
       type: "Result<[u8; OUT_LEN], Error>"
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
     security:
       constant_time: true
       handles_secrets: true
@@ -3391,6 +3471,9 @@ functions:
     returns:
       type: "Result<(), ModeError>"
       description: "LengthMismatch if buffer sizes are wrong."
+      error_variants:
+        - name: LengthMismatch
+          condition: The plaintext or output buffer length is not valid for KW-AE.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -3422,6 +3505,11 @@ functions:
     returns:
       type: "Result<(), ModeError>"
       description: "TagMismatch on ICV failure (constant-time check); LengthMismatch on size error."
+      error_variants:
+        - name: TagMismatch
+          condition: The ICV did not verify; checked in constant time.
+        - name: LengthMismatch
+          condition: The ciphertext or output buffer length is not valid for KW-AD.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -3453,6 +3541,9 @@ functions:
     returns:
       type: "Result<(), ModeError>"
       description: "LengthMismatch on size error."
+      error_variants:
+        - name: LengthMismatch
+          condition: The plaintext or output buffer length is not valid for KWP-AE.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -3484,6 +3575,11 @@ functions:
     returns:
       type: "Result<usize, ModeError>"
       description: "Recovered `mli` (plaintext byte length) on success; TagMismatch on ICV/pad failure (constant-time check); LengthMismatch on size error."
+      error_variants:
+        - name: TagMismatch
+          condition: The ICV prefix, the encoded message length, or the padding did not verify; checked in constant time.
+        - name: LengthMismatch
+          condition: The ciphertext or scratch buffer length is not valid for KWP-AD.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -3599,6 +3695,11 @@ functions:
     returns:
       type: "Result<EntropyPipeline<S>, EntropyError>"
       description: Pipeline (awaiting startup) on success; typed refusal otherwise.
+      error_variants:
+        - name: ClaimExceedsCeiling
+          condition: The claimed min-entropy per sample exceeds the source ceiling; the claim is refused rather than clamped.
+        - name: ClaimExceedsSampleWidth
+          condition: The claimed min-entropy per sample exceeds the declared sample width, or the alpha has no APT table coverage.
 
   - name: EntropyPipeline::run_startup
     module: oxicrypt-entropy
@@ -3607,6 +3708,11 @@ functions:
     returns:
       type: "Result<(), EntropyError>"
       description: Operational on success; NotReady if already started; Health on failure.
+      error_variants:
+        - name: NotReady
+          condition: Startup has already run on this pipeline.
+        - name: Health
+          condition: A continuous health test failed; the pipeline is permanently poisoned.
 
   - name: EntropyPipeline::on_demand_test
     module: oxicrypt-entropy
@@ -3615,6 +3721,11 @@ functions:
     returns:
       type: "Result<(), EntropyError>"
       description: Ok when the battery passes; typed error otherwise.
+      error_variants:
+        - name: NotReady
+          condition: The pipeline is not operational, having not completed startup or having been poisoned.
+        - name: Health
+          condition: The re-run battery failed; the pipeline is permanently poisoned.
 
   - name: EntropyPipeline::sample
     module: oxicrypt-entropy
@@ -3623,6 +3734,13 @@ functions:
     returns:
       type: "Result<RawSample, EntropyError>"
       description: One tested sample, or a typed refusal.
+      error_variants:
+        - name: NotReady
+          condition: Startup has not completed, or the pipeline has been poisoned by a health-test failure.
+        - name: Health
+          condition: The sample failed a continuous health test and is never released.
+        - name: Source
+          condition: The underlying noise source failed to produce a sample.
 
   - name: MinEntropy::from_fraction_floor
     module: oxicrypt-entropy
@@ -3655,6 +3773,9 @@ functions:
     returns:
       type: "Result<u64, TimerError>"
       description: The delta, or Backwards (caller discards the sample).
+      error_variants:
+        - name: Backwards
+          condition: The masked delta has the width top bit set, indicating the counter moved backwards; the caller discards the sample.
 
   - name: measure_adequacy
     module: oxicrypt-entropy
@@ -3671,6 +3792,9 @@ functions:
     returns:
       type: "Result<(), CollectionError>"
       description: Ok on success, else an operator-facing collection error.
+      error_variants:
+        - name: CollectionError
+          condition: The only error this returns. It is a newtype over a String carrying an operator-facing message, so the cause cannot be branched on programmatically.
 
 
   - name: oxi_timer::read_raw_counter
@@ -5998,6 +6122,13 @@ functions:
     returns:
       type: Result<[u8; 7856], Error>
       description: 7856-byte SLH-DSA-SHA2-128s signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6031,6 +6162,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6090,6 +6228,13 @@ functions:
     returns:
       type: Result<[u8; 17088], Error>
       description: 17088-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6123,6 +6268,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6182,6 +6334,13 @@ functions:
     returns:
       type: Result<[u8; 16224], Error>
       description: 16224-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6215,6 +6374,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6274,6 +6440,13 @@ functions:
     returns:
       type: Result<[u8; 35664], Error>
       description: 35664-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6307,6 +6480,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6366,6 +6546,13 @@ functions:
     returns:
       type: Result<[u8; 49856], Error>
       description: 49856-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6399,6 +6586,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6422,6 +6616,13 @@ functions:
     returns:
       type: Result<([u8; 32], [u8; 64]), Error>
       description: Public key (32 B) and secret key (64 B).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The supplied seed is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6451,6 +6652,13 @@ functions:
     returns:
       type: Result<[u8; 7856], Error>
       description: 7856-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6484,6 +6692,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6507,6 +6722,13 @@ functions:
     returns:
       type: Result<([u8; 32], [u8; 64]), Error>
       description: Public key (32 B) and secret key (64 B).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The supplied seed is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6536,6 +6758,13 @@ functions:
     returns:
       type: Result<[u8; 17088], Error>
       description: 17088-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6569,6 +6798,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6592,6 +6828,13 @@ functions:
     returns:
       type: Result<([u8; 48], [u8; 96]), Error>
       description: Public key (48 B) and secret key (96 B).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The supplied seed is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6621,6 +6864,13 @@ functions:
     returns:
       type: Result<[u8; 16224], Error>
       description: 16224-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6654,6 +6904,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6677,6 +6934,13 @@ functions:
     returns:
       type: Result<([u8; 48], [u8; 96]), Error>
       description: Public key (48 B) and secret key (96 B).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The supplied seed is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6706,6 +6970,13 @@ functions:
     returns:
       type: Result<[u8; 35664], Error>
       description: 35664-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6739,6 +7010,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6762,6 +7040,13 @@ functions:
     returns:
       type: Result<([u8; 64], [u8; 128]), Error>
       description: Public key (64 B) and secret key (128 B).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The supplied seed is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6791,6 +7076,13 @@ functions:
     returns:
       type: Result<[u8; 29792], Error>
       description: 29792-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6824,6 +7116,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -6847,6 +7146,13 @@ functions:
     returns:
       type: Result<([u8; 64], [u8; 128]), Error>
       description: Public key (64 B) and secret key (128 B).
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The supplied seed is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6876,6 +7182,13 @@ functions:
     returns:
       type: Result<[u8; 49856], Error>
       description: 49856-byte signature.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The secret key or context string is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6909,6 +7222,13 @@ functions:
     returns:
       type: Result<(), Error>
       description: Ok if valid, Err(InvalidInput) if invalid.
+      error_variants:
+        - name: NotOperational
+          condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: SLH-DSA blocked by active profile.
+        - name: InvalidInput
+          condition: The public key or signature is not the length this parameter set requires.
     thread_safety: thread-safe
     security:
       constant_time: false
