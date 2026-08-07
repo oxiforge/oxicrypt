@@ -14,13 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-07
+
 ### Added
+
+- The 29 crates making up the module's public surface are published to crates.io. The workspace set `publish = false` throughout development, so the roster was implied rather than stated; it is now a `publish = true` default with an explicit `publish = false` on the seven in-repo tools — `acvp-harness`, `esv-harness`, `oxicrypt-bench`, `oxicrypt-maxwell`, `ct-validation`, `doc-guard` and `quickstarts` — which never reach a registry. The test applied is whether a third party would name the crate in their own `Cargo.toml`, plus anything transitively required by one that would (#196).
 
 - Prebuilt C libraries are published as release attachments: `.so`/`.dylib`/`.dll`, `.a`/`.lib` and `oxicrypt.h` for linux x86_64/aarch64, macOS x86_64/aarch64 and windows x86_64, each with its integrity slot signed, a `BUILD-PROVENANCE.txt` recording the toolchain and integrity MACs, and a SHA-256 checksum. Consuming the module from C no longer requires a Rust toolchain, and the artifact a user links is the one that was built here rather than one they compiled themselves (#205).
 - LAMA manifest conformance is checked mechanically on every push. `scripts/check-lama-manifests.sh` runs the specification's conformance linter over every manifest in the tree and fails on any finding; the pre-push hook applies it to the revisions being pushed, and a CI job mirrors it. The linter runs in strict mode, because four of its six rules are advisory upstream and never move an exit code — a gate on the default contract would enforce two rules while appearing to enforce all six. The linter is vendored byte-identically from upstream with its origin and checksum recorded in `scripts/lama-validate.provenance`, verified on every run, so a copy weakened in-tree fails rather than silently reporting nothing (#175).
 - The quickstart examples carried in the LAMA manifest are compiled. Each lives as a file under `tools/quickstarts/examples/`, built by the existing `--all-targets` gate, and a test asserts the manifest's copy is byte-identical to it. The check runs both directions, so an example no capability claims fails too and a file cannot be built for nobody. The specification requires a quickstart to compile and run unmodified and nothing compiles a YAML file — of the seven in the specification's own reference adoption, five no longer built against the API they described. Eight of the fourteen capabilities carry one (#192).
 
 ### Changed
+
+- The command-line interface publishes as `oxicrypt-cli`; the binary it installs is still `oxi`. The crate name `oxi` has been registered on crates.io by an unrelated project since 2018 and is not available. `cargo install oxicrypt-cli` yields an `oxi` command, and nothing changes for anyone building from this repository.
 
 - The SHA digest and block sizes are re-exported at the crate root of `oxicrypt-sha`, algorithm-prefixed: `SHA256_DIGEST_SIZE`, `SHA384_BLOCK_SIZE` and so on for all seven algorithms. `oxicrypt_sha::DIGEST_SIZE` was the path a caller forms first and it could never resolve — `DIGEST_SIZE` is defined in six submodules with six different values, so the bare name has no correct answer. The prefixed form gives each size one meaning at the root and matches what `sha512_t` already did internally with `DIGEST_SIZE_224`; the module-scoped names are unchanged (#192).
 - Test fixtures no longer carry the `pqclib` project name: 77 occurrences across 19 files. All were test-only and reached no shipped artifact — `strings` on the built `.so` returns none — so this changes no behaviour a caller can observe. The `CHANGELOG` entries recording the original rotation keep the old name, being the history of it (#193).

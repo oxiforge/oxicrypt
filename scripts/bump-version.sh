@@ -6,14 +6,19 @@
 # invisible until an agent reads a manifest that claims to describe a release it
 # does not describe. This script is the single place that number changes.
 #
-#   ./scripts/bump-version.sh 0.21.0
-#   ./scripts/bump-version.sh 0.21.0 --date 2026-08-05   # override the date
-#   ./scripts/bump-version.sh 0.21.0 --check             # report, change nothing
+#   ./scripts/bump-version.sh X.Y.Z
+#   ./scripts/bump-version.sh X.Y.Z --date 2026-08-05   # override the date
+#   ./scripts/bump-version.sh X.Y.Z --check             # report, change nothing
+#
+# The examples above are deliberately not a real version. A concrete one goes
+# stale at the next release and then trips this script's own final guard, which
+# is a false positive in the one check that must stay trustworthy.
 #
 # What it touches:
 #   Cargo.toml                          [workspace.package] version
 #   docs/llm-api-manifest/llm-api.yaml  library.version
 #   lama.yaml                           library.version
+#   */llm-api-draft.yaml                library.version (unquoted; optional)
 #   CHANGELOG.md                        `## [Unreleased]` -> `## [X.Y.Z] - DATE`
 #
 # It does NOT commit, tag, or push. Releases stay deliberate acts; see
@@ -97,6 +102,19 @@ bump_dep_versions() { # $1=file  $2=human name
     echo "  ok  $file  ($what, $hits literal(s))"
 }
 
+# Harness draft manifests write the version UNQUOTED, so the anchors above
+# cannot match them. They went stale for a whole release before the final guard
+# caught them; they are covered here rather than left to it. Optional by
+# design — a draft that is deleted or promoted must not fail a release.
+for draft in */llm-api-draft.yaml; do
+    [[ -f "$draft" ]] || continue
+    hits="$(grep -cE "^  version: ${old//./\\.}$" "$draft" || true)"
+    [[ "$hits" -eq 1 ]] || die "draft manifest: pattern matched $hits times in $draft (need exactly 1) — refusing to write"
+    perl -i -pe "s/^  version: \Q$old\E$/  version: $new/" "$draft"
+    grep -qE "^  version: ${new//./\\.}$" "$draft" || die "draft manifest: rewrite did not take in $draft"
+    echo "  ok  $draft  (draft manifest version)"
+done
+
 bump_dep_versions "$CARGO" "[workspace.dependencies] versions"
 bump_dep_versions "esv-harness/Cargo.toml" "esv-harness explicit dependency version"
 
@@ -155,10 +173,15 @@ else
 fi
 
 # Positive control on the whole operation: no stale literal may survive outside
-# Cargo.lock, which cargo regenerates. Reporting success while a file still
+# the lock files, which cargo regenerates. Reporting success while a file still
 # carries the old number is the failure this script exists to prevent.
+#
+# The lock pathspec is `*Cargo.lock`, not `Cargo.lock`: the latter is anchored
+# at the repo root and misses `playground/Cargo.lock`, which is a real lock file
+# outside the workspace. Run `cargo update --workspace` in the root AND in
+# playground/ before trusting a clean result here.
 echo "bump-version: checking for surviving '$old' literals..."
-stale="$(git grep -nF "$old" -- ':!Cargo.lock' ':!CHANGELOG.md' || true)"
+stale="$(git grep -nF "$old" -- ':!*Cargo.lock' ':!CHANGELOG.md' || true)"
 if [[ -n "$stale" ]]; then
     echo "$stale" >&2
     die "stale '$old' literals survive (listed above) — the bump is incomplete"

@@ -50,7 +50,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to build and attach to (e.g. v0.21.0)"
+        description: "Existing release tag to build and attach to (e.g. v1.2.3)"
         required: true
         type: string
 
