@@ -40,11 +40,11 @@ fn hex_upper(b: &[u8]) -> String {
 const NUM_TESTS: usize = 5;
 
 const MESSAGES: [&[u8]; NUM_TESTS] = [
-    b"pqclib-oaep-lifecycle-msg-01",
-    b"pqclib-oaep-lifecycle-msg-02",
-    b"pqclib-oaep-lifecycle-msg-03",
-    b"pqclib-oaep-lifecycle-msg-04",
-    b"pqclib-oaep-lifecycle-msg-05",
+    b"oxicrypt-oaep-lifecycle-msg-01",
+    b"oxicrypt-oaep-lifecycle-msg-02",
+    b"oxicrypt-oaep-lifecycle-msg-03",
+    b"oxicrypt-oaep-lifecycle-msg-04",
+    b"oxicrypt-oaep-lifecycle-msg-05",
 ];
 
 #[test]
@@ -55,8 +55,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
     // ── Reproduce the RSA key from the lifecycle DRBG seed ───────
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-rsa-lifecycle-gen-entropy-v1",
-        b"pqclib-rsa-lifecycle-gen-nonce-v1",
+        b"oxicrypt-rsa-lifecycle-gen-entropy-v1",
+        b"oxicrypt-rsa-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");
@@ -85,8 +85,8 @@ fn generate_rsa_oaep_lifecycle_slice() {
     let mut seed_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     seed_drbg
         .instantiate(
-            b"pqclib-rsa-oaep-lifecycle-seed-entropy-v1",
-            b"pqclib-rsa-oaep-lifecycle-seed-nonce-v1",
+            b"oxicrypt-rsa-oaep-lifecycle-seed-entropy-v1",
+            b"oxicrypt-rsa-oaep-lifecycle-seed-nonce-v1",
             b"",
         )
         .expect("seed drbg instantiate");

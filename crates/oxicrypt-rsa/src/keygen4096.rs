@@ -73,7 +73,7 @@ mod tests {
             run: || Ok(()),
         }]);
         let mut d = HmacDrbgSha256::default();
-        d.instantiate(seed, b"pqclib-rsa4096-keygen-test", b"")
+        d.instantiate(seed, b"oxicrypt-rsa4096-keygen-test", b"")
             .unwrap();
         d
     }
@@ -118,7 +118,7 @@ mod tests {
             name: "rsa-4096-keygen-smoke",
             run: crate::self_test,
         }]);
-        let mut drbg = make_drbg(b"pqclib-rsa4096-keygen-smoke-entropy-0001");
+        let mut drbg = make_drbg(b"oxicrypt-rsa4096-keygen-smoke-entropy-0001");
         let km = generate_4096(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 4096 bits).
         assert_ne!(km.n.limbs[LIMBS4096 - 1] >> 63, 0, "n is not 4096-bit");

@@ -67,8 +67,8 @@ fn generate_rsa_siggen_cross_slice() {
     // Generate a fresh RSA-2048 key pair with CRT components.
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-siggen-cross-entropy-v1",
-        b"pqclib-siggen-cross-nonce-v1",
+        b"oxicrypt-siggen-cross-entropy-v1",
+        b"oxicrypt-siggen-cross-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");

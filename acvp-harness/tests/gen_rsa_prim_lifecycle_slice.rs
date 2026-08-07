@@ -53,8 +53,8 @@ fn generate_rsa_prim_lifecycle_slices() {
     // ── Reproduce the RSA key from the lifecycle DRBG seed ───────
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-rsa-lifecycle-gen-entropy-v1",
-        b"pqclib-rsa-lifecycle-gen-nonce-v1",
+        b"oxicrypt-rsa-lifecycle-gen-entropy-v1",
+        b"oxicrypt-rsa-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");
@@ -83,8 +83,8 @@ fn generate_rsa_prim_lifecycle_slices() {
     let mut msg_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     msg_drbg
         .instantiate(
-            b"pqclib-rsa-prim-lifecycle-msg-entropy-v1",
-            b"pqclib-rsa-prim-lifecycle-msg-nonce-v1",
+            b"oxicrypt-rsa-prim-lifecycle-msg-entropy-v1",
+            b"oxicrypt-rsa-prim-lifecycle-msg-nonce-v1",
             b"",
         )
         .expect("msg drbg instantiate");

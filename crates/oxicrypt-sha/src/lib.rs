@@ -100,6 +100,27 @@ pub use sha384::Sha384;
 pub use sha512::Sha512;
 pub use sha512_t::{Sha512_224, Sha512_256};
 
+// Digest and block sizes.
+//
+// Each is algorithm-prefixed rather than re-exported under its bare name.
+// `DIGEST_SIZE` is defined in six of the submodules above with six different
+// values, so `oxicrypt_sha::DIGEST_SIZE` — the path a caller forms first — has
+// no correct answer and cannot be made to resolve. Prefixing gives every size a
+// name at the crate root that means exactly one thing, and follows what
+// `sha512_t` already does internally with `DIGEST_SIZE_224`.
+//
+// The bare names remain available on their modules, so
+// `oxicrypt_sha::sha256::DIGEST_SIZE` is unaffected.
+pub use sha1::{BLOCK_SIZE as SHA1_BLOCK_SIZE, DIGEST_SIZE as SHA1_DIGEST_SIZE};
+pub use sha224::{BLOCK_SIZE as SHA224_BLOCK_SIZE, DIGEST_SIZE as SHA224_DIGEST_SIZE};
+pub use sha256::{BLOCK_SIZE as SHA256_BLOCK_SIZE, DIGEST_SIZE as SHA256_DIGEST_SIZE};
+pub use sha384::{BLOCK_SIZE as SHA384_BLOCK_SIZE, DIGEST_SIZE as SHA384_DIGEST_SIZE};
+pub use sha512::{BLOCK_SIZE as SHA512_BLOCK_SIZE, DIGEST_SIZE as SHA512_DIGEST_SIZE};
+pub use sha512_t::{
+    BLOCK_SIZE_224 as SHA512_224_BLOCK_SIZE, BLOCK_SIZE_256 as SHA512_256_BLOCK_SIZE,
+    DIGEST_SIZE_224 as SHA512_224_DIGEST_SIZE, DIGEST_SIZE_256 as SHA512_256_DIGEST_SIZE,
+};
+
 /// Power-up KATs for every algorithm this crate implements.
 ///
 /// Callers that are assembling the full module test inventory should

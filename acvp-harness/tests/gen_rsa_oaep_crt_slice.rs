@@ -62,8 +62,8 @@ fn generate_rsa_oaep_crt_slice() {
     // Generate a fresh RSA-2048 key pair with CRT components.
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-oaep-crt-gen-entropy-v1",
-        b"pqclib-oaep-crt-gen-nonce-v1",
+        b"oxicrypt-oaep-crt-gen-entropy-v1",
+        b"oxicrypt-oaep-crt-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");

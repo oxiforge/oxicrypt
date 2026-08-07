@@ -460,8 +460,8 @@ mod tests {
     fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-p384-entropy-input",
-            b"pqclib-p384-nonce",
+            b"oxicrypt-p384-entropy-input",
+            b"oxicrypt-p384-nonce",
             personalization,
         )
         .expect("drbg instantiates");
@@ -476,7 +476,7 @@ mod tests {
         }]);
         let mut drbg = pct_drbg(b"p384-roundtrip");
         let sk = EcdsaP384PrivateKey::generate(&mut drbg).expect("generate ok");
-        let msg = b"pqclib P-384: random-k sign and verify";
+        let msg = b"oxicrypt P-384: random-k sign and verify";
         let sig = sk.sign_sha384(&mut drbg, msg).expect("sign ok");
         assert!(verify(&sk.public_key(), msg, &sig).expect("verify ok"));
     }

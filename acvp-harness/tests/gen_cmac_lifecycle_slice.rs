@@ -45,8 +45,8 @@ fn generate_cmac_lifecycle_slice() {
 
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-cmac-lifecycle-gen-entropy-v1",
-        b"pqclib-cmac-lifecycle-gen-nonce-v1",
+        b"oxicrypt-cmac-lifecycle-gen-entropy-v1",
+        b"oxicrypt-cmac-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");

@@ -73,7 +73,7 @@ mod tests {
             run: || Ok(()),
         }]);
         let mut d = HmacDrbgSha256::default();
-        d.instantiate(seed, b"pqclib-rsa3072-keygen-test", b"")
+        d.instantiate(seed, b"oxicrypt-rsa3072-keygen-test", b"")
             .unwrap();
         d
     }
@@ -120,7 +120,7 @@ mod tests {
             name: "rsa-3072-keygen-smoke",
             run: crate::self_test,
         }]);
-        let mut drbg = make_drbg(b"pqclib-rsa3072-keygen-smoke-entropy-0001");
+        let mut drbg = make_drbg(b"oxicrypt-rsa3072-keygen-smoke-entropy-0001");
         let km = generate_3072(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 3072 bits).
         assert_ne!(km.n.limbs[LIMBS3072 - 1] >> 63, 0, "n is not 3072-bit");

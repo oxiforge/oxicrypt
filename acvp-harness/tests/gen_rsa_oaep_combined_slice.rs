@@ -69,8 +69,8 @@ fn generate_rsa_oaep_combined_slice() {
     // Generate a fresh RSA-2048 key pair.
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-oaep-combined-gen-entropy-v1",
-        b"pqclib-oaep-combined-gen-nonce-v1",
+        b"oxicrypt-oaep-combined-gen-entropy-v1",
+        b"oxicrypt-oaep-combined-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");

@@ -57,8 +57,8 @@ fn generate_rsa_lifecycle_slices() {
     // Generate a fresh RSA-2048 key pair.
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-rsa-lifecycle-gen-entropy-v1",
-        b"pqclib-rsa-lifecycle-gen-nonce-v1",
+        b"oxicrypt-rsa-lifecycle-gen-entropy-v1",
+        b"oxicrypt-rsa-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");
@@ -318,8 +318,8 @@ fn generate_rsa_lifecycle_slices() {
     // ── keyGen slice ─────────────────────────────────────────────
     // One group, one test: provide the same DRBG seed material so
     // the keyGen handler re-derives the identical key.
-    let entropy_hex = hex_upper(b"pqclib-rsa-lifecycle-gen-entropy-v1");
-    let nonce_hex = hex_upper(b"pqclib-rsa-lifecycle-gen-nonce-v1");
+    let entropy_hex = hex_upper(b"oxicrypt-rsa-lifecycle-gen-entropy-v1");
+    let nonce_hex = hex_upper(b"oxicrypt-rsa-lifecycle-gen-nonce-v1");
 
     let keygen_json = format!(
         r#"{{

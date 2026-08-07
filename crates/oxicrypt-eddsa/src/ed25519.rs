@@ -611,18 +611,18 @@ mod tests {
 
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r9-eddsa-entropy-input",
-            b"pqclib-r9-eddsa-nonce",
-            b"pqclib-r9-eddsa-personalization",
+            b"oxicrypt-r9-eddsa-entropy-input",
+            b"oxicrypt-r9-eddsa-nonce",
+            b"oxicrypt-r9-eddsa-personalization",
         )
         .unwrap();
         let key = Ed25519PrivateKey::generate(&mut drbg).unwrap();
 
         // Round-trip via the handle.
-        let sig = key.sign(b"pqclib-ed25519-r9-smoke").unwrap();
+        let sig = key.sign(b"oxicrypt-ed25519-r9-smoke").unwrap();
         assert!(verify_internal(
             &key.public_key(),
-            b"pqclib-ed25519-r9-smoke",
+            b"oxicrypt-ed25519-r9-smoke",
             &sig
         ));
 

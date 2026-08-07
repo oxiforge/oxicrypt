@@ -1865,8 +1865,8 @@ mod tests {
 
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r4-e2e-entropy-input-001",
-            b"pqclib-r4-e2e-nonce",
+            b"oxicrypt-r4-e2e-entropy-input-001",
+            b"oxicrypt-r4-e2e-nonce",
             b"",
         )
         .expect("drbg instantiates");
@@ -1875,7 +1875,7 @@ mod tests {
 
         // Two signatures over the same message must differ because
         // the salt is sampled fresh per call, then both must verify.
-        let msg = b"pqclib R4: generate + PSS sign e2e";
+        let msg = b"oxicrypt R4: generate + PSS sign e2e";
         let sig1 = sk
             .sign_pss_sha256(&mut drbg, msg)
             .expect("drbg-backed PSS sign #1");
@@ -1903,8 +1903,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r5-crt-equiv-entropy-v1",
-            b"pqclib-r5-crt-nonce",
+            b"oxicrypt-r5-crt-equiv-entropy-v1",
+            b"oxicrypt-r5-crt-nonce",
             b"",
         )
         .unwrap();
@@ -1920,7 +1920,7 @@ mod tests {
         let dq_bytes = km.dq.to_be_bytes();
         let qinv_bytes = km.qinv.to_be_bytes();
 
-        let msg = b"pqclib R5 CRT equivalence probe";
+        let msg = b"oxicrypt R5 CRT equivalence probe";
         let sig_non_crt = rsa_pkcs1_v15_sign_2048_sha256_internal(&n_bytes, &d_bytes, msg).unwrap();
         let sig_crt = rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
             &n_bytes,
@@ -1958,8 +1958,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r5-bellcore-entropy-v1",
-            b"pqclib-r5-bellcore-nonce",
+            b"oxicrypt-r5-bellcore-entropy-v1",
+            b"oxicrypt-r5-bellcore-nonce",
             b"",
         )
         .unwrap();
@@ -1980,7 +1980,7 @@ mod tests {
             &dp_bad,
             &dq_bytes,
             &qinv_bytes,
-            b"pqclib R5 Bellcore probe",
+            b"oxicrypt R5 Bellcore probe",
         );
         assert!(result.is_none(), "Bellcore verify must catch a faulted dP");
     }
@@ -1996,8 +1996,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r5-crt-pss-entropy",
-            b"pqclib-r5-crt-pss-nonce",
+            b"oxicrypt-r5-crt-pss-entropy",
+            b"oxicrypt-r5-crt-pss-nonce",
             b"",
         )
         .unwrap();
@@ -2018,7 +2018,7 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"pqclib-r4-reject-e-entropy", b"nonce", b"")
+        drbg.instantiate(b"oxicrypt-r4-reject-e-entropy", b"nonce", b"")
             .unwrap();
         match RsaPrivateKey2048::generate(&mut drbg, 4) {
             Err(Error::InvalidInput) => {}
@@ -2069,8 +2069,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r6-oaep-crt-entropy",
-            b"pqclib-r6-oaep-crt-nonce",
+            b"oxicrypt-r6-oaep-crt-entropy",
+            b"oxicrypt-r6-oaep-crt-nonce",
             b"",
         )
         .unwrap();
@@ -2106,8 +2106,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r6-oaep-agree-entropy",
-            b"pqclib-r6-oaep-agree-nonce",
+            b"oxicrypt-r6-oaep-agree-entropy",
+            b"oxicrypt-r6-oaep-agree-nonce",
             b"",
         )
         .unwrap();
@@ -2157,8 +2157,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r6-oaep-bellcore-entropy",
-            b"pqclib-r6-oaep-bellcore-nonce",
+            b"oxicrypt-r6-oaep-bellcore-entropy",
+            b"oxicrypt-r6-oaep-bellcore-nonce",
             b"",
         )
         .unwrap();
@@ -2268,8 +2268,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r6-oaep-drbg-entropy",
-            b"pqclib-r6-oaep-drbg-nonce",
+            b"oxicrypt-r6-oaep-drbg-entropy",
+            b"oxicrypt-r6-oaep-drbg-nonce",
             b"",
         )
         .unwrap();
@@ -2302,8 +2302,8 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r6-oaep-oversize-entropy",
-            b"pqclib-r6-oaep-oversize-nonce",
+            b"oxicrypt-r6-oaep-oversize-entropy",
+            b"oxicrypt-r6-oaep-oversize-nonce",
             b"",
         )
         .unwrap();

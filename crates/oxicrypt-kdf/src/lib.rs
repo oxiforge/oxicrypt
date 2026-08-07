@@ -2083,7 +2083,7 @@ mod tests {
     // non-NIST inputs to prove determinism, domain separation, and
     // the SP 800-108 §5.2 bit-length binding.
     const KBKDF_KAT_KEY: [u8; 20] = [0x0b; 20];
-    const KBKDF_KAT_LABEL: &[u8] = b"pqclib KBKDF counter";
+    const KBKDF_KAT_LABEL: &[u8] = b"oxicrypt KBKDF counter";
     const KBKDF_KAT_CONTEXT: &[u8] = b"fips-kdf self test";
     use oxicrypt_module::{Error, KatEntry, State, initialize_with_tests};
 

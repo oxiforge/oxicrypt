@@ -499,7 +499,7 @@ mod tests {
 
     /// The doc comment on `FIPS_INTEGRITY_KEY` names the key's literal.
     /// Before this test existed the two disagreed twice over: the doc named
-    /// an `oxicrypt-` prefix while the constant carried `pqclib-`, and the
+    /// an `oxicrypt-` prefix while the constant carried `oxicrypt-`, and the
     /// literal it named was 34 bytes, which could not have compiled as
     /// `[u8; 32]`. A doc naming the wrong key for the IG 10.3.A integrity
     /// check is the kind of discrepancy a CST lab reads.

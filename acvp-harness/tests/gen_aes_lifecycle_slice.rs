@@ -70,8 +70,8 @@ fn generate_aes_lifecycle_slices() {
 
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-aes-lifecycle-gen-entropy-v1",
-        b"pqclib-aes-lifecycle-gen-nonce-v1",
+        b"oxicrypt-aes-lifecycle-gen-entropy-v1",
+        b"oxicrypt-aes-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");

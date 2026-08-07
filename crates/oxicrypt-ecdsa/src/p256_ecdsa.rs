@@ -651,8 +651,8 @@ mod tests {
     fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
-            b"pqclib-r7-ecdsa-entropy-input",
-            b"pqclib-r7-ecdsa-nonce",
+            b"oxicrypt-r7-ecdsa-entropy-input",
+            b"oxicrypt-r7-ecdsa-nonce",
             personalization,
         )
         .expect("drbg instantiates");
@@ -665,12 +665,37 @@ mod tests {
         // produces a byte-stable `(d, Q)`. This guards against any
         // future refactor silently changing the order of DRBG
         // consumption inside the keygen / PCT / first-sign path.
+        //
+        // The two constants below are the pin. Without them this test
+        // asserted only properties that hold for ANY valid keypair from
+        // ANY seed, so it could not see the reordering it exists to
+        // catch — confirmed by mutating the seed, which changed the
+        // keypair completely and left the test green (#214). If this
+        // breaks intentionally, re-capture the bytes, as the RSA keygen
+        // pin documents.
+        const EXPECTED_D: [u8; PRIVATE_KEY_LEN] = [
+            0x7a, 0xcd, 0x58, 0x6a, 0x22, 0x6d, 0x77, 0x61, 0xac, 0x38, 0xad, 0x16, 0x0b, 0xce,
+            0x29, 0xfd, 0xe8, 0xb0, 0xdd, 0xf5, 0x99, 0x47, 0xb6, 0x97, 0x92, 0xe8, 0xf6, 0xd9,
+            0x1f, 0x74, 0xee, 0xe0,
+        ];
+        const EXPECTED_Q: [u8; PUBLIC_KEY_LEN] = [
+            0x04, 0xb1, 0x79, 0x37, 0x9a, 0x4d, 0xbc, 0xa0, 0x8e, 0x69, 0x8c, 0x37, 0xab, 0x68,
+            0x4b, 0x1f, 0x39, 0xbd, 0x26, 0x07, 0x2e, 0x3a, 0x52, 0x35, 0xc0, 0x03, 0x1f, 0xdc,
+            0x32, 0x4d, 0xde, 0x5e, 0x2e, 0x68, 0xaa, 0x24, 0x90, 0xba, 0x06, 0x96, 0x9c, 0xcd,
+            0x62, 0x23, 0x7a, 0x29, 0x2d, 0xdb, 0x48, 0xd7, 0x4c, 0x97, 0x90, 0x69, 0xa5, 0xa4,
+            0x1c, 0xde, 0xdc, 0x5d, 0x7d, 0x06, 0x48, 0x50, 0x25,
+        ];
+
         let _ = initialize_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
         let mut drbg = pct_drbg(b"r7-keygen-pinned");
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
+
+        assert_eq!(*sk.private_scalar(), EXPECTED_D, "keygen d drift");
+        assert_eq!(sk.public_key(), EXPECTED_Q, "keygen Q drift");
+
         // Re-derive the public key from the private scalar and
         // check the handle agrees — this is what the PCT also
         // verified internally.
@@ -689,7 +714,7 @@ mod tests {
         }]);
         let mut drbg = pct_drbg(b"r7-roundtrip");
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
-        let msg = b"pqclib R7: random-k sign and verify";
+        let msg = b"oxicrypt R7: random-k sign and verify";
         let sig = sk.sign_sha256(&mut drbg, msg).expect("sign ok");
         assert!(verify(&sk.public_key(), msg, &sig).expect("verify ok"));
     }
@@ -705,7 +730,7 @@ mod tests {
         }]);
         let mut drbg = pct_drbg(b"r7-randomises");
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
-        let msg = b"pqclib R7: drbg must randomise k per call";
+        let msg = b"oxicrypt R7: drbg must randomise k per call";
         let sig1 = sk.sign_sha256(&mut drbg, msg).expect("sign #1");
         let sig2 = sk.sign_sha256(&mut drbg, msg).expect("sign #2");
         assert_ne!(sig1, sig2, "DRBG-backed sigs must differ on fresh k");

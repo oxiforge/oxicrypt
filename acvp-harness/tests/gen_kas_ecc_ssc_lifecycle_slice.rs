@@ -41,8 +41,8 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
     // Reproduce the same five ECDSA lifecycle private keys.
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-ecdsa-lifecycle-gen-entropy-v1",
-        b"pqclib-ecdsa-lifecycle-gen-nonce-v1",
+        b"oxicrypt-ecdsa-lifecycle-gen-entropy-v1",
+        b"oxicrypt-ecdsa-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");
@@ -65,8 +65,8 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
     let mut peer_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     peer_drbg
         .instantiate(
-            b"pqclib-kas-ecc-ssc-lifecycle-peer-entropy-v1",
-            b"pqclib-kas-ecc-ssc-lifecycle-peer-nonce-v1",
+            b"oxicrypt-kas-ecc-ssc-lifecycle-peer-entropy-v1",
+            b"oxicrypt-kas-ecc-ssc-lifecycle-peer-nonce-v1",
             b"",
         )
         .expect("peer drbg instantiate");

@@ -53,8 +53,8 @@ fn generate_ecdsa_lifecycle_slices() {
     // using a DRBG so they are valid scalars in [1, n-1].
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     drbg.instantiate(
-        b"pqclib-ecdsa-lifecycle-gen-entropy-v1",
-        b"pqclib-ecdsa-lifecycle-gen-nonce-v1",
+        b"oxicrypt-ecdsa-lifecycle-gen-entropy-v1",
+        b"oxicrypt-ecdsa-lifecycle-gen-nonce-v1",
         b"",
     )
     .expect("drbg instantiate");

@@ -16449,6 +16449,90 @@ error_types:
         user_action: Read the message. This is an operator tool outside the module boundary, so the text is the interface; nothing in the type identifies the cause programmatically.
 
 constants:
+  - name: SHA1_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "20"
+    description: "SHA-1 digest length in bytes."
+
+  - name: SHA1_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "64"
+    description: "SHA-1 input block size in bytes."
+
+  - name: SHA224_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "28"
+    description: "SHA-224 digest length in bytes."
+
+  - name: SHA224_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "64"
+    description: "SHA-224 input block size in bytes."
+
+  - name: SHA256_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "32"
+    description: "SHA-256 digest length in bytes."
+
+  - name: SHA256_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "64"
+    description: "SHA-256 input block size in bytes."
+
+  - name: SHA384_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "48"
+    description: "SHA-384 digest length in bytes."
+
+  - name: SHA384_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "128"
+    description: "SHA-384 input block size in bytes."
+
+  - name: SHA512_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "64"
+    description: "SHA-512 digest length in bytes."
+
+  - name: SHA512_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "128"
+    description: "SHA-512 input block size in bytes."
+
+  - name: SHA512_224_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "28"
+    description: "SHA-512/224 digest length in bytes."
+
+  - name: SHA512_224_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "128"
+    description: "SHA-512/224 input block size in bytes."
+
+  - name: SHA512_256_DIGEST_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "32"
+    description: "SHA-512/256 digest length in bytes."
+
+  - name: SHA512_256_BLOCK_SIZE
+    module: oxicrypt-sha
+    type: usize
+    value: "128"
+    description: "SHA-512/256 input block size in bytes."
+
   - name: SHAKE128_RATE
     module: oxicrypt-xof
     type: usize
