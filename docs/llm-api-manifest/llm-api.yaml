@@ -377,6 +377,10 @@ families:
     description: SP 800-108 KDF modes (Counter, Feedback, Double-Pipeline) over HMAC-SHA-256, exposing identical `derive` entry points.
     applies_to: functions
 
+  - name: ffi-drbg-lifecycle
+    description: C ABI handle lifecycle for the three SP 800-90A DRBG mechanisms, taking an opaque handle through allocation, instantiation, reseeding, generation and release.
+    applies_to: functions
+
 # ─────────────────────────────────────────────────────────────────────
 # Types
 # ─────────────────────────────────────────────────────────────────────
@@ -12754,6 +12758,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha256_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated HMAC_DRBG-SHA-256 handle (SP 800-90A §10.1.2), writing an owned pointer through out_handle; _generate or _reseed before instantiate returns OxiResult::Uninstantiated = 8.
     signature: >-
       int oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **out_handle)
@@ -12775,6 +12780,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha256_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free an HMAC_DRBG-SHA-256 handle; NULL-safe, zeroizes the internal (K, V) state on drop.
     signature: >-
       void oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *handle)
@@ -12793,6 +12799,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha256_instantiate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: "HMAC_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.2.3); seeds with caller-supplied entropy, nonce, and personalization (combined length <= 768 bytes, else InvalidInput = 5, each input NULL when its length is 0)."
     signature: >-
       int oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *handle,
@@ -12847,6 +12854,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha256_reseed
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-256 Reseed (SP 800-90A §10.1.2.4); re-seeds with fresh entropy and optional additional input (NULL when its length is 0), resetting reseed_counter to 1.
     signature: >-
       int oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *handle,
@@ -12890,6 +12898,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha256_generate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-256 Generate (SP 800-90A §10.1.2.5); writes out_len pseudorandom bytes into out, advancing (K, V) (additional_input NULL when its length is 0).
     signature: >-
       int oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *handle,
@@ -12940,6 +12949,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha384_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated HMAC_DRBG-SHA-384 handle; same lifecycle and Uninstantiated = 8 semantics on premature _generate / _reseed.
     signature: >-
       int oxi_hmac_drbg_sha384_new(OxiHmacDrbgSha384 **out_handle)
@@ -12961,6 +12971,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha384_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free an HMAC_DRBG-SHA-384 handle; NULL-safe, zeroizes the internal (K, V) state on drop.
     signature: >-
       void oxi_hmac_drbg_sha384_free(OxiHmacDrbgSha384 *handle)
@@ -12979,6 +12990,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha384_instantiate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3); per Table 2 at strength 192, entropy >= 192 bits and nonce >= 96 bits, combined-length ceiling 768 bytes (hash-independent).
     signature: >-
       int oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *handle,
@@ -13033,6 +13045,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha384_reseed
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4).
     signature: >-
       int oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *handle,
@@ -13076,6 +13089,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha384_generate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-384 Generate (SP 800-90A §10.1.2.5); same 2^19-bit per-request ceiling.
     signature: >-
       int oxi_hmac_drbg_sha384_generate(OxiHmacDrbgSha384 *handle,
@@ -13123,6 +13137,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha512_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated HMAC_DRBG-SHA-512 handle.
     signature: >-
       int oxi_hmac_drbg_sha512_new(OxiHmacDrbgSha512 **out_handle)
@@ -13144,6 +13159,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha512_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free an HMAC_DRBG-SHA-512 handle; NULL-safe, zeroizes the wider 64-byte (K, V) state on drop.
     signature: >-
       void oxi_hmac_drbg_sha512_free(OxiHmacDrbgSha512 *handle)
@@ -13162,6 +13178,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha512_instantiate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-512 Instantiate (SP 800-90A §10.1.2.3); per Table 2 at strength 256, entropy >= 256 bits and nonce >= 128 bits, wider 64-byte (K, V) state.
     signature: >-
       int oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *handle,
@@ -13216,6 +13233,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha512_reseed
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-512 Reseed.
     signature: >-
       int oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *handle,
@@ -13259,6 +13277,7 @@ functions:
 
   - name: oxi_hmac_drbg_sha512_generate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: HMAC_DRBG-SHA-512 Generate.
     signature: >-
       int oxi_hmac_drbg_sha512_generate(OxiHmacDrbgSha512 *handle,
@@ -13309,6 +13328,7 @@ functions:
 
   - name: oxi_hash_drbg_sha256_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated Hash_DRBG-SHA-256 handle.
     signature: >-
       int oxi_hash_drbg_sha256_new(OxiHashDrbgSha256 **out_handle)
@@ -13330,6 +13350,7 @@ functions:
 
   - name: oxi_hash_drbg_sha256_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free a Hash_DRBG-SHA-256 handle; NULL-safe, zeroizes the internal (V, C, reseed_counter) state on drop.
     signature: >-
       void oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *handle)
@@ -13348,6 +13369,7 @@ functions:
 
   - name: oxi_hash_drbg_sha256_instantiate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-256 Instantiate (SP 800-90A §10.1.1.2); per Table 2 at strength 256, entropy >= 256 bits and nonce >= 128 bits, combined-input ceiling HASH_DRBG_MAX_DF_INPUT.
     signature: >-
       int oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *handle,
@@ -13402,6 +13424,7 @@ functions:
 
   - name: oxi_hash_drbg_sha256_reseed
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3).
     signature: >-
       int oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *handle,
@@ -13445,6 +13468,7 @@ functions:
 
   - name: oxi_hash_drbg_sha256_generate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-256 Generate (SP 800-90A §10.1.1.4); same 2^19-bit per-request ceiling.
     signature: >-
       int oxi_hash_drbg_sha256_generate(OxiHashDrbgSha256 *handle,
@@ -13492,6 +13516,7 @@ functions:
 
   - name: oxi_hash_drbg_sha384_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated Hash_DRBG-SHA-384 handle.
     signature: >-
       int oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **out_handle)
@@ -13513,6 +13538,7 @@ functions:
 
   - name: oxi_hash_drbg_sha384_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free a Hash_DRBG-SHA-384 handle; NULL-safe.
     signature: >-
       void oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *handle)
@@ -13531,6 +13557,7 @@ functions:
 
   - name: oxi_hash_drbg_sha384_instantiate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-384 Instantiate; per Table 2 at strength 192, entropy >= 192 bits and nonce >= 96 bits.
     signature: >-
       int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
@@ -13585,6 +13612,7 @@ functions:
 
   - name: oxi_hash_drbg_sha384_reseed
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-384 Reseed.
     signature: >-
       int oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *handle,
@@ -13628,6 +13656,7 @@ functions:
 
   - name: oxi_hash_drbg_sha384_generate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-384 Generate.
     signature: >-
       int oxi_hash_drbg_sha384_generate(OxiHashDrbgSha384 *handle,
@@ -13675,6 +13704,7 @@ functions:
 
   - name: oxi_hash_drbg_sha512_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated Hash_DRBG-SHA-512 handle.
     signature: >-
       int oxi_hash_drbg_sha512_new(OxiHashDrbgSha512 **out_handle)
@@ -13696,6 +13726,7 @@ functions:
 
   - name: oxi_hash_drbg_sha512_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free a Hash_DRBG-SHA-512 handle; NULL-safe.
     signature: >-
       void oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *handle)
@@ -13714,6 +13745,7 @@ functions:
 
   - name: oxi_hash_drbg_sha512_instantiate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-512 Instantiate; per Table 2 at strength 256, entropy >= 256 bits and nonce >= 128 bits.
     signature: >-
       int oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *handle,
@@ -13768,6 +13800,7 @@ functions:
 
   - name: oxi_hash_drbg_sha512_reseed
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-512 Reseed.
     signature: >-
       int oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *handle,
@@ -13811,6 +13844,7 @@ functions:
 
   - name: oxi_hash_drbg_sha512_generate
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Hash_DRBG-SHA-512 Generate.
     signature: >-
       int oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *handle,
@@ -13862,6 +13896,7 @@ functions:
 
   - name: oxi_ctr_drbg_aes128_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated CTR_DRBG-AES-128 handle; the caller MUST call exactly one of _instantiate_no_df or _instantiate_df before generate/reseed.
     signature: >-
       int oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **out_handle)
@@ -13883,6 +13918,7 @@ functions:
 
   - name: oxi_ctr_drbg_aes128_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free a CTR_DRBG-AES-128 handle; NULL-safe, zeroizes the internal (Key, V) state on drop.
     signature: >-
       void oxi_ctr_drbg_aes128_free(OxiCtrDrbgAes128 *handle)
@@ -14162,6 +14198,7 @@ functions:
 
   - name: oxi_ctr_drbg_aes192_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated CTR_DRBG-AES-192 handle.
     signature: >-
       int oxi_ctr_drbg_aes192_new(OxiCtrDrbgAes192 **out_handle)
@@ -14183,6 +14220,7 @@ functions:
 
   - name: oxi_ctr_drbg_aes192_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free a CTR_DRBG-AES-192 handle; NULL-safe.
     signature: >-
       void oxi_ctr_drbg_aes192_free(OxiCtrDrbgAes192 *handle)
@@ -14462,6 +14500,7 @@ functions:
 
   - name: oxi_ctr_drbg_aes256_new
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Allocate a new, uninstantiated CTR_DRBG-AES-256 handle.
     signature: >-
       int oxi_ctr_drbg_aes256_new(OxiCtrDrbgAes256 **out_handle)
@@ -14483,6 +14522,7 @@ functions:
 
   - name: oxi_ctr_drbg_aes256_free
     module: oxicrypt-ffi
+    family: ffi-drbg-lifecycle
     description: Free a CTR_DRBG-AES-256 handle; NULL-safe.
     signature: >-
       void oxi_ctr_drbg_aes256_free(OxiCtrDrbgAes256 *handle)
