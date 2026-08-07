@@ -1,0 +1,46 @@
+[package]
+name = "quickstarts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Compiles the quickstart examples carried in lama.yaml, so a manifest example cannot claim to run without being built."
+
+# Deliberately NOT `workspace = true`.
+#
+# The workspace denies unwrap_used, expect_used and panic, which is right for a
+# cryptographic module and wrong for the examples this crate exists to compile.
+# A quickstart is read and copied by someone meeting the library for the first
+# time, and `.unwrap()` is what makes the call chain legible; threading a real
+# error type through five lines would teach them about Rust error handling
+# rather than about this API. The specification's own example uses `.unwrap()`.
+#
+# The alternative was an allow attribute at the top of each example, but those
+# files are copied verbatim into `lama.yaml`, so the lint carve-out would appear
+# in the snippet a user pastes. Keeping it here leaves the published code clean.
+#
+# Everything that guards correctness rather than style is kept below. No crate
+# outside this one is affected: it is `publish = false` and contains no library
+# code beyond a doc comment.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused = "deny"
+
+[lints.clippy]
+indexing_slicing = "deny"
+integer_division = "deny"
+dbg_macro = "deny"
+todo = "warn"
+
+[dependencies]
+oxicrypt-aes = { workspace = true }
+oxicrypt-drbg = { workspace = true }
+oxicrypt-ecdh = { workspace = true }
+oxicrypt-eddsa = { workspace = true }
+oxicrypt-hmac = { workspace = true }
+oxicrypt-module = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-xof = { workspace = true }

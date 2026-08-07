@@ -44,6 +44,18 @@ capabilities:
     standards:
       - FIPS 180-4
       - FIPS 202
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Hashing. Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_module::initialize_with_tests;
+        use oxicrypt_sha::sha256;
+
+        fn main() {
+            initialize_with_tests(oxicrypt_sha::KATS).unwrap();
+            let digest = sha256(b"hello world").unwrap();
+            assert_eq!(digest.len(), 32);
+        }
 
   - category: "Extendable-output functions (XOF)"
     algorithms:
@@ -62,6 +74,20 @@ capabilities:
       - ParallelHashXOF128
       - ParallelHashXOF256
     standards: ["SP 800-185"]
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Extendable-output functions (XOF). Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_module::initialize_with_tests;
+        use oxicrypt_xof::{kmac256, shake256};
+
+        fn main() {
+            initialize_with_tests(oxicrypt_xof::KATS).unwrap();
+            let squeezed: [u8; 32] = shake256(b"input data").unwrap();
+            let tag: [u8; 32] = kmac256(b"my-key", b"input", b"").unwrap();
+            assert_eq!(squeezed.len(), 32);
+            assert_eq!(tag.len(), 32);
+        }
 
   - category: "Message authentication"
     algorithms:
@@ -70,6 +96,20 @@ capabilities:
     standards:
       - FIPS 198-1
       - SP 800-38B
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Message authentication. Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_hmac::HmacSha256;
+        use oxicrypt_module::initialize_with_tests;
+
+        fn main() {
+            initialize_with_tests(oxicrypt_hmac::KATS).unwrap();
+            let mut mac = HmacSha256::new(b"secret-key-at-least-32-bytes-long!!").unwrap();
+            mac.update(b"message to authenticate");
+            let tag = mac.finalize();
+            assert_eq!(tag.len(), 32);
+        }
 
   - category: "Symmetric encryption"
     algorithms: ["AES-128/192/256 in ECB, CBC, CTR, GCM, CCM, KW, KWP"]
@@ -79,6 +119,23 @@ capabilities:
       - SP 800-38C
       - SP 800-38D
       - SP 800-38F
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Symmetric encryption. Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_aes::{Aes256Key, gcm_encrypt};
+        use oxicrypt_module::initialize_with_tests;
+
+        fn main() {
+            initialize_with_tests(oxicrypt_aes::KATS).unwrap();
+            let key = Aes256Key::new(&[0u8; 32]).unwrap(); // use a real key
+            let iv = [0u8; 12]; // a nonce must never repeat under one key
+            let plaintext = b"hello, world!   ";
+            let mut ciphertext = [0u8; 16];
+            let mut tag = [0u8; 16];
+            gcm_encrypt(&key, &iv, b"", plaintext, &mut ciphertext, &mut tag).unwrap();
+            assert_ne!(ciphertext, *plaintext);
+        }
 
   - category: "Random number generation"
     algorithms:
@@ -86,6 +143,22 @@ capabilities:
       - Hash_DRBG (SHA-256/384/512)
       - HMAC_DRBG (SHA-256/384/512)
     standards: ["SP 800-90A Rev. 1"]
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Random number generation. Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_drbg::HmacDrbgSha256;
+        use oxicrypt_module::initialize_with_tests;
+
+        fn main() {
+            initialize_with_tests(oxicrypt_drbg::KATS).unwrap();
+            let mut rng = HmacDrbgSha256::new();
+            // Both values must come from a real entropy source in production.
+            rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+            let mut output = [0u8; 32];
+            rng.generate(None, &mut output).unwrap();
+            assert_ne!(output, [0u8; 32]);
+        }
 
   - category: "Key derivation"
     algorithms:
@@ -113,6 +186,22 @@ capabilities:
       - FIPS 204
       - FIPS 205
       - RFC 8032
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Digital signatures. Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_drbg::HmacDrbgSha256;
+        use oxicrypt_eddsa::ed25519::{Ed25519PrivateKey, verify};
+        use oxicrypt_module::initialize_with_tests;
+
+        fn main() {
+            initialize_with_tests(oxicrypt_eddsa::KATS).unwrap();
+            let mut rng = HmacDrbgSha256::new();
+            rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+            let signing_key = Ed25519PrivateKey::generate(&mut rng).unwrap();
+            let signature = signing_key.sign(b"message to sign").unwrap();
+            assert!(verify(&signing_key.public_key(), b"message to sign", &signature).unwrap());
+        }
 
   - category: "Key agreement"
     algorithms:
@@ -121,6 +210,25 @@ capabilities:
     standards:
       - SP 800-56Ar3
       - RFC 3526
+    quickstart:
+      language: "rust"
+      code: |
+        //! Quickstart: Key agreement. Carried in lama.yaml; this file is the canonical copy.
+        use oxicrypt_drbg::HmacDrbgSha256;
+        use oxicrypt_ecdh::{compute_shared_secret_p256, generate_keypair_p256};
+        use oxicrypt_module::initialize_with_tests;
+
+        fn main() {
+            initialize_with_tests(oxicrypt_ecdh::KATS).unwrap();
+            let mut rng = HmacDrbgSha256::new();
+            rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
+            // Each party keeps d and publishes Q.
+            let (alice_d, alice_q) = generate_keypair_p256(&mut rng).unwrap();
+            let (bob_d, bob_q) = generate_keypair_p256(&mut rng).unwrap();
+            let alice_shared = compute_shared_secret_p256(&alice_d, &bob_q).unwrap();
+            let bob_shared = compute_shared_secret_p256(&bob_d, &alice_q).unwrap();
+            assert_eq!(alice_shared, bob_shared);
+        }
 
   - category: "Key encapsulation"
     algorithms: ["ML-KEM-512/768/1024"]

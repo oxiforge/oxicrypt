@@ -36,6 +36,7 @@ members = [
     "benches",
     "tools/ct-validation",
     "tools/doc-guard",
+    "tools/quickstarts",
 ]
 exclude = [
     "playground",

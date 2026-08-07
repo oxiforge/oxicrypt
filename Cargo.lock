@@ -864,6 +864,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "quickstarts"
+version = "0.21.0"
+dependencies = [
+ "oxicrypt-aes",
+ "oxicrypt-drbg",
+ "oxicrypt-ecdh",
+ "oxicrypt-eddsa",
+ "oxicrypt-hmac",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-xof",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
