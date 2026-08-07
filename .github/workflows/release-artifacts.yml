@@ -123,13 +123,23 @@ jobs:
             zig_target: aarch64-unknown-linux-gnu.2.17
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
+          # macOS runner labels age out faster than the rest of this matrix.
+          # `macos-13` was retired from GitHub's available images between this
+          # workflow being written and its first run: the job sat queued for
+          # over two hours and was never assigned a runner, while every other
+          # leg finished in about two minutes. A retired label does not fail —
+          # it queues forever, which reads like scarcity rather than removal.
+          # Check https://github.com/actions/runner-images for the current set
+          # before assuming a queued macOS job is merely waiting.
           - name: macos-x86_64
-            runner: macos-13
+            runner: macos-15-intel
             target: x86_64-apple-darwin
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
+          # macos-14 built successfully on 2026-08-07 but is marked deprecated
+          # upstream, so it is moved ahead of retirement rather than after it.
           - name: macos-aarch64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
