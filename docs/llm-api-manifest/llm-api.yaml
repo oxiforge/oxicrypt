@@ -15617,6 +15617,21 @@ functions:
 # Error types (consolidated)
 # ─────────────────────────────────────────────────────────────────────
 
+# Function-level error_variants carry a name and the exact condition that
+# triggers it, and deliberately do NOT repeat user_action. The recovery advice
+# for a variant does not vary by call site, so restating it on each of the 968
+# occurrences below would be 968 places for it to drift.
+#
+# The rule a consumer relies on: every name appearing in a function's
+# returns.error_variants also appears as a variant of an entry in this section,
+# and that entry carries recoverable and user_action. Resolution is by name.
+# This holds for all 968 occurrences as written, and it is the reason the four
+# error types below were added rather than left implicit — 23 occurrences
+# across IntegrityError, EntropyError, TimerError and CollectionError resolved
+# to nothing until they were.
+#
+# Names are unique across error types here, so resolution needs no
+# qualification by the function's return type.
 error_types:
   - name: Error
     module: oxicrypt-module
@@ -15821,6 +15836,99 @@ error_types:
         description: A should-never-happen case reached the catch-all arm.
         recoverable: false
         user_action: Report this with the calling sequence; reaching Internal indicates a defect in the module, not in the call.
+
+  - name: IntegrityError
+    module: oxicrypt-integrity
+    description: Failure of the IG 10.3.A software integrity check or of the signing step that installs its tag.
+    variants:
+      - name: CurrentExeUnresolved
+        description: The path of the running executable could not be resolved.
+        recoverable: false
+        user_action: The integrity check cannot run on this platform or under this launcher; treat the module as unverified rather than proceeding.
+      - name: ExeReadFailed
+        description: The executable could not be read.
+        recoverable: false
+        user_action: Check that the binary is present and readable by this process, then re-run the check.
+      - name: ExeWriteFailed
+        description: The signed buffer could not be written back to the executable path.
+        recoverable: true
+        user_action: Check write permission and free space on the target path, then re-run the signing step.
+      - name: SlotNotFound
+        description: No header-MAC-footer slot was found in the binary.
+        recoverable: false
+        user_action: The binary was not linked against this crate, or the slot was stripped after linking; rebuild and re-sign rather than shipping it.
+      - name: MultipleSlotsFound
+        description: More than one valid slot was found, which a benign binary never contains.
+        recoverable: false
+        user_action: Treat the binary as tampered with; discard it and rebuild from source.
+      - name: MacMismatch
+        description: The HMAC computed over the slot-zeroed buffer did not match the MAC stored in the slot.
+        recoverable: false
+        user_action: The binary does not match what was signed; do not run it as a validated module, and re-sign only a build you trust.
+      - name: InputTooLong
+        description: The input exceeded the length the integrity routine accepts.
+        recoverable: false
+        user_action: Report this; a module binary of this size is outside the range the check was built for.
+  - name: EntropyError
+    module: oxicrypt-entropy
+    description: Refusal from the SP 800-90B entropy pipeline, at construction or while producing a sample.
+    variants:
+      - name: ClaimExceedsCeiling
+        description: The claimed min-entropy per sample exceeds the source ceiling.
+        recoverable: false
+        user_action: Lower the claim to at most the ceiling; the pipeline refuses rather than clamping, so the claim must be corrected by the caller.
+      - name: ClaimExceedsSampleWidth
+        description: The claimed min-entropy per sample exceeds the declared sample width, or the alpha has no APT table coverage.
+        recoverable: false
+        user_action: Lower the claim to at most the sample width, or choose an alpha the APT tables cover.
+      - name: Source
+        description: The underlying noise source failed to produce a sample.
+        recoverable: true
+        user_action: Retry; if the failure persists the source is unavailable and no entropy should be drawn from it.
+      - name: Health
+        description: A continuous health test failed.
+        recoverable: false
+        user_action: Discard the pipeline. The failure permanently poisons it, and the sample that failed is never released.
+      - name: NotReady
+        description: Startup has not completed, or the pipeline has been poisoned, or startup has already run.
+        recoverable: false
+        user_action: Run the startup tests once before sampling, and construct a fresh pipeline after any poisoning.
+      - name: ConditionerKat
+        description: The conditioning component's known-answer test failed.
+        recoverable: false
+        user_action: Treat as a self-test failure of the module rather than a caller error.
+      - name: Io
+        description: An I/O operation in the pipeline failed.
+        recoverable: true
+        user_action: Check the underlying device or file, then retry.
+  - name: TimerError
+    module: oxicrypt-entropy
+    description: Failure reading or interpreting the high-resolution counter the jitter source samples.
+    variants:
+      - name: Unsupported
+        description: The target architecture has no counter this crate can read.
+        recoverable: false
+        user_action: Use a different noise source on this platform.
+      - name: Unavailable
+        description: The counter exists but could not be read.
+        recoverable: true
+        user_action: Retry; a persistent failure means the counter cannot be used as a noise source here.
+      - name: Backwards
+        description: The masked delta has the width top bit set, indicating the counter moved backwards.
+        recoverable: true
+        user_action: Discard the sample and continue; this is a per-sample condition, not a pipeline failure.
+      - name: Inadequate
+        description: The counter's measured resolution is too coarse to carry the claimed entropy.
+        recoverable: false
+        user_action: Lower the claim, or use a source with finer resolution.
+  - name: CollectionError
+    module: oxicrypt-entropy
+    description: Sole error of the off-boundary collection binary, carrying an operator-facing message rather than a discriminated cause.
+    variants:
+      - name: CollectionError
+        description: A newtype over a String, so the cause is a human-readable message and callers cannot branch on it.
+        recoverable: true
+        user_action: Read the message. This is an operator tool outside the module boundary, so the text is the interface; nothing in the type identifies the cause programmatically.
 
 constants:
   - name: SHAKE128_RATE
