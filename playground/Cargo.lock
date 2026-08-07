@@ -4,59 +4,65 @@ version = 4
 
 [[package]]
 name = "oxicrypt-aes"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-module",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-drbg"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-aes",
  "oxicrypt-hmac",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-ecdh"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
+ "oxicrypt-drbg",
  "oxicrypt-ecdsa",
  "oxicrypt-module",
 ]
 
 [[package]]
 name = "oxicrypt-ecdsa"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-eddsa"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-hmac"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-test-vectors",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-integrity"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-module",
@@ -64,28 +70,34 @@ dependencies = [
 
 [[package]]
 name = "oxicrypt-module"
-version = "0.0.0"
+version = "0.21.0"
 
 [[package]]
 name = "oxicrypt-rsa"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-sha"
-version = "0.0.0"
+version = "0.21.0"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-test-vectors",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-test-vectors"
-version = "0.0.0"
+version = "0.21.0"
+
+[[package]]
+name = "oxicrypt-zeroize"
+version = "0.21.0"
 
 [[package]]
 name = "playground"

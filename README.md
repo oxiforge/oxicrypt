@@ -20,7 +20,7 @@ cargo build --workspace
 cargo build -p oxicrypt-integrity
 ./target/debug/fips-integrity-sign --sign target/debug/acvp-harness
 
-# Run all 183 power-up self-tests + software integrity check
+# Run all 152 power-up self-tests + software integrity check
 ./target/debug/acvp-harness
 
 # Run the full test suite (121 ACVP round-trip + 7 CAVP SHS + unit tests)
@@ -68,7 +68,7 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
 
-Every algorithm runs a known-answer test at module power-up. The 183
+Every algorithm runs a known-answer test at module power-up. The 152
 power-up self-tests include CAVP-sourced vectors (with 9 SP 800-90A §9.3
 prediction-resistance DRBG KATs), plus 3 SP 800-90A §11.3 DRBG health
 tests, each traceable to its published source.
@@ -111,11 +111,14 @@ crates/
   oxicrypt-maxwell       Out-of-boundary SP 800-90B entropy-assessment tool (EA-parity estimators, IID battery, restart analysis)
   oxicrypt-zeroize       Volatile zeroization for sensitive security parameters
 
-acvp-harness/           ACVP protocol handler with 86 registered algorithm handlers
+acvp-harness/           ACVP protocol handler with 88 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors
 tools/doc-guard/        Test-gate drift guard: doc-stated boundary/unsafe accounting vs the workspace as built
+tools/quickstarts/      Compiles the quickstart examples carried in the LAMA manifest
+esv-harness/            ESV protocol client for SP 800-90B entropy-source validation submissions
+oxi/                    Command-line interface — hash, HMAC, encrypt, generate random bytes
 ```
 
 The cryptographic boundary encompasses the `oxicrypt-*` crates compiled into a
@@ -192,7 +195,7 @@ see the design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-kecc
 ## ACVP harness
 
 The ACVP harness is a zero-dependency binary that processes NIST ACVP vector
-sets end-to-end. It currently has 86 registered algorithm handlers covering
+sets end-to-end. It currently has 88 registered algorithm handlers covering
 all test types the demo server is expected to send:
 
 | Test type | Algorithms |
@@ -339,8 +342,8 @@ PSS, OAEP, keygen with CRT + Bellcore verify-after-sign per IG D.G),
 DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — complete SP 800-208 §A.3 grid (80 pairs) — and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
-across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
-handlers, 183 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
+across all algorithm crates and the C ABI (`oxicrypt-ffi`). 88 ACVP
+handlers, 152 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
 green.
 
 **Phase 3 (current)** — ACVP validation. Demo-server dry run, gap
