@@ -1,0 +1,43 @@
+# The `oxicrypt` name on crates.io.
+#
+# This crate exists so that `cargo add oxicrypt` -- the first thing anyone
+# tries -- lands somewhere that says what to install instead. The library
+# ships as a family of `oxicrypt-*` crates and there is no single crate that
+# is "oxicrypt"; without this, the name resolves to a placeholder.
+#
+# DELIBERATELY OUTSIDE THE WORKSPACE, and every field below is chosen so this
+# never needs republishing:
+#
+#   * `version` is literal, never `version.workspace`. Inheriting would make
+#     scripts/bump-version.sh stamp it at every release, so it would either go
+#     stale on the registry or force a publish each time. Its version tracks
+#     changes to the guidance in the README, which is a different clock from
+#     the library's -- do not "fix" it to match the library.
+#
+#     1.40.3 reads as FIPS 140-3. It is a deliberate choice, not a typo and
+#     not drift from the workspace version. Only bump it if the guidance in
+#     the README changes, and even then the 1.40.x shape is worth keeping.
+#   * No dependencies on any oxicrypt crate. Nothing to bump, and no
+#     dependency edge into the FIPS module boundary -- adding one would change
+#     the boundary accounting the Security Policy states.
+#   * No version numbers in the README or the docs. It names the entry-point
+#     crate and the website, both of which outlive any release.
+#
+# Because it is excluded from the workspace, no gate compiles it. There is
+# nothing here to compile; the mitigation is keeping the content small enough
+# that there is nothing that can rot.
+
+[package]
+name = "oxicrypt"
+version = "1.40.3"
+edition = "2021"
+rust-version = "1.95"
+description = "The oxicrypt library ships as oxicrypt-* crates. Start with oxicrypt-module."
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/oxiforge/oxicrypt"
+homepage = "https://oxicrypt.dev"
+documentation = "https://docs.rs/oxicrypt"
+readme = "README.md"
+keywords = ["cryptography", "fips", "post-quantum", "no-std", "nist"]
+categories = ["cryptography", "no-std"]
+publish = true
