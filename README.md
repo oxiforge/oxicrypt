@@ -536,11 +536,7 @@ Licensed under either of
 
 at your option.
 
-The `oxicrypt` and `OxiTLS` names are intended to be filed as trademarks
-and reserved for the upstream-validated build lineage; consumers may use
-the source under the terms above and rebrand any redistributed builds.
-A trademark policy will be published at <https://oxicrypt.dev> alongside
-the public launch.
+The licences above grant rights in the code, not in the `oxicrypt`&trade; name.
 
 ### Contribution
 
