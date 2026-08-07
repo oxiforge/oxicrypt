@@ -241,7 +241,14 @@ jobs:
             echo "target triple : ${{ matrix.target }}"
             echo "glibc floor   : ${{ matrix.zig_target && 'pinned 2.17 via cargo-zigbuild' || 'n/a' }}"
             echo "rustc         : $(rustc --version)"
-            echo "commit        : ${{ github.sha }}"
+            # `git rev-parse HEAD`, NOT `github.sha`. On a workflow_dispatch,
+            # github.sha is the SHA of the ref the run was launched from --
+            # normally the default branch -- while the checkout above uses
+            # `inputs.tag`. The two coincide for a `release: published` run and
+            # diverge for every manual re-dispatch, so provenance built by the
+            # documented recovery path named a commit that was not the release.
+            # Reading the working tree cannot disagree with what was compiled.
+            echo "commit        : $(git rev-parse HEAD)"
             echo "built by      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo ""
             echo "Integrity MACs (HMAC-SHA-256 over the binary, slot zeroed),"
