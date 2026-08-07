@@ -1963,6 +1963,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
     postconditions:
@@ -2052,6 +2054,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2076,6 +2080,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2100,6 +2106,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2124,6 +2132,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2148,6 +2158,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2172,6 +2184,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2196,6 +2210,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2220,6 +2236,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2244,6 +2262,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2268,6 +2288,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: HMAC with this hash is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2288,6 +2310,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -2435,6 +2459,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2467,6 +2493,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -2497,6 +2525,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2531,6 +2561,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -2625,6 +2657,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2657,6 +2691,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -2679,6 +2715,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -2706,6 +2744,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -2796,6 +2836,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2812,6 +2854,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2828,6 +2872,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2862,6 +2908,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -2951,6 +2999,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2967,6 +3017,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -2983,6 +3035,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -3010,6 +3064,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
         check: "oxicrypt_module::require_operational()"
@@ -3038,6 +3094,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -3068,6 +3126,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -3087,6 +3147,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: false
@@ -3117,6 +3179,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -3142,6 +3206,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
@@ -3172,6 +3238,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -3191,6 +3259,8 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module not initialized.
+        - name: AlgorithmRestricted
+          condition: The SHA-3 derived function is blocked by the active profile.
     security:
       constant_time: true
       handles_secrets: true
