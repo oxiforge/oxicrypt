@@ -134,11 +134,32 @@ for root in "${manifests[@]}"; do
         root_body="$(cat "$root" 2>/dev/null || true)"
     fi
     # `manifest: path/to/file.yaml`, quoted or bare, relative to the repo root.
+    #
+    # Anchored at column 0 because that is where the root file writes the key,
+    # and an unanchored match would let a nested `manifest:` under some other
+    # mapping shadow the real pointer.
+    #
+    # The trailing comment and trailing whitespace have to come off before the
+    # comparison. A perfectly valid `manifest: x.yaml  # the full one` would
+    # otherwise fail to match any discovered path, and the failure would tell
+    # the author their manifest had been renamed out of the discovery pattern —
+    # sending them to fix something that is not wrong. A guard that cries wolf
+    # gets disabled, so a false refusal is not a cheap kind of error to make.
     pointer="$(printf '%s\n' "$root_body" \
-        | sed -n 's/^[[:space:]]*manifest:[[:space:]]*//p' \
+        | sed -n 's/^manifest:[[:space:]]*//p' \
+        | sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' \
         | tr -d '"'"'" | head -1)"
     [[ -n "$pointer" ]] || continue
     pointer="${pointer#./}"
+
+    # A root file that points at itself would satisfy the check while leaving
+    # the full manifest unread — the control implementing itself out of a job.
+    if [[ "$pointer" == "$root" ]]; then
+        echo "check-lama-manifests: FAILED — $root's manifest: points at itself." >&2
+        echo "  The root file is a discovery summary; the pointer must name the" >&2
+        echo "  full manifest, or nothing verifies that the full manifest was read." >&2
+        exit 1
+    fi
     found=false
     for m in "${manifests[@]}"; do
         [[ "$m" == "$pointer" ]] && { found=true; break; }

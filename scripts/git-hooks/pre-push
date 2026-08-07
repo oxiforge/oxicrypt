@@ -532,13 +532,24 @@ if [[ "$saw_ref" == "true" ]]; then
             if [[ -n "$base" ]]; then
                 lama_files="$(git diff --name-only "$base..$_l" 2>/dev/null)" || lama_ok=false
             else
-                # No merge base — a new or orphan branch. `git diff <sha>`
-                # would compare that commit against the WORKING TREE, which is
-                # a different question and returns empty when the tree matches,
-                # concluding "no manifest touched" for a push that carries one.
-                # diff-tree against the commit's own parents is the right
-                # operation, and it handles a root commit.
-                lama_files="$(git diff-tree -r --name-only --no-commit-id --root "$_l" 2>/dev/null)" || lama_ok=false
+                # No merge base — a new or orphan branch. Two wrong answers to
+                # avoid here, both of which return a truthful reply to the
+                # wrong question and so cannot be caught by the fail-closed
+                # guard below.
+                #
+                # `git diff <sha>` compares that commit against the WORKING
+                # TREE, and returns empty whenever they agree.
+                #
+                # `git diff-tree <sha>` compares the TIP against its parents,
+                # so a branch whose manifest changed in its first commit of
+                # three reports nothing — and a merge commit tip prints nothing
+                # at all.
+                #
+                # The question is what the whole push carries, so enumerate
+                # every commit reachable from the tip that no remote already
+                # has. With no remotes that is the entire history, which is
+                # correct: all of it is new to the remote.
+                lama_files="$(git log --name-only --pretty=format: "$_l" --not --remotes 2>/dev/null)" || lama_ok=false
             fi
         else
             lama_files="$(git diff --name-only "$_r..$_l" 2>/dev/null)" || lama_ok=false
@@ -589,8 +600,21 @@ else
             # not history.
             if ! git cat-file -e "$lama_sha:scripts/check-lama-manifests.sh" 2>/dev/null; then
                 guard_base="$(git merge-base "$lama_sha" origin/main 2>/dev/null || true)"
-                if [[ -n "$guard_base" ]] && \
-                   git cat-file -e "$guard_base:scripts/check-lama-manifests.sh" 2>/dev/null; then
+                if [[ -z "$guard_base" ]]; then
+                    # Without a merge base the two causes cannot be told apart,
+                    # and the benign reading is the dangerous one: it prints a
+                    # reassuring line and lets a guard-removing push through.
+                    # origin/main is absent on a --single-branch clone, a
+                    # remote not named origin, or a default branch not named
+                    # main, so this is reachable rather than theoretical.
+                    # "Cannot decide" is reported as a refusal, not a skip.
+                    echo "pre-push: FAILED — ${lama_sha:0:12} does not carry scripts/check-lama-manifests.sh," >&2
+                    echo "pre-push:   and no merge base with origin/main is available to tell whether" >&2
+                    echo "pre-push:   that is a revision predating the guard or one removing it." >&2
+                    echo "pre-push:   Fetch origin/main so the two can be distinguished." >&2
+                    exit 1
+                fi
+                if git cat-file -e "$guard_base:scripts/check-lama-manifests.sh" 2>/dev/null; then
                     echo "pre-push: FAILED — ${lama_sha:0:12} removes scripts/check-lama-manifests.sh." >&2
                     echo "pre-push:   The guard exists at the merge base, so this is a deletion" >&2
                     echo "pre-push:   rather than a revision that predates it. Restore it, or" >&2
