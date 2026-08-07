@@ -2039,6 +2039,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA-1."
     signature: "pub fn HmacSha1::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 64-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha1, Error>"
       error_variants:
@@ -2055,6 +2063,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA-224."
     signature: "pub fn HmacSha224::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 64-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha224, Error>"
       error_variants:
@@ -2071,6 +2087,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA-384."
     signature: "pub fn HmacSha384::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 128-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha384, Error>"
       error_variants:
@@ -2087,6 +2111,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA-512."
     signature: "pub fn HmacSha512::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 128-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha512, Error>"
       error_variants:
@@ -2103,6 +2135,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA-512/224."
     signature: "pub fn HmacSha512_224::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 128-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha512_224, Error>"
       error_variants:
@@ -2119,6 +2159,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA-512/256."
     signature: "pub fn HmacSha512_256::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 128-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha512_256, Error>"
       error_variants:
@@ -2135,6 +2183,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA3-224."
     signature: "pub fn HmacSha3_224::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 144-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha3_224, Error>"
       error_variants:
@@ -2151,6 +2207,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA3-256."
     signature: "pub fn HmacSha3_256::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 136-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha3_256, Error>"
       error_variants:
@@ -2167,6 +2231,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA3-384."
     signature: "pub fn HmacSha3_384::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 104-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha3_384, Error>"
       error_variants:
@@ -2183,6 +2255,14 @@ functions:
     family: hmac-new
     description: "Create HMAC-SHA3-512."
     signature: "pub fn HmacSha3_512::new(key: &[u8]) -> Result<Self, Error>"
+    parameters:
+      - name: key
+        type: "&[u8]"
+        direction: in
+        description: HMAC key of any length; keys shorter than the 72-byte hash block size are zero-padded, longer keys are hashed first (FIPS 198-1 §4).
+        constraints:
+          nullability: required
+          valid_range: 1+ bytes recommended; empty is technically valid
     returns:
       type: "Result<HmacSha3_512, Error>"
       error_variants:
