@@ -122,19 +122,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
 
-  # LAMA manifest conformance (#175). The cloud mirror of the same
-  # check the pre-push hook runs locally, kept here for the parity
-  # the header describes. Not a cargo step: it runs a vendored
-  # TypeScript linter, so it needs a bun runtime rather than a
-  # toolchain, and it is deliberately NOT a doc-guard test — that
-  # would make `cargo test` fail for anyone without bun installed,
-  # which is an unreasonable thing to ask of a Rust contributor.
+  # LAMA manifest conformance (#175). The cloud mirror of the check the
+  # pre-push hook runs locally. Like every job here it is
+  # workflow_dispatch-only, so the LOCAL HOOK is the gate that actually
+  # runs on every push — this job is the on-demand mirror, not a second
+  # line of defence.
+  #
+  # Not a cargo step: it runs a vendored TypeScript linter, so it needs a
+  # bun runtime rather than a toolchain. Deliberately NOT a doc-guard
+  # test, which would have matched how other doc claims are asserted
+  # here: that test would shell out to bun and make `cargo test` fail for
+  # anyone without a JavaScript runtime, which is an unreasonable thing
+  # to ask of someone building a Rust cryptographic library.
+  #
+  # bun is pinned. The linter is checksum-pinned against its upstream
+  # provenance, and running a pinned tool on a floating runtime leaves
+  # the result unpinned where it counts.
   lama:
     name: LAMA manifest conformance
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
       - run: ./scripts/check-lama-manifests.sh
 
   # Non-default feature configs — the local pre-push hook tests
