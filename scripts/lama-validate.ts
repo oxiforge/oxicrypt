@@ -42,8 +42,18 @@ interface Finding {
   snippet: string;
 }
 
+// `used to` is deliberately narrowed to its historical sense. The bare phrase
+// also matches the present tense of purpose — "a parameter used to select the
+// cutoff" — which states what something does rather than what it once was, and
+// is exactly the kind of description this rule should leave alone. `previously`
+// and `formerly` already catch the historical reading directly, so the bare
+// phrase was carrying almost nothing the pattern did not otherwise have.
+//
+// A false positive matters more here than it did before `--strict`: an advisory
+// rule that is occasionally wrong is lived with, while one that fails a push
+// gets the gate switched off.
 const NARRATIVE =
-  /\b(because|so that|in order to|the reason|previously|formerly|used to|replaces?|mirrors?|analogous to|the request half of|same as|note that|see\s+\S+\s+for)\b/i;
+  /\b(because|so that|in order to|the reason|previously|formerly|used to\s+(?:be|been|have|do)\b|replaces?|mirrors?|analogous to|the request half of|same as|note that|see\s+\S+\s+for)\b/i;
 
 const FAMILY_MEMBERLIST =
   /\bCovers\b|\b(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\s+\w+\s+(?:variants?|entries|functions?|types?)\b/i;

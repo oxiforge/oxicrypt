@@ -15,7 +15,7 @@
 
 upstream_repo   = https://github.com/lamaspec/lama
 upstream_path   = tools/lama-validate.ts
-upstream_commit = 3b7cacc0d2a36fa24444ce8759b10dfddef05d06
+upstream_commit = 2958ac80c28f0f76808bdf5ab82550d5b0a514a6
 upstream_date   = 2026-08-06
-sha256          = ef064f97b12f65e940b5def2478118b3e2600bf41fc35e6ecc3b941138ce50c1
-bytes           = 6951
+sha256          = c66872ceca4cd58f26c96e2a982400be987c2c74f80d885bcd900d4d5786e90e
+bytes           = 7642
