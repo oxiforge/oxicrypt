@@ -3,7 +3,7 @@ task: oxicrypt FIPS 140-3 cryptographic-module ideal-state contract and system o
 project: oxicrypt
 slug: oxicrypt-module-contract
 phase: execute
-progress: 99/154
+progress: 107/154
 mode: algorithm
 started: 2026-06-06T00:00:00Z
 updated: 2026-08-03T00:00:00Z
@@ -119,7 +119,7 @@ its health tests and estimator suite — that passes CAVP algorithm validation a
 through an accredited CST lab, with security policy, manifests, and code kept in lockstep by the
 commit-is-the-gate doc-sync discipline.
 
-## Criteria
+## Claims
 
 > Every criterion carries the probe that would falsify it. `M` = a command returns the verdict; `P` = a command plus a named judgment remainder; `J` = judgment only. A probe reading `TODO` does not yet exist, and its criterion is left unchecked — the gap is recorded, not implied.
 
