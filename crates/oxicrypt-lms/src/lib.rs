@@ -37,10 +37,11 @@
 //! | SHAKE-256 / N=32 (20 pairs × 2 ops) | RFC 8708 §3.1 | 580-619 |
 //! | SHAKE-256 / N=24 (20 pairs × 2 ops) | RFC 8708 §4.2 | 620-659 |
 //!
-//! CNSA 2.0 (and CNSA 1.0 by mirror) permits 8 pairs: SHA-256/M=32 at
-//! H{10,15,20,25} × W{4,8}. The other 72 pairs (and their 144 services)
-//! are Unrestricted-only, default-blocked by the fail-safe `matches!`
-//! patterns in [`oxicrypt_module::is_allowed`].
+//! CNSA 2.0 (and CNSA 1.0 by mirror) permits every one of the 80 pairs.
+//! CNSSP-15 Annex B states "all parameters appropriate to protect to TOP
+//! SECRET" for LMS, recommending LMS-SHA-256/192, and so places no subset
+//! restriction on the parameter sets — see
+//! [`oxicrypt_module::is_allowed`].
 //!
 //! # Cached signing — `LmsSigningKey` (feature `alloc`)
 //!
@@ -74,10 +75,16 @@
 //!
 //! Each pair's `sign` gates on its `Service::Lms<…>Sign`; `verify` gates
 //! on `Service::Lms<…>Verify`. Both also gate on `require_operational`.
-//! The fail-safe gating contract is the source of CMVP-readable
-//! completeness: any future pair added without a matching arm in
-//! `is_cnsa{1,2}_allowed` is automatically denied under the restrictive
-//! profiles.
+//!
+//! LMS is the one family the CNSA profiles admit by a discriminant range
+//! rather than by enumerated arms, because CNSSP-15 Annex B imposes no
+//! subset on it. So the fail-safe default-deny that covers every other
+//! family does **not** cover a new LMS pair: one added inside the reserved
+//! block is automatically *permitted*, not denied. That is the intended
+//! reading of the policy, and it is why
+//! `oxicrypt_module`'s `lms_discriminant_block_is_contiguous_and_pure`
+//! exists — it fails if anything but LMS ever lands in the block, which is
+//! the case the range test cannot distinguish on its own.
 
 // `no_std` by default. The optional `parallel` feature pulls in `rayon`,
 // which requires `std`, so `std` enters ONLY under `parallel`; every

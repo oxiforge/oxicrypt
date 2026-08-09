@@ -13,9 +13,9 @@
 //! | SLH-DSA sign   | FIPS 205 | Unrestricted |
 //! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
-//! SHAKE-256f is permitted in the FIPS 140-3 Unrestricted profile and is
-//! not on the CNSA 2.0 mandate list. CNSA 2.0 gating is denied at the
-//! Service-enum layer in Batch 4.
+//! CNSSP 15 lists no SLH-DSA parameter set, so SHAKE-256f is permitted
+//! in the FIPS 140-3 Unrestricted profile only. CNSA 2.0 gating is
+//! denied at the Service-enum layer in Batch 4.
 //!
 //! # External vs internal API
 //!

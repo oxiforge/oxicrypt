@@ -6,7 +6,7 @@
 )]
 
 //! LMS (SP 800-208) benchmarks — SHA-256/M=32 family only, bounded to
-//! H ∈ {5, 10, 15} × W ∈ {4, 8} (the CNSA-2-relevant W values; H=20/25
+//! H ∈ {5, 10, 15} × W ∈ {4, 8} (the larger Winternitz values; H=20/25
 //! keygen takes hours and is deliberately out of scope).
 //!
 //! LMS is stateful: each signature consumes one Merkle leaf and `sign`

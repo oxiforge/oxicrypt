@@ -9,15 +9,20 @@ Discriminant layout (decided in PRD-D2):
 
 Within each family: (H ascending, W ascending) canonical order. Sign+Verify alternate per pair.
 
-CNSA 2.0 subset = LMS_SHA256_M32_H{10,15,20,25} x LMOTS_SHA256_N32_W{4,8} = 8 pairs.
-CNSA 1.0 mirrors CNSA-2 exactly (PRD-D4).
+OBSOLETE — the `emit-cnsa2*` modes below encode a CNSA 2.0 subset that does not
+exist. CNSSP-15 Annex B states "all parameters appropriate to protect to TOP
+SECRET" for LMS, so every approved parameter set is permitted and the gate
+range-tests the discriminant block instead of enumerating a subset. The two
+emitters are retained only so this file still reproduces the original B4 rewire;
+their output must not be pasted into `is_cnsa2_allowed` / `is_cnsa1_allowed`.
+`is_cnsa2()` survives only to feed them; `emit-enum` no longer marks pairs with it.
 
 Modes:
   python lms_b4_rewire.py emit-enum             # variant declarations (stdout)
   python lms_b4_rewire.py emit-display          # Display impl arms (stdout)
-  python lms_b4_rewire.py emit-cnsa2            # CNSA-2 service list for is_cnsa2_allowed (stdout)
+  python lms_b4_rewire.py emit-cnsa2            # OBSOLETE, see above (stdout)
   python lms_b4_rewire.py emit-all-160-array    # 160-element [Service; _] array (stdout)
-  python lms_b4_rewire.py emit-cnsa2-set-array  # 16-element CNSA-2 array (stdout)
+  python lms_b4_rewire.py emit-cnsa2-set-array  # OBSOLETE, see above (stdout)
   python lms_b4_rewire.py preview-baseline      # debug: show baseline pair tuple
   python lms_b4_rewire.py rewire                # rewrite svc_sign/svc_verify in 80 per-pair files (in place)
 """
@@ -66,8 +71,7 @@ def emit_enum():
     lines.append("    // Layout: 500-539 SHA-256/M=32, 540-579 SHA-256/M=24,")
     lines.append("    // 580-619 SHAKE/M=32, 620-659 SHAKE/M=24.")
     lines.append("    // Within each family: (H ascending, W ascending), Sign/Verify alternating.")
-    lines.append("    // The 8 CNSA-2 permitted pairs (SHA-256/M=32 H{10,15,20,25} W{4,8}) are")
-    lines.append("    // flagged inline; all other 72 pairs are Unrestricted-only.")
+    lines.append("    // All 80 pairs are permitted under every profile; see is_lms_service.")
     disc = DISCRIMINANT_BASE
     prev_family_tag = None
     for file_stem, variant_stem, display, h, w, family, m in pairs():
@@ -86,7 +90,7 @@ def emit_enum():
                 lines.append("")
                 lines.append("    // SHAKE-256 / N=24 family (RFC 8708 §4.2)")
             prev_family_tag = family_tag
-        cnsa = " // CNSA 2.0" if is_cnsa2(file_stem, h, w, family, m) else ""
+        cnsa = ""  # no per-variant profile marker: every pair is permitted
         lines.append(f"    {variant_stem}Sign = {disc},{cnsa}")
         disc += 1
         lines.append(f"    {variant_stem}Verify = {disc},{cnsa}")

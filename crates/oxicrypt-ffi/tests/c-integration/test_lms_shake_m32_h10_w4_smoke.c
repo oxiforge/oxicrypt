@@ -17,9 +17,9 @@
  * `lms_impl!`. The remaining 78 pairs differ in numeric parameter
  * substitution only — identical macro shape, distinct constants.
  *
- * SHAKE family pairs fall outside the CNSA 2.0 / CNSA 1.0 permitted
- * set (CNSA limits to SHA-256/M=32 only); the test runs under
- * `AlgorithmProfile::Unrestricted` (= 0).
+ * The test runs under `AlgorithmProfile::Unrestricted` (= 0); the
+ * SHAKE family is permitted under the CNSA profiles too, since
+ * CNSSP-15 Annex B places no subset restriction on LMS.
  *
  * Verify-tamper-detection: `TagMismatch = 22` per cross-family
  * verify convention.

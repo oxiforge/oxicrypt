@@ -16,8 +16,8 @@
  * structurally-divergent code paths the macro hash-family dispatch
  * emits at expansion time.
  *
- * Profile must be Unrestricted (0): SHAKE-128f is NOT in the CNSA
- * 2.0 mandate (which pins SHA2-256s) and is permitted only under
+ * Profile must be Unrestricted (0): CNSSP-15 lists no SLH-DSA
+ * parameter set, so SHAKE-128f is permitted only under
  * `AlgorithmProfile::Unrestricted`. See lib.rs SLH-DSA section
  * comment.
  *

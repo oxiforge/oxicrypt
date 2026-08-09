@@ -16,11 +16,9 @@
  * parameter vary. Pair name slug aligns with the per-pair module:
  * `oxicrypt_lms::lms_sha256_m32_h5_w4`.
  *
- * H=5 with W=4 falls outside the CNSA 2.0 / CNSA 1.0 permitted set
- * (CNSA limits to H ∈ {10,15,20,25}); the test runs under
- * `AlgorithmProfile::Unrestricted` (= 0). The 80-pair grid is
- * available under Unrestricted; the 16-service subset is enforced
- * under CNSA-{1,2}.
+ * The test runs under `AlgorithmProfile::Unrestricted` (= 0). The
+ * full 80-pair grid is available under every profile: CNSSP-15
+ * Annex B places no subset restriction on LMS parameter sets.
  *
  * Verify-tamper-detection: `TagMismatch = 22` per cross-family verify
  * convention (RSA / ML-DSA / SLH-DSA / LMS / XMSS all share this

@@ -63,7 +63,7 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | ML-KEM | ML-KEM-512/-768/-1024 keygen/encaps/decaps | FIPS 203 |
 | ML-DSA | ML-DSA-44/-65/-87 sign/verify/keygen | FIPS 204 |
 | SLH-DSA | SLH-DSA full family — SHA2 (128s/f, 192s/f, 256s/f) and SHAKE (128s/f, 192s/f, 256s/f) sign/verify/keygen | FIPS 205 |
-| LMS | LMS sign/verify across the complete SP 800-208 §A.3 grid (80 pairs: 4 hash families × 5 tree heights × 4 Winternitz parameters); CNSA-restricted profiles permit 8 pairs (SHA-256/M=32 × H{10,15,20,25} × W{4,8}) | SP 800-208 (RFC 8554, RFC 8708) |
+| LMS | LMS sign/verify across the complete SP 800-208 §A.3 grid (80 pairs: 4 hash families × 5 tree heights × 4 Winternitz parameters), permitted in full under every algorithm profile | SP 800-208 (RFC 8554, RFC 8708) |
 | XMSS | XMSS sign/verify (XMSS-SHA2_10_256) | SP 800-208 (RFC 8391) |
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |

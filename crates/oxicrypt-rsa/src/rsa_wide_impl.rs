@@ -22,7 +22,7 @@
 //! # Architecture note
 //!
 //! The macro architecture here is designed for reuse: if a future
-//! CNSA 2.0 algorithm (e.g., ML-DSA or SLH-DSA) needs a similar
+//! post-quantum algorithm (e.g., ML-DSA or SLH-DSA) needs a similar
 //! parameterized sign/verify/encrypt flow over different key widths,
 //! it can follow the same single-source-of-truth pattern.
 

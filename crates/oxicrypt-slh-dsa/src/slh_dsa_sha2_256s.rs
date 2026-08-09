@@ -9,13 +9,13 @@
 //!
 //! | Service | Standard | Profile |
 //! |---------|----------|---------|
-//! | SLH-DSA keygen | FIPS 205 | Unrestricted, CNSA 2.0 (mandate) |
-//! | SLH-DSA sign   | FIPS 205 | Unrestricted, CNSA 2.0 (mandate) |
-//! | SLH-DSA verify | FIPS 205 | Unrestricted, CNSA 2.0 (mandate) |
+//! | SLH-DSA keygen | FIPS 205 | Unrestricted |
+//! | SLH-DSA sign   | FIPS 205 | Unrestricted |
+//! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
-//! SHA2-256s is the CNSA 2.0 stateless-hash-based signature mandate
-//! (CNSSP 15) and is permitted under all profiles. The remaining 11
-//! SLH-DSA parameter sets (when added) will be `Unrestricted`-only.
+//! CNSSP 15 lists no SLH-DSA parameter set. SHA2-256s, like every
+//! other SLH-DSA parameter set, is permitted under the Unrestricted
+//! profile only and is denied under both CNSA profiles.
 //!
 //! # External vs internal API
 //!

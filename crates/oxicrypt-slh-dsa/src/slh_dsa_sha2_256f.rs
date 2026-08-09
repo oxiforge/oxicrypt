@@ -13,10 +13,10 @@
 //! | SLH-DSA sign   | FIPS 205 | Unrestricted |
 //! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
-//! SHA2-256f is the **fast** sibling of the CNSA 2.0-mandated SHA2-256s.
-//! Only SHA2-256s is on the CNSA 2.0 mandate list; SHA2-256f is permitted
-//! in the FIPS 140-3 Unrestricted profile. CNSA 2.0 gating is denied at
-//! the Service-enum layer in Batch 4.
+//! SHA2-256f is the **fast** sibling of SHA2-256s. CNSSP 15 lists no
+//! SLH-DSA parameter set, so SHA2-256f is permitted in the FIPS 140-3
+//! Unrestricted profile only. CNSA 2.0 gating is denied at the
+//! Service-enum layer in Batch 4.
 //!
 //! # External vs internal API
 //!

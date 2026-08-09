@@ -75,8 +75,12 @@
 //!   [`initialize_with_tests`].
 //! - **CNSA 2.0** (CNSSP 15) — only quantum-resistant
 //!   algorithms: AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87,
-//!   LMS, XMSS, plus SHA3-384/512 and 256-bit SP 800-185
-//!   variants.
+//!   LMS and XMSS for software and firmware signing, plus
+//!   SHA3-384/512 and 256-bit SP 800-185 variants. Every
+//!   approved SP 800-208 LMS parameter set is permitted;
+//!   CNSSP-15 Annex B places no subset restriction on LMS.
+//!   No SLH-DSA parameter set is permitted — CNSSP-15 lists
+//!   none.
 //! - **CNSA 1.0** — classical algorithms for the transition
 //!   period: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072,
 //!   DH >= 3072.
@@ -697,8 +701,9 @@ pub enum Service {
     MlDsa65Keygen = 318,
 
     // ----- oxicrypt-slh-dsa: FIPS 205 (12 parameter sets × 3 ops = 36 variants) -----
-    // CNSA 2.0 baseline first: SHA-2 256s (CNSSP-15 mandate) claims 320-322,
-    // then the rest of the SHA-2 family (128s/f, 192s/f, 256f), then SHAKE family.
+    // SHA-2 256s claims 320-322 for historical reasons, then the rest of the
+    // SHA-2 family (128s/f, 192s/f, 256f), then the SHAKE family. No SLH-DSA
+    // parameter set is permitted under either CNSA profile.
     SlhDsaSha2256sKeygen = 320,
     SlhDsaSha2256sSign = 321,
     SlhDsaSha2256sVerify = 322,
@@ -741,8 +746,9 @@ pub enum Service {
     // Layout: 500-539 SHA-256/M=32, 540-579 SHA-256/M=24,
     // 580-619 SHAKE/M=32, 620-659 SHAKE/M=24.
     // Within each family: (H ascending, W ascending), Sign/Verify alternating.
-    // The 8 CNSA-2 permitted pairs (SHA-256/M=32 H{10,15,20,25} W{4,8}) are
-    // flagged inline; all other 72 pairs are Unrestricted-only.
+    // The block is contiguous and holds nothing but LMS, which is what lets
+    // `is_lms_service` range-test it; `lms_discriminant_block_is_contiguous_and_pure`
+    // pins that. All 80 pairs are permitted under every profile.
 
     // SHA-256 / N=32 family (RFC 8554 §A.1+§A.2)
     LmsSha256M32H5W1Sign = 500,
@@ -757,34 +763,34 @@ pub enum Service {
     LmsSha256M32H10W1Verify = 509,
     LmsSha256M32H10W2Sign = 510,
     LmsSha256M32H10W2Verify = 511,
-    LmsSha256M32H10W4Sign = 512,   // CNSA 2.0
-    LmsSha256M32H10W4Verify = 513, // CNSA 2.0
-    LmsSha256M32H10W8Sign = 514,   // CNSA 2.0
-    LmsSha256M32H10W8Verify = 515, // CNSA 2.0
+    LmsSha256M32H10W4Sign = 512,
+    LmsSha256M32H10W4Verify = 513,
+    LmsSha256M32H10W8Sign = 514,
+    LmsSha256M32H10W8Verify = 515,
     LmsSha256M32H15W1Sign = 516,
     LmsSha256M32H15W1Verify = 517,
     LmsSha256M32H15W2Sign = 518,
     LmsSha256M32H15W2Verify = 519,
-    LmsSha256M32H15W4Sign = 520,   // CNSA 2.0
-    LmsSha256M32H15W4Verify = 521, // CNSA 2.0
-    LmsSha256M32H15W8Sign = 522,   // CNSA 2.0
-    LmsSha256M32H15W8Verify = 523, // CNSA 2.0
+    LmsSha256M32H15W4Sign = 520,
+    LmsSha256M32H15W4Verify = 521,
+    LmsSha256M32H15W8Sign = 522,
+    LmsSha256M32H15W8Verify = 523,
     LmsSha256M32H20W1Sign = 524,
     LmsSha256M32H20W1Verify = 525,
     LmsSha256M32H20W2Sign = 526,
     LmsSha256M32H20W2Verify = 527,
-    LmsSha256M32H20W4Sign = 528,   // CNSA 2.0
-    LmsSha256M32H20W4Verify = 529, // CNSA 2.0
-    LmsSha256M32H20W8Sign = 530,   // CNSA 2.0
-    LmsSha256M32H20W8Verify = 531, // CNSA 2.0
+    LmsSha256M32H20W4Sign = 528,
+    LmsSha256M32H20W4Verify = 529,
+    LmsSha256M32H20W8Sign = 530,
+    LmsSha256M32H20W8Verify = 531,
     LmsSha256M32H25W1Sign = 532,
     LmsSha256M32H25W1Verify = 533,
     LmsSha256M32H25W2Sign = 534,
     LmsSha256M32H25W2Verify = 535,
-    LmsSha256M32H25W4Sign = 536,   // CNSA 2.0
-    LmsSha256M32H25W4Verify = 537, // CNSA 2.0
-    LmsSha256M32H25W8Sign = 538,   // CNSA 2.0
-    LmsSha256M32H25W8Verify = 539, // CNSA 2.0
+    LmsSha256M32H25W4Sign = 536,
+    LmsSha256M32H25W4Verify = 537,
+    LmsSha256M32H25W8Sign = 538,
+    LmsSha256M32H25W8Verify = 539,
 
     // SHA-256 / N=24 family (RFC 8708 §4.1)
     LmsSha256M24H5W1Sign = 540,
@@ -1305,8 +1311,35 @@ const fn is_allowed(profile: AlgorithmProfile, service: Service) -> bool {
     }
 }
 
+/// True for every LMS service, matching on the contiguous discriminant
+/// block the `Service` enum reserves for LMS.
+///
+/// A range test rather than 160 enumerated arms: the LMS block occupies
+/// `500..=659` with nothing else inside it. That is a property of the
+/// enum, not of this function, so it is pinned separately by
+/// `lms_discriminant_block_is_contiguous_and_pure` — without which a
+/// variant inserted into the range would silently become CNSA-permitted.
+const fn is_lms_service(service: Service) -> bool {
+    lms_block_contains(service as u16)
+}
+
+/// The range arithmetic behind [`is_lms_service`], over a raw discriminant.
+///
+/// Split out so the boundaries can be tested at all. `is_lms_service` takes a
+/// `Service`, and the LMS block sits at the very top of the enum — there is no
+/// variant above 659 — so a widened *upper* bound admits nothing today and no
+/// `Service`-typed probe can detect it. Over a raw `u16`, both edges are
+/// reachable: `lms_block_boundaries_are_exact` pins 499/500/659/660, which
+/// fails if either bound moves in either direction.
+const fn lms_block_contains(discriminant: u16) -> bool {
+    discriminant >= Service::LmsSha256M32H5W1Sign as u16
+        && discriminant <= Service::LmsShakeM24H25W8Verify as u16
+}
+
 /// CNSA 2.0 allowed set. Only quantum-resistant algorithms plus
-/// AES-256, SHA-384/512, SHA3-384/512, and 256-bit SP 800-185.
+/// AES-256, SHA-384/512, SHA3-384/512, and 256-bit SP 800-185, and the
+/// SP 800-208 stateful hash-based signatures for software and firmware
+/// signing.
 const fn is_cnsa2_allowed(service: Service) -> bool {
     matches!(
         service,
@@ -1365,36 +1398,17 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::MlDsa87Sign
             | Service::MlDsa87Verify
             | Service::MlDsa87Keygen
-            // SLH-DSA-SHA2-256s — CNSSP-15 CNSA 2.0 mandate (only SLH-DSA
-            // parameter set permitted under CNSA 2.0; the other 11 parameter
-            // sets are intentionally excluded and fall through to the
-            // fail-safe default-block).
-            | Service::SlhDsaSha2256sKeygen
-            | Service::SlhDsaSha2256sSign
-            | Service::SlhDsaSha2256sVerify
-            // LMS — SP 800-208 stateful HBS for software/firmware signing.
-            // CNSA 2.0 permits the 8 SHA-256/M=32 pairs at H{10,15,20,25}×W{4,8}
-            // per CNSSP 15. All other 72 pairs default-block via the `matches!`
-            // fail-safe (see CMVP gem in security-policy.md).
-            | Service::LmsSha256M32H10W4Sign
-            | Service::LmsSha256M32H10W4Verify
-            | Service::LmsSha256M32H10W8Sign
-            | Service::LmsSha256M32H10W8Verify
-            | Service::LmsSha256M32H15W4Sign
-            | Service::LmsSha256M32H15W4Verify
-            | Service::LmsSha256M32H15W8Sign
-            | Service::LmsSha256M32H15W8Verify
-            | Service::LmsSha256M32H20W4Sign
-            | Service::LmsSha256M32H20W4Verify
-            | Service::LmsSha256M32H20W8Sign
-            | Service::LmsSha256M32H20W8Verify
-            | Service::LmsSha256M32H25W4Sign
-            | Service::LmsSha256M32H25W4Verify
-            | Service::LmsSha256M32H25W8Sign
-            | Service::LmsSha256M32H25W8Verify
+            // XMSS — SP 800-208 stateful HBS for software/firmware signing.
             | Service::XmssSign
             | Service::XmssVerify
     )
+        // LMS — SP 800-208 stateful HBS for software/firmware signing.
+        // CNSSP-15 Annex B states "all parameters appropriate to protect to
+        // TOP SECRET", recommending LMS-SHA-256/192, so every approved
+        // parameter set the module implements is permitted rather than a
+        // subset. Every non-LMS service outside the arms above still reaches
+        // the `matches!` fail-safe default-block.
+        || is_lms_service(service)
 }
 
 /// CNSA 1.0 allowed set. Classical algorithms for the transition
@@ -1492,28 +1506,13 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
             | Service::MlDsa87Sign
             | Service::MlDsa87Verify
             | Service::MlDsa87Keygen
-            // LMS — mirrors CNSA 2.0's 8-pair subset during the transition.
-            // Stateful HBS is permitted under both profiles for software/firmware
-            // signing per CNSSP 15; the 72 non-listed pairs default-block.
-            | Service::LmsSha256M32H10W4Sign
-            | Service::LmsSha256M32H10W4Verify
-            | Service::LmsSha256M32H10W8Sign
-            | Service::LmsSha256M32H10W8Verify
-            | Service::LmsSha256M32H15W4Sign
-            | Service::LmsSha256M32H15W4Verify
-            | Service::LmsSha256M32H15W8Sign
-            | Service::LmsSha256M32H15W8Verify
-            | Service::LmsSha256M32H20W4Sign
-            | Service::LmsSha256M32H20W4Verify
-            | Service::LmsSha256M32H20W8Sign
-            | Service::LmsSha256M32H20W8Verify
-            | Service::LmsSha256M32H25W4Sign
-            | Service::LmsSha256M32H25W4Verify
-            | Service::LmsSha256M32H25W8Sign
-            | Service::LmsSha256M32H25W8Verify
+            // XMSS — mirrors CNSA 2.0 during the transition.
             | Service::XmssSign
             | Service::XmssVerify
     )
+        // LMS — mirrors CNSA 2.0 during the transition. Stateful HBS is
+        // permitted under both profiles for software and firmware signing.
+        || is_lms_service(service)
 }
 
 // -------------------------------------------------------------------------
@@ -1525,23 +1524,94 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
 // so we expose a test-only reset helper gated behind `cfg(test)`. It is
 // **not** part of the public API and is not compiled into release builds.
 
+/// The test-only state lock, in its own module so the guard cannot be forged.
+///
+/// The globals are a process singleton and cargo runs unit tests on a parallel
+/// thread pool, so without serialisation one test's reset lands inside
+/// another's initialize-then-assert window and the second observes a profile it
+/// did not install. Measured at 1 failure in 20 runs before this lock, on
+/// `require_allowed_returns_restricted_error_under_cnsa2`.
+///
+/// Serialising is deliberate where per-test isolation would be easier: the
+/// singleton is the thing under test, and giving each test private state would
+/// stop exercising it.
+///
+/// **Why a module and not merely a private field.** `MutexGuard` carries no
+/// identity tying it to a particular static, so a `StateGuard` wrapping *any*
+/// mutex would satisfy the type and still reach `reset`. Confining the type
+/// here — field private to this module — means the only way to obtain one is
+/// [`reset_for_test`], which takes the real lock; a sibling module cannot build
+/// a decoy. Editing this module still defeats it. That is the honest bound, and
+/// it is a much smaller one than "every future test must remember".
 #[cfg(test)]
-fn reset_for_test() {
-    STATE.store(State::PowerOff as u8, Ordering::Release);
-    PROFILE.store(AlgorithmProfile::Unrestricted as u8, Ordering::Release);
+pub(crate) mod state_lock {
+    use super::{AlgorithmProfile, Ordering, PROFILE, STATE, State};
+
+    static STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Proof that the holder owns the state lock. Constructible only by
+    /// [`reset_for_test`], because the field is private to this module.
+    #[must_use]
+    pub(crate) struct StateGuard(
+        /// Held for its `Drop`, never read: the lock releases when the guard
+        /// leaves the test's scope.
+        #[allow(dead_code)]
+        std::sync::MutexGuard<'static, ()>,
+    );
+
+    impl StateGuard {
+        /// Re-reset inside a test that already holds the lock — a loop over
+        /// profiles needs fresh state per iteration without releasing it.
+        // `&self` is the point: it is the proof the caller holds the lock.
+        #[allow(clippy::unused_self)]
+        pub(crate) fn reset(&self) {
+            STATE.store(State::PowerOff as u8, Ordering::Release);
+            PROFILE.store(AlgorithmProfile::Unrestricted as u8, Ordering::Release);
+        }
+    }
+
+    /// Resets the module to power-off and returns the guard that makes the
+    /// reset safe. The lock is not a convention a future test has to remember:
+    /// this is the only way to obtain a `StateGuard`, and `StateGuard` is the
+    /// only way to reach a reset.
+    ///
+    /// `StateGuard` is `#[must_use]`, so a bare `reset_for_test();` fails
+    /// `clippy -D warnings`, which the workspace gate runs — dropping the guard
+    /// early breaks the build rather than reintroducing the race quietly.
+    ///
+    /// Residual, stated rather than implied: `let _ = reset_for_test();` still
+    /// drops the guard immediately and does not warn. That is a deliberate act,
+    /// which is the most this construction can bound.
+    ///
+    /// A panicking test poisons the mutex. The poison carries no meaning here
+    /// because the state it protects is unconditionally overwritten on the next
+    /// line, so it is recovered rather than propagated.
+    pub(crate) fn reset_for_test() -> StateGuard {
+        let guard = StateGuard(
+            STATE_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        guard.reset();
+        guard
+    }
 }
 
 #[cfg(test)]
 extern crate alloc;
 
 #[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
+    use super::state_lock::reset_for_test;
     use super::{
         AlgorithmProfile, Error, KatEntry, SelfTest, SelfTestFailure, Service, State,
         active_profile, enter_error_state, initialize, initialize_with_profile,
-        initialize_with_tests, is_allowed, is_operational, require_allowed, require_operational,
-        reset_for_test, state,
+        initialize_with_tests, is_allowed, is_lms_service, is_operational, lms_block_contains,
+        require_allowed, require_operational, state,
     };
     use alloc::string::ToString;
 
@@ -1562,14 +1632,14 @@ mod tests {
 
     #[test]
     fn initial_state_is_power_off() {
-        reset_for_test();
+        let _guard = reset_for_test();
         assert_eq!(state(), State::PowerOff);
         assert!(!is_operational());
     }
 
     #[test]
     fn initialize_transitions_to_operational() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize().unwrap();
         assert_eq!(state(), State::Operational);
         assert!(is_operational());
@@ -1578,7 +1648,7 @@ mod tests {
 
     #[test]
     fn second_initialize_reports_already_initialized() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize().unwrap();
         match initialize() {
             Err(Error::AlreadyInitialized) => {}
@@ -1588,7 +1658,7 @@ mod tests {
 
     #[test]
     fn require_operational_rejects_power_off() {
-        reset_for_test();
+        let _guard = reset_for_test();
         match require_operational() {
             Err(Error::NotOperational {
                 current: State::PowerOff,
@@ -1599,7 +1669,7 @@ mod tests {
 
     #[test]
     fn enter_error_state_is_terminal_for_require_operational() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize().unwrap();
         assert!(is_operational());
         enter_error_state("unit-test forced failure");
@@ -1624,7 +1694,7 @@ mod tests {
 
     #[test]
     fn registry_runs_passing_tests_and_reaches_operational() {
-        reset_for_test();
+        let _guard = reset_for_test();
         let tests = [
             KatEntry {
                 name: "dummy-pass-a",
@@ -1641,7 +1711,7 @@ mod tests {
 
     #[test]
     fn registry_failing_test_latches_error_and_returns_name() {
-        reset_for_test();
+        let _guard = reset_for_test();
         let tests = [
             KatEntry {
                 name: "dummy-pass",
@@ -1693,13 +1763,13 @@ mod tests {
 
     #[test]
     fn default_profile_is_unrestricted() {
-        reset_for_test();
+        let _guard = reset_for_test();
         assert_eq!(active_profile(), AlgorithmProfile::Unrestricted);
     }
 
     #[test]
     fn initialize_with_profile_sets_cnsa2() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
         assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
         assert!(is_operational());
@@ -1707,7 +1777,7 @@ mod tests {
 
     #[test]
     fn initialize_with_profile_sets_cnsa1() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize_with_profile(&[], AlgorithmProfile::Cnsa1).unwrap();
         assert_eq!(active_profile(), AlgorithmProfile::Cnsa1);
         assert!(is_operational());
@@ -1807,8 +1877,7 @@ mod tests {
             Service::RsaPssSign2048,
             Service::RsaOaep2048,
             Service::Tls12Kdf,
-            // SLH-DSA-SHA2-128s is not in CNSA 2.0 (only SHA-2 256s is the
-            // CNSSP-15 mandate; the other 11 parameter sets are excluded).
+            // No SLH-DSA parameter set is in CNSA 2.0 — CNSSP-15 lists none.
             Service::SlhDsaSha2128sSign,
             Service::MlDsa44Sign,
             Service::MlDsa44Verify,
@@ -1875,22 +1944,12 @@ mod tests {
         }
     }
 
-    #[test]
-    // 160 enumerated variants + 16 CNSA-allowed entries is naturally long;
-    // any "natural factoring" (helper to build the array, macro to emit it)
-    // would obscure the audit-readable enumeration. CMVP reviewers benefit
-    // from the explicit, line-by-line variant list.
+    // The full LMS service enumeration, shared by the gating test and the
+    // discriminant-block test. Explicit rather than generated: CMVP reviewers
+    // read this list, and a macro would hide exactly what it must show.
     #[allow(clippy::too_many_lines)]
-    fn lms_gating_is_exhaustive_across_all_160_variants() {
-        // Enumerates every LMS Service variant (80 (LMS, LM-OTS) pairs ×
-        // {Sign, Verify} = 160 entries) and verifies the fail-safe gating:
-        // only the 8 CNSA-2-permitted pairs (SHA-256/M=32, H{10,15,20,25}
-        // × W{4,8}) × 2 ops = 16 entries are allowed under CNSA 2.0;
-        // CNSA 1.0 mirrors that same 16-entry subset (transition profile);
-        // all 160 are permitted under Unrestricted. If a new LMS variant
-        // is added without a matching entry in this array, the
-        // length assertion catches the drift.
-        let all_160 = [
+    fn lms_all_160() -> [Service; 160] {
+        [
             // SHA-256 / N=32 family (20 pairs, 40 entries).
             Service::LmsSha256M32H5W1Sign,
             Service::LmsSha256M32H5W1Verify,
@@ -2055,29 +2114,19 @@ mod tests {
             Service::LmsShakeM24H25W4Verify,
             Service::LmsShakeM24H25W8Sign,
             Service::LmsShakeM24H25W8Verify,
-        ];
-        assert_eq!(all_160.len(), 160, "LMS enumeration drift");
+        ]
+    }
 
-        // CNSA 2.0 permitted: SHA-256/M=32, H{10,15,20,25} × W{4,8} = 8 pairs.
-        let cnsa_allowed_set = [
-            Service::LmsSha256M32H10W4Sign,
-            Service::LmsSha256M32H10W4Verify,
-            Service::LmsSha256M32H10W8Sign,
-            Service::LmsSha256M32H10W8Verify,
-            Service::LmsSha256M32H15W4Sign,
-            Service::LmsSha256M32H15W4Verify,
-            Service::LmsSha256M32H15W8Sign,
-            Service::LmsSha256M32H15W8Verify,
-            Service::LmsSha256M32H20W4Sign,
-            Service::LmsSha256M32H20W4Verify,
-            Service::LmsSha256M32H20W8Sign,
-            Service::LmsSha256M32H20W8Verify,
-            Service::LmsSha256M32H25W4Sign,
-            Service::LmsSha256M32H25W4Verify,
-            Service::LmsSha256M32H25W8Sign,
-            Service::LmsSha256M32H25W8Verify,
-        ];
-        assert_eq!(cnsa_allowed_set.len(), 16, "CNSA permitted-set drift");
+    #[test]
+    fn lms_gating_is_exhaustive_across_all_160_variants() {
+        // Enumerates every LMS Service variant (80 (LMS, LM-OTS) pairs ×
+        // {Sign, Verify} = 160 entries) and verifies that all 160 are
+        // permitted under all three profiles: CNSSP-15 Annex B places no
+        // subset restriction on LMS, and Unrestricted permits everything.
+        // If a new LMS variant is added without a matching entry in
+        // `lms_all_160`, the length assertion catches the drift.
+        let all_160 = lms_all_160();
+        assert_eq!(all_160.len(), 160, "LMS enumeration drift");
 
         for svc in all_160 {
             // Unrestricted: every LMS variant is permitted.
@@ -2086,22 +2135,69 @@ mod tests {
                 "{svc} must be allowed in Unrestricted"
             );
 
-            let expected = cnsa_allowed_set.contains(&svc);
-
-            // CNSA 2.0: only the 16 CNSSP-15-conformant entries pass;
-            // the other 144 default-block via the `matches!` fail-safe.
-            let actual_cnsa2 = is_allowed(AlgorithmProfile::Cnsa2, svc);
-            assert_eq!(
-                actual_cnsa2, expected,
-                "{svc} CNSA 2.0 gating mismatch (expected={expected}, actual={actual_cnsa2})"
+            // CNSA 2.0: every approved SP 800-208 parameter set is permitted.
+            // CNSSP-15 Annex B places no subset restriction on LMS.
+            assert!(
+                is_allowed(AlgorithmProfile::Cnsa2, svc),
+                "{svc} must be allowed in CNSA 2.0"
             );
 
             // CNSA 1.0: mirrors CNSA 2.0 on LMS (transition profile).
-            let actual_cnsa1 = is_allowed(AlgorithmProfile::Cnsa1, svc);
-            assert_eq!(
-                actual_cnsa1, expected,
-                "{svc} CNSA 1.0 gating mismatch (expected={expected}, actual={actual_cnsa1})"
+            assert!(
+                is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} must be allowed in CNSA 1.0"
             );
+        }
+    }
+
+    #[test]
+    fn lms_discriminant_block_is_contiguous_and_pure() {
+        // `is_lms_service` range-tests `500..=659` instead of enumerating 160
+        // arms, which is only sound while that block holds every LMS service
+        // and nothing else. Enum discriminants are unique, so proving the 160
+        // LMS variants occupy the range exactly also proves no other variant
+        // can sit inside it.
+        let mut discriminants = [0u16; 160];
+        for (slot, svc) in discriminants.iter_mut().zip(lms_all_160()) {
+            *slot = svc as u16;
+        }
+        discriminants.sort_unstable();
+
+        // Strictly increasing after sorting == all 160 are distinct. The
+        // comparison count is asserted too, so an empty or short sweep
+        // cannot pass this vacuously.
+        let mut compared = 0usize;
+        for pair in discriminants.windows(2) {
+            let [lo, hi] = pair else {
+                unreachable!("windows(2) yields two-element slices")
+            };
+            assert!(hi > lo, "duplicate LMS discriminant {lo}");
+            compared += 1;
+        }
+        assert_eq!(compared, 159, "distinctness sweep did not run in full");
+
+        let (Some(&first), Some(&last)) = (discriminants.first(), discriminants.last()) else {
+            unreachable!("the array holds 160 elements")
+        };
+        assert_eq!(first, 500, "LMS block does not start at 500");
+        assert_eq!(last, 659, "LMS block does not end at 659");
+        // 160 distinct values spanning an inclusive range of 160 is exactly
+        // full occupancy — no gap a non-LMS variant could occupy.
+        assert_eq!(last - first + 1, 160, "LMS block is not contiguous");
+
+        for svc in lms_all_160() {
+            assert!(is_lms_service(svc), "{svc} must be inside the LMS range");
+        }
+
+        // Positive control on the other side of the boundary: the nearest
+        // non-LMS neighbours must not be swept in by a widened range.
+        for svc in [
+            Service::SlhDsaShake256fVerify,
+            Service::XmssSign,
+            Service::XmssVerify,
+            Service::Dh3072,
+        ] {
+            assert!(!is_lms_service(svc), "{svc} must be outside the LMS range");
         }
     }
 
@@ -2109,12 +2205,11 @@ mod tests {
     fn slh_dsa_gating_is_exhaustive_across_all_36_variants() {
         // Enumerates every SLH-DSA Service variant (12 parameter sets ×
         // {Keygen, Sign, Verify} = 36 entries) and verifies the
-        // fail-safe gating: only the CNSSP-15 mandate
-        // (SLH-DSA-SHA2-256s) is allowed under CNSA 2.0; all 36 are
-        // blocked under CNSA 1.0; all 36 are permitted under
-        // Unrestricted.  If a new SLH-DSA variant is added without a
-        // matching entry in this array, the assertion at the end
-        // catches the gap.
+        // fail-safe gating: all 36 are blocked under both CNSA profiles,
+        // because CNSSP-15 lists no SLH-DSA parameter set at all; all 36
+        // are permitted under Unrestricted.  If a new SLH-DSA variant is
+        // added without a matching entry in this array, the assertion at
+        // the end catches the gap.
         let all_36 = [
             // SHA-2 family (18 entries).
             Service::SlhDsaSha2256sKeygen,
@@ -2157,12 +2252,6 @@ mod tests {
         ];
         assert_eq!(all_36.len(), 36, "SLH-DSA enumeration drift");
 
-        let cnsa2_allowed_set = [
-            Service::SlhDsaSha2256sKeygen,
-            Service::SlhDsaSha2256sSign,
-            Service::SlhDsaSha2256sVerify,
-        ];
-
         for svc in all_36 {
             // Unrestricted: every SLH-DSA variant is permitted.
             assert!(
@@ -2176,20 +2265,19 @@ mod tests {
                 "{svc} must be BLOCKED in CNSA 1.0"
             );
 
-            // CNSA 2.0: only the three CNSSP-15-mandated entries pass;
-            // all 33 others are blocked.
-            let expected_cnsa2 = cnsa2_allowed_set.contains(&svc);
-            let actual_cnsa2 = is_allowed(AlgorithmProfile::Cnsa2, svc);
-            assert_eq!(
-                actual_cnsa2, expected_cnsa2,
-                "{svc} CNSA 2.0 gating mismatch (expected={expected_cnsa2}, actual={actual_cnsa2})"
+            // CNSA 2.0: no SLH-DSA variant is permitted either. CNSSP-15
+            // contains no SLH-DSA entry, so admitting one would be a
+            // conformance claim the policy does not support.
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa2, svc),
+                "{svc} must be BLOCKED in CNSA 2.0"
             );
         }
     }
 
     #[test]
     fn require_allowed_returns_restricted_error_under_cnsa2() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
         match require_allowed(Service::Aes128Ecb) {
             Err(Error::AlgorithmRestricted {
@@ -2201,7 +2289,7 @@ mod tests {
 
     #[test]
     fn require_allowed_passes_permitted_services() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
         require_allowed(Service::Aes256Gcm).unwrap();
         require_allowed(Service::Sha384).unwrap();
@@ -2210,13 +2298,101 @@ mod tests {
 
     #[test]
     fn require_allowed_passes_everything_in_unrestricted() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize().unwrap();
         // Spot-check a few from each end of the spectrum.
         require_allowed(Service::Sha1).unwrap();
         require_allowed(Service::Aes128Ecb).unwrap();
         require_allowed(Service::Ed25519Sign).unwrap();
         require_allowed(Service::MlKem1024Encaps).unwrap();
+    }
+
+    /// Entry-point coverage for the SLH-DSA correction. The exhaustive
+    /// `slh_dsa_gating_*` test calls the private `is_allowed` helper directly,
+    /// so it says nothing about whether the public gate reaches that helper.
+    /// This one goes through `require_allowed`, which is what every approved
+    /// service actually calls.
+    #[test]
+    fn require_allowed_refuses_every_slh_dsa_service_under_cnsa2() {
+        let guard = reset_for_test();
+        for profile in [AlgorithmProfile::Cnsa2, AlgorithmProfile::Cnsa1] {
+            guard.reset();
+            initialize_with_profile(&[], profile).unwrap();
+            for svc in [
+                Service::SlhDsaSha2256sKeygen,
+                Service::SlhDsaSha2256sSign,
+                Service::SlhDsaSha2256sVerify,
+                Service::SlhDsaShake128fVerify,
+            ] {
+                match require_allowed(svc) {
+                    Err(Error::AlgorithmRestricted { service }) => assert_eq!(service, svc),
+                    other => {
+                        panic!("expected AlgorithmRestricted({svc}) under {profile}, got {other:?}")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Entry-point coverage for the LMS correction, on the `M=24` sets.
+    /// CNSSP-15 Annex B recommends LMS-SHA-256/192, which is `M=24`, so these
+    /// are the parameter sets the policy names by name.
+    #[test]
+    fn require_allowed_admits_lms_m24_under_both_cnsa_profiles() {
+        let guard = reset_for_test();
+        for profile in [AlgorithmProfile::Cnsa2, AlgorithmProfile::Cnsa1] {
+            guard.reset();
+            initialize_with_profile(&[], profile).unwrap();
+            for svc in [
+                Service::LmsSha256M24H5W1Sign,
+                Service::LmsSha256M24H25W8Verify,
+                Service::LmsShakeM24H10W4Sign,
+                Service::LmsShakeM24H25W8Verify,
+            ] {
+                require_allowed(svc)
+                    .unwrap_or_else(|e| panic!("{svc} must be allowed under {profile}: {e:?}"));
+            }
+        }
+    }
+
+    /// Both edges of the LMS discriminant block, over raw values.
+    ///
+    /// The block sits at the very top of the enum, so a widened *upper* bound
+    /// admits nothing today and no `Service`-typed probe can see it — moving
+    /// the bound to 709 leaves the whole suite green. Testing the arithmetic
+    /// directly is what makes the upper edge checkable at all.
+    #[test]
+    fn lms_block_boundaries_are_exact() {
+        assert!(!lms_block_contains(499), "499 is below the LMS block");
+        assert!(lms_block_contains(500), "500 is the first LMS discriminant");
+        assert!(lms_block_contains(659), "659 is the last LMS discriminant");
+        assert!(!lms_block_contains(660), "660 is above the LMS block");
+
+        // ...and the block the arithmetic describes is the one the enum has.
+        assert_eq!(Service::LmsSha256M32H5W1Sign as u16, 500);
+        assert_eq!(Service::LmsShakeM24H25W8Verify as u16, 659);
+    }
+
+    /// The two CNSA profiles must be told apart at the entry point. Every other
+    /// `require_allowed` test uses a service the profiles treat alike, so a bug
+    /// wiring `Cnsa1` through as `Cnsa2` would survive them all. P-384 ECDSA is
+    /// the discriminator: CNSA 1.0 permits it, CNSA 2.0 does not.
+    #[test]
+    fn require_allowed_distinguishes_cnsa1_from_cnsa2() {
+        let guard = reset_for_test();
+
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa1).unwrap();
+        require_allowed(Service::EcdsaP384Sign)
+            .unwrap_or_else(|e| panic!("P-384 ECDSA must be permitted under CNSA 1.0: {e:?}"));
+
+        guard.reset();
+        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        match require_allowed(Service::EcdsaP384Sign) {
+            Err(Error::AlgorithmRestricted {
+                service: Service::EcdsaP384Sign,
+            }) => {}
+            other => panic!("expected P-384 ECDSA refused under CNSA 2.0, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2228,7 +2404,7 @@ mod tests {
 
     #[test]
     fn algorithm_restricted_error_display() {
-        reset_for_test();
+        let _guard = reset_for_test();
         initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
         let err = Error::AlgorithmRestricted {
             service: Service::Aes128Ecb,

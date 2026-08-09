@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- SLH-DSA is no longer permitted under the CNSA profiles. **Breaking: a CNSA 2.0 caller invoking an SLH-DSA service now receives `AlgorithmRestricted`.** (#229)
+
+- The CNSA profiles permit all 160 LMS services, previously 16. (#228)
+
+- Module lifecycle tests no longer race on the process-global state. (#230)
+
 ## [0.22.0] - 2026-08-07
 
 ### Added

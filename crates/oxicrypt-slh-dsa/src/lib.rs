@@ -26,11 +26,11 @@
 //! Batch 3 keeps the three generic `SlhDsaKeygen` / `SlhDsaSign` /
 //! `SlhDsaVerify` Service variants in place; Batch 4 will split them
 //! into 36 variant-specific entries (12 paramSets × Keygen/Sign/Verify)
-//! and tighten profile gating. Today, only `SHA2-256s` is approved
-//! under the CNSA 2.0 profile (CNSSP 15 mandate); the other 11
-//! variants are permitted under
+//! and tighten profile gating. CNSSP 15 lists no SLH-DSA parameter
+//! set, so all 12 variants — including `SHA2-256s` — are permitted
+//! under
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
-//! only.
+//! only and are denied under both CNSA profiles.
 //!
 //! # Parameter sets (FIPS 205 §11 Table 2)
 //!

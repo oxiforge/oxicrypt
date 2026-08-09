@@ -442,7 +442,8 @@ pub const SIG_LEN: usize;  // 2420 / 3309 / 4627
 
 Stateless hash-based signatures (FIPS 205). Twelve parameter-set modules:
 `slh_dsa_{sha2,shake}_{128,192,256}{s,f}`. The crate root re-exports
-`slh_dsa_sha2_256s` (the CNSA 2.0 mandate variant).
+`slh_dsa_sha2_256s`. CNSSP-15 lists no SLH-DSA parameter set, so all twelve
+are permitted under the Unrestricted profile only.
 
 ### Free functions (per variant module)
 

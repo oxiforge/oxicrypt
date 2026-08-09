@@ -206,7 +206,7 @@ modules:
       - oxicrypt-zeroize
 
   - name: oxicrypt-slh-dsa
-    description: "SLH-DSA stateless hash-based signatures (FIPS 205): all 12 §11 parameter sets (SHA-2 and SHAKE, each 128/192/256 s and f), only SHA2-256s approved under CNSA 2.0."
+    description: "SLH-DSA stateless hash-based signatures (FIPS 205): all 12 §11 parameter sets (SHA-2 and SHAKE, each 128/192/256 s and f), none approved under the CNSA profiles."
     no_std: true
     depends_on:
       - oxicrypt-module
@@ -11211,7 +11211,7 @@ functions:
       fips_approved: true
 
   # ── SLH-DSA — 11 additional FIPS 205 §11 variants ─────────────
-  # Per-variant keygen/sign/verify; only SHA2-256s is on the CNSA 2.0 mandate list, the other 11 are Unrestricted-only.
+  # Per-variant keygen/sign/verify; CNSSP-15 lists no SLH-DSA parameter set, so all 12 are Unrestricted-only.
 
   - name: oxi_slh_dsa_sha2_128s_keygen
     module: oxicrypt-ffi

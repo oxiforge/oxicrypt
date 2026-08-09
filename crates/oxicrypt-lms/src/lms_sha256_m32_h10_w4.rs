@@ -16,8 +16,8 @@
 //! | LMS sign | SP 800-208 (RFC 8554) | `Service::LmsSha256M32H10W4Sign` (512) |
 //! | LMS verify | SP 800-208 (RFC 8554) | `Service::LmsSha256M32H10W4Verify` (513) |
 //!
-//! This pair is one of the 8 CNSA 2.0 permitted (LMS, LM-OTS)
-//! combinations per CNSSP-15.
+//! Like every other approved (LMS, LM-OTS) combination, this pair is
+//! permitted under all three profiles.
 //!
 //! # Sensitive security parameters (SSPs)
 //!

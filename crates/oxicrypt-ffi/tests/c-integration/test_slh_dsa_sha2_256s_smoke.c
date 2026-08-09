@@ -5,10 +5,9 @@
  * Byte counts: xi=96 (SK.seed||SK.prf||PK.seed, 3×32), pk=64, sk=128,
  * sig=29 792.
  *
- * Profile must be Unrestricted (0). SHA2-256s is also CNSA-2.0
- * approved (the only SLH-DSA variant on the CNSSP-15 mandate list)
- * — testing under Unrestricted exercises the same gate path with one
- * less profile-table lookup, sufficient for FFI smoke coverage.
+ * Profile must be Unrestricted (0). CNSSP-15 lists no SLH-DSA
+ * parameter set, so SHA2-256s — like every other SLH-DSA parameter
+ * set — is denied under both CNSA profiles.
  *
  * Signing is deterministic (opt_rand = PK.seed): re-running with the
  * same (sk, msg, ctx) triple gives a bit-identical signature.

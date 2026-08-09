@@ -3729,9 +3729,8 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
 // would put PRF key material into the secret-derivation slot or
 // vice-versa, breaking the FIPS 205 §10 security argument).
 //
-// CNSA gating: only SLH-DSA-SHA2-256s is on the CNSA 2.0 mandate
-// list (CNSSP-15 for stateless hash-based signatures). The other
-// 11 variants — every entry in this block plus the SHAKE block
+// CNSA gating: CNSSP-15 lists no SLH-DSA parameter set, so all 12
+// variants — every entry in this block plus the SHAKE block
 // below — are permitted only under
 // `AlgorithmProfile::Unrestricted`; calls under either CNSA
 // profile return `OxiResult::AlgorithmRestricted = 6` via the
@@ -4286,8 +4285,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256f_verify(
 // concatenation (SHAKE provides native domain separation, no HMAC
 // needed), and H_msg is a single-shot squeeze (no MGF1 loop). All
 // 6 SHAKE variants share `AlgorithmProfile::Unrestricted` gating —
-// none of them are on the CNSA 2.0 mandate list (CNSSP-15 pins
-// SHA2-256s only).
+// CNSSP-15 lists no SLH-DSA parameter set at all.
 
 /// Generate an SLH-DSA-SHAKE-128s key pair from a 48-byte seed
 /// (FIPS 205 §9.1 Algorithm 17; n=16).
