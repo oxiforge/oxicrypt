@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-09
+
 ### Fixed
 
 - SLH-DSA is no longer permitted under the CNSA profiles. **Breaking: a CNSA 2.0 caller invoking an SLH-DSA service now receives `AlgorithmRestricted`.** (#229)
@@ -413,7 +415,10 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/oxiforge/oxicrypt/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/oxiforge/oxicrypt/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/oxiforge/oxicrypt/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/oxiforge/oxicrypt/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/oxiforge/oxicrypt/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/oxiforge/oxicrypt/compare/v0.18.0...v0.18.1

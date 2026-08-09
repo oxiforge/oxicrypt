@@ -44,7 +44,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.22.0"
+version = "0.23.0"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0 OR MIT"
@@ -64,35 +64,35 @@ publish = true
 # that depends on another (#196). One table means a release moves 29
 # literals instead of 155, and `scripts/bump-version.sh` edits one file.
 
-acvp-harness = { path = "acvp-harness", version = "0.22.0" }
-oxicrypt-aes = { path = "crates/oxicrypt-aes", version = "0.22.0" }
-oxicrypt-aes-accel = { path = "crates/oxicrypt-aes-accel", version = "0.22.0" }
-oxicrypt-cmac = { path = "crates/oxicrypt-cmac", version = "0.22.0" }
-oxicrypt-dh = { path = "crates/oxicrypt-dh", version = "0.22.0" }
-oxicrypt-drbg = { path = "crates/oxicrypt-drbg", version = "0.22.0" }
-oxicrypt-ecdh = { path = "crates/oxicrypt-ecdh", version = "0.22.0" }
-oxicrypt-ecdsa = { path = "crates/oxicrypt-ecdsa", version = "0.22.0" }
-oxicrypt-eddsa = { path = "crates/oxicrypt-eddsa", version = "0.22.0" }
-oxicrypt-entropy = { path = "crates/oxicrypt-entropy", version = "0.22.0" }
-oxicrypt-hmac = { path = "crates/oxicrypt-hmac", version = "0.22.0" }
-oxicrypt-integrity = { path = "crates/oxicrypt-integrity", version = "0.22.0" }
-oxicrypt-kdf = { path = "crates/oxicrypt-kdf", version = "0.22.0" }
-oxicrypt-keccak-accel = { path = "crates/oxicrypt-keccak-accel", version = "0.22.0" }
-oxicrypt-lms = { path = "crates/oxicrypt-lms", version = "0.22.0" }
-oxicrypt-maxwell = { path = "crates/oxicrypt-maxwell", version = "0.22.0" }
-oxicrypt-ml-dsa = { path = "crates/oxicrypt-ml-dsa", version = "0.22.0" }
-oxicrypt-ml-kem = { path = "crates/oxicrypt-ml-kem", version = "0.22.0" }
-oxicrypt-module = { path = "crates/oxicrypt-module", version = "0.22.0" }
-oxicrypt-rsa = { path = "crates/oxicrypt-rsa", version = "0.22.0" }
-oxicrypt-sha = { path = "crates/oxicrypt-sha", version = "0.22.0" }
-oxicrypt-sha-accel = { path = "crates/oxicrypt-sha-accel", version = "0.22.0" }
-oxicrypt-slh-dsa = { path = "crates/oxicrypt-slh-dsa", version = "0.22.0" }
-oxicrypt-test-vectors = { path = "crates/oxicrypt-test-vectors", version = "0.22.0" }
-oxicrypt-timer = { path = "crates/oxicrypt-timer", version = "0.22.0" }
-oxicrypt-tls-kdf = { path = "crates/oxicrypt-tls-kdf", version = "0.22.0" }
-oxicrypt-xmss = { path = "crates/oxicrypt-xmss", version = "0.22.0" }
-oxicrypt-xof = { path = "crates/oxicrypt-xof", version = "0.22.0" }
-oxicrypt-zeroize = { path = "crates/oxicrypt-zeroize", version = "0.22.0" }
+acvp-harness = { path = "acvp-harness", version = "0.23.0" }
+oxicrypt-aes = { path = "crates/oxicrypt-aes", version = "0.23.0" }
+oxicrypt-aes-accel = { path = "crates/oxicrypt-aes-accel", version = "0.23.0" }
+oxicrypt-cmac = { path = "crates/oxicrypt-cmac", version = "0.23.0" }
+oxicrypt-dh = { path = "crates/oxicrypt-dh", version = "0.23.0" }
+oxicrypt-drbg = { path = "crates/oxicrypt-drbg", version = "0.23.0" }
+oxicrypt-ecdh = { path = "crates/oxicrypt-ecdh", version = "0.23.0" }
+oxicrypt-ecdsa = { path = "crates/oxicrypt-ecdsa", version = "0.23.0" }
+oxicrypt-eddsa = { path = "crates/oxicrypt-eddsa", version = "0.23.0" }
+oxicrypt-entropy = { path = "crates/oxicrypt-entropy", version = "0.23.0" }
+oxicrypt-hmac = { path = "crates/oxicrypt-hmac", version = "0.23.0" }
+oxicrypt-integrity = { path = "crates/oxicrypt-integrity", version = "0.23.0" }
+oxicrypt-kdf = { path = "crates/oxicrypt-kdf", version = "0.23.0" }
+oxicrypt-keccak-accel = { path = "crates/oxicrypt-keccak-accel", version = "0.23.0" }
+oxicrypt-lms = { path = "crates/oxicrypt-lms", version = "0.23.0" }
+oxicrypt-maxwell = { path = "crates/oxicrypt-maxwell", version = "0.23.0" }
+oxicrypt-ml-dsa = { path = "crates/oxicrypt-ml-dsa", version = "0.23.0" }
+oxicrypt-ml-kem = { path = "crates/oxicrypt-ml-kem", version = "0.23.0" }
+oxicrypt-module = { path = "crates/oxicrypt-module", version = "0.23.0" }
+oxicrypt-rsa = { path = "crates/oxicrypt-rsa", version = "0.23.0" }
+oxicrypt-sha = { path = "crates/oxicrypt-sha", version = "0.23.0" }
+oxicrypt-sha-accel = { path = "crates/oxicrypt-sha-accel", version = "0.23.0" }
+oxicrypt-slh-dsa = { path = "crates/oxicrypt-slh-dsa", version = "0.23.0" }
+oxicrypt-test-vectors = { path = "crates/oxicrypt-test-vectors", version = "0.23.0" }
+oxicrypt-timer = { path = "crates/oxicrypt-timer", version = "0.23.0" }
+oxicrypt-tls-kdf = { path = "crates/oxicrypt-tls-kdf", version = "0.23.0" }
+oxicrypt-xmss = { path = "crates/oxicrypt-xmss", version = "0.23.0" }
+oxicrypt-xof = { path = "crates/oxicrypt-xof", version = "0.23.0" }
+oxicrypt-zeroize = { path = "crates/oxicrypt-zeroize", version = "0.23.0" }
 
 # Workspace-wide lints. These apply to every member crate via `[lints]
 # workspace = true` in each crate's Cargo.toml.
