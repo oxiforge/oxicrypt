@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 OR MIT */
 /*
- * oxicrypt — pure-Rust FIPS 140-3 cryptographic module
+ * oxicrypt — pure-Rust cryptographic module targeting FIPS 140-3 Level 1
  *
  * This header is GENERATED from the Rust source by cbindgen.
  * Do not edit by hand — edit the Rust signatures and rerun the build.

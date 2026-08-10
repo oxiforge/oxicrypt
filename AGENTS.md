@@ -6,7 +6,7 @@ every session by any agent that respects `AGENTS.md`. Model-agnostic — phrase 
 
 ## Project context
 
-oxicrypt is a **pure-Rust FIPS 140-3 Level 1 cryptographic module**. It implements FIPS-approved
+oxicrypt is a **pure-Rust cryptographic module targeting FIPS 140-3 Level 1**. It implements FIPS-approved
 algorithms across a 29-crate workspace (AES, SHA, SHA-3/XOF, HMAC, CMAC, KDF, TLS-KDF, DRBG, ECDH,
 ECDSA, EdDSA, RSA, DH, ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS, plus `zeroize`, `sha-accel`, `integrity`,
 `ffi`, `module`, `test-vectors`, and the SP 800-90B `entropy` scaffolding). The crate is `no_std`-capable and
