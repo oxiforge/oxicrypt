@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 # Out-of-boundary tooling (SP 800-90B EA-parity harness), not a product — kept off
 # crates.io. Licensed under the workspace Apache-2.0 OR MIT like every other crate.
 publish = false

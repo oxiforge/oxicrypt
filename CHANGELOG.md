@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-08-10
+
+- Every published crate carries a README. crates.io rendered a blank page for all of them.
+- Crates inherit `homepage`, `keywords` and `categories`. All three reached the registry unset.
+- The post-quantum crates carry their own keywords instead of the workspace set.
+- `oxicrypt-cli` no longer advertises an `encrypt` command. There is none.
+- The C header, both LAMA manifests and the crate descriptions say the module targets
+  FIPS 140-3 Level 1 rather than asserting it.
+
 ## [0.23.0] - 2026-08-09
 
 ### Fixed
