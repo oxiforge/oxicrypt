@@ -29,6 +29,38 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # Which optional gates does this change need? Decided by
+  # `scripts/gate-scope.sh`, which the pre-push hook is to call for the same
+  # decision — one fail-closed rule, two callers, rather than two copies that
+  # drift silently in the dangerous direction.
+  #
+  # Consumers force-pass inside a STEP rather than carrying a job-level `if`.
+  # A required check skipped by GitHub never reports at all: it sits at Pending
+  # and blocks the pull request indefinitely. A job that always runs and exits 0
+  # early is the supported shape.
+  #
+  # While the trigger is `workflow_dispatch` there is no base ref, so this emits
+  # `true` for everything and every run is full. That is the intended reading of
+  # a manual dispatch, and it means this job cannot narrow anything until the
+  # triggers are flipped.
+  scope:
+    name: gate scope
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      maxwell: ${{ steps.scope.outputs.maxwell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        run: |
+          base=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          fi
+          ./scripts/gate-scope.sh "$base" "${{ github.sha }}" | tee -a "$GITHUB_OUTPUT"
+
   fmt:
     name: cargo fmt
     runs-on: ubuntu-latest
@@ -54,9 +86,42 @@ jobs:
       # way to lint those targets is a separate invocation that opts in.
       - run: cargo clippy -p oxicrypt-bench --features entropy-bench --all-targets -- -D warnings
 
+  # Sharded across four runners (2026-08-10). Measured on run 31397044952: the
+  # unsharded job took 42m50s, of which nextest itself was 2495s — and the cost
+  # is NOT concentrated in one test, which is what makes sharding the right
+  # lever. The ten slowest, in seconds:
+  #
+  #   522.8  oxicrypt-maxwell  iid_gate::determinism_bit_exact
+  #   500.8  oxicrypt-slh-dsa  slh_dsa_shake_192s::different_messages
+  #   435.7  oxicrypt-slh-dsa  slh_dsa_shake_256s::different_messages
+  #   419.1  oxicrypt-maxwell  iid_gate::noniid_routed_value_is_suite_minimum
+  #   413.7  oxicrypt-maxwell  iid_gate::periodic_synthetic_routes_to_noniid
+  #   290.2  oxicrypt-slh-dsa  slh_dsa_shake_128s::different_messages
+  #   286.7  oxicrypt-maxwell  parity::tests::parity_table_within_tolerance
+  #   264.2  oxicrypt-slh-dsa  slh_dsa_shake_192s::round_trip
+  #   263.6  oxicrypt-slh-dsa  slh_dsa_shake_192s::kat_passes
+  #   227.3  oxicrypt-slh-dsa  slh_dsa_shake_256s::round_trip
+  #
+  # Note what that list says about oxicrypt-slh-dsa: it is a cost centre of the
+  # same order as oxicrypt-maxwell. The pre-push hook's Tier B is built on the
+  # premise that excluding maxwell removes the expensive tail, which is true on
+  # a 12-core developer machine and false here.
+  #
+  # `slice` rather than `hash`, and NOT `count` — which nextest deprecates as
+  # "neither the even nature of sliced partitioning nor the stability of hashed
+  # sharding". Slicing round-robins the test list, which distributes the ten
+  # tests above about as evenly as anything can without being load-aware; hashed
+  # sharding is stable when tests are added but balances worse, and balance is
+  # what is being bought here. A shard is floored by the single longest test in
+  # it (~523s), so raising the shard count past four buys progressively less.
   test:
-    name: cargo test
+    name: cargo test (slice ${{ matrix.slice }}/4)
     runs-on: ubuntu-latest
+    needs: scope
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - name: Install stable toolchain
@@ -65,8 +130,7 @@ jobs:
       # nextest gate (2026-06-12): per-test process isolation makes
       # oxicrypt-module's global-state mutation a non-issue — full
       # parallelism workspace-wide. nextest skips doctests, so the
-      # --doc step keeps doctest coverage identical. The same pair
-      # lives in scripts/git-hooks/pre-push.
+      # separate doctests job below keeps doctest coverage identical.
       - uses: taiki-e/install-action@nextest
       # SP 800-90B estimator parity IS validated here (#153). The EA v1.1.8
       # reference datasets are the 11 `.bin` files tracked in the public NIST
@@ -92,13 +156,96 @@ jobs:
       # not strictly required — the provisioning gate fires only on a checkout
       # that CLAIMS the document, and the runner claims nothing — but it states
       # the gap in the workflow rather than resting it on a missing directory.
-      - run: cargo nextest run --workspace
+      # Fail closed on a slice that selected nothing. A `--partition` expression
+      # matching no tests exits 0, which reads exactly like a pass — so a
+      # mis-specified slice would silently retire a quarter of the suite.
+      #
+      # The assertion is made against `list`, not against the run's output. The
+      # first version of this guard grepped the run's summary line for a test
+      # count and failed three of four shards on 2026-08-10 while every test in
+      # them passed: `CARGO_TERM_COLOR: always` is set workflow-wide, so nextest
+      # emits `457<ESC>[0m tests run`, and no pattern anchoring digits to
+      # " tests run" can match coloured output. Asking `list` how many tests the
+      # slice selects answers the actual question — is this slice non-empty —
+      # without parsing anything the terminal has decorated.
+      - name: Assert the slice is non-empty
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          n="$(cargo nextest list --workspace -E 'not package(oxicrypt-maxwell)' --partition slice:${{ matrix.slice }}/4 | grep -c '::')"
+          echo "slice ${{ matrix.slice }}/4 selects $n tests"
+          [ "$n" -gt 0 ] || { echo "slice ${{ matrix.slice }}/4 selected no tests" >&2; exit 1; }
+      # No output parsing here: nextest's own exit code is the verdict.
+      #
+      # oxicrypt-maxwell is excluded and runs in its own job. Its EA-anchored
+      # tests are the long pole of the whole suite —
+      # `iid_gate::assessed_assembly_matches_ea_on_multi_bit_datasets` alone ran
+      # >1300s on run 31401732545, which floored the shard that drew it at 23m12s
+      # while its three siblings finished in 7-11 minutes. Excluding the PACKAGE
+      # rather than a list of test names is deliberate: a name list rots the
+      # moment someone adds a slow test, and nothing would report that it had.
+      - name: cargo nextest run (slice ${{ matrix.slice }}/4, without maxwell)
+        run: |
+          if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
+            echo "no Rust-relevant paths in this change — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          cargo nextest run --workspace -E 'not package(oxicrypt-maxwell)' --partition slice:${{ matrix.slice }}/4
         env:
           OXICRYPT_EA_DATA: ${{ github.workspace }}/ea-reference/bin
           OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
+
+  # oxicrypt-maxwell, on its own runner and gated on its own dependency closure.
+  #
+  # This is the job the gating exists for. Maxwell carries the EA-anchored
+  # entropy-assessment tests, which are ~22 minutes of the suite, and its closure
+  # is small — itself plus module, sha, test-vectors and zeroize. A change that
+  # touches none of them cannot alter a verdict here, so most pull requests skip
+  # it and finish in the time the shards take.
+  maxwell:
+    name: cargo test (oxicrypt-maxwell)
+    runs-on: ubuntu-latest
+    needs: scope
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Provision the SP 800-90B reference datasets
+        uses: actions/checkout@v4
+        with:
+          repository: usnistgov/SP800-90B_EntropyAssessment
+          path: ea-reference
+      - name: cargo nextest run -p oxicrypt-maxwell
+        run: |
+          if [ "${{ needs.scope.outputs.maxwell }}" != "true" ]; then
+            echo "nothing oxicrypt-maxwell is built from changed — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          cargo nextest run -p oxicrypt-maxwell
+        env:
+          OXICRYPT_EA_DATA: ${{ github.workspace }}/ea-reference/bin
+          OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
+
+  # Doctests are not partitioned: nextest does not run them at all, so they need
+  # their own job rather than a fifth copy inside each shard. They need neither
+  # the EA datasets nor the policy flag — no doctest reads either.
+  doctests:
+    name: cargo test --doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --doc
       # The gate's own warning goes to stderr, which nextest discards on a
-      # passing test — so without this the caveat below would be invisible in
-      # every green run, which is the failure mode #137 exists to kill.
+      # passing test — so without this the caveat would be invisible in every
+      # green run, which is the failure mode #137 exists to kill. It lives here
+      # rather than in the shards so it is recorded once per run, not four times.
       - name: Record the coverage caveat
         if: always()
         run: |
@@ -109,7 +256,6 @@ jobs:
           echo "skipped. Boundary-accounting drift is still caught here by the equivalent" >> "$GITHUB_STEP_SUMMARY"
           echo "AGENTS.md and README.md assertions, which need no policy and did run." >> "$GITHUB_STEP_SUMMARY"
           echo "See docs/security-policy/README.md." >> "$GITHUB_STEP_SUMMARY"
-      - run: cargo test --workspace --doc
 
   build:
     name: cargo build (release)
