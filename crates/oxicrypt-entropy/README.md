@@ -2,14 +2,21 @@
 
 SP 800-90B entropy-source scaffolding: noise-source abstraction, claimed-H pipeline, cited spec constants.
 
-Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
-FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy
-cryptographic libraries.
+> **Phase-0 scaffolding. Read this before anything else.** This crate makes **no entropy
+> claim and no conformance claim**, and nothing in it has been assessed by any laboratory
+> or validation program. It has not been run against NIST's ESV demo server. It is also
+> **not a dependency of `oxicrypt-module` or `oxicrypt-drbg`** — the DRBGs take entropy as
+> a caller-supplied argument, so nothing in the module is seeded from it.
+>
+> It supplies the *shape* of an SP 800-90B entropy source — noise-source abstraction,
+> health tests, min-entropy accounting, conditioner — not an assessed one. Claimed
+> min-entropy is a required argument you must supply and justify yourself; this crate
+> will never assert one on your behalf.
 
-> This crate makes **no entropy claim** and has not been run against NIST's ESV
-> demo server. It is not a dependency of `oxicrypt-module` or `oxicrypt-drbg` — the
-> DRBGs take entropy as a caller-supplied argument, so nothing inside the module
-> boundary is seeded from it.
+Part of [oxicrypt](https://github.com/oxiforge/oxicrypt), a cryptographic module written
+entirely in Rust. The module as a whole targets FIPS 140-3 Level 1; this crate is listed
+inside its cryptographic boundary at Phase 0, which describes where it sits, not what it
+has been validated to do.
 
 ## Documentation
 
