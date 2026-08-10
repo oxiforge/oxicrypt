@@ -99,28 +99,25 @@ If a gate fails, fix the underlying issue rather than bypassing. The gate is the
 
 ### How much of the nextest suite a push runs
 
-The pre-push hook always runs fmt, Clippy, **doctests**, the **release construction guard** and the release build — together about seven seconds on a warm target directory. None of those are ever skipped. The one expensive gate is `cargo nextest run --workspace`, and only that gate is scoped to what the push can actually affect:
+None of it, unless you ask.
 
-| Your push changes | `cargo nextest run` |
-|---|---|
-| no Rust at all (docs, hooks, CI config) | skipped — no test can observe it |
-| Rust, but nothing `oxicrypt-maxwell` is built from | runs without that one package |
-| `oxicrypt-maxwell`, or `oxicrypt-module` / `oxicrypt-sha` / `oxicrypt-test-vectors` / `oxicrypt-zeroize`, or `Cargo.lock` / `Cargo.toml` / the toolchain pin / `.cargo/` | runs in full |
-| a crate the hook's inventory does not recognise | runs in full |
+The pre-push hook always runs fmt, Clippy over all targets, **doctests**, the **release construction guard** and the release build, plus the containment, internal-dependency and LAMA checks — about a minute against a warm target directory. Those catch the overwhelming majority of mistakes before a push, which is why a local hook exists at all.
 
-`oxicrypt-maxwell` carries the SP 800-90B estimator tests anchored to the NIST EA reference datasets. One of them exceeds 1140s of a ~1245s suite run, so excluding that package when nothing it is built from changed is most of the difference between a 21-minute push and a fast one. The scoping is conservative: it asks whether a test's verdict *could* change, never whether a push looks important, and anything it cannot resolve runs the full suite.
+`cargo nextest run --workspace` is **opt-in** as of 2026-08-10. CI is the gate of record: it runs on every pull request and on `main`, it slices the suite four ways, it isolates `oxicrypt-maxwell` in its own job, and it carries the feature-matrix configurations this hook structurally cannot — the hook tests default features only. It also cannot be bypassed with `--no-verify`.
 
-Only a full run records a pass in the stamp cache. A scoped run is a real pass over a smaller set, and must not be able to satisfy a later push that needs the full one.
+`oxicrypt-maxwell` carries the SP 800-90B estimator tests anchored to the NIST EA reference datasets, and one of them exceeds 1300s on a CI runner. Isolating that package is why an ordinary pull request settles in about ten minutes rather than forty.
 
-To decide for yourself on a given push:
+To run the suite locally anyway — before pushing, or while iterating:
 
 ```bash
-OXICRYPT_PUSH_NEXTEST=skip        git push    # skip the nextest suite (doctests + release guard still run)
-OXICRYPT_PUSH_NEXTEST=no-maxwell  git push    # nextest without oxicrypt-maxwell
-OXICRYPT_PUSH_NEXTEST=full        git push    # run all of nextest
+OXICRYPT_PUSH_NEXTEST=full        git push    # the whole suite
+OXICRYPT_PUSH_NEXTEST=no-maxwell  git push    # without the EA-anchored tail
+cargo nextest run --profile quick             # no push involved
 ```
 
-The override is announced in the hook's output and writes no stamp unless it ran everything. Unlike the automatic scoping it does **not** check whether maxwell's inputs changed — `no-maxwell` excludes those tests whatever you touched, so use it knowing that, and let a full nextest run gate what lands on `main`.
+The choice is announced in the hook's output, and only a full run records a pass in the stamp cache — a narrower run is a real pass over a smaller set and must not satisfy a later push that needs the full one.
+
+Which optional gates a change needs is decided by `scripts/gate-scope.sh`, called by CI. It is deliberately one file rather than a copy here and a copy in the workflow: two copies of a fail-closed rule drift, and the drift is silent in the dangerous direction. Everything it cannot resolve — no base ref, no merge base, a crate outside the known inventory — resolves to running the gate.
 
 ### SP 800-90B reference datasets (required for a meaningful test run)
 

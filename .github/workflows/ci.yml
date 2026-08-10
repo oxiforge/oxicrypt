@@ -13,15 +13,18 @@
 # Do NOT move any job to a larger runner: larger runners are billed
 # even for public repositories.
 #
-# Trigger policy is still `workflow_dispatch` ONLY at this commit.
-# Flipping it to `pull_request` + `push: main` is a separate change,
-# deliberately sequenced after this one so that the EA provisioning
-# and release-guard jobs below can be proven by dispatch while
-# nothing yet depends on them.
+# Runs on every pull request and on main. `workflow_dispatch` stays
+# alongside them: a full run on demand, against any ref, is worth
+# keeping, and it is also the only mode with no base ref — so
+# `scripts/gate-scope.sh` narrows nothing and a dispatch always runs
+# everything.
 
 name: ci
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 env:

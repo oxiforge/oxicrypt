@@ -225,11 +225,12 @@ than hidden: deleting the clone directory outright silences the gate on the main
 
 Two further guards have no EA analogue. `the_security_policy_is_not_in_the_public_tree` is the
 inverse check — it fails if the document reappears here under any name, because publication is the
-one direction that cannot be undone. Because the `pre-push` Tier A escape skips `nextest` when a
-push touches no Rust-relevant path — and `docs/` is exactly such a path — that same containment
-scan is duplicated in `scripts/git-hooks/pre-push`, ahead of the tag short-circuit and the stamp
-cache, on the same reasoning the deny-list scan already uses: a leak check a cache can skip is not
-a leak check. Neither says anything about git history.
+one direction that cannot be undone. Because `nextest` is opt-in in `pre-push` as of 2026-08-10, that
+check does not run locally on an ordinary push at all, so the same containment scan is duplicated in
+`scripts/git-hooks/pre-push`, ahead of the tag short-circuit and the stamp cache, on the reasoning
+the deny-list scan already uses: a leak check a cache can skip is not a leak check. CI runs
+`doc-guard` on every pull request, but it runs *after* the push, and publication is the one
+direction that cannot be undone. Neither says anything about git history.
 `policy_resolution_precedence_holds` pins the resolution order itself, since a resolver that
 resolved nothing would be indistinguishable from a clean skip.
 
