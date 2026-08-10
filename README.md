@@ -10,6 +10,34 @@ validation through an accredited CST laboratory.
 **Target:** FIPS 140-3 Level 1, following FIPS 140-3 Implementation
 Guidance D.G (March 2026).
 
+## Validation status
+
+oxicrypt holds **no NIST certificate**. Three separate validations apply, at
+different stages:
+
+- **Algorithm testing (ACVP → CAVP): graded on the demo server, no
+  certificate.** The harness runs sessions against NIST's ACVTS
+  **demonstration** server, graded by NIST on the environment provided for
+  that purpose. It does not produce a certificate: the production ACVTS is
+  open only to NVLAP-accredited laboratories, and is the only route to a CAVP
+  certificate.
+
+- **Module validation (CMVP): not submitted.** The module is built to the
+  FIPS 140-3 Level 1 structure — defined cryptographic boundary, state
+  machine, power-up self-tests, algorithm-profile gating — but it has not
+  been submitted to a CST laboratory.
+
+- **Entropy source (SP 800-90B → ESV): work in progress.**
+  `oxicrypt-entropy` makes no entropy claim and has not been run against
+  NIST's ESV demo server. It is not a dependency of `oxicrypt-module` or
+  `oxicrypt-drbg` — the DRBGs take entropy as a caller-supplied argument, so
+  nothing inside the module is seeded from it.
+
+If you want the approved algorithms implemented in pure Rust, that is what
+this is. If you need to satisfy a requirement for a *validated* module, that
+means a certificate number, and there is not one yet. See the
+[Roadmap](#roadmap) for sequencing.
+
 ## Quick start
 
 ```bash
@@ -346,8 +374,9 @@ across all algorithm crates and the C ABI (`oxicrypt-ffi`). 88 ACVP
 handlers, 152 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
 green.
 
-**Phase 3 (current)** — ACVP validation. Demo-server dry run, gap
-resolution, and preparation of the validation submission package.
+**Phase 3 (current)** — ACVP demo-server grading, gap resolution, and
+preparation of the validation submission package. Status:
+[Validation status](#validation-status).
 
 **Phase 4 (next)** — CST lab engagement. CAVP algorithm certificates,
 CMVP module submission, and lab review cycle.
