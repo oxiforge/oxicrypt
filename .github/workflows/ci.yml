@@ -1,24 +1,23 @@
-# NOTE — manual-dispatch mode since 2026-06-10 (was fully paused
-# 2026-05-07 by rename to `ci.yml.disabled` after the Free-tier
-# minutes cap; minutes renewed June, but they burn fast — one full
-# cycle costs 1.5-2h+ of 2-core runner time, mostly the debug
-# single-threaded test stage).
+# Minutes are no longer a constraint. This workflow was paused
+# 2026-05-07 and put on manual dispatch 2026-06-10 because the repo
+# was PRIVATE and burning a capped Free-tier allowance. The repo went
+# public 2026-08-07, and GitHub Actions is free for public
+# repositories on standard GitHub-hosted runners with no minute cap —
+# measured, not assumed: run 31394766907 reports
+# `billable.UBUNTU.total_ms = 0` across all nine jobs.
 #
-# Trigger policy: `workflow_dispatch` ONLY — zero default burn.
-# Each merge picks its gate: the local pre-push hook (default,
-# free, runs the same fmt/clippy/test/build cycle on every push)
-# or cloud CI via `gh workflow run ci`. Spend minutes when the
-# VM is busy (e.g. ACVTS campaigns) or when the feature-matrix
-# coverage below is wanted — the `features` job runs the
-# non-default feature configs (oxicrypt-lms `parallel`,
-# oxicrypt-sha `accel-sha`) that the local hook structurally
-# skips (it tests default features only).
+# Public repositories also get 4-core/16GB standard runners rather
+# than the 2-core/8GB a private repo gets, so the historical cost
+# notes above are stale in both directions.
 #
-# Local CI parity for the four core jobs is preserved by
-# `scripts/git-hooks/pre-push`, activated via the existing
-# `git config core.hooksPath scripts/git-hooks` setting that the
-# pre-commit hook already relies on. The hook stays as the
-# default gate; this workflow is the on-demand cloud mirror.
+# Do NOT move any job to a larger runner: larger runners are billed
+# even for public repositories.
+#
+# Trigger policy is still `workflow_dispatch` ONLY at this commit.
+# Flipping it to `pull_request` + `push: main` is a separate change,
+# deliberately sequenced after this one so that the EA provisioning
+# and release-guard jobs below can be proven by dispatch while
+# nothing yet depends on them.
 
 name: ci
 
@@ -69,40 +68,40 @@ jobs:
       # --doc step keeps doctest coverage identical. The same pair
       # lives in scripts/git-hooks/pre-push.
       - uses: taiki-e/install-action@nextest
-      # CI does NOT validate SP 800-90B estimator parity. The EA v1.1.8
-      # reference datasets are not provisioned on the runner, and every
-      # EA-anchored test in oxicrypt-maxwell skips when its dataset is absent —
-      # so this job has always run the parity story against nothing and reported
-      # success. Setting the flag makes that pre-existing fact explicit here
-      # rather than hidden in silent skips; it does not change what CI covers.
-      # The full-strength gate is local, where the bundle lives (#137, #153).
-      # The Security Policy is likewise absent here: it is withheld from this
-      # repository entirely (docs/security-policy/README.md), so the runner has
-      # no route to it and never will. The five doc-guard tests asserting its
-      # numerals against the workspace therefore skip.
+      # SP 800-90B estimator parity IS validated here (#153). The EA v1.1.8
+      # reference datasets are the 11 `.bin` files tracked in the public NIST
+      # repository, so provisioning them is a checkout rather than a secret or a
+      # build: no C++ toolchain is involved, because the reference VALUES are
+      # baked into `parity.rs` with a per-file SHA-256 that the harness verifies.
       #
-      # The flag is not strictly required — the provisioning gate fires only on a
-      # checkout that CLAIMS the document, and the runner claims nothing, so a
-      # bare job would pass anyway. It is set for the same reason as the line
-      # above it: to state the coverage gap in the workflow rather than leave it
-      # resting on the incidental absence of a directory.
+      # Until 2026-08-10 this job set OXICRYPT_EA_DATA_OPTIONAL=1 and every
+      # EA-anchored test in oxicrypt-maxwell skipped, so the parity story ran
+      # against nothing and reported success. The flag is deliberately NOT set
+      # below: `parity::tests::ea_dataset_suite_is_provisioned` now fails the job
+      # if the checkout ever stops landing, which is the whole point — a
+      # provisioning failure must not degrade silently back into a green run.
+      - name: Provision the SP 800-90B reference datasets
+        uses: actions/checkout@v4
+        with:
+          repository: usnistgov/SP800-90B_EntropyAssessment
+          path: ea-reference
+      # The Security Policy is a different case and stays absent: it is withheld
+      # from this repository entirely (docs/security-policy/README.md), so the
+      # runner has no route to it and never will. The five doc-guard tests
+      # asserting its numerals against the workspace therefore skip. The flag is
+      # not strictly required — the provisioning gate fires only on a checkout
+      # that CLAIMS the document, and the runner claims nothing — but it states
+      # the gap in the workflow rather than resting it on a missing directory.
       - run: cargo nextest run --workspace
         env:
-          OXICRYPT_EA_DATA_OPTIONAL: "1"
+          OXICRYPT_EA_DATA: ${{ github.workspace }}/ea-reference/bin
           OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
       # The gate's own warning goes to stderr, which nextest discards on a
-      # passing test — so without this the caveat above would be invisible in
+      # passing test — so without this the caveat below would be invisible in
       # every green run, which is the failure mode #137 exists to kill.
-      - name: Record the parity coverage caveat
+      - name: Record the coverage caveat
         if: always()
         run: |
-          echo "### SP 800-90B estimator parity: NOT validated by CI" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The EA v1.1.8 reference datasets are not provisioned on this runner, so the" >> "$GITHUB_STEP_SUMMARY"
-          echo "parity table, every per-estimator anchor and the assessed-assembly parity ran" >> "$GITHUB_STEP_SUMMARY"
-          echo "against no data. A green test job is not evidence of estimator parity." >> "$GITHUB_STEP_SUMMARY"
-          echo "The full-strength gate is local; see #137 and #153." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Security Policy assertions: NOT run by CI" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The FIPS 140-3 Security Policy is withheld from this repository, so the five" >> "$GITHUB_STEP_SUMMARY"
@@ -121,6 +120,47 @@ jobs:
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
+
+  # ISC-114's release-build guard, on a second machine (2026-08-10).
+  #
+  # `release_guard_delta_variance_persists` asserts that the jitter measurement
+  # loop survives the optimizer: it builds in RELEASE, reads the live raw
+  # counter, and requires the deltas not to have collapsed. nextest runs debug,
+  # where the optimizer does nothing, so this cannot ride the test job.
+  #
+  # It is here rather than only in `pre-push` because it is a CODEGEN guard, and
+  # codegen is precisely what differs between machines — a different CPU, a
+  # different scheduler, different inlining. Run on exactly one host forever, it
+  # tests one point of the space it is about.
+  #
+  # The bar is deliberately near the floor: `min_distinct_deltas` is 4, with a
+  # hard floor of 4 that config cannot lower, so this fails on a COLLAPSE rather
+  # than on a merely coarse clock. A virtualized counter clears it — that was
+  # measured before this job was added.
+  #
+  # Known conflation, recorded rather than papered over: a host whose timer is
+  # judged inadequate panics through the same arm as a genuine collapse, so an
+  # environment verdict and a defect are indistinguishable in the output. If this
+  # job ever goes red on a clean tree, that is the first thing to check, and the
+  # fix is to split the arms rather than to weaken the assertion.
+  release-guard:
+    name: release-build jitter guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # Fail closed on a zero-match filter: `cargo test <filter>` exits 0 with
+      # "0 tests run" if the guard is renamed or feature-moved, which would
+      # silently disable this job. Same guard as `pre-push [3/4c]`.
+      - name: cargo test --release -p oxicrypt-entropy --features raw-counter release_guard
+        run: |
+          set -o pipefail
+          guard_out="$(cargo test --release -p oxicrypt-entropy --features raw-counter release_guard 2>&1)"
+          echo "$guard_out"
+          echo "$guard_out" | grep -Eq "test result: ok\. [1-9][0-9]* passed" \
+            || { echo "release_guard matched no passing tests" >&2; exit 1; }
 
   # LAMA manifest conformance (#175). The cloud mirror of the check the
   # pre-push hook runs locally. Like every job here it is
