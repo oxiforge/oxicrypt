@@ -22,6 +22,15 @@ different stages:
   open only to NVLAP-accredited laboratories, and is the only route to a CAVP
   certificate.
 
+  **The full grading record is published, not summarised:**
+  [`docs/validation/ACVP-EVIDENCE.md`](docs/validation/ACVP-EVIDENCE.md) lists
+  every vector set submitted for grading — **154 graded, 141 passed, 13
+  failed**, across 78 distinct ACVP services and 20 algorithm families — each
+  with the test session and vector set IDs NIST issued. Failures are listed
+  alongside passes so the denominator is visible. The same record in
+  machine-readable form is
+  [`acvp-demo-evidence.json`](docs/validation/acvp-demo-evidence.json).
+
 - **Module validation (CMVP): not submitted.** The module is built to the
   FIPS 140-3 Level 1 structure — defined cryptographic boundary, state
   machine, power-up self-tests, algorithm-profile gating — but it has not
