@@ -35,7 +35,7 @@
 // The scalar module does native bignum arithmetic on u32 limbs.
 // The pedantic lints that fire on every limbwise add / shift / mask
 // don't add safety signal here; we opt out at module scope just
-// like `field.rs` and the sha3 / sha512_t modules in `fips-sha`.
+// like `field.rs` and the sha3 / sha512_t modules in `oxicrypt-sha`.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
