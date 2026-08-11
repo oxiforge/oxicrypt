@@ -16,7 +16,7 @@
 //! power-up KATs (SP 800-140F / FIPS 140-3 IG D.G). The KATs
 //! themselves go through the `*_internal` helpers, which skip the
 //! gate. SHA-512 is reached via `Sha512::new_internal`, mirroring
-//! the pattern in `fips-hmac` and `fips-kdf`.
+//! the pattern in `oxicrypt-hmac` and `oxicrypt-kdf`.
 
 #![allow(
     clippy::indexing_slicing,
@@ -291,9 +291,8 @@ impl Ed25519PrivateKey {
     }
 
     /// Return a reference to the raw seed bytes. Intended for
-    /// callers that need to re-export the key. Zeroization of the
-    /// returned buffer is the caller's responsibility until the
-    /// crate-wide hardening pass lands.
+    /// callers that need to re-export the key. Zeroization of any
+    /// copy the caller makes is the caller's responsibility.
     #[must_use]
     pub fn seed(&self) -> &[u8; SEED_LEN] {
         &self.seed

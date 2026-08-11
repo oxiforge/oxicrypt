@@ -21,12 +21,16 @@
 //!
 //! # Constant-time
 //!
-//! Every operation in this module runs in constant time with respect
-//! to the values of its inputs — there are no data-dependent branches
-//! and no data-dependent memory accesses. Conditional moves are
-//! implemented with arithmetic masks built from subtraction, matching
-//! the patterns used by `curve25519-dalek` and the ref10
-//! implementation.
+//! The operations reached by the Ed25519 signing ladder — `add`,
+//! `sub`, `mul`, `square`, `reduce`, `conditional_select` — carry no
+//! data-dependent branches and no data-dependent memory accesses, and
+//! are measured through [`EdwardsPoint::mul`] by the
+//! `eddsa_ed25519_scalar_mul` target in `tools/ct-validation`.
+//! Conditional moves are implemented with arithmetic masks built from
+//! subtraction, matching the patterns used by `curve25519-dalek` and
+//! the ref10 implementation.
+//!
+//! [`EdwardsPoint::mul`]: crate::edwards::EdwardsPoint::mul
 //!
 //! # References
 //!
@@ -40,8 +44,8 @@
 // arithmetic with explicit carry chains. The workspace-wide pedantic
 // lints are appropriate for most crypto code but would flood this
 // file with noise that obscures the actual invariants. This allow-set
-// matches the pattern used by `fips-sha` (sha3, sha512_t) and
-// `fips-aes` (kat, modes) for similar low-level modules.
+// matches the pattern used by `oxicrypt-sha` (sha3, sha512_t) and
+// `oxicrypt-aes` (kat, modes) for similar low-level modules.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,

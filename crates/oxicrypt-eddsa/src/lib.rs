@@ -65,8 +65,7 @@
 //! See `docs/security-policy/security-policy.md` §12.1 for the full
 //! disclosure. The secret-dependent scalar mult on the base point is
 //! covered by the `eddsa_ed25519_scalar_mul` target in
-//! `tools/ct-validation`, which the R9 harness run reported as CLEAN
-//! at 300k samples (worst `|t|` = 1.418, crop 0.900).
+//! `tools/ct-validation`; that harness holds its own measurements.
 //!
 //! Ed448 is deferred.
 #![no_std]

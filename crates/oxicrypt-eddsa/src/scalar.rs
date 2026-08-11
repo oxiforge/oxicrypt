@@ -10,10 +10,9 @@
 //!       14def9dea2f79cd6 5812631a5cf5d3ed
 //! ```
 //!
-//! This module lands the scalar type plus its encoding and
-//! canonicalization check. The heavier modular-reduction and
-//! multiply-add primitives (`reduce`, `muladd`) arrive in a
-//! follow-up commit so they can be reviewed on their own.
+//! The module holds the scalar type with its encoding and
+//! canonicalization check, and the Barrett modular-reduction and
+//! multiply-add primitives [`reduce_wide`] and [`muladd`].
 //!
 //! # Canonicalization and signature verification
 //!
@@ -29,12 +28,11 @@
 //!
 //! A [`Scalar`] stores a value in `[0, 2^256)` as an eight-limb
 //! little-endian `u32` array. The value is not automatically reduced
-//! mod `L`; callers that need a canonical scalar must use the
-//! reduction primitive added in the next commit, or construct the
-//! scalar via an API that performs the reduction itself.
+//! mod `L`; callers that need a canonical scalar go through
+//! [`reduce_wide`], or construct the scalar via an API that performs
+//! the reduction itself.
 
-// The scalar module does native bignum arithmetic on u32 limbs and
-// will grow constant-time modular reduction in the next commit.
+// The scalar module does native bignum arithmetic on u32 limbs.
 // The pedantic lints that fire on every limbwise add / shift / mask
 // don't add safety signal here; we opt out at module scope just
 // like `field.rs` and the sha3 / sha512_t modules in `fips-sha`.
@@ -80,9 +78,9 @@ pub(crate) const L_BYTES: [u8; 32] = [
 /// edwards25519 group order.
 ///
 /// This type is the raw 256-bit container. Values are **not**
-/// guaranteed to be reduced modulo `L`. Helpers that produce
-/// canonical reduced scalars will live alongside `reduce` and
-/// `muladd` in the follow-up commit.
+/// guaranteed to be reduced modulo `L`; [`reduce_wide`] and
+/// [`muladd`] are the helpers that produce canonical reduced
+/// scalars.
 #[derive(Copy, Clone, Debug)]
 pub struct Scalar {
     limbs: [u32; 8],
@@ -103,8 +101,7 @@ impl Scalar {
     /// Use this when you need the raw 256-bit value — for example
     /// when decoding the `s` component of a signature before running
     /// the canonical-form check (RFC 8032 §5.1.7 step 2). Callers
-    /// that want a reduced scalar should use the reduction API that
-    /// lands in a follow-up commit.
+    /// that want a reduced scalar use [`reduce_wide`].
     pub fn from_bytes(bytes: &[u8; 32]) -> Scalar {
         let mut limbs = [0u32; 8];
         for (i, limb) in limbs.iter_mut().enumerate() {
@@ -134,8 +131,8 @@ impl Scalar {
     }
 
     /// Access the underlying limb array. `pub(crate)` so the rest of
-    /// the `fips-eddsa` crate can build reduction routines on top
-    /// without exposing the representation publicly.
+    /// this crate can build reduction routines on top without
+    /// exposing the representation publicly.
     #[inline]
     pub(crate) fn limbs(&self) -> &[u32; 8] {
         &self.limbs

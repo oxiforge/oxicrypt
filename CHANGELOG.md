@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected `oxicrypt-eddsa`'s documentation, which described reduction, `muladd`, scalar
+  multiplication and point compression as still to come. All of them ship. (#242)
+- Removed three constant-time claims from `oxicrypt-eddsa` that no measurement covers: the field
+  module's blanket claim, `ct_eq`, and `decompress`. (#242)
+
 ## [0.23.1] - 2026-08-10
 
 - Every published crate carries a README. crates.io rendered a blank page for all of them.

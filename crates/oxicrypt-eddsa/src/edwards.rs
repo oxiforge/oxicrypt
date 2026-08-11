@@ -35,10 +35,11 @@
 //!
 //! # Status
 //!
-//! This commit lands the point type, the curve constants (`d2 = 2·d`,
-//! base point `B`, identity), and the complete add / double formulas.
-//! Scalar multiplication, compression / decompression, and the
-//! RFC 8032 sign / verify wiring arrive in follow-up commits.
+//! The module holds the point type, the curve constants (`d2 = 2·d`,
+//! base point `B`, identity), the complete add / double formulas,
+//! fixed-window scalar multiplication, and point compression /
+//! decompression. The RFC 8032 sign / verify wiring sits in
+//! [`crate::ed25519`].
 
 // The extended-coordinate add / double formulas hammer on field
 // elements through the +/-/* operators; each of those ops internally
@@ -152,7 +153,7 @@ impl EdwardsPoint {
     /// Projective point equality.
     ///
     /// Returns `1` if `self` and `other` represent the same affine
-    /// point, `0` otherwise. Constant time in both inputs.
+    /// point, `0` otherwise.
     pub fn ct_eq(&self, other: &EdwardsPoint) -> u8 {
         // (X1*Z2 == X2*Z1) AND (Y1*Z2 == Y2*Z1)
         let xz = self.x * other.z;
@@ -311,8 +312,7 @@ impl EdwardsPoint {
     /// The returned point is in extended coordinates with `Z = 1` and
     /// `T = x · y`. This routine is **not** constant time with respect
     /// to the validity of its input — invalid encodings are rejected
-    /// via early returns — but the decoding of a valid point takes a
-    /// fixed amount of work.
+    /// via early returns.
     pub fn decompress(bytes: &[u8; 32]) -> Option<EdwardsPoint> {
         // Split off the sign bit and mask it out of the y bytes.
         let sign_bit = bytes[31] >> 7;
