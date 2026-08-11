@@ -330,6 +330,18 @@ crate — directly or by reference — do all that apply:
    instance in [`oxiforge/standards/doc-sync-rules.md`](https://github.com/oxiforge/standards) is the
    full framing.
 
+6. **Code comments (`comment-gem`).** The comments wrapping the changed code are themselves a doc-sync
+   artefact — the only instance whose doc is co-located with its trigger, so it cannot be satisfied by
+   editing something else. A comment states what **is**: the contract, the invariant, the reason the
+   code is this way, never what it used to be or what changed. Why it *changed* goes in the commit
+   body. And a comment asserting a property — constant-time, zeroized, bounded, checked, validated —
+   is backed by a probe that fails when the property breaks, confirmed in that commit; where no probe
+   exists, the comment says the property is unproven or it is cut. Reading the code and agreeing with
+   it is not a probe. `# Safety` preconditions are exempt from removal: they state what a *caller*
+   must guarantee, which is an obligation rather than a claim about this code. The org `comment-gem`
+   instance in [`oxiforge/standards/doc-sync-rules.md`](https://github.com/oxiforge/standards) is the
+   full framing.
+
 **Insight capture (the gem).** Before staging any commit, ask: did this session surface a mechanistic
 insight a NIST/CST reviewer would need to accept a claim — a compiler guarantee that enforces a security
 property, a composition pattern that extends coverage transitively, a rationale for why a zeroization or
