@@ -2,12 +2,13 @@
 //! `oxicrypt-aes`.
 //!
 //! This is one of the small audited in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (alongside `oxicrypt-zeroize` and
-//! `oxicrypt-sha-accel`). It implements the sanctioned **CPU-intrinsic
-//! acceleration** category established by `oxicrypt-sha-accel`:
-//! feature-gated, default-off, runtime-detected, with equivalence to
-//! the portable implementation proven by KAT + cross-path oracle. All
-//! other in-boundary crates remain `#![forbid(unsafe_code)]`; the
+//! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
+//! `oxicrypt-sha-accel`, `oxicrypt-keccak-accel` and `oxicrypt-timer`).
+//! It implements the sanctioned **CPU-intrinsic acceleration** category
+//! established by `oxicrypt-sha-accel`: feature-gated, default-off,
+//! runtime-detected, with an equivalence oracle against the portable
+//! implementation in `oxicrypt-aes`'s `accel-aes`-gated tests. All
+//! other in-boundary crates are `#![forbid(unsafe_code)]`; the
 //! authoritative unsafe-code accounting lives in
 //! `docs/security-policy/security-policy.md` §9.2 "Isolation of
 //! `unsafe`".
@@ -31,9 +32,12 @@
 //!   the shipping default and default dependency graphs are unchanged.
 //! - **Runtime-detected.** One binary serves all CPUs: a hand-rolled
 //!   CPUID probe (this crate is `no_std`, so
-//!   `is_x86_feature_detected!` is unavailable) checks leaf 1 ECX
-//!   bit 25 (AESNI) plus SSE2 and caches the verdict in an `AtomicU8`.
-//! - **Fail-portable.** [`encrypt_block`] / [`decrypt_block`] return
+//!   `is_x86_feature_detected!` is unavailable) runs two independent
+//!   probes, each caching its verdict in its own `AtomicU8`: AES-NI
+//!   (leaf 1 ECX bit 25, plus EDX bit 26 SSE2) and PCLMULQDQ (leaf 1
+//!   ECX bit 1, plus ECX bit 9 SSSE3 and EDX bit 26 SSE2).
+//! - **Fail-portable.** [`encrypt_block`], [`decrypt_block`] and
+//!   [`ghash_mul`] return
 //!   `false` — leaving `block` untouched — whenever AES-NI is absent,
 //!   the target is not x86_64, or the round-key slice does not have the
 //!   exact FIPS 197 shape for `nr ∈ {10, 12, 14}`. The caller then
@@ -41,21 +45,22 @@
 //!
 //! # Scope
 //!
-//! Single-block encrypt/decrypt over a caller-supplied pre-expanded
-//! FIPS 197 round-key schedule — the same `(rk, nr)` contract as
+//! Two surfaces. Single-block AES encrypt/decrypt over a
+//! caller-supplied pre-expanded FIPS 197 round-key schedule — the same
+//! `(rk, nr)` contract as
 //! `oxicrypt-aes`'s portable `encrypt_block_generic` /
 //! `decrypt_block_generic`. The decrypt path derives the equivalent
-//! inverse-cipher round keys per call via `AESIMC` (at most 13
-//! single-cycle-class instructions per block — negligible against the
-//! portable software path this replaces). Multi-block pipelining for
-//! the CTR/GCM bulk paths is a documented follow-up under the same
-//! sanctioned category. AArch64 AES intrinsics likewise.
+//! inverse-cipher round keys per call via `AESIMC` (at most 13 per
+//! block). And the GCM GHASH GF(2^128) multiply over PCLMULQDQ
+//! (SP 800-38D §6.3), exposed as [`ghash_available`] and [`ghash_mul`].
+//! AArch64 AES intrinsics are a follow-up under the same sanctioned
+//! category (`ROADMAP.md`).
 //!
 //! # Correctness oracle placement
 //!
 //! Unlike SHA-256 compression (whose KAT needs no key schedule), an
 //! AES block KAT requires the expanded schedule, and key expansion is
-//! deliberately private to `oxicrypt-aes`. The FIPS 197 Appendix C
+//! deliberately private to `oxicrypt-aes`. The NIST AES example vector
 //! KATs and the dispatch-equals-portable cross-path oracle therefore
 //! live in `oxicrypt-aes`'s `accel-aes`-gated tests; this crate's own
 //! tests cover the detection probe (against std's runtime detection),
@@ -63,8 +68,9 @@
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU intrinsics and CPUID.
-// Every other in-boundary crate except oxicrypt-zeroize and
-// oxicrypt-sha-accel forbids unsafe.
+// Every other in-boundary crate except oxicrypt-zeroize,
+// oxicrypt-sha-accel, oxicrypt-keccak-accel and oxicrypt-timer forbids
+// unsafe.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Returns `true` if the running CPU supports the AES-NI accelerated
@@ -121,9 +127,8 @@ pub fn ghash_available() -> bool {
 /// target is not x86_64, in which case `out` is **untouched** and the
 /// caller must run its portable path instead.
 ///
-/// The kernel is straight-line and branch-free (no data-dependent
-/// control flow, no table lookups): PCLMULQDQ is inherently
-/// constant-time, so the multiply is CT by construction.
+/// The kernel is straight-line and branch-free: no data-dependent
+/// control flow, no table lookups.
 pub fn ghash_mul(x: &[u8; 16], y: &[u8; 16], out: &mut [u8; 16]) -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -344,11 +349,10 @@ mod x86_64_pclmul {
     //! byte-reflect both operands (a 16-byte `BSWAP`) into degree-rising
     //! order, do a 128×128→256 carry-less multiply (Karatsuba: three
     //! `clmul`s), reduce the 256-bit product modulo the GCM polynomial
-    //! with the standard two-step shift-fold Montgomery-style reduction,
+    //! with the standard shift-fold Montgomery-style reduction,
     //! and byte-reflect the 128-bit result back into GCM order.
     //!
-    //! The whole sequence is straight-line and branch-free, so it is
-    //! constant-time regardless of operand values.
+    //! The whole sequence is straight-line and branch-free.
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
     use core::arch::x86_64::{
@@ -427,11 +431,11 @@ mod x86_64_pclmul {
     /// We byte-reflect both 16-byte operands so polynomial degree rises
     /// with bit position (GCM's MSB-first convention is the reverse of
     /// PCLMULQDQ's natural order), run the Karatsuba 128×128 carry-less
-    /// multiply, then apply the whitepaper's 32-bit-granular two-phase
+    /// multiply, then apply the whitepaper's 32-bit-granular three-phase
     /// reduction modulo `x^128 + x^7 + x^2 + x + 1` (which folds in the
     /// reflection's one-bit shift), and byte-reflect the residue back.
     ///
-    /// Straight-line and branch-free: constant time by construction.
+    /// Straight-line and branch-free.
     ///
     /// # Safety
     ///
@@ -560,7 +564,7 @@ mod tests {
         // Pure contract test (any bytes form *a* valid schedule shape):
         // AES-NI decrypt over the same schedule must invert AES-NI
         // encrypt. The cross-path KAT against the portable cipher (and
-        // FIPS 197 Appendix C) lives in `oxicrypt-aes`'s accel-aes
+        // the NIST AES example vectors) lives in `oxicrypt-aes`'s accel-aes
         // tests, where the real key schedule is available.
         if !aes_block_available() {
             return;
