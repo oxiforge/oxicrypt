@@ -45,8 +45,12 @@
 
 /// Overwrite `buf` with zeroes using a volatile store.
 ///
-/// The volatile semantics prevent the compiler from eliding
-/// the write even if the buffer is about to be deallocated.
+/// `core::ptr::write_volatile` documents volatile operations as
+/// externally observable events that are guaranteed not to be elided
+/// or reordered by the compiler, so the write survives dead-store
+/// elimination even when the buffer is about to be deallocated. That
+/// guarantee is the language's, not this crate's — nothing here
+/// establishes it and no test can observe it.
 /// The `zeroize*` functions in this crate are what `Drop`
 /// implementations on CSP-holding types call across the workspace.
 ///

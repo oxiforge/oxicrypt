@@ -125,8 +125,10 @@ pub trait BlockHash<const B: usize, const L: usize>: Sized {
     /// Finalize and return the `L`-byte digest.
     ///
     /// Resets internal state to a fresh hasher so subsequent calls
-    /// produce the digest of an empty input. This allows the owning
-    /// struct to implement `Drop` for CSP zeroization.
+    /// produce the digest of an empty input. The owning struct's
+    /// `Drop` zeroizes `outer_key`; the inner hash state is cleared by
+    /// this reset, so a value dropped without being finalized does not
+    /// have it cleared.
     fn block_finalize(&mut self) -> [u8; L];
 }
 

@@ -40,8 +40,10 @@
 //! - **Internal state** (`V`, `Key`, `reseed_counter` for CTR_DRBG;
 //!   `V`, `C`, `reseed_counter` for Hash_DRBG; `K`, `V`,
 //!   `reseed_counter` for HMAC_DRBG) — CSP. Lives for the lifetime
-//!   of the DRBG instance. Internal state is zeroized on drop via
-//!   volatile writes (see `oxicrypt-zeroize`).
+//!   of the DRBG instance. The keying material (`Key`, `V`, `C`) is
+//!   zeroized on drop via volatile writes (see `oxicrypt-zeroize`);
+//!   `reseed_counter` and the instantiation flag are not, and carry
+//!   no secret material.
 //! - **Generated output** — public once returned, but must be
 //!   treated as CSP-material by the caller if used to key other
 //!   services.

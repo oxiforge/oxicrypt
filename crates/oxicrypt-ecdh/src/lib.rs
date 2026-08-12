@@ -363,10 +363,12 @@ pub fn generate_keypair_p256_internal(
     let consistent = z_a == z_b;
     // CSP scrub: `z_a` and `z_b` are 32-byte ECDH shared secrets
     // (CSP per SP 800-56Ar3 §5.7.1.2) used only for the equality
-    // check. They never escape the function. Wipe their stack
-    // locations before frame teardown — extends the
+    // check. They never escape the function. The clears below are
+    // ordinary writes to locals that are dead afterwards, so unlike
+    // `oxicrypt-zeroize`'s volatile stores the compiler is permitted
+    // to elide them. They follow the
     // `oxicrypt-dh::generate_keypair_3072_internal` keygen-scratch
-    // convention to ECDH PCT scratch.
+    // convention, which has the same limitation.
     z_a.fill(0);
     z_b.fill(0);
     if !consistent {
