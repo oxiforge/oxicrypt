@@ -1,4 +1,4 @@
-//! Power-up known-answer tests for fips-drbg.
+//! Power-up known-answer tests for oxicrypt-drbg.
 //!
 //! # Source traceability
 //!
@@ -33,23 +33,24 @@
 //! HMAC_DRBG path drives the `HMAC_DRBG_Update` helper and the
 //! `V = HMAC(K, V)` output loop.
 //!
-//! On top of the value-level KATs, three SP 800-90A §11.3 health
-//! tests (CTR_DRBG, Hash_DRBG, HMAC_DRBG) run the error paths
-//! required by §11.3.2 — generate-before-instantiate, reseed-counter
-//! ceiling, and post-uninstantiate access — from [`crate::health`].
+//! On top of the value-level KATs, three health tests (CTR_DRBG,
+//! Hash_DRBG, HMAC_DRBG) run error paths — generate-before-instantiate,
+//! reseed-counter ceiling, and post-uninstantiate access — from
+//! [`crate::health`], beyond what SP 800-90A §11.3 requires.
 //!
 //! On top of the non-PR value-level KATs, nine prediction-resistance
 //! KATs (3 CTR use df, 3 Hash, 3 HMAC) exercise the SP 800-90A §9.3
 //! reseed-then-generate path via the `generate_pr` / `generate_df_pr`
 //! wrappers on each DRBG.
 //!
-//! That's 24 KATs total. FIPS 140-3 IG 10.3.A requires exercising
-//! every approved configuration of the DRBG at power-up; the `no df`
+//! That's 24 KATs total. FIPS 140-3 IG 10.3.A requires separate CASTs
+//! for each implemented DRBG mechanism — HMAC_DRBG, CTR_DRBG and
+//! Hash_DRBG — and this set exceeds that; the `no df`
 //! KATs cover the core Update/Generate state machine, the `use df`
 //! KATs additionally cover the derivation function path, the
 //! Hash/HMAC_DRBG KATs cover two separate SP 800-90A mechanisms, the
 //! PR KATs cover the §9.3 prediction-resistance reseed path, and the
-//! health tests cover the §11.3.2 error-path requirements.
+//! health tests add error-path coverage the standard does not require.
 
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
@@ -881,7 +882,7 @@ fn run_hmac_sha512_pr() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
-/// Power-up KAT inventory for fips-drbg.
+/// Power-up KAT inventory for oxicrypt-drbg.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
         name: "CTR_DRBG AES-128 no df KAT (NIST CAVP DRBGVS CTR_DRBG.rsp Count=0)",

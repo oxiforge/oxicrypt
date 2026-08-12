@@ -17,11 +17,10 @@
 //! * Integer arithmetic modulo `2^(8 * SEEDLEN)` is performed
 //!   byte-at-a-time with explicit carry, matching the big-endian
 //!   representation SP 800-90A specifies.
-//! * The reseed interval is hardcoded at `2^48` per SP 800-90A
-//!   Table 2 (a conservative common bound; the spec allows larger
-//!   values for some variants).
+//! * The reseed interval is hardcoded at `2^48`, the value SP 800-90A
+//!   Table 2 gives for every hash variant.
 //! * Hash algorithm hand-off uses the `_internal` constructors
-//!   exported by `fips-sha`, which bypass the module state machine
+//!   exported by `oxicrypt-sha`, which bypass the module state machine
 //!   so that DRBG self-tests can run during Init.
 
 #![allow(
@@ -51,8 +50,9 @@ const MAX_SEEDLEN: usize = 111;
 /// Upper bound on the total length of `entropy || nonce || personalization`
 /// (or `V || entropy || additional_input`) buffered for a single
 /// `Hash_df` call. Sized to accommodate the largest ACVP payload:
-/// SHA2-512 with `entropy(320) + nonce(64) + perso(256) = 640`, plus
-/// headroom for the `V || entropy || additional` reseed path.
+/// SHA2-512 with `entropy(320) + nonce(64) + perso(256)` bits = 80
+/// bytes, plus room for the `V || entropy || additional_input` reseed
+/// path, where `V` alone is 111 bytes.
 pub const HASH_DRBG_MAX_DF_INPUT: usize = 768;
 /// Maximum output bytes per `generate` call (2^19 bits ≈ 64 KiB).
 const HASH_DRBG_MAX_BITS_PER_REQ: usize = 1 << 16;

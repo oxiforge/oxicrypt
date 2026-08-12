@@ -14,7 +14,7 @@
 //! variant only reads/writes the leftmost `OUTLEN` bytes.
 //!
 //! Power-up KATs bypass the module state machine via the
-//! `new_internal` HMAC constructors from `fips-hmac`.
+//! `new_internal` HMAC constructors from `oxicrypt-hmac`.
 
 #![allow(
     clippy::indexing_slicing,
@@ -36,9 +36,9 @@ use crate::ctr::DrbgError;
 /// Maximum HMAC output length across supported algorithms (SHA-512).
 const MAX_OUTLEN: usize = 64;
 /// Upper bound on `provided_data` passed to `HMAC_DRBG_Update` for
-/// power-up KATs and internal use. Applications use the streaming
-/// interface, so this only bounds the stack scratch buffer used by
-/// instantiate / reseed / generate.
+/// power-up KATs and internal use. Bounds the stack scratch buffer that
+/// instantiate / reseed / generate use to assemble `provided_data`
+/// before calling `HMAC_DRBG_Update`.
 pub const HMAC_DRBG_MAX_PROVIDED: usize = 768;
 /// SP 800-90A Table 2 reseed interval for HMAC_DRBG: 2^48 requests.
 const HMAC_DRBG_RESEED_INTERVAL: u64 = 1u64 << 48;

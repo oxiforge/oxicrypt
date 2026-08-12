@@ -1,21 +1,13 @@
 //! DRBG health tests — NIST SP 800-90A Rev. 1 §11.3.
 //!
-//! §11.3.2 requires the module to verify at power-up (and at other
-//! defined points) that:
+//! §11.3 requires known-answer testing of the instantiate (§11.3.2),
+//! generate (§11.3.3) and reseed (§11.3.4) functions. It also states
+//! that error-handling testing is *not* required, and §11.3.5 that
+//! uninstantiate testing is not required.
 //!
-//! * the Instantiate function returns the correct output on valid
-//!   input (already covered by the CAVP-sourced KATs in [`kat`]);
-//! * the Instantiate function fails with the expected error on
-//!   invalid input;
-//! * the Generate function returns the correct output on valid
-//!   input (covered by the KATs);
-//! * the Generate function fails with the expected error on invalid
-//!   input (for example, a request beyond `max_number_of_bits_per_request`
-//!   or a reseed-counter overflow);
-//! * the Uninstantiate function correctly clears the state so that
-//!   subsequent operations on the uninstantiated instance fail.
-//!
-//! This module implements the error-path half of those checks. It is
+//! This module adds error-path checks beyond that requirement:
+//! generate-before-instantiate, the reseed-counter ceiling, and access
+//! after uninstantiate. It is
 //! deliberately light on valid-input coverage because every DRBG
 //! mechanism in this crate already has a CAVP KAT wired into the
 //! power-up test set.
@@ -40,8 +32,8 @@ use crate::hmac::HmacDrbgSha256;
 const ENTROPY_32: [u8; 32] = [0x5au8; 32];
 const NONCE_16: [u8; 16] = [0xa5u8; 16];
 
-/// Exercise CTR_DRBG (AES-128, `use df`) error paths per SP 800-90A
-/// §11.3.2.
+/// Exercise CTR_DRBG (AES-128, `use df`) error paths. SP 800-90A does
+/// not require error-path testing; these checks are additional assurance.
 ///
 /// # Checks
 ///
@@ -89,7 +81,8 @@ pub fn run_ctr_drbg_health() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
-/// Exercise Hash_DRBG (SHA-256) error paths per SP 800-90A §11.3.2.
+/// Exercise Hash_DRBG (SHA-256) error paths. SP 800-90A does not require
+/// error-path testing; these checks are additional assurance.
 pub fn run_hash_drbg_health() -> Result<(), SelfTestFailure> {
     let mut drbg = HashDrbgSha256::new();
     let mut out = [0u8; 16];
@@ -119,7 +112,8 @@ pub fn run_hash_drbg_health() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
-/// Exercise HMAC_DRBG (HMAC-SHA-256) error paths per SP 800-90A §11.3.2.
+/// Exercise HMAC_DRBG (HMAC-SHA-256) error paths. SP 800-90A does not
+/// require error-path testing; these checks are additional assurance.
 pub fn run_hmac_drbg_health() -> Result<(), SelfTestFailure> {
     let mut drbg = HmacDrbgSha256::new();
     let mut out = [0u8; 16];

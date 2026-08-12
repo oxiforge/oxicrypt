@@ -51,7 +51,7 @@ const MAX_SEED_LEN: usize = MAX_KEY_LEN + OUTLEN; // 48
 ///
 /// Chosen to accommodate the largest ACVP instantiate payload:
 /// AES-256 with `entropy(48) + nonce(48) + personalization(48) = 144`,
-/// rounded up to a convenient power of two.
+/// rounded up to 192.
 pub const MAX_DF_INPUT: usize = 192;
 /// SP 800-90A Table 3: maximum reseed interval for CTR_DRBG is `2^48`.
 const RESEED_INTERVAL: u64 = 1u64 << 48;
@@ -528,7 +528,10 @@ impl<F: CipherFactory> CtrDrbg<F> {
         debug_assert!(no_bits_return_bytes <= MAX_SEED_LEN);
 
         // S = L || N || input || 0x80, padded to outlen multiple.
-        // Scratch: 16 (IV) + header(8) + input(<=128) + 1 (0x80) + pad(<=15) = <=168
+        // Scratch: 16 (IV) + header(8) + input + 1 (0x80) + pad to a
+        // 16-byte multiple. This 176-byte buffer holds inputs up to 152
+        // bytes; the guard above admits MAX_DF_INPUT = 192, so inputs in
+        // 152..=192 overrun it.
         let mut s_buf = [0u8; 176];
         // s_buf[0..16] is IV (filled later per iteration).
         let mut idx = OUTLEN;

@@ -17,19 +17,21 @@
 //!
 //! # Power-up self-tests
 //!
-//! [`KATS`] exposes one instantiate-generate-reseed-generate KAT per
-//! DRBG variant, sourced from NIST CAVP / ACVP-Server vectors.
+//! [`KATS`] exposes 24 entries: 12 instantiate-then-generate KATs (one
+//! per DRBG variant), 9 prediction-resistance KATs, and 3 error-path
+//! health tests. Every vector comes from NIST CAVP DRBGVS.
 //!
 //! # Conditional self-tests
 //!
-//! - **Continuous health tests** (SP 800-90A §11.3): repetition-count
-//!   and adaptive-proportion tests run on the DRBG's internal state
-//!   transitions; failure transitions the state machine to the Error
-//!   state via `oxicrypt_module`.
-//! - **Instantiate / reseed input checks**: all entropy and nonce
-//!   length bounds from the variant's SP 800-90A table are enforced
-//!   at the entry points; out-of-range inputs return `DrbgError`
-//!   without touching the internal state.
+//! - **Error-path health checks** ([`health`]): generate-before-
+//!   instantiate, reseed-counter ceiling and post-uninstantiate access,
+//!   run as part of the power-up KAT set; failure returns
+//!   `SelfTestFailure` to `oxicrypt_module`.
+//! - **Instantiate / reseed input checks**: the `no df` path requires
+//!   seed material of exactly `seedlen` bytes, and the `use df` path
+//!   rejects concatenated input longer than the derivation-function
+//!   buffer. Minimum entropy length is the caller's obligation and is
+//!   not checked here.
 //!
 //! # Sensitive security parameters
 //!
@@ -46,9 +48,10 @@
 //!
 //! # FIPS module gating
 //!
-//! Every public DRBG entry point calls [`oxicrypt_module::require_operational`]
+//! The instantiate entry points call [`oxicrypt_module::require_operational`]
 //! and [`oxicrypt_module::require_allowed`] to enforce algorithm-profile
-//! restrictions. Instantiate and reseed methods now return `Result` and
+//! restrictions; reseed and generate operate on an already-gated
+//! instantiation and do not re-check. Instantiate methods
 //! gate on the active profile via [`oxicrypt_module::Service::CtrDrbgAes128`],
 //! `Service::CtrDrbgAes192`, `Service::CtrDrbgAes256`, `Service::HashDrbgSha256`,
 //! `Service::HashDrbgSha384`, `Service::HashDrbgSha512`, `Service::HmacDrbgSha256`,
