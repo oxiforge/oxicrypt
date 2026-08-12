@@ -1,48 +1,54 @@
 //! Volatile zeroization for sensitive security parameters.
 //!
-//! This is one of exactly **two** in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (the other is `oxicrypt-sha-accel`,
-//! the readily auditable CPU-intrinsic acceleration crate). It provides a
-//! single mechanism, [`zeroize`], that writes zeroes through a
-//! volatile store so the compiler cannot elide the write even if it
-//! can prove the buffer is never read again. All other in-boundary
+//! This is one of the in-boundary crates in the oxicrypt
+//! workspace that use `unsafe` (the others are `oxicrypt-sha-accel`,
+//! `oxicrypt-aes-accel`, `oxicrypt-keccak-accel` and `oxicrypt-timer`).
+//! It provides three functions — [`zeroize`], [`zeroize_u32`] and
+//! [`zeroize_u64`] — that write zeroes through volatile stores. All other in-boundary
 //! crates remain `#![forbid(unsafe_code)]`; the authoritative
 //! unsafe-code accounting lives in
 //! `docs/security-policy/security-policy.md` §9.2.
 //!
 //! # Why a separate crate?
 //!
-//! FIPS 140-3 Level 1 requires that CSPs are zeroized when they
-//! are no longer needed (IG 7.7). The standard Rust `Drop` path
+//! FIPS 140-3 requires a module to provide methods to zeroise
+//! unprotected SSPs at every level (AS09.28, ISO/IEC 19790:2012
+//! §7.9.7). Zeroising temporary SSPs when they are no longer
+//! needed is AS09.32, which applies at Levels 2 and above; this
+//! module targets Level 1 and zeroises on drop regardless. The
+//! standard Rust `Drop` path
 //! can be optimised away by LLVM if the dead-store eliminator
 //! determines the memory is never read. `write_volatile` is the
 //! portable, stable mechanism to prevent that.
 //!
-//! Isolating the `unsafe` in a single three-line function makes
-//! the security-relevant code trivially auditable: there is
-//! exactly one `unsafe` block in the entire module, and its
-//! soundness argument is that it writes to owned, aligned, valid
+//! Isolating the `unsafe` in three small loops makes
+//! the security-relevant code trivially auditable: there are
+//! exactly three `unsafe` blocks in the entire module, each a
+//! `write_volatile` of a zero, and the soundness argument for each
+//! is that it writes to owned, aligned, valid
 //! memory — the same memory the caller already has a mutable
 //! reference to.
 //!
 //! # Constant-time note
 //!
 //! `write_volatile` issues a store to every byte unconditionally;
-//! the store width and order are implementation-defined but
-//! there is no data-dependent branching. This is adequate for
-//! zeroization but is **not** a constant-time comparison or copy.
+//! the store width and order are implementation-defined. This is
+//! adequate for zeroization but is **not** a constant-time
+//! comparison or copy.
 
 #![no_std]
 // This crate deliberately uses unsafe for volatile writes.
-// Every other in-boundary crate except oxicrypt-sha-accel forbids unsafe.
+// Every other in-boundary crate except oxicrypt-sha-accel,
+// oxicrypt-aes-accel, oxicrypt-keccak-accel and oxicrypt-timer forbids
+// unsafe.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Overwrite `buf` with zeroes using a volatile store.
 ///
 /// The volatile semantics prevent the compiler from eliding
 /// the write even if the buffer is about to be deallocated.
-/// This is the primitive used by every `Drop` implementation
-/// on CSP-holding types across the workspace.
+/// The `zeroize*` functions in this crate are what `Drop`
+/// implementations on CSP-holding types call across the workspace.
 ///
 /// # Examples
 ///
@@ -79,8 +85,8 @@ pub fn zeroize_u32(buf: &mut [u32]) {
 
 /// Overwrite a `[u64]` slice with zeroes using volatile stores.
 ///
-/// Used by RSA bigint types whose internal representation is
-/// `[u64; N]` limb arrays.
+/// Used by SHA-512 and the Keccak sponge state, and by RSA bigint
+/// types whose internal representation is `[u64; N]` limb arrays.
 #[inline]
 pub fn zeroize_u64(buf: &mut [u64]) {
     for limb in buf.iter_mut() {

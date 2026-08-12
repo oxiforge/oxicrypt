@@ -1,9 +1,9 @@
 //! Raw CPU counter reads (x86_64 TSC, aarch64 CNTVCT_EL0) for the
 //! oxicrypt entropy source.
 //!
-//! This is the **fourth** small readily auditable in-boundary crate in the oxicrypt
+//! This is one of the small readily auditable in-boundary crates in the oxicrypt
 //! workspace that uses `unsafe` (alongside `oxicrypt-zeroize`,
-//! `oxicrypt-sha-accel`, and `oxicrypt-aes-accel`). It implements the
+//! `oxicrypt-sha-accel`, `oxicrypt-aes-accel` and `oxicrypt-keccak-accel`). It implements the
 //! sanctioned **CPU timer/counter intrinsic** category: every `unsafe`
 //! block is a single side-effect-free read of an architectural
 //! counter/register. All other in-boundary crates remain
@@ -42,11 +42,11 @@
 #![no_std]
 // This crate deliberately uses unsafe for CPU timer/counter intrinsics.
 // Every other in-boundary crate except oxicrypt-zeroize, oxicrypt-sha-accel,
-// and oxicrypt-aes-accel forbids unsafe. The workspace lint set denies
+// oxicrypt-aes-accel and oxicrypt-keccak-accel forbids unsafe. The workspace lint set denies
 // unsafe_op_in_unsafe_fn; each read carries its own SAFETY comment.
 
 // Unsupported-target handling (documented design choice):
-// We cfg-gate `read_raw_counter` to the two supported arches and emit a
+// We cfg-gate `read_raw_counter`'s body to the two supported arches and emit a
 // hard `compile_error!` on any other target. We deliberately do NOT ship a
 // stub that returns a constant: a silent stub would let an unsupported
 // build link and feed `oxicrypt-entropy` a dead counter, which is exactly
