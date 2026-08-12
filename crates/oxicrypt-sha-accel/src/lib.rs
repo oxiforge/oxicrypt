@@ -331,7 +331,7 @@ mod tests {
         0x5be0_cd19,
     ];
 
-    /// SHA-256("abc") digest words — FIPS 180-4 Appendix B.1.
+    /// SHA-256("abc") digest words — NIST SHA-256 example.
     const ABC_DIGEST_WORDS: [u32; 8] = [
         0xba78_16bf,
         0x8f01_cfea,

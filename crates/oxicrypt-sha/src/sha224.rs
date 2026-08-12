@@ -9,7 +9,7 @@
 //!
 //! The power-up KAT is a NIST CAVP SHS short-message vector
 //! (`SHA224ShortMsg.rsp`, Len=8) via `oxicrypt-test-vectors`. The
-//! FIPS 180-4 Appendix A digest for SHA-224("abc") is retained as a
+//! NIST SHA-224 example digest for "abc" is retained as a
 //! unit-test cross-check.
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
@@ -150,7 +150,7 @@ pub fn sha224(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for the FIPS 180-4 Appendix A example:
+/// Expected digest for the NIST SHA-224 example:
 /// SHA-224("abc"). Retained for the cross-check tests below; the
 /// power-up KAT uses a NIST CAVP SHS vector via `oxicrypt_test_vectors`.
 #[cfg(test)]
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn kat_two_block_appendix_a() {
-        // FIPS 180-4 Appendix A example 2.
+        // NIST SHA-224 two-block example.
         let msg: &[u8] = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
         let expected = hex("75388b16512776cc5dba5da1fd890150b0c6455cb4f58b1952522525");
         let mut h = Sha224::new_internal();

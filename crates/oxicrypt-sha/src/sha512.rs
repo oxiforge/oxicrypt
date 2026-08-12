@@ -321,7 +321,7 @@ pub fn sha512(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 // Power-up self-test
 // ------------------------------------------------------------------------
 
-/// Expected digest for the FIPS 180-4 Appendix C.1 example:
+/// Expected digest for the NIST SHA-512 example:
 /// SHA-512("abc"). Retained for the cross-check tests below; the
 /// power-up KAT uses a NIST CAVP SHS vector via `oxicrypt_test_vectors`.
 #[cfg(test)]
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn kat_two_block_appendix_c2() {
-        // FIPS 180-4 Appendix C.2: "abcdefgh...stu" (112 bytes)
+        // NIST SHA-512 two-block example: "abcdefgh...stu" (112 bytes)
         let msg: &[u8] = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn\
                           hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
         let expected = hex64(

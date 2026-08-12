@@ -378,7 +378,7 @@ mod tests {
     use super::{DIGEST_SIZE, Sha256, self_test, sha256};
     use oxicrypt_module::{KatEntry, initialize_with_tests};
 
-    /// FIPS 180-4 Appendix B.1 one-block example: SHA-256("abc").
+    /// NIST SHA-256 one-block example: SHA-256("abc").
     /// Retained for the cross-check tests below (streaming, empty
     /// string, two-block message) since the power-up KAT now uses a
     /// NIST CAVP vector via `oxicrypt_test_vectors`.
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn kat_abc_matches_fips_180_4_appendix_b1() {
-        // "abc" — FIPS 180-4 Appendix B.1
+        // "abc" — NIST SHA-256 one-block example
         let mut h = Sha256::new_internal();
         h.update(b"abc");
         assert_eq!(h.finalize(), KAT_ABC_DIGEST);
@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn kat_two_block_message() {
         // "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-        // FIPS 180-4 Appendix B.2 — exercises a two-block message,
+        // NIST SHA-256 two-block example — exercises a two-block message,
         // so this verifies the block-boundary code path.
         let msg: &[u8] = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
         let expected = hex32("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn kat_one_million_a() {
-        // SHA-256 of 1,000,000 'a' bytes — FIPS 180-4 Appendix B.3.
+        // SHA-256 of 1,000,000 'a' bytes — NIST SHA-256 long-message example.
         // Exercises both the block-loop and the 2^20-byte length
         // field in the padding.
         let expected = hex32("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");

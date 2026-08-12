@@ -8,9 +8,9 @@
 //! they are the result of running a modified SHA-512 over the ASCII
 //! string "SHA-512/224" / "SHA-512/256", as described in the spec.
 //!
-//! Per FIPS 140-3 IG D.G, SHA-512/224 and SHA-512/256 are approved
-//! digest algorithms and require their own power-up KATs (an
-//! algorithm-family KAT over SHA-256 or SHA-512 does not cover them).
+//! SHA-512/224 and SHA-512/256 are approved digest algorithms per
+//! FIPS 180-4. Each ships its own power-up KAT; a KAT over SHA-256 or
+//! SHA-512 does not cover them.
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha512::{BLOCK_SIZE as SHA512_BLOCK, Sha512State};

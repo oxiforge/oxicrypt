@@ -97,7 +97,7 @@ pub fn sha3_224(data: &[u8]) -> Result<[u8; SHA3_224_DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for SHA3-224("abc") from FIPS 202 Appendix A.
+/// Expected digest for SHA3-224("abc") from the NIST SHA-3 examples.
 /// Retained for the cross-check tests below; the power-up KAT uses
 /// a NIST ACVP-Server vector via `oxicrypt_test_vectors`.
 #[cfg(test)]
@@ -152,7 +152,7 @@ pub fn sha3_256(data: &[u8]) -> Result<[u8; SHA3_256_DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for SHA3-256("abc") from FIPS 202 Appendix A.
+/// Expected digest for SHA3-256("abc") from the NIST SHA-3 examples.
 /// Retained for the cross-check tests below; the power-up KAT uses
 /// a NIST ACVP-Server vector via `oxicrypt_test_vectors`.
 #[cfg(test)]
@@ -206,7 +206,7 @@ pub fn sha3_384(data: &[u8]) -> Result<[u8; SHA3_384_DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for SHA3-384("abc") from FIPS 202 Appendix A.
+/// Expected digest for SHA3-384("abc") from the NIST SHA-3 examples.
 /// Retained for the cross-check tests below; the power-up KAT uses
 /// a NIST ACVP-Server vector via `oxicrypt_test_vectors`.
 #[cfg(test)]
@@ -262,7 +262,7 @@ pub fn sha3_512(data: &[u8]) -> Result<[u8; SHA3_512_DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for SHA3-512("abc") from FIPS 202 Appendix A.
+/// Expected digest for SHA3-512("abc") from the NIST SHA-3 examples.
 /// Retained for the cross-check tests below; the power-up KAT uses
 /// a NIST ACVP-Server vector via `oxicrypt_test_vectors`.
 #[cfg(test)]

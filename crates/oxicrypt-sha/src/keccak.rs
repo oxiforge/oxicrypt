@@ -10,9 +10,10 @@
 //!
 //! The sponge here is a minimal FIPS 202 implementation that covers
 //! absorb → pad → squeeze with a single-shot pad (sufficient for all
-//! SHA-3 and SHAKE variants we need). Per FIPS 140-3 IG 10.3.A each
-//! concrete algorithm still owns its own power-up KAT; the shared
-//! permutation does not get its own KAT.
+//! SHA-3 and SHAKE variants we need). FIPS 140-3 IG 10.3.A accepts one
+//! CAST across FIPS 202 and SP 800-185 functions that share a Keccak-p
+//! implementation; this module goes further and gives each concrete
+//! algorithm its own power-up KAT. The shared permutation has none.
 //!
 //! # Public visibility
 //!

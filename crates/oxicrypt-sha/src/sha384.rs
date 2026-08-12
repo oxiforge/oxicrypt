@@ -76,7 +76,7 @@ pub fn sha384(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
     Ok(h.finalize())
 }
 
-/// Expected digest for the FIPS 180-4 Appendix D.1 example:
+/// Expected digest for the NIST SHA-384 example:
 /// SHA-384("abc"). Retained for the cross-check tests below; the
 /// power-up KAT uses a NIST CAVP SHS vector via `oxicrypt_test_vectors`.
 #[cfg(test)]
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn kat_two_block_appendix_d2() {
-        // FIPS 180-4 Appendix D.2
+        // NIST SHA-384 two-block example
         let msg: &[u8] = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn\
                           hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
         let expected = hex(

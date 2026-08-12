@@ -2,7 +2,7 @@
 //!
 //! # Cryptographic use
 //!
-//! Per FIPS 140-3 IG D.G and SP 800-131A Rev. 2, SHA-1 is disallowed
+//! Per SP 800-131A Rev. 2, SHA-1 is disallowed
 //! for generating digital signatures but remains approved for
 //! HMAC, KDF, and non-digital-signature applications. This module
 //! provides the primitive; restrictions on *how* it may be used are
