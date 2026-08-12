@@ -7,7 +7,10 @@
 //! 2. The digest is truncated from 32 to 28 bytes (the leftmost 224
 //!    bits of the final H).
 //!
-//! The KAT is the FIPS 180-4 Appendix A example, SHA-224("abc").
+//! The power-up KAT is a NIST CAVP SHS short-message vector
+//! (`SHA224ShortMsg.rsp`, Len=8) via `oxicrypt-test-vectors`. The
+//! FIPS 180-4 Appendix A digest for SHA-224("abc") is retained as a
+//! unit-test cross-check.
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha256::{BLOCK_SIZE as SHA256_BLOCK, compress256};
@@ -54,7 +57,7 @@ impl Sha224 {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha224::new`] instead.
     #[doc(hidden)]
@@ -162,7 +165,7 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 ///
 /// Sourced from the NIST CAVP Secure Hash Standard (SHS) byte-oriented
 /// short-message test vectors (`SHA224ShortMsg.rsp`, Len=8). Constants
-/// are re-exported from `fips-test-vectors`, which pins the vendored
+/// are re-exported from `oxicrypt-test-vectors`, which pins the vendored
 /// file's SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha224::new_internal();

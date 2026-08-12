@@ -12,7 +12,9 @@
 //! Domain separation byte: 0x06 for all SHA-3 fixed-length hashes
 //! (FIPS 202 §B.2).
 //!
-//! Each variant ships its own power-up KAT over SHA3-n("abc").
+//! Each variant ships its own power-up KAT, driven by a NIST
+//! ACVP-Server vector via `oxicrypt-test-vectors`. The FIPS 202
+//! SHA3-n("abc") digests are retained as unit-test cross-checks.
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::keccak::Sponge;
@@ -39,7 +41,7 @@ impl<const RATE: usize, const OUT: usize> Sha3<RATE, OUT> {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KATs and by downstream crates
-    /// (fips-hmac) that need to instantiate a hash while the module
+    /// (oxicrypt-hmac) that need to instantiate a hash while the module
     /// is still in `SelfTest`. Public callers must use the typed
     /// constructors like `Sha3_256::new_256` instead.
     #[doc(hidden)]
@@ -109,7 +111,7 @@ const KAT_SHA3_224_ABC: [u8; SHA3_224_DIGEST_SIZE] = [
 /// Power-up KAT for SHA3-224.
 ///
 /// Sourced from NIST ACVP-Server `SHA3-224-2.0/internalProjection.json`
-/// via `fips-test-vectors`; the selected tgId/tcId and the vendored
+/// via `oxicrypt-test-vectors`; the selected tgId/tcId and the vendored
 /// slice file's SHA-256 are recorded in `vendor/nist/MANIFEST.toml`.
 pub fn self_test_224() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_224>::new_internal();
@@ -164,7 +166,7 @@ const KAT_SHA3_256_ABC: [u8; SHA3_256_DIGEST_SIZE] = [
 /// Power-up KAT for SHA3-256.
 ///
 /// Sourced from NIST ACVP-Server `SHA3-256-2.0/internalProjection.json`
-/// via `fips-test-vectors`.
+/// via `oxicrypt-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_256>::new_internal();
     h.update(&oxicrypt_test_vectors::SHA3_256_MSG);
@@ -220,7 +222,7 @@ const KAT_SHA3_384_ABC: [u8; SHA3_384_DIGEST_SIZE] = [
 /// Power-up KAT for SHA3-384.
 ///
 /// Sourced from NIST ACVP-Server `SHA3-384-2.0/internalProjection.json`
-/// via `fips-test-vectors`.
+/// via `oxicrypt-test-vectors`.
 pub fn self_test_384() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_384>::new_internal();
     h.update(&oxicrypt_test_vectors::SHA3_384_MSG);
@@ -278,7 +280,7 @@ const KAT_SHA3_512_ABC: [u8; SHA3_512_DIGEST_SIZE] = [
 /// Power-up KAT for SHA3-512.
 ///
 /// Sourced from NIST ACVP-Server `SHA3-512-2.0/internalProjection.json`
-/// via `fips-test-vectors`.
+/// via `oxicrypt-test-vectors`.
 pub fn self_test_512() -> Result<(), SelfTestFailure> {
     let mut h = <Sha3_512>::new_internal();
     h.update(&oxicrypt_test_vectors::SHA3_512_MSG);

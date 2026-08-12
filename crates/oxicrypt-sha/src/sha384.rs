@@ -43,7 +43,7 @@ impl Sha384 {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha384::new`] instead.
     #[doc(hidden)]
@@ -92,7 +92,7 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 /// Power-up KAT for SHA-384.
 ///
 /// Sourced from NIST CAVP SHS (`SHA384ShortMsg.rsp`, Len=8) via
-/// `fips-test-vectors`.
+/// `oxicrypt-test-vectors`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha384::new_internal();
     h.update(&oxicrypt_test_vectors::SHA_384_MSG);

@@ -10,7 +10,7 @@
 //! | SHA-256     | FIPS 180-4 §6.2 | [`sha256`](mod@sha256) |
 //! | SHA-384     | FIPS 180-4 §6.5 | [`sha384`](mod@sha384) |
 //! | SHA-512     | FIPS 180-4 §6.4 | [`sha512`](mod@sha512) |
-//! | SHA-512/224 | FIPS 180-4 §6.7 | [`sha512_t`] |
+//! | SHA-512/224 | FIPS 180-4 §6.6 | [`sha512_t`] |
 //! | SHA-512/256 | FIPS 180-4 §6.7 | [`sha512_t`] |
 //! | SHA3-224    | FIPS 202 §6.1  | [`sha3`]    |
 //! | SHA3-256    | FIPS 202 §6.1  | [`sha3`]    |
@@ -20,7 +20,7 @@
 //! SHA-1 is retained as an **approved hash for legacy use and
 //! non-digital-signature KDF/HMAC contexts** per SP 800-131A
 //! Rev. 2. It is **not** approved for new digital-signature
-//! generation; `fips-rsa` and `fips-ecdsa` do not expose any
+//! generation; `oxicrypt-rsa` and `oxicrypt-ecdsa` do not expose any
 //! SHA-1 sign path.
 //!
 //! # Power-up self-tests

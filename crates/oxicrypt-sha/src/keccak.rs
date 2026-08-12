@@ -16,7 +16,7 @@
 //!
 //! # Public visibility
 //!
-//! The module is `pub` so that `fips-xof` can depend on `fips-sha`
+//! The module is `pub` so that `oxicrypt-xof` can depend on `oxicrypt-sha`
 //! and reuse `Sponge` for SHAKE128/SHAKE256 rather than duplicating
 //! the permutation. The types are stable inside the module's
 //! public API but are not guaranteed to be stable across crate
@@ -469,8 +469,9 @@ mod tests {
         // equals RC[0] = 1. Easy sanity check that the ι step is
         // wired up.
         let mut state = [0u64; LANES];
-        // Run only a single round by clobbering the rest with a
-        // helper.
+        // One round is transcribed inline below so the ι step can be
+        // observed in isolation; the full permutation is covered by
+        // the SHA-3 KATs.
         for round in 0..1 {
             let mut c = [0u64; 5];
             for x in 0..5 {

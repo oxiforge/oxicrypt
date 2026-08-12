@@ -55,7 +55,7 @@ impl Sha512_224 {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha512_224::new`] instead.
     #[doc(hidden)]
@@ -109,7 +109,7 @@ const KAT_ABC_DIGEST_224: [u8; DIGEST_SIZE_224] = [
 /// Power-up KAT for SHA-512/224.
 ///
 /// Sourced from NIST CAVP SHS (`SHA512_224ShortMsg.rsp`, Len=8) via
-/// `fips-test-vectors`.
+/// `oxicrypt-test-vectors`.
 pub fn self_test_224() -> Result<(), SelfTestFailure> {
     let mut h = Sha512_224::new_internal();
     h.update(&oxicrypt_test_vectors::SHA_512_224_MSG);
@@ -159,7 +159,7 @@ impl Sha512_256 {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha512_256::new`] instead.
     #[doc(hidden)]
@@ -206,7 +206,7 @@ const KAT_ABC_DIGEST_256: [u8; DIGEST_SIZE_256] = [
 /// Power-up KAT for SHA-512/256.
 ///
 /// Sourced from NIST CAVP SHS (`SHA512_256ShortMsg.rsp`, Len=8) via
-/// `fips-test-vectors`.
+/// `oxicrypt-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
     let mut h = Sha512_256::new_internal();
     h.update(&oxicrypt_test_vectors::SHA_512_256_MSG);

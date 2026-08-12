@@ -12,9 +12,9 @@
 //!
 //! # Module boundary
 //!
-//! [`Sha256::new`] calls `oxicrypt_module::require_operational()` before
-//! returning a hasher, so no SHA-256 computation can escape until
-//! the module's power-up KATs have passed. The self-test entry point
+//! [`Sha256::new`] calls `oxicrypt_module::require_operational()` and
+//! `require_allowed(Service::Sha256)` before returning a hasher. The
+//! self-test entry point
 //! [`self_test`] uses a private constructor that bypasses this check —
 //! it is invoked *during* the `SelfTest` state and would otherwise
 //! deadlock the state machine.
@@ -143,7 +143,7 @@ impl Sha256 {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha256::new`] instead.
     #[doc(hidden)]
@@ -355,7 +355,7 @@ pub fn sha256(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 /// The message/digest pair is sourced from the NIST CAVP Secure Hash
 /// Standard (SHS) byte-oriented short-message test vectors
 /// (`SHA256ShortMsg.rsp`, Len=8); the constants are re-exported from
-/// the `fips-test-vectors` crate which pins the vendored file's
+/// the `oxicrypt-test-vectors` crate which pins the vendored file's
 /// SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha256::new_internal();
@@ -501,7 +501,7 @@ mod tests {
         // the shared binary may have already called
         // initialize_with_tests, so this test only exercises the
         // Ok path as a positive assertion and leaves the negative
-        // path to the fips-module unit tests.
+        // path to the oxicrypt-module unit tests.
         ensure_initialized();
         let h = Sha256::new();
         assert!(h.is_ok());

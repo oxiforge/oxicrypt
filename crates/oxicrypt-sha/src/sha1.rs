@@ -6,7 +6,7 @@
 //! for generating digital signatures but remains approved for
 //! HMAC, KDF, and non-digital-signature applications. This module
 //! provides the primitive; restrictions on *how* it may be used are
-//! enforced by the higher-level algorithm crates (`fips-hmac`, etc.)
+//! enforced by the higher-level algorithm crates (`oxicrypt-hmac`, etc.)
 //! and by the ACVP harness.
 //!
 //! # Implementation
@@ -86,7 +86,7 @@ impl Sha1 {
     /// Construct without consulting the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha1::new`] instead.
     #[doc(hidden)]
@@ -273,7 +273,7 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 /// The message/digest pair is sourced from the NIST CAVP Secure Hash
 /// Standard (SHS) byte-oriented short-message test vectors
 /// (`SHA1ShortMsg.rsp`, Len=8); the constants are re-exported from
-/// the `fips-test-vectors` crate, which pins the vendored file's
+/// the `oxicrypt-test-vectors` crate, which pins the vendored file's
 /// SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha1::new_internal();

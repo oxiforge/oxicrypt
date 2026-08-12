@@ -1,6 +1,6 @@
 //! SHA-512 per FIPS 180-4 §6.4.
 //!
-//! Pure-Rust, `no_std`, dependency-free. This module hosts the
+//! Pure-Rust and `no_std`. This module hosts the
 //! 64-bit compression function used by SHA-384, SHA-512, SHA-512/224,
 //! and SHA-512/256. The differences between those four variants are:
 //!
@@ -284,7 +284,7 @@ impl Sha512 {
     /// Constructor that bypasses the module state machine.
     ///
     /// Used by this crate's power-up KAT and by downstream crates
-    /// (fips-hmac, fips-kdf) that need to instantiate a hash while
+    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
     /// the module is still in `SelfTest`. Public callers must use
     /// [`Sha512::new`] instead.
     #[doc(hidden)]
@@ -339,7 +339,7 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 /// Power-up KAT for SHA-512.
 ///
 /// Sourced from NIST CAVP SHS (`SHA512ShortMsg.rsp`, Len=8) via
-/// `fips-test-vectors`.
+/// `oxicrypt-test-vectors`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     let mut h = Sha512::new_internal();
     h.update(&oxicrypt_test_vectors::SHA_512_MSG);
