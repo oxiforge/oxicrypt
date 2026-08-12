@@ -25,7 +25,7 @@
 //! # Containment
 //!
 //! - **Default-off.** `oxicrypt-sha` only depends on this crate behind
-//!   its `accel-sha` feature; the validated portable baseline remains the
+//!   its `accel-sha` feature; the portable baseline remains the
 //!   shipping default and default dependency graphs are unchanged.
 //! - **Runtime-detected.** One binary serves all CPUs: a hand-rolled
 //!   CPUID probe (this crate is `no_std`, so

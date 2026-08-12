@@ -27,7 +27,7 @@
 //! # Containment
 //!
 //! - **Default-off.** This crate is wired into `oxicrypt-sha` only behind
-//!   a feature; the validated portable baseline remains the shipping
+//!   a feature; the portable baseline remains the shipping
 //!   default and default dependency graphs are unchanged.
 //! - **Runtime-detected.** One binary serves all CPUs: a hand-rolled
 //!   CPUID probe (this crate is `no_std`, so `is_x86_feature_detected!`

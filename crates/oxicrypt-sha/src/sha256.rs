@@ -276,7 +276,7 @@ pub(crate) fn compress256(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
     compress256_portable(state, block);
 }
 
-/// Portable SHA-256 compression — the validated baseline path.
+/// Portable SHA-256 compression — the baseline path.
 fn compress256_portable(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
     // 1. Prepare the message schedule W[0..64].
     let mut w = [0u32; 64];

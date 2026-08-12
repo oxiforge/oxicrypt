@@ -18,7 +18,7 @@
 //! A full table-based T-box implementation would be faster on
 //! modern CPUs but is subject to well-known cache-timing attacks.
 //! For a Level 1 software module we prefer the simple byte-wise
-//! S-box implementation as the validated default. The optional
+//! S-box implementation as the shipping default. The optional
 //! `accel-aes` feature (default OFF) dispatches the single-block
 //! boundary to `oxicrypt-aes-accel` — AES-NI, runtime-detected via
 //! CPUID, fail-portable — whose rounds run in hardware with no table

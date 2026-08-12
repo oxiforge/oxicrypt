@@ -321,7 +321,7 @@ fn inc128_for_ctr(ctr: &mut [u8; 16]) {
 /// algorithm ("Algorithm 1" in McGrew & Viega), which is slow but
 /// simple, and uses no lookup tables.
 ///
-/// This is the **validated baseline** and the correctness oracle for
+/// This is the **portable baseline** and the correctness oracle for
 /// the optional PCLMULQDQ-accelerated path: [`gf_mul`] dispatches to
 /// `oxicrypt-aes-accel` when the `accel-aes` feature is on and PCLMULQDQ
 /// is present, and falls back here otherwise. Keep this function
@@ -354,7 +354,7 @@ fn gf_mul_portable(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
 
 /// GHASH multiply dispatcher: the CPU-accelerated PCLMULQDQ path when
 /// the `accel-aes` feature is on and the running CPU supports it, else
-/// the validated portable [`gf_mul_portable`]. The result is
+/// the portable [`gf_mul_portable`]. The result is
 /// byte-for-byte identical either way — the accel path is proven
 /// equivalent by the `accel-aes`-gated differential oracle in this
 /// module's tests. All GCM callers use this dispatcher unchanged.
@@ -605,7 +605,7 @@ mod tests {
 //
 // The UNFORGEABLE gate for the PCLMULQDQ GHASH multiply: for many
 // thousands of pseudo-random (x, y) pairs, the accelerated product
-// must equal the validated portable `gf_mul_portable` byte-for-byte.
+// must equal the portable `gf_mul_portable` byte-for-byte.
 // The accelerated value is obtained through the public dispatcher
 // `gf_mul` (which, under `accel-aes` with PCLMULQDQ present, runs the
 // hardware path). Skips gracefully on non-PCLMUL hosts so the suite is
