@@ -30,7 +30,7 @@
 //! profile. ML-DSA-87 is the CNSA 2.0 digital-signature mandate
 //! (CNSSP 15) and is also allowed in `Cnsa2`.
 //!
-//! # Parameter sets (FIPS 204 §4 Table 1)
+//! # Parameter sets (FIPS 204 §4, Tables 1 and 2)
 //!
 //! | Variant | λ | τ | γ₁ | γ₂ | k | ℓ | η | β | ω | PK_LEN | SK_LEN | SIG_LEN |
 //! |---------|---|---|----|----|---|---|---|---|---|--------|--------|---------|
@@ -71,7 +71,7 @@
 //!
 //! The public [`sign`] and [`verify`] functions of each variant
 //! implement the **external** ML-DSA.Sign / ML-DSA.Verify API
-//! defined in FIPS 204 §5.2 (Algorithms 2 and 3): they accept a
+//! defined in FIPS 204 §5.2 and §5.3 (Algorithms 2 and 3): they accept a
 //! `ctx` byte string and frame the message as
 //! `M' = 0x00 || |ctx| || ctx || M` before invoking the internal
 //! primitive. This is the shape consumed by X.509, CMS, the LAMPS
@@ -92,14 +92,16 @@
 //! (hidden) runs gate-free so power-up KATs can execute during
 //! `SelfTest`.
 //!
-//! # Constant-time behaviour
+//! # Timing properties
 //!
 //! The signing rejection loop iteration count leaks information
 //! about the secret key; this is a known and accepted property of
-//! Fiat-Shamir with aborts (NIST IG D.G accepts this for ML-DSA).
-//! Within each iteration, norm checks and coefficient comparisons
-//! use data-independent control flow. NTT operations have
-//! data-independent control flow.
+//! Fiat-Shamir with aborts, which is inherent to the ML-DSA signing
+//! algorithm of FIPS 204 §6.2.
+//! Within each iteration, the norm checks return on the first
+//! out-of-bound coefficient, so their duration depends on where the
+//! bound is first exceeded. NTT operations have data-independent
+//! control flow.
 //!
 //! # Data-parallel matrix expansion (`parallel` feature, default OFF)
 //!

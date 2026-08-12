@@ -6,7 +6,7 @@
 //! This is the encoding/wiring single source of truth for ML-DSA-44,
 //! ML-DSA-65, and ML-DSA-87. It mirrors the
 //! [`ml_kem_impl!`](../../oxicrypt-ml-kem/src/ml_kem_impl.rs) macro
-//! shipped in PR #74, which descends from the
+//! which follows the
 //! [`define_rsa_wide!`](../../oxicrypt-rsa/src/rsa_wide_impl.rs)
 //! pattern used by RSA-3072 / RSA-4096.
 //!
@@ -361,7 +361,7 @@ macro_rules! ml_dsa_impl {
             decompose(r).1
         }
 
-        /// `MakeHint` per FIPS 204 Algorithm 27, expressed in
+        /// `MakeHint` per FIPS 204 Algorithm 39, expressed in
         /// pq-crystals's shortcut form on centered low-bits `a0` and
         /// the corresponding high-bits `a1`.
         ///
@@ -371,7 +371,7 @@ macro_rules! ml_dsa_impl {
         ///
         /// Returns 1 iff applying the perturbation `c·t₀` would flip
         /// the high-bits bin — equivalent to
-        /// `HighBits(r) ≠ HighBits(r + z)` in Algorithm 27, but with
+        /// `HighBits(r) ≠ HighBits(r + z)` in Algorithm 39, but with
         /// the `−γ₂` fence case made explicit so the `Decompose`
         /// top-bin wrap (where `r⁺ = q − γ₂` maps to `r₁ = 0,
         /// r₀ = −γ₂`) is still classified as a bin flip when
@@ -500,7 +500,7 @@ macro_rules! ml_dsa_impl {
         // ── Sampling (per-variant) ──────────────────────────────────────
 
         /// RejNTTPoly: rejection-sample a polynomial in NTT domain
-        /// from a SHAKE-128 stream (FIPS 204 §8.3 Algorithm 32).
+        /// from a SHAKE-128 stream (FIPS 204 §7.3 Algorithm 30).
         fn rej_ntt_poly(xof: &mut Shake128) -> Poly {
             let mut poly = Poly::zero();
             let mut j: usize = 0;
@@ -517,7 +517,7 @@ macro_rules! ml_dsa_impl {
             poly
         }
 
-        /// ExpandA (FIPS 204 §8.3 Algorithm 30): A[i][j] ←
+        /// ExpandA (FIPS 204 §7.3 Algorithm 32): A[i][j] ←
         /// RejNTTPoly(SHAKE-128(ρ ‖ IntegerToBits(j,8) ‖ IntegerToBits(i,8))).
         ///
         /// Sequential build (default, `no_std`): the rows are filled in
@@ -538,7 +538,7 @@ macro_rules! ml_dsa_impl {
             mat
         }
 
-        /// ExpandA (FIPS 204 §8.3 Algorithm 30): A[i][j] ←
+        /// ExpandA (FIPS 204 §7.3 Algorithm 32): A[i][j] ←
         /// RejNTTPoly(SHAKE-128(ρ ‖ IntegerToBits(j,8) ‖ IntegerToBits(i,8))).
         ///
         /// Parallel build: the *outer* row loop is forked across a
@@ -748,7 +748,8 @@ macro_rules! ml_dsa_impl {
         }
 
         /// RejBoundedPoly: rejection-sample coefficients in [−η, η]
-        /// from SHAKE-256 (FIPS 204 §8.3 Algorithm 33, CoeffFromHalfByte).
+        /// from SHAKE-256 (FIPS 204 §7.3 Algorithm 31, using CoeffFromHalfByte,
+        /// Algorithm 15).
         ///
         /// η=2: half-byte threshold 15; coefficient = 2 − (t mod 5).
         /// η=4: half-byte threshold 9;  coefficient = 4 − t.
@@ -795,7 +796,7 @@ macro_rules! ml_dsa_impl {
             poly
         }
 
-        /// ExpandS (FIPS 204 §8.3 Algorithm 31):
+        /// ExpandS (FIPS 204 §7.3 Algorithm 33):
         /// s₁[r] ← RejBoundedPoly(SHAKE-256(σ ‖ r))   for r ∈ [0, ℓ)
         /// s₂[r] ← RejBoundedPoly(SHAKE-256(σ ‖ ℓ+r)) for r ∈ [0, k)
         fn expand_s(sigma: &[u8; 64]) -> (PolyVecL, PolyVecK) {
@@ -889,7 +890,7 @@ macro_rules! ml_dsa_impl {
             poly
         }
 
-        /// ExpandMask (FIPS 204 §8.3 Algorithm 34): y[r] ←
+        /// ExpandMask (FIPS 204 §7.3 Algorithm 34): y[r] ←
         /// SampleMaskPoly(ρ'', κ + r) for r ∈ [0, ℓ).
         fn expand_mask(seed: &[u8; 64], kappa: u16) -> PolyVecL {
             let mut y = PolyVecL::zero();
@@ -899,7 +900,7 @@ macro_rules! ml_dsa_impl {
             y
         }
 
-        /// SampleInBall (FIPS 204 §8.2 Algorithm 29).
+        /// SampleInBall (FIPS 204 §7.3 Algorithm 29).
         fn sample_in_ball(seed: &[u8]) -> Poly {
             let mut c = Poly::zero();
             let mut xof = Shake256::new_internal();
@@ -1150,7 +1151,7 @@ macro_rules! ml_dsa_impl {
             }
         }
 
-        /// Hint encoding — FIPS 204 §7.2.
+        /// Hint encoding (HintBitPack) — FIPS 204 §7.1 Algorithm 20.
         fn pack_hint(h: &PolyVecK, buf: &mut [u8]) -> bool {
             debug_assert!(buf.len() >= H_PACKED);
             for b in buf.iter_mut().take(H_PACKED) {
@@ -1317,7 +1318,7 @@ macro_rules! ml_dsa_impl {
 
         // ── FIPS 204 §6 internal primitives ────────────────────────────
 
-        /// ML-DSA.KeyGen (FIPS 204 §6.1 / Algorithm 1) per parameter set.
+        /// ML-DSA.KeyGen_internal (FIPS 204 §6.1 / Algorithm 6) per parameter set.
         fn ml_dsa_keygen(xi: &[u8; 32]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
             let mut h = Shake256::new_internal();
             h.update(xi);
@@ -1494,7 +1495,7 @@ macro_rules! ml_dsa_impl {
                     continue;
                 }
 
-                // 4j. Compute hint h per FIPS 204 §6.2 Algorithm 7 step 32:
+                // 4j. Compute hint h per FIPS 204 §6.2 Algorithm 7 step 26:
                 //   h = MakeHint(−c·t₀, w − c·s₂ + c·t₀)
                 //
                 // Use pq-crystals/dilithium's centered shortcut form so
@@ -1648,7 +1649,7 @@ macro_rules! ml_dsa_impl {
             ml_dsa_sign(sk, prefix_buf.as_slice(), message).ok_or(Error::InvalidInput)
         }
 
-        /// Verify a signature (FIPS 204 §5.2 Algorithm 3).
+        /// Verify a signature (FIPS 204 §5.3 Algorithm 3).
         pub fn verify(
             pk: &[u8; PK_LEN],
             message: &[u8],
