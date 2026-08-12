@@ -451,7 +451,7 @@ pub fn gcm_encrypt<B: BlockCipher>(
     Ok(())
 }
 
-/// AES-GCM authenticated decryption with branchless tag comparison
+/// AES-GCM authenticated decryption with constant-time tag comparison
 /// (SP 800-38D §7.2). Returns `Ok(())` only if the tag verifies.
 pub fn gcm_decrypt<B: BlockCipher>(
     cipher: &B,
@@ -496,7 +496,7 @@ pub fn gcm_decrypt<B: BlockCipher>(
         computed_tag[k] = ej0[k] ^ y[k];
     }
 
-    // Branchless compare.
+    // Constant-time compare.
     let mut diff: u8 = 0;
     for k in 0..16 {
         diff |= computed_tag[k] ^ tag[k];

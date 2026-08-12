@@ -5,7 +5,7 @@
 //! **Implemented for all three parameter sets.** This crate provides
 //! ML-KEM-512, ML-KEM-768, and ML-KEM-1024 as specified in FIPS 203
 //! (August 2024), including K-PKE key generation, encryption,
-//! decryption, and the Fujisaki–Okamoto transform with branchless
+//! decryption, and the Fujisaki–Okamoto transform with constant-time
 //! implicit rejection.
 //!
 //! Every parameter set is generated from a single declarative macro
@@ -87,11 +87,12 @@
 //! (hidden) runs gate-free so power-up KATs can execute during
 //! `SelfTest`.
 //!
-//! # Timing properties
+//! # Constant-time behaviour
 //!
 //! The FO transform's decapsulation selects between the candidate and
-//! the rejection key with `ct_bytes_eq` and `ct_select_32`, both
-//! branchless in the compared values.
+//! the rejection key with `ct_bytes_eq` and `ct_select_32`. Both
+//! are branchless masked operations, so the running time and memory
+//! access pattern do not depend on the compared values.
 //! NTT operations have data-independent control flow.
 //!
 //! # Data-parallel matrix expansion (`parallel` feature, default OFF)

@@ -599,7 +599,7 @@ macro_rules! ml_kem_impl {
         ///
         /// **Implicit rejection**: if the ciphertext is invalid, a
         /// pseudorandom key derived from the rejection seed `z` is
-        /// returned. The comparison and the selection are branchless.
+        /// returned. The comparison and the selection are constant-time.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -642,7 +642,7 @@ macro_rules! ml_kem_impl {
             let mut ct_prime = [0u8; CT_LEN];
             kpke_encrypt(ek, &m_prime, &r_prime, &mut ct_prime);
 
-            // 5. Branchless comparison: if c == c', return K'; else K̄
+            // 5. Constant-time comparison: if c == c', return K'; else K̄
             //
             // `ct_select_32` reads `k_prime` and `k_bar` through `&[u8; 32]`
             // and constructs a new owned `[u8; 32]` — the input stack
@@ -714,7 +714,7 @@ macro_rules! ml_kem_impl {
         ///
         /// Uses implicit rejection: if the ciphertext is invalid, a
         /// pseudorandom key is returned. The comparison and the
-        /// selection are branchless.
+        /// selection are constant-time.
         pub fn decapsulate(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],

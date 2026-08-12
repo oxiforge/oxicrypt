@@ -380,12 +380,14 @@ pub fn encode_hmac_hex(mac: &[u8; 32]) -> [u8; 64] {
     out
 }
 
-/// Compares two 32-byte MACs without short-circuiting: accumulates the
-/// XOR of all 32 byte pairs and tests the accumulator once.
+/// Compares two 32-byte MACs in constant time: accumulates the XOR of
+/// all 32 byte pairs and tests the accumulator once, so the running
+/// time does not depend on where the first difference falls.
 ///
-/// The MAC is public and sits in the file an attacker already holds, so
-/// nothing secret is at risk here; the non-short-circuiting compare is
-/// the discipline this workspace applies to every MAC verification.
+/// This MAC is public and sits in the file an attacker already holds,
+/// so no secret depends on it. The compare is written this way because
+/// it is the discipline this workspace applies to every MAC
+/// verification.
 #[must_use]
 pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     let mut diff: u8 = 0;

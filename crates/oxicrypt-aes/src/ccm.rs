@@ -30,7 +30,7 @@
 //! Decryption (§6.2 "CCM Decryption-Verification Process") runs the
 //! CTR keystream in reverse to recover the plaintext, then recomputes
 //! the CBC-MAC over the same formatted input and verifies the
-//! resulting tag against the transmitted tag with a branchless comparison. A
+//! resulting tag against the transmitted tag with a constant-time comparison. A
 //! mismatch returns [`ModeError::TagMismatch`] and the recovered
 //! plaintext is zeroised in the output buffer.
 //!
@@ -130,7 +130,7 @@ fn xor_block(acc: &mut [u8; B], other: &[u8; B]) {
     }
 }
 
-/// Branchless equality compare for two byte slices of identical
+/// Constant-time equality compare for two byte slices of identical
 /// length. Returns `true` iff every byte matches.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -346,7 +346,7 @@ pub fn ccm_decrypt<C: BlockCipher>(
 
     // Recompute raw CBC-MAC over the recovered plaintext and the
     // same formatted AAD, then mask with S0 to compare against the
-    // transmitted tag with a branchless comparison.
+    // transmitted tag with a constant-time comparison.
     let y = ccm_mac(cipher, nonce, aad, &out[..plen], tlen);
     let mut s0 = format_ctr(nonce, 0);
     cipher.encrypt_block(&mut s0);

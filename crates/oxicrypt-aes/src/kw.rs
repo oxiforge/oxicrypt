@@ -129,7 +129,7 @@ fn w_core_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) 
     }
 }
 
-/// Branchless equality on 8 bytes.
+/// Constant-time equality on 8 bytes.
 fn ct_eq8(a: &[u8; SEMI], b: &[u8; SEMI]) -> bool {
     let mut diff: u8 = 0;
     for k in 0..SEMI {
@@ -278,7 +278,7 @@ pub fn kwp_unwrap<B: BlockCipher>(
         w_core_inv(cipher, &mut aiv, plaintext_out_scratch);
     }
 
-    // Check prefix constant bytes with a branchless comparison.
+    // Check prefix constant bytes with a constant-time comparison.
     let mut diff: u8 = 0;
     for k in 0..4 {
         diff |= aiv[k] ^ KWP_IV_PREFIX[k];
@@ -316,7 +316,7 @@ pub fn kwp_unwrap<B: BlockCipher>(
 //     `encrypt_block`.
 //
 // The ICV (`A6A6A6A6A6A6A6A6` for KW, `A65959A6 || [mli]_32` for KWP)
-// is unchanged and is checked with a branchless comparison exactly as in the
+// is unchanged and is checked with a constant-time comparison exactly as in the
 // forward-cipher path. Cross-direction unwrap (forward-wrapped input
 // fed through inverse-unwrap, or vice versa) is rejected by the ICV
 // check with overwhelming probability.

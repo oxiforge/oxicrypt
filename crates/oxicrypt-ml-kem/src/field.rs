@@ -67,7 +67,7 @@ pub(crate) fn barrett_reduce(a: i16) -> i16 {
     const V: i32 = 20159; // ⌊(2²⁶ + q/2) / q⌋
     let t = ((a as i32) * V + (1 << 25)) >> 26;
     let mut r = (a as i32) - t * Q_I32;
-    // Branchless conditional subtraction: r may be in [0, 2q).
+    // Constant-time conditional subtraction: r may be in [0, 2q).
     // Arithmetic shift produces −1 (all ones) when r < q, else 0.
     let mask = (r - Q_I32) >> 31; // −1 if r < q, 0 if r ≥ q
     r -= Q_I32 & !mask;
@@ -96,7 +96,7 @@ pub(crate) fn to_mont(a: i16) -> i16 {
     fqmul(a, R2)
 }
 
-/// Branchless equality comparison of two byte slices.
+/// Constant-time equality comparison of two byte slices.
 ///
 /// Returns 0 if equal, non-zero otherwise. The comparison is
 /// branchless: every byte pair is XOR-folded into `diff` with no
@@ -115,7 +115,7 @@ pub(crate) fn ct_bytes_eq(a: &[u8], b: &[u8]) -> u8 {
     diff
 }
 
-/// Branchless select: if `flag == 0` return `a`, else return `b`.
+/// Constant-time select: if `flag == 0` return `a`, else return `b`.
 ///
 /// Accepts any `u8` value for `flag` — not just `0` or `1`. Any
 /// non-zero input maps to the all-ones mask `0xFF`. This matters
