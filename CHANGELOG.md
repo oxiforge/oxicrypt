@@ -54,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected `oxicrypt-tls-kdf`, documented as the TLS 1.2 KDF under SP 800-135. It also implements
   the TLS 1.3 KDF, which that document does not cover. (#242)
 
+- Corrected `oxicrypt-ml-kem`'s FIPS 203 citations, which carried the initial public draft's
+  numbering. K-PKE is Algorithms 13-15 in §5 and the internal ML-KEM functions are 16-18 in §6. (#242)
+- Corrected `oxicrypt-ml-kem`'s Barrett-reduction documentation. It reduces to approximately
+  `(-q, q)`, not `[0, q)`: `barrett_reduce(-1)` returns `-1`. (#242)
+- Corrected `oxicrypt-ml-kem`'s basemul documentation. Its output carries an extra `R^-1` factor,
+  not `R`. (#242)
+- Corrected `oxicrypt-ml-dsa`'s FIPS 204 citations. That document has no §8; the sampling
+  algorithms are §7.3, and ExpandA/RejNTTPoly and ExpandS/RejBoundedPoly were transposed. (#242)
+- Corrected `oxicrypt-ml-dsa`'s side-channel documentation, which claimed the norm checks have
+  data-independent control flow. They return on the first out-of-bound coefficient. (#242)
+- Removed the constant-time claims from `oxicrypt-ml-kem`. No ct-validation target measures either
+  post-quantum crate. (#242)
+
 - Corrected `oxicrypt-eddsa`'s documentation, which described reduction, `muladd`, scalar
   multiplication and point compression as still to come. All of them ship. (#242)
 - Removed three constant-time claims from `oxicrypt-eddsa` that no measurement covers: the field
