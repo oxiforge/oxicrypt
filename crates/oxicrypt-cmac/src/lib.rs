@@ -11,11 +11,11 @@
 //! All three services produce a full 128-bit tag; truncated-tag
 //! variants are not exposed in Phase 1.
 //!
-//! The implementation is layered over `fips-aes::BlockCipher`, so it
+//! The implementation is layered over `oxicrypt-aes::BlockCipher`, so it
 //! runs against the same AES primitive that the rest of the module
 //! uses — there is no second AES core to keep in sync. The pure-Rust,
-//! table-free side-channel posture is inherited from `fips-aes`; see
-//! that crate's lib.rs header for the rationale.
+//! implementation is inherited from `oxicrypt-aes`; see that crate's
+//! lib.rs header for its side-channel rationale.
 //!
 //! # Public API
 //!
@@ -28,14 +28,16 @@
 //!
 //! # Power-up self-tests
 //!
-//! [`KATS`] exposes one KAT per AES key size (three entries total)
-//! drawn from SP 800-38B Appendix D.
+//! [`KATS`] exposes two KATs per AES key size (six entries total),
+//! drawn from NIST's CMAC examples (linked from SP 800-38B Appendix D).
 //!
 //! # Sensitive security parameters
 //!
 //! - **CMAC key** — CSP. Consumed at `cmac_aesNNN` entry by the
-//!   underlying AES key expansion; the `AesNNNKey` round-key
-//!   schedule is the long-lived in-memory form. Subkeys K1/K2
+//!   underlying AES key expansion. On the [`cmac::cmac_tag`] path the
+//!   caller's `AesNNNKey` round-key schedule is the long-lived
+//!   in-memory form; on the `cmac_aesNNN` path the schedule is built
+//!   and dropped inside the call. Subkeys K1/K2
 //!   derived inside [`cmac::cmac_tag`] are ephemeral CSPs that
 //!   live only for the duration of the call stack frame.
 //! - **Message / tag** — public. Tag comparison is the caller's

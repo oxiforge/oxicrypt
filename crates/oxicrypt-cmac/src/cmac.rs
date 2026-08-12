@@ -21,7 +21,8 @@
 //!     or K2 (if it was padded), and CBC-MAC with IV = 0^128. The
 //!     tag is the final CBC output truncated to Tlen.
 //!
-//! Per SP 800-38B the minimum Tlen is 32 bits. This crate exposes
+//! SP 800-38B Appendix A recommends a Tlen of at least 64 bits, and
+//! permits less only with a documented risk analysis. This crate exposes
 //! fixed full-length 128-bit tags via [`cmac_tag`]. Callers that need
 //! a shorter approved tag (Tlen ≥ 32) can truncate the returned tag.
 
@@ -38,7 +39,7 @@ use oxicrypt_module::{Error, Service, require_allowed, require_operational};
 /// AES block size in bytes. Always 16 for AES.
 pub const BLOCK_SIZE: usize = 16;
 
-/// Rb constant for 128-bit blocks, SP 800-38B §5.3 Table 1.
+/// Rb constant for 128-bit blocks, SP 800-38B §5.3 (R128 = 0^120 10000111).
 const RB_128: u8 = 0x87;
 
 /// Derive the CMAC subkeys K1 and K2 from a block cipher.
@@ -199,7 +200,7 @@ pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error
 mod tests {
     use super::{cmac_aes128_internal, cmac_aes192_internal, cmac_aes256_internal};
 
-    // SP 800-38B Appendix D.1 Example 1 — Mlen = 0, AES-128
+    // NIST CMAC examples, AES-128 — Mlen = 0
     #[test]
     fn sp38b_d1_example1_aes128_empty() {
         let key: [u8; 16] = [
@@ -213,7 +214,7 @@ mod tests {
         assert_eq!(cmac_aes128_internal(&key, &[]), expected);
     }
 
-    // SP 800-38B Appendix D.1 Example 2 — Mlen = 128, AES-128
+    // NIST CMAC examples, AES-128 — Mlen = 128
     #[test]
     fn sp38b_d1_example2_aes128_one_block() {
         let key: [u8; 16] = [
@@ -231,7 +232,7 @@ mod tests {
         assert_eq!(cmac_aes128_internal(&key, &msg), expected);
     }
 
-    // SP 800-38B Appendix D.2 Example 4 — Mlen = 512, AES-192
+    // NIST CMAC examples, AES-192 — Mlen = 512
     #[test]
     fn sp38b_d2_example4_aes192_four_blocks() {
         let key: [u8; 24] = [
@@ -252,7 +253,7 @@ mod tests {
         assert_eq!(cmac_aes192_internal(&key, &msg), expected);
     }
 
-    // SP 800-38B Appendix D.3 Example 3 — Mlen = 320, AES-256
+    // NIST CMAC examples, AES-256 — Mlen = 320
     // (Partial final block — exercises the K2 subkey path.)
     #[test]
     fn sp38b_d3_example3_aes256_partial_block() {

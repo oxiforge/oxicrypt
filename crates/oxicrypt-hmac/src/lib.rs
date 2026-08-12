@@ -29,28 +29,29 @@
 //!   - HMAC-SHA3-224, HMAC-SHA3-256, HMAC-SHA3-384, HMAC-SHA3-512
 //!
 //! Each variant is a zero-overhead type alias over the generic
-//! [`Hmac`] struct. Per FIPS 140-3 IG 10.3.A each one ships its own
+//! [`Hmac`] struct. Each one ships its own
 //! power-up KAT; families do not share KATs.
 //!
 //! # Design
 //!
 //! The single implementation lives in the generic [`Hmac<H, B, L>`]
 //! struct parameterized by a hash type `H` implementing the private
-//! [`BlockHash`] trait. The trait is deliberately crate-private —
-//! it exists only to bridge fips-sha's concrete hash types into the
+//! [`BlockHash`] trait. The trait is `#[doc(hidden)]` and carries no
+//! semver commitment —
+//! it exists only to bridge oxicrypt-sha's concrete hash types into the
 //! generic HMAC core. Users always talk to the public type aliases
 //! ([`HmacSha256`], etc.), never to `BlockHash` directly.
 //!
 //! The `new_internal` constructor on each underlying hash is
 //! `#[doc(hidden)]` but public; it lets the HMAC boot-time KATs run
-//! while `fips-module` is still in the `SelfTest` state, before
+//! while `oxicrypt-module` is still in the `SelfTest` state, before
 //! `require_operational()` would allow it.
 //!
 //! # Power-up self-tests
 //!
 //! [`KATS`] ships one pinned vector per HMAC variant (11 in
 //! total). Each entry runs independently at module power-up
-//! per FIPS 140-3 IG 10.3.A; families do not share KATs even
+//! independently; families do not share KATs even
 //! when the hash cores are related.
 //!
 //! # Sensitive security parameters
@@ -60,7 +61,7 @@
 //!   state. The caller is responsible for zeroizing the
 //!   original key buffer once it hands off to HMAC; the HMAC
 //!   state itself holds only the derived inner/outer hash
-//!   state, which is reset by `new`/`reset` and goes away when
+//!   state, which is rebuilt by `new` and goes away when
 //!   the frame drops.
 //!
 //! # FIPS module gating
@@ -71,9 +72,9 @@
 //! and by downstream consumers (HKDF, KBKDF, HMAC_DRBG) that
 //! need to run during `SelfTest`.
 //!
-//! # FIPS 140-3 IG D.G note (March 2026)
+//! # Approval basis
 //!
-//! HMAC is an approved MAC per SP 800-107 Rev. 1 and an
+//! HMAC is an approved MAC per FIPS 198-1 and an
 //! approved PRF per SP 800-108. HMAC-SHA-1 remains approved
 //! for MAC and KDF use even though SHA-1 is disallowed for
 //! digital signature generation (SP 800-131A Rev. 2).
@@ -105,7 +106,7 @@ use oxicrypt_module::{
 /// and `L` is its output length in bytes (FIPS 198-1 variable `L`).
 ///
 /// This trait is an implementation detail: it exists only to bridge
-/// concrete fips-sha types into the generic HMAC core. It is
+/// concrete oxicrypt-sha types into the generic HMAC core. It is
 /// technically public so that the generic `Hmac<H, B, L>` struct
 /// can name it as a bound, but it is `#[doc(hidden)]` and is not
 /// covered by any semver commitment — downstream code must always
@@ -219,7 +220,7 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Drop for Hmac<H, B, L> 
 }
 
 // ----------------------------------------------------------------------
-// BlockHash impls for each approved fips-sha type
+// BlockHash impls for each approved oxicrypt-sha type
 // ----------------------------------------------------------------------
 
 macro_rules! impl_block_hash {
@@ -300,16 +301,14 @@ pub type HmacSha3_512 = Hmac<oxicrypt_sha::sha3::Sha3<72, 64>, 72, 64>;
 // All HMAC power-up KATs are sourced from NIST ACVP-Server
 // `HMAC-<alg>-1.0/internalProjection.json` (pinned commit + per-file
 // SHA-256 recorded in `vendor/nist/MANIFEST.toml`) and re-exported via
-// the `fips-test-vectors` crate.
+// the `oxicrypt-test-vectors` crate.
 //
-// ACVP HMAC test groups exercise *truncated* MAC outputs — every
-// group carries a `macLen` strictly less than the full digest length.
-// To validate against an unmodified NIST vector we therefore compute
-// the full HMAC output and compare its leading `MAC_PREFIX.len()`
-// bytes against the expected prefix constant. This strategy follows
-// FIPS 140-3 IG 10.3.A, which requires each HMAC variant to be
-// individually known-answer tested but does not require that the KAT
-// be a full-length output.
+// The eleven pinned ACVP cases all carry a `macLen` shorter than the
+// full digest length. To validate against an unmodified NIST vector we
+// therefore compute the full HMAC output and compare its leading
+// `MAC_PREFIX.len()` bytes against the expected prefix constant. This
+// strategy follows FIPS 140-3 IG 10.3.A, which requires a CAST for
+// HMAC but does not require that the KAT be a full-length output.
 
 macro_rules! kat_fn {
     ($name:ident, $alias:ty, $key:path, $msg:path, $prefix:path) => {
@@ -413,8 +412,8 @@ kat_fn!(
 /// Power-up KAT inventory for all HMAC variants in this crate.
 ///
 /// Merged into the acvp-harness boot sequence via
-/// `oxicrypt_module::initialize_with_tests`. Per FIPS 140-3 IG 10.3.A
-/// each variant has its own KAT — families do not share.
+/// `oxicrypt_module::initialize_with_tests`. Each variant has its own
+/// KAT — families do not share.
 pub const KATS: &[KatEntry] = &[
     KatEntry {
         name: "HMAC-SHA-1 KAT (NIST ACVP-Server HMAC-SHA-1-1.0, truncated)",
@@ -580,7 +579,7 @@ mod tests {
 
     #[test]
     fn hmac_length_checks() {
-        // Sanity: every alias produces the output length its name
+        // Sanity: each SHA-1 / SHA-2 alias produces the output length its name
         // promises.
         ensure_initialized();
         let k = [0x0b; 20];
