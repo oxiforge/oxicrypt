@@ -1,4 +1,4 @@
-//! Power-up known-answer tests for fips-aes.
+//! Power-up known-answer tests for oxicrypt-aes.
 //!
 //! # Source traceability
 //!
@@ -6,15 +6,14 @@
 //! NIST reference and carries its citation inline so a CST lab can
 //! audit the source without leaving the file:
 //!
-//!   * **ECB** — FIPS 197 Appendix C (the normative single-block
-//!     KAT published by NIST in the AES standard itself).
+//!   * **ECB** — the NIST AES example vectors that FIPS 197 Appendix C
+//!     points to (AES-128/192/256, single block).
 //!   * **CBC** — SP 800-38A Appendix F.2 (AES-128 in F.2.1, AES-192
 //!     in F.2.3, AES-256 in F.2.5).
 //!   * **CTR** — SP 800-38A Appendix F.5 (AES-128 in F.5.1, AES-192
 //!     in F.5.3, AES-256 in F.5.5).
 //!   * **GCM** — NIST-published "GCM Test Vectors" (McGrew & Viega
-//!     AES-GCM reference Appendix B, which is also the source
-//!     corpus listed in SP 800-38D §7 for CAVP):
+//!     AES-GCM reference Appendix B):
 //!     - AES-128 Test Case 3
 //!     - AES-192 Test Case 9
 //!     - AES-256 Test Case 15
@@ -23,13 +22,8 @@
 //!     the `[Alen=32, Nlen=13, Tlen=16, Plen=16]` parameter group,
 //!     Count=160 from each file. These are the canonical NIST
 //!     validation vectors for SP 800-38C.
-//!   * **KW / KWP** — RFC 3394 §4.1–§4.6 and RFC 5649 §6, which are
-//!     the vectors used by the SP 800-38F test suite and by the CAVP
-//!     key-wrap validation system.
+//!   * **KW / KWP** — RFC 3394 §4.1–§4.6 and RFC 5649 §6.
 //!
-//! These Appendix vectors ARE the canonical CAVP reference KATs for
-//! these modes: the ACVP-Server AES generators produce validation
-//! messages against the same published outputs.
 //!
 //! Each KAT is defined encrypt-then-decrypt: the KAT function
 //! encrypts the published plaintext, checks the ciphertext, then
@@ -63,7 +57,7 @@ const SP38A_PT: [u8; 64] = [
 ];
 
 // ----------------------------------------------------------------------
-// ECB — FIPS 197 Appendix C
+// ECB — the NIST AES example vectors
 // ----------------------------------------------------------------------
 
 // Appendix C uses a single 16-byte plaintext with key=0x000102..0f.
@@ -71,7 +65,7 @@ const FIPS197_PT: [u8; 16] = [
     0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
 ];
 
-// AES-128 — FIPS 197 Appendix C.1
+// AES-128 — NIST AES example vectors, AES-128
 const FIPS197_KEY128: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 ];
@@ -79,7 +73,7 @@ const FIPS197_CT128: [u8; 16] = [
     0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a,
 ];
 
-// AES-192 — FIPS 197 Appendix C.2
+// AES-192 — NIST AES example vectors, AES-192
 const FIPS197_KEY192: [u8; 24] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
@@ -88,7 +82,7 @@ const FIPS197_CT192: [u8; 16] = [
     0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d, 0x71, 0x91,
 ];
 
-// AES-256 — FIPS 197 Appendix C.3
+// AES-256 — NIST AES example vectors, AES-256
 const FIPS197_KEY256: [u8; 32] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
@@ -307,7 +301,6 @@ fn self_test_ctr_aes256() -> Result<(), SelfTestFailure> {
 
 // ----------------------------------------------------------------------
 // GCM — McGrew & Viega AES-GCM reference, Test Cases 3 / 9 / 15.
-// These are the NIST-listed sample vectors underpinning CAVP AES-GCM.
 // ----------------------------------------------------------------------
 
 // Plaintext shared by Cases 3, 9, 15 (64 bytes, no AAD).
@@ -786,7 +779,7 @@ fn self_test_ccm_aes256() -> Result<(), SelfTestFailure> {
     Ok(())
 }
 
-/// Power-up KAT inventory for fips-aes. Wired into the acvp-harness
+/// Power-up KAT inventory for oxicrypt-aes. Wired into the acvp-harness
 /// boot sequence via `oxicrypt_module::initialize_with_tests`.
 pub const KATS: &[KatEntry] = &[
     KatEntry {

@@ -1,6 +1,6 @@
 //! AES block cipher core (FIPS 197).
 //!
-//! Pure Rust, table-free (S-box only) reference implementation of
+//! Pure Rust byte-wise S-box reference implementation (no T-tables) of
 //! the Rijndael block cipher at the three approved key sizes:
 //! AES-128 (Nk=4, Nr=10), AES-192 (Nk=6, Nr=12), AES-256
 //! (Nk=8, Nr=14). The block size is fixed at 128 bits (Nb=4).
@@ -21,8 +21,8 @@
 //! S-box implementation as the validated default. The optional
 //! `accel-aes` feature (default OFF) dispatches the single-block
 //! boundary to `oxicrypt-aes-accel` — AES-NI, runtime-detected via
-//! CPUID, fail-portable — which is *also* constant-time by
-//! construction (hardware rounds, no table lookups). Bitsliced
+//! CPUID, fail-portable — whose rounds run in hardware with no table
+//! lookups. Bitsliced
 //! hardening of the portable path remains Phase 4 work per the
 //! project plan.
 
@@ -319,8 +319,8 @@ fn decrypt_block_generic(state: &mut [u8; 16], rk: &[u8], nr: usize) {
 fn round_key(rk: &[u8], round: usize) -> &[u8; 16] {
     let off = round * 16;
     let slice = &rk[off..off + 16];
-    // SAFETY-free conversion via try_into + unwrap_or: unwrap_used is
-    // denied, so use pattern match.
+    // `unwrap_used` is denied, so convert with a pattern match rather
+    // than `try_into().unwrap()`.
     match <&[u8; 16]>::try_from(slice) {
         Ok(a) => a,
         // Unreachable by construction (slice length is always 16).
@@ -460,7 +460,7 @@ impl Drop for Aes256Key {
 mod tests {
     use super::{Aes128Key, Aes192Key, Aes256Key};
 
-    // FIPS 197 Appendix C.1 — AES-128.
+    // NIST AES example vectors — AES-128.
     #[test]
     fn fips197_appendix_c1_aes128() {
         let key = [
@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(buf, pt);
     }
 
-    // FIPS 197 Appendix C.2 — AES-192.
+    // NIST AES example vectors — AES-192.
     #[test]
     fn fips197_appendix_c2_aes192() {
         let key = [
@@ -506,7 +506,7 @@ mod tests {
         assert_eq!(buf, pt);
     }
 
-    // FIPS 197 Appendix C.3 — AES-256.
+    // NIST AES example vectors — AES-256.
     #[test]
     fn fips197_appendix_c3_aes256() {
         let key = [
@@ -538,7 +538,7 @@ mod tests {
 // to this crate by design. So the equivalence proof lives here: with
 // `accel-aes` enabled, the public block methods (which dispatch to
 // AES-NI when CPUID allows) must agree byte-for-byte with the portable
-// generic cipher AND with the FIPS 197 Appendix C known answers.
+// generic cipher AND with the the NIST AES example vectors known answers.
 #[cfg(all(test, feature = "accel-aes"))]
 #[allow(
     clippy::unwrap_used,
@@ -549,7 +549,7 @@ mod tests {
 mod accel_cross_path_tests {
     use super::*;
 
-    /// FIPS 197 Appendix C common plaintext.
+    /// the NIST AES example vectors common plaintext.
     const PT: [u8; 16] = [
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
         0xff,

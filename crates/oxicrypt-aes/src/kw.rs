@@ -5,7 +5,8 @@
 //!
 //! Implements the two wrapping modes in SP 800-38F:
 //!
-//!   * **KW** (§6.2, Algorithms 1/2 "W" and "W^-1") — the original
+//!   * **KW** (§6.2, Algorithms 3/4 "KW-AE" / "KW-AD", over the W and
+//!     W^-1 functions of §6.1) — the original
 //!     RFC 3394 key wrap, with the default integrity check value
 //!     `A6A6A6A6A6A6A6A6`. Input length must be a positive multiple
 //!     of 8 bytes and at least 16 bytes (two 8-byte semiblocks).
@@ -31,12 +32,13 @@
 //!     [`kwp_wrap_inverse_cipher`] / [`kwp_unwrap_inverse_cipher`].
 //!
 //! The two directions are distinct algorithms — a wrap produced in
-//! one direction will not unwrap correctly in the other, and the
-//! ICV check guarantees this in constant time.
+//! one direction is rejected by the other's ICV check with
+//! overwhelming probability.
 //!
-//! Both the wrap and unwrap directions verify the published ICV
-//! (either the default KW value or the RFC 5649 KWP alternative IV)
-//! in constant time on the 8 prefix bytes; any mismatch returns
+//! The unwrap directions verify the published ICV: KW compares all
+//! eight bytes against `A6A6A6A6A6A6A6A6`, KWP compares the four
+//! `A65959A6` prefix bytes and then checks the declared length and the
+//! zero padding. The wrap directions write the ICV. Any mismatch returns
 //! [`ModeError::TagMismatch`]. Length mismatches and invalid inputs
 //! return dedicated variants of [`ModeError`].
 //!
@@ -127,7 +129,7 @@ fn w_core_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) 
     }
 }
 
-/// Constant-time equality on 8 bytes.
+/// Branchless equality on 8 bytes.
 fn ct_eq8(a: &[u8; SEMI], b: &[u8; SEMI]) -> bool {
     let mut diff: u8 = 0;
     for k in 0..SEMI {
@@ -219,7 +221,8 @@ pub fn kwp_wrap<B: BlockCipher>(
     if padded_pt_len == SEMI {
         // Single AES block direct encrypt path (RFC 5649 §4.1 case
         // "n == 1 semiblock of plaintext padding"; SP 800-38F §6.3
-        // "if n == 1 then C = CIPH_K(S)"). S = AIV || padded_PT.
+        // Algorithm 5 step 5, "If len(P) <= 64, then return C = CIPHK(S)").
+        // S = AIV || padded_PT.
         let mut blk = [0u8; 16];
         blk[..SEMI].copy_from_slice(&aiv);
         blk[SEMI..SEMI + mli].copy_from_slice(plaintext);
@@ -275,7 +278,7 @@ pub fn kwp_unwrap<B: BlockCipher>(
         w_core_inv(cipher, &mut aiv, plaintext_out_scratch);
     }
 
-    // Check prefix constant bytes in constant time.
+    // Check prefix constant bytes with a branchless comparison.
     let mut diff: u8 = 0;
     for k in 0..4 {
         diff |= aiv[k] ^ KWP_IV_PREFIX[k];
@@ -313,7 +316,7 @@ pub fn kwp_unwrap<B: BlockCipher>(
 //     `encrypt_block`.
 //
 // The ICV (`A6A6A6A6A6A6A6A6` for KW, `A65959A6 || [mli]_32` for KWP)
-// is unchanged and is checked in constant time exactly as in the
+// is unchanged and is checked with a branchless comparison exactly as in the
 // forward-cipher path. Cross-direction unwrap (forward-wrapped input
 // fed through inverse-unwrap, or vice versa) is rejected by the ICV
 // check with overwhelming probability.
@@ -436,8 +439,7 @@ pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(
     if padded_pt_len == SEMI {
         // Single AES block direct path; inverse cipher uses
         // `decrypt_block` as the wrapping primitive (SP 800-38F §6.3
-        // "if n == 1 then C = CIPH^-1_K(S)" under the inverse-cipher
-        // direction).
+        // Algorithm 5 step 5, under the inverse-cipher direction).
         let mut blk = [0u8; 16];
         blk[..SEMI].copy_from_slice(&aiv);
         blk[SEMI..SEMI + mli].copy_from_slice(plaintext);

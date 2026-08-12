@@ -13,18 +13,18 @@
 //! | Key Wrap (KW)           | SP 800-38F §6.2 / RFC 3394 | [`kw_wrap`] / [`kw_unwrap`] (forward cipher), [`kw_wrap_inverse_cipher`] / [`kw_unwrap_inverse_cipher`] (inverse cipher) |
 //! | Key Wrap with Padding (KWP) | SP 800-38F §6.3 / RFC 5649 | [`kwp_wrap`] / [`kwp_unwrap`] (forward cipher), [`kwp_wrap_inverse_cipher`] / [`kwp_unwrap_inverse_cipher`] (inverse cipher) |
 //!
-//! ECB is exposed because it is required as a primitive by
-//! other approved services (CTR_DRBG, the KW/KWP construction,
-//! AES-CMAC). It is **not** intended for direct use as a
-//! confidentiality mode by application callers; the Security
-//! Policy will call this out.
+//! ECB is exposed so the ACVP harness can drive the per-block CAVP
+//! KATs. CTR_DRBG, KW/KWP and AES-CMAC do not call it — they take the
+//! raw block cipher through [`BlockCipher`]. It is **not** intended
+//! for direct use as a confidentiality mode by application callers.
 //!
 //! # Power-up self-tests
 //!
-//! [`KATS`] exposes one encrypt-and-decrypt KAT per mode × key
-//! size (12 entries total). Vectors are sourced from FIPS 197
-//! Appendix C, SP 800-38A Appendix F.2 / F.5, and the McGrew-Viega
-//! GCM Appendix B test cases listed by NIST.
+//! [`KATS`] holds 23 encrypt-and-decrypt entries: three per key size
+//! for ECB, CBC, CTR, GCM and CCM, six KW vectors and two KWP vectors.
+//! Vectors come from the NIST AES example vectors that FIPS 197
+//! Appendix C points to, SP 800-38A Appendix F.2 / F.5, and the
+//! McGrew-Viega GCM Appendix B test cases.
 //!
 //! # Sensitive security parameters
 //!
@@ -38,8 +38,7 @@
 //!   same key for GCM or CCM) catastrophically breaks
 //!   authenticity; callers are responsible for uniqueness.
 //! - **GCM/CCM authentication tags** — public outputs; `*_decrypt`
-//!   entry points compare tags in constant time and return a
-//!   single error variant on any mismatch (no early-return
+//!   entry points return a single error variant on any mismatch (no early-return
 //!   distinguisher between "wrong tag" and "wrong ciphertext").
 //!
 //! # FIPS module gating
@@ -47,19 +46,19 @@
 //! All public entry points call [`oxicrypt_module::require_operational`]
 //! and [`oxicrypt_module::require_allowed`] to enforce algorithm-profile
 //! restrictions. Key constructors ([`Aes128Key::new`], [`Aes192Key::new`],
-//! [`Aes256Key::new`]) now return `Result` and gate on the active profile
+//! [`Aes256Key::new`]) return `Result` and gate on the active profile
 //! via [`oxicrypt_module::Service::Aes128`], `Service::Aes192`, and
 //! `Service::Aes256` respectively. KAT runners use the hidden `*_internal`
 //! surface to execute during `SelfTest`.
 //!
 //! # Side-channel posture
 //!
-//! Pure Rust, table-free S-box implementation. Constant-time
-//! hardening (bitsliced core or AES-NI with a safe fallback) is
-//! deferred to the Phase 4 hardening chunk per the project
-//! plan. This is acceptable at FIPS 140-3 Level 1, which does
-//! not mandate side-channel resistance, but the Security Policy
-//! will disclose the current posture plainly.
+//! Pure Rust byte-wise S-box implementation — no T-tables, but the
+//! 256-byte S-box is indexed by secret data. The optional `accel-aes`
+//! feature (default off) dispatches to AES-NI with a portable
+//! fallback; bitsliced hardening of the portable path is not
+//! implemented. This is acceptable at FIPS 140-3 Level 1, which does
+//! not mandate side-channel resistance.
 
 #![no_std]
 #![forbid(unsafe_code)]

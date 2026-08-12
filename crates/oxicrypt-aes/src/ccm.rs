@@ -30,20 +30,20 @@
 //! Decryption (§6.2 "CCM Decryption-Verification Process") runs the
 //! CTR keystream in reverse to recover the plaintext, then recomputes
 //! the CBC-MAC over the same formatted input and verifies the
-//! resulting tag against the transmitted tag in **constant time**. A
+//! resulting tag against the transmitted tag with a branchless comparison. A
 //! mismatch returns [`ModeError::TagMismatch`] and the recovered
 //! plaintext is zeroised in the output buffer.
 //!
 //! # Parameter validation
 //!
-//! The call sites enforce the full SP 800-38C §5.3 parameter matrix:
+//! The call sites enforce the full SP 800-38C Appendix A.1 parameter matrix:
 //!
 //!   * Nonce length `Nlen` ∈ {7, 8, 9, 10, 11, 12, 13}.
 //!   * Tag length `Tlen` ∈ {4, 6, 8, 10, 12, 14, 16}.
 //!   * Plaintext length `Plen` < `2^(8*(15 - Nlen))` (equivalently, `P`
 //!     must be representable in the L-byte length field `Q`).
-//!   * Associated-data length `Alen` < `2^64 - 2^16` (the §A.2.2 hard
-//!     upper bound for the 10-byte `0xFFFF`-prefixed encoding).
+//!   * Associated-data length `Alen` < `2^64` (SP 800-38C Appendix A.1);
+//!     the 10-byte `0xFFFF`-prefixed encoding covers 2^32 <= Alen < 2^64.
 //!
 //! Out-of-range values return dedicated [`ModeError`] variants rather
 //! than panicking.
@@ -62,11 +62,11 @@ use crate::modes::{BlockCipher, ModeError};
 /// AES block size in bytes. Always 16 for AES.
 const B: usize = 16;
 
-/// Valid nonce-length interval per SP 800-38C §5.3.
+/// Valid nonce-length interval per SP 800-38C Appendix A.1.
 const NLEN_MIN: usize = 7;
 const NLEN_MAX: usize = 13;
 
-/// Valid tag-length set per SP 800-38C §5.3 (bytes, not bits).
+/// Valid tag-length set per SP 800-38C Appendix A.1 (bytes, not bits).
 const fn tlen_valid(tlen: usize) -> bool {
     matches!(tlen, 4 | 6 | 8 | 10 | 12 | 14 | 16)
 }
@@ -130,7 +130,7 @@ fn xor_block(acc: &mut [u8; B], other: &[u8; B]) {
     }
 }
 
-/// Constant-time equality compare for two byte slices of identical
+/// Branchless equality compare for two byte slices of identical
 /// length. Returns `true` iff every byte matches.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -229,7 +229,7 @@ fn ccm_mac<C: BlockCipher>(
     y
 }
 
-/// Validate the parameter matrix from SP 800-38C §5.3 and return the
+/// Validate the parameter matrix from SP 800-38C Appendix A.1 and return the
 /// corresponding `ModeError` variant on any failure.
 fn validate_params(
     nonce_len: usize,
@@ -251,7 +251,7 @@ fn validate_params(
             return Err(ModeError::InvalidPayloadLength);
         }
     }
-    // Alen < 2^64 - 2^16 per §A.2.2. On 64-bit targets any `usize` is
+    // Alen < 2^64 per SP 800-38C Appendix A.1. On 64-bit targets any `usize` is
     // automatically < 2^64, so we only need to reject the final 2^16
     // bytes.
     if (aad_len as u64) > u64::MAX - (1u64 << 16) {
@@ -346,7 +346,7 @@ pub fn ccm_decrypt<C: BlockCipher>(
 
     // Recompute raw CBC-MAC over the recovered plaintext and the
     // same formatted AAD, then mask with S0 to compare against the
-    // transmitted tag in constant time.
+    // transmitted tag with a branchless comparison.
     let y = ccm_mac(cipher, nonce, aad, &out[..plen], tlen);
     let mut s0 = format_ctr(nonce, 0);
     cipher.encrypt_block(&mut s0);

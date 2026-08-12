@@ -265,10 +265,9 @@ fn inc32(ctr: &mut [u8; 16]) {
 }
 
 /// CTR encrypt/decrypt (the same operation) using `icb` as the
-/// initial counter block. The low 32 bits of the counter are
-/// incremented per SP 800-38A §6.5 with the convention that the
-/// counter occupies the last 4 bytes of the 16-byte block — this
-/// matches the convention used by GCM.
+/// initial counter block. The counter block is incremented as a full
+/// 128-bit big-endian integer, following the SP 800-38A Appendix F.5
+/// test-vector convention. GCM uses the 32-bit increment [`inc32`].
 ///
 /// Note: SP 800-38A defines CTR with an application-selected
 /// standard incrementing function. For the FIPS 140-3 power-up KAT
@@ -293,9 +292,8 @@ pub fn ctr_xor<B: BlockCipher>(cipher: &B, icb: &[u8; 16], input: &[u8], output:
 
 /// Full 128-bit big-endian increment, used by CTR mode to follow the
 /// SP 800-38A Appendix F.5 test-vector convention. The vectors only
-/// wrap the low 32 bits within the length of the sample message, so
-/// this agrees with [`inc32`] for every Appendix F.5 KAT but is the
-/// documented Appendix F.5 increment. GCM uses [`inc32`] instead.
+/// wrap the low 32 bits within the length of the sample message.
+/// GCM uses [`inc32`] instead.
 fn inc128_for_ctr(ctr: &mut [u8; 16]) {
     let mut carry: u16 = 1;
     let mut i = 16;
@@ -321,7 +319,7 @@ fn inc128_for_ctr(ctr: &mut [u8; 16]) {
 /// per the GCM spec: bit 0 of byte 0 is the coefficient of `1`.
 /// The implementation is the standard bit-by-bit schoolbook
 /// algorithm ("Algorithm 1" in McGrew & Viega), which is slow but
-/// simple and avoids cache-timing risk from table-based variants.
+/// simple, and uses no lookup tables.
 ///
 /// This is the **validated baseline** and the correctness oracle for
 /// the optional PCLMULQDQ-accelerated path: [`gf_mul`] dispatches to
@@ -453,7 +451,7 @@ pub fn gcm_encrypt<B: BlockCipher>(
     Ok(())
 }
 
-/// AES-GCM authenticated decryption with constant-time tag check
+/// AES-GCM authenticated decryption with branchless tag comparison
 /// (SP 800-38D §7.2). Returns `Ok(())` only if the tag verifies.
 pub fn gcm_decrypt<B: BlockCipher>(
     cipher: &B,
@@ -498,7 +496,7 @@ pub fn gcm_decrypt<B: BlockCipher>(
         computed_tag[k] = ej0[k] ^ y[k];
     }
 
-    // Constant-time compare.
+    // Branchless compare.
     let mut diff: u8 = 0;
     for k in 0..16 {
         diff |= computed_tag[k] ^ tag[k];
