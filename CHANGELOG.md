@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected `oxicrypt-dh`'s rejection-sampling rationale, which gave the acceptance probability as
+  about 50%. Computed from the group's own `q`, rejection is about 2^-66. (#242)
+- Corrected three SP 800-56Ar3 citations in `oxicrypt-dh` from §5.6.2.3.1 to §5.6.2.3.2. The crate
+  implements partial public-key validation. (#242)
+- Corrected the description of `oxicrypt-dh`'s self-test, whose negative case is the order-2 element
+  `p - 1` rather than a tampered peer key. (#242)
+- Removed `oxicrypt-ecdh`'s claim that its pairwise-consistency comparison is constant-time. It is
+  the derived equality on a byte array. The scalar-multiplication timing claims stand: ct-validation
+  measures both CDH paths. (#242)
+- Added `AlgorithmRestricted` to both `oxicrypt-ecdh` shared-secret error lists. (#242)
+- Corrected `oxicrypt-tls-kdf`, documented as the TLS 1.2 KDF under SP 800-135. It also implements
+  the TLS 1.3 KDF, which that document does not cover. (#242)
+
 - Corrected `oxicrypt-eddsa`'s documentation, which described reduction, `muladd`, scalar
   multiplication and point compression as still to come. All of them ship. (#242)
 - Removed three constant-time claims from `oxicrypt-eddsa` that no measurement covers: the field
