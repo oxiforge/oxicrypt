@@ -3984,7 +3984,7 @@ functions:
         direction: in
         description: Entropy input from a noise source.
         constraints:
-          valid_range: "1..=192 bytes (MAX_DF_INPUT shared across all inputs)"
+          valid_range: "0..=192 bytes (MAX_DF_INPUT shared across all inputs)"
       - name: nonce
         type: "&[u8]"
         direction: in

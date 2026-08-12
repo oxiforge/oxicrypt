@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed a panic in the CTR_DRBG derivation function on combined `entropy || nonce ||
+  personalization` inputs of 152 to 192 bytes, across `instantiate_df`, `reseed_df`,
+  `generate_df` and their C ABI mirrors. (#250)
 - Corrected twelve SP 800-108 citations in `oxicrypt-kdf`. That document numbers the modes §4.1
   counter, §4.2 feedback and §4.3 double-pipeline; its §5 is Key Hierarchy. (#242)
 - Corrected `oxicrypt-kdf`'s counter-width documentation. SP 800-108r1 permits any `1 <= r <= 32`;

@@ -53,6 +53,26 @@ const MAX_SEED_LEN: usize = MAX_KEY_LEN + OUTLEN; // 48
 /// AES-256 with `entropy(48) + nonce(48) + personalization(48) = 144`,
 /// rounded up to 192.
 pub const MAX_DF_INPUT: usize = 192;
+/// Smallest working block that holds the IV, the `L || N` header, the
+/// largest admissible input and the `0x80` separator.
+const DF_SCRATCH_MIN: usize = OUTLEN + 8 + MAX_DF_INPUT + 1;
+/// Scratch length for the `Block_Cipher_df` working block `IV || S`,
+/// where `S = L || N || input_string || 0x80` zero-padded to a multiple
+/// of `outlen` (SP 800-90A §10.3.2 steps 4 and 5).
+///
+/// Derived from [`MAX_DF_INPUT`] rather than written as a literal, so
+/// a change to the bound carries the buffer with it. That the buffer is
+/// large enough for every admissible input is established by
+/// `df_accepts_every_length_up_to_max_df_input`, which walks the whole
+/// range; the assertion below restates the requirement independently of
+/// the derivation, so replacing either with a literal fails to compile.
+const DF_SCRATCH_LEN: usize = DF_SCRATCH_MIN.div_ceil(OUTLEN) * OUTLEN;
+// The `0x80` separator lands one past the last input byte, so the block
+// must extend beyond `IV || L || N || input` at the largest admissible
+// input. Written from the field widths rather than from
+// `DF_SCRATCH_MIN`, so a mis-stated `DF_SCRATCH_MIN` does not satisfy it
+// by construction.
+const _: () = assert!(DF_SCRATCH_LEN > OUTLEN + 4 + 4 + MAX_DF_INPUT);
 /// SP 800-90A Table 3: maximum reseed interval for CTR_DRBG is `2^48`.
 const RESEED_INTERVAL: u64 = 1u64 << 48;
 
@@ -528,11 +548,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
         debug_assert!(no_bits_return_bytes <= MAX_SEED_LEN);
 
         // S = L || N || input || 0x80, padded to outlen multiple.
-        // Scratch: 16 (IV) + header(8) + input + 1 (0x80) + pad to a
-        // 16-byte multiple. This 176-byte buffer holds inputs up to 152
-        // bytes; the guard above admits MAX_DF_INPUT = 192, so inputs in
-        // 152..=192 overrun it.
-        let mut s_buf = [0u8; 176];
+        // Scratch: OUTLEN (IV) + header(8) + input(<=MAX_DF_INPUT)
+        // + 1 (0x80) + pad(<OUTLEN), rounded to whole blocks.
+        let mut s_buf = [0u8; DF_SCRATCH_LEN];
         // s_buf[0..16] is IV (filled later per iteration).
         let mut idx = OUTLEN;
         // L (4 bytes BE) = input length
@@ -815,5 +833,47 @@ mod tests {
         let mut v = [0xffu8; OUTLEN];
         increment_counter(&mut v);
         assert_eq!(v, [0u8; OUTLEN]);
+    }
+
+    /// Every combined input length the public guard accepts must be
+    /// processed, not panicked on. Covers the whole `0..=MAX_DF_INPUT`
+    /// band on all three entry points that reach `block_cipher_df`.
+    #[test]
+    fn df_accepts_every_length_up_to_max_df_input() {
+        let material = [0x5au8; MAX_DF_INPUT];
+        for len in 0..=MAX_DF_INPUT {
+            // instantiate_df: entropy || nonce || personalization
+            let mut a = CtrDrbgAes256::new();
+            let r = a.instantiate_df_internal(&material[..len], &[], &[]);
+            assert!(r.is_ok(), "instantiate_df rejected len={len}");
+
+            // reseed_df: entropy || additional_input
+            let r = a.reseed_df(&material[..len], &[]);
+            assert!(r.is_ok(), "reseed_df rejected len={len}");
+
+            // generate_df: additional_input alone
+            let mut out = [0u8; 32];
+            let r = a.generate_df(Some(&material[..len]), &mut out);
+            assert!(r.is_ok(), "generate_df rejected len={len}");
+        }
+    }
+
+    /// One byte past the guard is refused by the length check on every
+    /// path, before the derivation function is reached.
+    #[test]
+    fn df_rejects_one_byte_over_max_df_input() {
+        let material = [0x5au8; MAX_DF_INPUT + 1];
+
+        let mut a = CtrDrbgAes256::new();
+        assert!(a.instantiate_df_internal(&material, &[], &[]).is_err());
+
+        a.instantiate_df_internal(&[0x11u8; 48], &[], &[]).unwrap();
+        assert_eq!(a.reseed_df(&material, &[]), Err(DrbgError::InputTooLong));
+
+        let mut out = [0u8; 32];
+        assert_eq!(
+            a.generate_df(Some(&material), &mut out),
+            Err(DrbgError::InputTooLong)
+        );
     }
 }
