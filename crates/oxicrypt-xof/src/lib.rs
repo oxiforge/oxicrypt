@@ -68,16 +68,21 @@
 //!
 //! # Sensitive security parameters
 //!
-//! None. SHAKE and cSHAKE are keyless public primitives; all
-//! inputs and outputs are public. KMAC and KMACXOF keys are
-//! sensitive security parameters managed by the caller.
+//! - **KMAC / KMACXOF key** — CSP. Supplied by the caller and
+//!   absorbed into the sponge state at construction; the caller
+//!   retains ownership of the original key buffer.
+//!
+//! SHAKE, cSHAKE, TupleHash and ParallelHash are keyless public
+//! primitives; all their inputs and outputs are public.
 //!
 //! # FIPS module gating
 //!
-//! Public SHAKE/cSHAKE entry points gate on
-//! [`oxicrypt_module::require_operational`] and expose a hidden
-//! `*_internal` surface for in-module consumers (e.g. SP 800-185
-//! KMAC) that need to run during `SelfTest`.
+//! Public entry points gate on
+//! [`oxicrypt_module::require_operational`]. [`Shake128`] and
+//! [`Shake256`] additionally expose a hidden `new_internal`
+//! constructor for other in-boundary crates — oxicrypt-ml-kem,
+//! oxicrypt-ml-dsa, oxicrypt-slh-dsa and oxicrypt-lms — that need
+//! SHAKE during `SelfTest`. No other type exposes one.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -1198,8 +1203,9 @@ impl ParallelHash128 {
 
 /// ParallelHash256 (SP 800-185 §6).
 ///
-/// Like [`ParallelHash128`] but with 512-bit security: the inner hash
-/// is SHAKE256 squeezed to 512 bits and the outer is cSHAKE256.
+/// Like [`ParallelHash128`] but at the 256-bit security strength: the
+/// inner hash is SHAKE256 squeezed to 512 bits and the outer is
+/// cSHAKE256.
 pub struct ParallelHash256 {
     core: ParallelHashCore<SHAKE256_RATE, 64>,
 }
@@ -1345,7 +1351,7 @@ const KAT_SHAKE256_EMPTY_64: [u8; 64] = [
 /// Power-up KAT for SHAKE128.
 ///
 /// Sourced from NIST ACVP-Server `SHAKE-128-FIPS202/internalProjection.json`
-/// via `fips-test-vectors`; the selected tgId/tcId and the vendored
+/// via `oxicrypt-test-vectors`; the selected tgId/tcId and the vendored
 /// slice file's SHA-256 are recorded in `vendor/nist/MANIFEST.toml`.
 pub fn self_test_128() -> Result<(), SelfTestFailure> {
     let mut x = Shake128::new_internal();
@@ -1363,7 +1369,7 @@ pub fn self_test_128() -> Result<(), SelfTestFailure> {
 /// Power-up KAT for SHAKE256.
 ///
 /// Sourced from NIST ACVP-Server `SHAKE-256-FIPS202/internalProjection.json`
-/// via `fips-test-vectors`.
+/// via `oxicrypt-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
     let mut x = Shake256::new_internal();
     x.update(&oxicrypt_test_vectors::SHAKE256_MSG);
@@ -1377,19 +1383,20 @@ pub fn self_test_256() -> Result<(), SelfTestFailure> {
     }
 }
 
-// ── cSHAKE KATs (SP 800-185 §A) ──────────────────────────────────
+// ── cSHAKE KATs ──────────────────────────────────────────────────
 
 /// cSHAKE128 KAT input: `00 01 02 03` (4 bytes).
 const KAT_CSHAKE128_INPUT: [u8; 4] = [0x00, 0x01, 0x02, 0x03];
 /// cSHAKE128 KAT customization string: `"Email Signature"`.
 const KAT_CSHAKE128_S: &[u8] = b"Email Signature";
-/// cSHAKE128 expected output (32 bytes). Source: SP 800-185 §A.1 Sample #3.
+/// cSHAKE128 expected output (32 bytes) for N = "", S = "Email
+/// Signature", X = 00 01 02 03, L = 256 (SP 800-185 §3).
 const KAT_CSHAKE128_EXPECTED: [u8; 32] = [
     0xc1, 0xc3, 0x69, 0x25, 0xb6, 0x40, 0x9a, 0x04, 0xf1, 0xb5, 0x04, 0xfc, 0xbc, 0xa9, 0xd8, 0x2b,
     0x40, 0x17, 0x27, 0x7c, 0xb5, 0xed, 0x2b, 0x20, 0x65, 0xfc, 0x1d, 0x38, 0x14, 0xd5, 0xaa, 0xf5,
 ];
 
-/// Power-up known-answer test for cSHAKE128 (SP 800-185 §A.1).
+/// Power-up known-answer test for cSHAKE128 (SP 800-185 §3).
 pub fn self_test_cshake128() -> Result<(), SelfTestFailure> {
     let mut x = CShake128::new_internal(b"", KAT_CSHAKE128_S);
     x.update(&KAT_CSHAKE128_INPUT);
@@ -1417,7 +1424,7 @@ const KAT_CSHAKE256_EXPECTED: [u8; 64] = [
     0x37, 0xc5, 0x61, 0xa7, 0x4c, 0x41, 0x2b, 0xb4, 0xc7, 0x46, 0x46, 0x95, 0x27, 0x28, 0x1c, 0x8c,
 ];
 
-/// Power-up known-answer test for cSHAKE256 (SP 800-185 §A.2).
+/// Power-up known-answer test for cSHAKE256 (SP 800-185 §3).
 pub fn self_test_cshake256() -> Result<(), SelfTestFailure> {
     let mut x = CShake256::new_internal(b"", KAT_CSHAKE256_S);
     x.update(&KAT_CSHAKE256_INPUT);
@@ -1555,7 +1562,7 @@ pub fn self_test_kmacxof256() -> Result<(), SelfTestFailure> {
 // ── TupleHash KATs ──────────────────────────────────────────────
 
 /// TupleHash128 KAT expected output (32 bytes).
-/// SP 800-185 §A.3 Sample #1: X = ("000102", "101112131415"), S = "",
+/// NIST TupleHash examples: X = ("000102", "101112131415"), S = "",
 /// L = 256. Verified against pycryptodome `TupleHash128`.
 const KAT_TUPLEHASH128_EXPECTED: [u8; 32] = [
     0xc5, 0xd8, 0x78, 0x6c, 0x1a, 0xfb, 0x9b, 0x82, 0x11, 0x1a, 0xb3, 0x4b, 0x65, 0xb2, 0xc0, 0x04,
@@ -1577,7 +1584,7 @@ pub fn self_test_tuplehash128() -> Result<(), SelfTestFailure> {
 }
 
 /// TupleHash256 KAT expected output (64 bytes).
-/// SP 800-185 §A.4 Sample #1: X = ("000102", "101112131415"), S = "",
+/// NIST TupleHash examples: X = ("000102", "101112131415"), S = "",
 /// L = 512. Verified against pycryptodome `TupleHash256`.
 const KAT_TUPLEHASH256_EXPECTED: [u8; 64] = [
     0xcf, 0xb7, 0x05, 0x8c, 0xac, 0xa5, 0xe6, 0x68, 0xf8, 0x1a, 0x12, 0xa2, 0x0a, 0x21, 0x95, 0xce,
@@ -1951,7 +1958,7 @@ mod tests {
 
     #[test]
     fn cshake128_sp800_185_sample3() {
-        // SP 800-185 §A.1 Sample #3: X = 00 01 02 03, N = "", S = "Email Signature", L = 256
+        // cSHAKE128: X = 00 01 02 03, N = "", S = "Email Signature", L = 256
         let expected: [u8; 32] =
             hex("c1c36925b6409a04f1b504fcbca9d82b4017277cb5ed2b2065fc1d3814d5aaf5");
         let mut x = CShake128::new_internal(b"", b"Email Signature");
@@ -2232,7 +2239,7 @@ mod tests {
 
     #[test]
     fn tuplehash128_sample2() {
-        // SP 800-185 §A.3 Sample #2: X = ("000102", "101112131415"),
+        // TupleHash128: X = ("000102", "101112131415"),
         // S = "My Tuple App", L = 256
         let expected: [u8; 32] =
             hex("75cdb20ff4db1154e841d758e24160c54bae86eb8c13e7f5f40eb35588e96dfb");
@@ -2246,7 +2253,7 @@ mod tests {
 
     #[test]
     fn tuplehash128_sample3() {
-        // SP 800-185 §A.3 Sample #3: X = ("000102", "101112131415",
+        // TupleHash128: X = ("000102", "101112131415",
         // "202122232425262728"), S = "My Tuple App", L = 256
         let expected: [u8; 32] =
             hex("e60f202c89a2631eda8d4c588ca5fd07f39e5151998deccf973adb3804bb6e84");
@@ -2261,7 +2268,7 @@ mod tests {
 
     #[test]
     fn tuplehash256_sample2() {
-        // SP 800-185 §A.4 Sample #2: S = "My Tuple App"
+        // TupleHash256: S = "My Tuple App"
         let expected: [u8; 64] = hex(
             "147c2191d5ed7efd98dbd96d7ab5a11692576f5fe2a5065f3e33de6bba9f3aa1\
              c4e9a068a289c61c95aab30aee1e410b0b607de3620e24a4e3bf9852a1d4367e",
@@ -2276,7 +2283,7 @@ mod tests {
 
     #[test]
     fn tuplehash256_sample3() {
-        // SP 800-185 §A.4 Sample #3: three elements, S = "My Tuple App"
+        // TupleHash256: three elements, S = "My Tuple App"
         let expected: [u8; 64] = hex(
             "45000be63f9b6bfd89f54717670f69a9bc763591a4f05c50d68891a744bcc6e7\
              d6d5b5e82c018da999ed35b0bb49c9678e526abd8e85c13ed254021db9e790ce",
