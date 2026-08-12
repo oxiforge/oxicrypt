@@ -47,6 +47,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multiplication and point compression as still to come. All of them ship. (#242)
 - Removed three constant-time claims from `oxicrypt-eddsa` that no measurement covers: the field
   module's blanket claim, `ct_eq`, and `decompress`. (#242)
+- Corrected the standard citations across the symmetric crates. FIPS 180-4, FIPS 202, SP 800-38B
+  and SP 800-185 hold no example vectors in the appendices these crates cited, and FIPS 197
+  Appendix C is a pointer rather than a source. The known-answer values are unchanged. (#242)
+- Corrected the FIPS 140-3 IG attributions in `oxicrypt-sha`, `oxicrypt-hmac` and `oxicrypt-cmac`.
+  IG 10.3.A requires one CAST per algorithm family, not one per variant, and IG D.G is Key
+  Transport Methods. (#242)
+- Removed the constant-time claims from `oxicrypt-aes`, `oxicrypt-aes-accel`, `oxicrypt-cmac` and
+  `oxicrypt-xof`. No ct-validation target measures AES, GHASH, HMAC, CMAC or the XOFs. (#242)
+- Corrected `oxicrypt-aes`: ECB exists for the ACVP harness, not for CTR_DRBG, KW/KWP or CMAC;
+  `KATS` holds 23 entries, not 12; AES-NI hardening ships behind `accel-aes`. (#242)
+- Removed `oxicrypt-aes-accel`'s claim that its equivalence to the portable path is proven. The
+  oracles exist but no gate enables `accel-aes`. (#242)
+- Corrected the enumeration of the five audited crates that use `unsafe` in `oxicrypt-sha-accel`,
+  `oxicrypt-keccak-accel` and `oxicrypt-aes-accel`. Each named a subset. (#242)
 
 ## [0.23.1] - 2026-08-10
 
