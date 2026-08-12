@@ -28,8 +28,7 @@
 //!
 //! - **Default-off.** This crate is wired into `oxicrypt-sha` only behind
 //!   a feature; the validated portable baseline remains the shipping
-//!   default and default dependency graphs are unchanged. (The caller
-//!   wiring is a separate slice; this crate ships its primitive + oracle.)
+//!   default and default dependency graphs are unchanged.
 //! - **Runtime-detected.** One binary serves all CPUs: a hand-rolled
 //!   CPUID probe (this crate is `no_std`, so `is_x86_feature_detected!`
 //!   is unavailable) checks leaf 7 sub-leaf 0 EBX bit 5 (AVX2) plus the
@@ -43,13 +42,14 @@
 //! # Scope
 //!
 //! The AVX2 4-way `KeccakP1600times4` permutation only. AVX-512 8-way
-//! batching and AArch64 NEON batching are documented follow-ups under the
-//! same sanctioned category.
+//! batching is a documented follow-up under the same sanctioned category
+//! (`docs/design/avx2-keccak.md`, issue #110).
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU intrinsics and CPUID.
-// Every other in-boundary crate except oxicrypt-zeroize and the other
-// acceleration crates forbids unsafe.
+// The other in-boundary crates that use unsafe are oxicrypt-zeroize,
+// oxicrypt-sha-accel, oxicrypt-aes-accel and oxicrypt-timer; every other
+// in-boundary crate forbids it.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Returns `true` if the running CPU supports the AVX2 4-way batched
@@ -163,12 +163,11 @@ mod x86_64_avx2 {
         18,  2, 61, 56, 14,
     ];
 
-    /// Compile-time check that the unrolled `<L, 64-L>` rotation pairs in
-    /// [`rho_pi`] exactly match the `RHO` reference table — so the readable
-    /// `RHO` table is load-bearing (not dead code) and any future edit to a
-    /// hand-written pair that drifts from `RHO` fails the build, not just a
-    /// runtime test. The pairs are listed in *source-index* order
-    /// (`idx = x + 5*y`), identical to `RHO`'s indexing.
+    /// Compile-time check that `PAIRS_L` — a transcription of the rotation
+    /// offsets in source-index order (`idx = x + 5*y`) — matches the `RHO`
+    /// reference table. It compares two tables; it does not read the
+    /// `rotl::<L, 64-L>` literals in [`rho_pi`], so a drifting literal
+    /// still compiles and is caught by the cross-path oracle at runtime.
     const _: () = {
         const PAIRS_L: [u32; LANES] = [
             0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61,
@@ -309,7 +308,8 @@ mod x86_64_avx2 {
 
         // ρ and π steps, combined: b[y][2*x + 3*y] = rot(s[x][y], RHO).
         // The rotation amount is RHO[x + 5*y], a compile-time constant per
-        // (x, y), so each rotate dispatches to a const-generic `rotl_const`.
+        // (x, y), so each rotate dispatches to the const-generic `rotl`
+        // (or `rotl0` at the zero offset).
         let mut b = [unsafe_zero(); LANES];
         rho_pi(s, &mut b);
 
@@ -332,8 +332,8 @@ mod x86_64_avx2 {
     /// Fully unrolled so each rotate's shift counts are compile-time
     /// immediates (the shift intrinsics require them). For source index
     /// `idx = x + 5*y` the rotation amount is `RHO[idx]`, written here as
-    /// the explicit `<L, 64-L>` pair (so the `RHO` table stays the single
-    /// readable reference and the cross-path oracle catches any mismatch).
+    /// the explicit `<L, 64-L>` pair (the cross-path oracle catches any
+    /// mismatch).
     /// The destination is `new_x + 5*new_y` with `new_x = y`,
     /// `new_y = (2*x + 3*y) % 5`.
     #[target_feature(enable = "avx2")]
@@ -446,7 +446,7 @@ mod tests {
         // here, so the test is non-tautological and drift-proof against the
         // RC/RHO copies in this crate. ≥1000 random 4×25-lane inputs.
         if !keccak_f1600_x4_available() {
-            // No AVX2 on this host: skip (this host HAS avx2, so it runs).
+            // No AVX2 on this host: the accelerated path is untestable here.
             return;
         }
         let mut prng = SplitMix64::new(0x5eed_1600_a2c2_0042);
@@ -498,7 +498,7 @@ mod tests {
     fn detection_agrees_with_std_runtime_detection() {
         // Cross-path oracle for the hand-rolled CPUID probe: std's
         // is_x86_feature_detected! must agree in both directions. On an
-        // AVX2 host (this host) this asserts available() == true; on older
+        // AVX2 host this asserts available() == true; on older
         // x86_64 it asserts false — meaningful everywhere, skips nowhere.
         let std_says = std::arch::is_x86_feature_detected!("avx2")
             && std::arch::is_x86_feature_detected!("avx")

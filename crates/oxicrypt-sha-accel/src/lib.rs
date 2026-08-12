@@ -1,8 +1,8 @@
 //! CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for `oxicrypt-sha`.
 //!
 //! This is one of the small audited in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (alongside `oxicrypt-zeroize` and
-//! `oxicrypt-aes-accel`). It
+//! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
+//! `oxicrypt-aes-accel`, `oxicrypt-keccak-accel` and `oxicrypt-timer`). It
 //! implements the sanctioned **CPU-intrinsic acceleration** category:
 //! feature-gated, default-off, runtime-detected, with equivalence to the
 //! portable implementation proven by KAT + cross-path oracle. All other
@@ -45,7 +45,9 @@
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU intrinsics and CPUID.
-// Every other in-boundary crate except oxicrypt-zeroize forbids unsafe.
+// The other in-boundary crates that use unsafe are oxicrypt-zeroize,
+// oxicrypt-aes-accel, oxicrypt-keccak-accel and oxicrypt-timer; every
+// other in-boundary crate forbids it.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Returns `true` if the running CPU supports the SHA-NI accelerated
@@ -382,7 +384,7 @@ mod tests {
     fn detection_agrees_with_std_runtime_detection() {
         // Cross-path oracle for the hand-rolled CPUID probe: std's
         // is_x86_feature_detected! must agree in both directions. On a
-        // SHA-NI host (CI gate for this arc) this asserts
+        // SHA-NI host this asserts
         // available() == true; on older x86_64 it asserts false — so the
         // test is meaningful everywhere and skips nowhere on x86_64.
         let std_says = std::arch::is_x86_feature_detected!("sha")
