@@ -35,7 +35,7 @@ optional `parallel` feature pulls in `rayon` (hence `std`).
 
 ### Out-of-boundary / tooling crates
 
-These crates are not part of the validated module's public cryptographic
+These crates are not part of the module's public cryptographic
 API. They are internal infrastructure or out-of-boundary tooling and are
 documented here only for completeness:
 

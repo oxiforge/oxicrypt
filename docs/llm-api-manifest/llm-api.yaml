@@ -170,7 +170,7 @@ modules:
     depends_on: [oxicrypt-sha]
 
   - name: oxicrypt-timer
-    description: "Audited read-only CPU timer/counter reads for the entropy source: serialized TSC (x86_64) and CNTVCT_EL0 (aarch64)."
+    description: "Read-only CPU timer/counter reads for the entropy source: serialized TSC (x86_64) and CNTVCT_EL0 (aarch64)."
     no_std: true
     depends_on: []
 
@@ -234,17 +234,17 @@ modules:
     depends_on: []
 
   - name: oxicrypt-sha-accel
-    description: Audited x86_64 SHA-NI acceleration for oxicrypt-sha; compiled in only via the default-off accel-sha feature.
+    description: x86_64 SHA-NI acceleration for oxicrypt-sha; compiled in only via the default-off accel-sha feature.
     no_std: true
     depends_on: []
 
   - name: oxicrypt-aes-accel
-    description: Audited x86_64 AES-NI block plus PCLMULQDQ GCM GHASH acceleration for oxicrypt-aes; compiled in only via the default-off accel-aes feature.
+    description: x86_64 AES-NI block plus PCLMULQDQ GCM GHASH acceleration for oxicrypt-aes; compiled in only via the default-off accel-aes feature.
     no_std: true
     depends_on: []
 
   - name: oxicrypt-keccak-accel
-    description: Audited x86_64 AVX2 4-way batched Keccak-f[1600] permutation for oxicrypt-sha; compiled in only behind a default-off feature, runtime-detected via CPUID.
+    description: x86_64 AVX2 4-way batched Keccak-f[1600] permutation for oxicrypt-sha; compiled in only behind a default-off feature, runtime-detected via CPUID.
     no_std: true
     depends_on: []
 
@@ -1330,7 +1330,7 @@ types:
   - name: EntropyPipeline
     module: oxicrypt-entropy
     kind: struct
-    description: Pipeline skeleton bound to one NoiseSource and one validated min-entropy claim; health-test and conditioning stages attach as they land.
+    description: Pipeline skeleton bound to one NoiseSource and one injected min-entropy claim; health-test and conditioning stages attach as they land.
 
   - name: OxiRsaPrivateKey2048
     kind: opaque
@@ -16382,7 +16382,7 @@ error_types:
       - name: MacMismatch
         description: The HMAC computed over the slot-zeroed buffer did not match the MAC stored in the slot.
         recoverable: false
-        user_action: The binary does not match what was signed; do not run it as a validated module, and re-sign only a build you trust.
+        user_action: The binary does not match what was signed; do not run it, and re-sign only a build you trust.
       - name: InputTooLong
         description: The input exceeded the length the integrity routine accepts.
         recoverable: false

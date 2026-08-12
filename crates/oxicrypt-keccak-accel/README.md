@@ -1,6 +1,6 @@
 # oxicrypt-keccak-accel
 
-Audited CPU-intrinsic AVX2 4-way batched Keccak-f[1600] acceleration for oxicrypt-sha.
+CPU-intrinsic AVX2 4-way batched Keccak-f[1600] acceleration for oxicrypt-sha.
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy

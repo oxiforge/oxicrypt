@@ -653,7 +653,7 @@ pub fn resolve_datasets_dir(dir: Option<&Path>) -> PathBuf {
     Path::new(&home).join("repos/SP800-90B_EntropyAssessment/bin")
 }
 
-/// Compute the lowercase-hex SHA-256 of `data`, powering the validated module up
+/// Compute the lowercase-hex SHA-256 of `data`, powering the module up
 /// with the real KAT set first (the same gated-SHA provenance path the parity
 /// harness uses). Returns `None` on a module/service error.
 ///
@@ -676,7 +676,7 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Power the validated module up to `Operational` with the real SHA-256 KAT
+/// Power the module up to `Operational` with the real SHA-256 KAT
 /// set so the gated `oxicrypt_sha::sha256` provenance hash can run. Idempotent
 /// and concurrency-safe: the module's state machine lets exactly one caller win
 /// the `PowerOff -> SelfTest` transition; every later call returns

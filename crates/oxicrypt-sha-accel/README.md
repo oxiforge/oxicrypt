@@ -1,6 +1,6 @@
 # oxicrypt-sha-accel
 
-Audited CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for oxicrypt-sha.
+CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for oxicrypt-sha.
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy

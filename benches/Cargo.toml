@@ -26,7 +26,7 @@ default = []
 # jitter tests that `scripts/git-hooks/pre-push` deliberately excludes (their
 # verdict on a virtualized counter is load-dependent), making
 # `raw_counter_unavailable_without_feature` assert nothing, and overriding
-# `esv-harness`'s explicit `default-features = false` so an audited-unsafe
+# `esv-harness`'s explicit `default-features = false` so an auditable-unsafe
 # crate lands in its binary. Behind an optional dep + `required-features`, the
 # default workspace graph is untouched.
 #

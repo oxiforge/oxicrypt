@@ -69,8 +69,8 @@ for file I/O and self-test orchestration.
 | Windows 11 | x86_64 | stable 1.94+ | Tested |
 
 Additional platforms can be declared as vendor-affirmed operational
-environments under FIPS 140-3 IG D.G §3 equivalency. The validated
-certificate will list the exact tested configurations.
+environments under FIPS 140-3 IG D.G §3 equivalency. The certificate,
+once issued, will list the exact tested configurations.
 
 ### Cross-compilation
 

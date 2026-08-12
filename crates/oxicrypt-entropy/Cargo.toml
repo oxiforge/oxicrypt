@@ -19,13 +19,13 @@ workspace = true
 default = []
 # OS monotonic nanosecond clock timer (std-gated surface; core stays no_std).
 std = []
-# Serialized raw CPU counter via the audited oxicrypt-timer crate.
+# Serialized raw CPU counter via the oxicrypt-timer crate.
 raw-counter = ["dep:oxicrypt-timer"]
 # Off-boundary raw-data collection tooling: the `collect` binary, the
 # streaming dataset writer, the versioned dataset layout + sha256 manifest,
 # and the resumable collection-session checkpoint. Pulls in std (fs +
 # serialization) and raw-counter (a real CPU-counter jitter source). This
-# feature is OUTSIDE the validated module boundary — the default and library
+# feature is OUTSIDE the cryptographic boundary — the default and library
 # build graphs carry none of it, and `RawCollector` stays crate-private.
 collection = ["std", "raw-counter"]
 # rand_core 0.9 compatibility: expose the pipeline's vetted conditioned output

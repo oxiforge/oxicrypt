@@ -21,7 +21,7 @@ single-block SHA-256 evaluations. Accelerating that one primitive is the obvious
 
 AVX2 8-way multi-buffer SHA-256 is the standard SIMD technique for this: run eight independent
 SHA-256 message schedules + compression rounds in parallel, one per 32-bit element of a 256-bit
-lane. The arc / roadmap item #113 proposes a new audited-unsafe crate mirroring
+lane. The arc / roadmap item #113 proposes a new auditable-unsafe crate mirroring
 `oxicrypt-sha-accel` / `oxicrypt-keccak-accel`, plus a batched WOTS+ caller that feeds it
 8 chains at a time.
 
@@ -30,7 +30,7 @@ module targets that has SHA-NI) *already* accelerates single-stream SHA-256 in h
 `oxicrypt-sha-accel`. AVX2 multi-buffer is a batching technique that competes directly against
 SHA-NI on the same workload. So the load-bearing question is not "is AVX2 multi-buffer faster
 than scalar SHA-256" (it is) but **"does AVX2 8-way multi-buffer SHA-256 beat SHA-NI
-single-stream for WOTS+, by enough to justify a sixth audited-unsafe SIMD crate?"** If SHA-NI
+single-stream for WOTS+, by enough to justify a sixth auditable-unsafe SIMD crate?"** If SHA-NI
 already saturates the chains, the multi-buffer surface does not pay for its unsafe.
 
 ## Key architectural facts (verified 2026-06-24)
@@ -79,7 +79,7 @@ already saturates the chains, the multi-buffer surface does not pay for its unsa
    already runs on the SHA extension unit** when `accel-sha` is on — this is the incumbent the AVX2
    multi-buffer path must beat.
 
-6. **The audited-unsafe precedent + crate count.** Five audited in-boundary `unsafe` crates exist
+6. **The auditable-unsafe precedent + crate count.** Five readily auditable in-boundary `unsafe` crates exist
    today (`oxicrypt-zeroize`, `oxicrypt-sha-accel`, `oxicrypt-aes-accel`, `oxicrypt-keccak-accel`,
    `oxicrypt-timer`); the security-policy §9.2 accounting and the "22 of 27 `forbid(unsafe_code)`"
    line are stated in those exact terms (`security-policy.md:29`, :2616). A SHA-256 multi-buffer
@@ -115,7 +115,7 @@ cannot pass green.
 
 ## Approach options
 
-### Option A — AVX2 8-way multi-buffer SHA-256, new audited-unsafe crate + batched WOTS+ caller
+### Option A — AVX2 8-way multi-buffer SHA-256, new auditable-unsafe crate + batched WOTS+ caller
 
 A new `oxicrypt-sha-mb` (or `-sha256-mb`) crate exposing
 `sha256_compress_x8(states: &mut [[u32; 8]; 8], blocks: &[[u8; 64]; 8]) -> bool` (the
@@ -135,7 +135,7 @@ single-stream, but against the dedicated hardware instruction it is at best a wa
 loss, because SHA-NI does in two instructions what multi-buffer spreads across many AVX2 ops.
 (These are estimates from published multi-buffer-vs-SHA-NI comparisons; flagged as estimates — a
 real bench on this host would confirm, but the architectural reason is robust.) So on exactly the
-hosts that matter most (modern x86_64 with SHA-NI), Option A delivers **substantial audited unsafe
+hosts that matter most (modern x86_64 with SHA-NI), Option A delivers **substantial auditable unsafe
 for a likely-negative or wash result.** That is the `avx2-keccak.md` Option-A failure mode
 repeated: unsafe SIMD for a marginal/uncertain win.
 
@@ -163,7 +163,7 @@ across the thousands of independent chains.
 |---|---|---|
 | Per-`F` speed on SHA-NI host | likely ≤ SHA-NI single-stream (wash/loss, estimated) | full SHA-NI hardware speed |
 | Cross-chain throughput | 8-way lockstep, lane waste on ragged chain lengths | rayon across all cores, no lane waste |
-| New audited unsafe | **yes — 6th crate**, §9.2 + N-of-27 update, new CPUID/quarantine/oracle | **none** |
+| New auditable unsafe | **yes — 6th crate**, §9.2 + N-of-27 update, new CPUID/quarantine/oracle | **none** |
 | Caller rewiring | yes (batched WOTS+ sweep, ragged-length handling) | none (already shipped) |
 | Win only on | AVX2-without-SHA-NI legacy CPUs | — |
 | CMVP surface impact | grows the unsafe-audit footprint for a legacy-only gain | unchanged |
@@ -175,10 +175,10 @@ On the host class oxicrypt actually targets, Option B equals or beats Option A w
 
 - **Default build unchanged.** Any `accel-*` feature default OFF, runtime CPUID, portable fallback
   when AVX2 absent; the CMVP validation-target configuration stays the portable single-threaded build.
-- **Audited-unsafe quarantine.** All `unsafe` isolated in one dedicated `no_std` crate, fenced
+- **Auditable-unsafe quarantine.** All `unsafe` isolated in one dedicated `no_std` crate, fenced
   behind a `#[target_feature(enable = "avx2")]` boundary with a safe CPUID precondition and an
   `AtomicU8`-cached probe — mirroring `oxicrypt-sha-accel` / `oxicrypt-keccak-accel` exactly. This
-  would be the **sixth** audited in-boundary exception; §9.2 of the security policy and the
+  would be the **sixth** readily auditable in-boundary exception; §9.2 of the security policy and the
   "22 of 27 `forbid(unsafe_code)`" accounting must be updated in the same change.
 - **Byte-exact equivalence oracle.** Feature ON == feature OFF, bit-for-bit, on: every SHA-2-set
   power-up KAT, every SHA-2-set NIST ACVP keyGen/sigGen vector, and a crate-local
@@ -196,7 +196,7 @@ This is the same call `avx2-keccak.md` made about its Option A, for the same rea
 is *more* clear-cut, because Keccak has **no** hardware instruction (so its Option B / 4-way batch
 was the only acceleration available and was worth building), whereas SHA-256 **does** have a
 hardware instruction that the module already wraps. AVX2 multi-buffer is the technique you reach for
-*because* there is no SHA-NI; spending a sixth audited-unsafe crate to add it *alongside* SHA-NI
+*because* there is no SHA-NI; spending a sixth auditable-unsafe crate to add it *alongside* SHA-NI
 inverts that logic. The independent-chain throughput that multi-buffer would capture is already
 captured, byte-identically and unsafe-free, by the `parallel` rayon sweep.
 
@@ -212,7 +212,7 @@ reputation in isolation. Until then, the portable+SHA-NI+rayon stack remains the
 - **New crate vs extend `oxicrypt-sha-accel`.** If ever built, does the 8-way kernel live in a new
   `oxicrypt-sha-mb` crate (clean per-technique quarantine, matches the keccak-accel split) or as a
   second entry point in `oxicrypt-sha-accel` (one SHA-acceleration crate, two execution units —
-  SHA-NI single-stream + AVX2 multi-buffer)? The latter keeps the audited-crate count at five but
+  SHA-NI single-stream + AVX2 multi-buffer)? The latter keeps the auditable-crate count at five but
   mixes two unsafe techniques in one audit unit.
 - **The SHA-NI-vs-AVX2 throughput crossover** on real WOTS+ traffic — the number that would
   actually justify or kill Option A. Needs a bench on SHA-NI hardware (this host has SHA-NI),

@@ -37,7 +37,7 @@ not reachable from the command line.
 
 `oxi` also initializes the module **without** running the power-up known-answer
 tests, because the binary is not signed. Treat it as a convenience tool, not as a
-demonstration of the validated path.
+demonstration of the self-tested path.
 
 ## Documentation
 

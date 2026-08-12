@@ -56,14 +56,14 @@ mod tests {
     /// policy cannot drift apart silently.
     const OUT_OF_BOUNDARY: [&str; 2] = ["oxicrypt-ffi", "oxicrypt-maxwell"];
 
-    /// The audited in-boundary `unsafe` exception crates. The canonical
+    /// The in-boundary `unsafe` exception crates. The canonical
     /// statement is security-policy.md §9.2. `accounting()` asserts this set
     /// equals the disk-derived set of in-boundary crates lacking the forbid
     /// attribute, so a `forbid(unsafe_code)` swap — attribute removed from one
     /// crate while another gains it — fails by name, not just by count.
     /// `deny(unsafe_code)` deliberately does not qualify: the policy's claim
     /// is the compiler-hard forbid level.
-    const AUDITED_EXCEPTIONS: [&str; 5] = [
+    const UNSAFE_EXCEPTIONS: [&str; 5] = [
         "oxicrypt-aes-accel",
         "oxicrypt-keccak-accel",
         "oxicrypt-sha-accel",
@@ -536,11 +536,11 @@ mod tests {
             .cloned()
             .collect();
         let declared: BTreeSet<String> =
-            AUDITED_EXCEPTIONS.iter().map(ToString::to_string).collect();
+            UNSAFE_EXCEPTIONS.iter().map(ToString::to_string).collect();
         assert_eq!(
             exceptions, declared,
             "in-boundary crates without #![forbid(unsafe_code)] no longer match the declared \
-             audited-exception set — update security-policy.md §9.2, AGENTS.md, and this guard \
+             unsafe-exception set — update security-policy.md §9.2, AGENTS.md, and this guard \
              together"
         );
         Accounting {
@@ -1069,7 +1069,7 @@ mod tests {
     /// Pinned per marker, not as a total. A bare total is satisfied by
     /// substitution — delete a `TODO`, add a `[design pending]`, and the sum is
     /// unchanged — which is the failure this crate already rejects elsewhere:
-    /// `AUDITED_EXCEPTIONS` exists so a `forbid(unsafe_code)` swap "fails by
+    /// `UNSAFE_EXCEPTIONS` exists so a `forbid(unsafe_code)` swap "fails by
     /// name, not just by count". The same standard applies here.
     ///
     /// `[MARK` is in the list because the policy uses a second convention for the
@@ -1232,6 +1232,8 @@ mod tests {
         let ratio = format!("({} of {})", a.forbid_in_boundary, a.in_boundary);
         assert!(policy.contains(&ratio), "policy §9.2: {ratio:?} missing");
         let unsafe_summary = format!(
+            // The policy still says "audited" here. It is withheld from this
+            // tree and is swept separately; this string moves when it does.
             "{} carry `#![forbid(unsafe_code)]`, {} are the audited exception crates",
             a.forbid_in_boundary,
             word(a.exceptions.len())
@@ -1243,7 +1245,7 @@ mod tests {
         for exception in &a.exceptions {
             assert!(
                 policy.contains(&format!("`{exception}`")),
-                "policy: audited exception `{exception}` not named"
+                "policy: unsafe exception `{exception}` not named"
             );
         }
 
@@ -1267,7 +1269,7 @@ mod tests {
         );
         assert!(agents.contains(&ratio), "AGENTS.md: {ratio:?} missing");
         let exceptions = format!(
-            "The {} audited in-boundary exceptions",
+            "The {} readily auditable in-boundary exceptions",
             word(a.exceptions.len())
         );
         assert!(
@@ -1277,7 +1279,7 @@ mod tests {
         for exception in &a.exceptions {
             assert!(
                 agents.contains(&format!("`{exception}`")),
-                "AGENTS.md: audited exception `{exception}` not named"
+                "AGENTS.md: unsafe exception `{exception}` not named"
             );
         }
     }

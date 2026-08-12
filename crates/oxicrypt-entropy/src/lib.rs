@@ -52,18 +52,18 @@
 //! behind a named feature, and the default build graph carries no
 //! optional dependency.
 //!
-//! - **`default = []`** — the validated configuration: `no_std` core,
+//! - **`default = []`** — the validation-target configuration: `no_std` core,
 //!   no optional dependency. The sealed [`source::NoiseSource`] trait,
 //!   [`health`] tests, [`conditioner`], and the cited [`sp800_90b`]
 //!   numerics are all available here.
 //! - **`std`** — enables the OS monotonic-nanosecond-clock timer surface
 //!   (pulls in `std`; brings no third-party dependency).
 //! - **`raw-counter`** — enables the serialized raw CPU counter timer via
-//!   the audited `oxicrypt-timer` crate (`dep:oxicrypt-timer`), the only
+//!   the readily auditable `oxicrypt-timer` crate (`dep:oxicrypt-timer`), the only
 //!   optional dependency.
 //! - **`collection`** (= `std` + `raw-counter`) — the off-boundary
 //!   raw-data `collection` module tooling backing the `collect` binary;
-//!   never part of the validated surface.
+//!   never part of the validation-target surface.
 
 #![forbid(unsafe_code)]
 #![no_std]
@@ -97,7 +97,7 @@ pub mod rand_core_compat;
 /// raw + restart datasets to disk under a versioned layout with a sha256
 /// manifest, resumable via a content-hash session checkpoint. It is gated
 /// behind the `collection` feature so the default build graph, the library's
-/// validated surface, and its rustdoc carry **none** of the tooling — and
+/// validation-target surface, and its rustdoc carry **none** of the tooling — and
 /// `RawCollector` itself remains crate-private (this module reaches it
 /// in-crate; it is never re-exported). The single public entry point is
 /// [`collection::run`], which the thin `collect` binary calls.

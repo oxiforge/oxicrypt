@@ -45,7 +45,7 @@ enum State {
     Poisoned,
 }
 
-/// An entropy pipeline bound to one noise source, one validated
+/// An entropy pipeline bound to one noise source, one injected
 /// min-entropy claim, and one health-test configuration.
 #[derive(Debug)]
 pub struct EntropyPipeline<S: NoiseSource> {
@@ -235,7 +235,7 @@ impl<S: NoiseSource> EntropyPipeline<S> {
         self.conditioner
     }
 
-    /// The validated min-entropy claim this pipeline operates under.
+    /// The injected min-entropy claim this pipeline operates under.
     #[must_use]
     pub const fn claimed_h(&self) -> MinEntropy {
         self.claimed_h
@@ -799,7 +799,7 @@ mod tests {
     /// nonce) → instantiate + generate through `HashDrbgSha256`'s gated
     /// API. The instantiate/generate calls go through both the
     /// `require_operational` and `require_allowed` gates, so this also
-    /// proves the seed flows across the validated module boundary.
+    /// proves the seed flows across the cryptographic boundary.
     #[test]
     fn conditioned_output_seeds_module_gated_drbg() {
         use oxicrypt_drbg::HashDrbgSha256;

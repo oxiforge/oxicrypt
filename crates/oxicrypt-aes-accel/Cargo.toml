@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-aes-accel"
-description = "Audited CPU-intrinsic AES block acceleration (x86_64 AES-NI) for oxicrypt-aes."
+description = "CPU-intrinsic AES block acceleration (x86_64 AES-NI) for oxicrypt-aes."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

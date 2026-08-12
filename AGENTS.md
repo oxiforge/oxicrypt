@@ -11,7 +11,7 @@ algorithms across a 29-crate workspace (AES, SHA, SHA-3/XOF, HMAC, CMAC, KDF, TL
 ECDSA, EdDSA, RSA, DH, ML-KEM, ML-DSA, SLH-DSA, LMS, XMSS, plus `zeroize`, `sha-accel`, `integrity`,
 `ffi`, `module`, `test-vectors`, and the SP 800-90B `entropy` scaffolding). The crate is `no_std`-capable and
 disciplined about `unsafe`: **22 of the 27 crates inside the cryptographic boundary are
-`#![forbid(unsafe_code)]`.** The five audited in-boundary exceptions, each isolating sanctioned
+`#![forbid(unsafe_code)]`.** The five readily auditable in-boundary exceptions, each isolating sanctioned
 `unsafe` in a small dedicated crate, are `oxicrypt-zeroize` (volatile zeroization of critical
 security parameters), the three CPU-intrinsic acceleration crates `oxicrypt-sha-accel` /
 `oxicrypt-aes-accel` / `oxicrypt-keccak-accel` (feature-gated, default-off, runtime-detected,

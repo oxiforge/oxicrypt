@@ -30,7 +30,7 @@ oxicrypt-module = { workspace = true }
 # §5.1 statistic-18 (compression): pure-Rust bzip2. bzip2 0.6's default backend
 # is libbz2-rs-sys (pure Rust); the `bzip2-sys` C backend is an opt-in feature we
 # deliberately do NOT enable. maxwell is out-of-boundary tooling, so this — the
-# workspace's first third-party dep — never touches the validated module. See
+# workspace's first third-party dep — never touches the module. See
 # docs/security-policy/security-policy.md.
 bzip2 = "0.6"
 

@@ -121,13 +121,13 @@ crates/
   oxicrypt-module        State machine, algorithm-profile gating, self-test runner
   oxicrypt-integrity     Power-up software integrity check (IG 10.3.A)
   oxicrypt-sha           SHA-1, SHA-2, SHA-3 hash families
-  oxicrypt-sha-accel     Audited x86_64 SHA-NI SHA-256 acceleration (default-off `accel-sha` feature)
-  oxicrypt-keccak-accel  Audited x86_64 AVX2 4-way batched Keccak-f[1600] acceleration (default-off `accel-keccak` feature)
+  oxicrypt-sha-accel     x86_64 SHA-NI SHA-256 acceleration (default-off `accel-sha` feature)
+  oxicrypt-keccak-accel  x86_64 AVX2 4-way batched Keccak-f[1600] acceleration (default-off `accel-keccak` feature)
   oxicrypt-xof           SHAKE128, SHAKE256, cSHAKE, KMAC, TupleHash, ParallelHash
   oxicrypt-hmac          HMAC over all 11 approved hashes
   oxicrypt-cmac          AES-CMAC (SP 800-38B)
   oxicrypt-aes           AES block cipher and all approved modes
-  oxicrypt-aes-accel     Audited x86_64 AES-NI block + PCLMULQDQ GCM GHASH acceleration (default-off `accel-aes` feature)
+  oxicrypt-aes-accel     x86_64 AES-NI block + PCLMULQDQ GCM GHASH acceleration (default-off `accel-aes` feature)
   oxicrypt-drbg          CTR_DRBG, Hash_DRBG, HMAC_DRBG
   oxicrypt-kdf           SP 800-108 KBKDF, HKDF, PBKDF2
   oxicrypt-tls-kdf       TLS 1.2 KDF (RFC 5246) + TLS 1.3 KDF (RFC 8446 §7.1)
@@ -142,7 +142,7 @@ crates/
   oxicrypt-xmss          XMSS hash-based signatures (SP 800-208)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
   oxicrypt-entropy       SP 800-90B entropy source in progress (jitter noise source, RCT/APT health tests, timer adequacy, cited spec constants; pre-validation — no entropy claims)
-  oxicrypt-timer         Audited read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
+  oxicrypt-timer         Read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
   oxicrypt-ffi           C ABI wrappers (cdylib + staticlib) with profile selection
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
   oxicrypt-maxwell       Out-of-boundary SP 800-90B entropy-assessment tool (EA-parity estimators, IID battery, restart analysis)
@@ -163,16 +163,16 @@ single module binary. The ACVP harness and tools are outside the boundary.
 
 ### Design principles
 
-**Zero third-party dependencies in the validated build.** Phase 1 requires
+**Zero third-party dependencies in the default build.** Phase 1 requires
 every line of cryptographic code in the default build to be written in-tree in
 pure Rust. Dependencies are re-evaluated per-crate and must be justified in the
 Security Policy before adoption; the only third-party dependencies present are
 gated behind non-default, default-off performance features and never enter the
 CMVP validation-target default build graph: the `parallel` feature on the hash-based and
 lattice crates pulls in `rayon` for data-parallel keygen, and the `accel-sha` /
-`accel-aes` features pull the audited CPU-intrinsic crates. All are justified in
+`accel-aes` features pull the readily auditable CPU-intrinsic crates. All are justified in
 the Security Policy (the `parallel` rules R75/R77/R83/R84/R85 and the `accel-*`
-audited-unsafe rules). See **Performance features** below.
+auditable-unsafe rules). See **Performance features** below.
 
 **`no_std` by default.** The core algorithm crates use `#![no_std]` with
 `alloc` where necessary, making them suitable for embedded and `wasm32` targets.
@@ -191,7 +191,7 @@ were discovered and fixed by this harness.
 ### Performance features
 
 All performance features are **default-OFF, non-validated, and byte-identical to
-the validated default build** — the CMVP-tested configuration is the portable,
+the default build** — the CMVP-tested configuration is the portable,
 single-threaded, intrinsic-free default. They exist purely for throughput; their
 equivalence to the default build is argued structurally and corroborated by
 KAT-on/off + determinism oracles per crate (Security Policy).

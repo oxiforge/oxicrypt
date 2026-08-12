@@ -1,7 +1,7 @@
 //! Raw CPU counter reads (x86_64 TSC, aarch64 CNTVCT_EL0) for the
 //! oxicrypt entropy source.
 //!
-//! This is the **fourth** small audited in-boundary crate in the oxicrypt
+//! This is the **fourth** small readily auditable in-boundary crate in the oxicrypt
 //! workspace that uses `unsafe` (alongside `oxicrypt-zeroize`,
 //! `oxicrypt-sha-accel`, and `oxicrypt-aes-accel`). It implements the
 //! sanctioned **CPU timer/counter intrinsic** category: every `unsafe`

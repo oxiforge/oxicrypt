@@ -6,7 +6,7 @@ invocation, writes them under a versioned per-OE layout with a top-level
 sha256 manifest, and is resumable via a content-hash checkpoint.
 
 > **Off-boundary tooling.** `collect` is built behind the default-off
-> `collection` feature and is **outside** the validated module boundary. The
+> `collection` feature and is **outside** the cryptographic boundary. The
 > default and library build graphs carry none of it, and the crate's
 > `RawCollector` stays crate-private. Build it explicitly:
 >

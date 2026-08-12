@@ -2,7 +2,7 @@
 //!
 //! This is one of exactly **two** in-boundary crates in the oxicrypt
 //! workspace that use `unsafe` (the other is `oxicrypt-sha-accel`,
-//! the audited CPU-intrinsic acceleration crate). It provides a
+//! the readily auditable CPU-intrinsic acceleration crate). It provides a
 //! single mechanism, [`zeroize`], that writes zeroes through a
 //! volatile store so the compiler cannot elide the write even if it
 //! can prove the buffer is never read again. All other in-boundary

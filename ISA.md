@@ -52,7 +52,7 @@ rather than retrofitted.
 
 - **FIPS levels above 1** — Level 1 is the target; physical-security and higher operational-environment
   requirements are not in scope.
-- **Non-approved / experimental algorithms** in the validated boundary — approved algorithm set only.
+- **Non-approved / experimental algorithms** in the cryptographic boundary — approved algorithm set only.
 - **TLS / protocol layers** — those live in sibling crates (`oxitls`), built *on* oxicrypt, not in it.
 - **A production ESV certificate** — the entropy assessment target is the NIST demo server; an
   accredited 17ESV lab engagement is a later, separately-funded step.
@@ -68,14 +68,14 @@ rather than retrofitted.
 
 - **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 22 of 27 in-boundary crates
   carry it. It is a build-time control that enters the conformance argument. Three sanctioned
-  `unsafe` categories exist, isolated in five small audited crates: (1) **volatile CSP
-  zeroization** — `oxicrypt-zeroize`, one audited `unsafe` mechanism for `write_volatile`;
+  `unsafe` categories exist, isolated in five small, readily auditable crates: (1) **volatile CSP
+  zeroization** — `oxicrypt-zeroize`, one isolated `unsafe` mechanism for `write_volatile`;
   (2) **CPU-intrinsic acceleration** — `oxicrypt-sha-accel` (x86_64 SHA-NI), `oxicrypt-aes-accel`
   (x86_64 AES-NI + PCLMULQDQ GHASH), and `oxicrypt-keccak-accel` (x86_64 AVX2 4-way batched
   Keccak-f[1600]): feature-gated, default-off, runtime-detected, equivalence to the portable path
   proven by KAT + cross-path oracle; and (3) **CPU timer/counter intrinsics** — `oxicrypt-timer`:
   read-only, side-effect-free counter reads, no cryptographic logic. The default build graph contains
-  no acceleration crate; the validated portable baseline is the shipping default. The C-ABI crate
+  no acceleration crate; the portable baseline is the shipping default. The C-ABI crate
   (`oxicrypt-ffi`) sits outside the boundary and necessarily carries unsafe.
 - **One home per security claim** — the CMVP claims live in the Security Policy (withheld from this
   repository — `docs/security-policy/README.md`); code and rustdoc point at it, never restate it.
@@ -265,14 +265,14 @@ commit-is-the-gate doc-sync discipline.
 - [x] ISC-132: A certification-grade collection run that trips RCT/APT mid-run is invalidated and re-collected — the dataset submitted for a min-entropy estimate is a clean, contiguous, trip-free run; the unfiltered-annotated capture is retained only as characterization evidence, never window-stitched into a submission. Probe(M): `cargo test -p oxicrypt-entropy --lib certification_trip_invalidates_and_signals_recollect`; raw.rs:1842-1848
 - [x] ISC-133: The minimal pilot runs a lightweight FFT + autocorrelation periodicity screen on the 1M raw dataset (distinct from the deferred ≥10M independence analysis); a dominant periodic component fails pilot acceptance. Probe(M): `cargo test -p oxicrypt-maxwell --lib pure_periodic_sawtooth_is_flagged`; periodicity.rs:583; synthetic sources only
 - [x] ISC-134: Anti: maxwell's permutation shuffle never seeds from a non-deterministic source (no /dev/urandom, no system entropy) — unlike EA, which seeds xoshiro256 from /dev/urandom (`utils.h:580`); maxwell's seed is a fixed documented constant so every run is bit-reproducible. Probe(M): `cargo test -p oxicrypt-maxwell --lib determinism_test_bit_exact`; permutation.rs:1231, fixed SHUFFLE_SEED
-- [x] ISC-135: `forbid(unsafe_code)` accounting is recomputed from disk and matches the security policy — 22 of 27 in-boundary crates carry it, with five audited exception crates named, not merely counted. Probe(M): `cargo test -p doc-guard policy_states_the_as_built_accounting`; doc-guard/src/lib.rs:153 recomputes from disk and fails by crate NAME, not count
+- [x] ISC-135: `forbid(unsafe_code)` accounting is recomputed from disk and matches the security policy — 22 of 27 in-boundary crates carry it, with five unsafe exception crates named, not merely counted. Probe(M): `cargo test -p doc-guard policy_states_the_as_built_accounting`; doc-guard/src/lib.rs:153 recomputes from disk and fails by crate NAME, not count
 - [x] ISC-136: README.md and AGENTS.md state the same as-built unsafe accounting as the security policy. Probe(M): `cargo test -p doc-guard readme_states_the_count_and_lists_every_crate agents_md_states_the_as_built_accounting`; the same accounting asserted in README.md and AGENTS.md
 - [ ] ISC-137: Every approved algorithm has known-answer / ACVP vectors that pass. Probe(M): TODO — no single probe asserts every approved algorithm has passing KAT/ACVP vectors
 - [x] ISC-138: Power-up self-tests run and gate operation — no approved service is reachable before they pass. Probe(M): `cargo test -p oxicrypt-integrity integrity_self_test`; power-up self-test executes and gates operation
 - [ ] ISC-139: The cryptographic module boundary is formally defined, and its membership is derivable rather than asserted. Probe(M): TODO — module boundary is defined in prose; no probe recomputes its membership
 - [ ] ISC-140: SSPs are zeroized on drop; the zeroization invariant is documented and tested. Probe(P): `cargo test -p oxicrypt-zeroize zeroize_clears_bytes`; judgment: proves the primitive, not that every SSP type calls it on drop
 - [x] ISC-141: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` are clean. Probe(M): `cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings`; both exit 0; a lint regression fails closed
-- [ ] ISC-142: Anti: no non-approved algorithm is reachable through the validated module boundary. Probe(M): TODO — no probe asserts non-approved algorithms are unreachable through the boundary
+- [ ] ISC-142: Anti: no non-approved algorithm is reachable through the cryptographic boundary. Probe(M): TODO — no probe asserts non-approved algorithms are unreachable through the boundary
 - [x] ISC-143: Anti: no host path, private-project name, or internal context appears in any tracked file, including binary files. Probe(M): `git grep -nE '/home/[a-z]+|/Users/[a-z]+|C:\\Users' -- . ':!vendor'`; no output, exit 1; control: adding |oxicrypt matches README.md; VERIFIED to scan binary files, which is how the .pyc leak was found
 - [ ] ISC-144: Root `lama.yaml` and `docs/llm-api-manifest/llm-api.yaml` match the public API surface. Probe(M): TODO — no probe compares lama.yaml / llm-api.yaml against the public API surface
 - [x] ISC-145: `oxicrypt-maxwell` matches EA v1.1.8 on input validation — a sample exceeding the declared `bits_per_symbol` is refused with a typed error and surfaced as a non-zero CLI exit, a narrower one warns and continues, and a refused run writes no evidence sidecar. Probe(M): `cargo test -p oxicrypt-maxwell --lib independence::` asserts the typed error's variant and all five fields at every width `1..=7` via the inclusive `2^bits - 1` / `2^bits` boundary loop, plus a two-offender fixture pinning `first_index` and `count`, and the narrower-source report; `cargo test -p oxicrypt-maxwell --test cli_independence` drives the real binary for the non-zero exit, the absent sidecar, and the warning
@@ -323,7 +323,7 @@ Coverage of the workspace by articulated criteria. Crates with no criteria are n
 | crate | boundary | criteria | notes |
 |---|---|---|---|
 | `oxicrypt-aes` | in | — | no articulated criteria |
-| `oxicrypt-aes-accel` | in | — | audited `unsafe` exception |
+| `oxicrypt-aes-accel` | in | — | `unsafe` exception |
 | `oxicrypt-cmac` | in | — | no articulated criteria |
 | `oxicrypt-dh` | in | — | no articulated criteria |
 | `oxicrypt-drbg` | in | — | no articulated criteria |
@@ -335,7 +335,7 @@ Coverage of the workspace by articulated criteria. Crates with no criteria are n
 | `oxicrypt-hmac` | in | — | no articulated criteria |
 | `oxicrypt-integrity` | in | — | no articulated criteria |
 | `oxicrypt-kdf` | in | — | no articulated criteria |
-| `oxicrypt-keccak-accel` | in | — | audited `unsafe` exception |
+| `oxicrypt-keccak-accel` | in | — | `unsafe` exception |
 | `oxicrypt-lms` | in | — | no articulated criteria |
 | `oxicrypt-maxwell` | out | 40 |  |
 | `oxicrypt-ml-dsa` | in | — | no articulated criteria |
@@ -343,14 +343,14 @@ Coverage of the workspace by articulated criteria. Crates with no criteria are n
 | `oxicrypt-module` | in | — | no articulated criteria |
 | `oxicrypt-rsa` | in | — | no articulated criteria |
 | `oxicrypt-sha` | in | — | no articulated criteria |
-| `oxicrypt-sha-accel` | in | — | audited `unsafe` exception |
+| `oxicrypt-sha-accel` | in | — | `unsafe` exception |
 | `oxicrypt-slh-dsa` | in | — | no articulated criteria |
 | `oxicrypt-test-vectors` | in | — | no articulated criteria |
-| `oxicrypt-timer` | in | — | audited `unsafe` exception |
+| `oxicrypt-timer` | in | — | `unsafe` exception |
 | `oxicrypt-tls-kdf` | in | — | no articulated criteria |
 | `oxicrypt-xmss` | in | — | no articulated criteria |
 | `oxicrypt-xof` | in | — | no articulated criteria |
-| `oxicrypt-zeroize` | in | — | audited `unsafe` exception |
+| `oxicrypt-zeroize` | in | — | `unsafe` exception |
 | `acvp-harness` | tooling | — | outside the boundary |
 | `esv-harness` | tooling | 18 | outside the boundary |
 | `oxi` | tooling | — | outside the boundary |
@@ -362,18 +362,18 @@ Coverage of the workspace by articulated criteria. Crates with no criteria are n
 Decisions in force, with the reasoning that makes each hard to vary. Superseded amendments and the
 route taken to reach a decision are not recorded here — the git history and `CHANGELOG.md` hold those.
 
-- **Three sanctioned `unsafe` categories, five audited crates.** In-boundary code is
+- **Three sanctioned `unsafe` categories, five readily auditable crates.** In-boundary code is
   `#![forbid(unsafe_code)]` by default because it is a build-time control that enters the conformance
-  argument, not a style preference. Three categories are sanctioned, each isolated in a small audited
+  argument, not a style preference. Three categories are sanctioned, each isolated in a small, readily auditable
   crate: **volatile CSP zeroization** (`oxicrypt-zeroize`, one `write_volatile` mechanism);
   **CPU-intrinsic acceleration** (`oxicrypt-sha-accel`, `oxicrypt-aes-accel`, `oxicrypt-keccak-accel`
   — feature-gated, default-off, runtime-detected, equivalence to the portable path proven by KAT plus
   a cross-path oracle); and **CPU timer/counter intrinsics** (`oxicrypt-timer` — read-only,
   side-effect-free, no cryptographic logic). Acceleration is admitted only where an oracle can prove
   byte-identical output, which is why the category is safe to widen and why each new member ships with
-  its differential test. The default build graph contains no acceleration crate: the validated portable
+  its differential test. The default build graph contains no acceleration crate: the portable
   baseline is the shipping default. `oxicrypt-ffi` sits outside the boundary and necessarily carries
-  `unsafe`. Current accounting — 22 of 27 in-boundary crates carrying `forbid`, five audited
+  `unsafe`. Current accounting — 22 of 27 in-boundary crates carrying `forbid`, five readily auditable
   exceptions — is recomputed from disk by `doc-guard` rather than restated, so it cannot drift
   (ISC-135). Security policy §9.2.
 

@@ -27,13 +27,13 @@ oxicrypt-keccak-accel = { workspace = true, optional = true }
 # Runtime-detected: with the feature on, the compression boundary
 # dispatches to `oxicrypt-sha-accel` only when CPUID confirms SHA-NI,
 # else the portable path runs. Default builds carry no accel dependency
-# and are byte-for-byte the validated portable baseline.
+# and are byte-for-byte the portable baseline.
 accel-sha = ["dep:oxicrypt-sha-accel"]
 # CPU-intrinsic AVX2 4-way batched Keccak-f[1600] acceleration, default OFF.
 # Runtime-detected: with the feature on, the batched `Sponge4` permutation
 # dispatches to `oxicrypt-keccak-accel` only when CPUID confirms AVX2, else
 # the portable 4× path runs. Default builds carry no accel dependency and
-# are byte-for-byte the validated portable baseline.
+# are byte-for-byte the portable baseline.
 accel-keccak = ["dep:oxicrypt-keccak-accel"]
 
 [package.metadata.lama]

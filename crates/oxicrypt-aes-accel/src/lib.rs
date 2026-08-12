@@ -1,7 +1,7 @@
 //! CPU-intrinsic AES block acceleration (x86_64 AES-NI) for
 //! `oxicrypt-aes`.
 //!
-//! This is one of the small audited in-boundary crates in the oxicrypt
+//! This is one of the small readily auditable in-boundary crates in the oxicrypt
 //! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
 //! `oxicrypt-sha-accel`, `oxicrypt-keccak-accel` and `oxicrypt-timer`).
 //! It implements the sanctioned **CPU-intrinsic acceleration** category

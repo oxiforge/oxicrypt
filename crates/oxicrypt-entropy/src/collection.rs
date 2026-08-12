@@ -4,8 +4,8 @@
 //! crate-private [`crate::raw`] collector to write SP 800-90B raw and
 //! restart datasets to disk, under a versioned per-OE layout with a
 //! top-level sha256 manifest, resumable via a content-hash session
-//! checkpoint. **Everything here is outside the validated module boundary**
-//! — it is gated behind the `collection` feature, the validated library
+//! checkpoint. **Everything here is outside the cryptographic boundary**
+//! — it is gated behind the `collection` feature, the library
 //! surface carries none of it, and the only public entry point is [`run`].
 //!
 //! # Why a fresh source per restart round

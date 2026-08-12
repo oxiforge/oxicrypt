@@ -38,7 +38,7 @@ API change, accelerates every existing SHAKE/SHA-3 caller.
 **Problem:** single-state Keccak-f[1600] vectorizes poorly on AVX2. The 25-lane state does not
 map onto 4×u64 SIMD without heavy cross-lane shuffles in θ/ρ/π; published single-state AVX2
 implementations typically gain little over a good scalar (BMI-rotate) core and sometimes lose.
-**Substantial, audited unsafe SIMD for a marginal and uncertain win — fails the reward/risk bar.**
+**Substantial, auditable unsafe SIMD for a marginal and uncertain win — fails the reward/risk bar.**
 
 ### Option B — 4-way batched permutation `KeccakP1600times4` (high value, needs API)
 Run 4 independent sponges in parallel, each of the 25 lanes a `__m256i` holding lane *i* of 4
@@ -56,9 +56,9 @@ epic, not a single-night build.
 
 - **Default build unchanged:** `accel-*` feature default OFF, runtime CPUID, portable fallback
   when AVX2 absent; the CMVP validation-target configuration stays the portable single-threaded build.
-- **Audited-unsafe quarantine:** all `unsafe` isolated in one dedicated crate, fenced behind a
+- **Auditable-unsafe quarantine:** all `unsafe` isolated in one dedicated crate, fenced behind a
   `#[target_feature]` boundary with a safe CPUID precondition — mirroring `oxicrypt-sha-accel`.
-  This adds a 5th audited in-boundary exception crate; §9.2 of the security policy and the
+  This adds a 5th readily auditable in-boundary exception crate; §9.2 of the security policy and the
   "N-of-26 `forbid(unsafe_code)`" accounting must be updated in the same change.
 - **Byte-exact equivalence oracle:** every SHAKE128/256, cSHAKE, KMAC, SHA3-* KAT in
   `oxicrypt-xof` + `oxicrypt-sha` passes byte-identical with the feature ON and OFF; a
@@ -68,7 +68,7 @@ epic, not a single-night build.
 ## Recommendation
 
 Pursue **Option B** as a scoped epic when prioritized — it is the only form that justifies the
-audited-unsafe surface — starting with the batched sponge API design, then one caller (LMS leaf
+auditable-unsafe surface — starting with the batched sponge API design, then one caller (LMS leaf
 sweep) as the first beneficiary. **Do not ship Option A**: its gain does not justify the unsafe.
 Until then, the portable scalar Keccak remains the path.
 

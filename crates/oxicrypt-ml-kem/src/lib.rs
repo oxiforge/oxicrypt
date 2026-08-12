@@ -107,8 +107,8 @@
 //! feature pulls in `rayon` (hence `std`), so the crate is
 //! `#![no_std]` only when the feature is OFF; the default build graph
 //! contains no `rayon` and is the CMVP validation-target single-threaded
-//! configuration. `parallel` is a throughput option, not a validated
-//! path.
+//! configuration. `parallel` is a throughput option, not part of the validation
+//! target.
 
 #![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]

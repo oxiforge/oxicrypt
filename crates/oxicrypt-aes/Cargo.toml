@@ -25,7 +25,7 @@ oxicrypt-aes-accel = { workspace = true, optional = true }
 # Runtime-detected: with the feature on, the single-block boundary
 # dispatches to `oxicrypt-aes-accel` only when CPUID confirms AESNI,
 # else the portable path runs. Default builds carry no accel dependency
-# and are byte-for-byte the validated portable baseline.
+# and are byte-for-byte the portable baseline.
 accel-aes = ["dep:oxicrypt-aes-accel"]
 
 [package.metadata.lama]

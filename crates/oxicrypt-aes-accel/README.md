@@ -1,6 +1,6 @@
 # oxicrypt-aes-accel
 
-Audited CPU-intrinsic AES block acceleration (x86_64 AES-NI) for oxicrypt-aes.
+CPU-intrinsic AES block acceleration (x86_64 AES-NI) for oxicrypt-aes.
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy

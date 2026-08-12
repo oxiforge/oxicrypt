@@ -1,6 +1,6 @@
 # oxicrypt-timer
 
-Audited raw CPU counter reads (TSC, CNTVCT) for the oxicrypt entropy source.
+Raw CPU counter reads (TSC, CNTVCT) for the oxicrypt entropy source.
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy

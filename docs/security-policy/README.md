@@ -90,5 +90,5 @@ absent:
 | `policy_states_the_as_built_accounting` | §1 / §3.1 / §9.2 crate counts match the workspace on disk |
 
 The equivalent assertions against `AGENTS.md` and `README.md` — the same crate counts, the same
-audited-exception set — run for everyone, so boundary-accounting drift is still caught in a public
+unsafe-exception set — run for everyone, so boundary-accounting drift is still caught in a public
 clone.

@@ -863,8 +863,8 @@ fn cmd_periodicity(args: &[String]) -> ExitCode {
     }
 }
 
-/// Compute the SHA-256 of the input as lowercase hex, powering the validated
-/// module up with the real KAT set first (the parity-harness provenance path).
+/// Compute the SHA-256 of the input as lowercase hex, powering the module
+/// up with the real KAT set first (the parity-harness provenance path).
 /// Returns `None` on a service error — the sidecar then carries `null`.
 fn input_sha256_hex(data: &[u8]) -> Option<String> {
     oxicrypt_maxwell::parity::sha256_hex(data)

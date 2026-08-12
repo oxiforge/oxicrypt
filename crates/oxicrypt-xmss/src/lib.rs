@@ -65,8 +65,8 @@
 //! in `rayon` (hence `std`), so the crate is `#![no_std]` only when the
 //! feature is OFF; the default build graph contains no `rayon` and is
 //! the CMVP validation-target single-threaded configuration. `parallel` is a
-//! throughput option for keygen (which hashes all 1024 leaves), not a
-//! validated path.
+//! throughput option for keygen (which hashes all 1024 leaves), not part
+//! of that configuration.
 
 #![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]

@@ -580,7 +580,7 @@ macro_rules! lms_impl {
             // construction; costs ~2·2^H·N heap (2 GiB at H25/M32), one tree at
             // a time. Scoped to this ACVP/harness `keygen_from_parts` entry —
             // the gated `keygen()` and `keygen_internal` stay serial, so the
-            // validated default build and the FIPS-gated path are untouched.
+            // default build and the FIPS-gated path are untouched.
             #[cfg(feature = "parallel")]
             let root = cached_internals::build_node_table(seed, identifier)[1];
 

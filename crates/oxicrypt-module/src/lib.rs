@@ -60,7 +60,7 @@
 //!
 //! # Algorithm profiles
 //!
-//! A single validated binary serves general FIPS 140-3 consumers
+//! A single binary serves general FIPS 140-3 consumers
 //! and CNSA-restricted deployments via a runtime
 //! [`AlgorithmProfile`] selection. The operator passes the
 //! desired profile to [`initialize_with_profile`]; subsequent
@@ -434,7 +434,7 @@ pub fn enter_error_state(_reason: &'static str) {
 
 /// Algorithm restriction profile selected at module initialization.
 ///
-/// A single validated binary can serve general FIPS 140-3 consumers
+/// A single binary can serve general FIPS 140-3 consumers
 /// (`Unrestricted`) and CNSA-restricted deployments (`Cnsa2`,
 /// `Cnsa1`) by choosing the appropriate profile at init time.
 ///

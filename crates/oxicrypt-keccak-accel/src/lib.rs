@@ -1,7 +1,7 @@
 //! CPU-intrinsic AVX2 4-way batched Keccak-f\[1600\] acceleration for
 //! `oxicrypt-sha`.
 //!
-//! This is one of the small audited in-boundary crates in the oxicrypt
+//! This is one of the small readily auditable in-boundary crates in the oxicrypt
 //! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
 //! `oxicrypt-sha-accel`, `oxicrypt-aes-accel`, and `oxicrypt-timer`). It
 //! is the fifth such crate, and implements the sanctioned **CPU-intrinsic

@@ -5,7 +5,7 @@
 //! assembly — and this crate is unconditionally
 //! `#![forbid(unsafe_code)]`. Behind the default-off `accel-sha`
 //! feature, the compression boundary additionally dispatches to the
-//! audited `oxicrypt-sha-accel` crate (x86_64 SHA-NI) when runtime
+//! `oxicrypt-sha-accel` crate (x86_64 SHA-NI) when runtime
 //! CPUID detection confirms support; the accelerated path computes the
 //! identical §6.2.2 function, proven by KAT + cross-path oracle tests.
 //! Default builds are byte-for-byte the portable baseline.
@@ -263,7 +263,7 @@ impl Drop for Sha256 {
 /// accelerated path; SHA-1 acceleration is explicitly out of scope.
 pub(crate) fn compress256(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
     // Feature-gated CPU acceleration: when `accel-sha` is enabled AND
-    // runtime CPUID detection confirms SHA-NI, the audited
+    // runtime CPUID detection confirms SHA-NI, the
     // `oxicrypt-sha-accel` crate executes the same FIPS 180-4 §6.2.2
     // rounds via CPU intrinsics. `sha256_compress` returns `false` —
     // leaving `state` untouched — when the CPU lacks SHA-NI, and we fall

@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-timer"
-description = "Audited raw CPU counter reads (TSC, CNTVCT) for the oxicrypt entropy source."
+description = "Raw CPU counter reads (TSC, CNTVCT) for the oxicrypt entropy source."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

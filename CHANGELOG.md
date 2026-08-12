@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected the description of the five in-boundary `unsafe` exception crates, which called them
+  audited across 66 lines. Nothing in the repository records an audit; they are isolated so that
+  they are readily auditable. The published `description` of `oxicrypt-aes-accel`,
+  `oxicrypt-keccak-accel`, `oxicrypt-sha-accel` and `oxicrypt-timer` carried the claim to
+  crates.io. `doc-guard`'s `UNSAFE_EXCEPTIONS` and the phrase it requires in `AGENTS.md` move with
+  it. (#242)
+- Removed the claim that the module is validated from 37 lines across the rustdoc, `README.md`,
+  `ISA.md`, `docs/api.md`, `docs/building.md`, the LAMA manifest and four `Cargo.toml` files. The
+  module targets FIPS 140-3 Level 1 and has not completed CMVP. Input validation, wrapper
+  shape-checking and measured timing keep the word. (#242)
+
 - Fixed a panic in the CTR_DRBG derivation function on combined `entropy || nonce ||
   personalization` inputs of 152 to 192 bytes, across `instantiate_df`, `reseed_df`,
   `generate_df` and their C ABI mirrors. (#250)

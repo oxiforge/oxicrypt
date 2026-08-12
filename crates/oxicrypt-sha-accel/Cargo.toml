@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-sha-accel"
-description = "Audited CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for oxicrypt-sha."
+description = "CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for oxicrypt-sha."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

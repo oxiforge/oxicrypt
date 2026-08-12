@@ -6,7 +6,7 @@
 //! - **x86_64 → [`TimerSource::RawCounter`]**: the TSC is the
 //!   certificate-precedented path for CPU-jitter entropy sources and offers
 //!   sub-nanosecond effective resolution on current parts. The serialized
-//!   read itself lives in the audited `oxicrypt-timer` crate.
+//!   read itself lives in the readily auditable `oxicrypt-timer` crate.
 //! - **aarch64 → [`TimerSource::OsNanoClock`]**: generic-timer counters
 //!   (`CNTVCT_EL0`) run at platform-defined frequencies that are often far
 //!   coarser than the nominal CPU clock (pre-ARMv8.6 parts commonly tick
@@ -412,7 +412,7 @@ impl TimerSource {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PlatformTimer {
-    /// Serialized raw CPU counter via the audited `oxicrypt-timer` crate.
+    /// Serialized raw CPU counter via the readily auditable `oxicrypt-timer` crate.
     #[cfg(feature = "raw-counter")]
     RawCounter(RawCounterTimer),
     /// OS-provided monotonic nanosecond clock.
@@ -470,7 +470,7 @@ impl TimerRead for PlatformTimer {
     }
 }
 
-/// Serialized raw-counter timer (audited read in `oxicrypt-timer`).
+/// Serialized raw-counter timer (read in `oxicrypt-timer`).
 #[cfg(feature = "raw-counter")]
 #[derive(Debug)]
 pub struct RawCounterTimer(());

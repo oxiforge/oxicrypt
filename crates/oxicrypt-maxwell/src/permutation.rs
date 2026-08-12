@@ -80,7 +80,7 @@
 //! compression" value byte-for-byte on the oracle datasets (rand1_short = 1611,
 //! rand4_short = 5520, rand8_short = 10987). As `oxicrypt-maxwell` is
 //! out-of-boundary tooling, this third-party dependency never touches the
-//! validated module or its zero-dependency claim (see
+//! module or its zero-dependency claim (see
 //! `docs/security-policy/security-policy.md`).
 //!
 //! - [`compression`] returns the real compressed byte length as an `f64`.
@@ -558,7 +558,7 @@ fn covariance(data: &[u8], p: usize) -> f64 {
 ///
 /// Backed by the pure-Rust `bzip2` crate (libbz2-rs-sys backend — no C, no
 /// `bzip2-sys`). `oxicrypt-maxwell` is **out-of-boundary** tooling, so this — the
-/// workspace's first third-party dependency — never touches the validated module
+/// workspace's first third-party dependency — never touches the module
 /// or its zero-dependency claim; see `docs/security-policy/security-policy.md`.
 /// The crate's `#![forbid(unsafe_code)]` is unaffected: the unavoidable bzip2
 /// `unsafe` lives inside the dependency, not here.
