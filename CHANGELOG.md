@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected twelve SP 800-108 citations in `oxicrypt-kdf`. That document numbers the modes §4.1
+  counter, §4.2 feedback and §4.3 double-pipeline; its §5 is Key Hierarchy. (#242)
+- Corrected `oxicrypt-kdf`'s counter-width documentation. SP 800-108r1 permits any `1 <= r <= 32`;
+  the restriction to byte-aligned widths is this implementation's. (#242)
+- Corrected three SP 800-56C Rev. 2 citations in `oxicrypt-kdf` that named sections which do not
+  exist. (#242)
+- Corrected `oxicrypt-drbg`'s conditional-self-test section, which described repetition-count and
+  adaptive-proportion tests. Neither exists here, and both are SP 800-90B entropy-source tests. (#242)
+- Corrected `oxicrypt-drbg`'s module-gating claim. Four of twenty-two public entry points gate; the
+  instantiate paths do, reseed and generate do not. (#242)
+- Corrected `oxicrypt-drbg`'s health-test attribution. SP 800-90A §11.3 does not require error-path
+  or uninstantiate testing; these checks exceed it. (#242)
+
 - Corrected `oxicrypt-dh`'s rejection-sampling rationale, which gave the acceptance probability as
   about 50%. Computed from the group's own `q`, rejection is about 2^-66. (#242)
 - Corrected three SP 800-56Ar3 citations in `oxicrypt-dh` from §5.6.2.3.1 to §5.6.2.3.2. The crate
