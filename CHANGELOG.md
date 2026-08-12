@@ -86,6 +86,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected the enumeration of the five audited crates that use `unsafe` in `oxicrypt-sha-accel`,
   `oxicrypt-keccak-accel` and `oxicrypt-aes-accel`. Each named a subset. (#242)
 
+- Corrected the integrity crate's compliance citations. The module integrity test is governed by
+  FIPS 140-3 IG 10.2.A and ISO/IEC 19790:2012 §7.10.2.2; IG 10.3.A covers algorithm self-tests and
+  is retained only where the HMAC's own CAST is meant. (#242)
+- Corrected the description of the integrity check, which said the MAC covers the exact file bytes.
+  The 32-byte MAC field is zeroed before hashing. (#242)
+- Corrected the provenance labels on the vendored ACVP vectors. `vendor/nist/MANIFEST.toml` records
+  the digest of the upstream `internalProjection.json`, not of the vendored slice; the CAVP `.rsp`
+  files are pinned. `tools/acvp-gen/generate.py` emits the corrected label. (#242)
+- Corrected the enumeration of the five crates that use `unsafe` in `oxicrypt-timer` and
+  `oxicrypt-zeroize`, and the count of `oxicrypt-zeroize`'s own functions and `unsafe` blocks. (#242)
+- Corrected `oxicrypt-zeroize`'s zeroisation citation. There is no FIPS 140-3 IG 7.7; the
+  requirement is ISO/IEC 19790:2012 §7.9.7. (#242)
+- Removed `oxicrypt-pointer`'s claim that every crate requires module initialization. Six published
+  crates do not depend on `oxicrypt-module`. (#242)
+
 ## [0.23.1] - 2026-08-10
 
 - Every published crate carries a README. crates.io rendered a blank page for all of them.
