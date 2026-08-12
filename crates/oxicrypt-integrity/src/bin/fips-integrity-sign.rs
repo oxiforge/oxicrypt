@@ -14,9 +14,9 @@
 //!
 //! `--sign` computes HMAC-SHA-256 over the given binary with the
 //! fixed integrity key from the `oxicrypt-integrity` crate, locates
-//! the embedded slot (`HDR | 32 zero bytes | FTR`), and writes the
-//! 32-byte MAC into the slot in place. `--verify` recomputes the MAC
-//! and compares against the stored slot in constant time.
+//! the embedded slot (matched on `HDR` plus `FTR` at +48), and writes
+//! the 32-byte MAC into the slot in place. `--verify` recomputes the
+//! MAC and compares against the stored slot without short-circuiting.
 //!
 //! Multiple binaries may be signed (or verified) in one invocation.
 //! The named-flag form (`--cdylib-target` / `--staticlib-target`)

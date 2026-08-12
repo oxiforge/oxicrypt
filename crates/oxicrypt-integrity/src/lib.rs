@@ -4,13 +4,14 @@
 //!
 //! | Service | Standard | Entry point |
 //! |---------|----------|-------------|
-//! | Module binary integrity check | FIPS 140-3 §7.10 / IG 10.3.A | [`integrity_self_test`] |
+//! | Module binary integrity check | ISO/IEC 19790:2012 §7.10.2.2 / IG 10.2.A | [`integrity_self_test`] |
 //!
-//! This crate implements the power-up integrity check required by
-//! FIPS 140-3 IG 10.3.A (as of March 2026). The check verifies that
-//! the module binary on disk has not been modified since it was
-//! signed by recomputing an HMAC-SHA-256 over the exact file bytes of
-//! the currently-running executable and comparing against a
+//! This crate implements the pre-operational software integrity test
+//! required by ISO/IEC 19790:2012 §7.10.2.2, whose integrity-technique
+//! self-test is governed by FIPS 140-3 IG 10.2.A. The check verifies
+//! that the module binary on disk has not been modified since it was
+//! signed by recomputing an HMAC-SHA-256 over the executable's file
+//! bytes with the 32-byte MAC field zeroed, and comparing against a
 //! reference MAC embedded **inside** the binary at a reserved slot.
 //!
 //! # Sensitive security parameters
@@ -29,8 +30,9 @@
 //! [ HDR (16 bytes) | MAC (32 bytes) | FTR (16 bytes) ]
 //! ```
 //!
-//! The HDR and FTR are fixed byte patterns chosen to be
-//! cryptographically unlikely to appear elsewhere in the binary. The
+//! The HDR and FTR are fixed 16-byte patterns. A chance occurrence in
+//! unrelated data is negligible, and an incidental occurrence of HDR
+//! alone is rejected by the footer-at-+48 check described below. The
 //! MAC field is zero in an unsigned binary. At sign time, the
 //! companion tool `fips-integrity-sign --sign <exe>`:
 //!
@@ -46,7 +48,7 @@
 //! At runtime, the power-up KAT reads the on-disk bytes of
 //! `env::current_exe()`, finds the slot, extracts the expected MAC,
 //! zeroes the slot in its in-memory copy, recomputes the HMAC, and
-//! compares against the extracted MAC in constant time.
+//! compares against the extracted MAC without short-circuiting.
 //!
 //! # Why embedded instead of a sidecar file
 //!
@@ -78,19 +80,19 @@
 //!
 //! # HMAC key policy
 //!
-//! The HMAC key is a fixed, publicly known 32-byte constant. IG
-//! 10.3.A permits a known key here because the integrity check is an
-//! **authenticity** check, not a secrecy check: the property that
-//! matters is that an attacker who rewrites the module binary cannot
+//! The HMAC key is a fixed, publicly known 32-byte constant. The
+//! integrity check is an **authenticity** check, not a secrecy check:
+//! the property that matters is that an attacker who rewrites the
+//! module binary cannot
 //! also predict the corresponding reference MAC without knowing the
 //! key embedded in the module source. The key is therefore a
-//! build-time constant, not a runtime secret. Rotating the key
-//! requires re-validation per IG 10.3.A.
+//! build-time constant, not a runtime secret. Rotating the key after
+//! validation is a module change and would require re-validation.
 //!
 //! # Boot flow
 //!
 //! The `integrity_self_test` function is registered in [`KATS`] as a
-//! power-up KAT. During module boot the `fips-module` runner calls it
+//! power-up KAT. During module boot the `oxicrypt-module` runner calls it
 //! while the module is in `SelfTest` state, meaning the standard
 //! `HmacSha256::new` entry point is still gated by
 //! `require_operational()` and would return `NotOperational`. This
@@ -108,13 +110,13 @@
 //!   header/footer not aligned).
 //! - More than one valid slot is found (ambiguous binary, treated as
 //!   tampering).
-//! - The computed MAC does not equal the MAC stored in the slot in
-//!   constant time.
+//! - The computed MAC does not equal the MAC stored in the slot
+//!   (compared without short-circuiting).
 //!
 //! # Signing workflow (development)
 //!
 //! ```text
-//! cargo build -p fips-integrity --bin fips-integrity-sign
+//! cargo build -p oxicrypt-integrity --bin fips-integrity-sign
 //! cargo build -p acvp-harness
 //! ./target/debug/fips-integrity-sign --sign ./target/debug/acvp-harness
 //! ./target/debug/acvp-harness
@@ -199,9 +201,8 @@ pub struct IntegritySlot {
 /// `#[used]` prevents the linker from discarding the static even
 /// though it is never read from Rust code (the runtime check reads it
 /// back through the on-disk file bytes, not the in-memory symbol).
-/// Because the slot is a regular `pub static` with inline byte-array
-/// fields, the linker places its 64 bytes contiguously in `.rodata`
-/// exactly as declared. Signing and verification both find this
+/// [`IntegritySlot`] is `#[repr(C)]`, which pins field order so the
+/// 64 bytes appear on disk as declared. Signing and verification both find this
 /// region by scanning the on-disk file for the header/footer pair.
 #[used]
 pub static FIPS_INTEGRITY_SLOT: IntegritySlot = IntegritySlot {
@@ -379,12 +380,12 @@ pub fn encode_hmac_hex(mac: &[u8; 32]) -> [u8; 64] {
     out
 }
 
-/// Compares two 32-byte MACs in constant time.
+/// Compares two 32-byte MACs without short-circuiting: accumulates the
+/// XOR of all 32 byte pairs and tests the accumulator once.
 ///
-/// Short-circuiting comparison would let a timing attacker brute
-/// force the expected MAC one byte at a time; the integrity check
-/// happens against untrusted on-disk bytes, so we take the same care
-/// here that we would for any secret MAC verification.
+/// The MAC is public and sits in the file an attacker already holds, so
+/// nothing secret is at risk here; the non-short-circuiting compare is
+/// the discipline this workspace applies to every MAC verification.
 #[must_use]
 pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     let mut diff: u8 = 0;
@@ -400,8 +401,7 @@ pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
 /// Used by `fips-integrity-sign --sign`. This function reads the
 /// entire module binary into memory, zeroes the slot MAC bytes,
 /// computes HMAC-SHA-256, and writes the modified buffer back over
-/// the original file. Existing file permissions are preserved by
-/// `std::fs::write`'s truncate-then-write semantics.
+/// the original file.
 ///
 /// Must not be called against a running executable on Linux: the
 /// kernel rejects writes to a file that currently backs any process
@@ -425,7 +425,7 @@ pub fn sign_exe(exe_path: &Path) -> Result<[u8; 32], IntegrityError> {
 ///
 /// Reads the file, locates the slot, extracts the expected MAC,
 /// zeroes the slot MAC bytes in the in-memory copy, recomputes
-/// HMAC-SHA-256, and compares in constant time.
+/// HMAC-SHA-256, and compares without short-circuiting.
 ///
 /// # Errors
 ///
@@ -448,7 +448,7 @@ pub fn verify_exe(exe_path: &Path) -> Result<(), IntegrityError> {
 ///
 /// Resolves the current executable via `env::current_exe()`, reads
 /// the on-disk bytes, and runs [`verify_exe`]. Returns
-/// [`SelfTestFailure`] on any error so the `fips-module` runner can
+/// [`SelfTestFailure`] on any error so the `oxicrypt-module` runner can
 /// latch the module into the terminal `Error` state.
 ///
 /// Do not call this directly from application code — it is wired
@@ -468,9 +468,10 @@ pub fn integrity_self_test() -> Result<(), SelfTestFailure> {
 /// Power-up KAT inventory for the software integrity self-test.
 ///
 /// Merged into the acvp-harness boot sequence via
-/// `oxicrypt_module::initialize_with_tests`. Per FIPS 140-3 IG 10.3.A the
-/// integrity check is a mandatory power-up KAT and must run on every
-/// module startup.
+/// `oxicrypt_module::initialize_with_tests`. The pre-operational
+/// integrity test runs on every module startup (ISO/IEC 19790:2012
+/// §7.10.2.2); the HMAC-SHA-256 it uses carries its own CAST per
+/// IG 10.3.A.
 pub const KATS: &[KatEntry] = &[KatEntry {
     name: "Module binary integrity (HMAC-SHA-256 over embedded slot in current_exe())",
     run: integrity_self_test,
@@ -498,11 +499,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     /// The doc comment on `FIPS_INTEGRITY_KEY` names the key's literal.
-    /// Before this test existed the two disagreed twice over: the doc named
-    /// an `oxicrypt-` prefix while the constant carried `oxicrypt-`, and the
-    /// literal it named was 34 bytes, which could not have compiled as
-    /// `[u8; 32]`. A doc naming the wrong key for the IG 10.3.A integrity
-    /// check is the kind of discrepancy a CST lab reads.
+    /// A doc naming the wrong key for the pre-operational integrity check
+    /// is the kind of discrepancy a CST lab reads.
     ///
     /// Asserting the constant against a literal repeated in the test would
     /// prove nothing about the prose, so this reads the doc comment out of
@@ -556,7 +554,7 @@ mod tests {
 
     /// The slot magics are matched against on-disk bytes of signed binaries,
     /// so their length is load-bearing: a 15-byte tail plus the sentinel is
-    /// what makes the slot 16 bytes wide. Rotating the project name through
+    /// what makes each magic 16 bytes wide. Rotating the project name through
     /// them is only safe while the lengths hold.
     #[test]
     fn slot_magics_are_sixteen_bytes_and_distinctly_sentinelled() {
