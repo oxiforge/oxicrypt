@@ -2,7 +2,7 @@
 //!
 //! - `SampleNTT` (FIPS 203 Algorithm 7): rejection-samples a single
 //!   polynomial in NTT domain from a SHAKE-128 stream.
-//! - `sample_noise` (FIPS 203 §4.2.1 / Algorithm 8 driver): samples one
+//! - `sample_noise` (FIPS 203 §4.2.2 / Algorithm 8 driver): samples one
 //!   noise polynomial via PRF(σ, nonce) using CBD(η).
 //!
 //! The K-dependent helpers `expand_a` (matrix Â expansion) and

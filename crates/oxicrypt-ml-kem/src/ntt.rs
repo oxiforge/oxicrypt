@@ -9,7 +9,7 @@
 //! (powers of ζ in bit-reversed order) are stored in Montgomery
 //! domain in [`ZETAS`].
 //!
-//! Reference: FIPS 203 §4.1, Algorithms 9–10.
+//! Reference: FIPS 203 §4.3, Algorithms 9–10.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
@@ -103,7 +103,8 @@ pub(crate) fn inv_ntt(r: &mut [i16; N]) {
 /// Computes (a₀ + a₁X)(b₀ + b₁X) mod (X² − γ) where γ = ζ^{2·BitRev₇(i)+1}
 /// is supplied in Montgomery domain.
 ///
-/// Output coefficients are in Montgomery domain (one extra R factor).
+/// Output coefficients carry one extra R⁻¹ factor relative to the true
+/// product, because every term goes through `fqmul`.
 #[inline]
 pub(crate) fn basemul(a0: i16, a1: i16, b0: i16, b1: i16, zeta: i16) -> (i16, i16) {
     let r0 = fqmul(a1, b1);

@@ -5,9 +5,8 @@
 //! Montgomery domain: â = a · R mod q where R = 2¹⁶.
 //!
 //! Every index in this module is bounded by a compile-time constant
-//! or a `for i in 0..N` loop, and all arithmetic intentionally wraps
-//! on secret-independent intermediate values, so both lints are
-//! disabled at the module level.
+//! or a `for i in 0..N` loop, and all arithmetic intentionally wraps,
+//! so both lints are disabled at the module level.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
@@ -58,7 +57,9 @@ pub(crate) fn fqmul(a: i16, b: i16) -> i16 {
     montgomery_reduce((a as i32) * (b as i32))
 }
 
-/// Barrett reduction: reduce a ∈ (−2¹⁵, 2¹⁵) into [0, q).
+/// Barrett reduction: reduce a ∈ (−2¹⁵, 2¹⁵) into approximately (−q, q).
+/// Negative inputs stay negative — `barrett_reduce(-1)` is `-1`. Use
+/// [`reduce_full`] for a result in [0, q).
 ///
 /// Uses the approximation ⌊a/q⌋ ≈ ⌊a · v / 2²⁶⌋ with v = 20159.
 #[inline]
@@ -66,7 +67,7 @@ pub(crate) fn barrett_reduce(a: i16) -> i16 {
     const V: i32 = 20159; // ⌊(2²⁶ + q/2) / q⌋
     let t = ((a as i32) * V + (1 << 25)) >> 26;
     let mut r = (a as i32) - t * Q_I32;
-    // Constant-time conditional subtraction: r may be in [0, 2q).
+    // Branchless conditional subtraction: r may be in [0, 2q).
     // Arithmetic shift produces −1 (all ones) when r < q, else 0.
     let mask = (r - Q_I32) >> 31; // −1 if r < q, 0 if r ≥ q
     r -= Q_I32 & !mask;
@@ -95,10 +96,11 @@ pub(crate) fn to_mont(a: i16) -> i16 {
     fqmul(a, R2)
 }
 
-/// Constant-time equality comparison of two byte slices.
+/// Branchless equality comparison of two byte slices.
 ///
-/// Returns 0 if equal, non-zero otherwise. Timing is independent
-/// of the values.
+/// Returns 0 if equal, non-zero otherwise. The comparison is
+/// branchless: every byte pair is XOR-folded into `diff` with no
+/// early exit.
 pub(crate) fn ct_bytes_eq(a: &[u8], b: &[u8]) -> u8 {
     debug_assert_eq!(a.len(), b.len());
     let mut diff = 0u8;
@@ -113,7 +115,7 @@ pub(crate) fn ct_bytes_eq(a: &[u8], b: &[u8]) -> u8 {
     diff
 }
 
-/// Constant-time select: if `flag == 0` return `a`, else return `b`.
+/// Branchless select: if `flag == 0` return `a`, else return `b`.
 ///
 /// Accepts any `u8` value for `flag` — not just `0` or `1`. Any
 /// non-zero input maps to the all-ones mask `0xFF`. This matters
@@ -121,7 +123,8 @@ pub(crate) fn ct_bytes_eq(a: &[u8], b: &[u8]) -> u8 {
 /// [`ct_bytes_eq`], which can return any non-zero `u8` for unequal
 /// inputs (it ORs all per-byte XORs together).
 ///
-/// Timing is independent of `flag`.
+/// The selection is branchless: `flag` is expanded to a mask by shift-OR
+/// and applied to all 32 bytes unconditionally.
 pub(crate) fn ct_select_32(a: &[u8; 32], b: &[u8; 32], flag: u8) -> [u8; 32] {
     // Expand `flag` to a full byte mask via bit-spread:
     //   0x00 -> 0x00, any non-zero -> 0xFF.
@@ -130,16 +133,10 @@ pub(crate) fn ct_select_32(a: &[u8; 32], b: &[u8; 32], flag: u8) -> [u8; 32] {
     // was set, then negate the low bit to spread it across all 8
     // bits (`0` stays `0`; `1` wraps to `0xFF`).
     //
-    // The earlier `(-(flag as i8 | -(flag as i8))) as u8` form was
-    // incorrect at i8 width: for arbitrary non-zero `flag`, the
-    // expression collapsed to `flag` itself rather than the full
-    // mask.  E.g. `flag = 1` produced `0x01`, which silently broke
-    // the implicit-rejection branch of ML-KEM decapsulation —
-    // `out[i] = a[i] ^ (0x01 & (a[i] ^ b[i]))` only flips the LSB
-    // of each byte instead of selecting `b` whole.  Surfaced via
-    // ACVTS demo session 727778; valid-path decaps passed (mask =
-    // 0x00 worked), implicit-rejection decaps failed against the
-    // spec-defined `J(z || c)` byte-exact oracle.
+    // The mask must be full-width: a form that yields `0x01` rather
+    // than `0xFF` for non-zero `flag` selects only the low bit of
+    // each byte, which breaks implicit rejection while leaving the
+    // valid decapsulation path correct.
     let mut bit = flag;
     bit |= bit >> 4;
     bit |= bit >> 2;

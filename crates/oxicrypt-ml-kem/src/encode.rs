@@ -1,5 +1,6 @@
 //! Byte encoding/decoding, compression/decompression, and centered
-//! binomial distribution (CBD) sampling per FIPS 203 §4.2.1.
+//! binomial distribution (CBD) sampling per FIPS 203 §4.2.1
+//! (conversion and compression) and §4.2.2 (sampling).
 //!
 //! Every index in this module is bounded by compile-time constants or
 //! explicit loop bounds.
@@ -18,7 +19,7 @@
 use crate::params::{N, Q_U32};
 
 // ========================================================================
-// ByteEncode / ByteDecode — FIPS 203 Algorithms 4–5
+// ByteEncode / ByteDecode — FIPS 203 Algorithms 5–6
 // ========================================================================
 
 /// `ByteEncode_d`: encode 256 coefficients at `d` bits each into

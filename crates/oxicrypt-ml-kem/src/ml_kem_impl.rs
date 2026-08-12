@@ -43,8 +43,8 @@
 //! | `PolyMatrix` | `pub(crate)` | `[[Poly; K]; K]` with mul_vec / transpose_mul_vec |
 //! | `expand_a` | private | K-dependent matrix expansion from ρ |
 //! | `sample_noise_vec` | private | K-component noise sampler |
-//! | `kpke_keygen`, `kpke_encrypt`, `kpke_decrypt` | private | FIPS 203 §4.2 |
-//! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_decaps` | private | FIPS 203 §4.3 |
+//! | `kpke_keygen`, `kpke_encrypt`, `kpke_decrypt` | private | FIPS 203 §5 |
+//! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_decaps` | private | FIPS 203 §6 |
 //! | `keygen`, `encapsulate`, `decapsulate` | `pub` | Module-gated entry points |
 //! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden) | Gate-free mirrors |
 //! | `KATS`, `self_test` | `pub` | Power-up self-test |
@@ -229,7 +229,7 @@ macro_rules! ml_kem_impl {
         ///
         /// Â[i][j] = SampleNTT(XOF(ρ, j, i)) where XOF = SHAKE-128
         /// and the input is ρ ‖ j ‖ i (column index before row index,
-        /// per FIPS 203 Algorithm 12 step 3).
+        /// per FIPS 203 Algorithm 13 step 5).
         ///
         /// Sequential build (default, `no_std`): the rows are filled in
         /// order, each cell from its own fresh local XOF.
@@ -254,7 +254,7 @@ macro_rules! ml_kem_impl {
         ///
         /// Â[i][j] = SampleNTT(XOF(ρ, j, i)) where XOF = SHAKE-128
         /// and the input is ρ ‖ j ‖ i (column index before row index,
-        /// per FIPS 203 Algorithm 12 step 3).
+        /// per FIPS 203 Algorithm 13 step 5).
         ///
         /// Parallel build: the *outer* row loop is forked across a
         /// `rayon` parallel iterator. Each closure owns exactly its row
@@ -303,9 +303,9 @@ macro_rules! ml_kem_impl {
             (vec, nonce)
         }
 
-        // ── K-PKE (FIPS 203 §4.2, Algorithms 12–14) ─────────────────────
+        // ── K-PKE (FIPS 203 §5, Algorithms 13–15) ───────────────────────
 
-        /// K-PKE.KeyGen (FIPS 203 Algorithm 12).
+        /// K-PKE.KeyGen (FIPS 203 Algorithm 13).
         ///
         /// - `d`: 32 bytes of randomness (caller-supplied from an
         ///   approved DRBG).
@@ -380,7 +380,7 @@ macro_rules! ml_kem_impl {
             }
         }
 
-        /// K-PKE encryption (FIPS 203 Algorithm 13).
+        /// K-PKE encryption (FIPS 203 Algorithm 14).
         ///
         /// - `ek_pke`: encryption key (`EK_LEN` bytes).
         /// - `m`: 32-byte message (the shared-secret seed).
@@ -460,7 +460,7 @@ macro_rules! ml_kem_impl {
             );
         }
 
-        /// K-PKE decryption (FIPS 203 Algorithm 14).
+        /// K-PKE decryption (FIPS 203 Algorithm 15).
         ///
         /// - `dk_pke`: decryption key (`384 · k` bytes).
         /// - `ct`: ciphertext (`CT_LEN` bytes).
@@ -520,9 +520,9 @@ macro_rules! ml_kem_impl {
             byte_encode(1, &v.coeffs, m);
         }
 
-        // ── ML-KEM (FIPS 203 §4.3, Algorithms 15–17) ────────────────────
+        // ── ML-KEM internal (FIPS 203 §6, Algorithms 16–18) ─────────────
 
-        /// ML-KEM.KeyGen (FIPS 203 Algorithm 15).
+        /// ML-KEM.KeyGen_internal (FIPS 203 Algorithm 16).
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -550,7 +550,7 @@ macro_rules! ml_kem_impl {
             dk[dk_pke_len + EK_LEN + 32..dk_pke_len + EK_LEN + 64].copy_from_slice(z);
         }
 
-        /// ML-KEM.Encaps (FIPS 203 Algorithm 16).
+        /// ML-KEM.Encaps_internal (FIPS 203 Algorithm 17).
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -595,11 +595,11 @@ macro_rules! ml_kem_impl {
             result
         }
 
-        /// ML-KEM.Decaps (FIPS 203 Algorithm 17).
+        /// ML-KEM.Decaps_internal (FIPS 203 Algorithm 18).
         ///
         /// **Implicit rejection**: if the ciphertext is invalid, a
         /// pseudorandom key derived from the rejection seed `z` is
-        /// returned (constant-time, no observable difference).
+        /// returned. The comparison and the selection are branchless.
         #[allow(
             clippy::indexing_slicing,
             clippy::arithmetic_side_effects,
@@ -642,7 +642,7 @@ macro_rules! ml_kem_impl {
             let mut ct_prime = [0u8; CT_LEN];
             kpke_encrypt(ek, &m_prime, &r_prime, &mut ct_prime);
 
-            // 5. Constant-time comparison: if c == c', return K'; else K̄
+            // 5. Branchless comparison: if c == c', return K'; else K̄
             //
             // `ct_select_32` reads `k_prime` and `k_bar` through `&[u8; 32]`
             // and constructs a new owned `[u8; 32]` — the input stack
@@ -713,8 +713,8 @@ macro_rules! ml_kem_impl {
         /// Decapsulate a shared secret from a ciphertext.
         ///
         /// Uses implicit rejection: if the ciphertext is invalid, a
-        /// pseudorandom key is returned (constant-time, no observable
-        /// difference).
+        /// pseudorandom key is returned. The comparison and the
+        /// selection are branchless.
         pub fn decapsulate(
             dk: &[u8; DK_LEN],
             ct: &[u8; CT_LEN],

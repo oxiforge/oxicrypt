@@ -5,7 +5,7 @@
 //! **Implemented for all three parameter sets.** This crate provides
 //! ML-KEM-512, ML-KEM-768, and ML-KEM-1024 as specified in FIPS 203
 //! (August 2024), including K-PKE key generation, encryption,
-//! decryption, and the Fujisaki–Okamoto transform with constant-time
+//! decryption, and the Fujisaki–Okamoto transform with branchless
 //! implicit rejection.
 //!
 //! Every parameter set is generated from a single declarative macro
@@ -29,7 +29,7 @@
 //! profile. ML-KEM-1024 is the CNSA 2.0 baseline and is also allowed
 //! in CNSA 1.0 for hybrid use during the transition period.
 //!
-//! # Parameter sets (FIPS 203 Table 2)
+//! # Parameter sets (FIPS 203 Tables 2 and 3)
 //!
 //! | Variant | k | η₁ | η₂ | dᵤ | dᵥ | EK_LEN | DK_LEN | CT_LEN |
 //! |---------|---|----|----|----|----|--------|--------|--------|
@@ -87,10 +87,11 @@
 //! (hidden) runs gate-free so power-up KATs can execute during
 //! `SelfTest`.
 //!
-//! # Constant-time behaviour
+//! # Timing properties
 //!
-//! The FO transform's decapsulation uses constant-time comparison
-//! and constant-time selection to implement implicit rejection.
+//! The FO transform's decapsulation selects between the candidate and
+//! the rejection key with `ct_bytes_eq` and `ct_select_32`, both
+//! branchless in the compared values.
 //! NTT operations have data-independent control flow.
 //!
 //! # Data-parallel matrix expansion (`parallel` feature, default OFF)
@@ -107,8 +108,8 @@
 //! feature pulls in `rayon` (hence `std`), so the crate is
 //! `#![no_std]` only when the feature is OFF; the default build graph
 //! contains no `rayon` and is the CMVP validation-target single-threaded
-//! configuration. `parallel` is a throughput option, not part of the validation
-//! target.
+//! configuration. `parallel` is a throughput option, not part of that
+//! configuration.
 
 #![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
