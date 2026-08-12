@@ -4,7 +4,7 @@
 //!
 //! This crate ships:
 //!
-//!   - **HKDF** per RFC 5869, approved under SP 800-56C Rev. 2 §4.1
+//!   - **HKDF** per RFC 5869, approved under SP 800-56C Rev. 2 §5.1
 //!     as the Two-Step KDF ([`Hkdf::extract`] / [`Hkdf::expand`]).
 //!   - **SP 800-108 Rev. 1 KBKDF in Counter Mode** ([`Sp800_108Counter`]),
 //!     with a 32-bit big-endian counter placed before the fixed
@@ -43,8 +43,9 @@
 //!
 //! # Power-up self-tests
 //!
-//! Per IG 10.3.A each KDF instantiation carries its own
-//! power-up KAT; KDF families do not share. [`KATS`] exposes
+//! Each KDF instantiation carries its own power-up KAT; KDF families
+//! do not share. IG 10.3.A requires only one CAST per KBKDF, covering a
+//! single mode-and-PRF option, so this exceeds the requirement. [`KATS`] exposes
 //! 46 entries total — 11 HKDF extract+expand round-trips plus
 //! 11 SP 800-108 Counter Mode derivations plus 11 SP 800-108
 //! Feedback Mode derivations plus 11 SP 800-108 Double-Pipeline
@@ -359,7 +360,7 @@ pub type HkdfSha3_512 = Hkdf<oxicrypt_hmac::HmacSha3_512, 64>;
 //
 // Ten of the eleven HKDF variants exercise NIST ACVP-Server
 // `KDA-HKDF-Sp800-56Cr2` vectors (SP 800-56C Rev 2 §5 Two-Step KDF,
-// §5.9.2 hybrid form). For each variant the KAT runs:
+// the hybrid shared secret Z' = Z || T is permitted by §2). For each variant the KAT runs:
 //
 //     PRK = HMAC(SALT, IKM)                   (IKM = Z || T hybrid)
 //     OKM = HKDF-Expand(PRK, FIXED_INFO, L)   (L = KEY_OUT.len())
@@ -367,7 +368,8 @@ pub type HkdfSha3_512 = Hkdf<oxicrypt_hmac::HmacSha3_512, 64>;
 // and compares the leading `KEY_OUT.len()` bytes of `OKM` against
 // the expected DKM supplied by the ACVP-Server projection. FixedInfo
 // is pre-encoded by `tools/acvp-gen/generate.py` per SP 800-56Cr2
-// §5.8 so the Rust crypto surface sees a flat byte string.
+// so the Rust crypto surface sees a flat byte string; SP 800-56Cr2
+// defers FixedInfo format to SP 800-56A and SP 800-56B.
 //
 // HKDF-SHA-1 is *not* covered by the KDA-HKDF-Sp800-56Cr2 family
 // (SHA-1 is out of scope for SP 800-56C Rev 2). It remains on the
@@ -416,7 +418,7 @@ pub fn hkdf_self_test_sha1() -> Result<(), SelfTestFailure> {
 /// `expand(&FIXED_INFO, &mut out)` and compares the leading
 /// `KEY_OUT.len()` bytes of the derivation against `KEY_OUT`. The
 /// IKM constant is the hybrid `Z || T` concatenation per SP 800-56Cr2
-/// §5.9.2; the underlying HKDF primitive is exercised unchanged.
+/// §2 hybrid form; the underlying HKDF primitive is exercised unchanged.
 macro_rules! kda_hkdf_kat_fn {
     ($name:ident, $alias:ty, $salt:path, $ikm:path, $fixed_info:path, $key_out:path) => {
         /// Power-up KAT for an HKDF variant against a NIST ACVP-Server
@@ -538,7 +540,7 @@ kda_hkdf_kat_fn!(
 //
 //   * [i]_32 is the 32-bit big-endian iteration counter, starting at 1
 //   * Label and Context are caller-supplied byte strings
-//   * 0x00 is the mandatory separator byte (SP 800-108 §5.1)
+//   * 0x00 is the mandatory separator byte (SP 800-108r1 §4)
 //   * [L]_32 is the output length **in bits**, 32-bit big-endian
 //
 // This crate hard-codes r = 32 (counter width) and L_r = 32 (length
@@ -580,7 +582,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
 
     /// Gateless variant used by the boot-time KATs.
     ///
-    /// Assembles the SP 800-108 §5.2 fixed-input blob
+    /// Assembles the SP 800-108 §4.1 fixed-input blob
     /// `Label || 0x00 || Context || [L]_32` and runs the counter-mode
     /// PRF loop over it via [`derive_with_fixed_data_internal`].
     #[doc(hidden)]
@@ -619,7 +621,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
     /// `Label || 0x00 || Context || [L]_32` — the caller is expected
     /// to supply the already-encoded blob verbatim from the test
     /// vector. Consumers should prefer [`derive`] or [`derive_internal`]
-    /// for real use so the SP 800-108 §5.2 structure is preserved.
+    /// for real use so the SP 800-108 §4.1 structure is preserved.
     #[doc(hidden)]
     pub fn derive_with_fixed_data_internal(
         key: &[u8],
@@ -630,7 +632,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
     }
 
     /// Shared counter-mode loop. `fixed_data_pieces` is the ordered
-    /// list of byte slices that together form the SP 800-108 §5.2
+    /// list of byte slices that together form the SP 800-108 §4.1
     /// fixed-input blob that follows the 32-bit counter in each PRF
     /// invocation.
     fn derive_with_fixed_data_pieces(
@@ -710,7 +712,7 @@ pub type Sp800_108CounterHmacSha3_512 = Sp800_108Counter<oxicrypt_hmac::HmacSha3
 //
 // Every KAT below is sourced from NIST ACVP-Server `KDF-1.0`
 // (`gen-val/json-files/KDF/internalProjection.json`) via the
-// `fips-test-vectors` crate. Each vector provides a pre-built
+// `oxicrypt-test-vectors` crate. Each vector provides a pre-built
 // `fixedData` blob, a `keyIn` of the PRF's natural key length, and a
 // (potentially truncated) `keyOut`. Consumers run
 // [`Sp800_108Counter::derive_with_fixed_data_internal`] with the
@@ -718,15 +720,16 @@ pub type Sp800_108CounterHmacSha3_512 = Sp800_108Counter<oxicrypt_hmac::HmacSha3
 // the derived output against the expected `KEY_OUT` slice, matching
 // the ACVP harness behaviour.
 //
-// The canonical ACVP-Server commit hash and vendored slice SHA-256
-// digests are recorded in `vendor/nist/MANIFEST.toml`.
+// The canonical ACVP-Server commit hash and the SHA-256 of the upstream
+// `internalProjection.json` each slice was cut from are recorded in
+// `vendor/nist/MANIFEST.toml`.
 
 macro_rules! kbkdf_kat_fn {
     ($name:ident, $alias:ty, $key_in:path, $fixed_data:path, $key_out:path) => {
         /// Power-up KAT for this SP 800-108 Counter Mode variant.
         ///
         /// Sourced from NIST ACVP-Server `KDF-1.0` via
-        /// `fips-test-vectors`; runs the derivation with the vendored
+        /// `oxicrypt-test-vectors`; runs the derivation with the vendored
         /// `fixedData` blob and compares the leading
         /// `KEY_OUT.len()` bytes against the expected output.
         pub fn $name() -> Result<(), SelfTestFailure> {
@@ -836,8 +839,10 @@ kbkdf_kat_fn!(
 /// primitives, returning the byte offset at which the right-aligned
 /// big-endian counter slice begins inside `i.to_be_bytes()`.
 ///
-/// `counter_length_bits` must be one of `{8, 16, 24, 32}` per
-/// SP 800-108r1 §5.1; any other value returns
+/// `counter_length_bits` must be one of `{8, 16, 24, 32}`. SP 800-108r1
+/// permits any `1 <= r <= 32`; this implementation restricts `r` to
+/// byte-aligned widths, which is the set ACVP KDF-1.0 exercises. Any
+/// other value returns
 /// `KdfError::Module(Error::InvalidInput)`. The resulting iteration
 /// count `n = ceil(out_len / L)` must additionally fit in
 /// `2^counter_length_bits - 1` so no counter value exceeds its
@@ -863,7 +868,7 @@ fn validate_counter_params_and_offset<const L: usize>(
 
     // Output bit-length must fit in a u32 to match SP 800-108's
     // `[L]_32` length encoding (the caller assembles `[L]_32` inside
-    // `fixed_data` per §5.3 / §5.4; this just bounds n).
+    // `fixed_data` per §4.2 / §4.3; this just bounds n).
     let Some(bit_len) = out_len.checked_mul(8) else {
         return Err(KdfError::OutputTooLong);
     };
@@ -890,7 +895,7 @@ fn validate_counter_params_and_offset<const L: usize>(
 //     KDF output = K(1) || K(2) || ... truncated to the requested
 //                  bit length.
 //
-// SP 800-108 §5.3 embeds this recurrence inside a larger fixed-input
+// SP 800-108 §4.2 embeds this recurrence inside a larger fixed-input
 // string `Label || 0x00 || Context || [L]_32` which is passed
 // verbatim as `FixedData`. The public [`Sp800_108Feedback::derive`]
 // API builds that §5 blob for callers; the gateless KAT path
@@ -931,7 +936,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
 
     /// Gateless variant used by the boot-time KATs.
     ///
-    /// Assembles the SP 800-108 §5.3 fixed-input blob
+    /// Assembles the SP 800-108 §4.2 fixed-input blob
     /// `Label || 0x00 || Context || [L]_32` and runs the feedback
     /// recurrence via [`derive_with_fixed_data_pieces`].
     #[doc(hidden)]
@@ -986,7 +991,8 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
     /// `counterLocation = "none"` form.
     ///
     /// `counter_length_bits` must be one of `{8, 16, 24, 32}` per
-    /// SP 800-108r1 §5.1 — any other value returns
+    /// SP 800-108r1 permits any `1 <= r <= 32`; this implementation
+    /// restricts `r` to byte-aligned widths. Any other value returns
     /// `KdfError::Module(Error::InvalidInput)`. The number of PRF
     /// iterations `n = ceil(out.len() / L)` must additionally fit in
     /// `2^h - 1` so that no counter value exceeds its declared field
@@ -1043,7 +1049,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
     }
 
     /// Shared feedback-mode loop. `fixed_data_pieces` is the ordered
-    /// list of byte slices that together form the SP 800-108 §5.3
+    /// list of byte slices that together form the SP 800-108 §4.2
     /// fixed-input blob that follows `K(i-1)` in each PRF
     /// invocation. `iv` is the bit string `K(0)` and may be of any
     /// length (empty is supported for SP 800-108 zeroLengthIv=true,
@@ -1131,7 +1137,7 @@ pub type Sp800_108FeedbackHmacSha3_512 = Sp800_108Feedback<oxicrypt_hmac::HmacSh
 //
 // Each KAT below is sourced from NIST ACVP-Server `KDF-1.0`
 // (`gen-val/json-files/KDF/internalProjection.json`) via the
-// `fips-test-vectors` crate. Each vector provides `keyIn`, `iv`
+// `oxicrypt-test-vectors` crate. Each vector provides `keyIn`, `iv`
 // (non-zero-length), a pre-built `fixedData` blob, and a
 // (potentially truncated) `keyOut`. Consumers run
 // [`Sp800_108Feedback::derive_with_fixed_data_internal`] with the
@@ -1143,7 +1149,7 @@ macro_rules! kbkdf_feedback_kat_fn {
         /// Power-up KAT for this SP 800-108 Feedback Mode variant.
         ///
         /// Sourced from NIST ACVP-Server `KDF-1.0` via
-        /// `fips-test-vectors`; runs the derivation with the
+        /// `oxicrypt-test-vectors`; runs the derivation with the
         /// vendored `iv` and `fixedData` blob and compares the
         /// leading `KEY_OUT.len()` bytes against the expected
         /// output.
@@ -1307,7 +1313,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
 
     /// Gateless variant used by the boot-time KATs.
     ///
-    /// Assembles the SP 800-108 §5.4 fixed-input blob
+    /// Assembles the SP 800-108 §4.3 fixed-input blob
     /// `Label || 0x00 || Context || [L]_32` and runs the double-
     /// pipeline recurrence via [`derive_with_fixed_data_pieces`].
     #[doc(hidden)]
@@ -1363,7 +1369,8 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
     /// `counterLocation = "none"` form.
     ///
     /// `counter_length_bits` must be one of `{8, 16, 24, 32}` per
-    /// SP 800-108r1 §5.1 — any other value returns
+    /// SP 800-108r1 permits any `1 <= r <= 32`; this implementation
+    /// restricts `r` to byte-aligned widths. Any other value returns
     /// `KdfError::Module(Error::InvalidInput)`. The number of PRF
     /// iterations `n = ceil(out.len() / L)` must additionally fit in
     /// `2^h - 1` so that no counter value exceeds its declared field
@@ -1435,7 +1442,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
 
     /// Shared double-pipeline loop. `fixed_data_pieces` is the
     /// ordered list of byte slices that together form the SP 800-108
-    /// §5.4 fixed-input blob. The inner pipeline seed `A(0)` is
+    /// §4.3 fixed-input blob. The inner pipeline seed `A(0)` is
     /// this same fixed-input blob.
     fn derive_with_fixed_data_pieces(
         key: &[u8],
@@ -1541,7 +1548,7 @@ macro_rules! kbkdf_dp_kat_fn {
         /// Mode variant.
         ///
         /// Sourced from NIST ACVP-Server `KDF-1.0` via
-        /// `fips-test-vectors`; runs the derivation with the
+        /// `oxicrypt-test-vectors`; runs the derivation with the
         /// vendored `fixedData` blob and compares the leading
         /// `KEY_OUT.len()` bytes against the expected output.
         pub fn $name() -> Result<(), SelfTestFailure> {
@@ -1823,9 +1830,10 @@ pub fn pbkdf2_self_test_sha256() -> Result<(), SelfTestFailure> {
 /// Power-up KAT inventory for every KDF variant in this crate.
 ///
 /// Merged into the acvp-harness boot sequence via
-/// [`oxicrypt_module::initialize_with_tests`]. Per FIPS 140-3 IG 10.3.A
-/// each KDF instantiation carries its own KAT — families and modes
-/// do not share.
+/// [`oxicrypt_module::initialize_with_tests`]. Each KDF instantiation
+/// carries its own KAT — families and modes do not share. This exceeds
+/// IG 10.3.A, which requires one KBKDF CAST covering a single
+/// mode-and-PRF option.
 pub const KATS: &[KatEntry] = &[
     // --- HKDF (SP 800-56C Rev 2 Two-Step KDA-HKDF, hybrid) -----------
     //
@@ -2077,11 +2085,11 @@ mod tests {
     ];
 
     // Local fixed inputs for the cross-check KBKDF unit tests below.
-    // These do not participate in the power-up KAT anymore (the KAT
-    // pulls its vector straight from `oxicrypt_test_vectors`), but the
-    // existing tests still exercise the public API with stable,
+    // These do not participate in the power-up KAT, which pulls its
+    // vector from `oxicrypt_test_vectors`; these tests exercise the
+    // public API with stable,
     // non-NIST inputs to prove determinism, domain separation, and
-    // the SP 800-108 §5.2 bit-length binding.
+    // the SP 800-108 §4.1 bit-length binding.
     const KBKDF_KAT_KEY: [u8; 20] = [0x0b; 20];
     const KBKDF_KAT_LABEL: &[u8] = b"oxicrypt KBKDF counter";
     const KBKDF_KAT_CONTEXT: &[u8] = b"fips-kdf self test";
@@ -2278,7 +2286,7 @@ mod tests {
         // iteration runs but its [L]_32 encoding differs (17*8=136
         // vs 32*8=256), so the short output is NOT a prefix of the
         // full output — that's the whole point of binding L in the
-        // fixed input per SP 800-108 §5.2. This test confirms the
+        // fixed input per SP 800-108 §4.1. This test confirms the
         // bit-length encoding actually participates.
         let mut short = [0u8; 17];
         Sp800_108CounterHmacSha256::derive(
@@ -2662,7 +2670,7 @@ mod tests {
     //
     // Shape-correctness only: `derive_with_counter_internal` returns
     // `Ok` for the dispatched `counter_length_bits` value (32) and
-    // rejects every value outside the SP 800-108r1 §5.1 set
+    // rejects every value outside this implementation's byte-aligned set
     // `{8, 16, 24, 32}`. Cryptographic correctness for h>0 is gated
     // on the ACVP demo verdict, not these smoke tests — the vendored
     // NIST kat-slice carries h=0 vectors only for FB/DP.
