@@ -148,7 +148,9 @@ pub fn compute_shared_secret_p256_internal(
 /// # Errors
 ///
 /// Returns [`Error::NotOperational`] if the containing FIPS module
-/// has not finished its power-up self-tests, or [`Error::InvalidInput`]
+/// has not finished its power-up self-tests,
+/// [`Error::AlgorithmRestricted`] if the active profile does not allow
+/// ECDH-P-256, or [`Error::InvalidInput`]
 /// if `d` is not a valid non-zero scalar or `peer_pk` fails SP
 /// 800-56Ar3 §5.6.2.3.3 public-key validation.
 pub fn compute_shared_secret_p256(
@@ -209,7 +211,9 @@ pub fn compute_shared_secret_p384_internal(
 /// # Errors
 ///
 /// Returns [`Error::NotOperational`] if the containing FIPS module
-/// has not finished its power-up self-tests, or [`Error::InvalidInput`]
+/// has not finished its power-up self-tests,
+/// [`Error::AlgorithmRestricted`] if the active profile does not allow
+/// ECDH-P-384, or [`Error::InvalidInput`]
 /// if `d` is not a valid non-zero scalar or `peer_pk` fails SP
 /// 800-56Ar3 §5.6.2.3.3 public-key validation.
 pub fn compute_shared_secret_p384(
@@ -349,8 +353,8 @@ pub fn generate_keypair_p256_internal(
     let (d, q) = oxicrypt_ecdsa::p256_keygen::generate_p256_internal(drbg)?;
     // IG 10.3.A pairwise consistency: a faulted scalar-mul during
     // keygen produces `Q ≠ d · G` and the two-direction ECDH
-    // round-trip diverges. Constant-time equality on the 32-byte
-    // shared-secret outputs is fine here — both Z_a and Z_b are
+    // round-trip diverges. Variable-time equality on the 32-byte
+    // shared-secret outputs is acceptable here — both Z_a and Z_b are
     // derived from public-key-validated inputs that already passed
     // the SP 800-56Ar3 §5.6.2.3.3 checks inside
     // `compute_shared_secret_p256_internal`.

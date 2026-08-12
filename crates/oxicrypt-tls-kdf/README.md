@@ -1,6 +1,6 @@
 # oxicrypt-tls-kdf
 
-TLS 1.2 and TLS 1.3 KDFs per SP 800-135
+TLS 1.2 KDF per SP 800-135 and the TLS 1.3 KDF per RFC 8446
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy

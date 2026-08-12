@@ -1,4 +1,5 @@
-//! TLS 1.2 KDF per SP 800-135 Rev. 1 §4 and RFC 5246 §5.
+//! TLS 1.2 KDF per SP 800-135 Rev. 1 §4.2.2 and RFC 5246 §5, and the
+//! TLS 1.3 KDF (HKDF-Expand-Label, Derive-Secret) per RFC 8446 §7.1.
 //!
 //! Implements the TLS 1.2 PRF (`P_hash` expansion) used for both
 //! standard master-secret derivation (RFC 5246 §8.1) and RFC 7627
@@ -349,14 +350,16 @@ pub fn tls13_hkdf_expand_label_internal<P: PrfHmac<L>, const L: usize>(
 ) {
     // Build HkdfLabel into a stack scratch buffer.
     let mut scratch = [0u8; HKDF_LABEL_SCRATCH];
-    // `out.len()` is bounded above by realistic TLS 1.3 use (≤96 bytes);
-    // the `u16::MAX` saturation handles theoretical overflow.
+    // `out.len()` is bounded above by realistic TLS 1.3 use (≤96 bytes).
+    // An `out.len()` above `u16::MAX` would write a `length` field that
+    // disagrees with the output size rather than fail, so callers must
+    // keep `out.len()` within `u16`.
     let length: u16 = u16::try_from(out.len()).unwrap_or(u16::MAX);
     scratch[0..2].copy_from_slice(&length.to_be_bytes());
-    // `full_label_len` is clamped to 255 by the `.min(255)` above, so the
-    // `u8::try_from` cannot fail in practice; the `unwrap_or` is belt-and-
-    // suspenders matching the same saturation guarantee.
     let full_label_len = 6usize.saturating_add(label.len()).min(255);
+    // `full_label_len` is clamped to 255 by the `.min(255)` on the
+    // preceding line, so the `u8::try_from` cannot fail in practice; the
+    // `unwrap_or` is belt-and-suspenders matching the same saturation.
     scratch[2] = u8::try_from(full_label_len).unwrap_or(u8::MAX);
     scratch[3..9].copy_from_slice(b"tls13 ");
     let label_take = full_label_len.saturating_sub(6);
@@ -498,7 +501,7 @@ const KAT_PRF_EXPECTED: [u8; 48] = [
 ///
 /// Exercises `tls12_prf_internal` with a fixed `(secret, label, seed)`
 /// triple and verifies the 48-byte output matches the pinned reference
-/// value computed independently.
+/// value.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     use oxicrypt_hmac::HmacSha256;
     let mut out = [0u8; 48];

@@ -50,8 +50,8 @@
 //!
 //! [`self_test`] runs both directions of a deterministic KAT
 //! (`x_A * y_B` and `x_B * y_A`) over externally generated
-//! vectors and verifies that a tampered peer key is rejected by
-//! public-key validation.
+//! vectors and verifies that the order-2 element `p − 1` is rejected
+//! by public-key validation.
 //!
 //! # Conditional self-tests
 //!
@@ -67,13 +67,14 @@
 //! - **Shared secret `Z`** (`[u8; 384]`) — CSP. Returned raw;
 //!   the caller is responsible for feeding it into an SP 800-56Cr2
 //!   extractor before use as keying material.
-//! - **Peer public key `y`** — public. Subject to full validation.
+//! - **Peer public key `y`** — public. Subject to partial validation
+//!   (SP 800-56Ar3 §5.6.2.3.2).
 //!
 //! # Side-channel posture
 //!
 //! The private exponentiation `y^x mod p` is computed via the
-//! Montgomery `pow_secret` ladder, which is constant-time in `x`
-//! (4-bit fixed-window, fixed iteration count). Public-key
+//! Montgomery `pow_secret` ladder (4-bit fixed-window, fixed
+//! iteration count). Public-key
 //! validation branches only on public data. Level-1 disclosure
 //! only.
 //!
@@ -179,9 +180,10 @@ const TWO_BYTES: [u8; 384] = {
 };
 
 /// Maximum rejection-sampling iterations for key generation before
-/// returning an error. 3071-bit private keys sampled from a 3072-bit
-/// range have ≈50% acceptance probability, so 128 iterations gives a
-/// failure probability < 2^{-128}.
+/// returning an error. Candidates are masked to `< 2^3071` and rejected
+/// only when outside `[1, q − 1]`; since `2^3071 − q < 2^3005`, rejection
+/// has probability about `2^{-66}` per attempt, so 128 attempts fail with
+/// probability far below `2^{-128}`.
 const KEYGEN_MAX_ATTEMPTS: u32 = 128;
 
 // ------------------------------------------------------------------
@@ -233,7 +235,7 @@ fn validate_public_key(y: &U3072) -> bool {
 ///
 /// Returns `None` when:
 /// - `x` is not in `[1, q − 1]`
-/// - `y` fails SP 800-56Ar3 §5.6.2.3.1 full public-key validation
+/// - `y` fails SP 800-56Ar3 §5.6.2.3.2 partial public-key validation
 /// - `Z == 1` (SP 800-56Ar3 §5.7.1.1 error condition)
 ///
 /// This function bypasses the FIPS module state gate so it can be
@@ -264,7 +266,7 @@ pub fn compute_shared_secret_3072_internal(
         return None;
     }
 
-    // Z = y^x mod p (constant-time in x via pow_secret).
+    // Z = y^x mod p via the Montgomery fixed-window ladder.
     // pow_secret handles the to_mont / from_mont conversion internally.
     let ctx = group15_mont_ctx()?;
     let z = ctx.pow_secret(&y, &x);
@@ -286,9 +288,10 @@ pub fn compute_shared_secret_3072_internal(
 ///
 /// Uses rejection sampling over 384-byte DRBG output: sample
 /// `x_candidate`, mask the top bit to keep it < 2^3071, reject if
-/// `x_candidate ∉ [1, q − 1]`. The acceptance probability per
-/// attempt is ≈ 50 %, so `KEYGEN_MAX_ATTEMPTS = 128` gives a
-/// failure probability < 2^{-128}.
+/// `x_candidate ∉ [1, q − 1]`. Rejection has probability about
+/// `2^{-66}` per attempt (`2^3071 − q < 2^3005`), so
+/// `KEYGEN_MAX_ATTEMPTS = 128` fails with probability far below
+/// `2^{-128}`.
 ///
 /// Returns `None` if the DRBG fails or if all attempts are
 /// rejected (statistically impossible with a working DRBG).
@@ -352,7 +355,7 @@ pub fn generate_keypair_3072_internal(
 /// has not finished its power-up self-tests,
 /// [`Error::AlgorithmRestricted`] if the active profile does not
 /// allow DH-3072, or [`Error::InvalidInput`] if `x` is not in
-/// `[1, q − 1]`, `y` fails SP 800-56Ar3 §5.6.2.3.1 public-key
+/// `[1, q − 1]`, `y` fails SP 800-56Ar3 §5.6.2.3.2 partial public-key
 /// validation, or the shared secret `Z == 1`.
 pub fn compute_shared_secret_3072(
     x_bytes: &[u8; KEY_BYTES],
@@ -531,7 +534,7 @@ const KAT_Z: [u8; 384] = [
 
 /// Power-up known-answer test for DH-3072. Runs the deterministic
 /// vector in both directions (`x_A * y_B` and `x_B * y_A`) and
-/// checks that a tampered peer key is rejected by public-key
+/// checks that the order-2 element `p − 1` is rejected by public-key
 /// validation.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     // Positive 1: Z = y_B^{x_A} mod p.
@@ -589,8 +592,8 @@ mod tests {
 
     #[test]
     fn tampered_peer_key_changes_shared_secret() {
-        // Flipping a bit in a valid public key produces a different
-        // (but still in-range) public key for safe-prime groups.
+        // Flipping a low-order bit of this fixture leaves y inside
+        // [2, p - 2], so validation accepts it and Z changes.
         // The result should be a valid but different shared secret.
         let mut tampered = KAT_Y_B;
         tampered[200] ^= 0x01;
@@ -623,7 +626,8 @@ mod tests {
 
     #[test]
     fn rejects_peer_key_p_minus_one() {
-        // p - 1 has order 2 (not q), so y^q mod p == -1 != 1.
+        // p - 1 is the sole order-2 element and lies outside [2, p - 2],
+        // so the range check rejects it.
         let p = U3072::from_be_bytes(&GROUP15_P_BYTES);
         let one = U3072::from_be_bytes(&ONE_BYTES);
         let (p_minus_1, _) = p.subtracting(&one);
