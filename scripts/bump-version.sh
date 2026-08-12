@@ -186,4 +186,12 @@ if [[ -n "$stale" ]]; then
     echo "$stale" >&2
     die "stale '$old' literals survive (listed above) — the bump is incomplete"
 fi
-echo "bump-version: clean. Run 'cargo update --workspace' to refresh Cargo.lock, then commit."
+# Lockfiles are excluded from the scan above because they are generated and are
+# legitimately stale until the refresh below. That makes the refresh list part
+# of the guard rather than a footnote: a lockfile nobody refreshes keeps the old
+# version with nothing reporting it. `playground` is its own workspace, so
+# `--workspace` does not reach it, and its lock sat a release behind until this
+# was spelled out.
+echo "bump-version: clean. Refresh both lockfiles, then commit:"
+echo "  cargo update --workspace"
+echo "  cargo update --manifest-path playground/Cargo.toml   # standalone workspace"

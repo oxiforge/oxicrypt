@@ -25,5 +25,5 @@ oxicrypt-hmac = { workspace = true }
 # per-crate table: cargo strips [workspace] when it packages a member, so a
 # workspace-level copy never reaches the registry. Version-pinned rather than
 # branch-pinned so the manifest an agent fetches matches the crate it found.
-manifest = "https://raw.githubusercontent.com/oxiforge/oxicrypt/v0.23.1/docs/llm-api-manifest/llm-api.yaml"
+manifest = "https://raw.githubusercontent.com/oxiforge/oxicrypt/v0.23.2/docs/llm-api-manifest/llm-api.yaml"
 spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"

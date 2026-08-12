@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-08-12
+
 - Corrected the description of the five in-boundary `unsafe` exception crates, which called them
   audited across 66 lines. Nothing in the repository records an audit; they are isolated so that
   they are readily auditable. The published `description` of `oxicrypt-aes-accel`,

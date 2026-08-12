@@ -11,7 +11,7 @@
 lama: '0.1'
 library:
   name: esv-harness
-  version: 0.23.1
+  version: 0.23.2
   description: ESV protocol client for NIST's Entropy Source Validation server.
   repository: https://github.com/oxiforge/oxicrypt
   license: Apache-2.0 OR MIT

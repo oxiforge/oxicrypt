@@ -256,7 +256,7 @@ Releases are deliberate, separate acts. **Every version literal is bumped by `sc
 4. Tag the merge commit `vX.Y.Z` — annotated **and signed** — then `git push origin vX.Y.Z`.
 5. Create the GitHub release from the tag.
 
-When the project starts publishing to crates.io (currently `publish = false` in `Cargo.toml`), release tags become the publishing trigger. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
+Release tags are the publishing trigger: 29 of the workspace's 36 members carry `publish = true` and go to crates.io. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
 
 ### Tag scheme summary
 
