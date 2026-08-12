@@ -74,10 +74,13 @@
 //!
 //! Intermediate-state CSPs that live in stack-locals inside the FO
 //! transform are wiped via `oxicrypt_zeroize::zeroize` on function
-//! exit (FIPS 140-3 IG 7.7 / SP 800-140B §7.9). Because every
-//! parameter set is generated from the same `ml_kem_impl!` macro
-//! body, the zeroize-completeness invariant is audited once and
-//! holds uniformly across ML-KEM-512, -768, and -1024.
+//! exit. Zeroising temporary SSPs when they are no longer needed is
+//! AS09.32 (ISO/IEC 19790:2012 §7.9.7), which applies at Levels 2
+//! and above; this module targets Level 1 and wipes regardless.
+//! Because every parameter set is generated from the same
+//! `ml_kem_impl!` macro body, the zeroize-completeness invariant is
+//! auditable at a single site and holds uniformly across
+//! ML-KEM-512, -768, and -1024.
 //!
 //! # FIPS module gating
 //!

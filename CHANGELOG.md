@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `KATS` holds 23 entries, not 12; AES-NI hardening ships behind `accel-aes`. (#242)
 - Removed `oxicrypt-aes-accel`'s claim that its equivalence to the portable path is proven. The
   oracles exist but no gate enables `accel-aes`. (#242)
-- Corrected the enumeration of the five audited crates that use `unsafe` in `oxicrypt-sha-accel`,
+- Corrected the enumeration of the five `unsafe` exception crates in `oxicrypt-sha-accel`,
   `oxicrypt-keccak-accel` and `oxicrypt-aes-accel`. Each named a subset. (#242)
 
 - Corrected the integrity crate's compliance citations. The module integrity test is governed by
@@ -100,6 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requirement is ISO/IEC 19790:2012 §7.9.7. (#242)
 - Removed `oxicrypt-pointer`'s claim that every crate requires module initialization. Six published
   crates do not depend on `oxicrypt-module`. (#242)
+- Corrected four surviving FIPS 140-3 IG 7.7 citations in `oxicrypt-ml-kem` and `oxicrypt-ml-dsa`.
+  Zeroising temporary SSPs is AS09.32 (ISO/IEC 19790:2012 §7.9.7). (#242)
+- Removed the last two `audited` claims, in `oxicrypt-ml-kem` and `oxicrypt-rsa`. (#242)
 
 ## [0.23.1] - 2026-08-10
 

@@ -587,7 +587,7 @@ macro_rules! ml_kem_impl {
             // zeroize); `r` is the per-encapsulation re-encryption
             // randomness and must not outlive the function. `g_out`
             // is the concatenation `K ‖ r` and is zeroized alongside.
-            // See FIPS 140-3 IG 7.7 / SP 800-140B §7.9.
+            // See AS09.32 (ISO/IEC 19790:2012 §7.9.7).
             let result = (k, ct);
             oxicrypt_zeroize::zeroize(&mut k);
             oxicrypt_zeroize::zeroize(&mut r);
@@ -655,8 +655,8 @@ macro_rules! ml_kem_impl {
 
             // Phase 2 zeroize: every FO-transform intermediate that
             // carries shared-secret-derivable or candidate-shared-secret
-            // material is wiped on exit (FIPS 140-3 IG 7.7 / SP 800-140B
-            // §7.9):
+            // material is wiped on exit (AS09.32, ISO/IEC 19790:2012
+            // §7.9.7):
             //   `m_prime` — re-encryption-input random (decrypted K-PKE
             //               output; secret-key-derived).
             //   `k_prime` — candidate shared secret in the success branch.

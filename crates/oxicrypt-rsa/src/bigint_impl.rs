@@ -22,7 +22,8 @@
 //!   * Bug fixes propagate to every width at once.
 //!   * Adding a new width is a one-line macro call plus any
 //!     width-specific extras.
-//!   * The constant-time contract is stated and audited in one place.
+//!   * The constant-time contract is stated and readily auditable in
+//!     one place.
 
 /// Generate a fixed-width unsigned big-integer type with constant-time
 /// core arithmetic.

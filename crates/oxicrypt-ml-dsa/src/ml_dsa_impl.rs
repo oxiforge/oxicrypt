@@ -1361,7 +1361,7 @@ macro_rules! ml_dsa_impl {
             let mut sk = [0u8; SK_LEN];
             pack_sk(&rho, &key, &tr, &s1, &s2, &t0, &mut sk);
 
-            // Phase 3 zeroize (FIPS 140-3 IG 7.7 / SP 800-140B §7.9):
+            // Phase 3 zeroize (AS09.32, ISO/IEC 19790:2012 §7.9.7):
             // wipe the two stack-local secret seeds before the function
             // exits. `sigma` is the SHAKE-256 output that derives s1, s2;
             // `key` is the implicit-rejection / signing seed K embedded
