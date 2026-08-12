@@ -1162,7 +1162,7 @@ def main() -> int:
         rust_parts.append(
             f"// {display} — ACVP-Server {algo_dir} tgId={tc['tgId']} tcId={tc['tcId']}\n"
             f"// Source: vendor/nist/acvp-server/gen-val/json-files/{algo_dir}/kat-slice.json\n"
-            f"// Source-SHA256: {sha}"
+            f"// internalProjection-SHA256: {sha}"
         )
         rust_parts.append(
             rust_byte_array(
@@ -1200,7 +1200,7 @@ def main() -> int:
         rust_parts.append(
             f"// {display} — ACVP-Server {algo_dir} tgId={tc['tgId']} tcId={tc['tcId']}\n"
             f"// Source: vendor/nist/acvp-server/gen-val/json-files/{algo_dir}/kat-slice.json\n"
-            f"// Source-SHA256: {sha}"
+            f"// internalProjection-SHA256: {sha}"
         )
         rust_parts.append(
             rust_byte_array(
@@ -1247,7 +1247,7 @@ def main() -> int:
             f"// macLen={tc['mac_len_bits']} bits, keyLen={tc['key_len_bits']} bits, "
             f"msgLen={tc['msg_len_bits']} bits\n"
             f"// Source: vendor/nist/acvp-server/gen-val/json-files/{algo_dir}/kat-slice.json\n"
-            f"// Source-SHA256: {sha}"
+            f"// internalProjection-SHA256: {sha}"
         )
         rust_parts.append(
             rust_byte_array(

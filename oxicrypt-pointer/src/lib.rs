@@ -6,8 +6,8 @@
 //! the FIPS module boundary is stated per crate rather than inferred.
 //!
 //! **Start with [`oxicrypt-module`](https://crates.io/crates/oxicrypt-module).**
-//! It initializes the module and runs the power-up self-tests that every
-//! other crate requires before it will operate.
+//! It initializes the module and runs the power-up self-tests that the
+//! algorithm crates require before they will operate.
 //!
 //! The command-line interface is
 //! [`oxicrypt-cli`](https://crates.io/crates/oxicrypt-cli), which installs an

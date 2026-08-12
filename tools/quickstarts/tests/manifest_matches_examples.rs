@@ -9,10 +9,7 @@
 //!
 //! Neither half is sufficient alone. Examples that compile prove nothing about
 //! what the manifest says; a manifest checked only against itself proves
-//! nothing about whether the code builds. The failure this prevents is the one
-//! found upstream, where five of seven quickstarts in the specification's own
-//! reference example no longer compiled against the API they described, and
-//! nothing reported it.
+//! nothing about whether the code builds.
 
 use std::fs;
 use std::path::{Path, PathBuf};

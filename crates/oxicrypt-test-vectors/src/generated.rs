@@ -106,7 +106,7 @@ pub const SHA_512_256_MD: [u8; 32] = [
 
 // SHA3-224 — ACVP-Server SHA3-224-2.0 tgId=1 tcId=312
 // Source: vendor/nist/acvp-server/gen-val/json-files/SHA3-224-2.0/kat-slice.json
-// Source-SHA256: 9ae4b1480d15526b29498d442125dfcfe80d74fe74c1b56fa840b1fae702ae34
+// internalProjection-SHA256: 9ae4b1480d15526b29498d442125dfcfe80d74fe74c1b56fa840b1fae702ae34
 /// SHA3-224 message for the power-up KAT.
 pub const SHA3_224_MSG: [u8; 6] = [0xd9, 0xdd, 0x0e, 0xaa, 0x9b, 0x6a];
 /// SHA3-224 expected digest.
@@ -117,7 +117,7 @@ pub const SHA3_224_MD: [u8; 28] = [
 
 // SHA3-256 — ACVP-Server SHA3-256-2.0 tgId=1 tcId=87
 // Source: vendor/nist/acvp-server/gen-val/json-files/SHA3-256-2.0/kat-slice.json
-// Source-SHA256: dba4689436c7e440e61dc517210def3e8e09e50c0e9eff29ea66d89bdd0f2c63
+// internalProjection-SHA256: dba4689436c7e440e61dc517210def3e8e09e50c0e9eff29ea66d89bdd0f2c63
 /// SHA3-256 message for the power-up KAT.
 pub const SHA3_256_MSG: [u8; 1] = [0x08];
 /// SHA3-256 expected digest.
@@ -128,7 +128,7 @@ pub const SHA3_256_MD: [u8; 32] = [
 
 // SHA3-384 — ACVP-Server SHA3-384-2.0 tgId=1 tcId=197
 // Source: vendor/nist/acvp-server/gen-val/json-files/SHA3-384-2.0/kat-slice.json
-// Source-SHA256: e9eae46bd676dc82e911dcc3af92ef0093e0118615b62ab431086fce47574396
+// internalProjection-SHA256: e9eae46bd676dc82e911dcc3af92ef0093e0118615b62ab431086fce47574396
 /// SHA3-384 message for the power-up KAT.
 pub const SHA3_384_MSG: [u8; 5] = [0xc3, 0x86, 0xd3, 0x5f, 0xec];
 /// SHA3-384 expected digest.
@@ -140,7 +140,7 @@ pub const SHA3_384_MD: [u8; 48] = [
 
 // SHA3-512 — ACVP-Server SHA3-512-2.0 tgId=1 tcId=51
 // Source: vendor/nist/acvp-server/gen-val/json-files/SHA3-512-2.0/kat-slice.json
-// Source-SHA256: b0521468a178f7fd362d63319aa69b708885d08f0c71cee99ac70729f5bdf64b
+// internalProjection-SHA256: b0521468a178f7fd362d63319aa69b708885d08f0c71cee99ac70729f5bdf64b
 /// SHA3-512 message for the power-up KAT.
 pub const SHA3_512_MSG: [u8; 4] = [0x1f, 0xe5, 0x9e, 0x8b];
 /// SHA3-512 expected digest.
@@ -155,7 +155,7 @@ pub const SHA3_512_MD: [u8; 64] = [
 
 // SHAKE-128 — ACVP-Server SHAKE-128-FIPS202 tgId=1 tcId=128
 // Source: vendor/nist/acvp-server/gen-val/json-files/SHAKE-128-FIPS202/kat-slice.json
-// Source-SHA256: 1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db
+// internalProjection-SHA256: 1cbebb33db1f7e86ca265f89705dfac95cf90e8e0807b378e088af42cd0ae5db
 /// SHAKE-128 message for the power-up KAT.
 pub const SHAKE128_MSG: [u8; 1] = [0x4b];
 /// SHAKE-128 expected XOF output (58 bytes).
@@ -168,7 +168,7 @@ pub const SHAKE128_OUT: [u8; 58] = [
 
 // SHAKE-256 — ACVP-Server SHAKE-256-FIPS202 tgId=1 tcId=208
 // Source: vendor/nist/acvp-server/gen-val/json-files/SHAKE-256-FIPS202/kat-slice.json
-// Source-SHA256: a9348d17e009cad62a2baa70160353f5bca936a27116f60dd5811f39b91c6991
+// internalProjection-SHA256: a9348d17e009cad62a2baa70160353f5bca936a27116f60dd5811f39b91c6991
 /// SHAKE-256 message for the power-up KAT.
 pub const SHAKE256_MSG: [u8; 20] = [
     0xfe, 0xb7, 0x59, 0x18, 0x48, 0x82, 0x3e, 0x82, 0x1d, 0x6c, 0xc0, 0x8d, 0x8e, 0x05, 0xde, 0x60,
@@ -193,7 +193,7 @@ pub const SHAKE256_OUT: [u8; 56] = [
 // HMAC-SHA-1 — ACVP-Server HMAC-SHA-1-1.0 tgId=5 tcId=301
 // macLen=80 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA-1-1.0/kat-slice.json
-// Source-SHA256: 23e8cf16f428d18f0789ec380dbecd95caeee9683e2ab2dcb3ccdae7092a1842
+// internalProjection-SHA256: 23e8cf16f428d18f0789ec380dbecd95caeee9683e2ab2dcb3ccdae7092a1842
 /// HMAC-SHA-1 key for the power-up KAT.
 pub const HMAC_SHA_1_KEY: [u8; 1] = [0x8c];
 /// HMAC-SHA-1 message for the power-up KAT.
@@ -207,7 +207,7 @@ pub const HMAC_SHA_1_MAC_PREFIX: [u8; 10] =
 // HMAC-SHA2-224 — ACVP-Server HMAC-SHA2-224-1.0 tgId=8 tcId=526
 // macLen=160 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-224-1.0/kat-slice.json
-// Source-SHA256: cb3ee0ba82bbd6e4fb5c831ccaa7e174b67100865f94764d64b7e7afaedf433d
+// internalProjection-SHA256: cb3ee0ba82bbd6e4fb5c831ccaa7e174b67100865f94764d64b7e7afaedf433d
 /// HMAC-SHA2-224 key for the power-up KAT.
 pub const HMAC_SHA2_224_KEY: [u8; 1] = [0xe9];
 /// HMAC-SHA2-224 message for the power-up KAT.
@@ -223,7 +223,7 @@ pub const HMAC_SHA2_224_MAC_PREFIX: [u8; 20] = [
 // HMAC-SHA2-256 — ACVP-Server HMAC-SHA2-256-1.0 tgId=11 tcId=751
 // macLen=80 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-256-1.0/kat-slice.json
-// Source-SHA256: f1547839f024c72b0c1544e6943b4da5b4d8ee04563f011e7dc8697bc62c7e70
+// internalProjection-SHA256: f1547839f024c72b0c1544e6943b4da5b4d8ee04563f011e7dc8697bc62c7e70
 /// HMAC-SHA2-256 key for the power-up KAT.
 pub const HMAC_SHA2_256_KEY: [u8; 1] = [0x08];
 /// HMAC-SHA2-256 message for the power-up KAT.
@@ -237,7 +237,7 @@ pub const HMAC_SHA2_256_MAC_PREFIX: [u8; 10] =
 // HMAC-SHA2-384 — ACVP-Server HMAC-SHA2-384-1.0 tgId=12 tcId=826
 // macLen=80 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-384-1.0/kat-slice.json
-// Source-SHA256: 3bb7565138f2d0aa1027b16a944ea85bb1bfd65b831d05cda9fd6a1d32b1fcb2
+// internalProjection-SHA256: 3bb7565138f2d0aa1027b16a944ea85bb1bfd65b831d05cda9fd6a1d32b1fcb2
 /// HMAC-SHA2-384 key for the power-up KAT.
 pub const HMAC_SHA2_384_KEY: [u8; 1] = [0x21];
 /// HMAC-SHA2-384 message for the power-up KAT.
@@ -251,7 +251,7 @@ pub const HMAC_SHA2_384_MAC_PREFIX: [u8; 10] =
 // HMAC-SHA2-512 — ACVP-Server HMAC-SHA2-512-1.0 tgId=7 tcId=451
 // macLen=88 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-512-1.0/kat-slice.json
-// Source-SHA256: def11b8e04ded943a0cbc53c1c179beceb431dea2791d9f428e5aa10b9e31be5
+// internalProjection-SHA256: def11b8e04ded943a0cbc53c1c179beceb431dea2791d9f428e5aa10b9e31be5
 /// HMAC-SHA2-512 key for the power-up KAT.
 pub const HMAC_SHA2_512_KEY: [u8; 1] = [0xa3];
 /// HMAC-SHA2-512 message for the power-up KAT.
@@ -266,7 +266,7 @@ pub const HMAC_SHA2_512_MAC_PREFIX: [u8; 11] = [
 // HMAC-SHA2-512/224 — ACVP-Server HMAC-SHA2-512-224-1.0 tgId=11 tcId=751
 // macLen=88 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-512-224-1.0/kat-slice.json
-// Source-SHA256: 0ea996e3933cd40c41a710888049d8a8c121636ef0e109e5ed4efa0f8430b203
+// internalProjection-SHA256: 0ea996e3933cd40c41a710888049d8a8c121636ef0e109e5ed4efa0f8430b203
 /// HMAC-SHA2-512/224 key for the power-up KAT.
 pub const HMAC_SHA2_512_224_KEY: [u8; 1] = [0x2b];
 /// HMAC-SHA2-512/224 message for the power-up KAT.
@@ -281,7 +281,7 @@ pub const HMAC_SHA2_512_224_MAC_PREFIX: [u8; 11] = [
 // HMAC-SHA2-512/256 — ACVP-Server HMAC-SHA2-512-256-1.0 tgId=8 tcId=526
 // macLen=96 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA2-512-256-1.0/kat-slice.json
-// Source-SHA256: f4855274d6140080d20dbf897983c91e66ac006ebd6d47f69afb8955022176fc
+// internalProjection-SHA256: f4855274d6140080d20dbf897983c91e66ac006ebd6d47f69afb8955022176fc
 /// HMAC-SHA2-512/256 key for the power-up KAT.
 pub const HMAC_SHA2_512_256_KEY: [u8; 1] = [0xfd];
 /// HMAC-SHA2-512/256 message for the power-up KAT.
@@ -296,7 +296,7 @@ pub const HMAC_SHA2_512_256_MAC_PREFIX: [u8; 12] = [
 // HMAC-SHA3-224 — ACVP-Server HMAC-SHA3-224-1.0 tgId=9 tcId=601
 // macLen=88 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-224-1.0/kat-slice.json
-// Source-SHA256: 585c07f3f36e40ee4e5049a7a8caf48b5063a4a3334fdf1aaa723d0a6e7a5d61
+// internalProjection-SHA256: 585c07f3f36e40ee4e5049a7a8caf48b5063a4a3334fdf1aaa723d0a6e7a5d61
 /// HMAC-SHA3-224 key for the power-up KAT.
 pub const HMAC_SHA3_224_KEY: [u8; 1] = [0xa3];
 /// HMAC-SHA3-224 message for the power-up KAT.
@@ -311,7 +311,7 @@ pub const HMAC_SHA3_224_MAC_PREFIX: [u8; 11] = [
 // HMAC-SHA3-256 — ACVP-Server HMAC-SHA3-256-1.0 tgId=7 tcId=451
 // macLen=80 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-256-1.0/kat-slice.json
-// Source-SHA256: 3f39e5c04f0f581fa14e301bdae941c9889cba001050f68cf94d113bf47b3f39
+// internalProjection-SHA256: 3f39e5c04f0f581fa14e301bdae941c9889cba001050f68cf94d113bf47b3f39
 /// HMAC-SHA3-256 key for the power-up KAT.
 pub const HMAC_SHA3_256_KEY: [u8; 1] = [0x29];
 /// HMAC-SHA3-256 message for the power-up KAT.
@@ -325,7 +325,7 @@ pub const HMAC_SHA3_256_MAC_PREFIX: [u8; 10] =
 // HMAC-SHA3-384 — ACVP-Server HMAC-SHA3-384-1.0 tgId=6 tcId=376
 // macLen=88 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-384-1.0/kat-slice.json
-// Source-SHA256: da65bb225a53033bacb0bfec4cbe82477fc19027473e9245d93c844a72fd195e
+// internalProjection-SHA256: da65bb225a53033bacb0bfec4cbe82477fc19027473e9245d93c844a72fd195e
 /// HMAC-SHA3-384 key for the power-up KAT.
 pub const HMAC_SHA3_384_KEY: [u8; 1] = [0x39];
 /// HMAC-SHA3-384 message for the power-up KAT.
@@ -340,7 +340,7 @@ pub const HMAC_SHA3_384_MAC_PREFIX: [u8; 11] = [
 // HMAC-SHA3-512 — ACVP-Server HMAC-SHA3-512-1.0 tgId=6 tcId=376
 // macLen=80 bits, keyLen=8 bits, msgLen=128 bits
 // Source: vendor/nist/acvp-server/gen-val/json-files/HMAC-SHA3-512-1.0/kat-slice.json
-// Source-SHA256: 28b31e01b906c9afb8532898fd7c19e303a2d9829b691211714f5608c6801599
+// internalProjection-SHA256: 28b31e01b906c9afb8532898fd7c19e303a2d9829b691211714f5608c6801599
 /// HMAC-SHA3-512 key for the power-up KAT.
 pub const HMAC_SHA3_512_KEY: [u8; 1] = [0x3f];
 /// HMAC-SHA3-512 message for the power-up KAT.

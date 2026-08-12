@@ -33,7 +33,7 @@ fn main() -> ExitCode {
     // --lama: dump the LAMA manifest and exit.
     if args.iter().any(|a| a == "--lama") {
         print!("{}", include_str!("../llm-api.yaml"));
-        // Requirement 2: the embedded manifest carries the exact build.
+        // The embedded manifest carries the exact build.
         // A top-level key keeps the output a single YAML document.
         // Quoted: a short SHA is often all digits (~5% of commits), and YAML
         // would then parse it as an integer — with a leading zero, as octal.
