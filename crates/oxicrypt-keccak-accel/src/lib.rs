@@ -4,8 +4,8 @@
 //! This is one of the small readily auditable in-boundary crates in the oxicrypt
 //! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
 //! `oxicrypt-sha-accel`, `oxicrypt-aes-accel`, and `oxicrypt-timer`). It
-//! is the fifth such crate, and implements the sanctioned **CPU-intrinsic
-//! acceleration** category: feature-gated, default-off, runtime-detected,
+//! implements the sanctioned **CPU-intrinsic acceleration** category:
+//! feature-gated, default-off, runtime-detected,
 //! with equivalence to the portable permutation proven by a cross-path
 //! oracle. All other in-boundary crates remain `#![forbid(unsafe_code)]`;
 //! the authoritative unsafe-code accounting lives in

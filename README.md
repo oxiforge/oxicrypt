@@ -191,7 +191,7 @@ were discovered and fixed by this harness.
 ### Performance features
 
 All performance features are **default-OFF, non-validated, and byte-identical to
-the default build** — the CMVP-tested configuration is the portable,
+the default build** — the validation-target configuration is the portable,
 single-threaded, intrinsic-free default. They exist purely for throughput; their
 equivalence to the default build is argued structurally and corroborated by
 KAT-on/off + determinism oracles per crate (Security Policy).
