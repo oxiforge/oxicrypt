@@ -52,8 +52,9 @@ mod tests {
 
     /// The out-of-boundary crate set. The canonical statement of the module
     /// boundary is security-policy.md §1; `policy_states_the_as_built_accounting`
-    /// asserts §1 still names exactly these crates, so this constant and the
-    /// policy cannot drift apart silently.
+    /// asserts the policy still names exactly these crates and no more,
+    /// anywhere in the document, so this constant and the policy cannot drift
+    /// apart silently.
     const OUT_OF_BOUNDARY: [&str; 2] = ["oxicrypt-ffi", "oxicrypt-maxwell"];
 
     /// The in-boundary `unsafe` exception crates. The canonical
@@ -112,10 +113,10 @@ mod tests {
     /// `oxiforge/oxicrypt-policy` there needs no further configuration.
     const POLICY_REPO_REL: &str = "repos/oxicrypt-policy";
 
-    /// The in-tree path the policy used to occupy. Retained only as the thing
-    /// the containment guard forbids — deliberately **not** a resolution
-    /// fallback, since a fallback would make the containment guard's failure
-    /// mode reachable and silent at the same time.
+    /// The in-tree path the policy used to occupy. Retained so
+    /// `policy_resolution_precedence_holds` can assert it is never a
+    /// resolution target — deliberately **not** a fallback, since a fallback
+    /// would make that failure mode reachable and silent at the same time.
     const POLICY_IN_TREE: &str = "docs/security-policy/security-policy.md";
 
     /// Resolve the Security Policy from an environment value and a home
@@ -346,8 +347,8 @@ mod tests {
     /// file-name sweep catches a copy restored at any path; the phrase sweep
     /// catches one restored under a different name. A copy that was *reflowed*
     /// as it was moved evades both — this guard is a backstop against accident,
-    /// not an adversary. It also says nothing about git history, where the
-    /// document still is until the path excision lands.
+    /// not an adversary. It also says nothing about git history; the document
+    /// was excised from it, so only a new commit can reintroduce it.
     #[test]
     fn the_security_policy_is_not_in_the_public_tree() {
         /// A phrase the policy states on one line and nothing else in this tree
@@ -424,13 +425,10 @@ mod tests {
         phrased.sort(); // readdir order is not stable across filesystems
 
         // Positive control — and it must be a property of THE WALK, not a
-        // parallel read. An earlier version asserted the phrase was present by
-        // reading the exempt file directly through `read_doc`, which resolves
-        // independently: pointing the walk at a non-existent root left that
-        // assertion passing and the test reporting a clean tree in 0.00s. So the
-        // expected set is asserted against the walk's OWN output. A walk that
-        // read nothing now fails; so does a reworded phrase; so does one file
-        // too many.
+        // parallel read. A control that reads the exempt file independently
+        // still passes when the walk itself reads nothing, so the expected set
+        // is asserted against the walk's OWN output. A walk that read nothing
+        // fails; so does a reworded phrase; so does one file too many.
         let expected: Vec<String> = PHRASE_EXEMPT.iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(
             phrased, expected,
@@ -559,11 +557,8 @@ mod tests {
     // detects when the code drifts away from what the sentence asserts — the
     // claim and its enforcement are separate, and only the claim is checked.
     //
-    // ISC-125 had already diverged when this was written: the policy called α
-    // "the cutoff-generating parameter … not the observed false-positive rate",
-    // while the crate doc described it only as a "False-positive probability" —
-    // the reading the policy explicitly rules out. Both documents were current
-    // and nothing compared them.
+    // The guards below compare the two statements directly, so a policy
+    // sentence and a crate doc that describe α differently cannot both pass.
 
     /// The integer ASSIGNED on the line containing `needle`.
     ///
@@ -624,8 +619,8 @@ mod tests {
     /// Claims must be asserted against CURRENT-STATE prose. This crate's module
     /// docs say frozen history — dated decision rows, changelog entries — is
     /// deliberately not checked, but a bare `policy.contains("2⁻²⁰")` is
-    /// satisfied by any of its 6 occurrences, two of which sit in a dated
-    /// decision table. Deleting the live sentence would then still pass.
+    /// satisfied by any occurrence, including ones inside dated decision
+    /// rows. Deleting the live sentence would then still pass.
     fn paragraph_containing<'a>(doc: &'a str, marker: &str) -> &'a str {
         doc.split("\n\n")
             .find(|p| p.contains(marker))
@@ -777,12 +772,9 @@ mod tests {
     /// ISC-125 across **every** surface that documents α, not just the two the
     /// original divergence named.
     ///
-    /// Fixing `health.rs` alone left the same reading live one file away — eight
-    /// sites across three crates still called α a "false-positive probability",
-    /// including `sp800_90b.rs`, the file the guard above parses. A criterion
-    /// reported as fixed while its own defect persists next door is the thing
-    /// this whole check family exists to prevent, so the phrasing is denied
-    /// repo-wide rather than corrected once.
+    /// The ruled-out phrasing is denied repo-wide rather than corrected per
+    /// file. A criterion reported as fixed while its own defect persists one
+    /// file away is the thing this whole check family exists to prevent.
     #[test]
     fn no_source_surface_calls_alpha_a_false_positive_probability() {
         /// The ruled-out reading. The Security Policy says α is the
@@ -855,12 +847,10 @@ mod tests {
     /// requires this set to be EXACT, so citing one of these fails the test until
     /// it is removed here — the list cannot quietly become permanent.
     ///
-    /// #158 reported three cases. Sweeping every criterion found **five**:
-    /// `D.K R5` and `D.K R15` are also cited and unresolved — `D.K R15` by
-    /// ISC-125, the criterion whose α claim the guards above assert — and
-    /// `D.K R1` is cited by ISC-123 in longhand ("IG D.K Resolution-1"), a form
-    /// the first version of this parser dropped, so the very criterion the check
-    /// exists to catch was invisible to it.
+    /// `D.K R15` is cited by ISC-125, the criterion whose α claim the guards
+    /// above assert. `D.K R1` is cited by ISC-123 in longhand
+    /// ("IG D.K Resolution-1"): the parser normalises that form, which is one
+    /// reflow away from a silent false negative.
     const KNOWN_UNCITED: &[&str] = &["D.J AC6", "D.K R1", "D.K R15", "D.K R22", "D.K R5"];
 
     /// How many distinct resolutions the criteria cite. Pinned rather than
@@ -870,12 +860,11 @@ mod tests {
 
     /// Every `<letter>.<letter> R<n>` / `AC<n>` resolution cited in the ISA.
     ///
-    /// The input is normalised first, because the shorthand is not the only form
-    /// in use: ISC-123 cites "IG D.K Resolution-1" in longhand, whose token
-    /// carries no digit and was silently dropped — the criterion the check exists
-    /// to catch, invisible to the check. A comma or extra spacing between the
-    /// section and the resolution is tolerated for the same reason: each is one
-    /// reflow away from becoming a silent false negative.
+    /// The input is normalised first, because the shorthand is not the only
+    /// form in use: ISC-123 cites "IG D.K Resolution-1" in longhand, whose
+    /// token carries no digit. A comma or extra spacing between the section and
+    /// the resolution is tolerated for the same reason: each is one reflow away
+    /// from becoming a silent false negative.
     fn cited_resolutions(isa: &str) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
         let normalised = isa
@@ -1055,9 +1044,9 @@ mod tests {
 
     // ----- banned-phrase: the mechanism behind #159 (#157 family 3) -----
     //
-    // The Security Policy ships unresolved drafting text — a forward reference to
-    // wiring that has not landed, and a question not yet put to the CST lab. This
-    // is the document a CST lab and a CMVP reviewer read.
+    // The Security Policy ships unresolved drafting text; the census below pins
+    // how much, per marker. This is the document a CST lab and a CMVP reviewer
+    // read.
     //
     // Resolving them is the content decision in #159, and one of the two blocks
     // on an external answer. This is the mechanism, and it pins the census PER
@@ -1139,10 +1128,8 @@ mod tests {
 
         // Positive control on BOTH carve-outs, against a synthetic fixture rather
         // than the live document. Asserting only that the frozen predicate
-        // "matched a lot of rows" cannot detect mis-scoping: deleting the
-        // carve-out entirely changes today's census by zero, because the one
-        // dated row carrying a marker is exempt for another reason. So the
-        // predicate is exercised on inputs that must and must not match.
+        // "matched a lot of rows" cannot detect mis-scoping, so the predicate is
+        // exercised on inputs that must and must not match.
         assert!(
             is_frozen_history("| 2026-07-03 | draft-N | resolved an earlier TODO |"),
             "frozen-history predicate no longer recognises a dated change-log row"
@@ -1171,9 +1158,8 @@ mod tests {
             }
             let scanned = without_code_spans(line);
             for (marker, _) in OPEN_MARKERS {
-                // Every occurrence, not one per line: line 2791 already carries
-                // two `[seeding-integration pending]`, so a per-line count makes
-                // a second marker on an already-marked line free.
+                // Every occurrence, not one per line: a line already carrying one
+                // marker would otherwise make a second marker on it free.
                 let n = scanned.matches(marker).count();
                 if n > 0 {
                     *counts.entry(marker).or_insert(0) += n;
@@ -1305,14 +1291,13 @@ mod tests {
     /// Every `ISC-N` cited anywhere in the tree resolves to a criterion defined
     /// in `ISA.md`.
     ///
-    /// The repository previously carried a placeholder ISA whose IDs collided
-    /// with the numbering the code actually cited, so a citation resolved
-    /// against the authoritative file to an unrelated criterion with nothing to
-    /// signal the mismatch. Nothing checked, which is why it survived.
+    /// A citation that resolves against the wrong file reaches an unrelated
+    /// criterion with nothing to signal the mismatch, so resolution is pinned
+    /// to `ISA.md` alone.
     ///
-    /// Files are read as bytes and scanned lossily rather than as UTF-8 text: a
-    /// committed `.pyc` once carried a leaked path, and a scan that skips binary
-    /// content reports clean while the worst instance sits in history.
+    /// Files are read as bytes and scanned lossily rather than as UTF-8 text:
+    /// binary content can carry citations, and a scan that skips it reports
+    /// clean.
     #[test]
     fn every_cited_isc_resolves_in_the_isa() {
         fn collect(dir: &Path, out: &mut Vec<(String, u32)>) {
@@ -1363,9 +1348,10 @@ mod tests {
         // Anti-vacuity: a walk that found nothing would make the assertion below
         // trivially true. These bounds are deliberately loose — they exist to
         // catch a broken walk, not to pin a count that legitimately moves.
-        // A bolded ID makes PAI's `parseCriteriaList()` return zero criteria for
-        // the WHOLE file, silently. A count threshold does not catch a single
-        // bolded line, so assert the shape directly.
+        // Criterion IDs must be bare `- [ ] ISC-N:`; a bolded ID makes
+        // downstream criterion parsers return nothing for the whole file,
+        // silently. A count threshold does not catch a single bolded line,
+        // so assert the shape directly.
         let bolded: Vec<&str> = isa
             .lines()
             .filter(|l| l.starts_with("- [") && l.contains("] **ISC-"))
@@ -1408,9 +1394,9 @@ mod tests {
     // ----- packaging: embedded files must live inside the package -----
 
     /// The crates that embed the LAMA manifest, each through a symlink in its
-    /// own package root. Every one exposes a runtime `--lama` surface, which is
-    /// why it needs the bytes rather than the `[package.metadata.lama]` URL the
-    /// other crates carry.
+    /// own package root. Every one exposes a runtime `--lama` surface, so it
+    /// needs the bytes embedded as well as the `[package.metadata.lama]`
+    /// registry-discovery URL every crate carries.
     const LAMA_EMBEDDERS: [&str; 4] = ["crates/oxicrypt-ffi", "oxi", "acvp-harness", "esv-harness"];
 
     /// Every `.rs` file in the workspace, excluding build artefacts.
@@ -1461,8 +1447,7 @@ mod tests {
     ///
     /// The rule is deliberately unconditional rather than scoped to the crates
     /// currently destined for crates.io. A roster-conditional rule changes
-    /// meaning when a `publish` flag moves, which is exactly how `oxi` acquired
-    /// a latent packaging blocker the moment it joined the roster.
+    /// meaning when a `publish` flag moves.
     #[test]
     fn embedded_files_live_inside_their_package_root() {
         let files = workspace_rs_files();
