@@ -12,8 +12,7 @@
 //!   CRT components) or non-CRT path with `keyMode = "standard"`
 //!
 //! All four combinations of (sigType × keyMode) are supported at each
-//! modulus size. The CRT path uses Bellcore verify-after-sign per
-//! FIPS 140-3 IG D.G.
+//! modulus size. The CRT path uses Bellcore verify-after-sign.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -147,7 +146,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     // Echo group-level n + e in the response (live GDT requires it
     // because the server has no prior knowledge of the IUT's keypair;
     // offline shape echoes the values from the prompt for consistency
-    // — mirrors the ECDSA sigGen pattern PR #34 stabilised).
+    // — mirrors the ECDSA sigGen response shape).
     Ok(JsonValue::Object(vec![
         ("tgId".to_string(), JsonValue::Number(tg_id)),
         ("n".to_string(), JsonValue::String(n_hex)),
@@ -168,8 +167,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 ///   IUT generates its own CRT keypair via `os_entropy`-seeded DRBG
 ///   and signs every test with it (and a fresh per-test salt for PSS).
 ///   Server validates each signature with the IUT-emitted `n` + `e`.
-///   Mirrors the ECDSA sigGen + KAS-FFC-SSC live-generative pattern
-///   PR #34 / #36 stabilised.
+///   Mirrors the ECDSA sigGen and KAS-FFC-SSC live-generative shape.
 #[allow(clippy::too_many_lines)]
 fn handle_siggen_2048(
     group: &JsonValue,
@@ -275,7 +273,7 @@ fn handle_siggen_2048(
     }
     // Offline shape: echo n + e from the prompt (e defaults to 010001
     // when the prompt omits it — standard-keyMode pkcs1v1.5 carries
-    // only n + d but the cap advertises `fixedPubExp = "010001"`).
+    // only n + d, so the response echoes the default public exponent).
     let n_bytes: [u8; N] = decode_fixed(group, "n")?;
     let n_hex = hex::encode_upper(&n_bytes);
     let e_hex = group
@@ -290,8 +288,8 @@ fn handle_siggen_2048(
 /// Per `draft-celi-acvp-rsa §6.2`: the server emits only
 /// `(message, tcId, deferred)` per test and validates the resulting
 /// signature against the IUT-emitted group-level `n` + `e`. The IUT
-/// samples its own keypair (CRT internal API; same primitive the
-/// FIPS power-up KAT exercises) and — for PSS — its own fresh salt
+/// samples its own keypair (CRT internal API; the power-up KAT covers
+/// the non-CRT sign path) and — for PSS — its own fresh salt
 /// per signature via `os_entropy::read_os_entropy`.
 #[allow(clippy::similar_names)]
 fn live_siggen_2048(

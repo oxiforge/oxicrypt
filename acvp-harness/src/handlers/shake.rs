@@ -190,8 +190,8 @@ const MCT_INNER: usize = 1000;
 ///     resultsArray[i] = { md: MD, outLen: outputLen }
 /// ```
 ///
-/// `security_bits` is 128 for SHAKE128, 256 for SHAKE256 — this
-/// equals `minOutLen` in the ACVP parameterization.
+/// The MCT driver derives `minOutLen` from the group's own field and
+/// does not use the security level.
 #[allow(
     clippy::similar_names,
     clippy::too_many_lines,

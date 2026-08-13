@@ -4,7 +4,7 @@
 //! The ACVP `KDA` family publishes across two envelope fields rather
 //! than one: `algorithm = "KDA"`, `mode = "HKDF"`,
 //! `revision = "Sp800-56Cr2"`. The dispatcher keys handlers on the
-//! tuple `(algorithm, mode, revision)` since R13 so one registry slot
+//! tuple `(algorithm, mode, revision)`, so one registry slot
 //! covers this family cleanly; single-field handlers keep `mode =
 //! None`.
 //!

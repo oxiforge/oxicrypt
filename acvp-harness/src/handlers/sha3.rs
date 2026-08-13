@@ -2,9 +2,8 @@
 //!
 //! Targets ACVP `algorithm = "SHA3-{224,384,512}"`, `revision = "2.0"`,
 //! `testType ∈ {"AFT", "MCT", "LDT"}`. SHA3-256 lives in its own
-//! [`super::sha3_256`] module because it was wired up in R10 — this
-//! module provides the other three fixed-output members of the SHA-3
-//! family so R12-A can close out the SHA-3 hashing side of the
+//! [`super::sha3_256`] module; this module provides the other three
+//! fixed-output members of the SHA-3 family, completing the
 //! dispatcher without disturbing R10 code.
 //!
 //! All three variants share the exact envelope shape exercised by
@@ -128,8 +127,8 @@ impl AlgorithmHandler for Sha3_512Handler {
 }
 
 /// Shared group driver: dispatches AFT, MCT, and LDT groups for a
-/// SHA-3 variant. `label` is a static string used for diagnostic
-/// errors only.
+/// SHA-3 variant. `label` is currently unused; it is threaded through
+/// for future diagnostics.
 ///
 /// `compute` is the one-shot hash function (for AFT/MCT).
 /// `ldt_compute` is the streaming LDT hash function that takes a

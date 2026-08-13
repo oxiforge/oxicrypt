@@ -47,8 +47,9 @@
 //! # MCT — function-name handling
 //!
 //! SP 800-185 §6 ParallelHash takes no caller-supplied function name
-//! (the internal N is hard-coded to `"ParallelHash"`). The MCT
-//! pseudocode at §6.2.2 references a `FunctionName` parameter, but
+//! (the internal N is hard-coded to `"ParallelHash"`, per SP 800-185
+//! §6.3). The `draft-celi-acvp-xof` §6.2.2 MCT pseudocode references a
+//! `FunctionName` parameter, but
 //! the surrounding text never initializes it; it is a spec artefact
 //! inherited from cSHAKE's pseudocode and has no effect on
 //! ParallelHash output. The oxicrypt API (`ParallelHash128::new(B,

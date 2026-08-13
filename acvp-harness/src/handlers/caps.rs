@@ -1131,8 +1131,8 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
 /// field** under revision `Sp800-56Br2`, paralleling the
 /// `KAS-{ECC,FFC}-SSC` entries. The server's lookup key is
 /// `KTS-IFC-Sp800-56Br2`; sending a mode segment would mis-key.
-/// This is the same catalog-mapping correction pattern resolved in
-/// PR #35 (KMACXOF unification) and PR #36 (KAS-ECC-SSC mode-drop).
+/// This is the same catalog-mapping pattern as the KMACXOF and
+/// KAS-ECC-SSC entries: the registration key carries no mode segment.
 ///
 /// Spec ground truth: `draft-hammett-acvp-kas-ifc` §7.3 Table 3
 /// (Capabilities JSON Values) — required values are `algorithm`,
@@ -1286,8 +1286,7 @@ pub fn ml_dsa_keygen_capability() -> JsonValue {
 /// - `preHash`, `hashAlgs`, `contextLength` deliberately omitted —
 ///   they apply only to the external interface (which accepts a
 ///   pre-hashed payload, a hash algorithm tag, and context bytes
-///   respectively). Per ACVP server validation observed during
-///   the SLH-DSA bring-up (PR #60), advertising
+///   respectively). Per ACVP server validation, advertising
 ///   `signatureInterfaces: ["internal"]` AND `preHash: [...]` is
 ///   a registration error: *"Expected no pre-hash options with
 ///   only internal interface"* (HTTP 400). The internal interface

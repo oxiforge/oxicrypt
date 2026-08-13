@@ -105,8 +105,7 @@ impl AlgorithmHandler for EddsaKeyVerHandler {
 ///   per-test `signature` only — the offline fixture already knows
 ///   `q` from `d`.
 ///
-/// Same dual-mode pattern as PR #34 (ECDSA sigGen) and PR #38 (EdDSA
-/// keyGen).
+/// Same dual-mode pattern as [`super::ecdsa`]'s sigGen handler.
 pub struct EddsaSigGenHandler;
 
 impl AlgorithmHandler for EddsaSigGenHandler {
@@ -346,7 +345,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
     // fixtures supply `d` at group level for deterministic round-trip
     // assertions; the handler detects that shape via `group.d` presence
     // and signs with the supplied seed directly. Same dual-mode pattern
-    // as PR #34 (ECDSA sigGen) and PR #38 (EdDSA keyGen).
+    // as the ECDSA sigGen handler.
     let deterministic = group.get("d").is_some();
 
     // `seed`: the signing seed (32 bytes). Sourced from the prompt in
