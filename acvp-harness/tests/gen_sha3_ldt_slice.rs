@@ -35,7 +35,7 @@ fn hex_upper(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02X}")).collect()
 }
 
-/// Content patterns for LDT tests: (content_hex, content_bytes, full_bytes)
+/// Content patterns for LDT tests: (content_byte, content_bytes, full_bytes)
 const LDT_TESTS: [(u8, usize, u64); 3] = [
     // Test 1: single byte 0x61 ('a'), 1 byte content, 1MB total
     (0x61, 1, 1_048_576),

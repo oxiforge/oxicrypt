@@ -24,8 +24,9 @@
 //! - `CMAC-AES-1.0/lifecycle-slice.json`
 //!
 //! Uses a single DRBG-generated AES-256 key shared across `gen` and
-//! `ver` groups.  The `ver` group contains both valid (testPassed=true)
-//! and invalid (testPassed=false, bit-flipped MAC) cases.
+//! `ver` groups. Two `ver` groups follow the `gen` group: tgId 2 holds
+//! valid cases (testPassed=true), tgId 3 bit-flipped MACs
+//! (testPassed=false).
 //!
 //!   cargo test -p acvp-harness --test gen_cmac_lifecycle_slice -- --ignored --nocapture
 

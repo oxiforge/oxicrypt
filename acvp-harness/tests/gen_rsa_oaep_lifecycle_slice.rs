@@ -23,7 +23,7 @@
 //!
 //! - `RSA-OAEP-RFC8017/lifecycle-slice.json`
 //!
-//! Reuses the same DRBG seed as the RSA lifecycle slices (R37/R39) to
+//! Reuses the same DRBG seed as the RSA lifecycle slices to
 //! regenerate the same RSA-2048 key, then exercises OAEP encrypt→decrypt
 //! (both CRT and non-CRT paths) with deterministic seeds, proving
 //! keyGen→OAEP encrypt→OAEP decrypt pipeline consistency.

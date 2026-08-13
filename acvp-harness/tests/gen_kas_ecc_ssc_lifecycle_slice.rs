@@ -20,7 +20,7 @@
 //! - `KAS-ECC-SSC-Sp800-56Ar3/lifecycle-slice.json`
 //!
 //! Reuses the same five DRBG-generated P-256 private keys from the
-//! ECDSA lifecycle (R36) and pairs each with a fresh "peer" key.
+//! ECDSA lifecycle and pairs each with a fresh "peer" key.
 //! The shared secret `z = x(d * Q_peer)` is computed for each pair,
 //! proving that ECDSA-generated keys also work correctly for ECDH.
 //!
@@ -56,12 +56,8 @@ fn generate_kas_ecc_ssc_lifecycle_slice() {
         private_keys.push(d);
     }
 
-    // The ECDSA lifecycle generator also consumed 25 nonces (5 keys ×
-    // 5 messages) from this same DRBG sequence. We skip those to
-    // stay deterministic should anyone re-run both generators with
-    // the same seed. Alternatively, we use a fresh DRBG for peer keys.
-    //
-    // For clarity, use a separate DRBG for peer key generation.
+    // Peer keys come from a separate fixed-seed DRBG, so the ECDSA
+    // lifecycle generator's nonce draws cannot perturb them.
     let mut peer_drbg = oxicrypt_drbg::HmacDrbgSha256::default();
     peer_drbg
         .instantiate(

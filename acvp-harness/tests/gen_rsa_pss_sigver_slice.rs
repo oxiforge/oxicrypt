@@ -14,8 +14,8 @@
     clippy::ignore_without_reason,
     clippy::similar_names
 )]
-//! One-shot helper that generates additional PSS groups for the
-//! `RSA-sigVer-FIPS186-5/pss-kat-slice.json` file.
+//! One-shot helper that writes `RSA-sigVer-FIPS186-5/pss-kat-slice.json`:
+//! a single PSS group mixing valid and tampered signatures.
 //!
 //! Run with:
 //!   cargo test -p acvp-harness --test gen_rsa_pss_sigver_slice -- --ignored --nocapture

@@ -63,7 +63,7 @@ fn shake256(msg: &[u8], out: &mut [u8]) {
     x.squeeze(out);
 }
 
-// ---- MCT engine (mirrors the handler exactly) ----
+// ---- Local MCT engine used to produce the expected outputs ----
 
 struct MctResult {
     md: Vec<u8>,

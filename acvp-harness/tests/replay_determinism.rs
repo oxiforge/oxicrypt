@@ -25,7 +25,7 @@
 //! check, etc.). Per-site tests would multiply count without adding
 //! gating coverage.
 //!
-//! Built 2026-05-04 as Method 4 of the ACVTS server-provenance audit.
+//! Part of the ACVTS server-provenance audit.
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -89,8 +89,7 @@ fn assert_replay_stable(relative: &str, answer_fields: &[&str], label: &str) {
 // KBKDF — gating: `is_generative(tc)` returns true when prompt omits
 // `fixedData`. The vendored kat-slice supplies `fixedData` per test
 // (and `iv` for feedback mode), so the deterministic path is taken.
-// Sampling sites guarded: kbkdf.rs:119 (fixedData fabrication),
-// kbkdf.rs:352 (feedback-mode IV).
+// Sampling site guarded: `kbkdf::sample_fixed_data` and its caller.
 // ----------------------------------------------------------------------
 
 #[test]
@@ -153,12 +152,12 @@ fn ecdsa_keygen_deterministic_replay_stable() {
 // ----------------------------------------------------------------------
 // EdDSA keyGen — gating: same dual-mode pattern as ECDSA keyGen.
 // Vendored kat-slice supplies `d`, `q` per test.
-// Sampling sites guarded: eddsa.rs:400, :406.
+// Sampling site guarded: the `Ed25519PrivateKey::generate` branch.
 //
-// Note: EdDSA sigGen takes server-supplied group-level `d` (Ed25519 is
-// fully deterministic given the seed) and does not have a generative
-// path — no gating to test, no IUT sampling. Hence keyGen is the
-// relevant family endpoint here.
+// Note: EdDSA sigGen is dual-mode like ECDSA sigGen — it signs with a
+// server-supplied group-level `d` when present, and otherwise samples
+// via `build_seeded_drbg`. keyGen is covered here as the family
+// endpoint; the sigGen generative path is not.
 // ----------------------------------------------------------------------
 
 #[test]

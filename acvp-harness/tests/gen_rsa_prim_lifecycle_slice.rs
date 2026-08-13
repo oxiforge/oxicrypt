@@ -24,7 +24,7 @@
 //! - `RSA-SignaturePrimitive-2.0/lifecycle-slice.json`
 //! - `RSA-decryptionPrimitive-Sp800-56Br2/lifecycle-slice.json`
 //!
-//! Reuses the same DRBG seed as the RSA lifecycle slices (R37/R39/R43)
+//! Reuses the same DRBG seed as the RSA lifecycle slices
 //! to regenerate the same RSA-2048 key, then exercises both primitives
 //! with the same set of random message representatives across standard
 //! (non-CRT, `d`) and CRT (Bellcore-protected) key modes.

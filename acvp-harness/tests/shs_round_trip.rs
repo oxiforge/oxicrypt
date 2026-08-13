@@ -1,4 +1,4 @@
-//! Round-trip integration tests for the CAVP SHS dispatcher (R12-B).
+//! Round-trip integration tests for the CAVP SHS dispatcher.
 //!
 //! For each vendored `.rsp` short-message byte-vector file, we:
 //!

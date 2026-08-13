@@ -1,14 +1,15 @@
 //! Regression tests for ACVP handler-layer follow-ups:
 //!
-//! 1. `ctrDRBG` no-df non-PR generate path must pad/truncate the
-//!    additional_input to seed_len per SP 800-90A §10.2.1.5.1 step 2.1
-//!    before calling upstream `oxicrypt_drbg::ctr::generate_no_df`,
-//!    which strictly requires `additional_input.len() == F::SEED_LEN`.
-//!    (PR #33, 2026-05-03)
+//! 1. `ctrDRBG` no-df non-PR generate pads or truncates the
+//!    additional_input to seed_len before calling upstream
+//!    `oxicrypt_drbg::ctr::generate_no_df`, which strictly requires
+//!    `additional_input.len() == F::SEED_LEN`. The two tests below
+//!    cover DISPATCH only — neither compares `returnedBits` to an
+//!    expected value, so the padding direction and content are not
+//!    observed here.
 //! 2. `KDA-HKDF-Sp800-56Cr2` handler must accept `testType=VAL` groups
 //!    in addition to `AFT`. VAL groups carry a candidate `dkm` per test;
 //!    the response shape is `{tcId, testPassed: <bool>}`.
-//!    (PR #33, 2026-05-03)
 //! 3. `ECDSA` `sigGen` and `keyGen` handlers must NOT read field `d`
 //!    from the prompt — both modes are FIPS 186-5 §A.2.2 generative.
 //!    The IUT samples a fresh keypair via the module's DRBG-backed
@@ -92,7 +93,9 @@ fn ctrdrbg_no_df_non_pr_short_additional_input_dispatches() {
 
 /// Same arm, additional_input *longer* than seed_len. Spec says
 /// `leftmost(addl || 0^seedlen, seedlen)` — equivalent to truncation
-/// when addl is already longer than seedlen.
+/// when addl is already longer than seedlen. This test asserts only
+/// that the group dispatches; it does not read `returnedBits`, so the
+/// truncation itself is not observed.
 #[test]
 fn ctrdrbg_no_df_non_pr_long_additional_input_dispatches() {
     ensure_initialized().unwrap();

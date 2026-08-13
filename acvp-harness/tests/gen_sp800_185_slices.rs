@@ -298,7 +298,7 @@ fn gen_tuplehash_slice(
         out_len: usize,
     }
     let cases = [
-        // SP 800-185 sample: two 3-byte elements, no customization
+        // A 3-byte and a 6-byte element, no customization
         Case {
             elems: vec![
                 vec![0x00, 0x01, 0x02],
