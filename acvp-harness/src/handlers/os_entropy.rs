@@ -1,7 +1,6 @@
-//! OS-entropy and DRBG bootstrap shared by every handler that
-//! samples fresh randomness for FIPS 186-5 §A.2.2 generative paths
-//! (ECDSA sigGen/keyGen, KAS-ECC-SSC live AFT, future EdDSA keyGen,
-//! ML-DSA/ML-KEM/SLH-DSA keyGen, etc).
+//! OS-entropy and DRBG bootstrap shared by every handler that samples
+//! fresh randomness on a generative path. Callers are the RSA keyGen
+//! and sigGen handlers, KAS-FFC-SSC, KTS-IFC and KBKDF.
 //!
 //! The harness is Linux-only — its mTLS transport relies on the
 //! `s_client(1)` subprocess for PIV-key-bound TLS — so `/dev/urandom`

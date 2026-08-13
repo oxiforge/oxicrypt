@@ -4,13 +4,11 @@
 //! key `d` and the peer's public key `(X, Y)`, compute the ECDH
 //! shared secret `Z = x(d * Q)` per SP 800-56Ar3 §5.7.1.2.
 //!
-//! Despite carrying a `mode: "Component"` field in older self-
-//! generated kat-slice envelopes, the ACVTS demo catalog registers
-//! this algorithm with no mode segment (catalog row 114, lookup key
-//! `KAS-ECC-SSC-Sp800-56Ar3`). Both the registration capability and
-//! the dispatcher's lookup tuple drop the mode after the 2026-05-03
-//! audit. See `caps::kas_ecc_ssc_capability` for the rationale and
-//! the historical HTTP 400 error.
+//! The ACVTS demo catalog registers this algorithm with no mode
+//! segment, under the lookup key `KAS-ECC-SSC-Sp800-56Ar3`. The
+//! registration capability and the dispatcher's lookup tuple both
+//! carry no mode; see `caps::kas_ecc_ssc_capability` for the
+//! rationale.
 //!
 //! Supported configurations:
 //! - `domainParameterGenerationMode = "P-256"` — 32-byte coordinates

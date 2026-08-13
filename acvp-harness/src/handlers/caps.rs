@@ -1045,10 +1045,9 @@ pub fn eddsa_keygen_capability() -> JsonValue {
 
 /// Build an ACVP registration block for KAS-ECC-SSC.
 ///
-/// The ACVTS demo algorithm catalog (`acvts-demo/algorithms-catalog-
-/// 2026-04-25.json` row 114) registers `KAS-ECC-SSC` with **no mode
-/// field** under revision `Sp800-56Ar3` — unlike `KAS-ECC` (catalog
-/// row 133) which carries `mode: "CDH-Component"`. The server
+/// The ACVTS demo algorithm catalog registers `KAS-ECC-SSC` with
+/// **no mode field** under revision `Sp800-56Ar3` — unlike `KAS-ECC`,
+/// which carries `mode: "CDH-Component"`. The server
 /// constructs its lookup key by concatenating
 /// `algorithm-mode-revision`; sending `mode: "Component"` produced
 /// `KAS-ECC-SSC-Component-Sp800-56Ar3` which doesn't exist in the
@@ -1077,11 +1076,10 @@ pub fn kas_ecc_ssc_capability() -> JsonValue {
 
 /// Build an ACVP registration block for KAS-FFC-SSC.
 ///
-/// The ACVTS demo algorithm catalog (`acvts-demo/algorithms-catalog-
-/// 2026-04-25.json` row 158) registers `KAS-FFC-SSC` with **no mode
-/// field** under revision `Sp800-56Ar3` — paralleling the
-/// `KAS-ECC-SSC` entry at row 157 (no mode), and unlike `KAS-FFC`
-/// (catalog row 85) which carries `mode: "Component"`. The server
+/// The ACVTS demo algorithm catalog registers `KAS-FFC-SSC` with
+/// **no mode field** under revision `Sp800-56Ar3` — paralleling the
+/// `KAS-ECC-SSC` entry, and unlike `KAS-FFC`, which carries
+/// `mode: "Component"`. The server
 /// constructs its lookup key by concatenating
 /// `algorithm-mode-revision`; sending `mode: "Component"` would
 /// produce `KAS-FFC-SSC-Component-Sp800-56Ar3` which doesn't exist
@@ -1126,9 +1124,8 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
 /// Build an ACVP registration block for KTS-IFC (RSAES-OAEP key
 /// transport under SP 800-56Br2 §7.2.2.2 / KTS-OAEP-basic scheme).
 ///
-/// The ACVTS demo algorithm catalog (`acvts-demo/algorithms-catalog-
-/// 2026-04-25.json` row id 152) registers `KTS-IFC` with **no mode
-/// field** under revision `Sp800-56Br2`, paralleling the
+/// The ACVTS demo algorithm catalog registers `KTS-IFC` with **no
+/// mode field** under revision `Sp800-56Br2`, paralleling the
 /// `KAS-{ECC,FFC}-SSC` entries. The server's lookup key is
 /// `KTS-IFC-Sp800-56Br2`; sending a mode segment would mis-key.
 /// This is the same catalog-mapping pattern as the KMACXOF and

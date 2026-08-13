@@ -109,8 +109,8 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         //   carries only `tcId` + `deferred`; the IUT samples its own
         //   entropy from `/dev/urandom` and the server validates the
         //   keypair structurally (n composite of two distinct primes,
-        //   d·e ≡ 1 mod λ(n), etc.). Same generative-AFT pattern PR #34
-        //   ECDSA, PR #36 KAS-ECC-SSC, and PR #40 KBKDF established.
+        //   d·e ≡ 1 mod λ(n), etc.). Same generative-AFT shape as the
+        //   ECDSA, KAS-ECC-SSC and KBKDF handlers.
         let mut drbg = if tc.get("entropy").is_some() {
             let entropy = hex::decode(
                 tc.get("entropy")

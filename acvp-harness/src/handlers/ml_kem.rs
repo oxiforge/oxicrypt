@@ -14,10 +14,10 @@
 //!   `function` field selects encaps vs. decaps; group-level
 //!   `parameterSet` field selects k.
 //!
-//! All three FIPS 203 parameter sets are now live. The `algorithm()`
-//! value is the family name `"ML-KEM"` — adding additional parameter
-//! sets (or removing) would be a cap-only change with no handler
-//! struct churn.
+//! All three FIPS 203 parameter sets are supported. The `algorithm()`
+//! value is the family name `"ML-KEM"`. A new parameter set needs a
+//! cap entry and a match arm in each group driver, but no new handler
+//! struct.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -161,7 +161,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .map_err(|_| DispatchError::Crypto("ML-KEM KeyGen: z is not 32 bytes"))?;
 
         // Per-variant dispatch: each variant has different EK/DK
-        // byte counts (FIPS 203 Table 2). Match returns the hex-
+        // byte counts (FIPS 203 Table 3). Match returns the hex-
         // encoded outputs for serialization.
         let (ek_hex, dk_hex) = match parameter_set {
             "ML-KEM-512" => {

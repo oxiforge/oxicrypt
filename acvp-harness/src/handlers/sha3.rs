@@ -4,7 +4,7 @@
 //! `testType ∈ {"AFT", "MCT", "LDT"}`. SHA3-256 lives in its own
 //! [`super::sha3_256`] module; this module provides the other three
 //! fixed-output members of the SHA-3 family, completing the
-//! dispatcher without disturbing R10 code.
+//! dispatcher.
 //!
 //! All three variants share the exact envelope shape exercised by
 //! [`super::sha3_256`]: each AFT test case carries a bit-length `len`

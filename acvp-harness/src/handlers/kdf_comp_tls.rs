@@ -14,7 +14,7 @@
 //! Source — prompt schema (per-test-case fields)
 //! ---------------------------------------------
 //! `draft-celi-acvp-kdf-tls` §8.2.1 Table 5 ("1.0 Test Case JSON
-//! Object") enumerates the 5 fields this handler consumes:
+//! Object") enumerates the 6 fields this handler consumes:
 //! `tcId`, `preMasterSecret`, `serverHelloRandom`, `clientHelloRandom`,
 //! `serverRandom`, `clientRandom`. Both pairs of randoms (the Hello-
 //! prefixed pair and the non-prefixed pair) are present in the spec

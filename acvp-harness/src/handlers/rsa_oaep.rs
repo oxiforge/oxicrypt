@@ -36,23 +36,17 @@ impl AlgorithmHandler for RsaOaepHandler {
     }
     /// **Capability advertisement deferred — catalog mismatch.**
     ///
-    /// ACVP's algorithm catalog (row 159 / id 47 in
-    /// `acvts-demo/algorithms-catalog-2026-04-25.json`) registers
-    /// RSAES-OAEP under **`KTS-IFC / — / Sp800-56Br2`** (Key Transport
+    /// ACVP's algorithm catalog registers RSAES-OAEP under
+    /// **`KTS-IFC / — / Sp800-56Br2`** (Key Transport
     /// Scheme — Integer Factorization Cryptography, per SP 800-56Br2
     /// §7.2.2.2), not as a standalone `RSA / OAEP / RFC8017` mode.
-    /// The pre-fix advertisement caused HTTP 400 `Unable to map
-    /// RSA-OAEP-RFC8017 to an internal algorithm id` (session 729676,
-    /// 2026-05-13) — same failure mode as the KAS-ECC-SSC catalog
-    /// mismatch that PR #36 closed by switching to the canonical
-    /// (algorithm, mode, revision) triple.
+    /// Advertising it standalone is rejected: the server cannot map
+    /// `RSA-OAEP-RFC8017` to an internal algorithm id.
     ///
     /// This handler stays registered locally so its offline kat-slice
     /// round-trip tests in `tests/round_trip.rs` keep exercising the
-    /// EME-OAEP-SHA256 path; live advertisement is suppressed until
-    /// a parallel `KtsIfcHandler` lands with the catalog-correct
-    /// shape (separate follow-up arc, similar to the `KmacXofHandler`
-    /// → `KMAC × xof` unification pattern from PR #35).
+    /// EME-OAEP-SHA256 path. Live advertisement is suppressed; the
+    /// catalog-correct shape is `KtsIfcHandler`.
     fn acvp_capabilities(&self) -> Option<JsonValue> {
         None
     }

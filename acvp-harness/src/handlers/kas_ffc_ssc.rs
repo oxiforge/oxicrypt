@@ -5,14 +5,11 @@
 //! Diffie-Hellman shared secret `Z = y^x mod p` per SP 800-56Ar3
 //! §5.7.1.1 over RFC 3526 Group 15 (the MODP-3072 safe-prime group).
 //!
-//! Despite carrying a `mode: "Component"` field in earlier revisions
-//! of this handler, the ACVTS demo catalog registers this algorithm
-//! with no mode segment (catalog row 158, lookup key
-//! `KAS-FFC-SSC-Sp800-56Ar3`) — paralleling the KAS-ECC-SSC
-//! correction in PR #36. Both the registration capability and the
-//! dispatcher's lookup tuple drop the mode after the 2026-05-05 ACVP
-//! spec-vs-implementation review. See `caps::kas_ffc_ssc_capability`
-//! for the rationale.
+//! The ACVTS demo catalog registers this algorithm with no mode
+//! segment, under the lookup key `KAS-FFC-SSC-Sp800-56Ar3`. The
+//! registration capability and the dispatcher's lookup tuple both
+//! carry no mode; see `caps::kas_ffc_ssc_capability` for the
+//! rationale.
 //!
 //! Supported configurations:
 //! - `domainParameterGenerationMode = "MODP-3072"` — RFC 3526 Group

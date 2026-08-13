@@ -17,9 +17,9 @@
 //!   and SIG_LEN). The server mixes valid and tampered signatures
 //!   within the same group; the IUT returns `testPassed: bool`.
 //!
-//! All three FIPS 204 parameter sets are now live. The `algorithm()`
-//! value is the family name `"ML-DSA"` — adding additional parameter
-//! sets (or removing) would be a cap-only change with no handler
+//! All three FIPS 204 parameter sets are supported. The `algorithm()`
+//! value is the family name `"ML-DSA"`. A new parameter set needs a
+//! cap entry and a match arm in each group driver, but no new handler
 //! struct churn (same pattern as ML-KEM).
 //!
 //! Per-test field placement (`sk` for sigGen, `pk` for sigVer)
@@ -160,7 +160,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .map_err(|_| DispatchError::Crypto("ML-DSA KeyGen: seed is not 32 bytes"))?;
 
         // Per-variant dispatch: each variant emits PK/SK at the
-        // sizes given in FIPS 204 §4 Table 1.
+        // sizes given in FIPS 204 §4 Table 2.
         let (pk_hex, sk_hex) = match parameter_set {
             "ML-DSA-44" => {
                 let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_44::keygen_internal(&seed);
@@ -236,7 +236,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         )?;
 
         // Per-variant dispatch: each variant has different SK_LEN
-        // and SIG_LEN per FIPS 204 §4 Table 1.
+        // and SIG_LEN per FIPS 204 §4 Table 2.
         let sig_hex = match parameter_set {
             "ML-DSA-44" => {
                 let sk: [u8; oxicrypt_ml_dsa::ml_dsa_44::SK_LEN] =
@@ -335,7 +335,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         )?;
 
         // Per-variant dispatch: each variant has different PK_LEN
-        // and SIG_LEN per FIPS 204 §4 Table 1. Wrong-length pk fails
+        // and SIG_LEN per FIPS 204 §4 Table 2. Wrong-length pk fails
         // the test case (Crypto error); wrong-length sig grades as
         // testPassed=false (server tampers may yield short sigs;
         // upstream Verify already collapses decode-fail to false).

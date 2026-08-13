@@ -1,6 +1,6 @@
 //! AES AFT handlers for all seven ACVP modes (ACVP `ACVP-AES-*-1.0`).
 //!
-//! R14-A wired ECB / CBC / CTR. R14-B extends coverage to GCM, CCM,
+//! Handlers for ECB, CBC, CTR, GCM, CCM,
 //! KW, and KWP — the full FIPS 197 + SP 800-38A/C/D/F mode set.
 //!
 //! Each ACVP AFT group declares a `direction` (`encrypt` / `decrypt`)
@@ -10,7 +10,7 @@
 //!
 //! All seven handlers live on the default dispatch key
 //! `(algorithm, None, "1.0")` — ACVP-AES-* is a single-field family
-//! in the R13 three-tuple `(algorithm, Option<mode>, revision)` axis.
+//! in the three-tuple `(algorithm, Option<mode>, revision)` axis.
 //!
 //! Phase-1 scope notes:
 //!

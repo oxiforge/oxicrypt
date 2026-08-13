@@ -20,9 +20,9 @@
 //! - `customization` (string, AFT only) — customization string S,
 //!   encoded per the group-level `hexCustomization` boolean
 //!
-//! The function name N is always empty (per `draft-celi-acvp-xof`
-//! §6.2.1 the MCT hard-codes `FunctionName = ""`, and the AFT
-//! registration historically does not exercise non-empty N).
+//! The MCT hard-codes the function name N to `""` (per
+//! `draft-celi-acvp-xof` §6.2.1). The AFT path reads `functionName`
+//! per test, defaulting to empty when the field is absent.
 //! Response fields: `md` (hex) for AFT, `resultsArray` of `{md, outLen}`
 //! objects for MCT.
 //!
@@ -181,11 +181,10 @@ where
         let used = &msg[..msg_bytes];
 
         // Function name N (per-test). The cSHAKE handler comment
-        // historically claimed N was always empty for ACVP; the live
-        // demo server exercises non-empty N — values like `"KMAC"`,
-        // `"TupleHash"`, `"ParallelHash"` matching the SP 800-185
+        // Function name N is read per test; values include `"KMAC"`,
+        // `"TupleHash"` and `"ParallelHash"`, matching the SP 800-185
         // derived-function names. Default to empty when the field is
-        // absent (back-compat with offline fixtures).
+        // absent, which is what the offline fixtures carry.
         let n = t
             .get("functionName")
             .and_then(JsonValue::as_str)

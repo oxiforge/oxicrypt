@@ -57,10 +57,10 @@ use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_xof::{Kmac128, Kmac256, KmacXof128, KmacXof256};
 
-/// KMAC-128 AFT handler.
+/// KMAC-128 handler (AFT + MVT).
 pub struct Kmac128Handler;
 
-/// KMAC-256 AFT handler.
+/// KMAC-256 handler (AFT + MVT).
 pub struct Kmac256Handler;
 
 impl AlgorithmHandler for Kmac128Handler {
@@ -273,11 +273,8 @@ fn parse_kmac_test(
     // Customization string S. Read whichever JSON field the
     // group-level `hexCustomization` flag declares (per
     // `draft-celi-acvp-xof` §8.2 Table 6): `customizationHex` when
-    // true, `customization` when false. KMAC's 2026-05-01 live pass
-    // happened to exercise only `hexCustomization: false` groups, so
-    // the field-name divergence was latent until cSHAKE surfaced it
-    // on 2026-05-11; fixing the helper centrally closes the latent
-    // bug for KMAC alongside cSHAKE's active fix.
+    // true, `customization` when false. The mapping lives in the
+    // shared helper so both families read the same field.
     let s = super::xof_common::read_customization_field(t, hex_customization)?;
 
     Ok(KmacTestInputs {

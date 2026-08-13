@@ -1,7 +1,7 @@
 //! CAVP SHS per-algorithm handlers — the SHA-1 / SHA-2 family.
 //!
-//! These handlers ride the second envelope shape landed in R12-B
-//! (see [`crate::shs`]). They are trivial wrappers around the
+//! These handlers implement the CAVP SHS envelope (see
+//! [`crate::shs`]). They are trivial wrappers around the
 //! byte-oriented entry points in [`oxicrypt_sha`]; the dispatcher has
 //! already sliced `msg` to the declared bit length, so each handler's
 //! only job is to delegate to the right primitive and box the result

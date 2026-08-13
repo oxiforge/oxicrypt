@@ -9,18 +9,11 @@
 //!   true, `customization` when false), per `draft-celi-acvp-xof`
 //!   §8.2 Table 6.
 //!
-//! Before this helper existed, every family handler read only the
-//! `customization` field and used the group-level boolean to choose
-//! the *decode* (hex vs ASCII). The live ACVTS demo server actually
-//! emits the customization in different fields by mode — populating
-//! `customization` when `hexCustomization: false` and
-//! `customizationHex` when `hexCustomization: true`. Handlers that
-//! read only `customization` silently substituted `S = ""` for every
-//! `hexCustomization: true` test, producing `digest mismatch`
-//! failures across the entire group at live grading time. KMAC's
-//! 2026-05-01 pass exercised only `hexCustomization: false` groups,
-//! so the field-name divergence was latent for that family until
-//! cSHAKE surfaced it on 2026-05-11.
+//! The server emits the customization in different fields by mode:
+//! `customization` when `hexCustomization: false`, `customizationHex`
+//! when it is true. Reading only `customization` substitutes
+//! `S = ""` for every `hexCustomization: true` test, which fails the
+//! whole group on digest mismatch rather than on anything local.
 
 use crate::dispatch::DispatchError;
 use crate::hex;
@@ -35,8 +28,8 @@ use crate::json::JsonValue;
 ///   ASCII bytes.
 ///
 /// A missing or empty field yields the empty customization
-/// (`S = ""`), matching the spec's default semantics and offline
-/// fixtures generated before the live divergence was understood.
+/// (`S = ""`), matching the spec's default semantics and the offline
+/// fixtures.
 pub fn read_customization_field(
     t: &JsonValue,
     hex_customization: bool,

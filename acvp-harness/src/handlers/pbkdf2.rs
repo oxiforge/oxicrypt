@@ -6,7 +6,7 @@
 //! Each test group carries `hmacAlg` selecting the HMAC instantiation
 //! (e.g. `"SHA2-256"`, `"SHA-1"`). Each test case has:
 //!
-//! - `password` (hex) — password
+//! - `password` (UTF-8 string, consumed byte-for-byte) — password
 //! - `salt` (hex) — salt
 //! - `iterationCount` (integer) — PBKDF2 iteration count c
 //! - `keyLen` (bits) — desired derived-key length
@@ -123,10 +123,8 @@ fn handle_pbkdf2_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             .map_err(|_| DispatchError::Crypto("PBKDF2: iterationCount overflows u32"))?;
 
         // ACVP delivers `password` as a UTF-8 string passed byte-for-
-        // byte to PBKDF2 (NOT hex-encoded — confirmed against live
-        // ACVTS demo prompt vsId 3839019, 2026-05-03). The vendored
-        // offline kat-slice generator was updated in this commit to
-        // match (previously emitted hex-encoded bytes).
+        // byte to PBKDF2; it is NOT hex-encoded. The vendored offline
+        // kat-slice generator emits it the same way.
         let password = t
             .get("password")
             .and_then(JsonValue::as_str)

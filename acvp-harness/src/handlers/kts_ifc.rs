@@ -2,11 +2,10 @@
 //!
 //! **KTS-IFC** (`KTS-IFC` / `Sp800-56Br2`): RSAES-OAEP key transport
 //! per SP 800-56Br2 §7.2.2.2 (KTS-OAEP basic form). The ACVTS demo
-//! algorithm catalog (row id 152) registers this algorithm with **no
-//! mode field**, paralleling the `KAS-{ECC,FFC}-SSC` correction in
-//! PR #36. The server's lookup key is `KTS-IFC-Sp800-56Br2`; sending
-//! a mode segment would mis-key — this is the same catalog-mapping
-//! pattern resolved in PR #35 (KMACXOF) and PR #36 (KAS-ECC-SSC).
+//! algorithm catalog registers this algorithm with **no mode field**.
+//! The server's lookup key is `KTS-IFC-Sp800-56Br2`; sending a mode
+//! segment would mis-key. The `KAS-{ECC,FFC}-SSC` and KMACXOF entries
+//! follow the same catalog-mapping pattern.
 //!
 //! See [`crate::handlers::rsa_oaep`] for the standalone OAEP handler
 //! that exercises the same primitive surface over offline KAT-slice

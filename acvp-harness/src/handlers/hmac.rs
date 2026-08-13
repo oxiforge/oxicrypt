@@ -1,6 +1,6 @@
 //! HMAC AFT and MVT handlers for every HMAC variant oxicrypt exposes
 //! *except* HMAC-SHA2-256, which already has its own module at
-//! [`super::hmac_sha2_256`] from R10.
+//! [`super::hmac_sha2_256`].
 //!
 //! Covered here:
 //!
