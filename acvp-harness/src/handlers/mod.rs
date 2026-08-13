@@ -394,8 +394,9 @@
 //!   (keyGen/sigGen/sigVer), LMS (keyGen/sigGen/sigVer), and XMSS
 //!   (keyGen/sigGen/sigVer).
 //!
-//! All 78 handlers now declare `acvp_capabilities()`, enabling full
-//! demo-server registration for the complete algorithm suite.
+//! Handlers advertise through `acvp_capabilities()`. The offline-only
+//! fixture handlers — KMAC, TupleHash, ParallelHash and RSA-OAEP —
+//! return `None` and never advertise to the demo server.
 
 pub mod aes;
 pub mod caps;

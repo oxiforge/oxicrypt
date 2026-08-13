@@ -216,56 +216,17 @@ impl Default for Registry {
 /// Construct a [`Registry`] populated with every algorithm handler
 /// the harness currently knows how to dispatch.
 ///
-/// R10 wired the first two handlers — SHA3-256 AFT and HMAC-SHA2-256
-/// AFT — end-to-end. R12-A expanded the SHA-3 hashing family, both
-/// SHAKE XOFs, and every HMAC variant except HMAC-SHA2-256 (which
-/// stays in its R10 module), bringing the total to seventeen
-/// AFT handlers; R13 then added the first KDF family handler,
-/// `KDA-HKDF-Sp800-56Cr2`, as the eighteenth. That is also the first
-/// handler to live in a `(algorithm, mode, revision)` registry slot
-/// rather than `(algorithm, None, revision)`:
+/// The registered set is the sequence of `register` calls in this
+/// function. It is deliberately not restated here: a second copy of the
+/// list drifts from the first, and the two counts this doc block used to
+/// carry had both gone stale.
 ///
-/// - `SHA3-224`, `SHA3-256`, `SHA3-384`, `SHA3-512` (revision `2.0`)
-/// - `SHAKE-128`, `SHAKE-256` (revision `FIPS202`)
-/// - `HMAC-SHA-1` (revision `1.0`)
-/// - `HMAC-SHA2-{224,256,384,512}` and the two truncated
-///   `HMAC-SHA2-512/{224,256}` variants (revision `1.0`)
-/// - `HMAC-SHA3-{224,256,384,512}` (revision `1.0`)
-/// - `KDA` mode `HKDF` revision `Sp800-56Cr2` — SP 800-56C Rev 2 §5
-///   two-step KDF (hybrid form, ten HMAC instantiations)
-/// - `ACVP-AES-ECB`, `ACVP-AES-CBC`, `ACVP-AES-CTR` (revision `1.0`)
-///   — R14-A AFT across 128/192/256-bit keys, encrypt + decrypt
-/// - `ACVP-AES-GCM`, `ACVP-AES-CCM`, `ACVP-AES-KW`, `ACVP-AES-KWP`
-///   (revision `1.0`) — R14-B AFT with AEAD `testPassed` verification
-///
-/// R15 adds the MCT (Monte Carlo Test) engine for ECB and CBC
-/// (100×1000 iteration loop, key-schedule update, direction-aware
-/// CBC IV feedback). The same handler structs serve both AFT and MCT
-/// test types — the `handle_group` impl routes on `testType`.
-///
-/// R16 adds `CMAC-AES` revision `1.0` — SP 800-38B CMAC with gen
-/// (compute MAC) and ver (verify MAC / `testPassed`) directions over
-/// all three AES key sizes.
-///
-/// R17 adds three DRBG family handlers — `ctrDRBG`, `hashDRBG`, and
-/// `hmacDRBG` (all revision `1.0`) — covering CTR_DRBG AES-128/192/256
-/// with and without derivation function, Hash_DRBG SHA2-256/384/512,
-/// and HMAC_DRBG SHA2-256/384/512, each with and without prediction
-/// resistance.
-///
-/// R18 adds five asymmetric signature-verification and key-validation
-/// handlers — `ECDSA` sigVer + keyVer (P-256/SHA2-256), `EDDSA`
-/// sigVer + keyVer (ED-25519, pure), and `RSA` sigVer
-/// (RSA-2048/PKCS#1v1.5/SHA2-256, GDT).
-///
-/// R19 adds two SigGen handlers — `ECDSA` sigGen (P-256/SHA2-256,
-/// deterministic via caller-supplied `k`) and `EDDSA` sigGen
-/// (ED-25519, pure, naturally deterministic).
-///
-/// R20 adds the SP 800-108r1 KBKDF handler (`KDF` revision `1.0`)
-/// covering counter, feedback, and double-pipeline iteration modes
-/// across all eleven HMAC instantiations — reaching thirty-seven
-/// registered handlers.
+/// Two structural facts do belong here. A handler occupies either an
+/// `(algorithm, None, revision)` slot or an `(algorithm, mode, revision)`
+/// one — `KDA` mode `HKDF` revision `Sp800-56Cr2` is why the moded form
+/// exists. And the same handler structs serve both AFT and MCT test
+/// types: the `handle_group` impl routes on `testType` rather than the
+/// registry carrying separate entries.
 #[must_use]
 pub fn with_default_handlers() -> Registry {
     let mut r = Registry::new();
@@ -305,54 +266,54 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::kbkdf::KbkdfHandler));
     // KDA-HKDF (SP 800-56Cr2, mode-keyed)
     r.register(Box::new(handlers::kda_hkdf::KdaHkdfHandler));
-    // AES block-cipher modes (R14-A: ECB/CBC/CTR AFT)
+    // AES block-cipher modes (ECB/CBC/CTR AFT)
     r.register(Box::new(handlers::aes::AesEcbHandler));
     r.register(Box::new(handlers::aes::AesCbcHandler));
     r.register(Box::new(handlers::aes::AesCtrHandler));
-    // AES AEAD / key-wrap modes (R14-B: GCM/CCM/KW/KWP AFT)
+    // AES AEAD / key-wrap modes (GCM/CCM/KW/KWP AFT)
     r.register(Box::new(handlers::aes::AesGcmHandler));
     r.register(Box::new(handlers::aes::AesCcmHandler));
     r.register(Box::new(handlers::aes::AesKwHandler));
     r.register(Box::new(handlers::aes::AesKwpHandler));
-    // DRBG families (R17: ctrDRBG / hashDRBG / hmacDRBG)
+    // DRBG families (ctrDRBG / hashDRBG / hmacDRBG)
     r.register(Box::new(handlers::drbg::CtrDrbgHandler));
     r.register(Box::new(handlers::drbg::HashDrbgHandler));
     r.register(Box::new(handlers::drbg::HmacDrbgHandler));
-    // ECDSA sigVer + keyVer + sigGen + keyGen (R18/R19/R29: P-256 / SHA2-256, FIPS186-5)
+    // ECDSA sigVer + keyVer + sigGen + keyGen (P-256 / SHA2-256, FIPS186-5)
     r.register(Box::new(handlers::ecdsa::EcdsaSigVerHandler));
     r.register(Box::new(handlers::ecdsa::EcdsaKeyVerHandler));
     r.register(Box::new(handlers::ecdsa::EcdsaSigGenHandler));
     r.register(Box::new(handlers::ecdsa::EcdsaKeyGenHandler));
-    // EdDSA sigVer + keyVer + sigGen + keyGen (R18/R19/R28: ED-25519, pure, 1.0)
+    // EdDSA sigVer + keyVer + sigGen + keyGen (ED-25519, pure, 1.0)
     r.register(Box::new(handlers::eddsa::EddsaSigVerHandler));
     r.register(Box::new(handlers::eddsa::EddsaKeyVerHandler));
     r.register(Box::new(handlers::eddsa::EddsaSigGenHandler));
     r.register(Box::new(handlers::eddsa::EddsaKeyGenHandler));
-    // RSA sigVer (R18: RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
+    // RSA sigVer (RSA-2048 / PKCS#1v1.5 / SHA2-256, FIPS186-5)
     r.register(Box::new(handlers::rsa::RsaSigVerHandler));
     r.register(Box::new(handlers::rsa_decprim::RsaDecPrimHandler));
-    // TLS v1.2 KDF (R22: RFC 7627 Extended Master Secret)
+    // TLS v1.2 KDF (RFC 7627 Extended Master Secret)
     r.register(Box::new(handlers::tls12_kdf::Tls12KdfRfc7627Handler));
     // TLS v1.3 KDF (RFC 8446 §7.1) — first PR under feat/tls-1.3-kdf
     r.register(Box::new(handlers::tls13_kdf::Tls13KdfHandler));
-    // kdf-components / tls (R23: standard TLS 1.2 KDF, non-EMS)
+    // kdf-components / tls (standard TLS 1.2 KDF, non-EMS)
     r.register(Box::new(handlers::kdf_comp_tls::KdfComponentsTlsHandler));
-    // RSA signaturePrimitive (R24: RSASP1 with CRT + Bellcore)
+    // RSA signaturePrimitive (RSASP1 with CRT + Bellcore)
     r.register(Box::new(handlers::rsa_sigprim::RsaSigPrimHandler));
-    // RSA sigGen (R25: PKCS#1v1.5 non-CRT + PSS CRT, FIPS186-5)
+    // RSA sigGen (PKCS#1v1.5 non-CRT + PSS CRT, FIPS186-5)
     r.register(Box::new(handlers::rsa_siggen::RsaSigGenHandler));
-    // KAS-ECC-SSC (R26: P-256 ECDH shared secret, Sp800-56Ar3; R59: add P-384)
+    // KAS-ECC-SSC (P-256 ECDH shared secret, Sp800-56Ar3; R59: add P-384)
     r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
-    // KAS-FFC-SSC (R59: MODP-3072 shared secret computation, Sp800-56Ar3)
+    // KAS-FFC-SSC (MODP-3072 shared secret computation, Sp800-56Ar3)
     r.register(Box::new(handlers::kas_ffc_ssc::KasFfcSscHandler));
-    // KTS-IFC (R66: RSAES-OAEP key transport KTS-OAEP-basic, Sp800-56Br2;
+    // KTS-IFC (RSAES-OAEP key transport KTS-OAEP-basic, Sp800-56Br2;
     // full FIPS-approved modulus grid 2048/3072/4096; closes Section 12)
     r.register(Box::new(handlers::kts_ifc::KtsIfcHandler));
-    // RSA OAEP (R27: encrypt/decrypt, RFC8017, RSA-2048/SHA2-256)
+    // RSA OAEP (encrypt/decrypt, RFC8017, RSA-2048/SHA2-256)
     r.register(Box::new(handlers::rsa_oaep::RsaOaepHandler));
-    // RSA KeyGen (R32: FIPS186-5, RSA-2048, e=65537, DRBG-seeded)
+    // RSA KeyGen (FIPS186-5, RSA-2048, e=65537, DRBG-seeded)
     r.register(Box::new(handlers::rsa_keygen::RsaKeyGenHandler));
-    // SP 800-185 derived functions (R55: self-generated vectors)
+    // SP 800-185 derived functions (self-generated vectors)
     r.register(Box::new(handlers::cshake::CShake128Handler));
     r.register(Box::new(handlers::cshake::CShake256Handler));
     r.register(Box::new(handlers::kmac::Kmac128Handler));
@@ -361,7 +322,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::tuplehash::TupleHash256Handler));
     r.register(Box::new(handlers::parallelhash::ParallelHash128Handler));
     r.register(Box::new(handlers::parallelhash::ParallelHash256Handler));
-    // SP 800-185 XOF variants (R56: self-generated vectors)
+    // SP 800-185 XOF variants (self-generated vectors)
     r.register(Box::new(handlers::kmac::KmacXof128Handler));
     r.register(Box::new(handlers::kmac::KmacXof256Handler));
     r.register(Box::new(handlers::tuplehash::TupleHashXof128Handler));
@@ -370,27 +331,27 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::parallelhash::ParallelHashXof256Handler));
     // PBKDF2 (SP 800-132 / RFC 8018, R55: self-generated vectors)
     r.register(Box::new(handlers::pbkdf2::Pbkdf2Handler));
-    // ML-KEM (R59: keyGen / encapDecap, FIPS 203, post-quantum;
+    // ML-KEM (keyGen / encapDecap, FIPS 203, post-quantum;
     //         parameterSets advertise ML-KEM-1024 only)
     r.register(Box::new(handlers::ml_kem::MlKemKeyGenHandler));
     r.register(Box::new(handlers::ml_kem::MlKemEncapDecapHandler));
-    // ML-DSA (R60: keyGen / sigGen / sigVer, FIPS 204, post-quantum;
+    // ML-DSA (keyGen / sigGen / sigVer, FIPS 204, post-quantum;
     //         parameterSets advertise ML-DSA-44 / ML-DSA-65 / ML-DSA-87)
     r.register(Box::new(handlers::ml_dsa::MlDsaKeyGenHandler));
     r.register(Box::new(handlers::ml_dsa::MlDsaSigGenHandler));
     r.register(Box::new(handlers::ml_dsa::MlDsaSigVerHandler));
-    // SLH-DSA (R61: keyGen / sigGen / sigVer, FIPS 205, post-quantum;
+    // SLH-DSA (keyGen / sigGen / sigVer, FIPS 205, post-quantum;
     //          parameterSets advertise SLH-DSA-SHA2-256s only)
     r.register(Box::new(handlers::slh_dsa::SlhDsaKeyGenHandler));
     r.register(Box::new(handlers::slh_dsa::SlhDsaSigGenHandler));
     r.register(Box::new(handlers::slh_dsa::SlhDsaSigVerHandler));
-    // LMS (R62: keyGen / sigGen / sigVer, SP 800-208 / RFC 8554)
+    // LMS (keyGen / sigGen / sigVer, SP 800-208 / RFC 8554)
     r.register(Box::new(handlers::lms::LmsKeyGenHandler));
     r.register(Box::new(handlers::lms::LmsSigGenHandler));
     r.register(Box::new(handlers::lms::LmsSigGenSp800208Handler));
     r.register(Box::new(handlers::lms::LmsSigVerHandler));
     r.register(Box::new(handlers::lms::LmsSigVerSp800208Handler));
-    // XMSS (R62: keyGen / sigGen / sigVer, SP 800-208 / RFC 8391)
+    // XMSS (keyGen / sigGen / sigVer, SP 800-208 / RFC 8391)
     r.register(Box::new(handlers::xmss::XmssKeyGenHandler));
     r.register(Box::new(handlers::xmss::XmssSigGenHandler));
     r.register(Box::new(handlers::xmss::XmssSigVerHandler));

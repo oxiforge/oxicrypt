@@ -11,12 +11,13 @@
 //!   handler concatenates them into the `3N`-byte input that the per-variant
 //!   `keygen_internal` consumes.
 //! - **`SlhDsaSigGenHandler`** — `SLH-DSA` / `sigGen` / `FIPS205`, advertising
-//!   `deterministic: [true]`, `signatureInterfaces: ["internal"]`,
-//!   `preHash: ["pure"]`. Signs deterministically (FIPS 205 §10.2 Algorithm 22
-//!   with `opt_rand = PK.seed`); the per-test `sk` is variant-sized
-//!   (SK_LEN = 4N = 64 / 96 / 128).
+//!   `deterministic: [true]` and `signatureInterfaces: ["internal"]`.
+//!   Signs deterministically (FIPS 205 §9.2 Algorithm 19
+//!   `slh_sign_internal`, deterministic variant: line 2 substitutes
+//!   `opt_rand ← PK.seed` for the caller's `addrnd`); the per-test `sk`
+//!   is variant-sized (SK_LEN = 4N = 64 / 96 / 128).
 //! - **`SlhDsaSigVerHandler`** — `SLH-DSA` / `sigVer` / `FIPS205`, same
-//!   interface/pre-hash advertisement as sigGen. The per-test `pk` is
+//!   interface advertisement as sigGen. The per-test `pk` is
 //!   variant-sized (PK_LEN = 2N = 32 / 48 / 64); `signature` is variant-sized
 //!   per FIPS 205 §11 Table 2 (7 856 bytes for SHA2-128s up to 49 856 bytes
 //!   for SHAKE-256f).

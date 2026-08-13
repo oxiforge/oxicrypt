@@ -32,8 +32,9 @@
 //! SP 800-185 derived functions (cSHAKE, KMAC, TupleHash, ParallelHash),
 //! ECDSA, EdDSA, RSA (all modes), KAS-ECC-SSC, KAS-FFC-SSC, and
 //! post-quantum algorithms (ML-KEM-1024, ML-DSA-87, SLH-DSA-SHA2-256s,
-//! LMS, XMSS).  All 78 handlers declare ACVP registration capabilities
-//! via [`handlers::caps`], enabling full demo-server registration.
+//! LMS, XMSS).  Registered handlers declare ACVP registration capabilities
+//! via [`handlers::caps`]; the offline-only fixture handlers return `None`
+//! and never advertise.
 //!
 //! # Module gating
 //!

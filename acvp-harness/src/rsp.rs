@@ -3,11 +3,10 @@
 //!
 //! The CAVP Secure Hash Standard (SHS) validation test set is
 //! distributed as plain-text `.rsp` response files, not as the ACVP
-//! `internalProjection.json` envelope the R10 dispatcher consumes.
-//! R11′ recorded why: upstream `usnistgov/ACVP-Server` ships no plain
-//! FIPS 180-4 hashing vectors at the pinned commit — CAVP SHS is the
-//! only path — and this module is the "second envelope shape" R11′
-//! promised.
+//! `internalProjection.json` envelope the dispatcher consumes. Upstream
+//! `usnistgov/ACVP-Server` ships no plain FIPS 180-4 hashing vectors at
+//! the pinned commit, so CAVP SHS is the only path and this module is
+//! the second envelope shape.
 //!
 //! # File format
 //!

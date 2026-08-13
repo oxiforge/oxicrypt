@@ -4,7 +4,7 @@
 //! `acvp_capabilities()` returns.  The ACVP demo server uses these to
 //! generate matching vector sets.
 //!
-//! All 78 registered handlers declare capabilities via their
+//! Registered handlers declare capabilities via their
 //! [`crate::dispatch::AlgorithmHandler::acvp_capabilities`]
 //! implementation, which delegates to one of the builder functions in
 //! this module.  The transport client collects them into a single
@@ -1436,9 +1436,10 @@ pub fn slh_dsa_keygen_capability(paramset_filter: Option<&str>) -> JsonValue {
 /// Cap shape mirrors `draft-livelsberger-acvp-slh-dsa §7.4.1`,
 /// constrained to oxicrypt-slh-dsa's actual handler subset:
 /// - `deterministic: [true]` — only deterministic-mode signing is
-///   exposed (FIPS 205 §10.2 Algorithm 22 with `opt_rand = PK.seed`),
-///   matching the upstream `sign_internal` API; the FIPS 205 §10.2
-///   randomized-mode variant is intentionally not built.
+///   exposed (FIPS 205 §9.2 Algorithm 19 `slh_sign_internal`,
+///   deterministic variant: line 2 substitutes `opt_rand ← PK.seed`
+///   for the caller's `addrnd`); the randomized variant is
+///   intentionally not built.
 /// - `signatureInterfaces: ["internal"]` — the harness invokes
 ///   `sign_internal`, which does not consume context bytes; the
 ///   external interface (`Sign(SK, M, ctx)`) is not advertised.
@@ -1452,7 +1453,8 @@ pub fn slh_dsa_keygen_capability(paramset_filter: Option<&str>) -> JsonValue {
 ///   `signatureInterfaces: ["internal"]` AND `preHash: [...]` is
 ///   a registration error: *"Expected no pre-hash options with only
 ///   internal interface"* (HTTP 400). The internal interface
-///   (FIPS 205 §10.2 `Sign_internal`) operates on raw messages; pre-
+///   (FIPS 205 Algorithm 19 `slh_sign_internal`) operates on raw
+///   messages; pre-
 ///   hash modes are an external-interface concept by construction.
 pub fn slh_dsa_siggen_capability(paramset_filter: Option<&str>) -> JsonValue {
     obj(vec![
@@ -1501,9 +1503,9 @@ pub fn slh_dsa_sigver_capability(paramset_filter: Option<&str>) -> JsonValue {
 
 // ── Stateful HBS: LMS ────────────────────────────────────────────
 
-/// Build the `specificCapabilities` array for the single
-/// LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 pair the harness
-/// implements.
+/// Build the `specificCapabilities` array for the (lmsMode, lmOtsMode)
+/// pairs the harness implements — the full advertised grid, not a
+/// single pair.
 ///
 /// Per `draft-celi-acvp-lms §7.3` Table 5, `specificCapabilities`
 /// is the explicit-pair form: an array of objects, each with
@@ -1842,12 +1844,9 @@ fn lms_specific_capabilities() -> JsonValue {
 
 /// Build an ACVP registration block for LMS / keyGen / 1.0.
 ///
-/// Cap shape per `draft-celi-acvp-lms §7.3.3`. Subset note: only
-/// `LMS_SHA256_M32_H10` paired with `LMOTS_SHA256_N32_W4` (RFC 8554
-/// §A.1 typecode 0x00000003 / §A.2 typecode 0x00000003) is built
-/// in `oxicrypt-lms`; the 19 other LMS types and remaining LMOTS
-/// pairings are tracked under the PQ-expansion mandate
-/// (`algo-capability-matrix.md` rows 235–240) and will be added
+/// Cap shape per `draft-celi-acvp-lms §7.3.3`. The advertised grid is
+/// the LMS types and LMOTS pairings built in `oxicrypt-lms`; the
+/// registration is generated from that set rather than enumerated
 /// to `specificCapabilities` when their primitives ship.
 pub fn lms_keygen_capability(caps_filter: Option<&str>) -> JsonValue {
     obj(vec![

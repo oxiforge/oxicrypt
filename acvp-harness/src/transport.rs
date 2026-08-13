@@ -2153,10 +2153,9 @@ fn clamp_retry_hint(secs: i64) -> Option<u64> {
 /// (clamped to `[5s, 120s]` via [`clamp_retry_hint`]). When no hint
 /// is available, the loop falls back to the legacy local schedule
 /// `min(2s × 2^poll.min(4), 30s)`. Honoring the server's hint is the
-/// politeness fix per ACVP demo etiquette — last night's session
-/// (723934) showed the harness polling at 8s while the server
-/// explicitly asked for 30s, which is a small retry storm on a
-/// shared resource.
+/// politeness fix per ACVP demo etiquette: ignoring the hint polls far
+/// faster than the server asked for, which is a retry storm on a shared
+/// resource.
 ///
 /// **URL is `<vsUrl>/results`, not `<vsUrl>` itself.** The vector-set
 /// URL returns the prompt JSON regardless of grading state; the

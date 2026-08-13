@@ -1,12 +1,11 @@
 //! CAVP SHS dispatch layer — the second envelope shape.
 //!
-//! R10 wired the first envelope shape (ACVP `internalProjection.json`)
-//! with the [`crate::dispatch`] registry and trait. R11′ documented
-//! that plain FIPS 180-4 hashing vectors are not shipped in that
-//! layout at all: upstream `usnistgov/ACVP-Server` has never published
-//! top-level `SHA-*`, `SHA1-*`, or `SHA2-*` vector directories, so the
-//! SHA-2 family has to ride a different envelope. R12-B wires that
-//! second envelope: parse the vendored CAVP SHS `.rsp` files via
+//! Plain FIPS 180-4 hashing vectors are not shipped in the ACVP
+//! `internalProjection.json` layout that [`crate::dispatch`] consumes:
+//! upstream `usnistgov/ACVP-Server` publishes no top-level `SHA-*`,
+//! `SHA1-*`, or `SHA2-*` vector directories, so the SHA-2 family rides
+//! a second envelope. This module is that envelope: parse the vendored
+//! CAVP SHS `.rsp` files via
 //! [`crate::rsp`], dispatch each case to a per-algorithm
 //! [`ShsHandler`], and emit a JSON response document that mirrors the
 //! ACVP response shape closely enough to share the existing JSON

@@ -183,7 +183,7 @@ enum Direction {
 }
 
 /// AES-KW / AES-KWP cipher direction, parsed from the group's
-/// `kwCipher` field (SP 800-38F §6.2 / ACVP).
+/// `kwCipher` field (SP 800-38F §6.1 "W and W-1" / ACVP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KwCipher {
     /// `kwCipher = "cipher"` — W function uses AES forward cipher.
