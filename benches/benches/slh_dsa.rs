@@ -11,13 +11,14 @@
 //! runtime — add it later if a SHAKE measurement is actually needed.
 //!
 //! `keygen` takes a `3*N`-byte seed (`SK.seed || SK.prf || PK.seed`,
-//! FIPS 205 §9.2); `N` is the per-variant hash-output length (16/24/32),
+//! FIPS 205 §10.1 Algorithm 21); `N` is the per-variant hash-output
+//! length (16/24/32),
 //! so the seed array length is computed from each module's `N` const.
 //! The external `sign`/`verify` take a context string `ctx` (empty
 //! here). All seeds are deterministic (`0x42`) for reproducibility.
 //!
 //! Runtime guard for the `s` ("small/slow") variants: SLH-DSA `s`-variant
-//! SIGNING is enormously expensive (seconds per signature), so those
+//! signing is far slower than the `f` variants, so those
 //! sign benches live in their own group `SLH-DSA sign (slow)` with
 //! `sample_size(10)` (criterion's minimum) and a 100 ms warm-up. They
 //! are intended to be compiled (`cargo bench --no-run`) and single-shot
@@ -34,7 +35,8 @@ use oxicrypt_slh_dsa::{
 
 const SEED_BYTE: u8 = 0x42;
 const MSG: &[u8] = b"benchmark message for SLH-DSA (FIPS 205)";
-/// Empty context string (FIPS 205 §9.2 external API).
+/// Empty context string (FIPS 205 §10.2 Algorithm 22, the external
+/// signing API).
 const CTX: &[u8] = b"";
 
 /// Keygen bench for one SLH-DSA-SHA2 parameter set. The `3*N`-byte seed

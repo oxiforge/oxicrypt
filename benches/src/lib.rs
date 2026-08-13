@@ -1,7 +1,7 @@
 //! Shared helpers for oxicrypt benchmarks.
 //!
-//! This crate is never compiled directly; each `[[bench]]` target
-//! imports what it needs.
+//! This crate ships no benches of its own. Each `[[bench]]` target
+//! links it and imports what it needs.
 
 #![allow(
     clippy::expect_used,
@@ -12,7 +12,9 @@
     missing_docs
 )]
 
-/// Initialise the FIPS module with KATs from every algorithm crate.
+/// Initialise the FIPS module with the SHA, HMAC, AES, DRBG, ECDSA,
+/// EdDSA, ECDH and KDF KATs. The PQ, LMS, XMSS and RSA crates export
+/// `KATS` too and are deliberately not loaded here.
 ///
 /// Call once before any benchmark function that touches gated API.
 pub fn init_module() {

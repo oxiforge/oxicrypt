@@ -6,16 +6,16 @@
 )]
 
 //! LMS (SP 800-208) benchmarks — SHA-256/M=32 family only, bounded to
-//! H ∈ {5, 10, 15} × W ∈ {4, 8} (the larger Winternitz values; H=20/25
-//! keygen takes hours and is deliberately out of scope).
+//! H ∈ {5, 10, 15} × W ∈ {4, 8} (the larger Winternitz values). H=20/25
+//! are deliberately out of scope: keygen cost grows as 2^H.
 //!
 //! LMS is stateful: each signature consumes one Merkle leaf and `sign`
 //! refuses once the tree is exhausted (2^H one-time keys). The H=5
 //! pairs have only 32 leaves, so their sign benches generate a fresh
 //! key per iteration via `iter_batched_ref` (setup excluded from
-//! timing). The taller trees reuse one key — criterion schedules far
-//! fewer iterations than 2^H for these slow operations — with a rekey
-//! fallback if the tree ever exhausts.
+//! timing). The taller trees reuse one key, on the expectation that
+//! criterion schedules fewer iterations than 2^H for these slow
+//! operations, with a rekey fallback for when the tree does exhaust.
 //!
 //! A third group, `sign-cached`, measures `LmsSigningKey` — the
 //! tree-cache wrapper whose constructor precomputes the Merkle node
@@ -111,7 +111,8 @@ macro_rules! lms_sign_bench_shared_key {
 /// shared cached key per pair with a rekey-on-exhaustion fallback,
 /// mirroring `lms_sign_bench_shared_key`. Note for H=5 (32 leaves) the
 /// rekey fires every 32 iterations, so its numbers amortize 1/32 of a
-/// tree rebuild; taller trees never exhaust under criterion's counts.
+/// tree rebuild. Taller trees are not expected to exhaust; the rekey
+/// branch covers it if they do.
 macro_rules! lms_sign_cached_bench {
     ($fn_name:ident, $pair:ident, $label:literal, $samples:expr) => {
         fn $fn_name(c: &mut Criterion) {

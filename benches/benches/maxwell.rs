@@ -27,8 +27,8 @@
 //! The two branches are ~270× apart in cost. Measured on the reference
 //! platform at 8-bit symbols: the IID branch takes ~9 s per megabyte, the
 //! non-IID branch 2417.75 s ≈ 40.3 min. Criterion's floor is 10 samples, so a
-//! 1 M-sample non-IID group would run for roughly **6.5 hours** — it was tried,
-//! and criterion's own estimate was 23 339 s.
+//! 1 M-sample non-IID group would run for roughly **6.5 hours**;
+//! criterion's own estimate for that configuration is 23 339 s.
 //!
 //! Two caveats travel with those numbers, both recorded in
 //! `docs/entropy-performance.md`: the IID figure is a **best case**, because
