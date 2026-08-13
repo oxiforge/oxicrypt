@@ -11,15 +11,11 @@
 //! Reading the `status` / `id` fields out of that body with the integer-only
 //! codec is impossible.
 //!
-//! An earlier revision worked around this with a `neutralize_fractionals`
-//! textual pre-pass that stripped the fractional part of every number before
-//! handing the mangled copy to the integer-only codec. An adversarial review
-//! refuted that *design*, not merely its bugs: a byte-level rewrite that has
-//! to track JSON string state to avoid touching decimals inside strings is
-//! exactly a JSON parser, only one that silently corrupts its input and
-//! cannot see e-notation (`1.2e-05` → `1e-05`, still unparseable) or reject
-//! malformed numerals (`1.2.3` sailed straight through). This module replaces
-//! that pre-pass with a real parser.
+//! A textual pre-pass over the bytes cannot do this job: anything that
+//! rewrites numbers must track JSON string state to avoid touching decimals
+//! inside string literals, which is a JSON parser already. It must also see
+//! e-notation (`1.2e-05`) and reject malformed numerals (`1.2.3`) rather
+//! than passing them through. So this module is a real parser.
 //!
 //! # What it is
 //!
@@ -209,7 +205,8 @@ pub enum ParseError {
         /// Byte offset where the number started.
         pos: usize,
     },
-    /// A string literal held bytes that are not valid UTF-8.
+    /// A string literal held bytes that are not valid UTF-8. Defensive:
+    /// [`parse`] takes `&str`, so the input is UTF-8 by construction.
     InvalidUtf8 {
         /// Byte offset where the string started.
         pos: usize,
@@ -630,8 +627,8 @@ mod tests {
 
     #[test]
     fn malformed_numerals_are_parse_errors_never_promoted() {
-        // `1.2.3` — the review's exact bad case. `1.2` parses, `.3` is
-        // trailing garbage.
+        // `1.2.3` is an invalid numeral: `1.2` parses, `.3` is trailing
+        // garbage.
         assert!(matches!(
             parse("1.2.3"),
             Err(ParseError::TrailingData { .. })

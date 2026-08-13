@@ -15,7 +15,7 @@
 //! - **Metadata envelope:** `[{esvVersion:"1.0"}, {metadata}]` — the same
 //!   versioned array as login (schema
 //!   `entropy-source-metadata-schema.json`, vendored under `vendor/`,
-//!   ESV-Server `59e0438`; ESVP digest §3).
+//!   ESV-Server `59e0438`; ESV protocol specification §3).
 //! - **Metadata fields + bounds** (vendored schema, element 1):
 //!   `primaryNoiseSource` (string, ≤64 chars), `iidClaim` (bool),
 //!   `bitsPerSample` (int 1..=256), `hminEstimate` (number,
@@ -32,7 +32,7 @@
 //!   `RuleScripts/Rules/RegisterRequest/ConditioningComponent/Vetted/validationNumber.json`
 //!   (ESV-Server `59e0438`) and by ratified design decision **D2**
 //!   (required config, no default — construction fails typed when
-//!   absent). (ESVP digest §3.)
+//!   absent). (ESV protocol specification §3.)
 //! - **`physical: false`.** The oxicrypt noise source is CPU timing
 //!   jitter, a non-physical source; the *rationale* lives in the
 //!   noise-source description, not here (ISC-112 — point, do not
@@ -42,23 +42,25 @@
 //!   one assessment object per OE. `numberOfOEs` is a register-payload
 //!   field (server model `EntropyAssessmentRegisterPayload`), not part of
 //!   the vendored *metadata* schema; the schema's `additionalProperties`
-//!   default (true) admits it. (ESVP digest §3: "Registration creates an
+//!   default (true) admits it. (ESV protocol specification §3: "Registration creates an
 //!   eaId + per-OE response objects (set `numberOfOEs`)".)
 //!
 //! ## Resolved-by-judgment: `numberOfOEs` on the wire
 //!
-//! The ESVP digest §3 says the client *sets* `numberOfOEs` on the
+//! The ESV protocol specification §3 says the client *sets* `numberOfOEs` on the
 //! registration; the NIST reference client instead **rejects**
 //! `numberOfOEs` in the payload and sends one registration per OE,
 //! computing the OE count from the number of data files
-//! (`client/client_actions.py:37-53`, ESV-Server `59e0438`). This module
+//! (`client/client_actions.py`, ESV-Server `59e0438`). This module
 //! carries `numberOfOEs` as an **optional** payload field
 //! ([`EntropyRegistration::number_of_oes`]): `Some(n)` emits it (the
 //! digest's shape), `None` omits it (the reference client's shape). The
 //! divergence is flagged for empirical confirmation at the attended demo
 //! smoke. The response parser ([`parse_registration_response`]) handles
-//! the multi-OE array either way — the reference client confirms the
-//! response is always an array, one element per OE, even for a single OE.
+//! the multi-OE array either way. The reference client iterates the
+//! assessments unconditionally as an array; that the server returns an
+//! array even for a single OE is deferred for confirmation at the
+//! attended smoke, not established here.
 
 use acvp_harness::json::{self, JsonValue};
 use oxicrypt_entropy::h::MinEntropy;
@@ -69,8 +71,8 @@ use crate::preflight;
 /// The registration endpoint path — the **full server-relative path**;
 /// the transport base is host-only (see [`crate::login::LOGIN_PATH`] for
 /// the convention and the reference-config `/esv/v1` doubling trap).
-/// (ESVP digest §3; ESV-Server reference client
-/// `request_types/entropy_assessments.py:15`.)
+/// (ESV protocol specification §3; ESV-Server reference client
+/// `request_types/entropy_assessments.py`.)
 pub const REGISTRATION_PATH: &str = "/esv/v1/entropyAssessments";
 
 /// An error constructing a registration payload component.
@@ -524,7 +526,7 @@ impl DataFileRef {
 
 /// A reference to a conditioned-bits data-file slot, with its sequence
 /// position. (Present only for non-vetted, non-bijective conditioning —
-/// the vetted oxicrypt path never receives one; see the ESVP digest §3.)
+/// the vetted oxicrypt path never receives one; see the ESV protocol specification §3.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConditionedFileRef {
     /// Full server URL of the conditioned-bits slot.
@@ -583,8 +585,8 @@ fn url_tail(url: &str) -> Result<&str, String> {
 /// operating environment.
 ///
 /// The response is the versioned envelope `[{esvVersion}, [<ea>, …]]`
-/// (reference client `request_types/entropy_assessments.py:17,25` strips
-/// element 0, then iterates the array of assessments — always an array,
+/// (reference client `request_types/entropy_assessments.py` strips
+/// element 0, then iterates the array of assessments unconditionally,
 /// one element per OE). Each `<ea>` object carries `url`, `dataFileUrls`
 /// (objects with `rawNoiseBits` / `restartTestBits` /
 /// `conditionedBits`+`sequencePosition`), and `accessToken`.
@@ -988,7 +990,7 @@ mod tests {
         assert!(err.contains("accessToken"), "{err}");
     }
 
-    // ── Item 4: envelope validation shared with the auth parsers ───────
+    // ── envelope validation shared with the auth parsers ───────
 
     #[test]
     fn parse_registration_rejects_non_version_envelope() {
@@ -1008,7 +1010,7 @@ mod tests {
         assert_eq!(oes[0].ea_id, "7");
     }
 
-    // ── Item 6: fail-closed data-file slots ───────────────────────────
+    // ── fail-closed data-file slots ───────────────────────────
 
     /// A well-formed one-OE body with `slots` spliced in for the dataFileUrls.
     fn one_oe_with_slots(slots: &str) -> String {
@@ -1056,7 +1058,7 @@ mod tests {
         assert!(err.contains("duplicate `rawNoiseBits`"), "{err}");
     }
 
-    // ── Fix 5: duplicate conditionedBits sequencePosition ─────────────
+    // ── duplicate conditionedBits sequencePosition ─────────────
 
     #[test]
     fn parse_rejects_duplicate_conditioned_sequence_position() {
@@ -1082,7 +1084,7 @@ mod tests {
         assert_eq!(oes[0].conditioned[1].sequence_position, 2);
     }
 
-    // ── Fix 8: restartTestBits is tolerated-absent again ──────────────
+    // ── restartTestBits is tolerated-absent again ──────────────
 
     #[test]
     fn parse_tolerates_missing_restart_slot() {
@@ -1095,7 +1097,7 @@ mod tests {
         assert!(oes[0].restart.is_none());
     }
 
-    // ── Item 7: url_tail trailing-slash handling ──────────────────────
+    // ── url_tail trailing-slash handling ──────────────────────
 
     #[test]
     fn url_tail_trims_trailing_slash_and_yields_id() {

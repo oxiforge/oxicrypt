@@ -6,12 +6,13 @@
 //! the vendored NIST metadata schema
 //! (`vendor/entropy-source-metadata-schema.json`, ESV-Server `59e0438`,
 //! JSON Schema draft-07). A drift-guard test ([`tests::constraints_match_vendored_schema`])
-//! re-derives every transcribed constant from that vendored file, so a
+//! re-derives every schema-derived constant in the table below from that
+//! vendored file, so a
 //! hand-transcription mistake fails the test rather than shipping.
 //!
 //! Two vetted-conditioning constraints are **not** in the metadata schema
 //! and are transcribed from the NIST server-side rule scripts (same
-//! pinned commit) plus the ESVP digest §3: a vetted component's
+//! pinned commit) plus the ESV protocol specification §3: a vetted component's
 //! `description` must be a recognized ACVTS algorithm name
 //! (`RuleScripts/Rules/RegisterRequest/ConditioningComponent/Vetted/description.json`),
 //! and a vetted component must supply a CAVP `validationNumber`
@@ -96,7 +97,7 @@ pub const REQUIRED_CC_FIELDS: &[&str] = &[
 ];
 
 /// The exact ACVTS algorithm name for the vetted SHA2-256 conditioning
-/// component. (Task requirement; ESVP digest §3.)
+/// component. (Task requirement; ESV protocol specification §3.)
 pub const VETTED_SHA2_256_NAME: &str = "SHA2-256";
 
 /// Recognized ACVTS vetted-algorithm names accepted for a vetted
@@ -104,8 +105,8 @@ pub const VETTED_SHA2_256_NAME: &str = "SHA2-256";
 ///
 /// These are the SP 800-90B approved-hash / XOF conditioning names whose
 /// ACVP registration spellings are unambiguous (the exact `"SHA2-256"` is
-/// the oxicrypt target and the one this slice exercises). The vetted MAC /
-/// DRBG / derivation-function conditioning options from the ESVP digest §3
+/// the oxicrypt target). The vetted MAC /
+/// DRBG / derivation-function conditioning options from the ESV protocol specification §3
 /// (HMAC, CMAC, CBC-MAC, CTR/Hash/HMAC-DRBG, Hash_DF, BlockCipher_DF) are
 /// deliberately omitted until their exact ACVTS spellings are confirmed at
 /// the attended demo smoke — the server-side rule is authoritative, this
@@ -855,8 +856,9 @@ mod tests {
         let cc_props = cc_items
             .get("properties")
             .ok_or("conditioningComponent.items.properties absent")?;
-        // CC_POSITIVE_INT_MIN backs the `< 1` checks over sequencePosition /
-        // minNin / nw / nOut (sequencePosition is schema-bounded ≥1 too).
+        // CC_POSITIVE_INT_MIN backs the `< 1` checks over minNin / nw /
+        // nOut, and the schema minimum asserted here for sequencePosition,
+        // whose runtime cover is the 1..=n consecutiveness check instead.
         for name in ["sequencePosition", "minNin", "nw", "nOut"] {
             want_i64(cc_props, name, "minimum", CC_POSITIVE_INT_MIN)?;
         }

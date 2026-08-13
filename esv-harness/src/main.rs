@@ -1,7 +1,7 @@
 //! ESV harness binary.
 //!
-//! A thin CLI over the [`esv_harness`] library. Slice S1 wires the
-//! offline ESVP §2 building blocks; the live, credentialed submission
+//! A thin CLI over the [`esv_harness`] library. It wires the offline
+//! ESVP §2 building blocks; the live, credentialed submission
 //! run is a separate attended session (like ACVTS), so the subcommands
 //! here are offline utilities that exercise the request builders without
 //! any network contact:
@@ -168,7 +168,7 @@ mod tests {
         list.iter().map(|s| (*s).to_string()).collect()
     }
 
-    // ── Item 1: CLI argv rejection ────────────────────────────────────
+    // ── CLI argv rejection ────────────────────────────────────
 
     #[test]
     fn reject_flag_args_rejects_totp_secret_flag() {
@@ -193,7 +193,7 @@ mod tests {
         assert!(reject_flag_args(&args(&["jwt-a", "jwt-b", "jwt-c"])).is_ok());
     }
 
-    // ── Item 2: tty stdin notice wording ──────────────────────────────
+    // ── tty stdin notice wording ──────────────────────────────
 
     #[test]
     fn tty_stdin_notice_names_stdin_and_eof() {

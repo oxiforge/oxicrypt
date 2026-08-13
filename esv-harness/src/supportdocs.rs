@@ -5,8 +5,10 @@
 //! Supporting documents (the Entropy Assessment Report, the Public Use
 //! Document, an optional Data Collection Attestation, and any number of
 //! Other documents) justify the non-testable SP 800-90B requirements. The
-//! server accepts **PDF only** (ESVP §6.2 supersedes the §1 "Word or PDF"
-//! mention). The upload is `multipart/form-data`: an `sdFile` binary part,
+//! harness sends **PDF only**, per ESVP §6.2, which supersedes the §1
+//! "Word or PDF" mention. Nothing here exercises what the server
+//! accepts; the in-tree guard proves only what this crate refuses to
+//! send. The upload is `multipart/form-data`: an `sdFile` binary part,
 //! an `sdType` field, and an optional `sdComments` field — the same
 //! request shape as a data-file upload, serialized by the one shared
 //! [`crate::datafiles::serialize_multipart`] encoder.
@@ -15,7 +17,7 @@
 //!
 //! The NIST reference client does **not** validate PDF-ness at all: it
 //! opens whatever file it is handed and hard-codes the part's content type
-//! to `application/pdf` (`client/request_types/supporting_documentation.py:20`);
+//! to `application/pdf` (`client/request_types/supporting_documentation.py`);
 //! it checks neither the `.pdf` extension nor the file's magic bytes. This
 //! harness fails closed instead — [`SupportingDocUpload::new`] refuses any
 //! payload that does not begin with the PDF signature `%PDF-` (a document's
@@ -27,8 +29,8 @@
 //! # Protocol sources
 //!
 //! Endpoint path, part/field names, and the `sdType` wire strings are
-//! transcribed from the ESVP protocol (`Entropy Source Validation
-//! Protocol.md` §6.2, line 656 for the enum) and the reference client
+//! transcribed from the ESV protocol specification §6.2 and the
+//! reference client
 //! (`client/request_types/supporting_documentation.py`,
 //! `client/jsons/run.example.json`).
 
@@ -38,23 +40,23 @@ use crate::datafiles::{MultipartPart, serialize_multipart};
 
 /// The supporting-documentation endpoint — the full server-relative path.
 /// See [`crate::login::LOGIN_PATH`] for the host-only-base convention.
-/// (reference client `request_types/supporting_documentation.py:24`.)
+/// (reference client `request_types/supporting_documentation.py`.)
 pub const SUPPORTING_DOC_PATH: &str = "/esv/v1/supportingDocumentation";
 
 /// The multipart part name of the PDF binary payload (reference client
-/// `request_types/supporting_documentation.py:20`).
+/// `request_types/supporting_documentation.py`).
 pub const SD_FILE_PART_NAME: &str = "sdFile";
 
 /// The multipart text-field name carrying the document classification
-/// (reference client `request_types/supporting_documentation.py:21`).
+/// (reference client `request_types/supporting_documentation.py`).
 pub const SD_TYPE_FIELD: &str = "sdType";
 
 /// The multipart text-field name carrying the optional free-text comment
-/// (reference client `request_types/supporting_documentation.py:21`).
+/// (reference client `request_types/supporting_documentation.py`).
 pub const SD_COMMENTS_FIELD: &str = "sdComments";
 
 /// The `Content-Type` of the `sdFile` part — PDF only (reference client
-/// `request_types/supporting_documentation.py:20`; ESVP §6.2).
+/// `request_types/supporting_documentation.py`; ESVP §6.2).
 pub const SD_CONTENT_TYPE: &str = "application/pdf";
 
 /// The PDF file signature every conformant PDF begins with (`%PDF-`), used
@@ -65,10 +67,9 @@ pub const PDF_MAGIC: &[u8] = b"%PDF-";
 
 /// The ESVP §6.2 supporting-document type (`sdType`).
 ///
-/// The wire strings are transcribed from `Entropy Source Validation
-/// Protocol.md` §6.2 (line 656) — the authoritative list, matched by the
-/// server's `SupportingDocumentType` enum and by the actual payloads in
-/// `client/jsons/run.example.json`.
+/// The wire strings are transcribed from the ESV protocol
+/// specification §6.2 — the authoritative list — and match the payloads
+/// in the reference client's `client/jsons/run.example.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdType {
     /// The Entropy Assessment Report (`"EntropyAssessmentReport"`).
@@ -243,7 +244,7 @@ impl SupportingDocUpload {
     /// then the `sdComments` field (when present), then the `sdFile` binary
     /// part — the data-then-files order the reference client's `requests`
     /// call produces (`data=payload, files=…`,
-    /// `request_types/supporting_documentation.py:24`).
+    /// `request_types/supporting_documentation.py`).
     #[must_use]
     pub fn parts(&self) -> Vec<MultipartPart<'_>> {
         let mut out = vec![MultipartPart::Field {
@@ -293,8 +294,8 @@ impl SupportingDocUpload {
 pub struct SupportingDoc {
     /// The server-assigned supporting-document id (`sdId`).
     pub sd_id: i64,
-    /// The document classification (carried from the upload request — the
-    /// response does not echo it).
+    /// The document classification. Threaded in from the upload request
+    /// rather than read back from the response.
     pub sd_type: SdType,
     /// The scoped JWT with claims to this `sdId`.
     pub access_token: String,

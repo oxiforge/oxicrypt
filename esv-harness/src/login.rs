@@ -12,35 +12,35 @@
 //!
 //! - **Envelope:** every message is a two-element array
 //!   `[{"esvVersion":"1.0"}, {payload}]` — the ACVP-style versioned
-//!   envelope acvp-harness already handles. (ESVP digest §"Protocol
-//!   shape"; reference client `authentication/login.py:84-85`.)
+//!   envelope acvp-harness already handles. (ESV protocol specification §"Protocol
+//!   shape"; reference client `authentication/login.py`.)
 //! - **Endpoint paths carry the full server-relative path** (`/esv/v1/…`)
 //!   and the transport base is **host-only** — see the path constants
 //!   below and the reference-config trap they document.
-//!   (reference client `jsons/config.demo.json:5-6`: `EsvVersion "1.0"`.)
+//!   (reference client `jsons/config.demo.json`: `EsvVersion "1.0"`.)
 //! - **Login:** POST `/esv/v1/login` body `[{esvVersion},{password}]`,
-//!   where `password` is the current TOTP. (login.py:66,85.)
+//!   where `password` is the current TOTP. (login.py.)
 //! - **TOTP:** RFC 6238, 30-second step, T0 = 0, **8 digits**,
 //!   HMAC-SHA-256. The reference client's `totp.py` truncation is
 //!   byte-identical to acvp-harness's RFC-4226 dynamic truncation
 //!   (offset = low nibble of the last HMAC byte, top bit of the 32-bit
 //!   window masked, mod 10^8), so [`acvp_harness::transport::totp_now`]
-//!   is reused verbatim rather than reimplemented. (ESVP digest §2;
+//!   is reused verbatim rather than reimplemented. (ESV protocol specification §2;
 //!   `authentication/totp.py`.)
 //! - **Single refresh:** re-login at `/esv/v1/login` embedding the
 //!   current token, body `[{esvVersion},{password, accessToken:<old>}]`
 //!   — the server re-issues a fresh same-scope token, the exact
-//!   mechanism acvp-harness's own token refresh relies on. (ESVP digest
+//!   mechanism acvp-harness's own token refresh relies on. (ESV protocol specification
 //!   §2: "refresh = POST /esv/v1/login with {password, accessToken}".)
 //! - **Bulk refresh:** POST `/esv/v1/login/refresh` body
 //!   `[{esvVersion},{password, accessToken:[<t1>,<t2>,…]}]` — refreshes
-//!   an array of per-object JWTs in one TOTP touch. (ESVP digest §2:
+//!   an array of per-object JWTs in one TOTP touch. (ESV protocol specification §2:
 //!   "NEW vs ACVP: bulk refresh … accessToken ARRAY"; the reference
-//!   client's `refresh_payload` (login.py:80-81) carries the same
+//!   client's `refresh_payload` (login.py) carries the same
 //!   `{password, accessToken}` object.)
 //! - **TOTP-window-reuse retry:** a 403 whose body reports "TOTP Window
 //!   has already been used" is transient — the reference client waits
-//!   10 s and retries with a fresh TOTP (`login.py:19-29,41-44`). This
+//!   10 s and retries with a fresh TOTP (`login.py`). This
 //!   module mirrors that (see [`is_totp_window_reuse`] and the
 //!   [`Sleeper`]-driven retry in the flow entry points), bounded by
 //!   [`TOTP_REUSE_RETRY_CAP`].
@@ -49,7 +49,7 @@
 //!
 //! The digest assigns the single-token refresh to `/esv/v1/login` (a
 //! same-scope re-login), while the reference client's `refresh_jwt`
-//! (login.py:32-48) routes *both* single- and array-token refreshes
+//! (login.py) routes *both* single- and array-token refreshes
 //! through `/esv/v1/login/refresh`. This module follows the cited digest
 //! — [`SINGLE_REFRESH_PATH`] = [`LOGIN_PATH`] — because it matches the
 //! proven acvp-harness re-login mechanism and the task's protocol
@@ -66,7 +66,7 @@ use acvp_harness::transport::{
 
 /// The only ESVP version the NIST servers support.
 ///
-/// (reference client `jsons/config.demo.json:6`: `EsvVersion "1.0"`.)
+/// (reference client `jsons/config.demo.json`: `EsvVersion "1.0"`.)
 pub const ESV_VERSION: &str = "1.0";
 
 /// Login endpoint path — the **full server-relative path**.
@@ -74,7 +74,7 @@ pub const ESV_VERSION: &str = "1.0";
 /// The transport base is **host-only** (e.g.
 /// `https://demo.esvts.nist.gov:7443`), matching acvp-harness's
 /// convention: its `server_url` is host-only and the paths carry
-/// `/acvp/v1` (`acvp-harness/src/transport.rs` ~L904). These ESV
+/// `/acvp/v1` (see `acvp_harness::transport`'s `server_url`). These ESV
 /// constants likewise carry the full `/esv/v1/…` path, so the base must
 /// contribute the host only.
 ///
@@ -83,11 +83,11 @@ pub const ESV_VERSION: &str = "1.0";
 /// (`https://demo.esvts.nist.gov:7443/esv/v1`). It must **not** be used
 /// verbatim as the transport base — doing so doubles the path to
 /// `/esv/v1/esv/v1/login` (404). Strip the `/esv/v1` suffix to a
-/// host-only base. (reference client `authentication/login.py:66`.)
+/// host-only base. (reference client `authentication/login.py`.)
 pub const LOGIN_PATH: &str = "/esv/v1/login";
 
 /// Single-token refresh endpoint — the full server-relative path. Per the
-/// ESVP digest §2 a single refresh is a same-scope re-login at
+/// ESV protocol specification §2 a single refresh is a same-scope re-login at
 /// [`LOGIN_PATH`]; see the module docs for the reference-client
 /// divergence resolved by judgment, and [`LOGIN_PATH`] for the host-only
 /// base convention and the reference-config trap.
@@ -95,20 +95,20 @@ pub const SINGLE_REFRESH_PATH: &str = LOGIN_PATH;
 
 /// Bulk refresh endpoint — the full server-relative path; refreshes an
 /// array of per-object JWTs in one TOTP touch. See [`LOGIN_PATH`] for the
-/// host-only base convention and the reference-config trap. (ESVP digest
-/// §2; reference client `authentication/login.py:39`.)
+/// host-only base convention and the reference-config trap. (ESV protocol specification
+/// §2; reference client `authentication/login.py`.)
 pub const BULK_REFRESH_PATH: &str = "/esv/v1/login/refresh";
 
 /// Maximum TOTP-window-reuse retries before surfacing a typed error.
 ///
-/// The reference client (`authentication/login.py:41-44`) loops
+/// The reference client (`authentication/login.py`) loops
 /// unbounded on the "TOTP Window has already been used" 403, waiting 10 s
 /// each time. This harness caps the retries to avoid an indefinite
 /// attended stall on a persistently rejected window.
 pub const TOTP_REUSE_RETRY_CAP: u8 = 3;
 
 /// The wait between TOTP-window-reuse retries (reference client
-/// `authentication/login.py:44`: `time.sleep(10)`).
+/// `authentication/login.py`: `time.sleep(10)`).
 const TOTP_REUSE_WAIT: Duration = Duration::from_secs(10);
 
 /// An injectable wait, so the TOTP-window-reuse retry is driven by a
@@ -132,7 +132,7 @@ impl Sleeper for ThreadSleeper {
 /// True when a response is the transient "TOTP window already used" 403
 /// the NIST reference client retries.
 ///
-/// The reference client (`authentication/login.py:19-29`, `did_totp_fail`)
+/// The reference client (`authentication/login.py`, `did_totp_fail`)
 /// treats a 403 whose envelope element 1 carries an `error` containing
 /// "TOTP Window has already been used" as the retry trigger; a substring
 /// match over the whole body is equivalent and robust to envelope shape.
@@ -179,7 +179,7 @@ fn envelope(payload: Vec<(String, JsonValue)>) -> String {
 }
 
 /// Build the login request body: `[{esvVersion},{password:<totp>}]`.
-/// (reference client `authentication/login.py:85`.)
+/// (reference client `authentication/login.py`.)
 pub fn build_login_body(totp_code: &str) -> String {
     envelope(vec![(
         "password".to_string(),
@@ -190,7 +190,7 @@ pub fn build_login_body(totp_code: &str) -> String {
 /// Build the single-token refresh body:
 /// `[{esvVersion},{password:<totp>, accessToken:<old>}]`. Field order
 /// (password then accessToken) matches the reference client's
-/// `refresh_payload` (`authentication/login.py:81`).
+/// `refresh_payload` (`authentication/login.py`).
 pub fn build_single_refresh_body(totp_code: &str, access_token: &str) -> String {
     envelope(vec![
         (
@@ -207,7 +207,7 @@ pub fn build_single_refresh_body(totp_code: &str, access_token: &str) -> String 
 /// Build the bulk refresh body:
 /// `[{esvVersion},{password:<totp>, accessToken:[<t1>,<t2>,…]}]`. The
 /// `accessToken` array preserves the caller's token order so the
-/// response array maps back one-to-one. (ESVP digest §2.)
+/// response array maps back one-to-one. (ESV protocol specification §2.)
 pub fn build_bulk_refresh_body(totp_code: &str, access_tokens: &[String]) -> String {
     let tokens = access_tokens
         .iter()
@@ -267,7 +267,8 @@ impl EnvelopeValue for crate::jsonlite::JsonLite {
 /// Require the ESVP versioned envelope `[{esvVersion}, {payload}, …]` and
 /// return a reference to the payload element (index 1).
 ///
-/// ESV responses are **always** this envelope. The check is **at-least-two**
+/// This parser requires the versioned envelope and rejects the bare-object
+/// form. The check is **at-least-two**
 /// elements, not exactly two: element 0 must carry a string `esvVersion`,
 /// element 1 is the payload, and any trailing elements are ignored — so an
 /// additive server-side envelope variance is tolerated while a bare
@@ -310,8 +311,8 @@ pub(crate) fn esv_payload_element<V: EnvelopeValue>(parsed: &V) -> Result<&V, St
 /// versioned envelope `[{esvVersion}, {payload}]` and reads `accessToken`
 /// from the payload element. It intentionally does **not** delegate to
 /// `acvp_harness::transport::extract_access_token`, which also accepts a
-/// bare `{"accessToken":"…"}` object (an ACVP-side permissiveness) — ESV
-/// responses are always the envelope, so the bare-object form is rejected.
+/// bare `{"accessToken":"…"}` object (an ACVP-side permissiveness). This
+/// parser rejects the bare-object form and requires the envelope.
 pub fn parse_access_token(body: &str) -> Result<String, String> {
     let parsed = json::parse(body).map_err(|e| format!("parse ESV auth response: {e}"))?;
     let payload = esv_payload_element(&parsed)?;
@@ -852,7 +853,7 @@ mod tests {
     fn endpoint_paths_are_esv_v1() {
         assert_eq!(LOGIN_PATH, "/esv/v1/login");
         assert_eq!(BULK_REFRESH_PATH, "/esv/v1/login/refresh");
-        // Single refresh is a same-scope re-login per the ESVP digest §2.
+        // Single refresh is a same-scope re-login per the ESV protocol specification §2.
         assert_eq!(SINGLE_REFRESH_PATH, LOGIN_PATH);
         assert_eq!(ESV_VERSION, "1.0");
     }
@@ -922,7 +923,7 @@ mod tests {
         assert!(parse_bulk_refresh_tokens(body, 1).is_err());
     }
 
-    // ── Item 1: bulk count integrity ──────────────────────────────────
+    // ── bulk count integrity ──────────────────────────────────
 
     #[test]
     fn parse_bulk_refresh_tokens_rejects_short_count() {
@@ -993,7 +994,7 @@ mod tests {
         assert!(err.contains("forbidden"), "{err}");
     }
 
-    // ── Item 3: TOTP-window-reuse retry ───────────────────────────────
+    // ── TOTP-window-reuse retry ───────────────────────────────
 
     #[test]
     fn is_totp_window_reuse_matches_only_the_reuse_403() {
@@ -1077,7 +1078,7 @@ mod tests {
         );
     }
 
-    // ── Item 6: fresh-login fallback on refresh 401/403 ───────────────
+    // ── fresh-login fallback on refresh 401/403 ───────────────
 
     #[test]
     fn refresh_falls_back_to_fresh_login_on_401() {
@@ -1150,7 +1151,7 @@ mod tests {
         assert_eq!(t.calls.len(), 1);
     }
 
-    // ── Item 7: tunable refresh margin ────────────────────────────────
+    // ── tunable refresh margin ────────────────────────────────
 
     #[test]
     fn refresh_margin_defaults_to_acvp_measured_const() {
@@ -1268,7 +1269,7 @@ mod tests {
         assert!(bulk_refresh(SECRET, &tokens, &mut t, &mut sl).is_err());
     }
 
-    // ── Item 5: TOTP known-answer test + reuse of the ESV generator ───
+    // ── TOTP known-answer test + reuse of the ESV generator ───
 
     #[test]
     fn totp_matches_rfc6238_appendix_b_sha256_vector() {

@@ -12,7 +12,7 @@
 //! `acvp-harness` already contains the transport ESV needs. ESVP §2
 //! authentication is near-identical to ACVP: the same versioned-array
 //! envelope, mutual-TLS transport, RFC-6238 TOTP (30-second step,
-//! 8 digits, HMAC-SHA-256 via oxicrypt's own HMAC), a 30-minute JWT,
+//! 8 digits, HMAC-SHA-256 via oxicrypt's own HMAC), a short-lived JWT,
 //! and bearer authorization on all non-login endpoints. So esv-harness
 //! is mostly *new resources over a proven transport*, not a new
 //! transport: it reuses acvp-harness's TOTP generation
@@ -37,7 +37,7 @@
 //! a single POST that refreshes an array of per-object JWTs in one TOTP
 //! touch, for certify-time freshness (see [`login::bulk_refresh`]).
 //!
-//! # Registration (slice S2)
+//! # Registration
 //!
 //! [`registration`] builds the ESVP §3 entropy-source metadata payload
 //! (multi-OE via `numberOfOEs`, the vetted SHA2-256 conditioning entry
@@ -48,7 +48,7 @@
 //! metadata schema (`vendor/entropy-source-metadata-schema.json`,
 //! ESV-Server `59e0438`).
 //!
-//! # Data files (slice S3)
+//! # Data files
 //!
 //! [`datafiles`] builds the ESVP §6.1 multipart upload request (the
 //! `dataFile` part plus the v1.8-capitalized `DataFileSampleSize` field),
@@ -66,7 +66,7 @@
 //! parsed by the float-tolerant, raw-token [`jsonlite`] reader (the
 //! assessment body itself is still captured verbatim).
 //!
-//! # Supporting docs, certify, and the session store (slice S4)
+//! # Supporting docs, certify, and the session store
 //!
 //! [`supportdocs`] builds the ESVP §6.2 supporting-document upload (the
 //! `sdType` classification, a fail-closed PDF-only content guard, and the
@@ -82,7 +82,7 @@
 //! reload it and know exactly where the submission stands (registered /
 //! files-uploaded / docs-uploaded / certified).
 //!
-//! # File preflight and exact hmin (slice S5)
+//! # File preflight and exact hmin
 //!
 //! [`preflight`] gains a second half: [`preflight::preflight_data_file`]
 //! validates a **data file on disk** against the ESV wire constraints
@@ -103,8 +103,8 @@
 //! # Protocol sources
 //!
 //! Endpoint paths, envelope shapes, and TOTP parameters are transcribed
-//! from the ESVP protocol digest (`esvp-protocol-digest-2026-06-12.md`)
-//! and the NIST reference client (`usnistgov/ESV-Server`,
+//! from the ESV protocol specification and the NIST reference client
+//! (`usnistgov/ESV-Server`,
 //! `client/authentication/{login,totp}.py`,
 //! `client/jsons/config.demo.json`). The relevant citations appear at
 //! each protocol constant in [`login`].

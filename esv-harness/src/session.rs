@@ -1479,7 +1479,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // ── Fix 1: torn final line tolerated + append cannot merge ────────
+    // ── torn final line tolerated + append cannot merge ────────
 
     #[test]
     fn load_state_tolerates_a_truncated_final_line_and_reports_it() {
@@ -1601,7 +1601,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // ── Fix 2: a duplicate registered outcome does not double-load OEs ─
+    // ── a duplicate registered outcome does not double-load OEs ─
 
     #[test]
     fn duplicate_registered_outcome_does_not_double_load_oes() {
@@ -1722,7 +1722,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // ── Fix 10: sidecar name / eaId path validation ───────────────────
+    // ── sidecar name / eaId path validation ───────────────────
 
     #[test]
     fn read_sidecar_rejects_a_traversal_name() {

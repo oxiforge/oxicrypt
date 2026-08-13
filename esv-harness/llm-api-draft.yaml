@@ -476,7 +476,7 @@ constants:
   module: esv-harness
   type: '&str'
   value: /esv/v1/login
-  description: Single-token refresh endpoint; a same-scope re-login at LOGIN_PATH per the ESVP digest.
+  description: Single-token refresh endpoint; a same-scope re-login at LOGIN_PATH per the ESV protocol specification.
 - name: BULK_REFRESH_PATH
   module: esv-harness
   type: '&str'

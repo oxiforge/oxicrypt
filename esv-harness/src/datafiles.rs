@@ -12,25 +12,26 @@
 //! # Protocol facts (cited)
 //!
 //! - **Upload endpoint:** `POST /esv/v1/entropyAssessments/{eaId}/dataFiles/{dfId}`
-//!   (reference client `request_types/data_files.py:50`; the reference
+//!   (reference client `request_types/data_files.py`; the reference
 //!   `server_url` already carries the `/esv/v1` prefix, which these
 //!   full-path constants reproduce — see [`crate::login::LOGIN_PATH`] for
 //!   the host-only-base convention and the `/esv/v1` doubling trap).
 //! - **Multipart shape:** `multipart/form-data` with a single **`dataFile`**
 //!   binary part (`Content-Type: application/octet-stream`) plus, when a
 //!   per-file sample width is declared, a text form field. (reference
-//!   client `request_types/data_files.py:49-50`.)
+//!   client `request_types/data_files.py`.)
 //! - **`DataFileSampleSize` capitalization (v1.8 compat):** the field is
-//!   sent **capitalized** — server v1.8 expects `DataFileSampleSize`; only
+//!   sent **capitalized**; the reference client records v1.8 as
+//!   case-sensitive on `DataFileSampleSize`. Only
 //!   from server v2.0 is it case-insensitive. This harness never assumes
 //!   case-insensitivity. (reference client comment
-//!   `request_types/data_files.py:43`; ESVP digest §6.1 "INTEROP GOTCHA".)
+//!   `request_types/data_files.py`; ESV protocol specification §6.1 "INTEROP GOTCHA".)
 //!   Its value is a sample width in `1..=8` (`min(bitsPerSample, 8)` — the
-//!   `bitsPerSample` cross-check is data-file preflight, slice S5; the
-//!   intrinsic `1..=8` field bound is enforced here). (ESVP digest §6.1.)
+//!   `bitsPerSample` cross-check is data-file preflight; the
+//!   intrinsic `1..=8` field bound is enforced here). (ESV protocol specification §6.1.)
 //! - **Status polling:** GET the data-file resource, read `status` from the
 //!   envelope payload (`[{esvVersion}, {id, status, …}]`), and loop until a
-//!   terminal state. The seven documented statuses (ESVP digest §6.1) are
+//!   terminal state. The seven documented statuses (ESV protocol specification §6.1) are
 //!   `not-yet-processed` (wait and retry, bounded), `Uploaded` /
 //!   `Run Started` (processing — wait and re-poll), and the terminal
 //!   `Run Successful` (**returns NIST's computed assessment — the second
@@ -38,15 +39,15 @@
 //! - **Vetted ⇒ no conditionedBits upload:** "data file upload is only
 //!   allowed on non-vetted, non-bijective conditioning components" — a
 //!   conditioned-bits upload under vetted (or bijective) conditioning is a
-//!   **typed refusal**, never attempted. (ESVP digest §3/§6.1;
+//!   **typed refusal**, never attempted. (ESV protocol specification §3/§6.1;
 //!   ISC-107, Anti.)
 //!
 //! ## Resolved-by-judgment: the retry / poll interval
 //!
-//! The ratified design and the ESVP digest §6.1 name a **30-second**
+//! The ratified design and the ESV protocol specification §6.1 name a **30-second**
 //! not-yet-processed retry; the NIST reference client instead sleeps
-//! **10 s** on the upload not-yet-processed 400 (`data_files.py:58`) and
-//! **15 s** between status polls (`data_files.py:28`). This module follows
+//! **10 s** on the upload not-yet-processed 400 (`data_files.py`) and
+//! **15 s** between status polls (`data_files.py`). This module follows
 //! the design's 30 s (the [`PollConfig`] defaults), while keeping the
 //! interval a tunable field so the attended demo smoke can align it with
 //! whatever the upgraded demo server actually wants. Flagged for empirical
@@ -55,7 +56,7 @@
 //! ## Resolved-by-judgment: which statuses are terminal
 //!
 //! The reference client's poll loop treats only `error` and
-//! `run successful` as terminal (`data_files.py:11`), so on `Run Failed` or
+//! `run successful` as terminal (`data_files.py`), so on `Run Failed` or
 //! `Run Cancelled` it would poll forever. The ratified design (and the
 //! documented status set) makes **all four** of `Run Successful` /
 //! `Run Failed` / `Run Cancelled` / `Error` terminal; this module follows
@@ -70,27 +71,27 @@ use crate::login::{EsvTransport, Sleeper};
 use crate::registration::EntropyRegistration;
 
 /// The multipart part name of the data-file binary payload
-/// (reference client `request_types/data_files.py:49`).
+/// (reference client `request_types/data_files.py`).
 pub const DATA_FILE_PART_NAME: &str = "dataFile";
 
 /// The multipart text-field name declaring the file's per-sample width —
 /// sent **capitalized** for server v1.8 compatibility (never assume
 /// case-insensitivity). (reference client comment
-/// `request_types/data_files.py:43`; ESVP digest §6.1.)
+/// `request_types/data_files.py`; ESV protocol specification §6.1.)
 pub const DATA_FILE_SAMPLE_SIZE_FIELD: &str = "DataFileSampleSize";
 
 /// The `Content-Type` of the `dataFile` part (reference client
-/// `request_types/data_files.py:49`).
+/// `request_types/data_files.py`).
 pub const DATA_FILE_CONTENT_TYPE: &str = "application/octet-stream";
 
-/// Minimum valid `DataFileSampleSize` (ESVP digest §6.1: sample width
+/// Minimum valid `DataFileSampleSize` (ESV protocol specification §6.1: sample width
 /// `1..=8`).
 pub const DATA_FILE_SAMPLE_SIZE_MIN: u8 = 1;
 
 /// Maximum valid `DataFileSampleSize` — never more than 8 bits, since a
-/// byte-padded sample is at most one byte. (ESVP digest §6.1:
+/// byte-padded sample is at most one byte. (ESV protocol specification §6.1:
 /// "never > min(bitsPerSample, 8)"; the `bitsPerSample` cross-check is
-/// data-file preflight, slice S5.)
+/// data-file preflight.)
 pub const DATA_FILE_SAMPLE_SIZE_MAX: u8 = 8;
 
 // ── Errors ────────────────────────────────────────────────────────────
@@ -290,7 +291,7 @@ impl std::error::Error for DataFileError {}
 /// `/esv/v1/entropyAssessments/{ea_id}/dataFiles/{df_id}` (used for both
 /// the upload POST and the status GET). See [`crate::login::LOGIN_PATH`]
 /// for the host-only-base convention. (reference client
-/// `request_types/data_files.py:15,50`.)
+/// `request_types/data_files.py`.)
 pub fn data_file_path(ea_id: &str, df_id: &str) -> String {
     format!("/esv/v1/entropyAssessments/{ea_id}/dataFiles/{df_id}")
 }
@@ -347,7 +348,7 @@ pub struct DataFileUpload {
     /// The uploaded file's name (the `filename` of the `dataFile` part).
     pub filename: String,
     /// The raw file bytes (byte-padded 1M samples in production; the
-    /// exact-size check is data-file preflight, slice S5).
+    /// exact-size check is data-file preflight.
     pub bytes: Vec<u8>,
 }
 
@@ -371,7 +372,7 @@ impl DataFileUpload {
     /// # Errors
     /// [`DataFileError::SampleSizeOutOfRange`] if `size` is outside the
     /// intrinsic `1..=8` field bound (the `min(bitsPerSample, 8)`
-    /// cross-check is data-file preflight, slice S5).
+    /// cross-check is data-file preflight.
     pub fn with_sample_size(mut self, size: u8) -> Result<Self, DataFileError> {
         if !(DATA_FILE_SAMPLE_SIZE_MIN..=DATA_FILE_SAMPLE_SIZE_MAX).contains(&size) {
             return Err(DataFileError::SampleSizeOutOfRange { value: size });
@@ -397,7 +398,7 @@ impl DataFileUpload {
     /// `DataFileSampleSize` field first (when present), then the `dataFile`
     /// binary part — the data-then-files order the reference client's
     /// `requests` call produces (`data=payload, files=…`,
-    /// `request_types/data_files.py:50`).
+    /// `request_types/data_files.py`).
     pub fn parts(&self) -> Vec<MultipartPart<'_>> {
         let mut out = Vec::new();
         if let Some(size) = self.sample_size {
@@ -712,7 +713,7 @@ pub enum DataFileTarget {
 ///
 /// Raw-noise and restart uploads are always allowed. A conditioned-bits
 /// upload is allowed **only** for a non-vetted, non-bijective conditioning
-/// component (ESVP digest §3/§6.1: "data file upload is only allowed on
+/// component (ESV protocol specification §3/§6.1: "data file upload is only allowed on
 /// non-vetted, non-bijective conditioning components"); a vetted or
 /// bijective component — or a missing one — is a typed refusal.
 ///
@@ -915,10 +916,10 @@ impl Default for PollConfig {
             not_yet_processed_wait: Duration::from_secs(30),
             processing_wait: Duration::from_secs(30),
             // ~20 consecutive 30 s not-yet-processed polls ≈ 10 min, a
-            // generous ceiling on registration processing (~5 min typical).
+            // generous ceiling on registration processing.
             max_not_yet_processed_polls: 20,
             // 240 polls at the 30 s cadence ≈ 2 h — a generous hard ceiling
-            // on total processing time, well past any real assessment run.
+            // on total processing time.
             max_total_polls: 240,
             // Tolerate a short run of transient blips (a dropped connection,
             // a momentary gateway error) before giving up.
@@ -936,7 +937,7 @@ pub struct DataFileResult {
     pub status: TerminalStatus,
     /// On [`TerminalStatus::RunSuccessful`], NIST's returned assessment as
     /// the **raw response body** (the second maxwell oracle) — persist it to
-    /// the session dir (slice S4) and compare it against local EA v1.1.8 with
+    /// the session dir and compare it against local EA v1.1.8 with
     /// a float-capable parser downstream. `None` for the failure terminals.
     ///
     /// It is captured verbatim (never re-serialized) because the assessment
@@ -1107,7 +1108,7 @@ pub fn poll_data_file<T: EsvTransport>(
 }
 
 /// Build the error for a status response whose payload carries no `status`
-/// field: an explicit `error` field (reference client `data_files.py:22`),
+/// field: an explicit `error` field (reference client `data_files.py`),
 /// else a non-2xx server error, else a malformed-response error.
 fn status_absent_error(payload: &JsonLite, resp: &HttpResponse) -> DataFileError {
     if let Some(err) = payload.get("error").and_then(JsonLite::as_str) {
@@ -1658,11 +1659,11 @@ mod tests {
         );
     }
 
-    // ── Fix 1: float-tolerant status reads via jsonlite ───────────────
+    // ── float-tolerant status reads via jsonlite ───────────────
 
     #[test]
     fn run_successful_body_with_e_notation_float_polls_and_captures_assessment() {
-        // The review's exact good case: a Run Successful body carrying an
+        // Good case: a Run Successful body carrying an
         // e-notation min-entropy `1.2e-05` yields RunSuccessful with the
         // assessment captured verbatim.
         let success = HttpResponse {
@@ -1682,7 +1683,7 @@ mod tests {
 
     #[test]
     fn malformed_number_body_is_a_malformed_response_at_the_parse_boundary() {
-        // The review's exact bad case: `1.2.3` is an invalid numeral, so the
+        // Bad case: `1.2.3` is an invalid numeral, so the
         // whole body is a MalformedResponse (the poll loop then treats a
         // MalformedResponse like a transient failure — see the transient-budget
         // tests below).
@@ -1735,7 +1736,7 @@ mod tests {
         assert_eq!(t.calls.len(), 3);
     }
 
-    // ── Fix 2: global total-poll bound catches an alternating livelock ─
+    // ── global total-poll bound catches an alternating livelock ─
 
     #[test]
     fn poll_alternating_statuses_terminate_with_a_total_poll_timeout() {
@@ -1758,7 +1759,7 @@ mod tests {
         assert_eq!(t.calls.len(), 4);
     }
 
-    // ── Fix 4: transient-failure budget ───────────────────────────────
+    // ── transient-failure budget ───────────────────────────────
 
     #[test]
     fn poll_survives_a_single_transient_malformed_body_to_success() {
@@ -1989,7 +1990,7 @@ mod tests {
         ));
     }
 
-    // ── Fix 6: token provider ─────────────────────────────────────────
+    // ── token provider ─────────────────────────────────────────
 
     #[test]
     fn poll_calls_the_token_provider_once_per_request() {

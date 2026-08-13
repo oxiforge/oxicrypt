@@ -27,9 +27,9 @@
 //!
 //! Bodies are the ESVP versioned envelope `[{esvVersion}, {payload}]`. The
 //! payload field order follows the reference client's `cert_prep`
-//! /`cert_prep_add_oe` (`client/request_types/certify_requests.py:54,76`)
+//! /`cert_prep_add_oe` (`client/request_types/certify_requests.py`)
 //! and `send_post_update_pud`
-//! (`client/request_types/supporting_documentation.py:59`), because the
+//! (`client/request_types/supporting_documentation.py`), because the
 //! shared JSON codec preserves object key order and matching the reference
 //! keeps request diffs legible. All ids are integers, so the codec's
 //! integer-only number model fits without any float handling.
@@ -48,22 +48,22 @@ use crate::supportdocs::{SdType, SupportingDoc};
 
 /// The full-submission certify endpoint — the full server-relative path.
 /// See [`crate::login::LOGIN_PATH`] for the host-only-base convention.
-/// (ESVP §7.1; reference client `request_types/certify_requests.py:17`.)
+/// (ESVP §7.1; reference client `request_types/certify_requests.py`.)
 pub const CERTIFY_PATH: &str = "/esv/v1/certify";
 
 /// The AddOE certify endpoint (append operating environments to an existing
 /// certificate). (ESVP §7.2; reference client
-/// `request_types/certify_requests.py:33`.)
+/// `request_types/certify_requests.py`.)
 pub const CERTIFY_ADD_OE_PATH: &str = "/esv/v1/certify/addOE";
 
 /// The UpdatePUD certify endpoint (attach a new Public Use Document to an
 /// existing certificate). (ESVP §7.3; reference client
-/// `request_types/supporting_documentation.py:72`.)
+/// `request_types/supporting_documentation.py`.)
 pub const CERTIFY_UPDATE_PUD_PATH: &str = "/esv/v1/certify/updatePUD";
 
 /// Whether a certify payload defaults `limitEntropyAssessmentToSingleModule`
 /// to true — the reference client's default (`cert_prep`,
-/// `request_types/certify_requests.py:61`, "Defaulting to true for now").
+/// `request_types/certify_requests.py`, "Defaulting to true for now").
 pub const DEFAULT_LIMIT_TO_SINGLE_MODULE: bool = true;
 
 // ── Errors ────────────────────────────────────────────────────────────
@@ -877,7 +877,7 @@ mod tests {
 
     #[test]
     fn full_certify_rejects_non_positive_ea_id() {
-        // The 13th variant, previously untested: a non-positive eaId is
+        // A non-positive eaId is
         // refused at construction (the guard at check_assessments).
         assert_eq!(
             CertifyRequest::new(
@@ -1025,7 +1025,7 @@ mod tests {
         assert!(ok.is_ok(), "{ok:?}");
     }
 
-    // ── Fix 4: distinct eaIds (eaIdIsDistinct) ────────────────────────
+    // ── distinct eaIds (eaIdIsDistinct) ────────────────────────
 
     #[test]
     fn full_certify_requires_distinct_ea_ids() {
@@ -1071,7 +1071,7 @@ mod tests {
         );
     }
 
-    // ── Fix 7: non-IID restart-upload certify precondition ────────────
+    // ── non-IID restart-upload certify precondition ────────────
 
     #[test]
     fn non_iid_assessment_requires_a_restart_upload_before_certify() {
@@ -1087,10 +1087,10 @@ mod tests {
         assert_eq!(check_non_iid_restart_upload(11, true, true), Ok(()));
     }
 
-    // ── F5: the restart guard is wired into the certify constructors ──────
+    // ── the restart guard is wired into the certify constructors ──────
 
     /// Non-IID assessment with no restart upload is refused **at construction**
-    /// (the guard is no longer a dead function — it runs inside `new`).
+    /// (the guard runs inside `new`, so no caller can skip it).
     #[test]
     fn certify_refuses_non_iid_assessment_without_restart_upload() {
         let facts = vec![RestartPrecondition {
