@@ -42,7 +42,7 @@
 //!   case uses a sentinel `Msg = 00` byte that represents the empty
 //!   message; the parser does not treat it specially — the handler
 //!   slices `msg[..len/8]` which is the empty slice for `len = 0`,
-//!   matching the same byte-oriented rule R10 uses for the ACVP SHA-3
+//!   matching the same byte-oriented rule the ACVP SHA-3
 //!   AFT handler.
 //! - Trailing whitespace on any line is ignored. UNIX (`\n`) and DOS
 //!   (`\r\n`) line endings are both accepted.

@@ -9,17 +9,16 @@
 //!
 //! # Dispatch scope
 //!
-//! Phase 3 is being landed in chunks. As of R12-B the harness carries
+//! The harness carries
 //! **two** envelope shapes:
 //!
 //! - ACVP `internalProjection.json` — the shape `usnistgov/ACVP-Server`
-//!   publishes. R10 wired two handlers on it (SHA3-256, HMAC-SHA2-256);
-//!   R12-A expanded that to seventeen (the entire SHA-3 hashing
+//!   publishes. It carries the entire SHA-3 hashing
 //!   family, both SHAKE XOFs, HMAC-SHA-1, and every HMAC-SHA-2 /
 //!   HMAC-SHA-3 variant). The dispatcher lives in [`dispatch`] and the
 //!   per-algorithm handlers under [`handlers`].
 //! - CAVP SHS `.rsp` byte vectors — the *second envelope shape*
-//!   landed in R12-B. R11′ recorded the reason: upstream ACVP-Server
+//!   The reason is that upstream ACVP-Server
 //!   ships no top-level `SHA-*`, `SHA1-*`, or `SHA2-*` vector
 //!   directories at the pinned commit, so the SHA-2 family has to
 //!   ride CAVP SHS instead. The parser lives in [`rsp`], the

@@ -302,7 +302,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::rsa_sigprim::RsaSigPrimHandler));
     // RSA sigGen (PKCS#1v1.5 non-CRT + PSS CRT, FIPS186-5)
     r.register(Box::new(handlers::rsa_siggen::RsaSigGenHandler));
-    // KAS-ECC-SSC (P-256 ECDH shared secret, Sp800-56Ar3; R59: add P-384)
+    // KAS-ECC-SSC (P-256 and P-384 ECDH shared secret, Sp800-56Ar3)
     r.register(Box::new(handlers::kas_ecc_ssc::KasEccSscHandler));
     // KAS-FFC-SSC (MODP-3072 shared secret computation, Sp800-56Ar3)
     r.register(Box::new(handlers::kas_ffc_ssc::KasFfcSscHandler));
@@ -329,7 +329,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::tuplehash::TupleHashXof256Handler));
     r.register(Box::new(handlers::parallelhash::ParallelHashXof128Handler));
     r.register(Box::new(handlers::parallelhash::ParallelHashXof256Handler));
-    // PBKDF2 (SP 800-132 / RFC 8018, R55: self-generated vectors)
+    // PBKDF2 (SP 800-132 / RFC 8018; vectors are self-generated)
     r.register(Box::new(handlers::pbkdf2::Pbkdf2Handler));
     // ML-KEM (keyGen / encapDecap, FIPS 203, post-quantum;
     //         parameterSets advertise ML-KEM-1024 only)
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn registry_lookup() {
         let r = with_default_handlers();
-        // R10 handlers
+        // SHA3-256 and HMAC-SHA2-256
         assert!(r.find("SHA3-256", None, "2.0").is_some());
         assert!(r.find("HMAC-SHA2-256", None, "1.0").is_some());
         // SHA-1 + SHA-2 family (FIPS 180-4)
@@ -418,14 +418,14 @@ mod tests {
         assert!(r.find("SHA2-512", None, "1.0").is_some());
         assert!(r.find("SHA2-512/224", None, "1.0").is_some());
         assert!(r.find("SHA2-512/256", None, "1.0").is_some());
-        // R12-A SHA-3 family
+        // SHA-3 family
         assert!(r.find("SHA3-224", None, "2.0").is_some());
         assert!(r.find("SHA3-384", None, "2.0").is_some());
         assert!(r.find("SHA3-512", None, "2.0").is_some());
-        // R12-A SHAKE XOFs
+        // SHAKE XOFs
         assert!(r.find("SHAKE-128", None, "FIPS202").is_some());
         assert!(r.find("SHAKE-256", None, "FIPS202").is_some());
-        // R12-A HMAC family
+        // HMAC family
         assert!(r.find("HMAC-SHA-1", None, "1.0").is_some());
         assert!(r.find("HMAC-SHA2-224", None, "1.0").is_some());
         assert!(r.find("HMAC-SHA2-384", None, "1.0").is_some());
@@ -436,63 +436,63 @@ mod tests {
         assert!(r.find("HMAC-SHA3-256", None, "1.0").is_some());
         assert!(r.find("HMAC-SHA3-384", None, "1.0").is_some());
         assert!(r.find("HMAC-SHA3-512", None, "1.0").is_some());
-        // R13 KDA-HKDF (mode-keyed)
+        // KDA-HKDF (mode-keyed)
         assert!(r.find("KDA", Some("HKDF"), "Sp800-56Cr2").is_some());
-        // R14-A AES AFT modes
+        // AES AFT modes
         assert!(r.find("ACVP-AES-ECB", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-CBC", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-CTR", None, "1.0").is_some());
-        // R14-B AES AEAD / key-wrap modes
+        // AES AEAD / key-wrap modes
         assert!(r.find("ACVP-AES-GCM", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-CCM", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-KW", None, "1.0").is_some());
         assert!(r.find("ACVP-AES-KWP", None, "1.0").is_some());
-        // R16 CMAC-AES
+        // CMAC-AES
         assert!(r.find("CMAC-AES", None, "1.0").is_some());
-        // R17 DRBG families
+        // DRBG families
         assert!(r.find("ctrDRBG", None, "1.0").is_some());
         assert!(r.find("hashDRBG", None, "1.0").is_some());
         assert!(r.find("hmacDRBG", None, "1.0").is_some());
-        // R18 ECDSA / EdDSA / RSA verification
+        // ECDSA / EdDSA / RSA verification
         assert!(r.find("ECDSA", Some("sigVer"), "FIPS186-5").is_some());
         assert!(r.find("ECDSA", Some("keyVer"), "FIPS186-5").is_some());
         assert!(r.find("EDDSA", Some("sigVer"), "1.0").is_some());
         assert!(r.find("EDDSA", Some("keyVer"), "1.0").is_some());
         assert!(r.find("RSA", Some("sigVer"), "FIPS186-5").is_some());
-        // R19 ECDSA / EdDSA SigGen
+        // ECDSA / EdDSA SigGen
         assert!(r.find("ECDSA", Some("sigGen"), "FIPS186-5").is_some());
         assert!(r.find("EDDSA", Some("sigGen"), "1.0").is_some());
-        // R28 EdDSA KeyGen
+        // EdDSA KeyGen
         assert!(r.find("EDDSA", Some("keyGen"), "1.0").is_some());
-        // R29 ECDSA KeyGen
+        // ECDSA KeyGen
         assert!(r.find("ECDSA", Some("keyGen"), "FIPS186-5").is_some());
-        // R20 KBKDF (SP 800-108r1)
+        // KBKDF (SP 800-108r1)
         assert!(r.find("KDF", None, "1.0").is_some());
-        // R21 RSA DecryptionPrimitive (SP 800-56Br2)
+        // RSA DecryptionPrimitive (SP 800-56Br2)
         assert!(
             r.find("RSA", Some("decryptionPrimitive"), "Sp800-56Br2")
                 .is_some()
         );
-        // R22 TLS v1.2 KDF (RFC 7627)
+        // TLS v1.2 KDF (RFC 7627)
         assert!(r.find("TLS-v1.2", Some("KDF"), "RFC7627").is_some());
         // TLS v1.3 KDF (RFC 8446 §7.1)
         assert!(r.find("TLS-v1.3", Some("KDF"), "RFC8446").is_some());
-        // R23 kdf-components / tls
+        // kdf-components / tls
         assert!(r.find("kdf-components", Some("tls"), "1.0").is_some());
-        // R24 RSA SignaturePrimitive
+        // RSA SignaturePrimitive
         assert!(r.find("RSA", Some("signaturePrimitive"), "2.0").is_some());
-        // R25 RSA SigGen
+        // RSA SigGen
         assert!(r.find("RSA", Some("sigGen"), "FIPS186-5").is_some());
-        // R26 KAS-ECC-SSC — registered with no mode (catalog row 114)
+        // KAS-ECC-SSC — registered with no mode
         assert!(r.find("KAS-ECC-SSC", None, "Sp800-56Ar3").is_some());
-        // R59 KAS-FFC-SSC — registered with no mode (catalog row 158)
+        // KAS-FFC-SSC — registered with no mode
         assert!(r.find("KAS-FFC-SSC", None, "Sp800-56Ar3").is_some());
-        // R66 KTS-IFC — registered with no mode (catalog row 152) for
+        // KTS-IFC — registered with no mode for
         // RSAES-OAEP key transport under SP 800-56Br2 §7.2.2.2.
         assert!(r.find("KTS-IFC", None, "Sp800-56Br2").is_some());
-        // R27 RSA OAEP
+        // RSA OAEP
         assert!(r.find("RSA", Some("OAEP"), "RFC8017").is_some());
-        // R55 SP 800-185 derived functions + PBKDF2
+        // SP 800-185 derived functions + PBKDF2
         assert!(r.find("cSHAKE-128", None, "1.0").is_some());
         assert!(r.find("cSHAKE-256", None, "1.0").is_some());
         assert!(r.find("KMAC-128", None, "1.0").is_some());
@@ -501,27 +501,27 @@ mod tests {
         assert!(r.find("TupleHash-256", None, "1.0").is_some());
         assert!(r.find("ParallelHash-128", None, "1.0").is_some());
         assert!(r.find("ParallelHash-256", None, "1.0").is_some());
-        // R55 PBKDF2
+        // PBKDF2
         assert!(r.find("PBKDF", None, "1.0").is_some());
-        // R56 SP 800-185 XOF variants
+        // SP 800-185 XOF variants
         assert!(r.find("KMACXOF-128", None, "1.0").is_some());
         assert!(r.find("KMACXOF-256", None, "1.0").is_some());
         assert!(r.find("TupleHashXOF-128", None, "1.0").is_some());
         assert!(r.find("TupleHashXOF-256", None, "1.0").is_some());
         assert!(r.find("ParallelHashXOF-128", None, "1.0").is_some());
         assert!(r.find("ParallelHashXOF-256", None, "1.0").is_some());
-        // R59 ML-KEM (FIPS 203, post-quantum; parameterSets advertise ML-KEM-1024 only)
+        // ML-KEM (FIPS 203, post-quantum; parameterSets advertise ML-KEM-1024 only)
         assert!(r.find("ML-KEM", Some("keyGen"), "FIPS203").is_some());
         assert!(r.find("ML-KEM", Some("encapDecap"), "FIPS203").is_some());
-        // R60 ML-DSA (FIPS 204, post-quantum; parameterSets advertise ML-DSA-87 only)
+        // ML-DSA (FIPS 204, post-quantum; parameterSets advertise ML-DSA-87 only)
         assert!(r.find("ML-DSA", Some("keyGen"), "FIPS204").is_some());
         assert!(r.find("ML-DSA", Some("sigGen"), "FIPS204").is_some());
         assert!(r.find("ML-DSA", Some("sigVer"), "FIPS204").is_some());
-        // R61 SLH-DSA (FIPS 205, post-quantum; parameterSets advertise SLH-DSA-SHA2-256s only)
+        // SLH-DSA (FIPS 205, post-quantum; parameterSets advertise SLH-DSA-SHA2-256s only)
         assert!(r.find("SLH-DSA", Some("keyGen"), "FIPS205").is_some());
         assert!(r.find("SLH-DSA", Some("sigGen"), "FIPS205").is_some());
         assert!(r.find("SLH-DSA", Some("sigVer"), "FIPS205").is_some());
-        // R62 LMS (SP 800-208)
+        // LMS (SP 800-208)
         assert!(r.find("LMS", Some("keyGen"), "1.0").is_some());
         assert!(r.find("LMS", Some("sigGen"), "1.0").is_some());
         assert!(r.find("LMS", Some("sigVer"), "1.0").is_some());
@@ -533,7 +533,7 @@ mod tests {
         // No keyGen under SP800-208: key generation has no message, so the
         // server advertises the revision for the signing modes only.
         assert!(r.find("LMS", Some("keyGen"), "SP800-208").is_none());
-        // R62 XMSS (SP 800-208)
+        // XMSS (SP 800-208)
         assert!(r.find("XMSS", Some("keyGen"), "1.0").is_some());
         assert!(r.find("XMSS", Some("sigGen"), "1.0").is_some());
         assert!(r.find("XMSS", Some("sigVer"), "1.0").is_some());

@@ -52,7 +52,7 @@
 //!
 //! # Algorithm coverage
 //!
-//! R12-B registers seven handlers, one per file vendored under
+//! Seven handlers are registered, one per file vendored under
 //! `[cavp_shs]` in `vendor/nist/MANIFEST.toml`:
 //!
 //! - `SHA-1`   (20 bytes)
@@ -143,7 +143,7 @@ impl Default for ShsRegistry {
 }
 
 /// Construct a [`ShsRegistry`] populated with every CAVP SHS handler
-/// R12-B wires: SHA-1, SHA-224, SHA-256, SHA-384, SHA-512,
+/// Wires SHA-1, SHA-224, SHA-256, SHA-384, SHA-512,
 /// SHA-512/224, and SHA-512/256.
 #[must_use]
 pub fn with_default_shs_handlers() -> ShsRegistry {
@@ -174,7 +174,7 @@ pub fn with_default_shs_handlers() -> ShsRegistry {
 ///   to SHA-256" misconfiguration at dispatch time rather than only
 ///   at test-assertion time.
 /// - Errors with [`DispatchError::Unsupported`] on non-byte-aligned
-///   `Len`, matching R10's SHA-3 AFT handler. The vendored CAVP SHS
+///   `Len`, matching the SHA-3 AFT handler. The vendored CAVP SHS
 ///   byte-oriented files use byte-aligned lengths exclusively, so
 ///   this is not a functional gap.
 pub fn process_shs(
@@ -205,7 +205,7 @@ pub fn process_shs(
         let expected_bytes: usize = (case.len_bits / 8) as usize;
         // CAVP uses a sentinel `Msg = 00` byte for `Len = 0`. Slicing
         // `msg[..0]` produces an empty slice regardless, so the same
-        // `msg[..expected_bytes]` rule that R10's SHA-3 AFT handler
+        // `msg[..expected_bytes]` rule that the SHA-3 AFT handler
         // uses works here without a special case.
         if case.msg.len() < expected_bytes {
             return Err(DispatchError::Crypto(

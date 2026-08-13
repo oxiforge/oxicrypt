@@ -11,7 +11,7 @@
 //!   `internalProjection` slice from `<prompt.json>`, compute
 //!   responses, and write them to `<response.json>`.
 //! - `acvp-harness dispatch-shs <algorithm> <prompt.rsp> <response.json>`
-//!   — the R12-B second envelope: parse a CAVP SHS short-message
+//!   — the second envelope: parse a CAVP SHS short-message
 //!   `.rsp` byte-vector file from `<prompt.rsp>`, dispatch every
 //!   record through the named handler (e.g. `SHA-256`, `SHA-512/224`),
 //!   and write a JSON response to `<response.json>`. CAVP SHS is the
