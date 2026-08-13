@@ -7,9 +7,9 @@
 //! Fixed class = one fixed scalar, same every call.
 //! Random class = fresh 32-byte scalar per call.
 //!
-//! Scalars that fail `Scalar::from_bytes` (≥ n) are retried with a
-//! deterministic tweak so the timed call itself always succeeds and
-//! the per-call work is constant regardless of reject-probability.
+//! Every draw is reduced rather than rejected, so the timed call
+//! always succeeds and the per-call work does not depend on how often
+//! a raw draw would have landed ≥ n. See `bytes_to_scalar`.
 
 use crate::measure::{RunConfig, run_target};
 use crate::stats::VerdictReport;

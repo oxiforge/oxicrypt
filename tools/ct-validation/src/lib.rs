@@ -3,8 +3,9 @@
 //! This crate is **not** part of the oxicrypt FIPS 140-3 cryptographic
 //! module boundary. It is a developer tool that lives under `tools/`
 //! and exists solely to produce empirical evidence backing the
-//! "Side-channel posture (disclosed)" statements in
-//! `docs/security-policy/security-policy.md` §12.1.
+//! "Side-channel posture (disclosed)" statements in §12.1 of the
+//! Security Policy, which is withheld from this tree (see
+//! `docs/security-policy/README.md`).
 //!
 //! ## Why this tool exists
 //!
@@ -81,45 +82,38 @@
 //!
 //! ## Targets and current verdicts
 //!
-//! The seven primitives wired into [`targets`] cover every secret-
-//! dependent arithmetic path on the RSA, P-256, and Ed25519 private-
-//! key sides:
+//! The ten primitives wired into [`targets`] cover every secret-
+//! dependent arithmetic path on the RSA, P-256, P-384 and Ed25519
+//! private-key sides. The set is `targets::all_target_names`:
 //!
-//! | Target                         | Primitive                                           | Verdict at 300k samples |
-//! |--------------------------------|-----------------------------------------------------|-------------------------|
-//! | `rsa_mont2048_pow_secret`      | `oxicrypt_rsa::mont2048::Mont2048::pow_secret`          | CLEAN                   |
-//! | `rsa_mont1024_pow_secret`      | `oxicrypt_rsa::mont1024::Mont1024::pow_secret` (CRT)    | CLEAN                   |
-//! | `rsa_oaep_decode`              | `oxicrypt_rsa::oaep::emsa_oaep_decode` (Manger-framing) | CLEAN                   |
-//! | `ecdsa_p256_scalar_mul`        | `oxicrypt_ecdsa::p256_point::Point::mul`                | CLEAN                   |
-//! | `ecdsa_p256_scalar_invert`     | `oxicrypt_ecdsa::p256_scalar::Scalar::invert` (Fermat)  | CLEAN (see §12.1 noise) |
-//! | `ecdh_p256_cdh`                | `oxicrypt_ecdh::p256::cdh`                              | CLEAN                   |
-//! | `eddsa_ed25519_scalar_mul`     | `oxicrypt_eddsa::edwards::EdwardsPoint::mul` (clamped)  | CLEAN (R9, \|t\|=1.418) |
+//! | Target                      | Primitive                                               |
+//! |-----------------------------|---------------------------------------------------------|
+//! | `rsa_mont2048_pow_secret`   | `oxicrypt_rsa::mont2048::MontCtx2048::pow_secret`       |
+//! | `rsa_mont1024_pow_secret`   | `oxicrypt_rsa::mont1024::MontCtx1024::pow_secret` (CRT) |
+//! | `rsa_oaep_decode`           | `oxicrypt_rsa::oaep::emsa_oaep_decode` (Manger-framing) |
+//! | `ecdsa_p256_scalar_mul`     | `oxicrypt_ecdsa::p256_point::Point::mul`                |
+//! | `ecdsa_p256_scalar_invert`  | `oxicrypt_ecdsa::p256_scalar::Scalar::invert` (Fermat)  |
+//! | `ecdh_p256_cdh`             | `oxicrypt_ecdh::compute_shared_secret_p256_internal`    |
+//! | `ecdsa_p384_scalar_mul`     | `oxicrypt_ecdsa::p384_point::Point384::mul`             |
+//! | `ecdsa_p384_scalar_invert`  | `oxicrypt_ecdsa::p384_scalar::Scalar384::invert`        |
+//! | `ecdh_p384_cdh`             | `oxicrypt_ecdh::compute_shared_secret_p384_internal`    |
+//! | `eddsa_ed25519_scalar_mul`  | `oxicrypt_eddsa::edwards::EdwardsPoint::mul` (clamped)  |
 //!
-//! ## Leaks found and fixed during R8 bring-up
+//! Verdicts are not pinned here: they are whatever the harness reports
+//! on the run in front of you, at the sample budget you gave it.
 //!
-//! The harness earned its keep on first run by finding two real
-//! constant-time bugs that had been sitting in the tree. Both were
-//! fixed in the same commit that introduced this crate; both fixes
-//! are called out in §12.1 of the security policy.
+//! ## Invariants this harness exists to defend
 //!
-//! 1. **Montgomery reducer carry-propagation early exit** — the
-//!    tail-carry loops in `oxicrypt_ecdsa::p256_field::Fp::mul` and
-//!    `oxicrypt_ecdsa::p256_scalar::Scalar::mul` had an
-//!    `if carry == 0 { break; }` inside the fixed upper-bound loop
-//!    over the high limbs. That made the iteration count depend on
-//!    whether the intermediate carry happened to be zero, which is a
-//!    function of the (secret) operands. dudect flagged it as a
-//!    multi-thousand-σ leak on `ecdsa_p256_scalar_invert`. Fix: drop
-//!    the early exit and always iterate to the fixed bound.
-//!
-//! 2. **`Point::add_mixed` identity short-circuit** — the mixed
-//!    addition used an `if self.is_identity() == 1 { return ... }`
-//!    fast path, which made the scalar-mul ladder's per-iteration
-//!    cost depend on the number of leading zero bits of the secret
-//!    scalar (every leading-zero iteration stayed at identity). Fix:
-//!    introduce `add_mixed_ct`, which runs the full EFD
-//!    `madd-2007-bl` formula unconditionally and then CT-selects the
-//!    identity-case result with `Point::conditional_select`.
+//! Two properties of the P-256 code are load-bearing for its timing
+//! and are the kind this harness detects the loss of. The Montgomery
+//! tail-carry loops in `oxicrypt_ecdsa::p256_field::Fp::mul` and
+//! `oxicrypt_ecdsa::p256_scalar::Scalar::mul` iterate to a fixed
+//! bound with no carry-dependent early exit, so the iteration count
+//! does not depend on the operands. `Point::add_mixed_ct` runs the
+//! full EFD `madd-2007-bl` formula unconditionally and CT-selects the
+//! identity case with `Point::conditional_select`, so the scalar-mul
+//! ladder's per-iteration cost does not depend on the leading zero
+//! bits of the secret scalar. Both are disclosed in §12.1.
 //!
 //! ## Known noise fluctuations
 //!

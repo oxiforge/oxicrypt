@@ -21,7 +21,7 @@
 //!
 //! So we build a valid OAEP encoding on every measurement — fixed
 //! class uses a pinned `(msg, seed)` pair, random class derives
-//! `(msg, seed)` deterministically from the 256-byte PRNG draw —
+//! `(msg, seed)` deterministically from the 96-byte PRNG draw —
 //! and decode that. Both classes therefore:
 //!
 //! - always reach the success path,

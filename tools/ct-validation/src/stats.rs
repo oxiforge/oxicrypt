@@ -64,8 +64,8 @@ pub struct VerdictReport {
 }
 
 /// Compute Welch's two-sample t-statistic for two samples of equal
-/// length. Returns `0.0` if either variance is zero or sample count
-/// is below 2 — those are degenerate cases the caller should never
+/// length. Returns `0.0` if both variances are zero, or if either
+/// sample count is below 2 — those are degenerate cases the caller should never
 /// feed us in practice, but returning zero keeps the math stable.
 #[must_use]
 pub fn welch_t(a: &[f64], b: &[f64]) -> f64 {

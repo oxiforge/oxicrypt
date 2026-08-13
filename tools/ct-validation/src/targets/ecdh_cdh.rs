@@ -5,7 +5,7 @@
 //! gated entry point and SP 800-56Ar3 §5.6.2.3.3 public-key
 //! validation don't add data-dependent branches on top of the
 //! already-validated scalar mul. We pre-validate the peer public
-//! key by using RFC 5903's fixture (same one the fips-ecdh power-up
+//! key by using RFC 5903's fixture (same one the ECDH P-256 power-up
 //! KAT uses) so every measured call goes through the same success
 //! path; only the private scalar `d` changes between fixed and
 //! random classes.

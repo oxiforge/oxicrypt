@@ -19,7 +19,7 @@ use oxicrypt_rsa::bigint2048::U2048;
 use oxicrypt_rsa::mont2048::MontCtx2048;
 
 /// 2048-bit odd modulus with the top bit set. This isn't the RSA
-/// KAT modulus (which is module-private to `fips-rsa`) — we just
+/// KAT modulus (which is module-private to `oxicrypt-rsa`) — we just
 /// need *any* valid odd 2048-bit integer so `MontCtx2048::new`
 /// succeeds. Correctness isn't being checked here; timing is.
 const N_BYTES: [u8; 256] = {

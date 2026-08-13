@@ -34,7 +34,8 @@ use crate::stats::{VerdictReport, cropped_report};
 /// The `&[u8]` argument is whatever "secret input" means for this
 /// target. For `mont2048::pow_secret` it's a 256-byte secret
 /// exponent. For `p256_point::mul` it's a 32-byte secret scalar.
-/// For OAEP decode it's a 256-byte encoded message.
+/// For OAEP decode it's a 96-byte seed-and-plaintext pair, from which
+/// the target builds the encoded message.
 pub type TargetFn<'a> = Box<dyn FnMut(&[u8]) + 'a>;
 
 /// Parameters for one [`run_target`] invocation.

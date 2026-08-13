@@ -10,7 +10,8 @@
 //!
 //! With no target argument, runs every target in order with the
 //! default sample budget. Output is plain text suitable for pasting
-//! into `docs/security-policy/security-policy.md` §12.1.
+//! into §12.1 of the Security Policy, which is withheld from this
+//! tree (see `docs/security-policy/README.md`).
 
 #![allow(
     clippy::print_stdout,
