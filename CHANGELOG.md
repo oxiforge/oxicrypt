@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected oxicrypt-slh-dsa's FIPS 205 citations, which named §9 internal functions for the
+  external API, Algorithm 17 for internal key generation, §10 for the SHAKE and SHA-2
+  instantiations, and a Table 5 the standard does not contain. (#242)
+
 ## [0.23.2] - 2026-08-12
 
 - Corrected the description of the five in-boundary `unsafe` exception crates, which called them

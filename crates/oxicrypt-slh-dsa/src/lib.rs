@@ -52,7 +52,7 @@
 //! # External vs internal API
 //!
 //! The public [`sign`] / [`verify`] functions implement the **external**
-//! `slh_sign` / `slh_verify` API defined in FIPS 205 §9.2 / §9.3
+//! `slh_sign` / `slh_verify` API defined in FIPS 205 §10.2 / §10.3
 //! (Algorithms 22 and 24): they accept a `ctx` byte string and frame
 //! the message as `M' = 0x00 || |ctx| || ctx || M` before invoking the
 //! internal primitive. This is the shape consumed by X.509, CMS, the

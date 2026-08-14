@@ -19,10 +19,13 @@
 //!
 //! # External vs internal API
 //!
-//! [`keygen`], [`sign`], [`verify`] implement the FIPS 205 §9.2 / §9.3
+//! [`sign`] and [`verify`] implement the FIPS 205 §10.2 / §10.3
 //! external API with `ctx` framing (`M' = 0x00 || |ctx| || ctx || M`).
+//! [`keygen`] takes a caller-supplied seed, so it is a module-gated
+//! wrapper over §9.1 Algorithm 18 rather than §10.1 Algorithm 21,
+//! which samples its own randomness.
 //! [`keygen_internal`], [`sign_internal`], [`verify_internal`] expose
-//! Algorithms 17, 19, 20 directly for CAVP / ACVP harnesses.
+//! Algorithms 18, 19, 20 directly for CAVP / ACVP harnesses.
 
 #![allow(
     clippy::arithmetic_side_effects,
@@ -67,7 +70,7 @@ mod variant_tests {
     #[test]
     fn paramset_dispatch_emits_sha256_long_hash() {
         // Defends `feedback_macro_rules_literal_hygiene` (CMVP gem).
-        // At n=16, FIPS 205 §10.1 Table 5 requires SHA-256 (not SHA-512)
+        // At n=16, FIPS 205 §11.2.1 requires SHA-256 (not SHA-512)
         // for H, T, PRF_msg, H_msg. `__sha2_long_setup!(16)` emits
         // `LONG_PAD = 64 - N = 48` and `LONG_BLOCK = 64`. A prior bug
         // where the outer macro captured `$n` as `:literal` caused

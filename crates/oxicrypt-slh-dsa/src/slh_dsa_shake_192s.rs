@@ -19,10 +19,13 @@
 //!
 //! # External vs internal API
 //!
-//! [`keygen`], [`sign`], [`verify`] implement the FIPS 205 §9.2 / §9.3
+//! [`sign`] and [`verify`] implement the FIPS 205 §10.2 / §10.3
 //! external API with `ctx` framing (`M' = 0x00 || |ctx| || ctx || M`).
+//! [`keygen`] takes a caller-supplied seed, so it is a module-gated
+//! wrapper over §9.1 Algorithm 18 rather than §10.1 Algorithm 21,
+//! which samples its own randomness.
 //! [`keygen_internal`], [`sign_internal`], [`verify_internal`] expose
-//! Algorithms 17, 19, 20 directly for CAVP / ACVP harnesses.
+//! Algorithms 18, 19, 20 directly for CAVP / ACVP harnesses.
 
 #![allow(
     clippy::arithmetic_side_effects,

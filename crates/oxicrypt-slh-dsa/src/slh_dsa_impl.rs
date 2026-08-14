@@ -1,5 +1,5 @@
 //! Declarative macro generating a full SLH-DSA parameter-set
-//! implementation (FIPS 205 §9 internal primitives + §9.2 / §9.3
+//! implementation (FIPS 205 §9 internal primitives + §10.2 / §10.3
 //! external `ctx`-framing wrappers + power-up KAT) from a per-variant
 //! parameter tuple.
 //!
@@ -53,8 +53,8 @@
 //! | `wots_pkgen`, `wots_sign`, `wots_pk_from_sig` | `pub(crate)` | WOTS+ (FIPS 205 §5) |
 //! | `fors_sign`, `fors_pk_from_sig` | `pub(crate)` | FORS (FIPS 205 §8) |
 //! | `xmss_node` | `pub(crate)` | XMSS subtree (FIPS 205 §6.1) |
-//! | `keygen`, `sign`, `verify` | `pub` | Module-gated FIPS 205 §9.2/§9.3 external API |
-//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | Gate-free §9.1 mirrors for CAVP/ACVP |
+//! | `keygen`, `sign`, `verify` | `pub` | Module-gated: `sign`/`verify` per FIPS 205 §10.2/§10.3, `keygen` per §9.1 |
+//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | Gate-free §9.1–§9.3 mirrors for CAVP/ACVP |
 //! | `KATS`, `self_test` | `pub`, private | Power-up self-test |
 //!
 //! # Architectural note (CMVP gem candidate)
@@ -97,13 +97,13 @@
 //! inside the sub-macro), and the main `slh_dsa_impl!` body invokes the
 //! sub-macros parameterised by `$hash_family`.
 //!
-//! The SHA-2 arms encode FIPS 205 §10.1: `F`/`PRF` use SHA-256 at every
+//! The SHA-2 arms encode FIPS 205 §11.2: `F`/`PRF` use SHA-256 at every
 //! `n`; `H`/`T_l`/`PRF_msg`/`H_msg` use the `__sha2_long_setup!`-emitted
 //! `ShaLong` alias (Sha256 at `n = 16`, Sha512 truncated at `n ∈ {24, 32}`)
 //! and the `LONG_BLOCK`/`LONG_OUT`/`LONG_PAD` constants from the same
 //! sub-macro. `H_msg` MGF1-expands via a counter-block loop.
 //!
-//! The SHAKE arms encode FIPS 205 §10.2: every tweakable hash is
+//! The SHAKE arms encode FIPS 205 §11.1: every tweakable hash is
 //! `SHAKE256(prefix || ADRS || message, 8 · n)` with the full 32-byte
 //! ADRS — `__emit_adrs_compress!(shake)` returns `self.bytes`
 //! unchanged — so `ADRS_COMPRESSED_LEN` is family-conditional (22 for
@@ -115,7 +115,7 @@
 
 /// Family-and-`n`-conditional setup for SHA-2 tweakable hashes.
 ///
-/// FIPS 205 §10.1 prescribes two SHA-2 instantiations: at `n = 16` every
+/// FIPS 205 §11.2 prescribes two SHA-2 instantiations: at `n = 16` every
 /// tweakable hash uses SHA-256; at `n ∈ {24, 32}` the short hashes `F`/`PRF`
 /// stay on SHA-256 while the long hashes `H`/`T_l`/`PRF_msg`/`H_msg` move to
 /// SHA-512 (truncated to `n` for `H`/`T_l`, HMAC-SHA-512 for `PRF_msg`,
@@ -141,7 +141,7 @@ pub(crate) use __sha2_long_setup;
 
 /// Hash-family setup: imports the hash function(s), emits the
 /// family-conditional `ADRS_COMPRESSED_LEN` (22 for SHA-2 per FIPS 205
-/// §10.1 Table 5, 32 for SHAKE per FIPS 205 §10.2), and emits any
+/// §11.2, 32 for SHAKE per FIPS 205 §4.2), and emits any
 /// short-hash padding constants that only the SHA-2 family needs.
 ///
 /// The `sha2` arm forwards `$n` to `__sha2_long_setup!` so the
@@ -154,7 +154,7 @@ macro_rules! __hash_family_setup {
     (sha2, $n:tt) => {
         use oxicrypt_sha::sha256::Sha256;
         crate::slh_dsa_impl::__sha2_long_setup!($n);
-        /// Compressed-address length (FIPS 205 §10.1 Table 5).
+        /// Compressed-address length (FIPS 205 §11.2).
         pub(crate) const ADRS_COMPRESSED_LEN: usize = 22;
         /// SHA-256 zero padding so `PK.seed ‖ padding` fills one 64-byte block.
         const PAD256: usize = 64 - N;
@@ -165,7 +165,7 @@ macro_rules! __hash_family_setup {
         // arm; SHAKE family is `n`-uniform so no `__sha2_long_setup!`
         // analog is needed.
         const _: usize = $n;
-        /// Address length for the SHAKE instantiation (FIPS 205 §10.2
+        /// Address length for the SHAKE instantiation (FIPS 205 §11.1
         /// — full uncompressed 32-byte ADRS). The constant retains
         /// the `_COMPRESSED_` name across both families to keep
         /// downstream `[u8; ADRS_COMPRESSED_LEN]` callers single-source;
@@ -178,18 +178,18 @@ pub(crate) use __hash_family_setup;
 
 /// Emits the `compress()` method body on `impl Adrs`.
 ///
-/// SHA-2 (`compress(sha2)`) — FIPS 205 §10.1 Table 5 22-byte projection:
+/// SHA-2 (`compress(sha2)`) — FIPS 205 §11.2 Figure 18 22-byte projection:
 /// low byte of layer || low 8 bytes of tree || type byte ||
 /// keypair-or-hash-address (4) || chain-or-tree-height (4) ||
 /// hash-or-tree-index (4).
 ///
-/// SHAKE (`compress(shake)`) — FIPS 205 §10.2 identity: returns the full
+/// SHAKE (`compress(shake)`) — FIPS 205 §11.1 identity: returns the full
 /// 32-byte address unchanged so the variant module's `[u8;
 /// ADRS_COMPRESSED_LEN]` callers see a 32-byte slice.
 macro_rules! __emit_adrs_compress {
     (sha2) => {
         /// Compress to the 22-byte `ADRSc` used by the SHA-2 family
-        /// (FIPS 205 §10.1 Table 5).
+        /// (FIPS 205 §11.2).
         pub(crate) fn compress(&self) -> [u8; ADRS_COMPRESSED_LEN] {
             let mut c = [0u8; ADRS_COMPRESSED_LEN];
             c[0] = self.bytes[3];
@@ -203,7 +203,7 @@ macro_rules! __emit_adrs_compress {
     };
     (shake) => {
         /// Return the full 32-byte ADRS used by the SHAKE family
-        /// (FIPS 205 §10.2 — no compression).
+        /// (FIPS 205 §11.1 — no compression).
         pub(crate) fn compress(&self) -> [u8; ADRS_COMPRESSED_LEN] {
             self.bytes
         }
@@ -211,13 +211,13 @@ macro_rules! __emit_adrs_compress {
 }
 pub(crate) use __emit_adrs_compress;
 
-/// `F(PK.seed, ADRS, M₁)` — FIPS 205 §10.1 / §10.2.
+/// `F(PK.seed, ADRS, M₁)` — FIPS 205 §11.1 / §11.2.
 ///
 /// SHA-2: SHA-256 of `PK.seed ‖ pad ‖ ADRSc ‖ M₁` truncated to `N`.
 /// SHAKE: `SHAKE256(PK.seed ‖ ADRS ‖ M₁, 8N)`.
 macro_rules! __emit_f {
     (sha2) => {
-        /// `F(PK.seed, ADRS, M₁)` — FIPS 205 §10.1 (SHA-2 instantiation).
+        /// `F(PK.seed, ADRS, M₁)` — FIPS 205 §11.2 (SHA-2 instantiation).
         pub(crate) fn f(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N]) -> [u8; N] {
             let adrsc = adrs.compress();
             let mut hasher = Sha256::new_internal();
@@ -232,7 +232,7 @@ macro_rules! __emit_f {
         }
     };
     (shake) => {
-        /// `F(PK.seed, ADRS, M₁)` — FIPS 205 §10.2 (SHAKE-256 instantiation).
+        /// `F(PK.seed, ADRS, M₁)` — FIPS 205 §11.1 (SHAKE-256 instantiation).
         pub(crate) fn f(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N]) -> [u8; N] {
             let adrsc = adrs.compress();
             let mut x = Shake256::new_internal();
@@ -248,13 +248,13 @@ macro_rules! __emit_f {
 }
 pub(crate) use __emit_f;
 
-/// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §10.1 / §10.2.
+/// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §11.1 / §11.2.
 ///
 /// SHA-2: `ShaLong` of `PK.seed ‖ LONG_PAD ‖ ADRSc ‖ M₁ ‖ M₂` truncated to `N`.
 /// SHAKE: `SHAKE256(PK.seed ‖ ADRS ‖ M₁ ‖ M₂, 8N)`.
 macro_rules! __emit_h {
     (sha2) => {
-        /// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §10.1
+        /// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §11.2
         /// (SHA-256 at n=16, SHA-512 truncated at n∈{24,32}).
         pub(crate) fn h(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N], m2: &[u8; N]) -> [u8; N] {
             let adrsc = adrs.compress();
@@ -271,7 +271,7 @@ macro_rules! __emit_h {
         }
     };
     (shake) => {
-        /// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §10.2 (SHAKE-256 instantiation).
+        /// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §11.1 (SHAKE-256 instantiation).
         pub(crate) fn h(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N], m2: &[u8; N]) -> [u8; N] {
             let adrsc = adrs.compress();
             let mut x = Shake256::new_internal();
@@ -288,7 +288,7 @@ macro_rules! __emit_h {
 }
 pub(crate) use __emit_h;
 
-/// `T_l(PK.seed, ADRS, M)` — FIPS 205 §10.1 / §10.2.
+/// `T_l(PK.seed, ADRS, M)` — FIPS 205 §11.1 / §11.2.
 ///
 /// `M` is the concatenation of `l` consecutive `N`-byte values (WOTS+
 /// public-key compression or FORS roots compression); the byte slice is
@@ -296,7 +296,7 @@ pub(crate) use __emit_h;
 /// through SHAKE-256 in one pass.
 macro_rules! __emit_t {
     (sha2) => {
-        /// `T_l(PK.seed, ADRS, M)` — FIPS 205 §10.1
+        /// `T_l(PK.seed, ADRS, M)` — FIPS 205 §11.2
         /// (SHA-256 at n=16, SHA-512 truncated at n∈{24,32}).
         pub(crate) fn t(pk_seed: &[u8; N], adrs: &Adrs, m: &[u8]) -> [u8; N] {
             let adrsc = adrs.compress();
@@ -312,7 +312,7 @@ macro_rules! __emit_t {
         }
     };
     (shake) => {
-        /// `T_l(PK.seed, ADRS, M)` — FIPS 205 §10.2 (SHAKE-256 instantiation).
+        /// `T_l(PK.seed, ADRS, M)` — FIPS 205 §11.1 (SHAKE-256 instantiation).
         pub(crate) fn t(pk_seed: &[u8; N], adrs: &Adrs, m: &[u8]) -> [u8; N] {
             let adrsc = adrs.compress();
             let mut x = Shake256::new_internal();
@@ -328,13 +328,13 @@ macro_rules! __emit_t {
 }
 pub(crate) use __emit_t;
 
-/// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §10.1 / §10.2.
+/// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §11.1 / §11.2.
 ///
 /// Note FIPS 205 specifies the input order as `PK.seed ‖ ADRS ‖ SK.seed`
 /// for both families; only the hash function and the ADRS form differ.
 macro_rules! __emit_prf {
     (sha2) => {
-        /// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §10.1.
+        /// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §11.2.
         pub(crate) fn prf(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
             let adrsc = adrs.compress();
             let mut hasher = Sha256::new_internal();
@@ -349,7 +349,7 @@ macro_rules! __emit_prf {
         }
     };
     (shake) => {
-        /// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §10.2
+        /// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §11.1
         /// (SHAKE-256 instantiation; input order `PK.seed ‖ ADRS ‖ SK.seed`).
         pub(crate) fn prf(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
             let adrsc = adrs.compress();
@@ -366,7 +366,7 @@ macro_rules! __emit_prf {
 }
 pub(crate) use __emit_prf;
 
-/// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §10.1 / §10.2.
+/// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §11.1 / §11.2.
 ///
 /// SHA-2 uses HMAC-`ShaLong` (HMAC-SHA-256 at n=16, HMAC-SHA-512
 /// truncated at n∈{24,32}). SHAKE uses plain concatenation through
@@ -376,7 +376,7 @@ pub(crate) use __emit_prf;
 /// suffices — this is the FIPS 205 design choice.
 macro_rules! __emit_prf_msg {
     (sha2) => {
-        /// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §10.1
+        /// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §11.2
         /// (HMAC-SHA-256 at n=16, HMAC-SHA-512 truncated at n∈{24,32}).
         pub(crate) fn prf_msg(
             sk_prf: &[u8; N],
@@ -416,7 +416,7 @@ macro_rules! __emit_prf_msg {
         }
     };
     (shake) => {
-        /// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §10.2
+        /// `PRF_msg(SK.prf, opt_rand, M)` — FIPS 205 §11.1
         /// (SHAKE-256 instantiation; plain concatenation, no HMAC wrap).
         pub(crate) fn prf_msg(
             sk_prf: &[u8; N],
@@ -438,7 +438,7 @@ macro_rules! __emit_prf_msg {
 }
 pub(crate) use __emit_prf_msg;
 
-/// `H_msg(R, PK.seed, PK.root, M)` — FIPS 205 §10.1 / §10.2.
+/// `H_msg(R, PK.seed, PK.root, M)` — FIPS 205 §11.1 / §11.2.
 ///
 /// SHA-2: two-step construction with `ShaLong` seed + MGF1-`ShaLong`
 /// counter-block stretch to `FORS_DIGEST_BYTES + TREE_BYTES + 1` bytes.
@@ -456,7 +456,7 @@ macro_rules! __emit_h_msg {
             pub leaf_idx: u32,
         }
 
-        /// `H_msg(R, PK.seed, PK.root, M)` — FIPS 205 §10.1.
+        /// `H_msg(R, PK.seed, PK.root, M)` — FIPS 205 §11.2.
         ///
         /// Two-step construction: `ShaLong` produces a fixed-size seed
         /// (`LONG_OUT` bytes), then MGF1-`ShaLong` stretches it to
@@ -473,7 +473,7 @@ macro_rules! __emit_h_msg {
         ) -> HMsgOutput {
             const FORS_DIGEST_BYTES: usize = (K * A + 7) / 8;
             const TREE_BYTES: usize = (H - H_PRIME + 7) / 8;
-            // FIPS 205 §10.1 footnote: m = ⌈k·a/8⌉ + ⌈(h-h')/8⌉ + ⌈h'/8⌉.
+            // FIPS 205 §11.2: m = ⌈k·a/8⌉ + ⌈(h-h')/8⌉ + ⌈h'/8⌉.
             // The third term is `LEAF_BYTES = (H_PRIME + 7) / 8`, NOT a
             // hardcoded 1. For H_PRIME ∈ {3, 4, 8} (128f/192f/256f and
             // 256s) this is 1 byte; for H_PRIME = 9 (128s and 192s) this
@@ -558,7 +558,7 @@ macro_rules! __emit_h_msg {
             pub leaf_idx: u32,
         }
 
-        /// `H_msg(R, PK.seed, PK.root, M)` — FIPS 205 §10.2.
+        /// `H_msg(R, PK.seed, PK.root, M)` — FIPS 205 §11.1.
         ///
         /// Single-shot SHAKE-256 XOF stretched to `FORS_DIGEST_BYTES +
         /// TREE_BYTES + 1` bytes in one `squeeze` call. SHAKE provides
@@ -574,7 +574,7 @@ macro_rules! __emit_h_msg {
         ) -> HMsgOutput {
             const FORS_DIGEST_BYTES: usize = (K * A + 7) / 8;
             const TREE_BYTES: usize = (H - H_PRIME + 7) / 8;
-            // FIPS 205 §10.2 footnote: m = ⌈k·a/8⌉ + ⌈(h-h')/8⌉ + ⌈h'/8⌉.
+            // FIPS 205 §11.1: m = ⌈k·a/8⌉ + ⌈(h-h')/8⌉ + ⌈h'/8⌉.
             // See SHA-2 arm above for the rationale.
             const LEAF_BYTES: usize = (H_PRIME + 7) / 8;
             const REQUIRED_BYTES: usize = FORS_DIGEST_BYTES + TREE_BYTES + LEAF_BYTES;
@@ -713,7 +713,7 @@ macro_rules! slh_dsa_impl {
         // ── ADRS (FIPS 205 §4) ──────────────────────────────────────────
         //
         // `ADRS_COMPRESSED_LEN` is emitted by `__hash_family_setup!` —
-        // 22 for SHA-2 (FIPS 205 §10.1 Table 5), 32 for SHAKE (§10.2).
+        // 22 for SHA-2 (FIPS 205 §11.2), 32 for SHAKE (§4.2).
 
         /// Address type tags (FIPS 205 §4 Table 2).
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -820,14 +820,14 @@ macro_rules! slh_dsa_impl {
             crate::slh_dsa_impl::__emit_adrs_compress!($hash_family);
         }
 
-        // ── Tweakable hashes (FIPS 205 §10.1 / §10.2) ───────────────────
+        // ── Tweakable hashes (FIPS 205 §11.1 / §11.2) ───────────────────
         //
         // Every per-family divergence is emitted by a per-construct
         // sub-macro defined in this file. The `(sha2)` arms encode
-        // FIPS 205 §10.1 (with the `__sha2_long_setup!`-emitted
+        // FIPS 205 §11.2 (with the `__sha2_long_setup!`-emitted
         // `ShaLong` alias + `LONG_*` constants handling the n-keyed
         // SHA-256/SHA-512 split); the `(shake)` arms encode FIPS 205
-        // §10.2 (SHAKE-256 via one-shot XOF, full 32-byte ADRS, no
+        // §11.1 (SHAKE-256 via one-shot XOF, full 32-byte ADRS, no
         // MGF1 wrapping). See the module header for the dispatch
         // architecture and the const doc for `ADRS_COMPRESSED_LEN`.
 
@@ -1370,7 +1370,7 @@ macro_rules! slh_dsa_impl {
             })
         }
 
-        /// Generate a key pair (FIPS 205 §9.2 Algorithm 21).
+        /// Generate a key pair from a supplied seed (FIPS 205 §9.1 Algorithm 18).
         pub fn keygen(xi: &[u8]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
@@ -1383,7 +1383,7 @@ macro_rules! slh_dsa_impl {
             Ok((pk, sk))
         }
 
-        /// Gate-free keygen for CAVP/ACVP harnesses (FIPS 205 §9.1 Algorithm 17).
+        /// Gate-free keygen for CAVP/ACVP harnesses (FIPS 205 §9.1 Algorithm 18).
         #[doc(hidden)]
         pub fn keygen_internal(xi: &[u8; 3 * N]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
             let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
@@ -1404,7 +1404,7 @@ macro_rules! slh_dsa_impl {
             (pk, sk)
         }
 
-        /// Sign a message (FIPS 205 §9.2 Algorithm 22), deterministic mode.
+        /// Sign a message (FIPS 205 §10.2 Algorithm 22), deterministic mode.
         pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; SIG_LEN], Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_sign)?;
@@ -1413,7 +1413,7 @@ macro_rules! slh_dsa_impl {
             Ok(sign_with_prefix(sk_arr, prefix.as_slice(), message))
         }
 
-        /// Gate-free signing for CAVP/ACVP harnesses (FIPS 205 §9.1 Algorithm 19).
+        /// Gate-free signing for CAVP/ACVP harnesses (FIPS 205 §9.2 Algorithm 19).
         #[doc(hidden)]
         pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> [u8; SIG_LEN] {
             sign_with_prefix(sk, &[], message)
@@ -1442,7 +1442,7 @@ macro_rules! slh_dsa_impl {
             sig
         }
 
-        /// Verify a signature (FIPS 205 §9.3 Algorithm 24).
+        /// Verify a signature (FIPS 205 §10.3 Algorithm 24).
         pub fn verify(
             pk: &[u8],
             message: &[u8],
@@ -1461,7 +1461,7 @@ macro_rules! slh_dsa_impl {
             }
         }
 
-        /// Gate-free verification for CAVP/ACVP harnesses (FIPS 205 §9.1 Algorithm 20).
+        /// Gate-free verification for CAVP/ACVP harnesses (FIPS 205 §9.3 Algorithm 20).
         #[doc(hidden)]
         pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
             verify_with_prefix(pk, &[], message, sig)
