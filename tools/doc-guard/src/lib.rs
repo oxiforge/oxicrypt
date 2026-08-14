@@ -1218,9 +1218,7 @@ mod tests {
         let ratio = format!("({} of {})", a.forbid_in_boundary, a.in_boundary);
         assert!(policy.contains(&ratio), "policy §9.2: {ratio:?} missing");
         let unsafe_summary = format!(
-            // The policy still says "audited" here. It is withheld from this
-            // tree and is swept separately; this string moves when it does.
-            "{} carry `#![forbid(unsafe_code)]`, {} are the audited exception crates",
+            "{} carry `#![forbid(unsafe_code)]`, {} are the readily auditable exception crates",
             a.forbid_in_boundary,
             word(a.exceptions.len())
         );
