@@ -579,6 +579,7 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-module",
  "oxicrypt-rsa",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -599,6 +600,7 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-ecdsa",
  "oxicrypt-module",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]

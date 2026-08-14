@@ -363,14 +363,12 @@ pub fn generate_keypair_p256_internal(
     let consistent = z_a == z_b;
     // CSP scrub: `z_a` and `z_b` are 32-byte ECDH shared secrets
     // (CSP per SP 800-56Ar3 §5.7.1.2) used only for the equality
-    // check. They never escape the function. The clears below are
-    // ordinary writes to locals that are dead afterwards, so unlike
-    // `oxicrypt-zeroize`'s volatile stores the compiler is permitted
-    // to elide them. They follow the
-    // `oxicrypt-dh::generate_keypair_3072_internal` keygen-scratch
-    // convention, which has the same limitation.
-    z_a.fill(0);
-    z_b.fill(0);
+    // check. They never escape the function, and are temporary SSP
+    // material within the meaning of FIPS 140-3 IG §7.9.7 AS09.32. The
+    // clears go through `oxicrypt-zeroize`'s volatile store, so they
+    // are not elided even though both locals are dead here.
+    oxicrypt_zeroize::zeroize(&mut z_a);
+    oxicrypt_zeroize::zeroize(&mut z_b);
     if !consistent {
         return None;
     }
@@ -412,8 +410,8 @@ pub fn generate_keypair_p384_internal(
     let mut z_a = compute_shared_secret_p384_internal(&d, &KAT_P384_Q_R)?;
     let mut z_b = compute_shared_secret_p384_internal(&KAT_P384_D_R, &q)?;
     let consistent = z_a == z_b;
-    z_a.fill(0);
-    z_b.fill(0);
+    oxicrypt_zeroize::zeroize(&mut z_a);
+    oxicrypt_zeroize::zeroize(&mut z_b);
     if !consistent {
         return None;
     }

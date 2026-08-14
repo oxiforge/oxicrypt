@@ -32,7 +32,7 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
     let mut buf = [0u8; PRIVATE_KEY_LEN];
     for _ in 0..MAX_SAMPLE_ATTEMPTS {
         if drbg.generate(None, &mut buf).is_err() {
-            buf.fill(0);
+            oxicrypt_zeroize::zeroize(&mut buf);
             return None;
         }
         if let Some(s) = Scalar384::from_bytes(&buf)
@@ -42,10 +42,10 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
             // copy-and-clear rationale; same pattern, 48-byte
             // scalar instead of 32.
             let result = buf;
-            buf.fill(0);
+            oxicrypt_zeroize::zeroize(&mut buf);
             return Some(result);
         }
-        buf.fill(0);
+        oxicrypt_zeroize::zeroize(&mut buf);
     }
     None
 }

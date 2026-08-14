@@ -334,8 +334,10 @@ pub fn generate_keypair_3072_internal(
             continue;
         }
 
-        // Zero the buffer before returning.
-        buf.fill(0);
+        // Zero the buffer before returning, through
+        // `oxicrypt-zeroize`'s volatile store so the write is not
+        // elided on a local that is dead afterwards.
+        oxicrypt_zeroize::zeroize(&mut buf);
 
         return Some((x.to_be_bytes(), y.to_be_bytes()));
     }

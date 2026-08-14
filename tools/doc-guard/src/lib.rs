@@ -1546,4 +1546,71 @@ mod tests {
             );
         }
     }
+
+    /// Crates whose keygen primitives hold temporary SSP material on the
+    /// stack, and must clear it through the volatile path.
+    const VOLATILE_SCRATCH_CRATES: [&str; 3] = [
+        "crates/oxicrypt-ecdh",
+        "crates/oxicrypt-dh",
+        "crates/oxicrypt-ecdsa",
+    ];
+
+    /// FIPS 140-3 IG §7.9.7 AS09.32 requires temporary SSPs to be zeroised
+    /// when they are no longer needed. Keygen scratch — rejection-sampler
+    /// buffers, pairwise-consistency-test shared secrets — is temporary SSP
+    /// material, and `fill(0)` on a local that is dead afterwards is an
+    /// ordinary store the compiler is free to eliminate. The clear has to go
+    /// through `oxicrypt-zeroize`'s `write_volatile` path.
+    ///
+    /// This is deliberately a source check rather than a behavioural one.
+    /// Non-elision is a guarantee of `write_volatile`, not something a test
+    /// can observe: reading the stack back would run under `opt-level=0`,
+    /// where no dead-store elimination happens at all, so it would pass just
+    /// as happily against the elidable version. A probe that cannot fail on
+    /// the broken input is not a probe.
+    ///
+    /// Both halves matter. Banning `fill(0)` alone would be satisfied by
+    /// deleting the clears outright, so each crate must also still call the
+    /// volatile helper.
+    #[test]
+    fn keygen_scratch_is_cleared_through_the_volatile_path() {
+        let root = repo_root();
+        let mut elidable = Vec::new();
+        for file in workspace_rs_files() {
+            let Some(pkg) = owning_package_root(&file) else {
+                continue;
+            };
+            if !pkg.starts_with(root.join("crates")) {
+                continue;
+            }
+            let Ok(src) = fs::read_to_string(&file) else {
+                continue;
+            };
+            for (i, line) in src.lines().enumerate() {
+                if line.contains(".fill(0)") {
+                    elidable.push(format!("{}:{}", file.display(), i + 1));
+                }
+            }
+        }
+        assert!(
+            elidable.is_empty(),
+            "in-boundary crates clear scratch with an elidable `fill(0)`; \
+             use `oxicrypt_zeroize::zeroize` instead: {elidable:?}"
+        );
+
+        for crate_dir in VOLATILE_SCRATCH_CRATES {
+            let dir = root.join(crate_dir).join("src");
+            let calls: usize = workspace_rs_files()
+                .iter()
+                .filter(|f| f.starts_with(&dir))
+                .filter_map(|f| fs::read_to_string(f).ok())
+                .map(|s| s.matches("oxicrypt_zeroize::zeroize(").count())
+                .sum();
+            assert!(
+                calls > 0,
+                "{crate_dir} no longer clears its keygen scratch through the \
+                 volatile path (AS09.32)"
+            );
+        }
+    }
 }

@@ -19,6 +19,7 @@ workspace = true
 oxicrypt-drbg = { workspace = true }
 oxicrypt-ecdsa = { workspace = true }
 oxicrypt-module = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
