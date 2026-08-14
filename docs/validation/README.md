@@ -56,17 +56,19 @@ the algorithm-family count quoted elsewhere in the project. Different units, not
 
 ## Regenerating this record
 
-After a graded ACVP session, three steps, in order:
+After a graded ACVP session, three steps, in order. The first runs outside this repository,
+alongside the transcript directory it reads:
 
 ```sh
-scripts/extract-acvp-evidence.py <transcripts-dir>   # rebuild the JSON from raw transcripts
+<extractor> <transcripts-dir>                        # rebuild the JSON from raw transcripts
 scripts/gen-acvp-evidence-md.py                      # re-render ACVP-EVIDENCE.md from the JSON
 scripts/check-acvp-evidence.py                       # validate (also runs in CI)
 ```
 
 The transcript directory is deliberately **not** in this repository and must never be added to it:
 every session registration embeds an account access token whose payload carries personal identifying
-data in cleartext. The extractor is the scrub — it reads those transcripts and emits only
+data in cleartext. The extractor lives with them, outside this repository, and is the scrub — it
+reads those transcripts and emits only
 NIST-issued identifiers, verdicts and counts. It refuses to write if anything credential-shaped
 survives into its output, and it verifies that refusal against a planted string on every run.
 
