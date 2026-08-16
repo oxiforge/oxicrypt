@@ -526,10 +526,12 @@ struct KmacCore<const RATE: usize> {
 impl<const RATE: usize> KmacCore<RATE> {
     /// Create a new KMAC core with key `K` and customization string `S`.
     ///
-    /// # Safety invariant
+    /// # Bounds
     ///
-    /// `absorbed` tracks the bytepad offset; all slice accesses are
-    /// bounded by `RATE` which is at most 168.
+    /// `absorbed` tracks the bytepad offset into the sponge, which is
+    /// bounded by `RATE` (at most 168). The `buf` accesses below are
+    /// bounded by 9, the longest `left_encode` output this function
+    /// produces, not by `RATE`.
     #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
     fn new_internal(key: &[u8], s: &[u8]) -> Self {
         let mut cshake = CShakeCore::<RATE>::new_internal(b"KMAC", s);

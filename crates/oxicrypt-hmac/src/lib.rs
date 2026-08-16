@@ -81,9 +81,11 @@
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(
-    // The HMAC padding loops walk fixed-size `[u8; B]` buffers with
-    // compile-time bounds, so bounds-checked indexing is fine here
-    // and mirrors the notation used in FIPS 198-1. The pedantic
+    // The HMAC padding loops index `[u8; B]` buffers, and the notation
+    // mirrors FIPS 198-1. The bounds are not all compile-time: `k0[..L]`
+    // relies on `L <= B`, which holds for all eleven impls but is not
+    // enforced by a type, and `k0[..key.len()]` is a runtime length
+    // checked by the slice itself. The pedantic
     // arithmetic lint similarly objects to `+= 1` inside loops that
     // iterate over compile-time ranges.
     clippy::indexing_slicing,

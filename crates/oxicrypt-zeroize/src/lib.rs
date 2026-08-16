@@ -124,6 +124,7 @@ mod tests {
     fn zeroize_empty_slice_is_noop() {
         let mut buf: [u8; 0] = [];
         zeroize(&mut buf);
-        // No panic, no UB.
+        // Reaching this line is the assertion: the call must not panic
+        // on a zero-length slice.
     }
 }

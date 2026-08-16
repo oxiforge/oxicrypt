@@ -262,10 +262,13 @@ pub const SLOT_VERSION: u32 = 2;
 
 /// Reserved integrity slot.
 ///
-/// `#[used]` prevents the linker from discarding the static even though
-/// no Rust code reads its contents — the verifier takes its *address*
-/// and reads the bytes through the byte-acquisition mechanism, for the
-/// reason given in the crate documentation.
+/// `#[used]` keeps the static in this crate's object file even though no
+/// Rust code reads its contents — the verifier takes its *address* and
+/// reads the bytes through the byte-acquisition mechanism, for the reason
+/// given in the crate documentation. The attribute binds the compiler,
+/// not the linker: the Rust Reference states the linker remains free to
+/// remove such an item, so the slot's presence in a linked artifact is
+/// established by the signer finding it, not by the attribute.
 ///
 /// `#[repr(C)]` pins field order so the bytes appear in the artifact
 /// exactly as declared, which is what the signer scans for and what the
