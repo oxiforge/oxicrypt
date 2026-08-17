@@ -567,7 +567,6 @@ dependencies = [
  "oxicrypt-rsa",
  "oxicrypt-sha",
  "oxicrypt-slh-dsa",
- "oxicrypt-xmss",
 ]
 
 [[package]]
@@ -826,8 +825,6 @@ version = "0.23.2"
 dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
- "oxicrypt-zeroize",
- "rayon",
 ]
 
 [[package]]

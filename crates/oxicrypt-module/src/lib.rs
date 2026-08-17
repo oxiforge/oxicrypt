@@ -972,7 +972,6 @@ pub enum Service {
 
     // ----- oxicrypt-xmss: SP 800-208 (stub) -----
     // Renumbered 340/341 → 370/371 in Batch 4 to make room for the SLH-DSA block.
-    XmssSign = 370,
     XmssVerify = 371,
 
     // ----- oxicrypt-dh: RFC 3526 (stub) -----
@@ -1321,7 +1320,6 @@ impl fmt::Display for Service {
             Self::LmsShakeM24H25W4Verify => "LMS SHAKE M=24 H=25 W=4 verify",
             Self::LmsShakeM24H25W8Sign => "LMS SHAKE M=24 H=25 W=8 sign",
             Self::LmsShakeM24H25W8Verify => "LMS SHAKE M=24 H=25 W=8 verify",
-            Self::XmssSign => "XMSS sign",
             Self::XmssVerify => "XMSS verify",
             Self::Dh3072 => "DH-3072",
         };
@@ -1450,8 +1448,8 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::MlDsa87Sign
             | Service::MlDsa87Verify
             | Service::MlDsa87Keygen
-            // XMSS — SP 800-208 stateful HBS for software/firmware signing.
-            | Service::XmssSign
+            // XMSS — SP 800-208 verification. §8.1 confines key generation and
+            // signing to hardware modules, so the module offers neither.
             | Service::XmssVerify
     )
         // LMS — SP 800-208 stateful HBS for software/firmware signing.
@@ -1558,8 +1556,7 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
             | Service::MlDsa87Sign
             | Service::MlDsa87Verify
             | Service::MlDsa87Keygen
-            // XMSS — mirrors CNSA 2.0 during the transition.
-            | Service::XmssSign
+            // XMSS — mirrors CNSA 2.0 during the transition. Verification only.
             | Service::XmssVerify
     )
         // LMS — mirrors CNSA 2.0 during the transition. Stateful HBS is
@@ -1898,7 +1895,6 @@ mod tests {
             Service::MlDsa87Keygen,
             Service::LmsSha256M32H10W4Sign,
             Service::LmsSha256M32H10W4Verify,
-            Service::XmssSign,
             Service::XmssVerify,
             Service::Tls13Kdf,
         ];
@@ -2257,7 +2253,6 @@ mod tests {
         // non-LMS neighbours must not be swept in by a widened range.
         for svc in [
             Service::SlhDsaShake256fVerify,
-            Service::XmssSign,
             Service::XmssVerify,
             Service::Dh3072,
         ] {

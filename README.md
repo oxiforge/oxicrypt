@@ -151,7 +151,7 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | ML-DSA | ML-DSA-44/-65/-87 sign/verify/keygen | FIPS 204 |
 | SLH-DSA | SLH-DSA full family — SHA2 (128s/f, 192s/f, 256s/f) and SHAKE (128s/f, 192s/f, 256s/f) sign/verify/keygen | FIPS 205 |
 | LMS | LMS sign/verify across the complete SP 800-208 §A.3 grid (80 pairs: 4 hash families × 5 tree heights × 4 Winternitz parameters), permitted in full under every algorithm profile | SP 800-208 (RFC 8554, RFC 8708) |
-| XMSS | XMSS sign/verify (XMSS-SHA2_10_256) | SP 800-208 (RFC 8391) |
+| XMSS | XMSS signature verification (XMSS-SHA2_10_256) | SP 800-208 §8.2 (RFC 8391) |
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 over the loader-invariant module image | ISO/IEC 19790:2012 §7.10.2.2 (technique CAST: IG 10.2.A) |
 
@@ -189,7 +189,7 @@ crates/
   oxicrypt-ml-dsa        ML-DSA-44/-65/-87 (FIPS 204)
   oxicrypt-slh-dsa       SLH-DSA-{SHA2,SHAKE}-{128,192,256}{s,f} (FIPS 205)
   oxicrypt-lms           LMS hash-based signatures (SP 800-208); optional default-off `parallel` feature for data-parallel Merkle leaf computation
-  oxicrypt-xmss          XMSS hash-based signatures (SP 800-208)
+  oxicrypt-xmss          XMSS signature verification (SP 800-208 §8.2)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
   oxicrypt-entropy       SP 800-90B entropy source in progress (jitter noise source, RCT/APT health tests, timer adequacy, cited spec constants; pre-validation — no entropy claims)
   oxicrypt-timer         Read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
@@ -198,7 +198,7 @@ crates/
   oxicrypt-maxwell       Out-of-boundary SP 800-90B entropy-assessment tool (EA-parity estimators, IID battery, restart analysis)
   oxicrypt-zeroize       Volatile zeroization for sensitive security parameters
 
-acvp-harness/           ACVP protocol handler with 88 registered algorithm handlers
+acvp-harness/           ACVP protocol handler with 86 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors (Python)
@@ -231,7 +231,7 @@ auditable-unsafe rules). See **Performance features** below.
 `alloc` where necessary, making them suitable for embedded and `wasm32` targets.
 The integrity crate uses `std` for file I/O and self-test
 orchestration; the module crate is `#![no_std]`. The parallel-capable crates
-(`oxicrypt-lms`, `oxicrypt-slh-dsa`, `oxicrypt-xmss`, `oxicrypt-ml-kem`,
+(`oxicrypt-lms`, `oxicrypt-slh-dsa`, `oxicrypt-ml-kem`,
 `oxicrypt-ml-dsa`) become `std` only under their optional default-off `parallel`
 feature (rayon requires `std`); the default build stays `no_std`.
 
@@ -251,7 +251,7 @@ KAT-on/off + determinism oracles per crate (Security Policy).
 
 | Feature | Crate(s) | Effect | Brings in |
 |---------|----------|--------|-----------|
-| `parallel` | `oxicrypt-lms`, `oxicrypt-slh-dsa`, `oxicrypt-xmss`, `oxicrypt-ml-kem`, `oxicrypt-ml-dsa` | `rayon` data-parallelism over independent keygen work (Merkle leaf / tree build, WOTS+ & FORS sweeps, matrix-Â expansion) | `rayon` (+ `std`) |
+| `parallel` | `oxicrypt-lms`, `oxicrypt-slh-dsa`, `oxicrypt-ml-kem`, `oxicrypt-ml-dsa` | `rayon` data-parallelism over independent keygen work (Merkle leaf / tree build, WOTS+ & FORS sweeps, matrix-Â expansion) | `rayon` (+ `std`) |
 | `accel-sha` | `oxicrypt-sha` | runtime-detected x86_64 SHA-NI SHA-256 (portable fallback when absent) | `oxicrypt-sha-accel` |
 | `accel-aes` | `oxicrypt-aes` | runtime-detected x86_64 AES-NI block cipher (portable fallback when absent) | `oxicrypt-aes-accel` |
 
@@ -285,7 +285,7 @@ see the design-of-record at [`docs/design/avx2-keccak.md`](docs/design/avx2-kecc
 ## ACVP harness
 
 The ACVP harness is a zero-dependency binary that processes NIST ACVP vector
-sets end-to-end. It currently has 88 registered algorithm handlers covering
+sets end-to-end. It currently has 86 registered algorithm handlers covering
 all test types the demo server is expected to send:
 
 | Test type | Algorithms |
@@ -432,7 +432,7 @@ PSS, OAEP, keygen with CRT + Bellcore verify-after-sign per IG D.G),
 DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — complete SP 800-208 §A.3 grid (80 pairs) — and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
-across all algorithm crates and the C ABI (`oxicrypt-ffi`). 88 ACVP
+across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
 handlers, 152 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
 green.
 
@@ -531,7 +531,7 @@ The `oxicrypt-ffi` crate currently exposes:
 | ML-DSA | ML-DSA-44/-65/-87 keygen / sign / verify | FIPS 204 |
 | SLH-DSA | SLH-DSA-{SHA2,SHAKE}-{128,192,256}{s,f} keygen / sign / verify | FIPS 205 |
 | LMS (stateful, complete §A.3 grid) | 243 C entry points: 3 baseline `oxi_lms_*` (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 dispatch) + 240 per-pair `oxi_lms_<family>_m<N>_h<H>_w<W>_{keygen,sign,verify}` across 80 pairs; byte-buffer pass-through with explicit pre/post-state encoding | SP 800-208, RFC 8554, RFC 8708 |
-| XMSS (stateful) | XMSS-SHA2_10_256 — byte-buffer pass-through with explicit pre/post-state encoding | SP 800-208, RFC 8391 |
+| XMSS | XMSS-SHA2_10_256 verification — byte-buffer pass-through | SP 800-208 §8.2, RFC 8391 |
 | HMAC-DRBG (opaque handle) | SHA-256 / -384 / -512 — `new`, `instantiate`, `reseed`, `generate`, `free` | SP 800-90A §10.1.2 |
 | Hash-DRBG (opaque handle) | SHA-256 / -384 / -512 — same lifecycle | SP 800-90A §10.1.1 |
 | CTR-DRBG (opaque handle) | AES-128 / -192 / -256 — same lifecycle, with distinct `_no_df` and `_df` derivation entry points per stage | SP 800-90A §10.2 |

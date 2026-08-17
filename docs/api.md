@@ -529,33 +529,37 @@ pub const PRIVATE_KEY_LEN: usize;
 ## XMSS — `oxicrypt_xmss`
 
 eXtended Merkle Signature Scheme (SP 800-208 / RFC 8391), parameter set
-XMSS-SHA2_10_256 (SHA-256, tree height 10 = 1024 signatures). Like LMS,
-**stateful** — each leaf signs once; persist the leaf index after every
-signature.
+XMSS-SHA2_10_256 (SHA-256, tree height 10 = 1024 signatures).
 
-### Key type
+### Verification only
 
-`XmssPrivateKey` — zeroize-on-Drop private key with a stateful leaf
-counter; `leaf_index() -> u32`, `is_exhausted() -> bool`,
-`to_bytes() -> [u8; 132]`, `from_bytes(&[u8]) -> Option<Self>`.
+This crate verifies signatures and does nothing else. SP 800-208 §8.1
+confines XMSS key generation and signature generation to hardware modules
+at FIPS 140-3 Level 3 physical security or higher, and FIPS 140-3 IG C.N
+resolutions 9 and 6 place them beyond a software module's reach as either
+an approved or a non-approved service. §8.2 places no such restriction on
+verification. The signing keys for the signatures verified here are
+produced elsewhere, in practice by a hardware module.
+
+It follows that there is no private key type and no secret material: a
+verifier reads only the public key, the message and the signature.
 
 ### Free functions
 
 | Function | Signature |
 |----------|-----------|
-| `keygen` | `(xi: &[u8; 32]) -> Result<(XmssPrivateKey, [u8; PUBLIC_KEY_LEN]), Error>` |
-| `sign` | `(key: &mut XmssPrivateKey, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error>` |
 | `verify` | `(public_key: &[u8; PUBLIC_KEY_LEN], message: &[u8], signature: &[u8; SIGNATURE_LEN]) -> Result<(), Error>` |
 
-`keygen` returns `(sk, pk)` — the private key first. `sign` advances the
-leaf index and returns `Err(Error::InvalidInput)` once exhausted.
+`verify` returns `Ok(())` for a valid signature and
+`Err(Error::InvalidInput)` for an invalid one, plus the module-gating
+errors when the module is not operational or the active algorithm profile
+blocks the service.
 
 ### Constants
 
 ```rust
 pub const SIGNATURE_LEN: usize = 2500;   // idx(4) + r(32) + wots(67*32) + auth(10*32)
 pub const PUBLIC_KEY_LEN: usize = 68;    // OID(4) + root(32) + PUB_SEED(32)
-pub const MAX_SIGNATURES: u32 = 1024;
 ```
 
 ## DH-3072 — `oxicrypt_dh`

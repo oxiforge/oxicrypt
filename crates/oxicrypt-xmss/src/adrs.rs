@@ -11,9 +11,9 @@
 //! | 0    | 0–3     | layer address   |
 //! | 1–2  | 4–11    | tree address    |
 //! | 3    | 12–15   | type            |
-//! | 4    | 16–19   | (type-specific) |
-//! | 5    | 20–23   | (type-specific) |
-//! | 6    | 24–27   | (type-specific) |
+//! | 4    | 16–19   | OTS address / L-tree address / padding |
+//! | 5    | 20–23   | chain address / tree height |
+//! | 6    | 24–27   | hash address / tree index |
 //! | 7    | 28–31   | key and mask    |
 //!
 //! Words 4–7 are zeroed whenever the type field changes.
@@ -76,20 +76,22 @@ impl Adrs {
         self.data[28..32].copy_from_slice(&val.to_be_bytes());
     }
 
-    // ── L-tree Address fields ────────────────────────────────
+    // ── L-tree and hash-tree Address fields ──────────────────
 
     /// Word 4: which L-tree (same as OTS address / leaf index).
     pub(crate) fn set_ltree_address(&mut self, addr: u32) {
         self.data[16..20].copy_from_slice(&addr.to_be_bytes());
     }
 
-    /// Word 6: tree height within the L-tree.
+    /// Word 5: tree height. Shared by the L-tree and hash-tree
+    /// address types (RFC 8391 §2.5).
     pub(crate) fn set_tree_height(&mut self, height: u32) {
-        self.data[24..28].copy_from_slice(&height.to_be_bytes());
+        self.data[20..24].copy_from_slice(&height.to_be_bytes());
     }
 
-    /// Word 7: tree index within the current height.
+    /// Word 6: tree index within the current height. Shared by the
+    /// L-tree and hash-tree address types (RFC 8391 §2.5).
     pub(crate) fn set_tree_index(&mut self, idx: u32) {
-        self.data[28..32].copy_from_slice(&idx.to_be_bytes());
+        self.data[24..28].copy_from_slice(&idx.to_be_bytes());
     }
 }

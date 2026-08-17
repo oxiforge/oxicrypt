@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Scoped `oxicrypt-xmss` to signature verification. **Breaking: `keygen`, `sign` and
+  `XmssPrivateKey` are removed from the crate, and `oxi_xmss_keygen` and `oxi_xmss_sign` from the
+  C ABI. (#264)**
+- Aligned XMSS address encoding with RFC 8391. **Breaking: signatures at any leaf index other than
+  zero verify differently than in earlier versions. (#264)**
+- Added externally produced XMSS verification vectors from six independent sources, and made the
+  power-up self-test a CAST over one of them. (#264)
+- Removed the XMSS `keyGen` and `sigGen` ACVP handlers; `sigVer` remains. (#264)
+
 - Added `oxicrypt_integrity::status()` and `IntegrityStatus`, reported across the C ABI as
   `oxi_integrity_status()`, retrieving the pre-operational integrity test's outcome separately from
   `initialize_with_tests` (#262).

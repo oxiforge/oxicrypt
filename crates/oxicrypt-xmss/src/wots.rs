@@ -5,9 +5,11 @@
 //! LM-OTS in its use of randomized hashing with bitmasks and a
 //! pseudorandom key schedule derived from a public seed via PRF.
 //!
-//! Lints: array indexing is bounded by compile-time constants.
-//! Arithmetic operates on small, bounded values (chain indices,
-//! digit extraction, tree heights).
+//! Lints: the indexing and arithmetic allowed below operate on
+//! values bounded at their call sites — `base_w` takes a runtime
+//! slice but is only ever called with `i < LEN_1` over a `[u8; N]`
+//! or `i - LEN_1 < 4` over a `[u8; 2]`, and chain indices, digit
+//! values and tree heights are all bounded by `W`, `LEN` and `H`.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
@@ -138,70 +140,6 @@ fn chain(x: &[u8; N], start: u32, steps: u32, pub_seed: &[u8; N], adrs: &mut Adr
         tmp = chain_step(&tmp, j, pub_seed, adrs);
     }
     tmp
-}
-
-// ── WOTS+ key generation ────────────────────────────────────────
-
-/// Derive WOTS+ secret key element `sk[i]` for OTS key pair at
-/// leaf `ots_addr`.
-///
-/// sk\[i\] = PRF(sk_seed, ADRS) with ADRS encoding (ots_addr, chain=i, hash=0).
-fn derive_sk_element(
-    sk_seed: &[u8; N],
-    _pub_seed: &[u8; N],
-    ots_addr: u32,
-    chain_idx: u32,
-) -> [u8; N] {
-    let mut adrs = Adrs::new();
-    adrs.set_type(Adrs::OTS_HASH);
-    adrs.set_ots_address(ots_addr);
-    adrs.set_chain_address(chain_idx);
-    adrs.set_hash_address(0);
-    adrs.set_key_and_mask(0);
-    // Use PRF with sk_seed to derive the secret key element.
-    // PRF_keygen(SK_SEED, ADRS) — RFC 8391 §4.1.11
-    prf(sk_seed, &adrs.bytes())
-}
-
-/// Compute the WOTS+ public key for leaf `ots_addr`.
-///
-/// Returns `len` chain endpoints concatenated. The result is
-/// then compressed by the L-tree into a single n-byte value.
-pub(crate) fn wots_pk_gen(sk_seed: &[u8; N], pub_seed: &[u8; N], ots_addr: u32) -> [[u8; N]; LEN] {
-    let mut pk = [[0u8; N]; LEN];
-    for i in 0..LEN {
-        let sk_i = derive_sk_element(sk_seed, pub_seed, ots_addr, i as u32);
-        let mut adrs = Adrs::new();
-        adrs.set_type(Adrs::OTS_HASH);
-        adrs.set_ots_address(ots_addr);
-        adrs.set_chain_address(i as u32);
-        pk[i] = chain(&sk_i, 0, W as u32 - 1, pub_seed, &mut adrs);
-    }
-    pk
-}
-
-// ── WOTS+ signing ───────────────────────────────────────────────
-
-/// Create a WOTS+ signature of `msg_hash` at leaf `ots_addr`.
-///
-/// Returns `len` chain intermediate values.
-pub(crate) fn wots_sign(
-    msg_hash: &[u8; N],
-    sk_seed: &[u8; N],
-    pub_seed: &[u8; N],
-    ots_addr: u32,
-) -> [[u8; N]; LEN] {
-    let mut sig = [[0u8; N]; LEN];
-    for i in 0..LEN {
-        let sk_i = derive_sk_element(sk_seed, pub_seed, ots_addr, i as u32);
-        let a = u32::from(msg_digit(msg_hash, i));
-        let mut adrs = Adrs::new();
-        adrs.set_type(Adrs::OTS_HASH);
-        adrs.set_ots_address(ots_addr);
-        adrs.set_chain_address(i as u32);
-        sig[i] = chain(&sk_i, 0, a, pub_seed, &mut adrs);
-    }
-    sig
 }
 
 // ── WOTS+ verification (pk from sig) ────────────────────────────

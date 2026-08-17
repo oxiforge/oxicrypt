@@ -2015,26 +2015,6 @@ pub fn lms_sigver_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
 
 // ── Stateful HBS: XMSS ──────────────────────────────────────────
 
-/// Build an ACVP registration block for XMSS / keyGen.
-pub fn xmss_keygen_capability() -> JsonValue {
-    obj(vec![
-        ("algorithm", str_val("XMSS")),
-        ("mode", str_val("keyGen")),
-        ("revision", str_val("1.0")),
-        ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
-    ])
-}
-
-/// Build an ACVP registration block for XMSS / sigGen.
-pub fn xmss_siggen_capability() -> JsonValue {
-    obj(vec![
-        ("algorithm", str_val("XMSS")),
-        ("mode", str_val("sigGen")),
-        ("revision", str_val("1.0")),
-        ("parameterSets", str_array(&["XMSS-SHA2_10_256"])),
-    ])
-}
-
 /// Build an ACVP registration block for XMSS / sigVer.
 pub fn xmss_sigver_capability() -> JsonValue {
     obj(vec![

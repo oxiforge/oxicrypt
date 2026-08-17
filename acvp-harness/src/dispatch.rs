@@ -351,9 +351,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::lms::LmsSigGenSp800208Handler));
     r.register(Box::new(handlers::lms::LmsSigVerHandler));
     r.register(Box::new(handlers::lms::LmsSigVerSp800208Handler));
-    // XMSS (keyGen / sigGen / sigVer, SP 800-208 / RFC 8391)
-    r.register(Box::new(handlers::xmss::XmssKeyGenHandler));
-    r.register(Box::new(handlers::xmss::XmssSigGenHandler));
+    // XMSS (sigVer only, SP 800-208 §8.2 / RFC 8391)
     r.register(Box::new(handlers::xmss::XmssSigVerHandler));
     r
 }
@@ -533,16 +531,20 @@ mod tests {
         // No keyGen under SP800-208: key generation has no message, so the
         // server advertises the revision for the signing modes only.
         assert!(r.find("LMS", Some("keyGen"), "SP800-208").is_none());
-        // XMSS (SP 800-208)
-        assert!(r.find("XMSS", Some("keyGen"), "1.0").is_some());
-        assert!(r.find("XMSS", Some("sigGen"), "1.0").is_some());
+        // XMSS (SP 800-208). Verification only: §8.1 confines key generation
+        // and signing to hardware modules, so the absence of those two is a
+        // property to pin rather than an omission.
         assert!(r.find("XMSS", Some("sigVer"), "1.0").is_some());
+        assert!(r.find("XMSS", Some("keyGen"), "1.0").is_none());
+        assert!(r.find("XMSS", Some("sigGen"), "1.0").is_none());
         // Negative lookups
         assert!(r.find("SHA3-256", None, "9.9").is_none());
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        assert_eq!(r.len(), 88);
+        // 86 since XMSS keyGen and sigGen left the registry; the count is
+        // asserted so a handler cannot be added or dropped unnoticed.
+        assert_eq!(r.len(), 86);
         assert!(!r.is_empty());
     }
 

@@ -198,12 +198,11 @@ modules:
       - oxicrypt-zeroize
 
   - name: oxicrypt-xmss
-    description: XMSS hash-based stateful signatures (SP 800-208 / RFC 8391), parameter set XMSS-SHA2_10_256, with WOTS+ and L-tree compression.
+    description: XMSS signature verification for parameter set XMSS-SHA2_10_256 (SP 800-208 §8.2, RFC 8391 Algorithm 14), holding no key material and offering no key generation or signing service.
     no_std: true
     depends_on:
       - oxicrypt-module
       - oxicrypt-sha
-      - oxicrypt-zeroize
 
   - name: oxicrypt-slh-dsa
     description: "SLH-DSA stateless hash-based signatures (FIPS 205): all 12 §11 parameter sets (SHA-2 and SHAKE, each 128/192/256 s and f), none approved under the CNSA profiles."
@@ -731,31 +730,6 @@ types:
       - name: nodes
         type: "Vec<[u8; 32]>"
         description: Merkle node table in RFC 8554 numbering (root = 1, leaves at 2^H..2^(H+1), slot 0 unused).
-    security:
-      contains_secret: true
-      zeroize_on_drop: true
-      constant_time: true
-
-  - name: XmssPrivateKey
-    module: oxicrypt-xmss
-    kind: struct
-    description: XMSS stateful private key (XMSS-SHA2_10_256) holding SK_SEED, SK_PRF, PUB_SEED, cached root, and current leaf index; the caller MUST persist after every sign call.
-    fields:
-      - name: sk_seed
-        type: "[u8; 32]"
-        description: "Secret seed for WOTS+ key derivation."
-      - name: sk_prf
-        type: "[u8; 32]"
-        description: "PRF secret for message randomisation."
-      - name: pub_seed
-        type: "[u8; 32]"
-        description: "Public seed for randomized hashing (RAND_HASH)."
-      - name: root
-        type: "[u8; 32]"
-        description: "Cached Merkle tree root (part of the public key)."
-      - name: leaf_index
-        type: u32
-        description: "Next unused leaf index (0..1023)."
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -6469,80 +6443,6 @@ functions:
           persist_to_disk(&csk.private_key().to_bytes());  // MUST persist after every sign
 
   # ── XMSS (SP 800-208 / RFC 8391) ─────────────────────────────────
-
-  - name: keygen
-    module: oxicrypt-xmss
-    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<(XmssPrivateKey, [u8; 68]), Error>"
-    description: Generate an XMSS key pair (XMSS-SHA2_10_256); xi is a 32-byte secret DRBG seed, and the tree root takes ~15 s for 1024 leaves.
-    parameters:
-      - name: xi
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte secret seed (derives SK_SEED, SK_PRF, PUB_SEED)."
-    returns:
-      type: "Result<(XmssPrivateKey, [u8; 68]), Error>"
-      description: "(private_key, public_key)."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: XMSS blocked by active profile.
-    preconditions:
-      - description: Module must be Operational.
-      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
-    postconditions:
-      - description: Returns a fresh XMSS key pair starting at leaf_index 0; the key can sign at most 1024 messages.
-    thread_safety: thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-
-  - name: sign
-    module: oxicrypt-xmss
-    signature: "pub fn sign(key: &mut XmssPrivateKey, message: &[u8]) -> Result<[u8; 2500], Error>"
-    description: Sign a message with XMSS; STATEFUL, advances the leaf index by 1, the caller MUST persist key state afterwards.
-    parameters:
-      - name: key
-        type: "&mut XmssPrivateKey"
-        direction: in-out
-        description: "Mutable private key handle. leaf_index is incremented."
-      - name: message
-        type: "&[u8]"
-        direction: in
-        description: "Message to sign (arbitrary length)."
-    returns:
-      type: "Result<[u8; 2500], Error>"
-      description: "2500-byte XMSS signature: idx (4) || r (32) || WOTS+ sig (67 × 32 = 2144) || auth path (10 × 32 = 320)."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: XMSS blocked by active profile.
-        - name: InvalidInput
-          condition: Key exhausted (leaf_index >= 1024).
-    preconditions:
-      - description: Module must be Operational.
-      - description: key.leaf_index < 1024 (key not exhausted).
-    postconditions:
-      - description: key.leaf_index incremented by 1. Caller MUST persist key state.
-    thread_safety: not-thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-    pitfalls:
-      - description: XMSS is STATEFUL; like LMS, the caller must persist private key state after every sign call.
 
   - name: verify
     module: oxicrypt-xmss
@@ -12799,85 +12699,6 @@ functions:
       handles_secrets: false
       fips_approved: true
 
-  - name: oxi_xmss_keygen
-    module: oxicrypt-ffi
-    description: Generate an XMSS key pair (XMSS-SHA2_10_256, OID 0x00000001, SP 800-208 / RFC 8391) from a 32-byte caller-supplied seed; deterministically derives SK_SEED/SK_PRF/PUB_SEED, computes the 1024-leaf Merkle root, and writes the 132-byte opaque private-key blob into sk_out and the 68-byte public key into pk_out.
-    signature: >-
-      int oxi_xmss_keygen(const uint8_t *xi_ptr,
-      uint8_t *sk_out, uint8_t *pk_out)
-    parameters:
-      - name: xi_ptr
-        type: const uint8_t *
-        direction: in
-        description: 32-byte caller-supplied seed
-      - name: sk_out
-        type: uint8_t *
-        direction: out
-        description: 132-byte opaque XMSS private-key blob
-      - name: pk_out
-        type: uint8_t *
-        direction: out
-        description: 68-byte XMSS public key
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_xmss_sign
-    module: oxicrypt-ffi
-    description: "Sign a message with an XMSS private key (SP 800-208 / RFC 8391); reads the 132-byte opaque blob from sk_in_ptr, advances the leaf index, writes the updated blob into sk_out and the 2500-byte signature into sig_out."
-    signature: >-
-      int oxi_xmss_sign(const uint8_t *sk_in_ptr,
-      const uint8_t *msg_ptr, size_t msg_len,
-      uint8_t *sk_out, uint8_t *sig_out)
-    parameters:
-      - name: sk_in_ptr
-        type: const uint8_t *
-        direction: in
-        description: 132-byte opaque XMSS private-key blob (pre-state)
-      - name: msg_ptr
-        type: const uint8_t *
-        direction: in
-        description: Message bytes (length given by msg_len)
-      - name: msg_len
-        type: size_t
-        direction: in
-        description: Message length in bytes
-      - name: sk_out
-        type: uint8_t *
-        direction: out
-        description: 132-byte opaque XMSS private-key blob (post-state, leaf index advanced; MUST be persisted before using sig_out)
-      - name: sig_out
-        type: uint8_t *
-        direction: out
-        description: 2500-byte XMSS signature buffer
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
   - name: oxi_xmss_verify
     module: oxicrypt-ffi
     description: Verify an XMSS signature (SP 800-208 / RFC 8391); reads the 68-byte public key from pk_ptr, msg, and the 2500-byte signature from sig_ptr.
@@ -17020,12 +16841,6 @@ constants:
     type: usize
     value: "68"
     description: "XMSS public key size: OID (4) + root (32) + PUB_SEED (32)."
-
-  - name: MAX_SIGNATURES
-    module: oxicrypt-xmss
-    type: u32
-    value: "1024"
-    description: "Maximum signatures per XMSS key (2^H where H=10)."
 
   - name: PK_LEN
     module: oxicrypt-slh-dsa

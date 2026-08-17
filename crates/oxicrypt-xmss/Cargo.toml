@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-xmss"
-description = "XMSS hash-based signatures (SP 800-208) for CNSA 2.0 firmware signing"
+description = "XMSS signature verification (SP 800-208) for CNSA 2.0 firmware signing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,25 +15,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
-[features]
-default = []
-# Data-parallel evaluation of the recursive Merkle tree build, default
-# OFF. `compute_node` splits its two child sub-trees across a `rayon`
-# fork-join (`rayon::join`); each child closure computes one sub-tree as
-# a pure function of its `(height, index)` plus the immutable seeds, and
-# the parent recombines the two results by position (left, right) — never
-# by completion order — so output is byte-identical to the sequential
-# build. Pulls in `rayon`, which requires `std`, so the crate becomes
-# `std` only under this feature — the default build stays provably
-# `no_std` with no rayon in its graph. Performance build only: the
-# CMVP validation-target configuration is the default single-threaded build.
-parallel = ["dep:rayon"]
-
 [dependencies]
 oxicrypt-module = { workspace = true }
 oxicrypt-sha = { workspace = true }
-oxicrypt-zeroize = { workspace = true }
-rayon = { version = "1", optional = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

@@ -413,25 +413,25 @@ let sig = signer.sign(b"message")?;
 // Persist signer.private_key().to_bytes() after each signature.
 ```
 
-## XMSS (stateful hash-based signatures, SP 800-208)
+## XMSS (signature verification, SP 800-208 §8.2)
 
-XMSS is also **stateful** — the same persist-after-every-signature
-discipline as LMS applies.
+XMSS is verification-only here. SP 800-208 §8.1 confines key generation
+and signing to hardware modules, so this crate holds no key material and
+offers neither service; signatures come from elsewhere, in practice from a
+hardware module that owns the tree state.
 
 ```rust
-use oxicrypt_xmss::{keygen, sign, verify};
+use oxicrypt_xmss::verify;
 
-// keygen from a 32-byte seed; returns (private key, public key).
-let (mut sk, pk) = keygen(&xi)?;
-
-let sig = sign(&mut sk, b"message")?;  // advances sk.leaf_index by one
-// Persist sk.to_bytes() to durable storage HERE, before using the signature.
-
-verify(&pk, b"message", &sig)?;
+// `public_key` is 68 bytes (OID ‖ root ‖ PUB_SEED) and `signature` 2500,
+// both produced by the signer that owns the tree.
+verify(&public_key, b"message", &signature)?;
 ```
 
-XMSS-SHA2_10_256 supports up to 1024 signatures per key
-(`MAX_SIGNATURES`); `sign` returns `Err` once the tree is exhausted.
+`verify` returns `Ok(())` for a valid signature and
+`Err(Error::InvalidInput)` for an invalid one. XMSS-SHA2_10_256 carries a
+tree of height 10, so a signer's 1024 signatures all verify against the
+one public key.
 
 ## Error handling
 

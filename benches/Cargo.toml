@@ -41,7 +41,6 @@ parallel = [
     "oxicrypt-ml-kem/parallel",
     "oxicrypt-ml-dsa/parallel",
     "oxicrypt-slh-dsa/parallel",
-    "oxicrypt-xmss/parallel",
 ]
 
 [dependencies]
@@ -59,7 +58,6 @@ oxicrypt-lms = { workspace = true }
 oxicrypt-ml-kem = { workspace = true }
 oxicrypt-ml-dsa = { workspace = true }
 oxicrypt-slh-dsa = { workspace = true }
-oxicrypt-xmss = { workspace = true }
 # Optional — see the `entropy-bench` feature above for why this must not be a
 # plain dependency. `raw-counter` is required by the bench itself, not
 # incidental: `NoiseSource` is sealed and the mock sources are
@@ -111,10 +109,6 @@ harness = false
 
 [[bench]]
 name = "slh_dsa"
-harness = false
-
-[[bench]]
-name = "xmss"
 harness = false
 
 [[bench]]

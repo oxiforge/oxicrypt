@@ -7015,57 +7015,6 @@ int oxi_lms_shake_m24_h25_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an XMSS key pair from a 32-byte caller-supplied seed.
-
- Reads exactly 32 bytes from `xi_ptr`, deterministically derives
- `SK_SEED`, `SK_PRF`, and `PUB_SEED` via SHA-256 over `(xi || tag)`
- for tags 0x00, 0x01, 0x02 respectively, computes the Merkle tree
- root, and writes the 132-byte opaque private-key blob into
- `sk_out` and the 68-byte public key into `pk_out`. The caller
- MUST source the 32 seed bytes from an approved DRBG.
-
- `sk_out` is the persistence-of-record format. Treat it as opaque.
-
- Returns `OxiResult::Ok = 0` on success or a module error variant.
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥132 bytes. `pk_out` must be a non-NULL
- writable pointer to ≥68 bytes.
- */
-int oxi_xmss_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with an XMSS private key.
-
- Reads the 132-byte opaque private-key blob from `sk_in_ptr`,
- `msg_len` bytes from `msg_ptr`, signs the message, advances the
- internal leaf index by one, writes the **updated** 132-byte blob
- into `sk_out`, and writes the 2500-byte signature into `sig_out`.
-
- **Persistence contract:** identical to LMS — the caller MUST
- persist `sk_out` before using `sig_out`. See [`oxi_lms_sign`] for
- the rationale.
-
- Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
- key is exhausted (1024 signatures already issued), or a module
- error variant.
-
- # Safety
-
- `sk_in_ptr` must be valid for 132 bytes. `msg_ptr` must be valid
- for `msg_len` bytes. `sk_out` must be a non-NULL writable pointer
- to ≥132 bytes. `sig_out` must be a non-NULL writable pointer to
- ≥2500 bytes. `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_xmss_sign(const uint8_t *sk_in_ptr,
-                  const uint8_t *msg_ptr,
-                  uintptr_t msg_len,
-                  uint8_t *sk_out,
-                  uint8_t *sig_out);
-
-/*
  Verify an XMSS signature.
 
  Reads the 68-byte public key from `pk_ptr`, `msg_len` bytes from

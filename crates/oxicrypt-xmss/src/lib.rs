@@ -1,29 +1,31 @@
-//! XMSS (SP 800-208) — eXtended Merkle Signature Scheme.
+//! XMSS (SP 800-208) — eXtended Merkle Signature Scheme, verification.
 //!
-//! Implements the XMSS signature scheme with parameter set
-//! XMSS-SHA2_10_256 (OID 0x00000001), as specified by
-//! [RFC 8391] and approved for FIPS use by SP 800-208.
+//! Verifies XMSS signatures for parameter set XMSS-SHA2_10_256
+//! (OID 0x00000001), specified by [RFC 8391] and approved for FIPS
+//! use by SP 800-208 §5.1 Table 10.
 //!
-//! Like LMS, XMSS is a **stateful** scheme: each Merkle tree
-//! leaf may sign exactly one message. The signer must persist
-//! the private key's leaf index after every signature to prevent
-//! catastrophic one-time key reuse. This module enforces the
-//! state counter and refuses to sign once the tree is exhausted.
+//! # Verification only
 //!
-//! # XMSS vs LMS
+//! This crate implements signature verification and nothing else.
+//! SP 800-208 §8.1 requires that implementations of XMSS key
+//! generation and signature generation be validated only within
+//! hardware cryptographic modules at FIPS 140-3 Level 3 or higher
+//! physical security. FIPS 140-3 IG C.N resolution 9 excludes
+//! software modules from that, and resolution 6 bars offering a
+//! conforming scheme as a non-approved service. §8.2 places no such
+//! restriction on verification: a module that verifies XMSS
+//! signatures implements Algorithm 14 of RFC 8391 for at least one
+//! approved parameter set, which is what this crate does.
 //!
-//! Both are SP 800-208 hash-based signature schemes. XMSS uses
-//! WOTS+ (with bitmask-based randomized hashing) and L-trees,
-//! making it more complex but providing tighter security
-//! reductions. LMS uses LM-OTS with simpler hash constructions.
-//! Both are approved for CNSA 2.0 firmware signing.
+//! Signing keys for the signatures verified here are therefore
+//! produced elsewhere — in practice by a hardware module, which is
+//! the deployment CNSA 2.0 anticipates for firmware signing.
 //!
 //! # Approved services
 //!
 //! | Service | Standard | Service ID |
 //! |---|---|---|
-//! | XMSS digital signature generation | SP 800-208 (RFC 8391) | `XmssSign` (340) |
-//! | XMSS digital signature verification | SP 800-208 (RFC 8391) | `XmssVerify` (341) |
+//! | XMSS digital signature verification | SP 800-208 (RFC 8391) | `XmssVerify` (371) |
 //!
 //! # Parameter set
 //!
@@ -32,46 +34,18 @@
 //! | OID | XMSS-SHA2_10_256 (0x00000001) | SHA-256, height 10, n=32 |
 //! | w | 16 | Winternitz parameter |
 //! | len | 67 | WOTS+ chains (64 msg + 3 checksum) |
-//! | h | 10 | Tree height (1024 signatures) |
-//!
-//! # Self-tests
-//!
-//! [`KATS`] contains a single power-up KAT that performs a full
-//! keygen → sign → verify round trip plus negative tests.
-//! Because keygen hashes all 1024 leaves with WOTS+ and L-tree
-//! compression, the KAT takes approximately 1–3 s.
+//! | h | 10 | Tree height (1024 leaves) |
 //!
 //! # Sensitive security parameters (SSPs)
 //!
-//! | SSP | Location | Zeroized on Drop |
-//! |---|---|---|
-//! | Secret key seed SK_SEED (32 bytes) | `XmssPrivateKey::sk_seed` | Yes |
-//! | PRF secret SK_PRF (32 bytes) | `XmssPrivateKey::sk_prf` | Yes |
-//!
-//! # FIPS module gating
-//!
-//! [`sign`] gates on `Service::XmssSign`; [`verify`] gates on
-//! `Service::XmssVerify`. Both gate on `require_operational`.
-//!
-//! # Data-parallel tree build (`parallel` feature, default OFF)
-//!
-//! The optional `parallel` feature parallelizes the recursive Merkle
-//! tree build in [`tree::compute_node`]: above a small height cutoff the
-//! two child sub-trees are computed concurrently via a `rayon`
-//! fork-join, and the parent recombines them by position (left, right)
-//! — never by completion order. Each child sub-tree is a pure function
-//! of its `(height, index)` plus the immutable seeds, so the parallel
-//! output is byte-identical to the sequential build. The feature pulls
-//! in `rayon` (hence `std`), so the crate is `#![no_std]` only when the
-//! feature is OFF; the default build graph contains no `rayon` and is
-//! the CMVP validation-target single-threaded configuration. `parallel` is a
-//! throughput option for keygen (which hashes all 1024 leaves), not part
-//! of that configuration.
+//! None. A verifier reads only public values: the public key, the
+//! message and the signature.
 
-#![cfg_attr(not(feature = "parallel"), no_std)]
+#![no_std]
 #![forbid(unsafe_code)]
 
 mod adrs;
+mod kat;
 mod tree;
 mod wots;
 
@@ -91,24 +65,13 @@ pub const SIGNATURE_LEN: usize = 4 + N + wots::LEN * N + tree::H * N;
 /// Layout: OID(4) + root(32) + PUB_SEED(32) = 68.
 pub const PUBLIC_KEY_LEN: usize = 4 + N + N;
 
-/// Maximum number of signatures for XMSS-SHA2_10_256.
-pub const MAX_SIGNATURES: u32 = tree::NUM_LEAVES;
-
-// ── Hash helpers for message randomization ──────────────────────
+// ── Hash helper for message randomization ───────────────────────
 
 /// Domain separation for H_msg.
 #[allow(clippy::indexing_slicing)]
 const PAD_H_MSG: [u8; N] = {
     let mut buf = [0u8; N];
     buf[N - 1] = 2;
-    buf
-};
-
-/// Domain separation for PRF.
-#[allow(clippy::indexing_slicing)]
-const PAD_PRF: [u8; N] = {
-    let mut buf = [0u8; N];
-    buf[N - 1] = 3;
     buf
 };
 
@@ -124,17 +87,7 @@ fn to_byte_idx(idx: u32) -> [u8; N] {
     buf
 }
 
-/// PRF(KEY, M)
-fn prf(key: &[u8; N], m: &[u8]) -> [u8; N] {
-    use oxicrypt_sha::sha256::Sha256;
-    let mut h = Sha256::new_internal();
-    h.update(&PAD_PRF);
-    h.update(key);
-    h.update(m);
-    h.finalize()
-}
-
-/// H_msg(r, ROOT, idx, M) — randomized message hash.
+/// H_msg(r ‖ ROOT ‖ toByte(idx,n), M) — randomized message hash.
 ///
 /// SHA-256(toByte(2,32) || r || ROOT || toByte(idx,32) || M)
 fn h_msg(r: &[u8; N], root: &[u8; N], idx: u32, message: &[u8]) -> [u8; N] {
@@ -148,209 +101,15 @@ fn h_msg(r: &[u8; N], root: &[u8; N], idx: u32, message: &[u8]) -> [u8; N] {
     h.finalize()
 }
 
-// ── Private key ─────────────────────────────────────────────────
-
-/// XMSS private key with stateful leaf counter.
-///
-/// The caller must persist the key (including the updated
-/// `leaf_index`) after every call to [`sign`]. Failure to persist
-/// before a crash can lead to one-time key reuse.
-pub struct XmssPrivateKey {
-    /// Secret seed for WOTS+ key derivation.
-    sk_seed: [u8; N],
-    /// Secret seed for pseudo-random message randomizer.
-    sk_prf: [u8; N],
-    /// Public seed (also in public key, but needed for signing).
-    pub_seed: [u8; N],
-    /// Cached tree root (also in public key).
-    root: [u8; N],
-    /// Index of the next unused leaf.
-    leaf_index: u32,
-}
-
-impl Drop for XmssPrivateKey {
-    fn drop(&mut self) {
-        oxicrypt_zeroize::zeroize(&mut self.sk_seed);
-        oxicrypt_zeroize::zeroize(&mut self.sk_prf);
-    }
-}
-
-impl XmssPrivateKey {
-    /// Returns the current leaf index.
-    pub fn leaf_index(&self) -> u32 {
-        self.leaf_index
-    }
-
-    /// Returns `true` if the key is exhausted.
-    pub fn is_exhausted(&self) -> bool {
-        self.leaf_index >= MAX_SIGNATURES
-    }
-
-    /// Serialize for persistence.
-    ///
-    /// Layout: sk_seed(32) + sk_prf(32) + pub_seed(32) + root(32) + idx(4) = 132.
-    pub fn to_bytes(&self) -> [u8; 132] {
-        #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-        let mut out = [0u8; 132];
-        out[..N].copy_from_slice(&self.sk_seed);
-        out[N..2 * N].copy_from_slice(&self.sk_prf);
-        out[2 * N..3 * N].copy_from_slice(&self.pub_seed);
-        out[3 * N..4 * N].copy_from_slice(&self.root);
-        out[4 * N..4 * N + 4].copy_from_slice(&self.leaf_index.to_be_bytes());
-        out
-    }
-
-    /// Deserialize from bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-        if bytes.len() != 132 {
-            return None;
-        }
-        let mut sk_seed = [0u8; N];
-        sk_seed.copy_from_slice(&bytes[..N]);
-        let mut sk_prf = [0u8; N];
-        sk_prf.copy_from_slice(&bytes[N..2 * N]);
-        let mut pub_seed = [0u8; N];
-        pub_seed.copy_from_slice(&bytes[2 * N..3 * N]);
-        let mut root = [0u8; N];
-        root.copy_from_slice(&bytes[3 * N..4 * N]);
-        let leaf_index = u32::from_be_bytes([
-            bytes[4 * N],
-            bytes[4 * N + 1],
-            bytes[4 * N + 2],
-            bytes[4 * N + 3],
-        ]);
-        Some(Self {
-            sk_seed,
-            sk_prf,
-            pub_seed,
-            root,
-            leaf_index,
-        })
-    }
-}
-
-// ── Key generation ──────────────────────────────────────────────
-
-/// Generate an XMSS key pair from a 32-byte seed `xi`.
-///
-/// Derives three sub-seeds deterministically:
-///   SK_SEED  = SHA-256(xi || 0x00)
-///   SK_PRF   = SHA-256(xi || 0x01)
-///   PUB_SEED = SHA-256(xi || 0x02)
-///
-/// # Errors
-///
-/// Returns module-gating errors if not ready.
-pub fn keygen(xi: &[u8; 32]) -> Result<(XmssPrivateKey, [u8; PUBLIC_KEY_LEN]), Error> {
-    oxicrypt_module::require_operational()?;
-    oxicrypt_module::require_allowed(Service::XmssSign)?;
-    Ok(keygen_internal(xi))
-}
-
-/// Internal keygen bypassing module gating (for self-tests).
-#[doc(hidden)]
-pub fn keygen_internal(xi: &[u8; 32]) -> (XmssPrivateKey, [u8; PUBLIC_KEY_LEN]) {
-    #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-    use oxicrypt_sha::sha256::Sha256;
-
-    let derive = |suffix: u8| -> [u8; N] {
-        let mut h = Sha256::new_internal();
-        h.update(xi);
-        h.update(&[suffix]);
-        h.finalize()
-    };
-
-    let sk_seed = derive(0x00);
-    let sk_prf = derive(0x01);
-    let pub_seed = derive(0x02);
-
-    let root = tree::compute_root(&sk_seed, &pub_seed);
-
-    // Public key: OID(4) + root(32) + PUB_SEED(32).
-    let mut pk = [0u8; PUBLIC_KEY_LEN];
-    pk[..4].copy_from_slice(&tree::XMSS_OID.to_be_bytes());
-    pk[4..4 + N].copy_from_slice(&root);
-    pk[4 + N..4 + 2 * N].copy_from_slice(&pub_seed);
-
-    let sk = XmssPrivateKey {
-        sk_seed,
-        sk_prf,
-        pub_seed,
-        root,
-        leaf_index: 0,
-    };
-    (sk, pk)
-}
-
-// ── Signing ─────────────────────────────────────────────────────
-
-/// Sign `message`, advancing the leaf index.
-///
-/// # Errors
-///
-/// Returns [`Error::InvalidInput`] if the key is exhausted.
-pub fn sign(key: &mut XmssPrivateKey, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
-    oxicrypt_module::require_operational()?;
-    oxicrypt_module::require_allowed(Service::XmssSign)?;
-    sign_internal(key, message).ok_or(Error::InvalidInput)
-}
-
-/// Internal sign bypassing module gating (for self-tests).
-#[doc(hidden)]
-pub fn sign_internal(key: &mut XmssPrivateKey, message: &[u8]) -> Option<[u8; SIGNATURE_LEN]> {
-    #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-
-    if key.is_exhausted() {
-        return None;
-    }
-
-    let idx = key.leaf_index;
-
-    // Randomizer r = PRF(SK_PRF, toByte(idx, 32)).
-    let r = prf(&key.sk_prf, &to_byte_idx(idx));
-
-    // Message hash.
-    let msg_hash = h_msg(&r, &key.root, idx, message);
-
-    // WOTS+ sign.
-    let wots_sig = wots::wots_sign(&msg_hash, &key.sk_seed, &key.pub_seed, idx);
-
-    // Authentication path.
-    let auth = tree::compute_auth_path(&key.sk_seed, &key.pub_seed, idx);
-
-    // Assemble signature: idx(4) || r(32) || wots_sig(67*32) || auth(10*32).
-    let mut sig = [0u8; SIGNATURE_LEN];
-    let mut pos = 0;
-
-    sig[pos..pos + 4].copy_from_slice(&idx.to_be_bytes());
-    pos += 4;
-
-    sig[pos..pos + N].copy_from_slice(&r);
-    pos += N;
-
-    for elem in &wots_sig {
-        sig[pos..pos + N].copy_from_slice(elem);
-        pos += N;
-    }
-
-    for node in &auth {
-        sig[pos..pos + N].copy_from_slice(node);
-        pos += N;
-    }
-
-    key.leaf_index = idx + 1;
-
-    Some(sig)
-}
-
 // ── Verification ────────────────────────────────────────────────
 
 /// Verify an XMSS signature.
 ///
 /// # Errors
 ///
-/// Returns [`Error::InvalidInput`] if the signature is invalid.
+/// Returns [`Error::InvalidInput`] if the signature is invalid, and
+/// the module-gating errors if the module is not operational or the
+/// service is blocked by the active algorithm profile.
 pub fn verify(
     public_key: &[u8; PUBLIC_KEY_LEN],
     message: &[u8],
@@ -415,7 +174,8 @@ pub fn verify_internal(
     // Compute root from signature.
     let computed_root = tree::root_from_sig(&msg_hash, &wots_sig, &pub_seed, idx, &auth);
 
-    // Constant-time comparison.
+    // Compare the root recomputed from the signature against the
+    // root parsed from `public_key`.
     let mut diff = 0u8;
     for i in 0..N {
         diff |= computed_root[i] ^ expected_root[i];
@@ -427,56 +187,38 @@ pub fn verify_internal(
 
 /// Power-up KATs for XMSS.
 pub const KATS: &[KatEntry] = &[KatEntry {
-    name: "XMSS KAT (XMSS-SHA2_10_256 keygen+sign+verify round-trip, SP 800-208)",
+    name: "XMSS KAT (XMSS-SHA2_10_256 verify, SP 800-208, external vector)",
     run: self_test,
 }];
 
-/// KAT seed.
-const KAT_XI: [u8; 32] = [
-    0x58, 0x4d, 0x53, 0x53, 0x2d, 0x4b, 0x41, 0x54, // "XMSS-KAT"
-    0x2d, 0x53, 0x50, 0x38, 0x30, 0x30, 0x2d, 0x32, // "-SP800-2"
-    0x30, 0x38, 0x2d, 0x6f, 0x78, 0x69, 0x63, 0x72, // "08-oxicr"
-    0x79, 0x70, 0x74, 0x2d, 0x76, 0x30, 0x2e, 0x30, // "ypt-v0.0"
-];
-
-/// KAT message.
-const KAT_MSG: &[u8] = b"XMSS self-test message for SP 800-208 / FIPS 140-3 compliance";
-
-/// Power-up self-test.
+/// Power-up known-answer test for XMSS signature verification.
+///
+/// Verifies a signature the module did not produce, and rejects the same
+/// signature with one bit altered. The vector is compiled in — see
+/// [`kat`] for its provenance and for why it is a constant rather than a
+/// file read at run time.
 fn self_test() -> Result<(), SelfTestFailure> {
-    let (mut sk, pk) = keygen_internal(&KAT_XI);
-
-    let Some(sig) = sign_internal(&mut sk, KAT_MSG) else {
-        return Err(SelfTestFailure);
-    };
-
-    // Positive.
-    if !verify_internal(&pk, KAT_MSG, &sig) {
+    // Known answer: this signature is valid under this key for this message.
+    if !verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &kat::KAT_SIGNATURE) {
         return Err(SelfTestFailure);
     }
 
-    // Negative: wrong message.
-    if verify_internal(&pk, b"wrong message", &sig) {
-        return Err(SelfTestFailure);
-    }
-
-    // Negative: tampered signature.
-    let mut sig_bad = sig;
+    // Known answer: one altered bit makes it invalid. Without this, a
+    // verifier that accepted everything would pass the check above.
+    let mut tampered = kat::KAT_SIGNATURE;
     #[allow(clippy::indexing_slicing)]
     {
-        sig_bad[100] ^= 0x01;
+        tampered[64] ^= 0x01;
     }
-    if verify_internal(&pk, KAT_MSG, &sig_bad) {
+    if verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &tampered) {
         return Err(SelfTestFailure);
     }
 
     Ok(())
 }
 
-// ── Unit tests ──────────────────────────────────────────────────
-
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use oxicrypt_module::{KatEntry, initialize_with_tests};
@@ -493,62 +235,56 @@ mod tests {
         run: || Ok(()),
     }];
 
-    fn ensure_initialized() {
-        let _ = initialize_with_tests(
-            UNSIGNED_TEST_BINARY,
-            &[KatEntry {
-                name: "xmss-unit-test-bootstrap",
-                run: self_test,
-            }],
-        );
-    }
-
     #[test]
     fn self_test_passes() {
-        self_test().unwrap();
+        self_test().expect("power-up KAT failed");
+    }
+
+    /// The self-test must fail when the stored answer is wrong. A KAT that
+    /// cannot fail is the defect this one replaced, so the property is
+    /// pinned rather than assumed.
+    #[test]
+    fn self_test_fails_on_a_corrupted_vector() {
+        let mut sig = kat::KAT_SIGNATURE;
+        sig[64] ^= 0x01;
+        assert!(!verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &sig));
+
+        let mut pk = kat::KAT_PUBLIC_KEY;
+        pk[8] ^= 0x01;
+        assert!(!verify_internal(&pk, &kat::KAT_MSG, &kat::KAT_SIGNATURE));
     }
 
     #[test]
-    fn keygen_produces_valid_public_key() {
-        let xi = [0x42u8; 32];
-        let (_sk, pk) = keygen_internal(&xi);
-        let oid = u32::from_be_bytes([pk[0], pk[1], pk[2], pk[3]]);
-        assert_eq!(oid, tree::XMSS_OID);
+    fn gated_api_verifies_after_init() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, KATS);
+        verify(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &kat::KAT_SIGNATURE)
+            .expect("gated verify rejected the KAT vector");
     }
 
+    /// The gated entry point must REJECT as well as accept. Without this,
+    /// replacing `verify`'s whole body with `Ok(())` passes every other
+    /// test in the crate: the external vectors all exercise
+    /// `verify_internal`, and the acceptance test above only ever feeds a
+    /// valid signature.
     #[test]
-    fn sign_advances_leaf_index() {
-        let (mut sk, _pk) = keygen_internal(&KAT_XI);
-        assert_eq!(sk.leaf_index(), 0);
-        let _ = sign_internal(&mut sk, b"msg1");
-        assert_eq!(sk.leaf_index(), 1);
+    fn gated_api_rejects_a_tampered_signature() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, KATS);
+        let mut tampered = kat::KAT_SIGNATURE;
+        tampered[64] ^= 0x01;
+        assert!(matches!(
+            verify(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &tampered),
+            Err(Error::InvalidInput)
+        ));
     }
 
+    /// A public key labelled with a different XMSS parameter set must not
+    /// be verified as XMSS-SHA2_10_256. Every external vector carries OID
+    /// 0x00000001, so without this the OID guard can be deleted and the
+    /// suite stays green — parameter confusion with no probe.
     #[test]
-    fn verify_fails_on_wrong_public_key() {
-        let (mut sk, _pk) = keygen_internal(&KAT_XI);
-        let sig = sign_internal(&mut sk, KAT_MSG).unwrap();
-        let (_sk2, pk2) = keygen_internal(&[0xFFu8; 32]);
-        assert!(!verify_internal(&pk2, KAT_MSG, &sig));
-    }
-
-    #[test]
-    fn private_key_round_trips_through_bytes() {
-        let (sk, _pk) = keygen_internal(&KAT_XI);
-        let bytes = sk.to_bytes();
-        let sk2 = XmssPrivateKey::from_bytes(&bytes).unwrap();
-        assert_eq!(sk.sk_seed, sk2.sk_seed);
-        assert_eq!(sk.sk_prf, sk2.sk_prf);
-        assert_eq!(sk.pub_seed, sk2.pub_seed);
-        assert_eq!(sk.root, sk2.root);
-        assert_eq!(sk.leaf_index, sk2.leaf_index);
-    }
-
-    #[test]
-    fn gated_api_works_after_init() {
-        ensure_initialized();
-        let (mut sk, pk) = keygen(&[0x99u8; 32]).unwrap();
-        let sig = sign(&mut sk, b"gated test").unwrap();
-        verify(&pk, b"gated test", &sig).unwrap();
+    fn rejects_a_public_key_with_a_foreign_oid() {
+        let mut pk = kat::KAT_PUBLIC_KEY;
+        pk[3] = 0x02; // XMSS-SHA2_16_256, not this crate's parameter set
+        assert!(!verify_internal(&pk, &kat::KAT_MSG, &kat::KAT_SIGNATURE));
     }
 }
