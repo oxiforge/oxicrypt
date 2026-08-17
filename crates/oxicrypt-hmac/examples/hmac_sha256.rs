@@ -6,8 +6,20 @@
 use oxicrypt_sha::Sha256;
 use oxicrypt_sha::sha256::{BLOCK_SIZE, DIGEST_SIZE};
 
+/// Stands in for the pre-operational integrity test.
+///
+/// A `cargo run --example` binary is never signed, so the real integrity
+/// test cannot pass inside one. The module requires an integrity group to
+/// initialise at all, so this example declares this stub — visibly, at
+/// the call site — rather than the module offering any way to skip the
+/// requirement.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned example binary",
+    run: || Ok(()),
+}];
+
 fn main() {
-    oxicrypt_module::initialize().expect("module init");
+    oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).expect("module init");
 
     let key = b"my-secret-hmac-key-for-demo!!!!"; // 31 bytes — any length works
     let message = b"Authenticate this message";

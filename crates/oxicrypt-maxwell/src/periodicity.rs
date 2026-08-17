@@ -51,7 +51,7 @@
 //! not values transcribed from SP 800-90B / 90C / an IG (the spec defines no
 //! such screen). They are set conservatively to catch *dominant* periodicity
 //! while not flagging ordinary noise, and they are expected to be **tuned
-//! against real pilot data** once the orinoco collection runs. See each
+//! against real pilot data** once the bare-metal collection runs. See each
 //! constant's docs for the reasoning, and the crate REVIEW-NEEDED note.
 //!
 //! # Determinism and panic-freedom

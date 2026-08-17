@@ -52,7 +52,7 @@ capabilities:
         use oxicrypt_sha::sha256;
 
         fn main() {
-            initialize_with_tests(oxicrypt_sha::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_sha::KATS).unwrap();
             let digest = sha256(b"hello world").unwrap();
             assert_eq!(digest.len(), 32);
         }
@@ -82,7 +82,7 @@ capabilities:
         use oxicrypt_xof::{kmac256, shake256};
 
         fn main() {
-            initialize_with_tests(oxicrypt_xof::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_xof::KATS).unwrap();
             let squeezed: [u8; 32] = shake256(b"input data").unwrap();
             let tag: [u8; 32] = kmac256(b"my-key", b"input", b"").unwrap();
             assert_eq!(squeezed.len(), 32);
@@ -104,7 +104,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         fn main() {
-            initialize_with_tests(oxicrypt_hmac::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_hmac::KATS).unwrap();
             let mut mac = HmacSha256::new(b"secret-key-at-least-32-bytes-long!!").unwrap();
             mac.update(b"message to authenticate");
             let tag = mac.finalize();
@@ -127,7 +127,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         fn main() {
-            initialize_with_tests(oxicrypt_aes::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_aes::KATS).unwrap();
             let key = Aes256Key::new(&[0u8; 32]).unwrap(); // use a real key
             let iv = [0u8; 12]; // a nonce must never repeat under one key
             let plaintext = b"hello, world!   ";
@@ -151,7 +151,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         fn main() {
-            initialize_with_tests(oxicrypt_drbg::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_drbg::KATS).unwrap();
             let mut rng = HmacDrbgSha256::new();
             // Both values must come from a real entropy source in production.
             rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
@@ -181,7 +181,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         fn main() {
-            initialize_with_tests(oxicrypt_kdf::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_kdf::KATS).unwrap();
             // Extract concentrates the input keying material into a pseudorandom key,
             // then expand derives as many bytes as the caller asks for.
             let hkdf = HkdfSha256::extract(Some(b"optional-salt"), b"input-keying-material").unwrap();
@@ -211,7 +211,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         fn main() {
-            initialize_with_tests(oxicrypt_eddsa::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_eddsa::KATS).unwrap();
             let mut rng = HmacDrbgSha256::new();
             rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
             let signing_key = Ed25519PrivateKey::generate(&mut rng).unwrap();
@@ -235,7 +235,7 @@ capabilities:
         use oxicrypt_module::initialize_with_tests;
 
         fn main() {
-            initialize_with_tests(oxicrypt_ecdh::KATS).unwrap();
+            initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_ecdh::KATS).unwrap();
             let mut rng = HmacDrbgSha256::new();
             rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
             // Each party keeps d and publishes Q.
@@ -265,7 +265,9 @@ capabilities:
 
   - category: "Module integrity"
     algorithms: ["HMAC-SHA-256 software integrity check"]
-    standards: ["FIPS 140-3 IG 10.3.A"]
+    standards:
+      - "ISO/IEC 19790:2012 §7.10.2.2"
+      - "FIPS 140-3 IG 10.2.A"
 
   - category: "Entropy source (pre-validation scaffolding)"
     algorithms:

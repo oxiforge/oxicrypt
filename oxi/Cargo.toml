@@ -26,6 +26,7 @@ path = "src/main.rs"
 
 [dependencies]
 oxicrypt-module = { workspace = true }
+oxicrypt-integrity = { workspace = true }
 oxicrypt-sha = { workspace = true }
 oxicrypt-hmac = { workspace = true }
 oxicrypt-aes = { workspace = true }

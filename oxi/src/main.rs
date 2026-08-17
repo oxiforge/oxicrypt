@@ -80,8 +80,31 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
+/// Pre-operational self-tests for the services this CLI offers.
+///
+/// The integrity test runs first as its own, separate argument to
+/// [`oxicrypt_module::initialize_with_tests`]. This inventory covers the
+/// approved algorithms reachable from the subcommands: SHA for `hash`,
+/// HMAC for `hmac`, and the DRBG — with the AES it is built on — for
+/// `rand`.
+///
+/// The module refuses to become operational without an integrity group,
+/// which is a separate parameter. That guarantee does NOT extend to this
+/// inventory: nothing checks that `tests` covers every algorithm the
+/// subcommands can reach, so adding a subcommand without adding its KATs
+/// here would still start. Keeping the two in step is this file's job.
+fn power_up_tests() -> Vec<oxicrypt_module::KatEntry> {
+    let groups: &[&[oxicrypt_module::KatEntry]] = &[
+        oxicrypt_sha::KATS,
+        oxicrypt_hmac::KATS,
+        oxicrypt_aes::KATS,
+        oxicrypt_drbg::KATS,
+    ];
+    groups.iter().flat_map(|g| g.iter().copied()).collect()
+}
+
 fn init_module() -> Result<(), oxicrypt_module::Error> {
-    match oxicrypt_module::initialize() {
+    match oxicrypt_module::initialize_with_tests(oxicrypt_integrity::KATS, &power_up_tests()) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
         Err(e) => Err(e),
     }

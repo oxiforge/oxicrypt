@@ -15,7 +15,7 @@ two staged PRs:
   `oxi_is_operational` state query, AES-256-GCM canonical exposure with
   opaque `OxiAes256Key` handle (F4 distinct `OxiResult::TagMismatch`,
   F5 NULL-safe `_free`, F9 NULL-AAD-with-len-0 allowed),
-  `fips-integrity-sign` extended for multi-target signing (F8 per-binary
+  `oxicrypt-integrity-sign` extended for multi-target signing (F8 per-binary
   integrity slots in cdylib + staticlib), C integration test harness
   (McGrew/Viega Case 15 + tag-tamper + handle lifecycle, 6 test runs
   spanning both link modes).
@@ -23,10 +23,11 @@ two staged PRs:
 The implementation tracks the design below; deltas during implementation
 are recorded inline in the Implementation Plan section.
 
-**Boundary note:** The C FFI shim resides *inside* the FIPS 140-3 module
-boundary. It is thin glue that calls the same Rust functions exercised by
-the ACVP harness. Language bindings built on top of this C API (Python,
-Go, Node) reside *outside* the boundary.
+**Boundary note:** The C FFI shim resides *outside* the FIPS 140-3 module
+boundary, as does everything built on top of it. It is thin glue that calls
+the same Rust functions exercised by the ACVP harness, which are the ones
+inside the boundary. Security Policy §1 states the boundary membership;
+`doc-guard` asserts the crate set against it.
 
 ## Design principles
 
@@ -415,11 +416,12 @@ const char *oxi_version(void);
    McGrew/Viega Case 15 vector (AES-256, no AAD), decrypt round-trip,
    tag tamper rejection (`OxiResult::TagMismatch=22`), and handle
    lifecycle (NULL-free safe no-op, NULL-arg rejection).
-5. ✅ **Complete** (PR #6) — The FFI crate is workspace-internal and
-   ships inside the FIPS boundary alongside the algorithm crates. Both
-   the cdylib and staticlib outputs embed the integrity slot per F8;
-   `fips-integrity-sign --cdylib-target … --staticlib-target …`
-   signs both in one invocation.
+5. ✅ **Complete** (PR #6) — The FFI crate sits outside the FIPS
+   boundary and translates for the in-boundary algorithm crates. Both
+   the cdylib and staticlib outputs embed the integrity slot per F8.
+   `oxicrypt-integrity-sign --cdylib-target …` signs the shared library; a
+   consumer linking the static archive signs the binary they produce,
+   since an archive is a build input with no loadable image to verify.
 
 **Future work** (tracked separately):
 

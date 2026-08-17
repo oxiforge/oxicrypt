@@ -634,12 +634,28 @@ const _: () = {
 mod tests {
     use super::*;
 
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    fn init_with_tests(tests: &[oxicrypt_module::KatEntry]) -> Result<(), oxicrypt_module::Error> {
+        oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
+
     fn make_drbg(seed: &[u8]) -> HmacDrbgSha256 {
         // Bring the module to Operational so the gated
         // `instantiate()` (and any gated key construction it
         // triggers) succeeds.
-        use oxicrypt_module::{KatEntry, initialize_with_tests};
-        let _ = initialize_with_tests(&[KatEntry {
+        use oxicrypt_module::KatEntry;
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-keygen-test-noop",
             run: || Ok(()),
         }]);
@@ -693,8 +709,8 @@ mod tests {
         // PCT inside from_components gates on the module being
         // operational, so bring the module up via the standard
         // initialization path first.
-        use oxicrypt_module::{KatEntry, initialize_with_tests};
-        let _ = initialize_with_tests(&[KatEntry {
+        use oxicrypt_module::KatEntry;
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-keygen-smoke",
             run: crate::self_test,
         }]);
@@ -728,8 +744,8 @@ mod tests {
     #[test]
     #[allow(clippy::items_after_statements)]
     fn generate_2048_pinned_kat() {
-        use oxicrypt_module::{KatEntry, initialize_with_tests};
-        let _ = initialize_with_tests(&[KatEntry {
+        use oxicrypt_module::KatEntry;
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-keygen-pinned-kat",
             run: crate::self_test,
         }]);

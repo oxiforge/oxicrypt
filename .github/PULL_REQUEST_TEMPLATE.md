@@ -31,7 +31,7 @@
 - [ ] `cargo doc --no-deps --workspace` — no warnings
 - [ ] LAMA manifest updated (or `--no-verify` documented in commit body)
 - [ ] Security policy updated — or no gem surfaced (bypass, no note needed), or policy not provisioned
-- [ ] `fips-integrity-sign --sign` re-signed binary (harness rebuilds only) — HMAC `<paste>`
+- [ ] `oxicrypt-integrity-sign --sign` re-signed binary (harness rebuilds only) — HMAC `<paste>`
 - [ ] Live ACVTS run (if applicable) — session `<id>`, vector set `<id>`, verdict `passed`
 
 ## Anti-criteria

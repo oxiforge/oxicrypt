@@ -36,7 +36,7 @@
 #     of this workflow on the same tag can produce different bytes and
 #     therefore different integrity MACs. What is asserted is narrower and
 #     checkable: each published artifact's MAC is recorded in the release body,
-#     and `fips-integrity-sign --verify` confirms the artifact matches the MAC
+#     and `oxicrypt-integrity-sign --verify` confirms the artifact matches the MAC
 #     it ships with.
 #   * No macOS/Windows FIPS claim is implied by their presence here. They are
 #     built because the C API is portable; the validated configuration is
@@ -191,7 +191,7 @@ jobs:
       - name: Build the signing tool
         # Built for the HOST, not the target: it has to run here. On the
         # cross-compiled Linux legs a target-built signer would not execute.
-        run: cargo build -p oxicrypt-integrity --bin fips-integrity-sign --release
+        run: cargo build -p oxicrypt-integrity-sign --release
 
       # ORDER IS LOAD-BEARING. Signing rewrites the MAC slot inside the binary,
       # so it mutates the file. A checksum taken before this step describes
@@ -205,17 +205,18 @@ jobs:
         run: |
           set -euo pipefail
           OUT="target/${{ matrix.target }}/release"
-          SIGNER="target/release/fips-integrity-sign"
-          [ -x "$SIGNER" ] || SIGNER="target/release/fips-integrity-sign.exe"
+          SIGNER="target/release/oxicrypt-integrity-sign"
+          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
           "$SIGNER" --sign \
-            --cdylib-target  "$OUT/${{ matrix.cdylib }}" \
-            --staticlib-target "$OUT/${{ matrix.staticlib }}" | tee /tmp/sign-output.txt
-          # Positive control: two targets in, two MAC lines out. A silently
-          # skipped target would leave a signed-looking artifact whose slot
-          # was never written, and it fails in the consumer's hands, not here.
+            --cdylib-target  "$OUT/${{ matrix.cdylib }}" | tee /tmp/sign-output.txt
+          # Positive control: one loadable image in, one MAC line out. A
+          # silently skipped target would leave a signed-looking artifact whose
+          # slot was never written, and it fails in the consumer's hands, not
+          # here. The static archive is deliberately absent: an archive has no
+          # loadable image, so the consumer signs the binary they link it into.
           n=$(grep -c '^signed ' /tmp/sign-output.txt)
-          if [ "$n" -ne 2 ]; then
-            echo "::error::expected 2 signed lines, got $n — a target was not signed"
+          if [ "$n" -ne 1 ]; then
+            echo "::error::expected 1 signed line, got $n — the shared library was not signed"
             exit 1
           fi
 
@@ -252,25 +253,30 @@ jobs:
             echo "built by      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo ""
             echo "Integrity MACs (HMAC-SHA-256 over the binary, slot zeroed),"
-            echo "as emitted by fips-integrity-sign at signing time:"
+            echo "as emitted by oxicrypt-integrity-sign at signing time:"
             sed 's|^signed target/[^ ]*/release/|  |' /tmp/sign-output.txt
             echo ""
+            echo ""
+            echo "The static archive ships unsigned. An archive has no loadable"
+            echo "image, so sign the binary you link it into:"
+            echo "  oxicrypt-integrity-sign --sign <your-binary>"
+            echo ""
             echo "Verify locally with:"
-            echo "  cargo run -p oxicrypt-integrity --bin fips-integrity-sign -- --verify <file>"
+            echo "  cargo install oxicrypt-integrity-sign"
+            echo "  oxicrypt-integrity-sign --verify <file>"
           } > "$DIR/BUILD-PROVENANCE.txt"
 
           # Verify the STAGED copies, not the build-directory originals. The
           # copies are what ship, and this is the last point at which a
           # truncated or mangled `cp` is still catchable here rather than by
           # the consumer's power-up self-test.
-          SIGNER="target/release/fips-integrity-sign"
-          [ -x "$SIGNER" ] || SIGNER="target/release/fips-integrity-sign.exe"
+          SIGNER="target/release/oxicrypt-integrity-sign"
+          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
           "$SIGNER" --verify \
-            --cdylib-target  "$DIR/${{ matrix.cdylib }}" \
-            --staticlib-target "$DIR/${{ matrix.staticlib }}" | tee /tmp/verify-output.txt
+            --cdylib-target  "$DIR/${{ matrix.cdylib }}" | tee /tmp/verify-output.txt
           v=$(grep -c '^verify ok: ' /tmp/verify-output.txt)
-          if [ "$v" -ne 2 ]; then
-            echo "::error::expected 2 verify-ok lines on the staged copies, got $v"
+          if [ "$v" -ne 1 ]; then
+            echo "::error::expected 1 verify-ok line on the staged copy, got $v"
             exit 1
           fi
 

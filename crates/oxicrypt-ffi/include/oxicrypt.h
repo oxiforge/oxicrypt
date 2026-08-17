@@ -5,7 +5,7 @@
  * This header is GENERATED from the Rust source by cbindgen.
  * Do not edit by hand — edit the Rust signatures and rerun the build.
  *
- * The C ABI shim resides INSIDE the FIPS 140-3 module boundary.
+ * The C ABI shim resides OUTSIDE the FIPS 140-3 module boundary.
  * See docs/security-policy/ for the formal CMVP Security Policy.
  *
  * Generated headers are committed under version control and verified
@@ -223,6 +223,38 @@ int oxi_active_profile(void);
  No pointers; always safe to call.
  */
 int oxi_is_operational(void);
+
+/*
+ Returns the pre-operational integrity test's status indicator.
+
+ | Value | Meaning |
+ |---|---|
+ | 0 | `NotRun` — the test has not run in this process |
+ | 1 | `Passed` — the image matched its reference MAC |
+ | 2 | `Mismatch` — the image does not match its reference MAC |
+ | 3 | `SlotInvalid` — the slot is absent, malformed, or impossible |
+ | 4 | `Unreadable` — the test was **not performed** |
+ | 5 | `CastNotRun` — the test was reached before its CAST |
+ | 6 | `Unknown` — the record held a value this module never writes |
+
+ This exists because `oxi_init` cannot carry the distinction: a
+ failing self-test returns [`OxiResult::SelfTestFailed`] whatever the
+ cause, so `Mismatch` and `Unreadable` are indistinguishable from its
+ return value alone. Security Policy §5.2 requires an operator and a
+ test laboratory to be able to tell those two apart — a corrupt module
+ from an environment that could not supply the module's own bytes —
+ and this query is how that is retrieved.
+
+ The value latches on the first run and nothing is re-run here, so a
+ later call cannot revise it and this is safe to call from the error
+ state. A value of 6 means the record held something this module never
+ writes.
+
+ # Safety
+
+ No pointers; always safe to call.
+ */
+int oxi_integrity_status(void);
 
 /*
  Compute SHA-256 over `data_len` bytes at `data_ptr`.

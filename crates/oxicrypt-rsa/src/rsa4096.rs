@@ -79,8 +79,20 @@ mod tests {
     use super::*;
     use oxicrypt_drbg::HmacDrbgSha256;
 
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
     fn init_module() {
-        let _ = oxicrypt_module::initialize_with_tests(&[]);
+        let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
     }
 
     #[test]

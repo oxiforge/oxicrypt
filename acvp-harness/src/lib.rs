@@ -97,15 +97,31 @@ pub mod session;
 pub mod shs;
 pub mod transport;
 
-/// Convenience wrapper: run `oxicrypt_module::initialize()` and treat
-/// `AlreadyInitialized` as success.
+/// Stands in for the pre-operational integrity test.
+///
+/// Every caller of [`ensure_initialized`] lives in this crate's `tests/`
+/// integration binaries, and a `cargo test` binary is never signed, so the
+/// real integrity test cannot pass inside one. The module requires an
+/// integrity group to initialise at all, so this stub is declared here,
+/// visibly, rather than the module offering any way to skip the
+/// requirement. `acvp-harness`'s own `main.rs` binary is the production
+/// caller and passes the real `oxicrypt_integrity::KATS` — see
+/// `initialize_with_tests` there.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Convenience wrapper: run `oxicrypt_module::initialize_with_tests` with
+/// the unsigned-test-binary integrity stub and no additional tests, and
+/// treat `AlreadyInitialized` as success.
 ///
 /// Integration tests share a single `oxicrypt_module` state machine
 /// across test cases within the same test binary, so the first call
 /// initializes and subsequent calls are no-ops. This helper keeps the
 /// boilerplate in tests down to a single line.
 pub fn ensure_initialized() -> Result<(), oxicrypt_module::Error> {
-    match oxicrypt_module::initialize() {
+    match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
         Err(e) => Err(e),
     }

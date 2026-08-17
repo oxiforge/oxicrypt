@@ -259,17 +259,32 @@ mod tests {
         out
     }
 
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
     fn ensure_initialized() {
-        let _ = initialize_with_tests(&[
-            KatEntry {
-                name: "sha512-224-unit-test-bootstrap",
-                run: self_test_224,
-            },
-            KatEntry {
-                name: "sha512-256-unit-test-bootstrap",
-                run: self_test_256,
-            },
-        ]);
+        let _ = initialize_with_tests(
+            UNSIGNED_TEST_BINARY,
+            &[
+                KatEntry {
+                    name: "sha512-224-unit-test-bootstrap",
+                    run: self_test_224,
+                },
+                KatEntry {
+                    name: "sha512-256-unit-test-bootstrap",
+                    run: self_test_256,
+                },
+            ],
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@ use oxicrypt_drbg::HmacDrbgSha256;
 use oxicrypt_module::initialize_with_tests;
 
 fn main() {
-    initialize_with_tests(oxicrypt_drbg::KATS).unwrap();
+    initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_drbg::KATS).unwrap();
     let mut rng = HmacDrbgSha256::new();
     // Both values must come from a real entropy source in production.
     rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();

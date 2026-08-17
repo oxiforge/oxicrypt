@@ -66,9 +66,25 @@ crate::keygen_impl::define_keygen! {
 mod tests {
     use super::*;
 
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    fn init_with_tests(tests: &[oxicrypt_module::KatEntry]) -> Result<(), oxicrypt_module::Error> {
+        oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
+
     fn make_drbg(seed: &[u8]) -> HmacDrbgSha256 {
-        use oxicrypt_module::{KatEntry, initialize_with_tests};
-        let _ = initialize_with_tests(&[KatEntry {
+        use oxicrypt_module::KatEntry;
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-3072-keygen-test-noop",
             run: || Ok(()),
         }]);
@@ -115,8 +131,8 @@ mod tests {
     /// primes) but exercises the complete pipeline.
     #[test]
     fn generate_3072_smoke() {
-        use oxicrypt_module::{KatEntry, initialize_with_tests};
-        let _ = initialize_with_tests(&[KatEntry {
+        use oxicrypt_module::KatEntry;
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-3072-keygen-smoke",
             run: crate::self_test,
         }]);

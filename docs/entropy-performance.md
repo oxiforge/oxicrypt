@@ -35,7 +35,7 @@ unifies features across an invocation, so a plain dependency here would enable
 > profile is not its host's, and `RawCounterTimer` is simultaneously the thing
 > being measured and the instrument measuring it. The number below characterises
 > this VM. It is **not** the pilot operational environment's figure — that is
-> orinoco, the host, and it needs its own run before it can be cited as the
+> the bare-metal host, and it needs its own run before it can be cited as the
 > per-OE number the Security Policy's operational claims sit alongside.
 >
 > The `maxwell` assessment figures are ordinary compute and less sensitive to
@@ -166,7 +166,7 @@ hours.
 ## What these figures do not cover
 
 - **The pilot operational environment.** Every number here is from a KVM guest;
-  the per-OE conditioned-output figure requires a host-side run on orinoco.
+  the per-OE conditioned-output figure requires a run on the bare-metal host.
 - **The module's own 4-bit symbol width** for the IID figure and the criterion
   bench; only the non-IID CLI rows cover it.
 - **The IID branch's worst case**, which the early exit hides.

@@ -808,7 +808,17 @@ mod tests {
         // global state); under nextest each test is its own process. The
         // default profile is `Unrestricted`, which permits Hash_DRBG-256 —
         // no non-default profile is needed.
-        let _ = oxicrypt_module::initialize();
+        //
+        // Stands in for the pre-operational integrity test: a `cargo test`
+        // binary is never signed, so the real integrity test cannot pass
+        // inside one. The module requires an integrity group to initialise
+        // at all, so this stub is declared here, visibly, rather than the
+        // module offering any way to skip the requirement.
+        const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+            name: "integrity not verifiable in an unsigned test binary",
+            run: || Ok(()),
+        }];
+        let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
         assert!(
             oxicrypt_module::is_operational(),
             "module must be operational before the gated DRBG API can be used"

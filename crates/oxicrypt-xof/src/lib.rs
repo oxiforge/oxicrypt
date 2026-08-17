@@ -1756,57 +1756,72 @@ mod tests {
         out
     }
 
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
     fn ensure_initialized() {
-        let _ = initialize_with_tests(&[
-            KatEntry {
-                name: "shake128-bootstrap",
-                run: self_test_128,
-            },
-            KatEntry {
-                name: "shake256-bootstrap",
-                run: self_test_256,
-            },
-            KatEntry {
-                name: "cshake128-bootstrap",
-                run: self_test_cshake128,
-            },
-            KatEntry {
-                name: "cshake256-bootstrap",
-                run: self_test_cshake256,
-            },
-            KatEntry {
-                name: "kmac128-bootstrap",
-                run: self_test_kmac128,
-            },
-            KatEntry {
-                name: "kmac256-bootstrap",
-                run: self_test_kmac256,
-            },
-            KatEntry {
-                name: "kmacxof128-bootstrap",
-                run: self_test_kmacxof128,
-            },
-            KatEntry {
-                name: "kmacxof256-bootstrap",
-                run: self_test_kmacxof256,
-            },
-            KatEntry {
-                name: "tuplehash128-bootstrap",
-                run: self_test_tuplehash128,
-            },
-            KatEntry {
-                name: "tuplehash256-bootstrap",
-                run: self_test_tuplehash256,
-            },
-            KatEntry {
-                name: "parallelhash128-bootstrap",
-                run: self_test_parallelhash128,
-            },
-            KatEntry {
-                name: "parallelhash256-bootstrap",
-                run: self_test_parallelhash256,
-            },
-        ]);
+        let _ = initialize_with_tests(
+            UNSIGNED_TEST_BINARY,
+            &[
+                KatEntry {
+                    name: "shake128-bootstrap",
+                    run: self_test_128,
+                },
+                KatEntry {
+                    name: "shake256-bootstrap",
+                    run: self_test_256,
+                },
+                KatEntry {
+                    name: "cshake128-bootstrap",
+                    run: self_test_cshake128,
+                },
+                KatEntry {
+                    name: "cshake256-bootstrap",
+                    run: self_test_cshake256,
+                },
+                KatEntry {
+                    name: "kmac128-bootstrap",
+                    run: self_test_kmac128,
+                },
+                KatEntry {
+                    name: "kmac256-bootstrap",
+                    run: self_test_kmac256,
+                },
+                KatEntry {
+                    name: "kmacxof128-bootstrap",
+                    run: self_test_kmacxof128,
+                },
+                KatEntry {
+                    name: "kmacxof256-bootstrap",
+                    run: self_test_kmacxof256,
+                },
+                KatEntry {
+                    name: "tuplehash128-bootstrap",
+                    run: self_test_tuplehash128,
+                },
+                KatEntry {
+                    name: "tuplehash256-bootstrap",
+                    run: self_test_tuplehash256,
+                },
+                KatEntry {
+                    name: "parallelhash128-bootstrap",
+                    run: self_test_parallelhash128,
+                },
+                KatEntry {
+                    name: "parallelhash256-bootstrap",
+                    run: self_test_parallelhash256,
+                },
+            ],
+        );
     }
 
     #[test]

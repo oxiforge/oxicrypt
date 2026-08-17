@@ -52,11 +52,26 @@ mod tests {
     /// Deterministic seed shared by the cached and uncached paths.
     const XI: [u8; 32] = [0x42u8; 32];
 
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
     fn ensure_initialized() {
-        let _ = initialize_with_tests(&[KatEntry {
-            name: "lms-h5w4-unit-test-bootstrap",
-            run: self_test,
-        }]);
+        let _ = initialize_with_tests(
+            UNSIGNED_TEST_BINARY,
+            &[KatEntry {
+                name: "lms-h5w4-unit-test-bootstrap",
+                run: self_test,
+            }],
+        );
     }
 
     #[test]

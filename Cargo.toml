@@ -36,6 +36,9 @@ members = [
     "benches",
     "tools/ct-validation",
     "tools/doc-guard",
+    "tools/oxicrypt-integrity-sign",
+    "tools/integrity-probe",
+    "tools/integrity-probe-so",
     "tools/quickstarts",
 ]
 exclude = [

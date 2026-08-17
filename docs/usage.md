@@ -22,10 +22,11 @@ fn main() -> Result<(), oxicrypt_module::Error> {
     all_kats.extend_from_slice(oxicrypt_aes::KATS);
     all_kats.extend_from_slice(oxicrypt_drbg::KATS);
 
-    // Initialize the module. This runs every KAT sequentially.
-    // If any test fails, the module enters an error state and
+    // Initialize the module. The integrity group runs first and is a
+    // separate, required argument, then every algorithm KAT runs in
+    // order. If any test fails, the module enters an error state and
     // all subsequent require_operational() calls will fail.
-    initialize_with_tests(&all_kats)?;
+    initialize_with_tests(oxicrypt_integrity::KATS, &all_kats)?;
 
     // From this point, all approved services are available.
     require_operational()?;

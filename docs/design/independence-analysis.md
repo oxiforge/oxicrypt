@@ -218,17 +218,17 @@ maxwell independence <FILE> <BITS_PER_SYMBOL> [--claim <H>] [--metadata <FILE>] 
   re-collect on trip). Implementation details follow a build-time survey of `collection.rs`;
   because that survey is a judgment point, this slice runs attended-or-reviewed, not in an
   unattended night.
-- **The run (attended, orinoco bare metal):** both boundaries × ≥10M; then per boundary
+- **The run (attended, bare metal):** both boundaries × ≥10M; then per boundary
   `maxwell independence characterization.bin 4 --claim 0.5 --metadata metadata.json` +
   `maxwell periodicity` on the same capture (10M pads to 16.7M complex ≈ 400 MiB —
-  documented; fine on orinoco). Sidecars land beside `gate-results.json` in the per-OE
+  documented; fine on the bare-metal host). Sidecars land beside `gate-results.json` in the per-OE
   layout (ISC-61); **both boundaries are required** for the evidence package entry (panel
   C6/Risk-4).
 - **One-time independent replication (panel C5):** on the banked 10M datasets, the tuple-MCV
   numbers (pairs + triplets, measured + shuffled-baseline) are replicated once in an
   independent implementation (numpy — the #102 periodicity precedent) and the match recorded
   in the assessment note. This is the external check the triplet path otherwise lacks.
-- **What flips when:** ISC-121 → [x] at build + oracles green; ISC-120 → [x] at the orinoco
+- **What flips when:** ISC-121 → [x] at build + oracles green; ISC-120 → [x] at the bare-metal
   run with both boundaries' sidecars + the replication note banked.
 
 ## Build plan (night-runnable except where marked, oracle-gated)
@@ -261,7 +261,7 @@ format pinned), Build-3 (odd-tail KATs), Build-risks (stride-asserting KATs; rid
 de-scoped from nights; shift-arithmetic note).
 Accepted-documented (declined to change): Stat-C/D (k≤3 + flag floor-detector nature —
 inherent to the precedent method; delegation stated), periodicity 400 MiB at 10M (offline
-tool, orinoco headroom).
+tool, bare-metal headroom).
 
 ## Deliberately not in scope
 

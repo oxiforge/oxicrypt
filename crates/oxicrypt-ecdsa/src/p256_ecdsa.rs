@@ -534,7 +534,23 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{KatEntry, initialize_with_tests};
+    use oxicrypt_module::KatEntry;
+
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    fn init_with_tests(tests: &[KatEntry]) -> Result<(), oxicrypt_module::Error> {
+        oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
 
     #[test]
     fn kat_public_key_matches_rfc6979() {
@@ -630,7 +646,7 @@ mod tests {
         // run it to completion. The public entry points must then
         // succeed; before initialization they would return
         // `Error::NotOperational`.
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -686,7 +702,7 @@ mod tests {
             0x1c, 0xde, 0xdc, 0x5d, 0x7d, 0x06, 0x48, 0x50, 0x25,
         ];
 
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -708,7 +724,7 @@ mod tests {
 
     #[test]
     fn r7_generate_then_sign_and_verify_roundtrips() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -724,7 +740,7 @@ mod tests {
         // Two DRBG-backed signatures over the same message must
         // differ (fresh `k`), and both must verify under the same
         // public key.
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -744,7 +760,7 @@ mod tests {
         // handle constructor. The PCT must pass (the key is
         // internally consistent) and the resulting handle's
         // `public_key()` must match the RFC 6979 `U` value.
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -761,7 +777,7 @@ mod tests {
 
     #[test]
     fn r7_from_bytes_rejects_zero_scalar() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -776,7 +792,7 @@ mod tests {
 
     #[test]
     fn r7_from_bytes_rejects_scalar_equal_to_n() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -802,7 +818,7 @@ mod tests {
         // forged public key is not `d · G`. This is the IG 10.3.A
         // fault-injection proof that the PCT actually tests what
         // we claim it tests.
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
@@ -833,7 +849,7 @@ mod tests {
         // is a valid non-zero scalar. This is primarily a guard
         // against silently regressing the rejection-sampling
         // range check.
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);

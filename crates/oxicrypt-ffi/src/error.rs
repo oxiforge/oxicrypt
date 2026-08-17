@@ -96,6 +96,10 @@ pub enum OxiResult {
     InvalidPayloadLength = 26,
     /// AAD length exceeds the mode's allowed maximum.
     InvalidAadLength = 27,
+    /// The module was initialised without the pre-operational software
+    /// integrity test, so it was never verified against its reference
+    /// MAC. Distinct from `SelfTestFailed`: no test failed, none ran.
+    IntegrityUnverified = 28,
 
     /// Catch-all for "should-never-happen" cases. New error sources should
     /// be paired with new `OxiResult` variants in the same change set —
@@ -115,6 +119,7 @@ impl From<oxicrypt_module::Error> for OxiResult {
             oxicrypt_module::Error::InvalidInput => OxiResult::InvalidInput,
             oxicrypt_module::Error::AlgorithmRestricted { .. } => OxiResult::AlgorithmRestricted,
             oxicrypt_module::Error::NotImplemented => OxiResult::NotImplemented,
+            oxicrypt_module::Error::IntegrityNotAttested => OxiResult::IntegrityUnverified,
         }
     }
 }

@@ -676,13 +676,27 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Power the module up to `Operational` with the real SHA-256 KAT
-/// set so the gated `oxicrypt_sha::sha256` provenance hash can run. Idempotent
-/// and concurrency-safe: the module's state machine lets exactly one caller win
-/// the `PowerOff -> SelfTest` transition; every later call returns
+/// Stands in for the pre-operational integrity test.
+///
+/// `maxwell` is out-of-boundary tooling that is never signed — it ships
+/// to nobody and no release pipeline runs `oxicrypt-integrity-sign` against
+/// it — so the real integrity test can never pass inside it. The module
+/// requires an integrity group to initialise at all, so this stub is
+/// declared here, visibly, rather than the module offering any way to
+/// skip the requirement.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in the unsigned maxwell binary",
+    run: || Ok(()),
+}];
+
+/// Power the module up to `Operational` with the unsigned-binary
+/// integrity stub and the real SHA-256 KAT set so the gated
+/// `oxicrypt_sha::sha256` provenance hash can run. Idempotent and
+/// concurrency-safe: the module's state machine lets exactly one caller
+/// win the `PowerOff -> SelfTest` transition; every later call returns
 /// `AlreadyInitialized`, which is success for our purposes.
 fn ensure_module_powered_up() -> Result<(), oxicrypt_module::Error> {
-    match oxicrypt_module::initialize_with_tests(oxicrypt_sha::KATS) {
+    match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, oxicrypt_sha::KATS) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
         Err(e) => Err(e),
     }

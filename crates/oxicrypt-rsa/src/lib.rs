@@ -1575,7 +1575,23 @@ pub const __SHA256_DIGEST_SIZE: usize = SHA256_DIGEST_SIZE;
 )]
 mod tests {
     use super::*;
-    use oxicrypt_module::{KatEntry, initialize_with_tests};
+    use oxicrypt_module::KatEntry;
+
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    fn init_with_tests(tests: &[KatEntry]) -> Result<(), oxicrypt_module::Error> {
+        oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
 
     #[test]
     fn kat_positive_verifies() {
@@ -1707,7 +1723,7 @@ mod tests {
 
     #[test]
     fn private_key_construction_runs_pct_and_signs() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-pkcs1v15-sha256",
             run: self_test,
         }]);
@@ -1824,7 +1840,7 @@ mod tests {
 
     #[test]
     fn private_key_sign_pss_then_public_verify() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-pkcs1v15-sha256",
             run: self_test,
         }]);
@@ -1840,7 +1856,7 @@ mod tests {
 
     #[test]
     fn private_key_construction_rejects_bad_d() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-pkcs1v15-sha256",
             run: self_test,
         }]);
@@ -1858,7 +1874,7 @@ mod tests {
     /// public API. This exercises the whole R4 surface in one shot.
     #[test]
     fn generate_then_pss_sign_and_verify() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r4-gen-pss",
             run: self_test,
         }]);
@@ -1897,7 +1913,7 @@ mod tests {
     #[test]
     #[allow(clippy::similar_names)]
     fn r5_crt_sign_equals_non_crt_sign_for_fresh_keypair() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r5-crt-equiv",
             run: self_test,
         }]);
@@ -1952,7 +1968,7 @@ mod tests {
     #[test]
     #[allow(clippy::similar_names)]
     fn r5_bellcore_rejects_tampered_dp() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r5-bellcore",
             run: self_test,
         }]);
@@ -1990,7 +2006,7 @@ mod tests {
     /// through `sign_pss_sha256_with_salt` works end-to-end.
     #[test]
     fn r5_crt_handle_pss_sign_verifies() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r5-crt-pss",
             run: self_test,
         }]);
@@ -2013,7 +2029,7 @@ mod tests {
     /// an invalid public exponent (even) without touching the DRBG.
     #[test]
     fn generate_rejects_even_exponent() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r4-reject-e",
             run: self_test,
         }]);
@@ -2036,7 +2052,7 @@ mod tests {
     /// to reach the `pow_secret` ladder path.
     #[test]
     fn r6_oaep_roundtrip_nocrt_handle() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-nocrt",
             run: self_test,
         }]);
@@ -2063,7 +2079,7 @@ mod tests {
     /// Bellcore verify-after-decrypt.
     #[test]
     fn r6_oaep_roundtrip_crt_handle() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-crt",
             run: self_test,
         }]);
@@ -2100,7 +2116,7 @@ mod tests {
     /// `mont2048::pow_secret` ladder on decrypt too.
     #[test]
     fn r6_oaep_crt_and_nocrt_agree_on_decryption() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-agree",
             run: self_test,
         }]);
@@ -2151,7 +2167,7 @@ mod tests {
     /// for sign. Proves the CRT decrypt path is fault-protected.
     #[test]
     fn r6_oaep_bellcore_rejects_tampered_dp() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-bellcore",
             run: self_test,
         }]);
@@ -2208,7 +2224,7 @@ mod tests {
     /// rather than the structural `PS`/`0x01` checks.
     #[test]
     fn r6_oaep_decrypt_rejects_wrong_label() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-label",
             run: self_test,
         }]);
@@ -2237,7 +2253,7 @@ mod tests {
     /// decoder rejects it via one or more of its structural checks.
     #[test]
     fn r6_oaep_decrypt_rejects_tampered_ciphertext() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-ct-tamper",
             run: self_test,
         }]);
@@ -2262,7 +2278,7 @@ mod tests {
     /// randomised through the caller-supplied DRBG.
     #[test]
     fn r6_oaep_encrypt_drbg_produces_distinct_ciphertexts() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-drbg",
             run: self_test,
         }]);
@@ -2296,7 +2312,7 @@ mod tests {
     /// observe the error.)
     #[test]
     fn r6_oaep_encrypt_rejects_oversize_message() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "rsa-2048-r6-oaep-oversize",
             run: self_test,
         }]);

@@ -12,16 +12,16 @@
 //! # State machine (FIPS 140-3 §7.2)
 //!
 //! ```text
-//!    ┌──────────┐  initialize() ┌───────────┐  all KATs pass  ┌──────────────┐
-//!    │ PowerOff │──────────────▶│ SelfTest  │────────────────▶│ Operational  │
-//!    └──────────┘               └───────────┘                 └──────────────┘
-//!                                     │                              │
-//!                                 KAT failure                conditional self-test
-//!                                     │                            failure
-//!                                     ▼                              │
-//!                                ┌─────────┐◀───────────────────────┘
-//!                                │  Error  │
-//!                                └─────────┘
+//!    ┌──────────┐  initialize_with_tests()  ┌───────────┐  all KATs pass  ┌──────────────┐
+//!    │ PowerOff │───────────────────────────▶│ SelfTest  │────────────────▶│ Operational  │
+//!    └──────────┘                            └───────────┘                 └──────────────┘
+//!                                                   │                              │
+//!                                               KAT failure                conditional self-test
+//!                                                   │                            failure
+//!                                                   ▼                              │
+//!                                              ┌─────────┐◀───────────────────────┘
+//!                                              │  Error  │
+//!                                              └─────────┘
 //! ```
 //!
 //! # What this crate ships
@@ -29,10 +29,9 @@
 //! - [`State`] and the transition machine (`PowerOff →
 //!   SelfTest → Operational | Error`).
 //! - [`initialize_with_tests`] — the canonical one-shot entry
-//!   point that the top-level caller uses to run every approved
-//!   algorithm's power-up KAT before opening the service
-//!   interface. [`initialize`] is a thin wrapper for the empty
-//!   registry case (used only by this crate's own unit tests).
+//!   point that the top-level caller uses to run the integrity
+//!   test and every approved algorithm's power-up KAT before
+//!   opening the service interface.
 //! - [`require_operational`] — the gate that every approved
 //!   service in every other crate calls on entry. Returns
 //!   [`Error::NotOperational`] (with the observed state) on any
@@ -108,7 +107,7 @@
 //! | §7.10 power-up self-tests | [`initialize_with_tests`] runs every registered [`KatEntry`] sequentially; the first failure latches [`State::Error`]. |
 //! | §7.10 conditional self-tests | Algorithm crates call [`enter_error_state`] on detecting a pairwise-consistency or DRBG-health failure. |
 //! | IG 9.5.A approved-mode indicator | [`is_operational`] / [`state`] — queryable at runtime. |
-//! | IG 10.3.A software integrity | Delegated to `oxicrypt-integrity` (separate crate), wired in as the first KAT by the top-level caller. |
+//! | §7.10.2.2 software integrity | Delegated to `oxicrypt-integrity` (separate crate), whose `KATS` the top-level caller runs first: the technique's own CAST, then the integrity test. |
 //!
 //! # Thread safety
 //!
@@ -144,6 +143,20 @@ pub enum State {
     /// treated as zeroized. The only recovery is to restart the
     /// containing process.
     Error = 3,
+    /// The module reached the end of its pre-operational sequence
+    /// without the software integrity test having been performed, so it
+    /// was never verified against its reference MAC. **Terminal**, and
+    /// no services are offered.
+    ///
+    /// Distinct from [`State::Error`] because the two are different
+    /// faults with different owners. `Error` means a test ran and the
+    /// module failed it: the artifact is wrong. This state means nothing
+    /// checked the artifact at all — a front end initialised the module
+    /// without the integrity test in its inventory. Nothing here says
+    /// the module is corrupt; it says the module is unverified, and an
+    /// operator told only "Error" would go looking for corruption that
+    /// may not exist.
+    IntegrityUnverified = 4,
 }
 
 impl State {
@@ -152,6 +165,7 @@ impl State {
             0 => Self::PowerOff,
             1 => Self::SelfTest,
             2 => Self::Operational,
+            4 => Self::IntegrityUnverified,
             // Any unknown discriminant collapses to `Error` so that a
             // corrupted state byte can never be interpreted as
             // `Operational`. This is defence-in-depth: `AtomicU8`
@@ -169,12 +183,13 @@ impl fmt::Display for State {
             Self::SelfTest => "SelfTest",
             Self::Operational => "Operational",
             Self::Error => "Error",
+            Self::IntegrityUnverified => "IntegrityUnverified",
         };
         f.write_str(s)
     }
 }
 
-/// Global module state. Written only by [`initialize`] and
+/// Global module state. Written only by [`initialize_with_tests`] and
 /// [`enter_error_state`]; read by [`state`] and [`require_operational`].
 static STATE: AtomicU8 = AtomicU8::new(State::PowerOff as u8);
 
@@ -229,8 +244,16 @@ pub enum Error {
         /// Short description of the failing check.
         reason: &'static str,
     },
-    /// [`initialize`] was called while the module was already past
-    /// `PowerOff`. This is not itself a FIPS violation — it just means
+    /// The pre-operational self-test sequence completed without the
+    /// software integrity test having been performed. The module is now
+    /// in the [`State::IntegrityUnverified`] state.
+    ///
+    /// This is an integration fault rather than a finding about the
+    /// module: the test inventory handed to [`initialize_with_tests`]
+    /// did not include `oxicrypt_integrity::KATS`.
+    IntegrityNotAttested,
+    /// [`initialize_with_tests`] was called while the module was already
+    /// past `PowerOff`. This is not itself a FIPS violation — it just means
     /// a second caller raced with the first. The first call's outcome
     /// is authoritative; the race loser should read [`state`] to find
     /// out.
@@ -273,6 +296,11 @@ impl fmt::Display for Error {
             Self::ConditionalTestFailed { reason } => {
                 write!(f, "FIPS conditional self-test failed: {reason}")
             }
+            Self::IntegrityNotAttested => f.write_str(
+                "this module did not check itself at startup, so it cannot tell whether this \
+                 copy is the one that was built and signed. That does not mean the module is \
+                 damaged: the program that started it skipped the check.",
+            ),
             Self::AlreadyInitialized => f.write_str("FIPS module already initialized"),
             Self::InvalidInput => f.write_str("invalid input to FIPS service"),
             Self::AlgorithmRestricted { service } => {
@@ -307,8 +335,8 @@ impl fmt::Display for SelfTestFailure {
 /// A single power-up self-test.
 ///
 /// Each approved algorithm crate will implement this trait for at least
-/// one test vector, per SP 800-140B. The [`initialize`] routine runs
-/// every registered test sequentially before the module can leave the
+/// one test vector, per SP 800-140B. The [`initialize_with_tests`] routine
+/// runs every registered test sequentially before the module can leave the
 /// `SelfTest` state.
 ///
 /// Implementations **must** be deterministic, **must not** allocate,
@@ -348,18 +376,6 @@ pub struct KatEntry {
     pub run: fn() -> Result<(), SelfTestFailure>,
 }
 
-/// Initializes the module with an empty KAT registry.
-///
-/// Convenience wrapper around [`initialize_with_tests`] for contexts
-/// that want to exercise only the state machine (notably
-/// `fips-module`'s own unit tests). Production callers of this crate
-/// must use [`initialize_with_tests`] with the full approved-service
-/// KAT set — a FIPS module that ships no self-tests is not compliant
-/// with SP 800-140B regardless of whether the state machine runs.
-pub fn initialize() -> Result<(), Error> {
-    initialize_with_tests(&[])
-}
-
 /// Initializes the module and runs every supplied power-up KAT.
 ///
 /// This is the canonical entry point. It transitions
@@ -378,7 +394,7 @@ pub fn initialize() -> Result<(), Error> {
 /// tricks: the full set of power-up tests is visible in source at
 /// every call site, which makes it straightforward to audit the
 /// module's test inventory against the Security Policy.
-pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error> {
+pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Result<(), Error> {
     // Try to claim the SelfTest phase. Only the first caller in the
     // process lifetime succeeds.
     let cas = STATE.compare_exchange(
@@ -395,12 +411,37 @@ pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error> {
         while STATE.load(Ordering::Acquire) == State::SelfTest as u8 {
             core::hint::spin_loop();
         }
-        return Err(Error::AlreadyInitialized);
+        let current = state();
+        if current == State::Operational {
+            return Err(Error::AlreadyInitialized);
+        }
+        // The module is in a terminal state. Reporting
+        // `AlreadyInitialized` here would read as success to a caller
+        // that treats it as one, so the state is named instead.
+        return Err(Error::NotOperational { current });
     }
 
-    for entry in tests {
-        let result = (entry.run)();
-        if result.is_err() {
+    // The integrity group runs first and cannot be OMITTED: it is a
+    // separate parameter rather than an entry in `tests`, so a caller
+    // cannot drop it by handing over a shorter list, and an empty group
+    // is refused rather than treated as "nothing to check".
+    //
+    // What this does NOT establish is the group's identity. `KatEntry`
+    // is a public struct, so any non-empty slice satisfies this check —
+    // including one whose `run` returns `Ok(())` without verifying
+    // anything. Passing a counterfeit group is an integration fault
+    // that leaves the validated configuration, in the same class as
+    // calling an approved algorithm with a key the operator invented;
+    // the module cannot detect it and does not claim to. The Security
+    // Policy states the obligation: initialise with
+    // `oxicrypt_integrity::KATS`.
+    if integrity.is_empty() {
+        STATE.store(State::IntegrityUnverified as u8, Ordering::Release);
+        return Err(Error::IntegrityNotAttested);
+    }
+
+    for entry in integrity.iter().chain(tests) {
+        if (entry.run)().is_err() {
             // Latch the module into Error before returning. Any
             // subsequent service call will be rejected by
             // require_operational().
@@ -409,6 +450,11 @@ pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error> {
         }
     }
 
+    // The only place in the workspace where the module becomes
+    // operational. Every entry point reaches it, so the integrity
+    // requirement is enforced once here rather than at the 129
+    // `require_operational` call sites, and no service pays for the
+    // check on its hot path.
     STATE.store(State::Operational as u8, Ordering::Release);
     Ok(())
 }
@@ -502,12 +548,18 @@ pub fn active_profile() -> AlgorithmProfile {
 ///
 /// See [`initialize_with_tests`] for the backward-compatible wrapper
 /// that uses [`AlgorithmProfile::Unrestricted`].
-pub fn initialize_with_profile(tests: &[KatEntry], profile: AlgorithmProfile) -> Result<(), Error> {
+pub fn initialize_with_profile(
+    integrity: &[KatEntry],
+    tests: &[KatEntry],
+    profile: AlgorithmProfile,
+) -> Result<(), Error> {
     // Store the profile before running KATs. This is safe even if
-    // initialization fails: a failed init latches State::Error, so
-    // no service call can reach require_allowed() anyway.
+    // initialization fails: a failed init latches a terminal state —
+    // State::Error, or State::IntegrityUnverified when the integrity
+    // test was absent — so no service call can reach require_allowed()
+    // anyway.
     PROFILE.store(profile as u8, Ordering::Release);
-    initialize_with_tests(tests)
+    initialize_with_tests(integrity, tests)
 }
 
 /// Enumeration of every approved service in the module, at the
@@ -1609,11 +1661,23 @@ mod tests {
     use super::state_lock::reset_for_test;
     use super::{
         AlgorithmProfile, Error, KatEntry, SelfTest, SelfTestFailure, Service, State,
-        active_profile, enter_error_state, initialize, initialize_with_profile,
-        initialize_with_tests, is_allowed, is_lms_service, is_operational, lms_block_contains,
-        require_allowed, require_operational, state,
+        active_profile, enter_error_state, initialize_with_profile, initialize_with_tests,
+        is_allowed, is_lms_service, is_operational, lms_block_contains, require_allowed,
+        require_operational, state,
     };
     use alloc::string::ToString;
+
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
 
     // Both of these helpers are used as `fn() -> Result<(), SelfTestFailure>`
     // function pointers in `KatEntry`, so the `Result` wrapper is mandatory
@@ -1640,7 +1704,7 @@ mod tests {
     #[test]
     fn initialize_transitions_to_operational() {
         let _guard = reset_for_test();
-        initialize().unwrap();
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
         assert_eq!(state(), State::Operational);
         assert!(is_operational());
         require_operational().unwrap();
@@ -1649,8 +1713,8 @@ mod tests {
     #[test]
     fn second_initialize_reports_already_initialized() {
         let _guard = reset_for_test();
-        initialize().unwrap();
-        match initialize() {
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
+        match initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
             Err(Error::AlreadyInitialized) => {}
             other => panic!("expected AlreadyInitialized, got {other:?}"),
         }
@@ -1670,7 +1734,7 @@ mod tests {
     #[test]
     fn enter_error_state_is_terminal_for_require_operational() {
         let _guard = reset_for_test();
-        initialize().unwrap();
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
         assert!(is_operational());
         enter_error_state("unit-test forced failure");
         assert_eq!(state(), State::Error);
@@ -1705,7 +1769,7 @@ mod tests {
                 run: always_pass,
             },
         ];
-        initialize_with_tests(&tests).unwrap();
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &tests).unwrap();
         assert_eq!(state(), State::Operational);
     }
 
@@ -1727,7 +1791,7 @@ mod tests {
                 run: always_pass,
             },
         ];
-        match initialize_with_tests(&tests) {
+        match initialize_with_tests(UNSIGNED_TEST_BINARY, &tests) {
             Err(Error::SelfTestFailed { test: "dummy-fail" }) => {}
             other => panic!("expected SelfTestFailed{{dummy-fail}}, got {other:?}"),
         }
@@ -1770,7 +1834,7 @@ mod tests {
     #[test]
     fn initialize_with_profile_sets_cnsa2() {
         let _guard = reset_for_test();
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
         assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
         assert!(is_operational());
     }
@@ -1778,7 +1842,7 @@ mod tests {
     #[test]
     fn initialize_with_profile_sets_cnsa1() {
         let _guard = reset_for_test();
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa1).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa1).unwrap();
         assert_eq!(active_profile(), AlgorithmProfile::Cnsa1);
         assert!(is_operational());
     }
@@ -2278,7 +2342,7 @@ mod tests {
     #[test]
     fn require_allowed_returns_restricted_error_under_cnsa2() {
         let _guard = reset_for_test();
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
         match require_allowed(Service::Aes128Ecb) {
             Err(Error::AlgorithmRestricted {
                 service: Service::Aes128Ecb,
@@ -2290,7 +2354,7 @@ mod tests {
     #[test]
     fn require_allowed_passes_permitted_services() {
         let _guard = reset_for_test();
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
         require_allowed(Service::Aes256Gcm).unwrap();
         require_allowed(Service::Sha384).unwrap();
         require_allowed(Service::MlKem1024Encaps).unwrap();
@@ -2299,7 +2363,7 @@ mod tests {
     #[test]
     fn require_allowed_passes_everything_in_unrestricted() {
         let _guard = reset_for_test();
-        initialize().unwrap();
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap();
         // Spot-check a few from each end of the spectrum.
         require_allowed(Service::Sha1).unwrap();
         require_allowed(Service::Aes128Ecb).unwrap();
@@ -2317,7 +2381,7 @@ mod tests {
         let guard = reset_for_test();
         for profile in [AlgorithmProfile::Cnsa2, AlgorithmProfile::Cnsa1] {
             guard.reset();
-            initialize_with_profile(&[], profile).unwrap();
+            initialize_with_profile(UNSIGNED_TEST_BINARY, &[], profile).unwrap();
             for svc in [
                 Service::SlhDsaSha2256sKeygen,
                 Service::SlhDsaSha2256sSign,
@@ -2342,7 +2406,7 @@ mod tests {
         let guard = reset_for_test();
         for profile in [AlgorithmProfile::Cnsa2, AlgorithmProfile::Cnsa1] {
             guard.reset();
-            initialize_with_profile(&[], profile).unwrap();
+            initialize_with_profile(UNSIGNED_TEST_BINARY, &[], profile).unwrap();
             for svc in [
                 Service::LmsSha256M24H5W1Sign,
                 Service::LmsSha256M24H25W8Verify,
@@ -2381,12 +2445,12 @@ mod tests {
     fn require_allowed_distinguishes_cnsa1_from_cnsa2() {
         let guard = reset_for_test();
 
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa1).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa1).unwrap();
         require_allowed(Service::EcdsaP384Sign)
             .unwrap_or_else(|e| panic!("P-384 ECDSA must be permitted under CNSA 1.0: {e:?}"));
 
         guard.reset();
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
         match require_allowed(Service::EcdsaP384Sign) {
             Err(Error::AlgorithmRestricted {
                 service: Service::EcdsaP384Sign,
@@ -2405,7 +2469,7 @@ mod tests {
     #[test]
     fn algorithm_restricted_error_display() {
         let _guard = reset_for_test();
-        initialize_with_profile(&[], AlgorithmProfile::Cnsa2).unwrap();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
         let err = Error::AlgorithmRestricted {
             service: Service::Aes128Ecb,
         };

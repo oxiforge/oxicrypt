@@ -69,7 +69,6 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
             + oxicrypt_aes::KATS.len()
             + oxicrypt_cmac::KATS.len()
             + oxicrypt_drbg::KATS.len()
-            + oxicrypt_integrity::KATS.len()
             + oxicrypt_ecdsa::KATS.len()
             + oxicrypt_eddsa::KATS.len()
             + oxicrypt_rsa::KATS.len()
@@ -90,7 +89,6 @@ const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
     oxicrypt_aes::KATS,
     oxicrypt_cmac::KATS,
     oxicrypt_drbg::KATS,
-    oxicrypt_integrity::KATS,
     oxicrypt_ecdsa::KATS,
     oxicrypt_eddsa::KATS,
     oxicrypt_rsa::KATS,
@@ -169,9 +167,9 @@ fn main() -> std::process::ExitCode {
     // process image (`ETXTBSY`), so a running executable cannot
     // rewrite its own embedded integrity slot. The standard
     // development workflow is to build the harness, then run
-    // `fips-integrity-sign --sign target/debug/acvp-harness` from a
+    // `oxicrypt-integrity-sign --sign target/debug/acvp-harness` from a
     // separate process, and only then execute the harness.
-    match initialize_with_tests(POWER_UP_KATS) {
+    match initialize_with_tests(oxicrypt_integrity::KATS, POWER_UP_KATS) {
         Ok(()) | Err(Error::AlreadyInitialized) => {}
         Err(e) => {
             eprintln!("oxicrypt acvp-harness: initialization failed: {e}");
@@ -831,9 +829,9 @@ fn print_self_test_banner() {
     println!("oxicrypt acvp-harness: module state = {}", state());
     println!(
         "Power-up self-tests passed: {} KAT(s).",
-        POWER_UP_KATS.len()
+        oxicrypt_integrity::KATS.len() + POWER_UP_KATS.len()
     );
-    for kat in POWER_UP_KATS {
+    for kat in oxicrypt_integrity::KATS.iter().chain(POWER_UP_KATS) {
         println!("  - {}", kat.name);
     }
     let registry = acvp_harness::dispatch::with_default_handlers();

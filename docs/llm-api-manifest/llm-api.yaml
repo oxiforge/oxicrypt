@@ -222,7 +222,7 @@ modules:
       - oxicrypt-drbg
 
   - name: oxicrypt-integrity
-    description: HMAC-SHA-256 software integrity check over the module binary, with a 64-byte reserved tag slot.
+    description: HMAC-SHA-256 software integrity check over the module's loader-invariant runtime image, with a 16 KiB reserved slot carrying a range table and the reference MAC.
     no_std: false
     depends_on:
       - oxicrypt-module
@@ -324,6 +324,25 @@ modules:
     description: Out-of-boundary Criterion benchmark suite; publish = false, so no API surface is described here.
     no_std: false
     depends_on: []
+
+  - name: oxicrypt-integrity-sign
+    description: Out-of-boundary build tool and library that derives a module artifact's loader-invariant extent and writes its reference MAC into the embedded integrity slot, published for `cargo install oxicrypt-integrity-sign` and not itself part of the FIPS-validated module.
+    no_std: false
+    depends_on:
+      - oxicrypt-integrity
+
+  - name: integrity-probe
+    description: Out-of-boundary front end that boots the module and reports the pre-operational integrity test's status indicator; publish = false, so no API surface is described here.
+    no_std: false
+    depends_on:
+      - oxicrypt-integrity
+      - oxicrypt-module
+
+  - name: integrity-probe-so
+    description: Out-of-boundary shared object that runs the module's integrity test from inside a dlopen'd library, proving the verified artifact is the library rather than its host; publish = false, so no API surface is described here.
+    no_std: false
+    depends_on:
+      - oxicrypt-integrity
 
 
 
@@ -544,6 +563,8 @@ types:
         description: Payload length exceeds the mode's allowed maximum.
       - name: InvalidAadLength
         description: AAD length exceeds the mode's allowed maximum.
+      - name: IntegrityUnverified
+        description: The module was initialised without the pre-operational software integrity test, so it was never verified against its reference MAC.
       - name: Internal
         description: Catch-all for should-never-happen cases.
 
@@ -1405,15 +1426,15 @@ types:
   - name: IntegritySlot
     module: oxicrypt-integrity
     kind: struct
-    description: repr(C) 64-byte reserved slot embedded in the module binary, holding the integrity MAC between a header and a footer magic.
-    size_bytes: 64
+    description: repr(C) 16 KiB reserved slot embedded in the module's runtime image, holding the format version, range table, and reference MAC between a header and a footer magic.
+    size_bytes: 16384
     fields:
     - name: hdr
       type: '[u8; 16]'
       description: Header magic; equals SLOT_HEADER_MAGIC in a valid slot.
-    - name: mac
-      type: '[u8; 32]'
-      description: HMAC-SHA-256 over the whole module binary computed with this field zeroed; all zeros in an unsigned binary.
+    - name: body
+      type: '[u8; SLOT_BODY_SIZE]'
+      description: Opaque body holding the version, flags, range count, slot_rva, reference MAC, and range table; interior layout is defined by the field offsets in the slot module and parsed from bytes, never by Rust field access.
     - name: ftr
       type: '[u8; 16]'
       description: Footer magic; equals SLOT_FOOTER_MAGIC in a valid slot.
@@ -1422,27 +1443,154 @@ types:
       zeroize_on_drop: false
       constant_time: false
 
+  - name: Unreadable
+    module: oxicrypt-integrity
+    kind: enum
+    description: Why no byte-acquisition mechanism could supply the module's own bytes.
+    variants:
+    - name: NoMechanism
+      description: This target has no implemented byte-acquisition mechanism.
+    - name: MapsUnavailable
+      description: "Tuple variant carrying an io::Error: /proc/self/maps could not be read, so neither the load base nor the backing file could be established."
+    - name: MapsUnparseable
+      description: The mapping holding the slot was found but a field of it did not parse, so its file offset cannot be trusted.
+    - name: SlotUnmapped
+      description: The slot's address falls in no mapping named by /proc/self/maps.
+    - name: NoBackingFile
+      description: The mapping holding the slot names no backing file, so the file-read fallback has nothing to open.
+    - name: AllMechanismsFailed
+      description: "Tuple variant carrying Vec<io::Error>: every mechanism was tried and each failed, in the order attempted."
+
   - name: IntegrityError
     module: oxicrypt-integrity
     kind: enum
-    description: Error type returned by the standalone integrity signing and verification helpers.
+    description: Failure of the pre-operational software integrity test.
     implements:
     - Debug
     - Display
     - std::error::Error
     variants:
-    - name: CurrentExeUnresolved
-      description: Carries the io::Error from a failed env::current_exe() resolution; declared but never constructed anywhere in the crate.
-    - name: ExeReadFailed
-      description: Carries the io::Error from a failed read of the executable file.
-    - name: ExeWriteFailed
-      description: Carries the io::Error from a failed write-back of the signed buffer.
-    - name: SlotNotFound
-      description: No header-plus-footer slot pair was found in the buffer, or the buffer is shorter than 64 bytes.
-    - name: MultipleSlotsFound
-      description: More than one valid slot was found in the buffer.
-    - name: MacMismatch
-      description: The MAC recomputed over the slot-zeroed buffer differs from the MAC stored in the slot.
+    - name: CastNotRun
+      description: The integrity technique's own HMAC-SHA-256 algorithm self-test has not passed in this process, so the integrity test may not use it.
+    - name: Mismatch
+      description: The computed MAC over the loader-invariant image does not equal the reference MAC in the slot.
+    - name: SlotInvalid
+      description: "Tuple variant carrying a SlotDefect: the slot is absent, malformed, or describes an impossible extent."
+    - name: Unreadable
+      description: "Tuple variant carrying an Unreadable: the module's own bytes could not be obtained, so the test was not performed."
+
+  - name: Range
+    module: oxicrypt-integrity
+    kind: struct
+    description: One contiguous run of loader-invariant bytes, addressed by rva for the verifier reading the loaded image and by file_off for the signer computing the reference MAC and for the file-read fallback.
+    fields:
+    - name: rva
+      type: u32
+      description: Offset of the run from the image base, as loaded.
+    - name: file_off
+      type: u32
+      description: Offset of the same run in the signed file.
+    - name: len
+      type: u32
+      description: Length of the run in bytes, never zero.
+
+  - name: SlotDefect
+    module: oxicrypt-integrity
+    kind: enum
+    description: Why an integrity slot was refused; each variant names a distinct defect rather than collapsing to a single "bad slot" case.
+    implements:
+    - Debug
+    - Display
+    - std::error::Error
+    variants:
+    - name: WrongSize
+      description: "Tuple variant carrying usize: the acquired bytes are not SLOT_SIZE long."
+    - name: HeaderMagic
+      description: The header magic is absent.
+    - name: FooterMagic
+      description: The footer magic is absent.
+    - name: UnsupportedVersion
+      description: "Tuple variant carrying u32: the version is not SLOT_VERSION; zero means the artifact was never signed."
+    - name: UnknownFlags
+      description: "Tuple variant carrying u32: the reserved flags word is non-zero, written by a tool asserting a feature this verifier does not implement."
+    - name: NoRanges
+      description: The range count is zero; an extent covering nothing would make the test vacuous.
+    - name: TooManyRanges
+      description: "Tuple variant carrying u32: the range count exceeds MAX_RANGES."
+    - name: EmptyRange
+      description: "Tuple variant carrying u32: the range at this index has zero length."
+    - name: RangeOverflow
+      description: "Tuple variant carrying u32: the range at this index overflows the RVA space."
+    - name: Unordered
+      description: "Tuple variant carrying u32: the range at this index starts before the previous range ends, so the table is unordered or self-overlapping."
+    - name: OverlapsSlot
+      description: "Tuple variant carrying u32: the range at this index covers part of the slot, so signer and verifier would hash different bytes."
+    - name: RangeOutOfBounds
+      description: "Tuple variant carrying u32: the range at this index falls outside the image being hashed."
+    - name: SlotRvaTooLarge
+      description: The slot's recorded RVA exceeds the address the slot was found at, so no load base can be derived from the pair.
+
+  - name: SlotImage
+    module: oxicrypt-integrity
+    kind: struct
+    description: A parsed, fully validated integrity slot.
+    fields:
+    - name: version
+      type: u32
+      description: Format version, always SLOT_VERSION once parsed.
+    - name: flags
+      type: u32
+      description: Reserved flags word.
+    - name: slot_rva
+      type: u32
+      description: Offset of the slot itself from the image base.
+    - name: mac
+      type: '[u8; 32]'
+      description: Reference MAC over the listed ranges, in order.
+    - name: ranges
+      type: 'Vec<Range>'
+      description: The loader-invariant extent.
+
+  - name: IntegrityStatus
+    module: oxicrypt-integrity
+    kind: enum
+    description: The pre-operational integrity test's status indicator, whose discriminants the C ABI reports and whose four failure values Security Policy 5.2 enumerates.
+    variants:
+    - name: NotRun
+      description: The test has not run in this process.
+    - name: Passed
+      description: The test ran and the image matched its reference MAC.
+    - name: Mismatch
+      description: The computed MAC does not equal the reference MAC in the slot.
+    - name: SlotInvalid
+      description: The slot is absent, malformed, or describes an impossible extent.
+    - name: Unreadable
+      description: The module's own bytes could not be obtained, so the test was not performed and this says nothing about the image.
+    - name: CastNotRun
+      description: The test was reached before the HMAC-SHA-256 CAST it depends on.
+    - name: Unknown
+      description: The recorded indicator is not a value this module writes, reported rather than folded into NotRun so an impossible value is visible instead of reading as benign.
+
+  - name: Layout
+    module: oxicrypt-integrity-sign
+    kind: struct
+    description: What the signer needs to know about an artifact after classifying it — the loader-invariant extent with the slot already subtracted, where the slot sits, and how much of the mapped image the extent covers.
+    fields:
+    - name: ranges
+      type: 'Vec<Range>'
+      description: The loader-invariant extent, slot already subtracted, ascending.
+    - name: slot_file_off
+      type: usize
+      description: File offset of the integrity slot.
+    - name: slot_rva
+      type: u32
+      description: Offset of the integrity slot from the image base.
+    - name: invariant_len
+      type: u64
+      description: File-backed bytes across all non-writable load segments before the slot was subtracted, reported so an operator can see what fraction of the mapped image the extent covers.
+    - name: mapped_len
+      type: u64
+      description: File-backed bytes across every load segment.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -7757,6 +7905,19 @@ functions:
       description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
     preconditions:
       - description: Module must be initialized.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_integrity_status
+    module: oxicrypt-ffi
+    description: Query the pre-operational integrity test's status indicator, returning NotRun (0), Passed (1), Mismatch (2), SlotInvalid (3), Unreadable (4), CastNotRun (5) or Unknown (6) for the first run in this process.
+    signature: "int oxi_integrity_status(void)"
+    returns:
+      type: int
+      description: The status-indicator discriminant for the first run, or 0 when the test has not run in this process.
+    thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: false
@@ -15988,29 +16149,6 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: find_slot_offset
-    module: oxicrypt-integrity
-    description: Scan a module-binary buffer for the single embedded integrity slot and return the byte offset of its header.
-    signature: 'pub fn find_slot_offset(bytes: &[u8]) -> Result<usize, IntegrityError>'
-    parameters:
-    - name: bytes
-      type: '&[u8]'
-      direction: in
-      description: Full contents of a module binary.
-    returns:
-      type: Result<usize, IntegrityError>
-      description: Offset of the slot header, accepted only when SLOT_HEADER_MAGIC sits at that offset and SLOT_FOOTER_MAGIC sits 48 bytes later.
-      error_variants:
-      - name: SlotNotFound
-        condition: bytes.len() < 64, or no offset satisfies both the header and footer match.
-      - name: MultipleSlotsFound
-        condition: Two or more offsets satisfy both the header and footer match.
-    thread_safety: thread-safe
-    security:
-      constant_time: false
-      handles_secrets: false
-      fips_approved: false
-
   - name: encode_hmac_hex
     module: oxicrypt-integrity
     description: Format a 32-byte MAC as 64 lowercase ASCII hex characters.
@@ -16057,58 +16195,163 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: sign_exe
+  - name: mac_over_file_ranges
     module: oxicrypt-integrity
-    description: Compute HMAC-SHA-256 over the executable at exe_path with the slot MAC field zeroed, splice the result into the slot, and write the buffer back over the file.
-    signature: 'pub fn sign_exe(exe_path: &Path) -> Result<[u8; 32], IntegrityError>'
+    description: Compute the reference MAC over ranges taken from the file bytes in image, in table order; the signer's half of the identity that makes the loader-invariant design work.
+    signature: 'pub fn mac_over_file_ranges(image: &[u8], ranges: &[Range]) -> Result<[u8; 32], SlotDefect>'
     parameters:
-    - name: exe_path
-      type: '&Path'
+    - name: image
+      type: '&[u8]'
       direction: in
-      description: Path to the module binary to sign in place.
+      description: Full contents of the signed file.
+    - name: ranges
+      type: '&[Range]'
+      direction: in
+      description: The loader-invariant extent, addressed by file_off.
     returns:
-      type: Result<[u8; 32], IntegrityError>
-      description: The MAC that was written into the slot.
+      type: Result<[u8; 32], SlotDefect>
+      description: The HMAC-SHA-256 computed over the listed ranges, in order.
       error_variants:
-      - name: ExeReadFailed
-        condition: fs::read of exe_path failed.
-      - name: SlotNotFound
-        condition: No valid slot in the file, or the file is shorter than 64 bytes.
-      - name: MultipleSlotsFound
-        condition: More than one valid slot in the file.
-      - name: ExeWriteFailed
-        condition: fs::write of the spliced buffer back to exe_path failed.
-    preconditions:
-    - description: exe_path must not currently back a running process image; Linux rejects the write-back with ETXTBSY.
-    side_effects:
-    - description: Overwrites the file at exe_path with the spliced buffer.
-    thread_safety: not-thread-safe
+      - name: RangeOutOfBounds
+        condition: A range's file_off/len falls outside image, or the addition overflows.
+    thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: false
       fips_approved: false
 
-  - name: verify_exe
+  - name: slot_address
     module: oxicrypt-integrity
-    description: Recompute HMAC-SHA-256 over the executable at exe_path with the slot MAC field zeroed and compare it in constant time against the MAC stored in the slot.
-    signature: 'pub fn verify_exe(exe_path: &Path) -> Result<(), IntegrityError>'
-    parameters:
-    - name: exe_path
-      type: '&Path'
-      direction: in
-      description: Path to the module binary to verify.
+    description: Runtime address of the embedded integrity slot, taken from the linked static without dereferencing it; used to derive the load base and, across runs, as a diagnostic showing whether the image moved.
+    signature: 'pub fn slot_address() -> usize'
+    returns:
+      type: usize
+      description: The address of FIPS_INTEGRITY_SLOT in this process.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: status
+    module: oxicrypt-integrity
+    description: Return the pre-operational integrity test's status indicator for the first run in this process, re-running nothing and remaining safe to call from the module's error state.
+    signature: 'pub fn status() -> IntegrityStatus'
+    returns:
+      type: IntegrityStatus
+      description: The first run's outcome, or NotRun when the test has not run in this process.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: verify_loaded_image
+    module: oxicrypt-integrity
+    description: Run the pre-operational software integrity test against the loaded module image — locate the slot, acquire its bytes through the platform mechanism, validate the slot, derive the load base, hash the listed ranges from the loaded image, and compare without short-circuiting.
+    signature: 'pub fn verify_loaded_image() -> Result<(), IntegrityError>'
     returns:
       type: Result<(), IntegrityError>
-      description: Ok when the recomputed MAC equals the stored MAC.
+      description: Ok when the recomputed MAC equals the reference MAC in the slot.
       error_variants:
-      - name: ExeReadFailed
-        condition: fs::read of exe_path failed.
-      - name: SlotNotFound
-        condition: No valid slot in the file, or the file is shorter than 64 bytes.
-      - name: MultipleSlotsFound
-        condition: More than one valid slot in the file.
-      - name: MacMismatch
-        condition: The recomputed MAC differs from the MAC stored in the slot.
+      - name: CastNotRun
+        condition: hmac_cast() has not passed in this process.
+      - name: Mismatch
+        condition: The recomputed MAC differs from the reference MAC in the slot.
+      - name: SlotInvalid
+        condition: The slot is absent, malformed, or describes an impossible extent.
+      - name: Unreadable
+        condition: No byte-acquisition mechanism could supply the module's own bytes.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: encode
+    module: oxicrypt-integrity
+    description: Serialize an integrity slot from a range table, slot RVA, and reference MAC.
+    signature: 'pub fn encode(ranges: &[Range], slot_rva: u32, mac: &[u8; 32]) -> Result<Vec<u8>, SlotDefect>'
+    parameters:
+    - name: ranges
+      type: '&[Range]'
+      direction: in
+      description: The loader-invariant extent, in table order.
+    - name: slot_rva
+      type: u32
+      direction: in
+      description: Offset of the slot itself from the image base.
+    - name: mac
+      type: '&[u8; 32]'
+      constraints:
+        size: 32
+      direction: in
+      description: Reference MAC to embed.
+    returns:
+      type: Result<Vec<u8>, SlotDefect>
+      description: SLOT_SIZE bytes in the wire format described by the slot module.
+      error_variants:
+      - name: TooManyRanges
+        condition: ranges.len() exceeds MAX_RANGES.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: parse
+    module: oxicrypt-integrity
+    description: Parse and fully validate an integrity slot's bytes.
+    signature: 'pub fn parse(bytes: &[u8]) -> Result<SlotImage, SlotDefect>'
+    parameters:
+    - name: bytes
+      type: '&[u8]'
+      direction: in
+      description: Acquired slot bytes, expected to be SLOT_SIZE long.
+    returns:
+      type: Result<SlotImage, SlotDefect>
+      description: The parsed slot once every structural check passes.
+      error_variants:
+      - name: WrongSize
+        condition: bytes.len() != SLOT_SIZE.
+      - name: HeaderMagic
+        condition: The header magic is absent.
+      - name: FooterMagic
+        condition: The footer magic is absent.
+      - name: UnsupportedVersion
+        condition: The version field is not SLOT_VERSION.
+      - name: UnknownFlags
+        condition: The reserved flags word is non-zero.
+      - name: NoRanges
+        condition: The range count is zero.
+      - name: TooManyRanges
+        condition: The range count exceeds MAX_RANGES.
+      - name: EmptyRange
+        condition: A range entry has zero length.
+      - name: RangeOverflow
+        condition: A range entry's rva + len overflows u32.
+      - name: Unordered
+        condition: A range entry starts before the previous range ends.
+      - name: OverlapsSlot
+        condition: A range entry covers part of the slot.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: extent_len
+    module: oxicrypt-integrity
+    description: Total number of bytes an extent covers.
+    signature: 'pub fn extent_len(ranges: &[Range]) -> Option<u64>'
+    parameters:
+    - name: ranges
+      type: '&[Range]'
+      direction: in
+      description: The loader-invariant extent.
+    returns:
+      type: Option<u64>
+      description: Sum of every range's length, or None on overflow.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -16129,6 +16372,87 @@ functions:
       fips_approved: false
       fips_gate: "none \u2014 callable outside the module state machine"
 
+
+
+  # ── Integrity signing (out of boundary, build tool) ───────────────
+
+  - name: sign_image
+    module: oxicrypt-integrity-sign
+    description: Sign an image in place — derive its loader-invariant extent, compute the reference MAC over that extent's file bytes, and write the range table and MAC into the embedded slot.
+    signature: 'pub fn sign_image(image: &mut [u8]) -> Result<[u8; 32], String>'
+    returns:
+      type: 'Result<[u8; 32], String>'
+      description: The reference MAC written into the slot, or a description of why the image could not be signed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: write_extent
+    module: oxicrypt-integrity-sign
+    description: Write an arbitrary extent into an image's slot, separate from sign_image so a test can sign an image against an extent the classifier would never emit and thereby build the control proving the runtime stability probe can fail.
+    signature: 'pub fn write_extent(image: &mut [u8], ranges: &[slot::Range], slot_rva: u32, slot_file_off: usize) -> Result<[u8; 32], String>'
+    returns:
+      type: 'Result<[u8; 32], String>'
+      description: The reference MAC written into the slot, or a description of why the image could not be signed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: is_elf64_le
+    module: oxicrypt-integrity-sign
+    description: Report whether the bytes look like a little-endian 64-bit ELF image.
+    signature: 'pub fn is_elf64_le(bytes: &[u8]) -> bool'
+    returns:
+      type: bool
+      description: True when the image is ELF64 little-endian.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: find_slot
+    module: oxicrypt-integrity-sign
+    description: Locate the integrity slot in an image by its header and footer magics, refusing both zero matches (unsigned) and several (no authoritative slot).
+    signature: 'pub fn find_slot(bytes: &[u8]) -> Result<usize, String>'
+    returns:
+      type: 'Result<usize, String>'
+      description: File offset of the slot, or a description of why no single slot was found.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: writable_ranges
+    module: oxicrypt-integrity-sign
+    description: Report the file-backed ranges of every writable load segment, used to build the negative control in which an extent widened over loader-rewritten bytes must be rejected at runtime.
+    signature: 'pub fn writable_ranges(bytes: &[u8]) -> Result<Vec<Range>, String>'
+    returns:
+      type: 'Result<Vec<Range>, String>'
+      description: The writable segments' file-backed ranges, or a description of why the image is malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: classify
+    module: oxicrypt-integrity-sign
+    description: Derive an artifact's loader-invariant extent — every PT_LOAD segment lacking PF_W, file-backed prefix only, with the integrity slot subtracted.
+    signature: 'pub fn classify(bytes: &[u8]) -> Result<Layout, String>'
+    returns:
+      type: 'Result<Layout, String>'
+      description: The classified layout, or a description of why the image could not be classified.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -16255,7 +16579,7 @@ error_types:
         user_action: >-
           The module is in the terminal Error state and no service will run.
           The binary may be corrupted or its integrity slot unsigned; verify it
-          with fips-integrity-sign --verify and reinstall from a published
+          with oxicrypt-integrity-sign --verify and reinstall from a published
           release artifact.
       - name: ConditionalTestFailed
         value: 3
@@ -16349,6 +16673,11 @@ error_types:
         description: The additional-authenticated-data length exceeds the mode's allowed maximum.
         recoverable: true
         user_action: Reduce the AAD to within the mode's maximum.
+      - name: IntegrityUnverified
+        value: 28
+        description: The module was initialised without the pre-operational software integrity test in its inventory, so it was never verified against its reference MAC rather than having failed a test.
+        recoverable: false
+        user_action: Initialise the module with an inventory that includes the integrity test, and run a signed artifact.
       - name: Internal
         value: 255
         description: A should-never-happen case reached the catch-all arm.
@@ -16357,36 +16686,81 @@ error_types:
 
   - name: IntegrityError
     module: oxicrypt-integrity
-    description: Failure of the IG 10.3.A software integrity check or of the signing step that installs its tag.
+    description: Failure of the pre-operational software integrity test (ISO/IEC 19790:2012 §7.10.2.2, AS10.17-AS10.18).
     variants:
-      - name: CurrentExeUnresolved
-        description: The path of the running executable could not be resolved.
-        recoverable: false
-        user_action: The integrity check cannot run on this platform or under this launcher; treat the module as unverified rather than proceeding.
-      - name: ExeReadFailed
-        description: The executable could not be read.
-        recoverable: false
-        user_action: Check that the binary is present and readable by this process, then re-run the check.
-      - name: ExeWriteFailed
-        description: The signed buffer could not be written back to the executable path.
+      - name: CastNotRun
+        description: The integrity technique's own HMAC-SHA-256 algorithm self-test has not passed in this process, so the integrity test may not use it.
         recoverable: true
-        user_action: Check write permission and free space on the target path, then re-run the signing step.
-      - name: SlotNotFound
-        description: No header-MAC-footer slot was found in the binary.
+        user_action: Run hmac_cast() before calling verify_loaded_image(); the crate's KATS constant already lists them in the required order for a front end that iterates it. This is a front-end sequencing fault, not a finding about the module image.
+      - name: Mismatch
+        description: The computed MAC over the loader-invariant image does not equal the reference MAC in the slot.
         recoverable: false
-        user_action: The binary was not linked against this crate, or the slot was stripped after linking; rebuild and re-sign rather than shipping it.
-      - name: MultipleSlotsFound
-        description: More than one valid slot was found, which a benign binary never contains.
+        user_action: >-
+          The module is in the terminal Error state and no service will run. The binary may be corrupted or its integrity slot unsigned; verify it with oxicrypt-integrity-sign --verify and reinstall from a published release artifact.
+      - name: SlotInvalid
+        description: The slot is absent, malformed, or describes an impossible extent.
         recoverable: false
-        user_action: Treat the binary as tampered with; discard it and rebuild from source.
-      - name: MacMismatch
-        description: The HMAC computed over the slot-zeroed buffer did not match the MAC stored in the slot.
+        user_action: The artifact was not linked against oxicrypt-integrity, its slot was stripped, or it was never signed; rebuild and sign it with oxicrypt-integrity-sign --sign rather than shipping it.
+      - name: Unreadable
+        description: No byte-acquisition mechanism could supply the module's own bytes, so the test was not performed.
         recoverable: false
-        user_action: The binary does not match what was signed; do not run it, and re-sign only a build you trust.
-      - name: InputTooLong
-        description: The input exceeded the length the integrity routine accepts.
+        user_action: Treat the module as unverified rather than proceeding. On a target with no implemented mechanism this is expected and the module correctly refuses to become operational; on a target that should have one, check that /proc/self/maps and the backing file are both readable by this process.
+  - name: SlotDefect
+    module: oxicrypt-integrity
+    description: Why an integrity slot was refused, returned directly by mac_over_file_ranges, encode, and parse and nested in IntegrityError::SlotInvalid.
+    variants:
+      - name: WrongSize
+        description: The acquired bytes are not SLOT_SIZE long.
         recoverable: false
-        user_action: Report this; a module binary of this size is outside the range the check was built for.
+        user_action: This indicates a bug in the caller's byte-acquisition mechanism rather than a corrupt artifact; report it.
+      - name: HeaderMagic
+        description: The header magic is absent — the artifact was not linked against oxicrypt-integrity, or the slot was stripped.
+        recoverable: false
+        user_action: Rebuild and sign the artifact with oxicrypt-integrity-sign; do not ship it as-is.
+      - name: FooterMagic
+        description: The footer magic is absent — the slot is truncated or overwritten.
+        recoverable: false
+        user_action: Treat the artifact as corrupt; rebuild and re-sign from a trusted source.
+      - name: UnsupportedVersion
+        description: The version is not SLOT_VERSION; zero means the artifact was never signed.
+        recoverable: false
+        user_action: Sign the artifact with the current oxicrypt-integrity-sign, or rebuild against the crate version whose SLOT_VERSION matches.
+      - name: UnknownFlags
+        description: The reserved flags word is non-zero, so the slot was written by a tool asserting a feature this verifier does not implement.
+        recoverable: false
+        user_action: Use a oxicrypt-integrity-sign build matching this verifier's crate version.
+      - name: NoRanges
+        description: The range count is zero; an extent covering nothing would make the test vacuous.
+        recoverable: false
+        user_action: Re-sign with oxicrypt-integrity-sign, which always derives at least one range.
+      - name: TooManyRanges
+        description: The range count exceeds MAX_RANGES.
+        recoverable: false
+        user_action: This is a signer or format defect to report, not something a caller can work around.
+      - name: EmptyRange
+        description: The range at this index has zero length.
+        recoverable: false
+        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
+      - name: RangeOverflow
+        description: The range at this index overflows the RVA space.
+        recoverable: false
+        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
+      - name: Unordered
+        description: The range at this index starts before the previous range ends, so the table is unordered or self-overlapping.
+        recoverable: false
+        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
+      - name: OverlapsSlot
+        description: The range at this index covers part of the slot, so signer and verifier would hash different bytes.
+        recoverable: false
+        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
+      - name: RangeOutOfBounds
+        description: The range at this index falls outside the image being hashed.
+        recoverable: false
+        user_action: Treat the artifact as mismatched between its slot and its bytes; re-sign it.
+      - name: SlotRvaTooLarge
+        description: The slot's recorded RVA exceeds the address the slot was found at, so no load base can be derived from the pair.
+        recoverable: false
+        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
   - name: EntropyError
     module: oxicrypt-entropy
     description: Refusal from the SP 800-90B entropy pipeline, at construction or while producing a sample.
@@ -16707,30 +17081,84 @@ constants:
   - name: SLOT_SIZE
     module: oxicrypt-integrity
     type: usize
-    value: '64'
-    description: Total size in bytes of the embedded integrity slot.
+    value: '16384'
+    description: Total size in bytes of the embedded integrity slot; 16 KiB, sized to hold the range table (up to MAX_RANGES entries) plus the reference MAC.
 
-  - name: MAC_OFFSET_IN_SLOT
+  - name: SLOT_VERSION
     module: oxicrypt-integrity
-    type: usize
-    value: '16'
-    description: Offset of the MAC field from the start of the slot.
-
-  - name: MAC_SIZE
-    module: oxicrypt-integrity
-    type: usize
-    value: '32'
-    description: Length in bytes of the MAC field within the slot.
-
-  - name: FOOTER_OFFSET_IN_SLOT
-    module: oxicrypt-integrity
-    type: usize
-    value: '48'
-    description: Offset of the footer magic from the start of the slot.
+    type: u32
+    value: '2'
+    description: Format version written by the signer and required by the verifier, currently 2 (version 1, a 64-byte whole-file-MAC slot, is not accepted).
 
   - name: FIPS_INTEGRITY_SLOT
     module: oxicrypt-integrity
     type: IntegritySlot
-    value: "hdr = SLOT_HEADER_MAGIC, mac = 32 zero bytes, ftr = SLOT_FOOTER_MAGIC"
-    description: "The 64-byte #[used] static whose contiguous .rodata placement carries the module's HMAC-SHA-256 integrity tag; sign_exe and verify_exe locate it by scanning the on-disk file for the header/footer magic pair rather than by reading the symbol."
+    value: "hdr = SLOT_HEADER_MAGIC, body = SLOT_BODY_SIZE zero bytes, ftr = SLOT_FOOTER_MAGIC"
+    description: "The #[used] 16 KiB static carrying the module's integrity slot, read through the byte-acquisition mechanism by address rather than dereferenced directly."
+
+  - name: SLOT_BODY_SIZE
+    module: oxicrypt-integrity
+    type: usize
+    value: 'SLOT_SIZE - 32'
+    description: Size of the slot's body — everything between the header and footer magics.
+
+  - name: OFF_HDR
+    module: oxicrypt-integrity
+    type: usize
+    value: '0'
+    description: Offset of the header magic within the slot.
+
+  - name: OFF_VERSION
+    module: oxicrypt-integrity
+    type: usize
+    value: '16'
+    description: Offset of the format-version field within the slot.
+
+  - name: OFF_FLAGS
+    module: oxicrypt-integrity
+    type: usize
+    value: '20'
+    description: Offset of the reserved flags word within the slot.
+
+  - name: OFF_COUNT
+    module: oxicrypt-integrity
+    type: usize
+    value: '24'
+    description: Offset of the range-count field within the slot.
+
+  - name: OFF_SLOT_RVA
+    module: oxicrypt-integrity
+    type: usize
+    value: '28'
+    description: Offset of the slot's own RVA field within the slot.
+
+  - name: OFF_MAC
+    module: oxicrypt-integrity
+    type: usize
+    value: '32'
+    description: Offset of the reference-MAC field within the slot.
+
+  - name: OFF_TABLE
+    module: oxicrypt-integrity
+    type: usize
+    value: '64'
+    description: Offset of the first range-table entry within the slot.
+
+  - name: OFF_FTR
+    module: oxicrypt-integrity
+    type: usize
+    value: 'SLOT_SIZE - 16'
+    description: Offset of the footer magic within the slot.
+
+  - name: RANGE_ENTRY_SIZE
+    module: oxicrypt-integrity
+    type: usize
+    value: '12'
+    description: Size of one range-table entry — three little-endian u32s (rva, file_off, len).
+
+  - name: MAX_RANGES
+    module: oxicrypt-integrity
+    type: usize
+    value: '1358'
+    description: Number of range entries the table can hold, computed as (OFF_FTR - OFF_TABLE) / RANGE_ENTRY_SIZE with the remainder left as padding.
 

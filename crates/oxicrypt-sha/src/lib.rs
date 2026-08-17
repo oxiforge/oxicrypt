@@ -56,7 +56,7 @@
 //! use oxicrypt_sha::Sha256;       // streaming hasher  (re-export)
 //! use oxicrypt_module::initialize_with_tests;
 //!
-//! initialize_with_tests(oxicrypt_sha::KATS).unwrap();
+//! initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_sha::KATS).unwrap();
 //! let digest = sha256(b"abc").unwrap();
 //! ```
 

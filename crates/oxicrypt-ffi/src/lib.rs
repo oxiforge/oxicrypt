@@ -146,24 +146,19 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8
 
 // ── Module lifecycle ─────────────────────────────────────────────
 
-/// Collect every KAT entry from every algorithm crate into a single
-/// flat `Vec`.
+/// Collect every algorithm KAT entry from every algorithm crate into a
+/// single flat `Vec`.
 ///
-/// The integrity self-test KAT (`oxicrypt_integrity::KATS`) is
-/// deliberately NOT bundled here. `integrity_self_test` resolves the
-/// current binary via `env::current_exe()`, which for a cdylib
-/// loaded into a host process returns the host's path, not the
-/// `liboxicrypt_ffi.so` path. Wiring the existing KAT into `oxi_init`
-/// would cause every C-ABI consumer to fail with
-/// `OxiResult::SelfTestFailed` because the slot scanner would scan
-/// the wrong binary.
+/// The integrity self-test KAT (`oxicrypt_integrity::KATS`) is not
+/// collected here: [`oxi_init`] passes it separately, as the required
+/// integrity argument to `initialize_with_profile`. `oxicrypt_integrity`
+/// verifies the artifact that contains it — it locates its slot by that
+/// slot's own runtime address, so a cdylib verifies itself rather than
+/// its host.
 ///
-/// The integrity slot still ships in the cdylib/staticlib (forced via
-/// the `_SLOT_REF` static below) and is sign-able via
-/// `fips-integrity-sign --cdylib-target …`. Runtime verification for
-/// the cdylib path requires a `dladdr`-based "find this .so's own
-/// path" helper, which is tracked as a future-work item in the
-/// security policy.
+/// The integrity slot ships in the cdylib and staticlib (forced via
+/// the `_SLOT_REF` static below) and the shared library is sign-able
+/// with `oxicrypt-integrity-sign --cdylib-target …`.
 fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
     let all_kats: &[&[oxicrypt_module::KatEntry]] = &[
         oxicrypt_sha::KATS,
@@ -191,9 +186,9 @@ fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
 /// crate, but the rlib-to-cdylib linker may still drop unreferenced
 /// symbols during dead-code elimination. The explicit `&'static`
 /// reference here creates an actual code-level pointer to the slot,
-/// guaranteeing its 64 bytes (header magic + 32-byte MAC + footer
-/// magic) land contiguously in the output binary's `.rodata` so
-/// `fips-integrity-sign` can locate and update them.
+/// guaranteeing its `oxicrypt_integrity::SLOT_SIZE` bytes land
+/// contiguously in the output binary's `.rodata` so
+/// `oxicrypt-integrity-sign` can locate and populate them.
 #[used]
 static _SLOT_REF: &oxicrypt_integrity::IntegritySlot = &oxicrypt_integrity::FIPS_INTEGRITY_SLOT;
 
@@ -275,7 +270,7 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
         return R::Ok as c_int;
     }
     let kats = collect_kats();
-    match oxicrypt_module::initialize_with_profile(&kats, p) {
+    match oxicrypt_module::initialize_with_profile(oxicrypt_integrity::KATS, &kats, p) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => R::Ok as c_int,
         Err(e) => status_module(Err(e)),
     }
@@ -320,6 +315,39 @@ pub extern "C" fn oxi_active_profile() -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn oxi_is_operational() -> c_int {
     c_int::from(oxicrypt_module::is_operational())
+}
+
+/// Returns the pre-operational integrity test's status indicator.
+///
+/// | Value | Meaning |
+/// |---|---|
+/// | 0 | `NotRun` — the test has not run in this process |
+/// | 1 | `Passed` — the image matched its reference MAC |
+/// | 2 | `Mismatch` — the image does not match its reference MAC |
+/// | 3 | `SlotInvalid` — the slot is absent, malformed, or impossible |
+/// | 4 | `Unreadable` — the test was **not performed** |
+/// | 5 | `CastNotRun` — the test was reached before its CAST |
+/// | 6 | `Unknown` — the record held a value this module never writes |
+///
+/// This exists because `oxi_init` cannot carry the distinction: a
+/// failing self-test returns [`OxiResult::SelfTestFailed`] whatever the
+/// cause, so `Mismatch` and `Unreadable` are indistinguishable from its
+/// return value alone. Security Policy §5.2 requires an operator and a
+/// test laboratory to be able to tell those two apart — a corrupt module
+/// from an environment that could not supply the module's own bytes —
+/// and this query is how that is retrieved.
+///
+/// The value latches on the first run and nothing is re-run here, so a
+/// later call cannot revise it and this is safe to call from the error
+/// state. A value of 6 means the record held something this module never
+/// writes.
+///
+/// # Safety
+///
+/// No pointers; always safe to call.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_integrity_status() -> c_int {
+    oxicrypt_integrity::status() as c_int
 }
 
 // ── SHA-256 ──────────────────────────────────────────────────────
@@ -20006,7 +20034,7 @@ mod lama_tests {
     /// This crate now carries a ~500 KB document inside an artifact whose
     /// integrity slot is located by scanning the on-disk bytes for a
     /// header/footer magic pair. A second match anywhere in the file makes
-    /// `find_slot_offset` return `MultipleSlotsFound`, a hard failure — so an
+    /// the signer refuse the artifact as ambiguous, a hard failure — so an
     /// arbitrary embedded document is a surface worth guarding rather than
     /// assuming away.
     ///

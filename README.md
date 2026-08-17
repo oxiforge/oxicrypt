@@ -54,8 +54,8 @@ means a certificate number, and there is not one yet. See the
 cargo build --workspace
 
 # Sign the harness binary for the integrity self-test
-cargo build -p oxicrypt-integrity
-./target/debug/fips-integrity-sign --sign target/debug/acvp-harness
+cargo build -p oxicrypt-integrity-sign
+./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
 
 # Run all 152 power-up self-tests + software integrity check
 ./target/debug/acvp-harness
@@ -69,6 +69,56 @@ cargo test --workspace
 - **Rust 1.95+** (MSRV enforced in `Cargo.toml`; toolchain pinned via `rust-toolchain.toml`; workspace targets edition 2024)
 - No third-party dependencies — all cryptography is pure Rust, written in-tree
 - Builds on Linux, macOS, and Windows; `no_std` core crates work on any target
+
+### Using oxicrypt as a dependency
+
+Take only the algorithms you need — there is no aggregate crate you have to
+swallow whole. Crates do build on each other where the algorithms do (ECDSA
+needs SHA and a DRBG; CMAC needs AES), so cargo will pull in what your
+selection actually requires and nothing else.
+
+One crate comes along with every selection:
+
+```sh
+cargo add oxicrypt-aes          # whichever algorithms you want
+cargo add oxicrypt-integrity    # required: the pre-operational integrity test
+```
+
+`oxicrypt-integrity` is not optional. The module runs its integrity self-test
+before any algorithm will produce output, and the test is a parameter of
+initialization rather than something a caller can skip:
+
+```rust
+oxicrypt_module::initialize_with_tests(
+    oxicrypt_integrity::KATS,   // the integrity test — an empty slice is refused
+    MY_ALGORITHM_KATS,          // the power-up KATs for the crates you took
+)?;
+```
+
+It brings `oxicrypt-hmac` and `oxicrypt-sha` with it, because HMAC-SHA-256 is
+the integrity technique. How much that adds depends on what you already took:
+an ECDSA build reaches HMAC and SHA through its DRBG anyway, so integrity
+costs it one further crate, while a minimal AES-only build goes from 3 crates
+to 7.
+
+**Then sign your binary.** A freshly compiled artifact carries an empty
+integrity slot, so the self-test has no reference to compare against and the
+module refuses to become operational:
+
+```sh
+cargo install oxicrypt-integrity-sign
+cargo build --release
+oxicrypt-integrity-sign --sign target/release/my-app
+```
+
+The signer is also a library, so a build script can do this automatically
+rather than leaving it as a step to remember. See
+[`oxicrypt-integrity-sign`](tools/oxicrypt-integrity-sign/README.md) for both
+routes, and for what signing does and does not prove.
+
+Building oxicrypt yourself and signing the result is a fully supported path.
+The artifact is your module, and its self-test protects it exactly as it would
+one signed by anyone else.
 
 ### Installing the git hooks
 
@@ -103,7 +153,7 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | LMS | LMS sign/verify across the complete SP 800-208 §A.3 grid (80 pairs: 4 hash families × 5 tree heights × 4 Winternitz parameters), permitted in full under every algorithm profile | SP 800-208 (RFC 8554, RFC 8708) |
 | XMSS | XMSS sign/verify (XMSS-SHA2_10_256) | SP 800-208 (RFC 8391) |
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
-| Integrity | HMAC-SHA-256 software integrity check | FIPS 140-3 IG 10.3.A |
+| Integrity | HMAC-SHA-256 over the loader-invariant module image | ISO/IEC 19790:2012 §7.10.2.2 (technique CAST: IG 10.2.A) |
 
 Every algorithm runs a known-answer test at module power-up. The 152
 power-up self-tests include CAVP-sourced vectors (with 9 SP 800-90A §9.3
@@ -119,7 +169,7 @@ crates — plus tools:
 ```
 crates/
   oxicrypt-module        State machine, algorithm-profile gating, self-test runner
-  oxicrypt-integrity     Power-up software integrity check (IG 10.3.A)
+  oxicrypt-integrity     Pre-operational software integrity check (§7.10.2.2)
   oxicrypt-sha           SHA-1, SHA-2, SHA-3 hash families
   oxicrypt-sha-accel     x86_64 SHA-NI SHA-256 acceleration (default-off `accel-sha` feature)
   oxicrypt-keccak-accel  x86_64 AVX2 4-way batched Keccak-f[1600] acceleration (default-off `accel-keccak` feature)
@@ -151,8 +201,11 @@ crates/
 acvp-harness/           ACVP protocol handler with 88 registered algorithm handlers
 benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, ECDSA, etc.)
 tools/ct-validation/    dudect-style constant-time timing validation
-tools/acvp-gen/         KAT constant generator from vendored vectors
+tools/acvp-gen/         KAT constant generator from vendored vectors (Python)
 tools/doc-guard/        Test-gate drift guard: doc-stated boundary/unsafe accounting vs the workspace as built
+tools/oxicrypt-integrity-sign/  Writes a module artifact's reference MAC into its integrity slot; published, installable with cargo install
+tools/integrity-probe/  Out-of-boundary front end reporting the pre-operational integrity test's status indicator
+tools/integrity-probe-so/  The same probe as a shared object, so a library verifies its own image rather than the host that loaded it
 tools/quickstarts/      Compiles the quickstart examples carried in the LAMA manifest
 esv-harness/            ESV protocol client for SP 800-90B entropy-source validation submissions
 oxi/                    Command-line interface (crate `oxicrypt-cli`) — hash, HMAC, encrypt, generate random bytes
@@ -425,16 +478,21 @@ crate reaches the LAMA manifest through one. See
 [CONTRIBUTING.md § One-time setup](CONTRIBUTING.md#one-time-setup). This does not
 apply to the crate as published on crates.io, where the file is a normal file.
 
-Sign both artifacts with `fips-integrity-sign` before use in a
-FIPS-validated context (the embedded HMAC-SHA-256 slot is populated
-in place):
+Sign the shared library with `oxicrypt-integrity-sign` before use in a
+FIPS-validated context (the embedded HMAC-SHA-256 slot is populated in
+place):
 
 ```bash
-cargo build --release -p oxicrypt-integrity --bin fips-integrity-sign
-./target/release/fips-integrity-sign --sign \
-    --cdylib-target    target/release/liboxicrypt_ffi.so \
-    --staticlib-target target/release/liboxicrypt_ffi.a
+cargo build --release -p oxicrypt-integrity-sign
+./target/release/oxicrypt-integrity-sign --sign \
+    --cdylib-target target/release/liboxicrypt_ffi.so
 ```
+
+The static archive is not signed. An archive is a build input rather
+than a loadable image: the linker copies the slot into the consumer's
+final binary, so a MAC computed over the archive could never be
+verified at runtime. A consumer linking `liboxicrypt_ffi.a` signs the
+binary they produce.
 
 C integration tests live at
 `crates/oxicrypt-ffi/tests/c-integration/`. Run them after building +

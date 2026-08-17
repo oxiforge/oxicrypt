@@ -404,7 +404,23 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{KatEntry, initialize_with_tests};
+    use oxicrypt_module::KatEntry;
+
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    fn init_with_tests(tests: &[KatEntry]) -> Result<(), oxicrypt_module::Error> {
+        oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
 
     #[test]
     fn kat_public_key_matches() {
@@ -446,7 +462,7 @@ mod tests {
 
     #[test]
     fn public_api_gated_on_operational() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p384-sha384",
             run: self_test,
         }]);
@@ -470,7 +486,7 @@ mod tests {
 
     #[test]
     fn generate_then_sign_and_verify_roundtrips() {
-        let _ = initialize_with_tests(&[KatEntry {
+        let _ = init_with_tests(&[KatEntry {
             name: "ecdsa-p384-sha384",
             run: self_test,
         }]);

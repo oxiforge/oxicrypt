@@ -412,6 +412,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "integrity-probe"
+version = "0.23.2"
+dependencies = [
+ "oxicrypt-integrity",
+ "oxicrypt-integrity-sign",
+ "oxicrypt-module",
+]
+
+[[package]]
+name = "integrity-probe-so"
+version = "0.23.2"
+dependencies = [
+ "oxicrypt-integrity",
+ "oxicrypt-integrity-sign",
+]
+
+[[package]]
 name = "is-terminal"
 version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -560,6 +577,7 @@ dependencies = [
  "oxicrypt-aes",
  "oxicrypt-drbg",
  "oxicrypt-hmac",
+ "oxicrypt-integrity",
  "oxicrypt-module",
  "oxicrypt-sha",
 ]
@@ -677,6 +695,13 @@ version = "0.23.2"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-module",
+]
+
+[[package]]
+name = "oxicrypt-integrity-sign"
+version = "0.23.2"
+dependencies = [
+ "oxicrypt-integrity",
 ]
 
 [[package]]
@@ -874,6 +899,7 @@ dependencies = [
  "oxicrypt-ecdh",
  "oxicrypt-eddsa",
  "oxicrypt-hmac",
+ "oxicrypt-integrity",
  "oxicrypt-kdf",
  "oxicrypt-module",
  "oxicrypt-sha",

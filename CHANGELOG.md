@@ -14,6 +14,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added `oxicrypt_integrity::status()` and `IntegrityStatus`, reported across the C ABI as
+  `oxi_integrity_status()`, retrieving the pre-operational integrity test's outcome separately from
+  `initialize_with_tests` (#262).
+- Aligned the release workflow with the signer's one-target interface, and its provenance record now
+  states that the static archive ships unsigned (#262).
+- Corrected the documents that placed `oxicrypt-ffi` inside the cryptographic boundary. It is
+  outside, as Security Policy §1 and `doc-guard` both state (#262).
+- Corrected the LAMA manifest, which described `oxicrypt-integrity-sign` as unpublished and omitted
+  its seven public items (#262).
+- Corrected two comments that said the integrity group cannot be skipped. It cannot be omitted (#262).
+- Added a test for the empty-integrity-group refusal, which had a purpose-built control that no test
+  invoked (#262).
+- Hardened the `integrity-probe` tests against `ETXTBSY` under `cargo test`, which runs them in one
+  process where `cargo nextest` gives each its own (#262).
+- Added the three integrity `tools/` members to the README's workspace layout (#262).
+- Added loader-invariant image verification to the pre-operational software integrity test. The
+  module verifies the bytes the loader mapped from the signed artifact rather than the on-disk file,
+  so a shared library verifies itself rather than the host process that loaded it. The signer writes
+  the extent as a range table into a 16 KiB slot and computes the reference MAC offline from the
+  file. **The slot format is not backward compatible: every artifact must be re-signed.** (#262).
+- Required the pre-operational integrity test at initialization. `initialize_with_tests(integrity,
+  tests)` and `initialize_with_profile` both take the integrity group as a parameter, and a module
+  initialized with an empty group enters the new `IntegrityUnverified` state instead of becoming
+  operational. No interface exists, at any visibility, to declare the test passed without running
+  it. **Breaking: `initialize()` is removed; every caller passes `oxicrypt_integrity::KATS`.** (#262).
+- Added `State::IntegrityUnverified` and `Error::IntegrityNotAttested`, reported across the C ABI as
+  `OxiResult::IntegrityUnverified` (28) (#262).
+- Added a four-value status indicator to the integrity test — `Mismatch`, `SlotInvalid`,
+  `Unreadable`, `CastNotRun`. An environment that cannot supply the module's own bytes reports
+  `Unreadable` and does not become operational (#262).
+- Added the HMAC-SHA-256 CAST to `oxicrypt_integrity::KATS`, ahead of the integrity test. The test
+  refuses to run before it has passed (#262).
+- Added `oxicrypt-integrity-sign`, the signer, as its own published crate, moved out of
+  `oxicrypt-integrity`. An oxicrypt build must be signed before it will run, so the signer installs
+  with `cargo install oxicrypt-integrity-sign` and is also a library a build script can call. It is
+  a build tool outside the cryptographic module and is not FIPS-validated (#262).
+- Removed `--staticlib-target`. A static archive has no loadable image; the consumer signs the
+  binary the archive is linked into (#262).
+- Corrected the integrity test's citation to ISO/IEC 19790:2012 §7.10.2.2 across the crate metadata,
+  README, `docs/api.md`, `oxicrypt-module` and the LAMA manifests. IG 10.3.A remains cited where it
+  governs pairwise consistency tests and algorithm CASTs (#262).
 - Corrected oxicrypt-slh-dsa's FIPS 205 citations, which named §9 internal functions for the
   external API, Algorithm 17 for internal key generation, §10 for the SHAKE and SHA-2
   instantiations, and a Table 5 the standard does not contain. (#242)
@@ -146,7 +187,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The SHA digest and block sizes are re-exported at the crate root of `oxicrypt-sha`, algorithm-prefixed: `SHA256_DIGEST_SIZE`, `SHA384_BLOCK_SIZE` and so on for all seven algorithms. `oxicrypt_sha::DIGEST_SIZE` was the path a caller forms first and it could never resolve — `DIGEST_SIZE` is defined in six submodules with six different values, so the bare name has no correct answer. The prefixed form gives each size one meaning at the root and matches what `sha512_t` already did internally with `DIGEST_SIZE_224`; the module-scoped names are unchanged (#192).
 - Test fixtures no longer carry the `pqclib` project name: 77 occurrences across 19 files. All were test-only and reached no shipped artifact — `strings` on the built `.so` returns none — so this changes no behaviour a caller can observe. The `CHANGELOG` entries recording the original rotation keep the old name, being the history of it (#193).
 - **The LAMA manifest now describes only what reaches crates.io.** `acvp-harness` and `esv-harness` are ACVP and ESV protocol clients that drive validation rather than part of the surface a consumer links against, and neither can be named in anyone's `Cargo.toml` — yet the manifest carried 36 functions, 50 types and 32 constants for them. Those move to `acvp-harness/llm-api-draft.yaml` and `esv-harness/llm-api-draft.yaml`, kept rather than deleted because both describe real library surfaces that would need manifests of their own if either is split out. `oxi`, `doc-guard`, `ct-validation` and `oxicrypt-bench` gain `modules:` entries so that every workspace crate now has one and an absent crate is unambiguously a defect — the condition that would have caught #174. The coverage rule in `AGENTS.md` collapses to a single sentence with no exceptions list (#208).
-- **The integrity key, the slot magics, and the self-test message constants no longer carry the `pqclib` project name.** `FIPS_INTEGRITY_KEY` is now `oxicrypt-fips140-3-integrity-key`, the slot magics are `0xfc OXICRYPT_FIPS_H` / `0xfd OXICRYPT_FIPS_F`, the two RSA power-up KAT messages and the three pairwise-consistency probe messages are `oxicrypt`-prefixed, and the pinned RSA signatures are regenerated to match. **Any binary signed with the previous key or magics will fail its power-up integrity check and must be re-signed** — `fips-integrity-sign --sign` is the same command as before. Rotating these after validation would require re-validation under IG 10.3.A, so this is the last point at which the change costs a re-sign and a test run rather than a submission (#193).
+- **The integrity key, the slot magics, and the self-test message constants no longer carry the `pqclib` project name.** `FIPS_INTEGRITY_KEY` is now `oxicrypt-fips140-3-integrity-key`, the slot magics are `0xfc OXICRYPT_FIPS_H` / `0xfd OXICRYPT_FIPS_F`, the two RSA power-up KAT messages and the three pairwise-consistency probe messages are `oxicrypt`-prefixed, and the pinned RSA signatures are regenerated to match. **Any binary signed with the previous key or magics will fail its power-up integrity check and must be re-signed** — `oxicrypt-integrity-sign --sign` is the same command as before. Rotating these after validation would require re-validation under IG 10.3.A, so this is the last point at which the change costs a re-sign and a test run rather than a submission (#193).
 - The `FIPS_INTEGRITY_KEY` doc comment named a key the module did not use: it stated an `oxicrypt-` prefix against a `pqclib-` constant, and the literal it named was 34 bytes where the type is `[u8; 32]`, so its own arithmetic disproved it. The doc now states the compiled literal, and a test reads the doc comment out of the source and asserts both the literal and its stated byte count against the constant, so the two cannot drift apart again (#193).
 
 ### Fixed

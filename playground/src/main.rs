@@ -18,6 +18,17 @@ use oxicrypt_sha::sha256::{BLOCK_SIZE as SHA256_BLOCK_SIZE, DIGEST_SIZE as SHA25
 use oxicrypt_ecdsa::{EcdsaP256PrivateKey, verify as ecdsa_verify};
 use oxicrypt_eddsa::{keygen as ed_keygen, sign as ed_sign, verify as ed_verify};
 
+/// Stands in for the pre-operational integrity test.
+///
+/// The playground binary is never signed, so the real integrity test
+/// cannot pass inside it. The module requires an integrity group to
+/// initialise at all, so this stub is declared here, visibly, rather
+/// than the module offering any way to skip the requirement.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned playground binary",
+    run: || Ok(()),
+}];
+
 fn main() {
     println!("╔══════════════════════════════════════════════════╗");
     println!("║        oxicrypt playground — API walkthrough     ║");
@@ -27,11 +38,12 @@ fn main() {
     // ── 1. Module initialization ────────────────────────────────
     // The module must reach "Operational" state before any crypto
     // function will work. In the real acvp-harness, initialize_with_tests()
-    // runs all 139 KATs + integrity check. Here we use initialize()
-    // (empty test list) to skip straight to Operational, since the
-    // playground binary isn't signed and we just want to poke at APIs.
+    // runs the real integrity group plus all 139 algorithm KATs. Here we
+    // pass the unsigned-binary stub and an empty test list to skip
+    // straight to Operational, since the playground binary isn't signed
+    // and we just want to poke at APIs.
     println!("─── 1. Module initialization ───");
-    match oxicrypt_module::initialize() {
+    match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
         Ok(()) => {}
         Err(oxicrypt_module::Error::AlreadyInitialized) => {}
         Err(e) => {

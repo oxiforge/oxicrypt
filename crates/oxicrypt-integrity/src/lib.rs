@@ -1,140 +1,216 @@
-//! Software integrity self-test for the oxicrypt FIPS module.
+//! Pre-operational software integrity test for the oxicrypt FIPS module.
 //!
 //! # Approved service
 //!
 //! | Service | Standard | Entry point |
 //! |---------|----------|-------------|
-//! | Module binary integrity check | ISO/IEC 19790:2012 §7.10.2.2 / IG 10.2.A | [`integrity_self_test`] |
+//! | Module image integrity check | ISO/IEC 19790:2012 §7.10.2.2 (`AS10.17`–`AS10.18`) | [`integrity_self_test`] |
 //!
 //! This crate implements the pre-operational software integrity test
-//! required by ISO/IEC 19790:2012 §7.10.2.2, whose integrity-technique
-//! self-test is governed by FIPS 140-3 IG 10.2.A. The check verifies
-//! that the module binary on disk has not been modified since it was
-//! signed by recomputing an HMAC-SHA-256 over the executable's file
-//! bytes with the 32-byte MAC field zeroed, and comparing against a
-//! reference MAC embedded **inside** the binary at a reserved slot.
+//! required by ISO/IEC 19790:2012 §7.10.2.2, asserted by `AS10.17` and
+//! `AS10.18`. The integrity technique itself is HMAC-SHA-256, whose
+//! cryptographic algorithm self-test is governed by FIPS 140-3
+//! IG 10.2.A and runs before this test (see "Boot order" below).
 //!
-//! # Sensitive security parameters
+//! # What is hashed: the loader-invariant image
 //!
-//! None. The integrity HMAC key is public build-time material (see
-//! "HMAC key policy" below); the MAC itself is public, and the
-//! module binary bytes are public. No CSPs pass through this
-//! crate's API.
+//! The test verifies the module's **runtime image** — the bytes the
+//! operating-system loader mapped from the signed artifact and never
+//! wrote to — rather than the bytes of a file on disk. Every loader
+//! examined leaves the executable code alone and routes
+//! address-dependent references through writable data (ELF through the
+//! GOT, Mach-O through chained fixups into `__DATA_CONST`, PE through
+//! base relocations landing in `.rdata`), so a region defined as *"every
+//! byte the loader maps from the signed file and never modifies"* is
+//! stable across runs and identical to the corresponding file bytes.
 //!
-//! # Design: embedded slot
+//! Hashing the runtime image rather than the file is what makes one
+//! technique reach every operational environment the module intends to
+//! claim. A file-based hash cannot work where the platform rewrites the
+//! delivered artifact — Apple's `codesign` edits `__LINKEDIT` and
+//! FairPlay encrypts the code segment on disk while the kernel decrypts
+//! it in memory — so the on-disk bytes of a shipped iOS binary are not
+//! the bytes that execute. The runtime image is.
 //!
-//! The module binary embeds a 64-byte reserved slot at link time via
-//! [`FIPS_INTEGRITY_SLOT`], an `#[used] pub static` with the layout
+//! The consequence that makes this practical: because the loader does
+//! not modify the region, the **signer computes the reference MAC
+//! offline from the file** while the **verifier reads memory**, and the
+//! two agree by construction. No memory dump is needed in the build
+//! pipeline and the module need not run at build time.
+//!
+//! # The extent is a list of ranges, not a rule
+//!
+//! The verifier performs **no classification**. The signer — a
+//! build-time tool outside the cryptographic boundary, free to parse
+//! ELF, Mach-O and PE — decides which ranges make up the
+//! loader-invariant image for the artifact in front of it, and writes
+//! that range list into the module. At runtime the module hashes the
+//! ranges it is told to hash, in order. Format knowledge lives entirely
+//! in the tool; the boundary crate understands one thing, a table of
+//! `(rva, file_off, len)` triples.
+//!
+//! Ranges are **subtractive**: bytes the loader does patch are absent
+//! from the extent rather than masked to zero, so both sides share a
+//! single semantic — "HMAC the listed ranges in order" — with no
+//! zero-substitution logic on either side and no cross-build assumption
+//! about which words those are. The signer emits whatever ranges *this*
+//! build produced.
+//!
+//! # The slot, and why it is not part of the extent
+//!
+//! [`FIPS_INTEGRITY_SLOT`] is a [`SLOT_SIZE`]-byte `#[used] pub static`
+//! reserved at link time, carrying the format version, the range table,
+//! and the reference MAC:
 //!
 //! ```text
-//! [ HDR (16 bytes) | MAC (32 bytes) | FTR (16 bytes) ]
+//! HDR(16) | version(4) | flags(4) | count(4) | slot_rva(4) | MAC(32) | range table | pad | FTR(16)
 //! ```
 //!
-//! The HDR and FTR are fixed 16-byte patterns. A chance occurrence in
-//! unrelated data is negligible, and an incidental occurrence of HDR
-//! alone is rejected by the footer-at-+48 check described below. The
-//! MAC field is zero in an unsigned binary. At sign time, the
-//! companion tool `fips-integrity-sign --sign <exe>`:
+//! **The slot's own range is never in the extent.** That is what
+//! dissolves the circularity a reference MAC embedded inside the hashed
+//! region would otherwise create: the signer hashes file bytes that
+//! exclude the slot, then writes the MAC into the slot, and the verifier
+//! hashes memory bytes that exclude the slot. Both sides hash identical
+//! input by construction — there is no zeroing step on either side, and
+//! no window in which the two disagree about what the slot contained.
 //!
-//! 1. reads the module binary into a buffer,
-//! 2. locates the slot by scanning for HDR and verifying that FTR
-//!    appears at offset +48 from the match,
-//! 3. zeroes the 32 MAC bytes in the buffer (idempotent re-sign),
-//! 4. computes HMAC-SHA-256 over the entire buffer with the fixed
-//!    public integrity key [`FIPS_INTEGRITY_KEY`], and
-//! 5. writes the modified buffer — with the computed MAC spliced into
-//!    the slot — back to disk.
+//! `slot_rva` records where the slot sits relative to the image base.
+//! The verifier takes the slot's runtime address from the static and
+//! subtracts `slot_rva` to recover the load base, which is all it needs
+//! to turn every `rva` in the table into an address. No relocation
+//! processing, no symbol lookup, no scanning.
 //!
-//! At runtime, the power-up KAT reads the on-disk bytes of
-//! `env::current_exe()`, finds the slot, extracts the expected MAC,
-//! zeroes the slot in its in-memory copy, recomputes the HMAC, and
-//! compares against the extracted MAC without short-circuiting.
+//! # Why the slot's bytes are read through the acquisition mechanism
 //!
-//! # Why embedded instead of a sidecar file
+//! The verifier takes only the *address* of [`FIPS_INTEGRITY_SLOT`] from
+//! the static and then reads its bytes the same way it reads every other
+//! range. It never dereferences the static.
 //!
-//! An earlier version of this crate used a `<exe>.fipshmac` sidecar
-//! written next to the executable. The sidecar pattern is simple on
-//! Linux, macOS, and Windows command-line tools but breaks on
-//! code-signed mobile bundles:
+//! The reason is that the signer patches the slot **after** compilation,
+//! so the compiler's view of the static — all zeros in the MAC and table
+//! — is stale for every signed artifact. Reading the static in Rust is a
+//! read of an immutable value with a known initializer, which the
+//! compiler is permitted to constant-fold; nothing in the source
+//! prevents it, and the observed behaviour of any one compiler version
+//! is not a guarantee. Folding would substitute the unsigned initializer
+//! for the signed content, and the failure would be silent at compile
+//! time. Taking the address and acquiring the bytes removes the question
+//! entirely.
 //!
-//! - iOS `.app` bundles are signed as a unit; writing a sidecar at
-//!   install time invalidates Apple's code signature and writing one
-//!   at runtime is blocked by bundle immutability.
-//! - Android APKs are zip archives; individual files inside an APK
-//!   are not writable post-install.
+//! # Byte acquisition
 //!
-//! An embedded MAC travels with the binary across the signing
-//! boundary on all three mobile OSes, so a single mechanism covers
-//! every target this module intends to support.
+//! One technique, a small platform-specific step to read the module's
+//! own bytes:
 //!
-//! # Why scan for a magic, not parse ELF/Mach-O/PE
+//! | Operational environment | Order | Mechanism | `unsafe` |
+//! |---|---|---|---|
+//! | Linux | 1 | `pread` on `/proc/self/mem` | none |
+//! | Linux | 2 | `pread` the backing file at the recorded `file_off` | none |
 //!
-//! Looking up the slot by the address of [`FIPS_INTEGRITY_SLOT`] and
-//! converting that address to a file offset would require per-platform
-//! ELF, Mach-O, and PE parsers. Scanning the on-disk bytes for a
-//! 16-byte header magic plus a 16-byte footer magic 32 bytes later is
-//! portable, pure Rust, no `unsafe`, and robust to any dedup choice
-//! the linker might make: even if the scanner itself references the
-//! header pattern somewhere in the code, the footer-at-+48 check
-//! rejects any occurrence that isn't a real slot.
+//! This crate carries `#![forbid(unsafe_code)]` and keeps it. Both Linux
+//! mechanisms are file reads, so a wrong offset is an error return or a
+//! short read rather than undefined behaviour — a property worth
+//! preserving in the crate whose entire job is integrity. Environments
+//! needing a non-file mechanism (Darwin, Windows, and Android where the
+//! process is not dumpable) are served by a separate exception crate and
+//! are **not implemented here**; on those targets
+//! [`verify_loaded_image`] reports [`Unreadable::NoMechanism`] and the
+//! module does not become operational.
+//!
+//! The second Linux mechanism verifies the **file image** rather than the
+//! loaded image: a modification made to memory after loading would pass
+//! it. That is consistent with the security property below, and it is
+//! stated rather than left implicit. It exists because
+//! `/proc/self/mem` becomes `root:root` for a non-dumpable process —
+//! setuid, setcap, or privilege-dropping consumers — where reading the
+//! backing file still works.
+//!
+//! # Security property
+//!
+//! This test detects **modification of the module after it was signed**.
+//! An artifact whose loader-invariant image no longer matches the
+//! reference MAC in its slot has changed since signing — corruption at
+//! rest, corruption during loading, a faulty or partial installation, a
+//! mismatched build — and the module refuses to become operational.
+//!
+//! The test is scoped to an artifact and the signature that artifact
+//! carries. It does not establish *who* signed. The integrity key is
+//! public build-time material, so any party able to write to an artifact
+//! can also compute a valid reference MAC for it; an artifact modified
+//! and then re-signed is internally consistent, and is a *different
+//! module* rather than a defeated test. Establishing that an artifact is
+//! the one a particular vendor produced is the job of the platform's
+//! code signing and of the distribution channel, distinct from — and not
+//! to be confused with — the module's own HMAC.
+//!
+//! Building this module from source and signing the result is not
+//! modification-after-signing. The resulting artifact is the builder's
+//! module, and this test protects it from the moment it is signed
+//! exactly as it protects a vendor-signed one.
 //!
 //! # HMAC key policy
 //!
 //! The HMAC key is a fixed, publicly known 32-byte constant. The
-//! integrity check is an **authenticity** check, not a secrecy check:
-//! the property that matters is that an attacker who rewrites the
-//! module binary cannot
-//! also predict the corresponding reference MAC without knowing the
-//! key embedded in the module source. The key is therefore a
-//! build-time constant, not a runtime secret. Rotating the key after
-//! validation is a module change and would require re-validation.
+//! integrity check is an authenticity check against accident and
+//! substitution, not a secrecy check, so the key is a build-time
+//! constant rather than a runtime secret. Rotating it after validation
+//! is a module change and would require re-validation.
 //!
-//! # Boot flow
+//! # Sensitive security parameters
 //!
-//! The `integrity_self_test` function is registered in [`KATS`] as a
-//! power-up KAT. During module boot the `oxicrypt-module` runner calls it
-//! while the module is in `SelfTest` state, meaning the standard
-//! `HmacSha256::new` entry point is still gated by
-//! `require_operational()` and would return `NotOperational`. This
-//! crate therefore routes through `HmacSha256::new_internal`, the
-//! gateless constructor that exists for exactly this reason.
+//! None. The integrity HMAC key is public build-time material, the MAC
+//! is public, and the module image bytes are public. No CSPs pass
+//! through this crate's API.
+//!
+//! # Boot order
+//!
+//! [`integrity_self_test`] is registered in [`KATS`] as a pre-operational
+//! test. The `oxicrypt-module` runner calls it while the module is in
+//! `SelfTest` state, where the ordinary `HmacSha256::new` entry point is
+//! still gated by `require_operational()`. This crate therefore routes
+//! through `HmacSha256::new_internal`, the gateless constructor that
+//! exists for exactly this reason. The HMAC-SHA-256 CAST runs before
+//! the integrity test, satisfying `AS10.20`.
 //!
 //! # Failure modes
 //!
-//! Any of the following counts as an integrity failure and causes the
-//! runner to latch the module into the terminal `Error` state:
+//! Every failure is terminal — the runner latches the module into the
+//! `Error` state and no service is available. The three top-level
+//! variants of [`IntegrityError`] are distinguishable by design, because
+//! a laboratory and an integrator need to tell "the module is corrupt"
+//! from "this environment cannot supply the module's own bytes":
 //!
-//! - The current executable path cannot be resolved.
-//! - The executable cannot be read.
-//! - No valid slot is found in the binary (missing header/footer, or
-//!   header/footer not aligned).
-//! - More than one valid slot is found (ambiguous binary, treated as
-//!   tampering).
-//! - The computed MAC does not equal the MAC stored in the slot
-//!   (compared without short-circuiting).
+//! - [`IntegrityError::Mismatch`] — the image does not match its
+//!   reference MAC.
+//! - [`IntegrityError::SlotInvalid`] — the slot is missing, malformed,
+//!   or describes an extent that cannot be valid.
+//! - [`IntegrityError::Unreadable`] — no byte-acquisition mechanism
+//!   succeeded, so the test **was not performed**. An unverifiable
+//!   module never becomes operational.
 //!
-//! # Signing workflow (development)
+//! # Signing workflow
 //!
 //! ```text
-//! cargo build -p oxicrypt-integrity --bin fips-integrity-sign
-//! cargo build -p acvp-harness
-//! ./target/debug/fips-integrity-sign --sign ./target/debug/acvp-harness
-//! ./target/debug/acvp-harness
+//! cargo build -p oxicrypt-integrity-sign
+//! cargo build -p oxi
+//! ./target/debug/oxicrypt-integrity-sign --sign ./target/debug/oxi
+//! ./target/debug/oxi
 //! ```
 //!
-//! A production build would run the signer as a post-link step in
-//! the build pipeline and ship the signed binary; the runtime boot
-//! path never calls [`sign_exe`].
+//! A production build runs the signer as a post-link step and ships the
+//! signed artifact; the runtime path never signs.
 
 #![forbid(unsafe_code)]
 
-use std::env;
-use std::fs;
-use std::io;
-use std::path::Path;
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use oxicrypt_hmac::HmacSha256;
 use oxicrypt_module::{KatEntry, SelfTestFailure};
+
+mod acquire;
+pub mod slot;
+
+pub use slot::{Range, SlotDefect, SlotImage};
 
 /// Fixed, publicly known HMAC key used for the software integrity
 /// self-test.
@@ -153,216 +229,169 @@ pub const FIPS_INTEGRITY_KEY: [u8; 32] = *b"oxicrypt-fips140-3-integrity-key";
 /// Header magic for the embedded integrity slot. 16 bytes.
 ///
 /// The leading `0xfc` byte is a deliberately non-ASCII sentinel: it
-/// makes the pattern unlikely to appear in a string table and lets
-/// the scanner short-circuit on a byte that rarely occurs in text
+/// makes the pattern unlikely to appear in a string table and lets the
+/// signer's scanner short-circuit on a byte that rarely occurs in text
 /// sections.
 pub const SLOT_HEADER_MAGIC: [u8; 16] = [
     0xfc, b'O', b'X', b'I', b'C', b'R', b'Y', b'P', b'T', b'_', b'F', b'I', b'P', b'S', b'_', b'H',
 ];
 
-/// Footer magic for the embedded integrity slot. 16 bytes. Paired
-/// with [`SLOT_HEADER_MAGIC`]; the scanner requires both to appear at
-/// the correct relative offsets before accepting a candidate slot.
+/// Footer magic for the embedded integrity slot. 16 bytes. Paired with
+/// [`SLOT_HEADER_MAGIC`]; a candidate slot is accepted only when both
+/// appear at their correct relative offsets.
 pub const SLOT_FOOTER_MAGIC: [u8; 16] = [
     0xfd, b'O', b'X', b'I', b'C', b'R', b'Y', b'P', b'T', b'_', b'F', b'I', b'P', b'S', b'_', b'F',
 ];
 
 /// Size in bytes of the embedded integrity slot.
-pub const SLOT_SIZE: usize = 64;
-
-/// Offset of the MAC field within the slot (after the 16-byte
-/// header).
-pub const MAC_OFFSET_IN_SLOT: usize = 16;
-
-/// Length in bytes of the MAC field.
-pub const MAC_SIZE: usize = 32;
-
-/// Offset of the footer within the slot (header + MAC).
-pub const FOOTER_OFFSET_IN_SLOT: usize = 48;
-
-/// Reserved 64-byte integrity slot layout.
 ///
-/// `#[repr(C)]` pins field order so the on-disk byte layout matches
-/// the source declaration exactly, which is what the signer and
-/// verifier both scan for.
-#[repr(C)]
-pub struct IntegritySlot {
-    /// Header magic, must equal [`SLOT_HEADER_MAGIC`].
-    pub hdr: [u8; 16],
-    /// HMAC-SHA-256 over the module binary with this field zeroed.
-    /// All zeros in an unsigned binary.
-    pub mac: [u8; 32],
-    /// Footer magic, must equal [`SLOT_FOOTER_MAGIC`].
-    pub ftr: [u8; 16],
-}
+/// 16 KiB. The size is what the range table can grow into: at
+/// [`slot::RANGE_ENTRY_SIZE`] bytes per entry it admits
+/// [`slot::MAX_RANGES`] ranges, which is ample for a subtractive extent
+/// on every format measured — the densest case observed is a PE image
+/// whose 472 base relocations each split a range.
+pub const SLOT_SIZE: usize = 16384;
 
-/// The module-binary integrity slot.
+/// Format version written by the signer and required by the verifier.
 ///
-/// `#[used]` prevents the linker from discarding the static even
-/// though it is never read from Rust code (the runtime check reads it
-/// back through the on-disk file bytes, not the in-memory symbol).
-/// [`IntegritySlot`] is `#[repr(C)]`, which pins field order so the
-/// 64 bytes appear on disk as declared. Signing and verification both find this
-/// region by scanning the on-disk file for the header/footer pair.
+/// Version 1 was a 64-byte slot holding a whole-file MAC. It is not
+/// accepted: the technique it encoded verifies the wrong bytes on every
+/// platform that rewrites the delivered artifact, so accepting it would
+/// mean the module could pass a test that does not hold.
+pub const SLOT_VERSION: u32 = 2;
+
+/// Reserved integrity slot.
+///
+/// `#[used]` prevents the linker from discarding the static even though
+/// no Rust code reads its contents — the verifier takes its *address*
+/// and reads the bytes through the byte-acquisition mechanism, for the
+/// reason given in the crate documentation.
+///
+/// `#[repr(C)]` pins field order so the bytes appear in the artifact
+/// exactly as declared, which is what the signer scans for and what the
+/// field offsets in [`slot`] index into.
 #[used]
 pub static FIPS_INTEGRITY_SLOT: IntegritySlot = IntegritySlot {
     hdr: SLOT_HEADER_MAGIC,
-    mac: [0u8; 32],
+    body: [0u8; SLOT_BODY_SIZE],
     ftr: SLOT_FOOTER_MAGIC,
 };
 
-/// Errors surfaced by the standalone integrity-check helpers.
+/// Size of the slot's body — everything between the two magics.
+pub const SLOT_BODY_SIZE: usize = SLOT_SIZE - 32;
+
+/// Layout of the reserved integrity slot.
 ///
-/// The power-up KAT itself returns only [`SelfTestFailure`] — the
-/// runner has no use for richer error information at boot time — but
-/// the signer tool uses these variants to give operators actionable
-/// diagnostics.
+/// The body is deliberately opaque here: its interior structure is
+/// defined by the field offsets in [`slot`] and parsed from bytes, not
+/// by Rust field access, because the verifier never reads the static
+/// directly.
+#[repr(C)]
+pub struct IntegritySlot {
+    /// Header magic, equal to [`SLOT_HEADER_MAGIC`].
+    pub hdr: [u8; 16],
+    /// Version, flags, count, `slot_rva`, MAC, range table, padding.
+    pub body: [u8; SLOT_BODY_SIZE],
+    /// Footer magic, equal to [`SLOT_FOOTER_MAGIC`].
+    pub ftr: [u8; 16],
+}
+
+/// Why no byte-acquisition mechanism could supply the module's bytes.
+///
+/// Distinguished from a MAC mismatch because the two mean opposite
+/// things to an operator: a mismatch says the module is wrong, an
+/// acquisition failure says the environment cannot answer the question.
+#[derive(Debug)]
+pub enum Unreadable {
+    /// This target has no implemented byte-acquisition mechanism.
+    NoMechanism,
+    /// `/proc/self/maps` could not be read, so neither the load base nor
+    /// the backing file could be established.
+    MapsUnavailable(std::io::Error),
+    /// The mapping holding the slot was found but a field of it did not
+    /// parse, so its file offset cannot be trusted.
+    MapsUnparseable,
+    /// The slot's address falls in no mapping named by
+    /// `/proc/self/maps`.
+    SlotUnmapped,
+    /// The mapping holding the slot names no backing file, so the
+    /// file-read fallback has nothing to open.
+    NoBackingFile,
+    /// Every mechanism was tried and each failed. Carries the first
+    /// error from each, in the order attempted.
+    AllMechanismsFailed(Vec<std::io::Error>),
+}
+
+/// Failure of the pre-operational software integrity test.
+///
+/// The three variants are the module's status indicator for this test
+/// (`AS10.18`); see the crate documentation.
 #[derive(Debug)]
 pub enum IntegrityError {
-    /// Resolving `env::current_exe()` failed.
-    CurrentExeUnresolved(io::Error),
-    /// The executable could not be read.
-    ExeReadFailed(io::Error),
-    /// The signed buffer could not be written back to the executable
-    /// path.
-    ExeWriteFailed(io::Error),
-    /// No `[HDR | 32 bytes | FTR]` slot was found in the binary.
-    /// Usually means the binary was not linked against this crate,
-    /// or the slot was stripped by a hostile post-processing step.
-    SlotNotFound,
-    /// More than one valid slot was found. Treated as tampering: a
-    /// benign binary contains exactly one slot.
-    MultipleSlotsFound,
-    /// The HMAC computed over the slot-zeroed buffer did not match
-    /// the MAC stored in the slot.
-    MacMismatch,
+    /// The integrity technique's own algorithm self-test has not passed
+    /// in this process, so the integrity test may not use it.
+    ///
+    /// A sequencing fault in the front end rather than a finding about
+    /// the module image: it means something called the integrity test
+    /// without first running [`hmac_cast`]. Reported distinctly because
+    /// an error state a laboratory can reach must be one the Security
+    /// Policy enumerates, and because reporting it as a mismatch would
+    /// send an operator hunting for corruption that is not there.
+    CastNotRun,
+    /// The computed MAC over the loader-invariant image does not equal
+    /// the reference MAC in the slot.
+    Mismatch,
+    /// The slot is absent, malformed, or describes an impossible extent.
+    SlotInvalid(SlotDefect),
+    /// The module's own bytes could not be obtained, so the test was not
+    /// performed.
+    Unreadable(Unreadable),
 }
 
 impl core::fmt::Display for IntegrityError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::CurrentExeUnresolved(e) => {
-                write!(f, "could not resolve current executable path: {e}")
+            Self::CastNotRun => f.write_str(
+                "the HMAC-SHA-256 algorithm self-test has not run, so the integrity test may not \
+                 use it",
+            ),
+            Self::Mismatch => f.write_str(
+                "module image integrity MAC mismatch — the image does not match its reference MAC",
+            ),
+            Self::SlotInvalid(d) => write!(f, "integrity slot invalid: {d}"),
+            Self::Unreadable(u) => write!(f, "module image unreadable: {u}"),
+        }
+    }
+}
+
+impl core::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoMechanism => f.write_str(
+                "no byte-acquisition mechanism is implemented for this operational environment",
+            ),
+            Self::MapsUnavailable(e) => write!(f, "/proc/self/maps unreadable: {e}"),
+            Self::MapsUnparseable => {
+                f.write_str("the mapping holding the integrity slot could not be parsed")
             }
-            Self::ExeReadFailed(e) => write!(f, "could not read module binary: {e}"),
-            Self::ExeWriteFailed(e) => write!(f, "could not write signed module binary: {e}"),
-            Self::SlotNotFound => f.write_str(
-                "embedded integrity slot not found; binary was not linked against fips-integrity or the slot was stripped",
-            ),
-            Self::MultipleSlotsFound => f.write_str(
-                "multiple integrity slots found; module binary has been tampered with",
-            ),
-            Self::MacMismatch => f.write_str(
-                "module binary integrity MAC mismatch — the binary has been modified since signing",
-            ),
+            Self::SlotUnmapped => f.write_str("the integrity slot lies in no reported mapping"),
+            Self::NoBackingFile => {
+                f.write_str("the mapping holding the integrity slot names no backing file")
+            }
+            Self::AllMechanismsFailed(errors) => {
+                f.write_str("every byte-acquisition mechanism failed:")?;
+                for e in errors {
+                    write!(f, " [{e}]")?;
+                }
+                Ok(())
+            }
         }
     }
 }
 
 impl std::error::Error for IntegrityError {}
 
-/// Scans a module buffer for the embedded integrity slot.
-///
-/// Returns the absolute byte offset of the slot's header. A slot is
-/// counted as valid only if [`SLOT_HEADER_MAGIC`] appears at offset
-/// `i` **and** [`SLOT_FOOTER_MAGIC`] appears at offset
-/// `i + FOOTER_OFFSET_IN_SLOT`; this rejects spurious occurrences of
-/// the header pattern that might show up because the linker placed a
-/// standalone copy of the constant somewhere in `.rodata`.
-///
-/// Returns `SlotNotFound` if zero valid slots are present, and
-/// `MultipleSlotsFound` if more than one is present.
-pub fn find_slot_offset(bytes: &[u8]) -> Result<usize, IntegrityError> {
-    let mut valid: Option<usize> = None;
-    let len = bytes.len();
-    if len < SLOT_SIZE {
-        return Err(IntegrityError::SlotNotFound);
-    }
-    // Last index at which a full 64-byte window still fits.
-    let last = len.saturating_sub(SLOT_SIZE);
-    for i in 0..=last {
-        let Some(window_end) = i.checked_add(SLOT_SIZE) else {
-            break;
-        };
-        let Some(window) = bytes.get(i..window_end) else {
-            continue;
-        };
-        let Some(hdr) = window.get(..16) else {
-            continue;
-        };
-        let Some(ftr) = window.get(FOOTER_OFFSET_IN_SLOT..SLOT_SIZE) else {
-            continue;
-        };
-        if hdr == SLOT_HEADER_MAGIC.as_slice() && ftr == SLOT_FOOTER_MAGIC.as_slice() {
-            if valid.is_some() {
-                return Err(IntegrityError::MultipleSlotsFound);
-            }
-            valid = Some(i);
-        }
-    }
-    valid.ok_or(IntegrityError::SlotNotFound)
-}
-
-/// Zeros the MAC bytes of the slot at `slot_offset` in `bytes` and
-/// computes HMAC-SHA-256 over the whole buffer.
-///
-/// Shared by [`sign_exe`] and [`verify_exe`] so the two paths cannot
-/// disagree on what "HMAC over the module binary" means.
-fn hmac_with_slot_zeroed(bytes: &mut [u8], slot_offset: usize) -> Result<[u8; 32], IntegrityError> {
-    let mac_start = slot_offset
-        .checked_add(MAC_OFFSET_IN_SLOT)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let mac_end = mac_start
-        .checked_add(MAC_SIZE)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let slot_mac = bytes
-        .get_mut(mac_start..mac_end)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    for b in slot_mac.iter_mut() {
-        *b = 0;
-    }
-    let mut mac = HmacSha256::new_internal(&FIPS_INTEGRITY_KEY);
-    mac.update(bytes);
-    Ok(mac.finalize())
-}
-
-/// Extracts the 32-byte MAC stored in the slot at `slot_offset`.
-fn extract_slot_mac(bytes: &[u8], slot_offset: usize) -> Result<[u8; 32], IntegrityError> {
-    let mac_start = slot_offset
-        .checked_add(MAC_OFFSET_IN_SLOT)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let mac_end = mac_start
-        .checked_add(MAC_SIZE)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let slice = bytes
-        .get(mac_start..mac_end)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let mut out = [0u8; 32];
-    out.copy_from_slice(slice);
-    Ok(out)
-}
-
-/// Writes the 32-byte MAC into the slot at `slot_offset` in `bytes`.
-fn splice_slot_mac(
-    bytes: &mut [u8],
-    slot_offset: usize,
-    mac: &[u8; 32],
-) -> Result<(), IntegrityError> {
-    let mac_start = slot_offset
-        .checked_add(MAC_OFFSET_IN_SLOT)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let mac_end = mac_start
-        .checked_add(MAC_SIZE)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    let slot_mac = bytes
-        .get_mut(mac_start..mac_end)
-        .ok_or(IntegrityError::SlotNotFound)?;
-    slot_mac.copy_from_slice(mac);
-    Ok(())
-}
-
-/// Formats a 32-byte MAC as 64 lowercase hex characters. Used by the
-/// signer tool when printing the MAC to stdout.
+/// Formats a 32-byte MAC as 64 lowercase hex characters.
 #[must_use]
 pub fn encode_hmac_hex(mac: &[u8; 32]) -> [u8; 64] {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -380,11 +409,11 @@ pub fn encode_hmac_hex(mac: &[u8; 32]) -> [u8; 64] {
     out
 }
 
-/// Compares two 32-byte MACs in constant time: accumulates the XOR of
-/// all 32 byte pairs and tests the accumulator once, so the running
-/// time does not depend on where the first difference falls.
+/// Compares two 32-byte MACs without short-circuiting: accumulates the
+/// XOR of all 32 byte pairs and tests the accumulator once, so the
+/// running time does not depend on where the first difference falls.
 ///
-/// This MAC is public and sits in the file an attacker already holds,
+/// This MAC is public and sits in an artifact an attacker already holds,
 /// so no secret depends on it. The compare is written this way because
 /// it is the discipline this workspace applies to every MAC
 /// verification.
@@ -397,108 +426,249 @@ pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     diff == 0
 }
 
-/// Computes the expected MAC for `exe_path` and writes it back into
-/// the embedded slot, returning the computed MAC.
+/// Computes the reference MAC over `ranges` taken from the **file**
+/// bytes in `image`, in table order.
 ///
-/// Used by `fips-integrity-sign --sign`. This function reads the
-/// entire module binary into memory, zeroes the slot MAC bytes,
-/// computes HMAC-SHA-256, and writes the modified buffer back over
-/// the original file.
+/// This is the signer's half of the identity that makes the design work:
+/// the MAC computed here from file bytes equals the MAC the verifier
+/// computes from the loaded image, because the extent excludes every
+/// byte the loader writes.
 ///
-/// Must not be called against a running executable on Linux: the
-/// kernel rejects writes to a file that currently backs any process
-/// image with `ETXTBSY`. The standard development workflow is to run
-/// the signer between `cargo build` and execution.
+/// Shared with the signing tool so the two paths cannot disagree about
+/// what "HMAC over the loader-invariant image" means.
 ///
 /// # Errors
 ///
-/// Returns [`IntegrityError`] on I/O failure, missing slot, or
-/// multiple-slot detection.
-pub fn sign_exe(exe_path: &Path) -> Result<[u8; 32], IntegrityError> {
-    let mut bytes = fs::read(exe_path).map_err(IntegrityError::ExeReadFailed)?;
-    let slot_offset = find_slot_offset(&bytes)?;
-    let mac = hmac_with_slot_zeroed(&mut bytes, slot_offset)?;
-    splice_slot_mac(&mut bytes, slot_offset, &mac)?;
-    fs::write(exe_path, &bytes).map_err(IntegrityError::ExeWriteFailed)?;
-    Ok(mac)
+/// Returns [`SlotDefect::RangeOutOfBounds`] if any range falls outside
+/// `image`.
+pub fn mac_over_file_ranges(image: &[u8], ranges: &[Range]) -> Result<[u8; 32], SlotDefect> {
+    let mut mac = HmacSha256::new_internal(&FIPS_INTEGRITY_KEY);
+    for (index, range) in ranges.iter().enumerate() {
+        let start = range.file_off as usize;
+        let end = start
+            .checked_add(range.len as usize)
+            .ok_or(SlotDefect::RangeOutOfBounds(index_as_u32(index)))?;
+        let bytes = image
+            .get(start..end)
+            .ok_or(SlotDefect::RangeOutOfBounds(index_as_u32(index)))?;
+        mac.update(bytes);
+    }
+    Ok(mac.finalize())
 }
 
-/// Verifies the integrity of `exe_path` against its embedded slot.
+/// Narrows a table index for a diagnostic. Indices are bounded by
+/// [`slot::MAX_RANGES`], far below `u32::MAX`, so the saturating cast
+/// cannot lose information in practice; it exists to keep the error type
+/// free of `usize`.
+fn index_as_u32(index: usize) -> u32 {
+    u32::try_from(index).unwrap_or(u32::MAX)
+}
+
+/// Runtime address of the integrity slot.
 ///
-/// Reads the file, locates the slot, extracts the expected MAC,
-/// zeroes the slot MAC bytes in the in-memory copy, recomputes
-/// HMAC-SHA-256, and compares without short-circuiting.
+/// Taking the address of the static is safe and says nothing about its
+/// contents: the address is the one thing the verifier takes from the
+/// linked static, and the load base is derived from it. Exposed because
+/// it is also the diagnostic an operator needs — across runs it shows
+/// whether the image moved, which is what makes a stable verdict
+/// meaningful rather than vacuous.
+#[must_use]
+pub fn slot_address() -> usize {
+    core::ptr::from_ref(&FIPS_INTEGRITY_SLOT) as usize
+}
+
+/// Runs the pre-operational software integrity test against the loaded
+/// module image.
+///
+/// Locates the slot by the address of [`FIPS_INTEGRITY_SLOT`], acquires
+/// its bytes through the platform mechanism, validates the slot, derives
+/// the load base, hashes the listed ranges from the loaded image, and
+/// compares without short-circuiting.
 ///
 /// # Errors
 ///
-/// Returns [`IntegrityError::MacMismatch`] if the MAC differs from
-/// the slot, or an appropriate I/O / slot-lookup error on other
-/// failure modes.
-pub fn verify_exe(exe_path: &Path) -> Result<(), IntegrityError> {
-    let mut bytes = fs::read(exe_path).map_err(IntegrityError::ExeReadFailed)?;
-    let slot_offset = find_slot_offset(&bytes)?;
-    let expected = extract_slot_mac(&bytes, slot_offset)?;
-    let computed = hmac_with_slot_zeroed(&mut bytes, slot_offset)?;
-    if constant_time_eq(&expected, &computed) {
-        Ok(())
+/// Returns [`IntegrityError`]; see the crate documentation for what each
+/// variant means to an operator.
+///
+/// Records the outcome for [`status`] the first time it runs in this
+/// process. The record latches, so calling this again cannot revise the
+/// indicator an operator reads.
+pub fn verify_loaded_image() -> Result<(), IntegrityError> {
+    let outcome = if HMAC_CAST_PASSED.load(Ordering::Acquire) {
+        let slot_addr = core::ptr::from_ref(&FIPS_INTEGRITY_SLOT) as usize;
+        acquire::verify_at(slot_addr)
     } else {
-        Err(IntegrityError::MacMismatch)
+        Err(IntegrityError::CastNotRun)
+    };
+    // Recorded HERE rather than in `integrity_self_test`, so the
+    // indicator is set on every path that runs the test — including a
+    // direct call — and not only on the one the module runner takes.
+    //
+    // The record LATCHES, mirroring the module's own state machine: this
+    // function is public and may be called again after boot, and a later
+    // benign run must not overwrite a failure the operator still needs.
+    // Without the latch a transient `Unreadable` that subsequently clears
+    // would rewrite the indicator to `Passed` while `oxicrypt_module`
+    // stayed permanently in `Error` — the query would then contradict the
+    // module state it exists to explain.
+    let _ = LAST_STATUS.compare_exchange(
+        IntegrityStatus::NotRun as u8,
+        IntegrityStatus::of(&outcome) as u8,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+    outcome
+}
+
+/// The pre-operational integrity test's status indicator.
+///
+/// Security Policy §5.2 requires an operator and a test laboratory to be
+/// able to tell a corrupt module from an environment that could not
+/// supply the module's own bytes. The module runner's `SelfTestFailure`
+/// carries no payload, so that distinction cannot travel out through
+/// `initialize_with_tests`; this indicator is how it is retrieved
+/// instead, and [`status`] is the retrieval.
+///
+/// The discriminants are stable and are what the C ABI reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+#[non_exhaustive]
+pub enum IntegrityStatus {
+    /// The test has not run in this process.
+    NotRun = 0,
+    /// The test ran and the image matched its reference MAC.
+    Passed = 1,
+    /// The computed MAC does not equal the reference MAC in the slot.
+    Mismatch = 2,
+    /// The slot is absent, malformed, or describes an impossible extent.
+    SlotInvalid = 3,
+    /// The module's own bytes could not be obtained, so the test was
+    /// **not performed**. This says nothing about the image.
+    Unreadable = 4,
+    /// The test was reached before the HMAC-SHA-256 CAST it depends on.
+    CastNotRun = 5,
+    /// The recorded indicator is not a value this module writes.
+    ///
+    /// Unreachable by construction — only [`verify_loaded_image`] writes
+    /// the record, and only from the variants above. Reported rather than
+    /// folded into [`IntegrityStatus::NotRun`] because this is a module
+    /// whose purpose is detecting tampering: reading an impossible value
+    /// as the most benign one would hide the very condition worth seeing.
+    Unknown = 6,
+}
+
+impl IntegrityStatus {
+    /// The indicator corresponding to one run's outcome.
+    const fn of(outcome: &Result<(), IntegrityError>) -> Self {
+        match outcome {
+            Ok(()) => Self::Passed,
+            Err(IntegrityError::Mismatch) => Self::Mismatch,
+            Err(IntegrityError::SlotInvalid(_)) => Self::SlotInvalid,
+            Err(IntegrityError::Unreadable(_)) => Self::Unreadable,
+            Err(IntegrityError::CastNotRun) => Self::CastNotRun,
+        }
     }
 }
 
-/// Power-up integrity KAT.
+/// The last outcome recorded by [`verify_loaded_image`].
+static LAST_STATUS: AtomicU8 = AtomicU8::new(IntegrityStatus::NotRun as u8);
+
+/// Returns the pre-operational integrity test's status indicator.
 ///
-/// Resolves the current executable via `env::current_exe()`, reads
-/// the on-disk bytes, and runs [`verify_exe`]. Returns
-/// [`SelfTestFailure`] on any error so the `oxicrypt-module` runner can
-/// latch the module into the terminal `Error` state.
+/// [`IntegrityStatus::NotRun`] until the test has run in this process.
+/// The value latches on the first run; the test is not re-run here, so
+/// this is safe to call from an error state and cannot change it.
+#[must_use]
+pub fn status() -> IntegrityStatus {
+    match LAST_STATUS.load(Ordering::Acquire) {
+        1 => IntegrityStatus::Passed,
+        2 => IntegrityStatus::Mismatch,
+        3 => IntegrityStatus::SlotInvalid,
+        4 => IntegrityStatus::Unreadable,
+        5 => IntegrityStatus::CastNotRun,
+        0 => IntegrityStatus::NotRun,
+        _ => IntegrityStatus::Unknown,
+    }
+}
+
+/// Records that the integrity technique's algorithm self-test passed in
+/// this process.
+static HMAC_CAST_PASSED: AtomicBool = AtomicBool::new(false);
+
+/// The integrity technique's own cryptographic algorithm self-test.
 ///
-/// Do not call this directly from application code — it is wired
-/// into [`KATS`] and runs as part of
-/// `oxicrypt_module::initialize_with_tests`.
+/// `AS10.20` and IG 10.2.A require an approved algorithm's CAST to
+/// precede any use of that algorithm, and the integrity test's technique
+/// is HMAC-SHA-256 — so this runs first, and the module's own image is
+/// hashed only once its hash function has been proven against a known
+/// answer. SHA-256 needs no separate CAST here: IG 10.2.A permits a hash
+/// to be covered implicitly by the HMAC self-test that exercises it.
+///
+/// The ordering is not left to convention. [`KATS`] lists this entry
+/// first, so a front end passing `oxicrypt_integrity::KATS` gets the
+/// sequence by construction; and [`verify_loaded_image`] refuses with
+/// [`IntegrityError::CastNotRun`] if it is reached anyway. A rule that
+/// cannot be violated is worth more than one every caller must remember.
 ///
 /// # Errors
 ///
-/// Returns [`SelfTestFailure`] if the executable path cannot be
-/// resolved, the binary cannot be read, the embedded slot cannot be
-/// found, or the computed MAC does not match the slot's MAC.
-pub fn integrity_self_test() -> Result<(), SelfTestFailure> {
-    let exe = env::current_exe().map_err(|_| SelfTestFailure)?;
-    verify_exe(&exe).map_err(|_| SelfTestFailure)
+/// Returns [`SelfTestFailure`] if the known-answer test fails, which
+/// latches the module into its terminal `Error` state.
+pub fn hmac_cast() -> Result<(), SelfTestFailure> {
+    oxicrypt_hmac::self_test_sha256()?;
+    HMAC_CAST_PASSED.store(true, Ordering::Release);
+    Ok(())
 }
 
-/// Power-up KAT inventory for the software integrity self-test.
+/// Pre-operational integrity test, in the shape the module runner wants.
 ///
-/// Merged into the acvp-harness boot sequence via
-/// `oxicrypt_module::initialize_with_tests`. The pre-operational
-/// integrity test runs on every module startup (ISO/IEC 19790:2012
-/// §7.10.2.2); the HMAC-SHA-256 it uses carries its own CAST per
-/// IG 10.3.A.
-pub const KATS: &[KatEntry] = &[KatEntry {
-    name: "Module binary integrity (HMAC-SHA-256 over embedded slot in current_exe())",
-    run: integrity_self_test,
-}];
+/// Do not call this directly from application code — it is wired into
+/// [`KATS`] and runs as part of `oxicrypt_module::initialize_with_tests`.
+///
+/// # Errors
+///
+/// Returns [`SelfTestFailure`] on any integrity failure, so the runner
+/// latches the module into the terminal `Error` state. The richer
+/// diagnosis is available from [`verify_loaded_image`], which this wraps.
+pub fn integrity_self_test() -> Result<(), SelfTestFailure> {
+    verify_loaded_image().map_err(|_| SelfTestFailure)
+}
 
-// ----------------------------------------------------------------------
-// Unit tests
-// ----------------------------------------------------------------------
+/// Pre-operational test inventory for the software integrity test.
+///
+/// Merged into a front end's boot sequence via
+/// `oxicrypt_module::initialize_with_tests`, which runs entries **in
+/// order**. The order here is the requirement, not a convenience: the
+/// technique's CAST first (`AS10.20`, IG 10.2.A), then the integrity test
+/// it enables (ISO/IEC 19790:2012 §7.10.2.2, `AS10.17`).
+///
+/// This slice is the module's own dependency and is self-contained. The
+/// remaining approved-algorithm CASTs are a separate inventory and run
+/// after these, once the module's image has been verified.
+pub const KATS: &[KatEntry] = &[
+    KatEntry {
+        name: "HMAC-SHA-256 CAST (integrity technique, AS10.20)",
+        run: hmac_cast,
+    },
+    KatEntry {
+        name: "Module image integrity (HMAC-SHA-256 over the loader-invariant image)",
+        run: integrity_self_test,
+    },
+];
 
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation
 )]
 mod tests {
     use super::{
-        FIPS_INTEGRITY_KEY, IntegrityError, MAC_SIZE, SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC,
-        SLOT_SIZE, constant_time_eq, encode_hmac_hex, find_slot_offset, hmac_with_slot_zeroed,
-        sign_exe, verify_exe,
+        FIPS_INTEGRITY_KEY, Range, SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC, SLOT_SIZE, SLOT_VERSION,
+        SlotDefect, constant_time_eq, encode_hmac_hex, mac_over_file_ranges, slot,
     };
-    use std::fs;
-    use std::io::Write;
-    use std::path::{Path, PathBuf};
 
     /// The doc comment on `FIPS_INTEGRITY_KEY` names the key's literal.
     /// A doc naming the wrong key for the pre-operational integrity check
@@ -520,7 +690,6 @@ mod tests {
         };
         let doc = &src[doc_start..doc_start + decl];
 
-        // The doc states the literal in backticks and its length in parens.
         let Some(quoted_start) = doc.find("`\"") else {
             panic!("doc states no quoted literal");
         };
@@ -554,10 +723,9 @@ mod tests {
         );
     }
 
-    /// The slot magics are matched against on-disk bytes of signed binaries,
-    /// so their length is load-bearing: a 15-byte tail plus the sentinel is
-    /// what makes each magic 16 bytes wide. Rotating the project name through
-    /// them is only safe while the lengths hold.
+    /// The slot magics are matched against artifact bytes by the signer,
+    /// so their length is load-bearing: a 15-byte tail plus the sentinel
+    /// is what makes each magic 16 bytes wide.
     #[test]
     fn slot_magics_are_sixteen_bytes_and_distinctly_sentinelled() {
         assert_eq!(SLOT_HEADER_MAGIC.len(), 16);
@@ -574,103 +742,239 @@ mod tests {
         ] {
             assert!(
                 m[1..].iter().all(u8::is_ascii_graphic),
-                "{name} magic tail must stay ASCII so it is greppable in a binary"
+                "{name} magic tail must stay ASCII so it is greppable in an artifact"
             );
         }
     }
 
-    /// Builds a fake "binary" blob containing exactly one integrity
-    /// slot with the MAC field zeroed, surrounded by filler bytes.
-    fn make_fake_exe(prefix_len: usize, suffix_len: usize) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(prefix_len + SLOT_SIZE + suffix_len);
-        buf.extend(std::iter::repeat_n(0xAAu8, prefix_len));
-        buf.extend_from_slice(&SLOT_HEADER_MAGIC);
-        buf.extend_from_slice(&[0u8; 32]);
-        buf.extend_from_slice(&SLOT_FOOTER_MAGIC);
-        buf.extend(std::iter::repeat_n(0xBBu8, suffix_len));
-        buf
+    /// The static must be exactly `SLOT_SIZE` bytes, or the signer's
+    /// footer-at-a-fixed-offset check and the field offsets disagree with
+    /// what is actually linked in.
+    #[test]
+    fn the_linked_slot_is_slot_size_bytes() {
+        assert_eq!(core::mem::size_of::<super::IntegritySlot>(), SLOT_SIZE);
+        assert_eq!(slot::OFF_FTR + 16, SLOT_SIZE);
     }
 
-    fn unique_tmp_path(tag: &str) -> PathBuf {
-        let mut p = std::env::temp_dir();
-        let pid = std::process::id();
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        p.push(format!("fips-integrity-test-{tag}-{pid}-{ts}.bin"));
-        p
-    }
-
-    fn write_file(path: &Path, body: &[u8]) {
-        let mut f = fs::File::create(path).unwrap();
-        f.write_all(body).unwrap();
-        f.sync_all().unwrap();
+    fn sample_ranges() -> Vec<Range> {
+        vec![
+            Range {
+                rva: 0,
+                file_off: 0,
+                len: 64,
+            },
+            Range {
+                rva: 4096,
+                file_off: 4096,
+                len: 128,
+            },
+        ]
     }
 
     #[test]
-    fn oxicrypt_integrity_key_is_32_bytes_ascii() {
-        assert_eq!(FIPS_INTEGRITY_KEY.len(), 32);
-        for b in FIPS_INTEGRITY_KEY {
-            assert!(b.is_ascii() && !b.is_ascii_control());
+    fn slot_round_trips_through_encode_and_parse() {
+        let ranges = sample_ranges();
+        let mac = [0x5au8; 32];
+        let bytes = slot::encode(&ranges, 0x9000, &mac).unwrap();
+        assert_eq!(bytes.len(), SLOT_SIZE);
+        let parsed = slot::parse(&bytes).unwrap();
+        assert_eq!(parsed.version, SLOT_VERSION);
+        assert_eq!(parsed.slot_rva, 0x9000);
+        assert_eq!(parsed.mac, mac);
+        assert_eq!(parsed.ranges, ranges);
+    }
+
+    #[test]
+    fn parse_rejects_a_wrong_header_magic() {
+        let mut bytes = slot::encode(&sample_ranges(), 0x9000, &[0u8; 32]).unwrap();
+        bytes[0] ^= 0xff;
+        match slot::parse(&bytes) {
+            Err(SlotDefect::HeaderMagic) => {}
+            other => panic!("expected HeaderMagic, got {other:?}"),
         }
     }
 
     #[test]
-    fn slot_magics_are_distinct_16_byte_patterns() {
-        assert_eq!(SLOT_HEADER_MAGIC.len(), 16);
-        assert_eq!(SLOT_FOOTER_MAGIC.len(), 16);
-        assert_ne!(SLOT_HEADER_MAGIC, SLOT_FOOTER_MAGIC);
+    fn parse_rejects_a_wrong_footer_magic() {
+        let mut bytes = slot::encode(&sample_ranges(), 0x9000, &[0u8; 32]).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+        match slot::parse(&bytes) {
+            Err(SlotDefect::FooterMagic) => {}
+            other => panic!("expected FooterMagic, got {other:?}"),
+        }
     }
 
+    /// An unsigned artifact carries the magics and nothing else, so its
+    /// version field is zero. It must be refused as a distinct defect —
+    /// "never signed" is a different operator problem from "corrupt".
     #[test]
-    fn find_slot_offset_locates_single_slot_in_middle_of_buffer() {
-        let buf = make_fake_exe(1024, 2048);
-        let off = find_slot_offset(&buf).unwrap();
-        assert_eq!(off, 1024);
+    fn parse_rejects_an_unsigned_slot() {
+        let mut bytes = vec![0u8; SLOT_SIZE];
+        bytes[..16].copy_from_slice(&SLOT_HEADER_MAGIC);
+        bytes[slot::OFF_FTR..].copy_from_slice(&SLOT_FOOTER_MAGIC);
+        match slot::parse(&bytes) {
+            Err(SlotDefect::UnsupportedVersion(0)) => {}
+            other => panic!("expected UnsupportedVersion(0), got {other:?}"),
+        }
     }
 
+    /// Version 1 was the whole-file scheme. Accepting it would let the
+    /// module pass a test that verifies the wrong bytes.
     #[test]
-    fn find_slot_offset_rejects_buffer_with_no_slot() {
-        let buf = vec![0xAAu8; 4096];
-        match find_slot_offset(&buf) {
-            Err(IntegrityError::SlotNotFound) => {}
-            other => panic!("expected SlotNotFound, got {other:?}"),
+    fn parse_rejects_the_superseded_version_one() {
+        let mut bytes = slot::encode(&sample_ranges(), 0x9000, &[0u8; 32]).unwrap();
+        bytes[slot::OFF_VERSION..slot::OFF_VERSION + 4].copy_from_slice(&1u32.to_le_bytes());
+        match slot::parse(&bytes) {
+            Err(SlotDefect::UnsupportedVersion(1)) => {}
+            other => panic!("expected UnsupportedVersion(1), got {other:?}"),
         }
     }
 
     #[test]
-    fn find_slot_offset_rejects_buffer_shorter_than_slot() {
-        let buf = vec![0u8; SLOT_SIZE - 1];
-        match find_slot_offset(&buf) {
-            Err(IntegrityError::SlotNotFound) => {}
-            other => panic!("expected SlotNotFound, got {other:?}"),
+    fn parse_rejects_an_empty_range_table() {
+        let bytes = slot::encode(&[], 0x9000, &[0u8; 32]).unwrap();
+        match slot::parse(&bytes) {
+            Err(SlotDefect::NoRanges) => {}
+            other => panic!("expected NoRanges, got {other:?}"),
         }
     }
 
     #[test]
-    fn find_slot_offset_rejects_header_without_footer() {
-        // Header present but followed by garbage, not the footer.
-        let mut buf = vec![0xAAu8; 100];
-        buf.extend_from_slice(&SLOT_HEADER_MAGIC);
-        buf.extend_from_slice(&[0u8; 32]);
-        buf.extend_from_slice(&[0xCDu8; 16]);
-        buf.extend(std::iter::repeat_n(0xBBu8, 100));
-        match find_slot_offset(&buf) {
-            Err(IntegrityError::SlotNotFound) => {}
-            other => panic!("expected SlotNotFound, got {other:?}"),
+    fn parse_rejects_a_zero_length_range() {
+        let ranges = vec![Range {
+            rva: 0,
+            file_off: 0,
+            len: 0,
+        }];
+        let bytes = slot::encode(&ranges, 0x9000, &[0u8; 32]).unwrap();
+        match slot::parse(&bytes) {
+            Err(SlotDefect::EmptyRange(0)) => {}
+            other => panic!("expected EmptyRange(0), got {other:?}"),
+        }
+    }
+
+    /// Ranges must be strictly ascending and non-overlapping. Overlap
+    /// would let a signer double-count bytes, and unordered ranges would
+    /// make "in table order" ambiguous between signer and verifier.
+    #[test]
+    fn parse_rejects_overlapping_ranges() {
+        let ranges = vec![
+            Range {
+                rva: 0,
+                file_off: 0,
+                len: 4096,
+            },
+            Range {
+                rva: 2048,
+                file_off: 2048,
+                len: 4096,
+            },
+        ];
+        let bytes = slot::encode(&ranges, 0x9000, &[0u8; 32]).unwrap();
+        match slot::parse(&bytes) {
+            Err(SlotDefect::Unordered(1)) => {}
+            other => panic!("expected Unordered(1), got {other:?}"),
+        }
+    }
+
+    /// The whole circularity resolution rests on the slot being outside
+    /// the extent. A signer that got that wrong must be refused loudly
+    /// rather than producing a mismatch that reads like corruption.
+    #[test]
+    fn parse_rejects_a_range_covering_the_slot() {
+        let slot_rva = 0x9000;
+        let ranges = vec![Range {
+            rva: 0x8000,
+            file_off: 0x8000,
+            len: 0x4000,
+        }];
+        let bytes = slot::encode(&ranges, slot_rva, &[0u8; 32]).unwrap();
+        match slot::parse(&bytes) {
+            Err(SlotDefect::OverlapsSlot(0)) => {}
+            other => panic!("expected OverlapsSlot(0), got {other:?}"),
+        }
+    }
+
+    /// A range abutting the slot on either side is legal — that is
+    /// exactly what subtracting the slot from a larger segment produces,
+    /// so the mirror control matters as much as the rejection above.
+    #[test]
+    fn parse_accepts_ranges_abutting_the_slot() {
+        let slot_rva = 0x9000;
+        let ranges = vec![
+            Range {
+                rva: 0x8000,
+                file_off: 0x8000,
+                len: 0x1000,
+            },
+            Range {
+                rva: slot_rva + SLOT_SIZE as u32,
+                file_off: slot_rva + SLOT_SIZE as u32,
+                len: 0x1000,
+            },
+        ];
+        let bytes = slot::encode(&ranges, slot_rva, &[0u8; 32]).unwrap();
+        let parsed = slot::parse(&bytes).unwrap();
+        assert_eq!(parsed.ranges.len(), 2);
+    }
+
+    #[test]
+    fn encode_refuses_more_ranges_than_the_table_holds() {
+        let ranges: Vec<Range> = (0..=slot::MAX_RANGES)
+            .map(|i| Range {
+                rva: (i as u32) * 16,
+                file_off: (i as u32) * 16,
+                len: 8,
+            })
+            .collect();
+        match slot::encode(&ranges, 0, &[0u8; 32]) {
+            Err(SlotDefect::TooManyRanges(_)) => {}
+            other => panic!("expected TooManyRanges, got {other:?}"),
         }
     }
 
     #[test]
-    fn find_slot_offset_rejects_two_valid_slots() {
-        let mut buf = make_fake_exe(100, 100);
-        // Append another full slot.
-        buf.extend_from_slice(&SLOT_HEADER_MAGIC);
-        buf.extend_from_slice(&[0u8; 32]);
-        buf.extend_from_slice(&SLOT_FOOTER_MAGIC);
-        match find_slot_offset(&buf) {
-            Err(IntegrityError::MultipleSlotsFound) => {}
-            other => panic!("expected MultipleSlotsFound, got {other:?}"),
+    fn mac_over_file_ranges_hashes_only_the_listed_bytes() {
+        let mut image = vec![0u8; 8192];
+        for (i, b) in image.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let ranges = sample_ranges();
+        let first = mac_over_file_ranges(&image, &ranges).unwrap();
+
+        // A byte inside a listed range changes the MAC.
+        let mut inside = image.clone();
+        inside[10] ^= 0xff;
+        assert_ne!(
+            first,
+            mac_over_file_ranges(&inside, &ranges).unwrap(),
+            "a change inside the extent must change the MAC"
+        );
+
+        // A byte between the two ranges does not — this is the control
+        // proving the extent is genuinely subtractive rather than a
+        // whole-file hash wearing a range table.
+        let mut outside = image.clone();
+        outside[2048] ^= 0xff;
+        assert_eq!(
+            first,
+            mac_over_file_ranges(&outside, &ranges).unwrap(),
+            "a change outside the extent must not change the MAC"
+        );
+    }
+
+    #[test]
+    fn mac_over_file_ranges_rejects_a_range_past_the_image() {
+        let image = vec![0u8; 64];
+        let ranges = vec![Range {
+            rva: 0,
+            file_off: 0,
+            len: 128,
+        }];
+        match mac_over_file_ranges(&image, &ranges) {
+            Err(SlotDefect::RangeOutOfBounds(0)) => {}
+            other => panic!("expected RangeOutOfBounds(0), got {other:?}"),
         }
     }
 
@@ -694,113 +998,5 @@ mod tests {
         assert!(constant_time_eq(&a, &b));
         b[31] = 1;
         assert!(!constant_time_eq(&a, &b));
-    }
-
-    #[test]
-    fn hmac_with_slot_zeroed_is_independent_of_prior_slot_bytes() {
-        // Two buffers identical except in the MAC region — since
-        // that region is zeroed before HMAC, the computed MAC must
-        // be equal.
-        let mut a = make_fake_exe(200, 200);
-        let mut b = a.clone();
-        let slot_offset = find_slot_offset(&a).unwrap();
-        // Corrupt the MAC field in `b` only.
-        for i in 0..MAC_SIZE {
-            let idx = slot_offset + 16 + i;
-            b[idx] = 0xFF;
-        }
-        let mac_a = hmac_with_slot_zeroed(&mut a, slot_offset).unwrap();
-        let mac_b = hmac_with_slot_zeroed(&mut b, slot_offset).unwrap();
-        assert_eq!(mac_a, mac_b);
-    }
-
-    #[test]
-    fn sign_then_verify_round_trips() {
-        let exe = unique_tmp_path("signverify");
-        let body = make_fake_exe(300, 300);
-        write_file(&exe, &body);
-        let signed_mac = sign_exe(&exe).unwrap();
-        // Verify from on-disk.
-        verify_exe(&exe).unwrap();
-        // The on-disk bytes differ from the original only in the MAC
-        // region, and the diff equals the signed MAC.
-        let after = fs::read(&exe).unwrap();
-        let slot_offset = find_slot_offset(&after).unwrap();
-        let on_disk_mac = &after[slot_offset + 16..slot_offset + 16 + MAC_SIZE];
-        assert_eq!(on_disk_mac, signed_mac.as_slice());
-        let _ = fs::remove_file(&exe);
-    }
-
-    #[test]
-    fn sign_is_idempotent_across_repeat_calls() {
-        let exe = unique_tmp_path("idempotent");
-        let body = make_fake_exe(500, 500);
-        write_file(&exe, &body);
-        let first = sign_exe(&exe).unwrap();
-        let second = sign_exe(&exe).unwrap();
-        assert_eq!(first, second);
-        verify_exe(&exe).unwrap();
-        let _ = fs::remove_file(&exe);
-    }
-
-    #[test]
-    fn verify_detects_tampered_payload_byte() {
-        let exe = unique_tmp_path("tamperpayload");
-        let body = make_fake_exe(400, 400);
-        write_file(&exe, &body);
-        sign_exe(&exe).unwrap();
-        // Flip a byte somewhere in the prefix (outside the slot).
-        let mut buf = fs::read(&exe).unwrap();
-        buf[10] ^= 0xff;
-        fs::write(&exe, &buf).unwrap();
-        match verify_exe(&exe) {
-            Err(IntegrityError::MacMismatch) => {}
-            other => panic!("expected MacMismatch, got {other:?}"),
-        }
-        let _ = fs::remove_file(&exe);
-    }
-
-    #[test]
-    fn verify_detects_tampered_mac_byte() {
-        let exe = unique_tmp_path("tampermac");
-        let body = make_fake_exe(400, 400);
-        write_file(&exe, &body);
-        sign_exe(&exe).unwrap();
-        let mut buf = fs::read(&exe).unwrap();
-        let slot_offset = find_slot_offset(&buf).unwrap();
-        buf[slot_offset + 16] ^= 0x01;
-        fs::write(&exe, &buf).unwrap();
-        match verify_exe(&exe) {
-            Err(IntegrityError::MacMismatch) => {}
-            other => panic!("expected MacMismatch, got {other:?}"),
-        }
-        let _ = fs::remove_file(&exe);
-    }
-
-    #[test]
-    fn verify_rejects_binary_without_slot() {
-        let exe = unique_tmp_path("noslot");
-        let body = vec![0xAAu8; 4096];
-        write_file(&exe, &body);
-        match verify_exe(&exe) {
-            Err(IntegrityError::SlotNotFound) => {}
-            other => panic!("expected SlotNotFound, got {other:?}"),
-        }
-        let _ = fs::remove_file(&exe);
-    }
-
-    #[test]
-    fn verify_rejects_binary_with_multiple_slots() {
-        let exe = unique_tmp_path("twoslots");
-        let mut body = make_fake_exe(100, 100);
-        body.extend_from_slice(&SLOT_HEADER_MAGIC);
-        body.extend_from_slice(&[0u8; 32]);
-        body.extend_from_slice(&SLOT_FOOTER_MAGIC);
-        write_file(&exe, &body);
-        match verify_exe(&exe) {
-            Err(IntegrityError::MultipleSlotsFound) => {}
-            other => panic!("expected MultipleSlotsFound, got {other:?}"),
-        }
-        let _ = fs::remove_file(&exe);
     }
 }

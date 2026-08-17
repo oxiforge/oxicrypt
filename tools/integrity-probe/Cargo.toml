@@ -1,0 +1,20 @@
+[package]
+name = "integrity-probe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Out-of-boundary front end that boots the module and reports the pre-operational integrity test's status indicator."
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-integrity = { workspace = true }
+oxicrypt-module = { workspace = true }
+
+[dev-dependencies]
+oxicrypt-integrity-sign = { path = "../oxicrypt-integrity-sign" }

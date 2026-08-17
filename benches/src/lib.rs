@@ -12,6 +12,17 @@
     missing_docs
 )]
 
+/// Stands in for the pre-operational integrity test.
+///
+/// A `cargo bench` binary is never signed, so the real integrity test
+/// cannot pass inside one. The module requires an integrity group to
+/// initialise at all, so this stub is declared here, visibly, rather
+/// than the module offering any way to skip the requirement.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned benchmark binary",
+    run: || Ok(()),
+}];
+
 /// Initialise the FIPS module with the SHA, HMAC, AES, DRBG, ECDSA,
 /// EdDSA, ECDH and KDF KATs. The PQ, LMS, XMSS and RSA crates export
 /// `KATS` too and are deliberately not loaded here.
@@ -34,5 +45,5 @@ pub fn init_module() {
 
     // Ignore AlreadyInitialized — multiple benchmark groups share
     // the same process.
-    let _ = oxicrypt_module::initialize_with_tests(&all_kats);
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &all_kats);
 }

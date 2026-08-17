@@ -6,7 +6,7 @@ header = """/* SPDX-License-Identifier: Apache-2.0 OR MIT */
  * This header is GENERATED from the Rust source by cbindgen.
  * Do not edit by hand — edit the Rust signatures and rerun the build.
  *
- * The C ABI shim resides INSIDE the FIPS 140-3 module boundary.
+ * The C ABI shim resides OUTSIDE the FIPS 140-3 module boundary.
  * See docs/security-policy/ for the formal CMVP Security Policy.
  *
  * Generated headers are committed under version control and verified

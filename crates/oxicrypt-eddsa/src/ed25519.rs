@@ -416,7 +416,23 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
 #[allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use oxicrypt_module::{KatEntry, initialize_with_tests};
+    use oxicrypt_module::KatEntry;
+
+    /// Stands in for the pre-operational integrity test.
+    ///
+    /// A `cargo test` binary is never signed, so the real integrity test
+    /// cannot pass inside one. The module requires an integrity group to
+    /// initialise at all, so a test that needs a gated service declares
+    /// this stub — visibly, at the call site — rather than the module
+    /// offering any way to skip the requirement.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    fn init_with_tests(tests: &[KatEntry]) -> Result<(), oxicrypt_module::Error> {
+        oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
 
     // RFC 8032 §7.1 test vectors (pure Ed25519).
     //
@@ -584,7 +600,7 @@ mod tests {
             name: "ed25519_power_up_kat",
             run: self_test,
         }];
-        let _ = initialize_with_tests(entries);
+        let _ = init_with_tests(entries);
 
         for v in &rfc8032_vectors() {
             let key = Ed25519PrivateKey::from_seed(&v.sk).unwrap();
@@ -606,7 +622,7 @@ mod tests {
             name: "ed25519_power_up_kat",
             run: self_test,
         }];
-        let _ = initialize_with_tests(entries);
+        let _ = init_with_tests(entries);
 
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
@@ -641,7 +657,7 @@ mod tests {
             name: "ed25519_power_up_kat",
             run: self_test,
         }];
-        let _ = initialize_with_tests(entries);
+        let _ = init_with_tests(entries);
 
         let v = &rfc8032_vectors()[0];
         // Take the public key from vector 1 but the seed from
@@ -676,7 +692,7 @@ mod tests {
         // If any other test in this process already initialized the
         // module, `initialize_with_tests` returns AlreadyInitialized;
         // that's also a state in which the public API must work.
-        let _ = initialize_with_tests(entries);
+        let _ = init_with_tests(entries);
 
         let pk = keygen(&KAT_SEED).unwrap();
         assert_eq!(pk, KAT_PUBLIC_KEY);

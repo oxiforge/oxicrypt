@@ -1,0 +1,22 @@
+[package]
+name = "integrity-probe-so"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Out-of-boundary shared object that runs the module's integrity test from inside a dlopen'd library, proving the verified artifact is the library rather than its host."
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicrypt-integrity = { workspace = true }
+
+[dev-dependencies]
+oxicrypt-integrity-sign = { path = "../oxicrypt-integrity-sign" }

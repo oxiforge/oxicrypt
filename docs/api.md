@@ -9,7 +9,7 @@ build the rustdoc with `cargo doc --workspace --no-deps`.
 | Crate | Purpose | `no_std` |
 |-------|---------|----------|
 | `oxicrypt-module` | Module state machine, self-test runner | No (`std`) |
-| `oxicrypt-integrity` | Software integrity check (IG 10.3.A) | No (`std`) |
+| `oxicrypt-integrity` | Pre-operational software integrity check (§7.10.2.2) | No (`std`) |
 | `oxicrypt-sha` | SHA-1, SHA-2, SHA-3 hash families | Yes |
 | `oxicrypt-xof` | SHAKE, cSHAKE, KMAC, TupleHash, ParallelHash | Yes |
 | `oxicrypt-hmac` | HMAC over all 11 approved hashes | Yes |
@@ -64,7 +64,7 @@ PowerOff ──initialize_with_tests()──> SelfTest ──(all KATs pass)─�
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `initialize_with_tests` | `(tests: &[KatEntry]) -> Result<(), Error>` | Run power-up KATs, transition to Operational |
+| `initialize_with_tests` | `(integrity: &[KatEntry], tests: &[KatEntry]) -> Result<(), Error>` | Run the integrity test then power-up KATs, transition to Operational |
 | `require_operational` | `() -> Result<(), Error>` | Guard — returns error if not Operational |
 | `state` | `() -> State` | Current module state |
 | `is_operational` | `() -> bool` | Convenience check |

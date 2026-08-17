@@ -91,7 +91,7 @@ All of these must be clean before opening a PR. They run on your local machine u
 | Clippy (strict) | `cargo clippy --all-targets --all-features --release -- -D warnings` |
 | Rustdocs | `cargo doc --no-deps --workspace` (no warnings) |
 | Doc-sync hook | Activated via `git config core.hooksPath scripts/git-hooks` (one-time setup above) |
-| Integrity-sign (harness rebuilds) | `./target/release/fips-integrity-sign --sign ./target/release/acvp-harness` |
+| Integrity-sign (harness rebuilds) | `./target/release/oxicrypt-integrity-sign --sign ./target/release/acvp-harness` |
 
 `-D warnings` promotes Clippy lints to errors. The project uses pedantic-tier lints; this gate is intentionally strict.
 

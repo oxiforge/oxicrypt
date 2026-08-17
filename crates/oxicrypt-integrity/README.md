@@ -1,6 +1,6 @@
 # oxicrypt-integrity
 
-Software/firmware integrity self-test (FIPS 140-3 IG 10.3.A)
+Pre-operational software integrity self-test (ISO/IEC 19790:2012 §7.10.2.2)
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy
