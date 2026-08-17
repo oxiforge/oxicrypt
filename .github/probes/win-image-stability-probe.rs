@@ -120,15 +120,20 @@ fn main() {
     let size_opt_hdr = u16le(&nt, 20) as usize;
     let sec_table = base + e_lfanew + 24 + size_opt_hdr;
 
-    // The preferred ImageBase, and whether we actually landed there.
+    // The ImageBase field as it appears in the LOADED header.
     //
-    // This is the control that matters on Windows, and it replaces the
-    // load-base-variation control the other platforms use. Windows randomises a
-    // DLL's base ONCE PER BOOT and reuses it for every process in that boot, so
-    // repeating the run cannot move the image and the variation control can
-    // never fire. What makes relocations *applicable* is landing somewhere other
-    // than the preferred base — if we load AT ImageBase, zero fixups are applied
-    // and a MATCH against the file proves nothing about relocation behaviour.
+    // INFORMATIONAL ONLY — do not build a control on this. It was tried as one
+    // and it cannot fire: the loader rewrites this field in memory to the actual
+    // load address, so `preferred` and `actual` are always equal and the image
+    // always appears not to have moved. Measured 2026-08-17: the field read back
+    // as an ASLR-shaped `0x7ff9_4079_0000` rather than a link-time base, while
+    // 472 fixups existed and `.rdata` differed from the file — i.e. relocations
+    // demonstrably had been applied.
+    //
+    // The control that does work is below, and the analyser applies it: fixups
+    // exist AND a fixup-bearing section differs from the file. That pair proves
+    // the loader applied relocations, without asking the image where it thinks
+    // it was loaded.
     //
     // ImageBase sits at optional-header offset 24 for PE32+ (magic 0x20b).
     let opt = read_own(base + e_lfanew + 24, size_opt_hdr).expect("read optional header");
@@ -141,10 +146,9 @@ fn main() {
         u32le(&opt, 28) as u64
     };
     println!(
-        "IMAGEBASE preferred=0x{:x} actual=0x{:x} relocated={}",
-        image_base,
-        base,
-        if image_base as usize == base { "no" } else { "yes" }
+        "IMAGEBASE informational header_field=0x{:x} actual=0x{:x} \
+         note=loader-rewrites-this-field-so-it-is-not-a-control",
+        image_base, base
     );
 
     let raw = read_own(sec_table, 40 * n_sections).expect("read section table");

@@ -18,8 +18,8 @@ import sys
 regions = collections.OrderedDict()
 bases = []
 runs = set()
-# Windows only: whether the image landed somewhere other than its preferred base.
-relocated = set()
+# Windows only: sections the base relocation table targets, name -> fixup count.
+fixup_sections = {}
 
 for line in sys.stdin:
     p = line.split()
@@ -30,10 +30,13 @@ for line in sys.stdin:
         bases.append(p[2])
         runs.add(run)
         continue
-    if p[1] == "IMAGEBASE":
+    if p[1] == "RELOC":
         kv = dict(x.split("=", 1) for x in p[2:] if "=" in x)
-        relocated.add(kv.get("relocated", "?"))
+        if "section" in kv and "fixups" in kv:
+            fixup_sections[kv["section"]] = int(kv["fixups"])
         continue
+    if p[1] == "IMAGEBASE":
+        continue  # informational; the loader rewrites the field, see the probe
     if p[1] != "REGION":
         continue
     kv = dict(x.split("=", 1) for x in p[2:] if "=" in x)
@@ -75,20 +78,36 @@ if total:
 print()
 ok = True
 
-# Control 1 has two platform-appropriate forms, and picking the wrong one is not a
-# relaxation but a correction. On per-process-ASLR platforms (Linux, macOS) the test
-# is that the load base moved across runs. Windows randomises a DLL's base once per
-# boot and reuses it for every process, so that test can never fire there; the
-# equivalent question is whether the image landed anywhere other than its preferred
-# ImageBase, because that is what makes relocations applicable at all. Loading AT
-# ImageBase means zero fixups were applied and a MATCH proves nothing.
-if relocated:
-    if "yes" in relocated:
-        print("control ok: image did NOT load at its preferred base, so relocations were")
-        print("            applicable and a MATCH means the section survived them")
+# Control 1 has two platform-appropriate forms, and picking the wrong one is a
+# correction rather than a relaxation. On per-process-ASLR platforms (Linux, macOS)
+# the test is that the load base moved across runs. Windows randomises a DLL's base
+# once per boot and reuses it for every process, so that test can never fire there.
+#
+# The PE form asks instead whether relocations were actually APPLIED, which is what a
+# MATCH on the code section has to survive to mean anything. Evidence: a base
+# relocation table exists AND at least one section it targets differs from the file.
+# Fixups can only differ from the file image if the loader wrote them.
+#
+# An earlier attempt read the ImageBase field back from the loaded header and compared
+# it with the actual base. That control could not fire — the loader rewrites the field
+# — and it is kept here only as a worked example of a check that reads as passing
+# because it is incapable of failing.
+if fixup_sections:
+    targeted = [n for n, c in fixup_sections.items() if c > 0]
+    differing = [
+        name
+        for (name, _perms, _off, _size), d in regions.items()
+        if name in targeted and "DIFFER" in set(d["cmp"])
+    ]
+    total_fixups = sum(fixup_sections.values())
+    if differing:
+        print(f"control ok: {total_fixups} fixups present and {', '.join(differing)} differs from")
+        print("            the file, so the loader demonstrably applied relocations")
     else:
-        print("CONTROL FAILED: image loaded at its preferred ImageBase, so no relocations")
-        print("                were applied — a MATCH says nothing about relocation behaviour.")
+        print(f"CONTROL FAILED: {total_fixups} fixups present but no targeted section "
+              f"({', '.join(targeted) or 'none'}) differs")
+        print("                from the file — cannot establish that relocations were applied,")
+        print("                so a MATCH on the code section proves nothing.")
         ok = False
 elif len(set(bases)) < 2:
     print("CONTROL FAILED: load base did not vary across runs — ASLR is not moving the image,")
