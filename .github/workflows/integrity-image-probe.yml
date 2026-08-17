@@ -2,8 +2,7 @@
 #
 # NOT a gate. A one-off design measurement, kept in CI because the platforms it
 # needs are unavailable on the development machine: Mach-O cannot be built or
-# run there at all, so the iOS-relevant half of the question is unanswerable
-# locally.
+# run there at all, and neither can PE.
 #
 # What it establishes per platform: which parts of the loaded module are
 # identical across runs despite ASLR, and whether those parts equal the file
@@ -13,7 +12,16 @@
 #
 # The linux-x86_64 leg is the harness control: it must reproduce the figure
 # already measured locally (99.03% stable, all of it matching the file). If it
-# does not, the Mach-O numbers from the same harness are not to be trusted.
+# does not, the numbers from the same harness on other platforms are not to be
+# trusted.
+#
+# Windows uses a separate Rust probe rather than the C one, for two reasons: the
+# Rust toolchain is already installed on the runner while a C compiler needs the
+# MSVC environment set up, and PE additionally needs its base relocation table
+# parsed. ELF PIC and Mach-O chained fixups leave the code segment untouched,
+# which is why hashing it works there; PE relocations can target `.text`
+# directly, so the Windows probe reports which sections the fixups land in and
+# answers that outright instead of inferring it from hash stability.
 #
 # Runner labels age out. `macos-13` was retired mid-life in this repo and a job
 # using it queued for over two hours rather than failing, so every job here
@@ -46,14 +54,22 @@ jobs:
             runner: ubuntu-latest
             cdylib: liboxicrypt_ffi.so
             ldflags: '-ldl'
+            probe: c
           - name: macos-aarch64
             runner: macos-15
             cdylib: liboxicrypt_ffi.dylib
             ldflags: ''
+            probe: c
           - name: macos-x86_64
             runner: macos-15-intel
             cdylib: liboxicrypt_ffi.dylib
             ldflags: ''
+            probe: c
+          - name: windows-x86_64
+            runner: windows-latest
+            cdylib: oxicrypt_ffi.dll
+            ldflags: ''
+            probe: rust
 
     steps:
       - uses: actions/checkout@v4
@@ -75,21 +91,35 @@ jobs:
           cargo build --release -p oxicrypt-ffi
           ls -l "target/release/${{ matrix.cdylib }}"
 
-      - name: Compile the probe
+      - name: Compile the probe — C (ELF / Mach-O)
+        if: matrix.probe == 'c'
         shell: bash
         run: |
           set -euo pipefail
           cc -O1 -Wall -Wextra -o probe \
             .github/probes/image-stability-probe.c ${{ matrix.ldflags }}
 
+      - name: Compile the probe — Rust (PE)
+        if: matrix.probe == 'rust'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc -O -o probe.exe .github/probes/win-image-stability-probe.rs
+
       - name: Measure — 20 runs under ASLR
         shell: bash
         run: |
           set -euo pipefail
           LIB="$PWD/target/release/${{ matrix.cdylib }}"
+          PROBE=./probe
+          if [ -f ./probe.exe ]; then
+            PROBE=./probe.exe
+            # LoadLibraryA cannot take a Git Bash path; hand it a native one.
+            LIB="$(cygpath -w "$LIB")"
+          fi
           : > runs.txt
           for i in $(seq 1 20); do
-            ./probe "$LIB" | sed "s/^/run$i /" >> runs.txt
+            "$PROBE" "$LIB" | sed "s/^/run$i /" >> runs.txt
           done
           echo "recorded $(grep -c LOADBASE runs.txt) runs"
 
@@ -102,6 +132,15 @@ jobs:
           # plus tee would report tee's status, so read the real one.
           exit "${PIPESTATUS[0]}"
 
+      - name: Relocation findings (PE only)
+        if: matrix.probe == 'rust'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The structural question for PE, answered by parsing .reloc rather
+          # than inferred from hash stability.
+          grep '^run1 RELOC' runs.txt | sed 's/^run1 //' | tee -a analysis.txt
+
       - name: Record the platform's own view of the image
         shell: bash
         run: |
@@ -113,8 +152,11 @@ jobs:
           if command -v otool >/dev/null 2>&1; then
             otool -l "$LIB" | grep -A5 -E 'LC_SEGMENT_64|LC_DYLD_CHAINED_FIXUPS|LC_ENCRYPTION' \
               | tee -a analysis.txt || true
-          else
+          elif command -v readelf >/dev/null 2>&1; then
             readelf -lW "$LIB" | tee -a analysis.txt || true
+          else
+            echo "(no otool/readelf; the PE probe prints its own section table)" \
+              | tee -a analysis.txt
           fi
 
       - uses: actions/upload-artifact@v4
