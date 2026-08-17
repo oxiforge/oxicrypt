@@ -1,0 +1,127 @@
+# Loaded-image stability measurement for the pre-operational integrity test.
+#
+# NOT a gate. A one-off design measurement, kept in CI because the platforms it
+# needs are unavailable on the development machine: Mach-O cannot be built or
+# run there at all, so the iOS-relevant half of the question is unanswerable
+# locally.
+#
+# What it establishes per platform: which parts of the loaded module are
+# identical across runs despite ASLR, and whether those parts equal the file
+# bytes on disk. A region satisfying both can be hashed from the file at build
+# time and re-hashed from memory at runtime — which is how the integrity test
+# survives a platform that rewrites or encrypts the file after signing.
+#
+# The linux-x86_64 leg is the harness control: it must reproduce the figure
+# already measured locally (99.03% stable, all of it matching the file). If it
+# does not, the Mach-O numbers from the same harness are not to be trusted.
+#
+# Runner labels age out. `macos-13` was retired mid-life in this repo and a job
+# using it queued for over two hours rather than failing, so every job here
+# carries an explicit timeout — a retired label must surface as a timeout, not
+# as apparent scarcity. Check https://github.com/actions/runner-images before
+# assuming a queued macOS job is merely waiting.
+name: integrity image probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'measure/integrity-image-**'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # One platform failing must not suppress the others; a partial matrix
+      # that names what is missing beats no measurement at all.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            cdylib: liboxicrypt_ffi.so
+            ldflags: '-ldl'
+          - name: macos-aarch64
+            runner: macos-15
+            cdylib: liboxicrypt_ffi.dylib
+            ldflags: ''
+          - name: macos-x86_64
+            runner: macos-15-intel
+            cdylib: liboxicrypt_ffi.dylib
+            ldflags: ''
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: integrity-probe-${{ matrix.name }}
+
+      - name: Build the cdylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-ffi
+          ls -l "target/release/${{ matrix.cdylib }}"
+
+      - name: Compile the probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O1 -Wall -Wextra -o probe \
+            .github/probes/image-stability-probe.c ${{ matrix.ldflags }}
+
+      - name: Measure — 20 runs under ASLR
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIB="$PWD/target/release/${{ matrix.cdylib }}"
+          : > runs.txt
+          for i in $(seq 1 20); do
+            ./probe "$LIB" | sed "s/^/run$i /" >> runs.txt
+          done
+          echo "recorded $(grep -c LOADBASE runs.txt) runs"
+
+      - name: Analyse — fails if either positive control does not hold
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/probes/analyse.py < runs.txt | tee analysis.txt
+          # analyse.py exits non-zero when a control fails; `set -o pipefail`
+          # plus tee would report tee's status, so read the real one.
+          exit "${PIPESTATUS[0]}"
+
+      - name: Record the platform's own view of the image
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIB="$PWD/target/release/${{ matrix.cdylib }}"
+          echo "== file size ==" | tee -a analysis.txt
+          wc -c < "$LIB" | tee -a analysis.txt
+          echo "== segments/sections as the platform reports them ==" | tee -a analysis.txt
+          if command -v otool >/dev/null 2>&1; then
+            otool -l "$LIB" | grep -A5 -E 'LC_SEGMENT_64|LC_DYLD_CHAINED_FIXUPS|LC_ENCRYPTION' \
+              | tee -a analysis.txt || true
+          else
+            readelf -lW "$LIB" | tee -a analysis.txt || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integrity-image-probe-${{ matrix.name }}
+          path: |
+            runs.txt
+            analysis.txt
+          if-no-files-found: error
