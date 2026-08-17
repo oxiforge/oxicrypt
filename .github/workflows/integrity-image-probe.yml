@@ -80,9 +80,10 @@ jobs:
           set -euo pipefail
           rustup show active-toolchain || rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: integrity-probe-${{ matrix.name }}
+      # No rust-cache here deliberately: `Swatinem/rust-cache` failed to download
+      # with HTTP 429 on two separate runs of this workflow, taking otherwise
+      # healthy legs with it. A one-off measurement does not need the cache, and a
+      # non-load-bearing action must not be able to fail the job.
 
       - name: Build the cdylib
         shell: bash
@@ -133,15 +134,16 @@ jobs:
           exit "${PIPESTATUS[0]}"
 
       - name: Relocation findings (PE only)
-        if: matrix.probe == 'rust'
+        if: always() && matrix.probe == 'rust'
         shell: bash
         run: |
           set -euo pipefail
           # The structural question for PE, answered by parsing .reloc rather
           # than inferred from hash stability.
-          grep '^run1 RELOC' runs.txt | sed 's/^run1 //' | tee -a analysis.txt
+          grep -E '^run1 (RELOC|IMAGEBASE)' runs.txt | sed 's/^run1 //' | tee -a analysis.txt
 
       - name: Record the platform's own view of the image
+        if: always()
         shell: bash
         run: |
           set -euo pipefail

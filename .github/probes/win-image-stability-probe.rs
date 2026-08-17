@@ -120,6 +120,33 @@ fn main() {
     let size_opt_hdr = u16le(&nt, 20) as usize;
     let sec_table = base + e_lfanew + 24 + size_opt_hdr;
 
+    // The preferred ImageBase, and whether we actually landed there.
+    //
+    // This is the control that matters on Windows, and it replaces the
+    // load-base-variation control the other platforms use. Windows randomises a
+    // DLL's base ONCE PER BOOT and reuses it for every process in that boot, so
+    // repeating the run cannot move the image and the variation control can
+    // never fire. What makes relocations *applicable* is landing somewhere other
+    // than the preferred base — if we load AT ImageBase, zero fixups are applied
+    // and a MATCH against the file proves nothing about relocation behaviour.
+    //
+    // ImageBase sits at optional-header offset 24 for PE32+ (magic 0x20b).
+    let opt = read_own(base + e_lfanew + 24, size_opt_hdr).expect("read optional header");
+    let magic = u16le(&opt, 0);
+    let image_base: u64 = if magic == 0x20b {
+        u64::from_le_bytes([
+            opt[24], opt[25], opt[26], opt[27], opt[28], opt[29], opt[30], opt[31],
+        ])
+    } else {
+        u32le(&opt, 28) as u64
+    };
+    println!(
+        "IMAGEBASE preferred=0x{:x} actual=0x{:x} relocated={}",
+        image_base,
+        base,
+        if image_base as usize == base { "no" } else { "yes" }
+    );
+
     let raw = read_own(sec_table, 40 * n_sections).expect("read section table");
     let mut sections = Vec::new();
     for i in 0..n_sections {

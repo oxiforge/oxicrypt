@@ -18,6 +18,8 @@ import sys
 regions = collections.OrderedDict()
 bases = []
 runs = set()
+# Windows only: whether the image landed somewhere other than its preferred base.
+relocated = set()
 
 for line in sys.stdin:
     p = line.split()
@@ -27,6 +29,10 @@ for line in sys.stdin:
     if p[1] == "LOADBASE":
         bases.append(p[2])
         runs.add(run)
+        continue
+    if p[1] == "IMAGEBASE":
+        kv = dict(x.split("=", 1) for x in p[2:] if "=" in x)
+        relocated.add(kv.get("relocated", "?"))
         continue
     if p[1] != "REGION":
         continue
@@ -68,7 +74,23 @@ if total:
 
 print()
 ok = True
-if len(set(bases)) < 2:
+
+# Control 1 has two platform-appropriate forms, and picking the wrong one is not a
+# relaxation but a correction. On per-process-ASLR platforms (Linux, macOS) the test
+# is that the load base moved across runs. Windows randomises a DLL's base once per
+# boot and reuses it for every process, so that test can never fire there; the
+# equivalent question is whether the image landed anywhere other than its preferred
+# ImageBase, because that is what makes relocations applicable at all. Loading AT
+# ImageBase means zero fixups were applied and a MATCH proves nothing.
+if relocated:
+    if "yes" in relocated:
+        print("control ok: image did NOT load at its preferred base, so relocations were")
+        print("            applicable and a MATCH means the section survived them")
+    else:
+        print("CONTROL FAILED: image loaded at its preferred ImageBase, so no relocations")
+        print("                were applied — a MATCH says nothing about relocation behaviour.")
+        ok = False
+elif len(set(bases)) < 2:
     print("CONTROL FAILED: load base did not vary across runs — ASLR is not moving the image,")
     print("                so a STABLE verdict proves nothing.")
     ok = False
