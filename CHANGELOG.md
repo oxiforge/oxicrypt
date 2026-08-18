@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Aligned the CNSA 2.0 profile with CNSSP-15 (March 2025) Annex B. The suite names AES-256,
+  ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful hash-based signatures;
+  it names no Keccak-family hash or XOF for a software module, and SHA-3 appears there only for
+  internal hardware functionality.
+- Aligned the CNSA 1.0 profile with CNSSP-15 (October 2016) Annex B: AES-256, ECDH and ECDSA on
+  P-384, SHA-384, and Diffie-Hellman and RSA at a minimum 3072-bit modulus, together with the
+  supporting services those need at matching strength.
+- Added `AlgorithmProfile::Migration`, the union of the two suites, for a deployment running
+  classical and post-quantum algorithms side by side. It is not a CNSA profile; the C ABI selects
+  it with profile `3`.
+- Each profile membership now cites the clause of CNSSP-15 that admits it, and a test pins the
+  CNSA 1.0 set against the suite.
 - Scoped `oxicrypt-xmss` to signature verification. **Breaking: `keygen`, `sign` and
   `XmssPrivateKey` are removed from the crate, and `oxi_xmss_keygen` and `oxi_xmss_sign` from the
   C ABI. (#264)**
