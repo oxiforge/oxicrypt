@@ -494,15 +494,31 @@ pub enum AlgorithmProfile {
     /// default and preserves backward compatibility with callers
     /// that use [`initialize_with_tests`].
     Unrestricted = 0,
-    /// CNSA 2.0 (CNSSP 15): quantum-resistant algorithms only.
-    /// AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS.
-    /// SHA3-384/512 and 256-bit SP 800-185 variants are also
-    /// allowed. All other algorithms return
+    /// CNSA 2.0 — CNSSP-15 (March 2025) Annex B: AES-256, ML-KEM-1024,
+    /// ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful
+    /// hash-based signatures for software and firmware signing, with the
+    /// supporting services those need at matching strength. The suite
+    /// names no Keccak-family algorithm for a software module, so none is
+    /// permitted here. Everything else returns
     /// [`Error::AlgorithmRestricted`].
     Cnsa2 = 1,
-    /// CNSA 1.0: classical algorithms for the transition period.
-    /// AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072, DH >= 3072.
+    /// CNSA 1.0 — CNSSP-15 (October 2016) Annex B: AES-256, ECDH and
+    /// ECDSA on P-384, SHA-384, and Diffie-Hellman and RSA at a minimum
+    /// 3072-bit modulus, with the supporting services those need at
+    /// matching strength. SHA-256 and its variants are refused: the suite
+    /// admits them only under a near-term condition scoped to UNCLASSIFIED
+    /// data, which a module cannot evaluate.
     Cnsa1 = 2,
+    /// Both suites at once — **not a CNSA profile and not defined by any
+    /// standard.** This is oxicrypt's own union of CNSA 1.0 and CNSA 2.0,
+    /// for a deployment migrating between them that must run classical and
+    /// post-quantum algorithms side by side.
+    ///
+    /// It is narrower than [`Unrestricted`](Self::Unrestricted), which
+    /// refuses nothing: SHA-1, AES-128, RSA-2048 and P-256 are all refused
+    /// here. It admits no Keccak-family algorithm, because neither suite
+    /// does.
+    Migration = 3,
 }
 
 impl AlgorithmProfile {
@@ -510,6 +526,7 @@ impl AlgorithmProfile {
         match raw {
             0 => Self::Unrestricted,
             2 => Self::Cnsa1,
+            3 => Self::Migration,
             // Unknown discriminant (including 1 = Cnsa2) defaults to
             // the most restrictive profile as defence-in-depth.
             _ => Self::Cnsa2,
@@ -523,6 +540,7 @@ impl fmt::Display for AlgorithmProfile {
             Self::Unrestricted => "Unrestricted",
             Self::Cnsa2 => "CNSA 2.0",
             Self::Cnsa1 => "CNSA 1.0",
+            Self::Migration => "Migration (CNSA 1.0 + CNSA 2.0)",
         };
         f.write_str(s)
     }
@@ -1358,6 +1376,12 @@ const fn is_allowed(profile: AlgorithmProfile, service: Service) -> bool {
         AlgorithmProfile::Unrestricted => true,
         AlgorithmProfile::Cnsa2 => is_cnsa2_allowed(service),
         AlgorithmProfile::Cnsa1 => is_cnsa1_allowed(service),
+        // Derived from the two suites rather than enumerated a third time:
+        // a hand-written union is a third list to drift, and drift is the
+        // defect this work exists to repair.
+        AlgorithmProfile::Migration => {
+            is_cnsa1_allowed(service) || is_cnsa2_allowed(service) || is_lms_service(service)
+        }
     }
 }
 
@@ -1456,107 +1480,82 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
         || is_lms_service(service)
 }
 
-/// CNSA 1.0 allowed set. Classical algorithms for the transition
-/// period: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072,
-/// DH >= 3072. Also includes SHA-256 (widely needed for
-/// interoperability and certificate verification) and the
-/// post-quantum algorithms allowed in CNSA 2.0 (CNSA 1.0 is
-/// the transition profile; PQ algorithms are allowed if present).
+/// CNSA 1.0 allowed set — CNSSP-15 (October 2016) Annex B.
+///
+/// Annex B names seven families with their parameters: AES with 256-bit
+/// keys, ECDH on Curve P-384, ECDSA on Curve P-384, SHA-384, Diffie-Hellman
+/// with a minimum 3072-bit modulus, RSA with a minimum 3072-bit modulus for
+/// key establishment, and RSA with a minimum 3072-bit modulus for digital
+/// signatures. It names no hash other than SHA-384 and no Keccak-family
+/// algorithm at all — the policy does not cite FIPS PUB 202.
+///
+/// The suite names no DRBG, MAC or KDF, because it states what protects
+/// information rather than every primitive a module needs in order to do
+/// so. This gate therefore also admits the supporting services required to
+/// operate the named algorithms **at matching strength**: the DRBGs that
+/// seed their key generation, and the MAC and KDFs at the SHA-384 /
+/// AES-256 security level. Anything weaker than the suite requires is
+/// refused, SHA-256 and its HMAC, DRBG and KDF variants included.
+///
+/// Annex B's Additional Information paragraph permits RSA and Diffie-Hellman
+/// at 2048, SHA-256, and P-256 "in the near term", but only for deployments
+/// protecting UNCLASSIFIED NSS data or providing community-of-interest
+/// separation, and it requires consulting NSA before deploying a curve other
+/// than P-384. Those conditions turn on the classification of the data and on
+/// an external approval, neither of which a module can evaluate, so this gate
+/// refuses them and the Security Policy carries the allowance as an operator
+/// obligation. [`AlgorithmProfile::Migration`] is the profile for a
+/// deployment that needs both suites at once.
 const fn is_cnsa1_allowed(service: Service) -> bool {
     matches!(
         service,
-        // AES-256 all modes
-        Service::Aes256Ecb
+        // AES-256 — FIPS PUB 197, "Use 256 bit keys to protect up to TOP SECRET"
+        Service::Aes256
+            | Service::Aes256Ecb
             | Service::Aes256Cbc
             | Service::Aes256Ctr
             | Service::Aes256Gcm
             | Service::Aes256Ccm
             | Service::Aes256Kw
             | Service::Aes256Kwp
-            | Service::Aes256
-            // SHA-256, SHA-384, SHA-512 (SHA-256 needed for certs)
-            | Service::Sha256
-            | Service::Sha384
-            | Service::Sha512
-            // SHA3-256, SHA3-384, SHA3-512
-            | Service::Sha3_256
-            | Service::Sha3_384
-            | Service::Sha3_512
-            // SHAKE-256
-            | Service::Shake256
-            // 256-bit SP 800-185 variants
-            | Service::CShake256
-            | Service::Kmac256
-            | Service::KmacXof256
-            | Service::TupleHash256
-            | Service::TupleHashXof256
-            | Service::ParallelHash256
-            | Service::ParallelHashXof256
-            // HMAC with allowed hashes
-            | Service::HmacSha256
-            | Service::HmacSha384
-            | Service::HmacSha512
-            | Service::HmacSha3_256
-            | Service::HmacSha3_384
-            | Service::HmacSha3_512
-            // CMAC-AES-256
-            | Service::CmacAes256
-            // DRBGs backed by AES-256 or allowed hashes
-            | Service::CtrDrbgAes256
-            | Service::HashDrbgSha256
-            | Service::HashDrbgSha384
-            | Service::HashDrbgSha512
-            | Service::HmacDrbgSha256
-            | Service::HmacDrbgSha384
-            | Service::HmacDrbgSha512
-            // KDFs with allowed backing
-            | Service::HkdfSha256
-            | Service::HkdfSha384
-            | Service::HkdfSha512
-            | Service::KbkdfHmacSha256
-            | Service::KbkdfHmacSha384
-            | Service::KbkdfHmacSha512
-            | Service::KbkdfCmacAes256
-            | Service::Pbkdf2HmacSha256
-            | Service::Pbkdf2HmacSha384
-            | Service::Pbkdf2HmacSha512
-            // ECDSA/ECDH P-384
+            // ECDH — SP 800-56A Rev 2, "Use Curve P-384 to protect up to TOP SECRET"
+            | Service::EcdhP384
+            // ECDSA — FIPS PUB 186-4, "Use Curve P-384 to protect up to TOP SECRET"
+            | Service::EcdsaP384Keygen
             | Service::EcdsaP384Sign
             | Service::EcdsaP384Verify
-            | Service::EcdsaP384Keygen
-            | Service::EcdhP384
-            // RSA >= 3072
-            | Service::RsaKeygen3072
-            | Service::RsaPkcs1v15Sign3072
-            | Service::RsaPssSign3072
-            | Service::RsaOaep3072
-            | Service::RsaPkcs1v15Verify3072
-            | Service::RsaPssVerify3072
-            | Service::RsaKeygen4096
-            | Service::RsaPkcs1v15Sign4096
-            | Service::RsaPssSign4096
-            | Service::RsaOaep4096
-            | Service::RsaPkcs1v15Verify4096
-            | Service::RsaPssVerify4096
-            // DH >= 3072
+            // SHA — FIPS PUB 180-4, "Use SHA-384 to protect up to TOP SECRET"
+            | Service::Sha384
+            // Diffie-Hellman — IETF RFC 3526, minimum 3072-bit modulus
             | Service::Dh3072
-            // TLS 1.3 KDF — accepted as the modern transport KDF in the
-            // transition profile too (TLS 1.3 with classical-only ciphers
-            // is CNSA-1.0-compatible)
-            | Service::Tls13Kdf
-            // PQ algorithms (allowed during transition for hybrid use)
-            | Service::MlKem1024Encaps
-            | Service::MlKem1024Decaps
-            | Service::MlKem1024Keygen
-            | Service::MlDsa87Sign
-            | Service::MlDsa87Verify
-            | Service::MlDsa87Keygen
-            // XMSS — mirrors CNSA 2.0 during the transition. Verification only.
-            | Service::XmssVerify
+            // RSA key establishment — SP 800-56B Rev 1, minimum 3072-bit modulus
+            | Service::RsaKeygen3072
+            | Service::RsaKeygen4096
+            | Service::RsaOaep3072
+            | Service::RsaOaep4096
+            // RSA digital signatures — FIPS PUB 186-4, minimum 3072-bit modulus
+            | Service::RsaPkcs1v15Sign3072
+            | Service::RsaPkcs1v15Sign4096
+            | Service::RsaPkcs1v15Verify3072
+            | Service::RsaPkcs1v15Verify4096
+            | Service::RsaPssSign3072
+            | Service::RsaPssSign4096
+            | Service::RsaPssVerify3072
+            | Service::RsaPssVerify4096
+            // Supporting services at the suite's own strength: the DRBGs that
+            // seed key generation for the algorithms above, and the MAC and
+            // KDFs at the SHA-384 / AES-256 level.
+            | Service::CtrDrbgAes256
+            | Service::HashDrbgSha384
+            | Service::HmacDrbgSha384
+            | Service::HmacSha384
+            | Service::CmacAes256
+            | Service::HkdfSha384
+            | Service::KbkdfHmacSha384
+            | Service::KbkdfCmacAes256
+            | Service::Pbkdf2HmacSha384
+            | Service::Tls12Kdf
     )
-        // LMS — mirrors CNSA 2.0 during the transition. Stateful HBS is
-        // permitted under both profiles for software and firmware signing.
-        || is_lms_service(service)
 }
 
 // -------------------------------------------------------------------------
@@ -1930,7 +1929,10 @@ mod tests {
         // also pass against a gate that refuses everything.
         assert!(is_allowed(AlgorithmProfile::Cnsa2, Service::Sha384));
         // Control: ML-KEM reaches Keccak internally and must be unaffected.
-        assert!(is_allowed(AlgorithmProfile::Cnsa2, Service::MlKem1024Encaps));
+        assert!(is_allowed(
+            AlgorithmProfile::Cnsa2,
+            Service::MlKem1024Encaps
+        ));
     }
 
     #[test]
@@ -1981,12 +1983,145 @@ mod tests {
         }
     }
 
+    /// The exact CNSA 1.0 membership, pinned.
+    ///
+    /// Exhaustiveness over every `Service` is not expressible here — the enum
+    /// has no iterator, and the 336 variants would have to be listed to get
+    /// one. What this pins is the membership itself: adding a service to the
+    /// gate without adding it here, or removing one, fails. That is the drift
+    /// this work exists to stop, since both allow-lists were hand-written
+    /// match arms with no anchor to the documents they name.
     #[test]
-    fn cnsa1_allows_p384_rsa3072_and_pq() {
+    fn cnsa1_membership_is_pinned_at_the_2016_suite() {
+        let expected = [
+            Service::Aes256,
+            Service::Aes256Ecb,
+            Service::Aes256Cbc,
+            Service::Aes256Ctr,
+            Service::Aes256Gcm,
+            Service::Aes256Ccm,
+            Service::Aes256Kw,
+            Service::Aes256Kwp,
+            Service::EcdhP384,
+            Service::EcdsaP384Keygen,
+            Service::EcdsaP384Sign,
+            Service::EcdsaP384Verify,
+            Service::Sha384,
+            Service::Dh3072,
+            Service::RsaKeygen3072,
+            Service::RsaKeygen4096,
+            Service::RsaOaep3072,
+            Service::RsaOaep4096,
+            Service::RsaPkcs1v15Sign3072,
+            Service::RsaPkcs1v15Sign4096,
+            Service::RsaPkcs1v15Verify3072,
+            Service::RsaPkcs1v15Verify4096,
+            Service::RsaPssSign3072,
+            Service::RsaPssSign4096,
+            Service::RsaPssVerify3072,
+            Service::RsaPssVerify4096,
+            Service::CtrDrbgAes256,
+            Service::HashDrbgSha384,
+            Service::HmacDrbgSha384,
+            Service::HmacSha384,
+            Service::CmacAes256,
+            Service::HkdfSha384,
+            Service::KbkdfHmacSha384,
+            Service::KbkdfCmacAes256,
+            Service::Pbkdf2HmacSha384,
+            Service::Tls12Kdf,
+        ];
+        assert_eq!(expected.len(), 36, "CNSA 1.0 membership drift");
+        for svc in expected {
+            assert!(
+                is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} is in CNSSP-15 (2016) Annex B and must be permitted"
+            );
+        }
+    }
+
+    /// Migration is the union of the two suites and nothing more.
+    ///
+    /// It is not a CNSA profile: no standard defines it, which is why it does
+    /// not carry a CNSA name. Its contract is that it permits what either
+    /// suite permits, refuses what both refuse, and is strictly narrower than
+    /// `Unrestricted`.
+    #[test]
+    fn migration_is_the_union_of_both_suites() {
+        // From CNSA 1.0 alone.
+        for svc in [
+            Service::EcdsaP384Sign,
+            Service::EcdhP384,
+            Service::RsaPssSign3072,
+            Service::Dh3072,
+            Service::Tls12Kdf,
+        ] {
+            assert!(
+                is_allowed(AlgorithmProfile::Migration, svc),
+                "{svc} (CNSA 1.0) must pass"
+            );
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa2, svc),
+                "{svc} is not CNSA 2.0"
+            );
+        }
+
+        // From CNSA 2.0 alone.
+        for svc in [
+            Service::MlKem1024Encaps,
+            Service::MlDsa87Sign,
+            Service::XmssVerify,
+            Service::Sha512,
+            Service::LmsSha256M32H10W4Sign,
+            Service::Tls13Kdf,
+        ] {
+            assert!(
+                is_allowed(AlgorithmProfile::Migration, svc),
+                "{svc} (CNSA 2.0) must pass"
+            );
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} is not CNSA 1.0"
+            );
+        }
+
+        // Shared by both — the overlap is AES-256 and SHA-384 with their
+        // matching-strength support, and nothing else.
+        for svc in [Service::Aes256Gcm, Service::Sha384, Service::HmacSha384] {
+            assert!(is_allowed(AlgorithmProfile::Cnsa1, svc));
+            assert!(is_allowed(AlgorithmProfile::Cnsa2, svc));
+            assert!(is_allowed(AlgorithmProfile::Migration, svc));
+        }
+
+        // Refused by both, so refused here. This is what makes Migration a
+        // gate rather than a synonym for Unrestricted.
+        for svc in [
+            Service::Sha1,
+            Service::Sha256,
+            Service::Aes128Gcm,
+            Service::RsaPssSign2048,
+            Service::EcdsaP256Sign,
+            Service::Ed25519Sign,
+            // Named by neither suite for a software module.
+            Service::Sha3_384,
+            Service::Shake256,
+            Service::Kmac256,
+        ] {
+            assert!(
+                !is_allowed(AlgorithmProfile::Migration, svc),
+                "{svc} is in neither suite and must be refused"
+            );
+            // Control: Unrestricted does permit it, so the refusal above is
+            // Migration's doing and not a service that is gated everywhere.
+            assert!(is_allowed(AlgorithmProfile::Unrestricted, svc));
+        }
+    }
+
+    #[test]
+    fn cnsa1_allows_the_2016_suite() {
         let allowed = [
             Service::Aes256Gcm,
             Service::Sha384,
-            Service::Sha256,
             Service::EcdsaP384Sign,
             Service::EcdsaP384Verify,
             Service::EcdsaP384Keygen,
@@ -1995,9 +2130,12 @@ mod tests {
             Service::RsaOaep3072,
             Service::RsaPssSign4096,
             Service::Dh3072,
-            Service::MlKem1024Encaps,
-            Service::LmsSha256M32H10W4Sign,
-            Service::Tls13Kdf,
+            // Supporting services at the suite's own strength.
+            Service::HmacSha384,
+            Service::CtrDrbgAes256,
+            Service::HashDrbgSha384,
+            Service::KbkdfHmacSha384,
+            Service::Tls12Kdf,
         ];
         for svc in allowed {
             assert!(
@@ -2021,7 +2159,27 @@ mod tests {
             Service::Ed25519Verify,
             Service::RsaPssSign2048,
             Service::RsaOaep2048,
-            Service::Tls12Kdf,
+            // Weaker than the suite requires. Annex B names SHA-384 alone;
+            // SHA-256 appears only in its Additional Information paragraph,
+            // as a near-term allowance scoped to UNCLASSIFIED data and
+            // conditioned on NSA consultation for non-P-384 curves — neither
+            // of which this module can evaluate.
+            Service::Sha256,
+            Service::HmacSha256,
+            Service::HashDrbgSha256,
+            Service::HkdfSha256,
+            // SHA-512 belongs to CNSA 2.0; the 2016 suite does not name it.
+            Service::Sha512,
+            Service::HmacSha512,
+            // Named by neither suite.
+            Service::Sha3_256,
+            Service::Shake256,
+            // Post-quantum and stateful hash-based: CNSA 2.0, not CNSA 1.0.
+            Service::MlKem1024Encaps,
+            Service::MlDsa87Sign,
+            Service::XmssVerify,
+            Service::LmsSha256M32H10W4Sign,
+            Service::Tls13Kdf,
         ];
         for svc in blocked {
             assert!(
@@ -2208,8 +2366,9 @@ mod tests {
     fn lms_gating_is_exhaustive_across_all_160_variants() {
         // Enumerates every LMS Service variant (80 (LMS, LM-OTS) pairs ×
         // {Sign, Verify} = 160 entries) and verifies that all 160 are
-        // permitted under all three profiles: CNSSP-15 Annex B places no
-        // subset restriction on LMS, and Unrestricted permits everything.
+        // gated as CNSA 2.0 permits them and CNSA 1.0 does not: the 2025
+        // Annex B places no subset restriction on LMS, while the 2016 suite
+        // names no stateful hash-based scheme at all.
         // If a new LMS variant is added without a matching entry in
         // `lms_all_160`, the length assertion catches the drift.
         let all_160 = lms_all_160();
@@ -2229,10 +2388,17 @@ mod tests {
                 "{svc} must be allowed in CNSA 2.0"
             );
 
-            // CNSA 1.0: mirrors CNSA 2.0 on LMS (transition profile).
+            // CNSA 1.0: refused. CNSSP-15 (October 2016) Annex B names no
+            // stateful hash-based signature scheme; LMS arrives with CNSA 2.0.
             assert!(
-                is_allowed(AlgorithmProfile::Cnsa1, svc),
-                "{svc} must be allowed in CNSA 1.0"
+                !is_allowed(AlgorithmProfile::Cnsa1, svc),
+                "{svc} is not in CNSA 1.0 and must be refused"
+            );
+
+            // Migration: permitted, because CNSA 2.0 permits it.
+            assert!(
+                is_allowed(AlgorithmProfile::Migration, svc),
+                "{svc} must be allowed in Migration"
             );
         }
     }
@@ -2421,12 +2587,16 @@ mod tests {
     }
 
     /// Entry-point coverage for the LMS correction, on the `M=24` sets.
-    /// CNSSP-15 Annex B recommends LMS-SHA-256/192, which is `M=24`, so these
-    /// are the parameter sets the policy names by name.
+    /// CNSSP-15 (March 2025) Annex B recommends LMS-SHA-256/192, which is
+    /// `M=24`, so these are the parameter sets the policy names by name.
+    ///
+    /// CNSA 1.0 is absent from this list deliberately: the 2016 suite names
+    /// no stateful hash-based scheme, so LMS is refused there and permitted
+    /// under Migration instead.
     #[test]
-    fn require_allowed_admits_lms_m24_under_both_cnsa_profiles() {
+    fn require_allowed_admits_lms_m24_under_cnsa2_and_migration() {
         let guard = reset_for_test();
-        for profile in [AlgorithmProfile::Cnsa2, AlgorithmProfile::Cnsa1] {
+        for profile in [AlgorithmProfile::Cnsa2, AlgorithmProfile::Migration] {
             guard.reset();
             initialize_with_profile(UNSIGNED_TEST_BINARY, &[], profile).unwrap();
             for svc in [
