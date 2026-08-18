@@ -496,7 +496,9 @@ types:
       - name: Cnsa2
         description: "CNSA 2.0: quantum-resistant algorithms only."
       - name: Cnsa1
-        description: "CNSA 1.0: classical transition period algorithms."
+        description: "CNSA 1.0 per CNSSP-15 (October 2016) Annex B: AES-256, ECDH and ECDSA on P-384, SHA-384, and Diffie-Hellman and RSA at a minimum 3072-bit modulus."
+      - name: Migration
+        description: "Both suites at once, for a deployment migrating between them; not a CNSA profile and not defined by any standard."
 
   - name: Service
     module: oxicrypt-module
@@ -1630,7 +1632,7 @@ functions:
       - name: profile
         type: AlgorithmProfile
         direction: in
-        description: "Algorithm restriction policy: Unrestricted, Cnsa2, or Cnsa1."
+        description: "Algorithm restriction policy: Unrestricted, Cnsa2, Cnsa1, or Migration."
     returns:
       type: "Result<(), Error>"
       description: Ok(()) if all KATs pass.
@@ -5542,6 +5544,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: encapsulate
     module: oxicrypt-ml-kem
@@ -5586,6 +5589,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: decapsulate
     module: oxicrypt-ml-kem
@@ -5628,6 +5632,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   # ── ML-KEM-512 (FIPS 203, k=2) ────────────────────────────────────
 
@@ -5879,6 +5884,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: sign
     module: oxicrypt-ml-dsa
@@ -5926,6 +5932,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: verify
     module: oxicrypt-ml-dsa
@@ -5979,6 +5986,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   # ── ML-DSA-44 (FIPS 204, k=4, ℓ=4, η=2, γ₁=2¹⁷) ──────────────────
 
@@ -6243,6 +6251,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: sign
     module: oxicrypt-lms
@@ -6281,6 +6290,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
     pitfalls:
       - description: "LMS is STATEFUL: each private key can sign only 1024 messages, the caller must persist key state after every sign, and reusing a leaf index voids the whole tree's security."
         wrong: |
@@ -6334,6 +6344,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   # Cached signing (feature `alloc`, on by default); baseline H10/W4 shapes shown.
 
@@ -6368,6 +6379,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: "LmsSigningKey::from_private_key"
     module: oxicrypt-lms
@@ -6397,6 +6409,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   - name: "LmsSigningKey::sign"
     module: oxicrypt-lms
@@ -6431,6 +6444,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
     pitfalls:
       - description: "The same one-leaf-per-signature contract as the uncached sign applies: persist the wrapped private key after every call. The node table is public data and does not capture leaf state; only the wrapped LmsPrivateKey does."
         wrong: |
@@ -6486,6 +6500,7 @@ functions:
     profiles:
       - Unrestricted
       - Cnsa2
+      - Migration
 
   # ── SLH-DSA (FIPS 205) ───────────────────────────────────────────
   # SHA2-256s surface; the crate root re-exports it as oxicrypt_slh_dsa::{keygen, sign, verify}.

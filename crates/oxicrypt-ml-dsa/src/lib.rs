@@ -19,16 +19,17 @@
 //!
 //! # Approved services
 //!
-//! | Service | Description | CNSA-1.0 | CNSA-2.0 |
-//! |---------|-------------|----------|----------|
-//! | `MlDsa44Keygen` / `Sign` / `Verify` | ML-DSA-44 | No | No |
-//! | `MlDsa65Keygen` / `Sign` / `Verify` | ML-DSA-65 | No | No |
-//! | `MlDsa87Keygen` / `Sign` / `Verify` | ML-DSA-87 | No | Yes (mandate) |
+//! | Service | Description | CNSA-1.0 | CNSA-2.0 | Migration |
+//! |---------|-------------|----------|----------|-----------|
+//! | `MlDsa44Keygen` / `Sign` / `Verify` | ML-DSA-44 | No | No | No |
+//! | `MlDsa65Keygen` / `Sign` / `Verify` | ML-DSA-65 | No | No | No |
+//! | `MlDsa87Keygen` / `Sign` / `Verify` | ML-DSA-87 | No | Yes | Yes |
 //!
 //! ML-DSA-44 and ML-DSA-65 are permitted only under the
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
 //! profile. ML-DSA-87 is the CNSA 2.0 digital-signature mandate
-//! (CNSSP 15) and is also allowed in `Cnsa2`.
+//! (CNSSP-15, March 2025 Annex B), and `Migration` admits it as the
+//! union of the two suites.
 //!
 //! # Parameter sets (FIPS 204 §4, Tables 1 and 2)
 //!

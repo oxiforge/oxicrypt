@@ -51,7 +51,8 @@
 //! |-------|---------|
 //! | `0`   | Unrestricted (all approved algorithms) |
 //! | `1`   | CNSA 2.0 (AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS) |
-//! | `2`   | CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072) |
+//! | `2`   | CNSA 1.0 (AES-256, SHA-384, P-384, RSA ≥ 3072, DH ≥ 3072) |
+//! | `3`   | Migration — both suites at once; not a CNSA profile |
 //!
 //! Unknown profile codes return [`OxiResult::InvalidInput`].
 //! Once a profile is active, calling a restricted algorithm returns
@@ -231,7 +232,8 @@ pub extern "C" fn lama_manifest() -> *const core::ffi::c_char {
 /// - `0` — Unrestricted (all approved algorithms available)
 /// - `1` — CNSA 2.0 (AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87,
 ///   LMS, XMSS)
-/// - `2` — CNSA 1.0 (AES-256, SHA-256+, P-384, RSA ≥ 3072, DH ≥ 3072)
+/// - `2` — CNSA 1.0 (AES-256, SHA-384, P-384, RSA ≥ 3072, DH ≥ 3072)
+/// - `3` — Migration (both suites at once; not a CNSA profile)
 ///
 /// Any other value returns [`OxiResult::InvalidInput`] without
 /// performing initialisation. This is per F4 reviewer-framing —
@@ -259,6 +261,7 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
         0 => oxicrypt_module::AlgorithmProfile::Unrestricted,
         1 => oxicrypt_module::AlgorithmProfile::Cnsa2,
         2 => oxicrypt_module::AlgorithmProfile::Cnsa1,
+        3 => oxicrypt_module::AlgorithmProfile::Migration,
         _ => return R::InvalidInput as c_int,
     };
     // Idempotent fast-path: skip KAT collection on already-operational
@@ -282,6 +285,7 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
 /// - `0` — Unrestricted
 /// - `1` — CNSA 2.0
 /// - `2` — CNSA 1.0
+/// - `3` — Migration (CNSA 1.0 + CNSA 2.0)
 ///
 /// # Safety
 ///
@@ -292,6 +296,7 @@ pub extern "C" fn oxi_active_profile() -> c_int {
         oxicrypt_module::AlgorithmProfile::Unrestricted => 0,
         oxicrypt_module::AlgorithmProfile::Cnsa2 => 1,
         oxicrypt_module::AlgorithmProfile::Cnsa1 => 2,
+        oxicrypt_module::AlgorithmProfile::Migration => 3,
     }
 }
 

@@ -37,7 +37,9 @@
 //! | SHAKE-256 / N=32 (20 pairs × 2 ops) | RFC 8708 §3.1 | 580-619 |
 //! | SHAKE-256 / N=24 (20 pairs × 2 ops) | RFC 8708 §4.2 | 620-659 |
 //!
-//! CNSA 2.0 (and CNSA 1.0 by mirror) permits every one of the 80 pairs.
+//! CNSA 2.0 permits every one of the 80 pairs. CNSA 1.0 permits none of
+//! them: CNSSP-15 (October 2016) names no stateful hash-based signature
+//! scheme. `Migration` permits them, as the union of the two suites.
 //! CNSSP-15 Annex B states "all parameters appropriate to protect to TOP
 //! SECRET" for LMS, recommending LMS-SHA-256/192, and so places no subset
 //! restriction on the parameter sets — see

@@ -18,16 +18,18 @@
 //!
 //! # Approved services
 //!
-//! | Service | Description | CNSA-1.0 | CNSA-2.0 |
-//! |---------|-------------|----------|----------|
-//! | `MlKem512Keygen` / `Encaps` / `Decaps` | ML-KEM-512 | No | No |
-//! | `MlKem768Keygen` / `Encaps` / `Decaps` | ML-KEM-768 | No | No |
-//! | `MlKem1024Keygen` / `Encaps` / `Decaps` | ML-KEM-1024 | Yes (transition) | Yes (core) |
+//! | Service | Description | CNSA-1.0 | CNSA-2.0 | Migration |
+//! |---------|-------------|----------|----------|-----------|
+//! | `MlKem512Keygen` / `Encaps` / `Decaps` | ML-KEM-512 | No | No | No |
+//! | `MlKem768Keygen` / `Encaps` / `Decaps` | ML-KEM-768 | No | No | No |
+//! | `MlKem1024Keygen` / `Encaps` / `Decaps` | ML-KEM-1024 | No | Yes | Yes |
 //!
 //! ML-KEM-512 and ML-KEM-768 are permitted only under the
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
-//! profile. ML-KEM-1024 is the CNSA 2.0 baseline and is also allowed
-//! in CNSA 1.0 for hybrid use during the transition period.
+//! profile. ML-KEM-1024 is the CNSA 2.0 baseline. CNSSP-15 (October
+//! 2016) names no post-quantum algorithm, so CNSA 1.0 refuses it; a
+//! deployment running classical and post-quantum side by side selects
+//! `Migration`.
 //!
 //! # Parameter sets (FIPS 203 Tables 2 and 3)
 //!
