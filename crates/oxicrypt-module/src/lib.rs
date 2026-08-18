@@ -1386,10 +1386,17 @@ const fn lms_block_contains(discriminant: u16) -> bool {
         && discriminant <= Service::LmsShakeM24H25W8Verify as u16
 }
 
-/// CNSA 2.0 allowed set. Only quantum-resistant algorithms plus
-/// AES-256, SHA-384/512, SHA3-384/512, and 256-bit SP 800-185, and the
-/// SP 800-208 stateful hash-based signatures for software and firmware
-/// signing.
+/// CNSA 2.0 allowed set — CNSSP-15 (March 2025) Annex B.
+///
+/// The suite names AES-256, ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512,
+/// and the SP 800-208 stateful hash-based signatures for software and
+/// firmware signing. It names no Keccak-family hash or XOF: SHA-3
+/// appears only as "allowed for internal hardware functionality", and
+/// the policy states that algorithms using SHA3 as a component, such as
+/// LMS or ML-KEM, do not thereby make SHA3 an approved hash function.
+/// This module is software, so no Keccak service is permitted here —
+/// ML-KEM and ML-DSA reach Keccak through `new_internal`, which is a
+/// component path and not a service.
 const fn is_cnsa2_allowed(service: Service) -> bool {
     matches!(
         service,
@@ -1406,23 +1413,11 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::Sha384
             | Service::Sha512
             // SHA3-384, SHA3-512 (for internal / hardware — see plan note)
-            | Service::Sha3_384
-            | Service::Sha3_512
             // SHAKE-256
-            | Service::Shake256
             // 256-bit SP 800-185 variants
-            | Service::CShake256
-            | Service::Kmac256
-            | Service::KmacXof256
-            | Service::TupleHash256
-            | Service::TupleHashXof256
-            | Service::ParallelHash256
-            | Service::ParallelHashXof256
             // HMAC with allowed hashes
             | Service::HmacSha384
             | Service::HmacSha512
-            | Service::HmacSha3_384
-            | Service::HmacSha3_512
             // CMAC-AES-256
             | Service::CmacAes256
             // DRBGs backed by AES-256 or SHA-384/512
@@ -1878,15 +1873,11 @@ mod tests {
             Service::Aes256Cbc,
             Service::Sha384,
             Service::Sha512,
-            Service::Sha3_384,
-            Service::Sha3_512,
             Service::HmacSha384,
             Service::HmacSha512,
             Service::CtrDrbgAes256,
             Service::HashDrbgSha384,
             Service::HmacDrbgSha512,
-            Service::Kmac256,
-            Service::KmacXof256,
             Service::MlKem1024Encaps,
             Service::MlKem1024Decaps,
             Service::MlKem1024Keygen,
@@ -1904,6 +1895,42 @@ mod tests {
                 "{svc} should be allowed in CNSA 2.0"
             );
         }
+    }
+
+    /// CNSSP-15 (March 2025) Annex B names no Keccak-family hash or XOF.
+    /// SHA-3 appears only as "allowed for internal hardware functionality",
+    /// and the policy states outright that algorithms using SHA3 as a
+    /// component — LMS and ML-KEM are its examples — do not thereby make
+    /// SHA3 an approved hash function. This module is software, so the whole
+    /// family is refused under CNSA 2.0. Pinned as a property because the
+    /// gate permitted all twelve until 2026-08-18.
+    #[test]
+    fn cnsa2_refuses_the_keccak_family() {
+        let refused = [
+            Service::Shake256,
+            Service::CShake256,
+            Service::Kmac256,
+            Service::KmacXof256,
+            Service::TupleHash256,
+            Service::TupleHashXof256,
+            Service::ParallelHash256,
+            Service::ParallelHashXof256,
+            Service::Sha3_384,
+            Service::Sha3_512,
+            Service::HmacSha3_384,
+            Service::HmacSha3_512,
+        ];
+        for svc in refused {
+            assert!(
+                !is_allowed(AlgorithmProfile::Cnsa2, svc),
+                "{svc} is not in CNSA 2.0 and must be refused"
+            );
+        }
+        // Control: the suite's own hash must still pass, or this test would
+        // also pass against a gate that refuses everything.
+        assert!(is_allowed(AlgorithmProfile::Cnsa2, Service::Sha384));
+        // Control: ML-KEM reaches Keccak internally and must be unaffected.
+        assert!(is_allowed(AlgorithmProfile::Cnsa2, Service::MlKem1024Encaps));
     }
 
     #[test]
