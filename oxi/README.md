@@ -5,9 +5,34 @@ a cryptographic module targeting FIPS 140-3 Level 1, written entirely in Rust.
 
 The crate is `oxicrypt-cli`; the binary it installs is `oxi`.
 
-```sh
-cargo install oxicrypt-cli
+## Installing
+
+⚠️ **`cargo install oxicrypt-cli` alone does not produce a runnable binary.**
+
+`oxi` initializes the module before it does anything, and the module runs a
+pre-operational integrity test over its own loaded image. That test needs a MAC
+written into the binary after linking, and `cargo install` has no post-link step
+in which to write it. An installed but unsigned `oxi` prints
+
 ```
+fatal: module initialization failed: FIPS power-up self-test failed:
+Module image integrity (HMAC-SHA-256 over the loader-invariant image)
+```
+
+and exits non-zero. It is behaving correctly: a module that cannot verify its own
+image refuses to become operational rather than proceeding untested.
+
+Until signed release artifacts are published, build and sign it yourself:
+
+```sh
+git clone https://github.com/oxiforge/oxicrypt && cd oxicrypt
+cargo build --release -p oxicrypt-cli -p oxicrypt-integrity-sign
+./target/release/oxicrypt-integrity-sign --sign target/release/oxi
+./target/release/oxi hash sha256 ./some-file
+```
+
+The procedure, and what it is doing, is in
+[`docs/integrity-signing.md`](https://github.com/oxiforge/oxicrypt/blob/main/docs/integrity-signing.md).
 
 ## Commands
 
@@ -35,9 +60,9 @@ general cryptographic toolkit. There is no key generation, signing, verification
 or encryption here yet, and the post-quantum algorithms the module implements are
 not reachable from the command line.
 
-`oxi` also initializes the module **without** running the power-up known-answer
-tests, because the binary is not signed. Treat it as a convenience tool, not as a
-demonstration of the self-tested path.
+`oxi` does run the module's full power-up self-tests, including the
+pre-operational integrity test — which is why it must be signed before it will
+start. See **Installing** below.
 
 ## Documentation
 

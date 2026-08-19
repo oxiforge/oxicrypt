@@ -45,7 +45,9 @@ fn main() -> ExitCode {
         return usage();
     }
 
-    // Initialize the module (skip KATs — the oxi binary isn't signed).
+    // Initialize the module: the integrity group plus every algorithm group
+    // this binary can reach. Nothing checks that the second list covers the
+    // subcommands below — see `power_up_tests`.
     if let Err(e) = init_module() {
         eprintln!("fatal: module initialization failed: {e}");
         return ExitCode::FAILURE;

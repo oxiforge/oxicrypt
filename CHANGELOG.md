@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `docs/integrity-signing.md`, the one home for signing an artifact against the
   pre-operational integrity test. `docs/building.md`'s signing section named a build command
   that errors, a slot size 256 times smaller than the real one, and a MAC over the whole file.
+- Corrected `oxicrypt-cli`'s README and a comment in `oxi`, both of which said the CLI skips
+  its power-up known-answer tests. It runs them, including the pre-operational integrity test,
+  and therefore must be signed before it will start — which `cargo install` cannot do.
 - Aligned the CNSA 2.0 profile with CNSSP-15 (March 2025) Annex B. The suite names AES-256,
   ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful hash-based signatures;
   it names no Keccak-family hash or XOF for a software module, and SHA-3 appears there only for
