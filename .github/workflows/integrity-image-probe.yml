@@ -1,8 +1,15 @@
-# Loaded-image stability measurement for the pre-operational integrity test.
+# Design measurements for the pre-operational integrity test.
 #
-# NOT a gate. A one-off design measurement, kept in CI because the platforms it
-# needs are unavailable on the development machine: Mach-O cannot be built or
-# run there at all, and neither can PE.
+# NOT a gate. Measurements, kept in CI because the platforms they need are
+# unavailable on the development machine: Mach-O and PE cannot be run there.
+#
+# Two jobs, answering two different questions. `probe` asks what the *loader*
+# does to an image — which parts survive ASLR unchanged and still equal the file
+# on disk. `codesign-extent` asks what the *signing tool* does to it, which
+# matters because the Darwin extent is `__TEXT` and a Mach-O carries its header
+# and load commands at the start of `__TEXT`; a signature that adds a load
+# command writes inside the region the MAC covers. Each job documents itself
+# where it is defined.
 #
 # What it establishes per platform: which parts of the loaded module are
 # identical across runs despite ASLR, and whether those parts equal the file
@@ -168,4 +175,133 @@ jobs:
           path: |
             runs.txt
             analysis.txt
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Does `codesign` disturb the extent the signer recorded?
+  #
+  # The stability probe above answers what the *loader* does to an image. This
+  # answers what the *signing tool* does to it, which is a different question and
+  # the one that decides whether Darwin can carry the design at all: the extent
+  # is `__TEXT`, and a Mach-O's header and load commands live at the start of
+  # `__TEXT`. If `codesign` adds an `LC_CODE_SIGNATURE` command it writes inside
+  # the very region the MAC covers, and a signature applied after signing would
+  # invalidate it.
+  #
+  # The measurement uses the real signer rather than a stand-in, so what is
+  # measured is the mechanism that ships. It reports rather than fails on the
+  # answer itself — an extent that moves is a finding, not a broken build — but
+  # it does fail if either control does not hold, because a run whose controls
+  # are dead says nothing in either direction.
+  #
+  # `codesign -s -` is ad-hoc signing: no certificate, no Apple account, no
+  # enrolment. It is the same code path a real identity takes for everything this
+  # measurement observes.
+  codesign-extent:
+    name: codesign-extent-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-aarch64
+            runner: macos-15
+          - name: macos-x86_64
+            runner: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Build the cdylib and the signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
+          cp target/release/liboxicrypt_ffi.dylib subject.dylib
+          ls -l subject.dylib
+
+      - name: Record the extent, then sign — CONTROL, must verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN=target/release/oxicrypt-integrity-sign
+          "$SIGN" --show subject.dylib | tee before-show.txt
+          "$SIGN" --sign subject.dylib | tee sign.txt
+          # If this does not pass, nothing below distinguishes "codesign broke
+          # the extent" from "the extent was never right on this platform".
+          "$SIGN" --verify subject.dylib
+          echo "control ok: the artifact verifies before codesign runs"
+          shasum -a 256 subject.dylib | tee before-sha.txt
+          otool -l subject.dylib > before-otool.txt
+          grep -c LC_CODE_SIGNATURE before-otool.txt || true
+
+      - name: Ad-hoc sign — CONTROL, codesign must actually change the file
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --force --sign - --timestamp=none subject.dylib
+          codesign -dv subject.dylib 2>&1 | tee codesign-dv.txt
+          shasum -a 256 subject.dylib | tee after-sha.txt
+          # A codesign that no-opped would leave the artifact verifying and the
+          # measurement would read as "codesign is harmless" without codesign
+          # having done anything.
+          if cmp -s <(cut -d' ' -f1 before-sha.txt) <(cut -d' ' -f1 after-sha.txt); then
+            echo "control FAILED: codesign left the file byte-identical" >&2
+            exit 1
+          fi
+          echo "control ok: codesign changed the file"
+
+      - name: THE ANSWER — does the recorded extent still verify?
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN=target/release/oxicrypt-integrity-sign
+          otool -l subject.dylib > after-otool.txt
+          set +e
+          "$SIGN" --verify subject.dylib > verify-after.txt 2>&1
+          VERIFY_EXIT=$?
+          "$SIGN" --show subject.dylib > after-show.txt 2>&1
+          set -e
+          echo "verify_after_codesign_exit=$VERIFY_EXIT" | tee answer.txt
+          cat verify-after.txt
+
+          echo "--- what codesign changed ---" | tee -a answer.txt
+          echo "LC_CODE_SIGNATURE before: $(grep -c LC_CODE_SIGNATURE before-otool.txt || true)" | tee -a answer.txt
+          echo "LC_CODE_SIGNATURE after:  $(grep -c LC_CODE_SIGNATURE after-otool.txt || true)" | tee -a answer.txt
+          echo "--- __TEXT segment, before ---" | tee -a answer.txt
+          grep -A 6 'segname __TEXT' before-otool.txt | head -12 | tee -a answer.txt
+          echo "--- __TEXT segment, after ---" | tee -a answer.txt
+          grep -A 6 'segname __TEXT' after-otool.txt | head -12 | tee -a answer.txt
+          echo "--- extent, before vs after ---" | tee -a answer.txt
+          diff before-show.txt after-show.txt || true
+
+          if [ "$VERIFY_EXIT" -eq 0 ]; then
+            echo "RESULT: codesign does NOT disturb the recorded extent on ${{ matrix.name }}" | tee -a answer.txt
+          else
+            echo "RESULT: codesign DOES disturb the recorded extent on ${{ matrix.name }}." | tee -a answer.txt
+            echo "This is a finding about the design, not a build failure. The Darwin path needs" | tee -a answer.txt
+            echo "rework — most likely signing after codesign rather than before it." | tee -a answer.txt
+          fi
+
+      - name: Upload the measurement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codesign-extent-${{ matrix.name }}
+          path: |
+            before-show.txt
+            after-show.txt
+            sign.txt
+            verify-after.txt
+            answer.txt
+            codesign-dv.txt
+            before-otool.txt
+            after-otool.txt
           if-no-files-found: error
