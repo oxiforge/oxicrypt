@@ -267,7 +267,7 @@ fn inc32(ctr: &mut [u8; 16]) {
 /// CTR encrypt/decrypt (the same operation) using `icb` as the
 /// initial counter block. The counter block is incremented as a full
 /// 128-bit big-endian integer, following the SP 800-38A Appendix F.5
-/// test-vector convention. GCM uses the 32-bit increment [`inc32`].
+/// test-vector convention. GCM uses the 32-bit increment `inc32`.
 ///
 /// Note: SP 800-38A defines CTR with an application-selected
 /// standard incrementing function. For the FIPS 140-3 power-up KAT

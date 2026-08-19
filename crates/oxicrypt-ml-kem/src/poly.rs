@@ -7,7 +7,7 @@
 //!
 //! The K-dependent companion types `PolyVec` (`[Poly; K]`) and
 //! `PolyMatrix` (`[[Poly; K]; K]`) are emitted per-variant by
-//! [`crate::ml_kem_impl::ml_kem_impl!`].
+//! `crate::ml_kem_impl::ml_kem_impl!`.
 //!
 //! All indices are bounded by compile-time constants.
 #![allow(

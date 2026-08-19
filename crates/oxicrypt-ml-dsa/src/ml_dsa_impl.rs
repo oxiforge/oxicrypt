@@ -155,8 +155,8 @@ macro_rules! ml_dsa_impl {
 
         /// Bytes per w₁ polynomial used in `pack_w1` (hashing).
         ///
-        /// γ₂=(q−1)/32 → high coefficients in [0,15] → 4 bits/coeff → 128;
-        /// γ₂=(q−1)/88 → high coefficients in [0,43] → 6 bits/coeff → 192.
+        /// γ₂=(q−1)/32 → high coefficients in `[0,15]` → 4 bits/coeff → 128;
+        /// γ₂=(q−1)/88 → high coefficients in `[0,43]` → 6 bits/coeff → 192.
         pub const W1_PACKED: usize = if GAMMA2 == (Q - 1) / 32 { 128 } else { 192 };
 
         /// Total `pack_w1` buffer length across the k components.
@@ -464,9 +464,9 @@ macro_rules! ml_dsa_impl {
 
         /// Pack w₁ into per-poly buffers for hashing.
         ///
-        /// γ₂=(q−1)/32: coefficients in [0,15], 4 bits/coeff,
+        /// γ₂=(q−1)/32: coefficients in `[0,15]`, 4 bits/coeff,
         /// 128 bytes/poly.
-        /// γ₂=(q−1)/88: coefficients in [0,43], 6 bits/coeff,
+        /// γ₂=(q−1)/88: coefficients in `[0,43]`, 6 bits/coeff,
         /// 192 bytes/poly (packed 4 coeffs per 3 bytes).
         fn pack_w1(w1: &PolyVecK, buf: &mut [u8]) {
             debug_assert!(buf.len() >= W1_PACKED_TOTAL);

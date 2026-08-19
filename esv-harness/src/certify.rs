@@ -365,7 +365,7 @@ fn check_assessments(assessments: &[CertifyAssessment]) -> Result<(), CertifyErr
 /// (`restartTestBits` is tolerated-absent there, since the demo server's exact
 /// slot set is unproven) and re-established here — the certify-precondition
 /// layer, where both facts are known. It is **enforced at construction** via
-/// [`check_restart_preconditions`], which [`CertifyRequest::new`] and
+/// `check_restart_preconditions`, which [`CertifyRequest::new`] and
 /// [`AddOeRequest::new`] call for every referenced assessment, so no caller can
 /// build a certify request that skips it. (The submission orchestrator that
 /// *invokes* those constructors with live registration + session facts is the
@@ -520,7 +520,7 @@ impl CertifyRequest {
     /// `entropyId`, non-positive `moduleId`, no assessments, a non-positive
     /// `eaId`/`oeId`, the EAR/PUD/DCA count constraints, or a restart-precondition
     /// violation for a referenced assessment (missing fact, or a non-IID
-    /// assessment with no restart upload — see [`check_restart_preconditions`]).
+    /// assessment with no restart upload — see `check_restart_preconditions`).
     ///
     /// `restart_facts` supplies, per referenced `eaId`, the IID-claim and
     /// restart-upload status the guard needs (see [`RestartPrecondition`]). It is
@@ -623,7 +623,7 @@ impl AddOeRequest {
     /// # Errors
     /// A [`CertifyError`] for the first violated precondition, including a
     /// restart-precondition violation for a referenced assessment (see
-    /// [`check_restart_preconditions`]). `restart_facts` is mandatory for the
+    /// `check_restart_preconditions`). `restart_facts` is mandatory for the
     /// same reason as on [`CertifyRequest::new`].
     pub fn new(
         entropy_id: &str,

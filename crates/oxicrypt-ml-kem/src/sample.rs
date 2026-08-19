@@ -7,7 +7,7 @@
 //!
 //! The K-dependent helpers `expand_a` (matrix Â expansion) and
 //! `sample_noise_vec` (k-component noise vector) are emitted per
-//! variant by [`crate::ml_kem_impl::ml_kem_impl!`].
+//! variant by `crate::ml_kem_impl::ml_kem_impl!`.
 #![allow(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,

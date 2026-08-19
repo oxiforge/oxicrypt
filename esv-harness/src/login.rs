@@ -595,7 +595,7 @@ impl EsvSession {
     /// If the refresh is rejected 401/403 (a non-window-reuse rejection —
     /// window reuse is retried transparently by the [`Sleeper`]-driven
     /// POST), the embedded token is treated as stale (see the
-    /// suspend-blind note on [`Self::issued`]) and the flow falls back to a
+    /// suspend-blind note on `Self::issued`) and the flow falls back to a
     /// **plain fresh login** (no embedded token) before surfacing an
     /// error.
     ///

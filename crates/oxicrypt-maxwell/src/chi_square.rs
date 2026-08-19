@@ -33,13 +33,13 @@
 //!
 //! # Cephes incomplete-gamma p-value (Part A)
 //!
-//! [`cephes_polevl`], [`cephes_p1evl`], [`cephes_lgam`], [`cephes_igam`],
-//! [`cephes_igamc`], and [`chi_square_pvalue`] are faithful pure-Rust
+//! `cephes_polevl`, `cephes_p1evl`, `cephes_lgam`, `cephes_igam`,
+//! `cephes_igamc`, and [`chi_square_pvalue`] are faithful pure-Rust
 //! transcriptions of the Cephes Math Library routines embedded in
 //! `chi_square_tests.h` (lines 53–370). The constants (`MACHEP`, `MAXLOG`,
 //! `MAXNUM`, `PI`, `big`, `biginv`, the `A`/`B`/`C` polynomial coefficient
 //! arrays, `MAXLGM`) are transcribed verbatim from lines 53–92. The C `static int
-//! sgngam` is threaded as a return value out of [`cephes_lgam`] rather than a
+//! sgngam` is threaded as a return value out of `cephes_lgam` rather than a
 //! global (it is consumed only by the `x < -34.0` recursion inside `cephes_lgam`
 //! itself, which the chi-square path never reaches, but it is preserved for
 //! fidelity). The convergence loops iterate to `MACHEP` relative tolerance
@@ -57,7 +57,7 @@
 //!
 //! # `relEpsilonEqual` (Part A helper)
 //!
-//! [`rel_epsilon_equal`] transcribes `utils.h:80-163` faithfully: NaN is never
+//! `rel_epsilon_equal` transcribes `utils.h:80-163` faithfully: NaN is never
 //! equal; equal (including infinite) values are equal; mismatched-sign or
 //! mixed-infinite values are not close; the absolute / relative / ULP ladder
 //! follows Knuth AoCP vol II §4.2.2. The ULP step uses `f64::to_bits` in place of

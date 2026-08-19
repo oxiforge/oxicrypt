@@ -44,9 +44,9 @@
 //! For binary data, two block conversions of the raw bit-sequence appear
 //! (`permutation_tests.h` lines 27–50):
 //!
-//! - [`conversion1`]: each output byte = **count of 1-bits** in its 8-bit block
+//! - `conversion1`: each output byte = **count of 1-bits** in its 8-bit block
 //!   (0..=8). Used by the directional, periodicity, and covariance families.
-//! - [`conversion2`]: each output byte = the 8-bit block read as a **binary
+//! - `conversion2`: each output byte = the 8-bit block read as a **binary
 //!   number** (0..=255). Used by the collision family.
 //!
 //! # The 19 statistics (EA `test_names`, index order)
@@ -83,7 +83,7 @@
 //! module or its zero-dependency claim (see
 //! `docs/security-policy/security-policy.md`).
 //!
-//! - [`compression`] returns the real compressed byte length as an `f64`.
+//! - `compression` returns the real compressed byte length as an `f64`.
 //! - The compression slot (index 18) is **included** in the verdict
 //!   ([`PermutationVerdict::compression_included`] is `true`) — it participates
 //!   like every other statistic.
@@ -780,7 +780,7 @@ pub fn xoshiro_next(state: &mut [u64; 4]) -> u64 {
 }
 
 /// Uniform `f64` in `[0, 1)` from the xoshiro256** generator, matching EA
-/// `randomUnit` ([`utils.h`] line 650): `(next() >> 11) * 2^-53`. Advances
+/// `randomUnit` (`utils.h` line 650): `(next() >> 11) * 2^-53`. Advances
 /// `state` in place.
 ///
 /// The top 53 bits of the 64-bit output are scaled into the unit interval; this

@@ -5,7 +5,7 @@
 //! (`K`, `ETA1`, `ETA2`, `DU`, `DV`, `EK_LEN`, `DK_LEN`, `CT_LEN`,
 //! `POLY_COMPRESSED_DU`, `POLY_COMPRESSED_DV`, `PRF_ETA1_BYTES`,
 //! `PRF_ETA2_BYTES`) live inside each per-variant module emitted by
-//! [`crate::ml_kem_impl::ml_kem_impl!`].
+//! `crate::ml_kem_impl::ml_kem_impl!`.
 
 /// Polynomial degree (FIPS 203 Table 2).
 pub const N: usize = 256;

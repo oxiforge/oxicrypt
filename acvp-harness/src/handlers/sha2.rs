@@ -44,7 +44,7 @@
 //!
 //! Because the inner-loop body differs, this module ships its own
 //! group driver and MCT engine rather than reusing
-//! [`super::sha3::handle_hash_group`]. The sha3 driver is intentionally
+//! `super::sha3::handle_hash_group`. The sha3 driver is intentionally
 //! left untouched (per `feedback_refinements_only_as_needed`); a
 //! generalization across hash families is deferred until a third
 //! family with a different MCT shape lands.

@@ -15,7 +15,7 @@
 //!
 //! # The LZ78Y predictor (SP 800-90B §6.3.10)
 //!
-//! `B = 16` ([`B_LEN`], the EA tool's `B_len`) is the longest context the
+//! `B = 16` (`B_LEN`, the EA tool's `B_len`) is the longest context the
 //! predictor ever uses. For each symbol `S[i]` (`i = B + 1 ..< L`), the predictor
 //! holds, for every prefix length `m = 1 ..= B`, a dictionary keyed by the
 //! length-`m` context `(S[i-m] … S[i-1])` immediately preceding `S[i]`; each
@@ -44,7 +44,7 @@
 //! slots hold the observed counts of next-symbol `0` and next-symbol `1`. The EA
 //! tool stores these as `binaryDict[m-1]` (a 0-indexed array of `B` pointers) and
 //! addresses them with `BINARYDICTLOC(m, b)`; this module uses one
-//! [`BinaryDict`] per prefix length to reproduce that addressing exactly.
+//! `BinaryDict` per prefix length to reproduce that addressing exactly.
 //!
 //! The per-step context is encoded by the EA tool's `compressedBitSymbols`: it
 //! packs the `B` bits `S[i-B] … S[i-1]` MSB-first into `curPattern` (so `S[i-B]`
@@ -57,7 +57,7 @@
 //!
 //! A **single shared** counter `dict_elems` (the EA tool's `dictElems`) bounds the
 //! total number of distinct `(prefix-length, context)` entries created across
-//! **all** prefix lengths at `MAX_DICTIONARY_SIZE = 65536` ([`MAX_DICTIONARY_SIZE`],
+//! **all** prefix lengths at `MAX_DICTIONARY_SIZE = 65536` (`MAX_DICTIONARY_SIZE`,
 //! the EA tool's `MAX_DICTIONARY_SIZE`). Once the dictionary is full it **stops
 //! creating new entries but keeps incrementing the counts of entries that already
 //! exist** — exactly the EA tool's `dictElems < MAX_DICTIONARY_SIZE` guard around
@@ -603,15 +603,15 @@ pub fn lz78y(symbols: &[u8], bits_per_symbol: u8) -> Lz78yEstimate {
 /// `LZ78Y_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
 /// The symbols are translated to a dense `0 .. alph_size` alphabet via the shared
-/// [`crate::value_sorted_alphabet`] (ascending raw-value order). LZ78Y's
+/// `crate::value_sorted_alphabet` (ascending raw-value order). LZ78Y's
 /// `PostfixDictionary` tie-break is on the **raw symbol value**
 /// (`in > curPrediction`), so the remap must be order-preserving — value-sorted
 /// gives "larger raw value wins" ⟺ "larger dense index wins", reproducing the EA
-/// tie-break exactly; a first-seen remap ([`crate::dense_alphabet`]) would NOT
+/// tie-break exactly; a first-seen remap (`crate::dense_alphabet`) would NOT
 /// preserve it. (MultiMMC §6.3.9 shares this requirement and the same helper.) A
 /// binary alphabet (`alph_size <= 2`) takes the dedicated binary fast path
-/// ([`lz78y_core`], same computation the EA tool dispatches for `alph_size == 2`);
-/// a larger alphabet takes the general path ([`lz78y_core_general`]). Literal-track
+/// (`lz78y_core`, same computation the EA tool dispatches for `alph_size == 2`);
+/// a larger alphabet takes the general path (`lz78y_core_general`). Literal-track
 /// input to `H_original`. Deterministic; does not panic.
 #[must_use]
 pub fn lz78y_literal(symbols: &[u8]) -> Lz78yEstimate {

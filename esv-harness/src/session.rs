@@ -799,7 +799,7 @@ impl SessionDir {
     /// The record is written as a single buffered `line + "\n"` so a crash
     /// can never separate the line from its terminating newline, and any torn
     /// (non-newline-terminated) tail left by an earlier crashed append is
-    /// healed away first (see [`Self::heal_torn_tail`]) so a retry cannot
+    /// healed away first (see `Self::heal_torn_tail`) so a retry cannot
     /// concatenate a valid record onto an incomplete one.
     ///
     /// # Errors

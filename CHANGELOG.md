@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected the intra-doc links across the workspace, which pointed at private items and at
+  bracketed text that is not a link. `cargo doc` now builds clean under `-D warnings`.
 - Aligned the CNSA 2.0 profile with CNSSP-15 (March 2025) Annex B. The suite names AES-256,
   ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful hash-based signatures;
   it names no Keccak-family hash or XOF for a software module, and SHA-3 appears there only for

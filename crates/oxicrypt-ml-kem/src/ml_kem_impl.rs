@@ -804,7 +804,7 @@ macro_rules! ml_kem_impl {
 
         /// Single power-up KAT entry for this parameter set.
         ///
-        /// Aggregated into the crate-level [`KATS`](crate::KATS) slice
+        /// Aggregated into the crate-level `KATS` slice
         /// by-value, avoiding the `indexing_slicing` clippy lint that
         /// fires on `slice[0]` even inside `const` blocks.
         pub const KAT_ENTRY: KatEntry = KatEntry {

@@ -548,7 +548,7 @@ pub struct OeRegistration {
     pub ea_id: String,
     /// The raw-noise data-file slot. Always `Some` when produced by
     /// [`parse_registration_response`], which requires it (the `Option` is
-    /// retained for hand-built values); see [`parse_one_assessment`].
+    /// retained for hand-built values); see `parse_one_assessment`.
     pub raw_noise: Option<DataFileRef>,
     /// The restart-test data-file slot. `None` when the registration response
     /// carried no `restartTestBits` slot — it is tolerated-absent
@@ -592,7 +592,7 @@ fn url_tail(url: &str) -> Result<&str, String> {
 /// `conditionedBits`+`sequencePosition`), and `accessToken`.
 ///
 /// The envelope itself is validated by the shared
-/// [`crate::login::esv_payload_element`] — element 0 must be an
+/// `crate::login::esv_payload_element` — element 0 must be an
 /// `{esvVersion}` object — so a version-less or error-shaped array
 /// (`["error", …]`) is rejected the same way the auth parsers reject it.
 ///

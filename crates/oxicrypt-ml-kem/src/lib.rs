@@ -9,9 +9,9 @@
 //! implicit rejection.
 //!
 //! Every parameter set is generated from a single declarative macro
-//! ([`ml_kem_impl!`](crate::ml_kem_impl::ml_kem_impl)) instantiated in
+//! (`ml_kem_impl!`) instantiated in
 //! [`ml_kem_512`], [`ml_kem_768`], and [`ml_kem_1024`]. The shared
-//! base modules ([`encode`], [`field`], [`ntt`], [`poly`], [`sample`])
+//! base modules (`encode`, `field`, `ntt`, `poly`, `sample`)
 //! are K-independent; the K-dependent `PolyVec` / `PolyMatrix` types
 //! and the K-PKE + KEM implementations are emitted per-variant inside
 //! each module.
@@ -104,7 +104,7 @@
 //!
 //! The optional `parallel` feature parallelizes the public-matrix
 //! expansion `expand_a`: the k × k matrix Â is built by forking its
-//! *rows* across a `rayon` parallel iterator. Each cell Â[i][j] is a
+//! *rows* across a `rayon` parallel iterator. Each cell Â`i``j` is a
 //! pure function of ρ plus the cell's (i, j) indices — sampled from a
 //! fresh local SHAKE-128 XOF with no shared mutable state — and each
 //! row is written by exactly one closure, then recombined by position

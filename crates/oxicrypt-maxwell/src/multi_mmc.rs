@@ -35,7 +35,7 @@
 //! context is encoded MSB-first into the low `d+1` bits of `b`: when predicting
 //! `data[i]`, the EA tool builds `b` so that bit `d` of `b` is `S[i-d-1]` and bit
 //! `0` is `S[i-1]` (it ORs `S[i-d-1] << d` into `b` as `d` grows). This module
-//! uses [`BinaryDict`] to reproduce that exact addressing.
+//! uses `BinaryDict` to reproduce that exact addressing.
 //!
 //! ## The memory cap (matched from `multi_mmc_test.h`: `MAX_ENTRIES`)
 //!
@@ -572,12 +572,12 @@ fn multi_mmc_core_general(data: &[u8], alph_size: usize) -> MultiMmcEstimate {
 /// `multi_mmc_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
 /// The symbols are translated to a dense `0..alph_size` alphabet via the shared
-/// [`crate::value_sorted_alphabet`] — MultiMMC's value-sensitive tie rule requires
+/// `crate::value_sorted_alphabet` — MultiMMC's value-sensitive tie rule requires
 /// the EA tool's ascending-value mapping rather than the first-seen
-/// [`crate::dense_alphabet`] (LZ78Y shares this requirement and the same helper). A
+/// `crate::dense_alphabet` (LZ78Y shares this requirement and the same helper). A
 /// binary alphabet (`alph_size <= 2`) routes through the binary fast path
-/// [`multi_mmc_core`] (the EA tool's `alph_size == 2` branch); larger alphabets use
-/// [`multi_mmc_core_general`]. This is the literal-track input to `H_original`. The
+/// `multi_mmc_core` (the EA tool's `alph_size == 2` branch); larger alphabets use
+/// `multi_mmc_core_general`. This is the literal-track input to `H_original`. The
 /// function is **deterministic** and does not panic.
 #[must_use]
 pub fn multimmc_literal(symbols: &[u8]) -> MultiMmcEstimate {
