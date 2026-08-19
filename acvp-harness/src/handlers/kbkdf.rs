@@ -23,7 +23,7 @@
 //!   `derive_with_fixed_data_internal` and echoes only `keyOut`.
 //! - **Generative AFT** — each test carries only `keyIn`. The IUT
 //!   samples its own Label (16 bytes) and Context (16 bytes) via
-//!   [`os_entropy::read_os_entropy`], assembles
+//!   `os_entropy::read_os_entropy`, assembles
 //!   `fixedData = Label || 0x00 || Context || [L]_32` per
 //!   SP 800-108 §5.2, derives `keyOut`, and echoes both `keyOut`
 //!   and `fixedData` (and `iv` for non-zeroLengthIv feedback).

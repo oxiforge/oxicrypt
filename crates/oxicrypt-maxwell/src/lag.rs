@@ -254,8 +254,8 @@ pub fn lag(symbols: &[u8], bits_per_symbol: u8) -> LagEstimate {
 /// `lag_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
 /// The symbols are translated to a dense `0..alph_size` alphabet (see
-/// [`crate::dense_alphabet`]) and run through the same alphabet-generic
-/// [`lag_core`] as the bitstring track. Literal-track input to `H_original`.
+/// `crate::dense_alphabet`) and run through the same alphabet-generic
+/// `lag_core` as the bitstring track. Literal-track input to `H_original`.
 /// Deterministic; does not panic.
 #[must_use]
 pub fn lag_literal(symbols: &[u8]) -> LagEstimate {

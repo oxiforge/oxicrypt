@@ -8,9 +8,9 @@
 //! with aborts / rejection sampling), and signature verification.
 //!
 //! Every parameter set is generated from a single declarative macro
-//! ([`ml_dsa_impl!`](crate::ml_dsa_impl::ml_dsa_impl)) instantiated in
+//! (`ml_dsa_impl!`) instantiated in
 //! [`ml_dsa_44`], [`ml_dsa_65`], and [`ml_dsa_87`]. The shared base
-//! modules ([`field`], [`ntt`], [`poly`] (single-poly), [`params`]
+//! modules (`field`, `ntt`, `poly` (single-poly), [`params`]
 //! (universal constants)) are K/L-independent; the K/L-dependent
 //! `PolyVecK`/`PolyVecL` types, `Decompose`/`UseHint`/`pack_w1` rounding
 //! family, byte encoders, samplers (`ExpandA`/`ExpandS`/`ExpandMask`),
@@ -108,7 +108,7 @@
 //!
 //! The optional `parallel` feature parallelizes the public-matrix
 //! expansion `expand_a`: the k × ℓ matrix A is built by forking its
-//! *rows* across a `rayon` parallel iterator. Each cell A[i][j] is a
+//! *rows* across a `rayon` parallel iterator. Each cell A`i``j` is a
 //! pure function of ρ plus the cell's (i, j) indices — sampled from a
 //! fresh local SHAKE-128 XOF with no shared mutable state — and each
 //! row is written by exactly one closure, then recombined by position

@@ -22,7 +22,7 @@
 //! green with no configuration at all.
 //!
 //! A skip prints to stderr, which a passing test discards, so the skip alone
-//! cannot be the safety net. [`security_policy_is_provisioned`] is — but it
+//! cannot be the safety net. `security_policy_is_provisioned` is — but it
 //! keys on *claimed* provisioning rather than on absence, and that departure
 //! from the EA-dataset precedent this otherwise mirrors is deliberate. The EA
 //! datasets are public, so failing on absence is right there. This document is
@@ -30,8 +30,6 @@
 //! absence would reintroduce as one failure exactly the hard failures that
 //! removing it from the tree exists to prevent. See that test for the full
 //! state table.
-//!
-//! [`security_policy_is_provisioned`]: tests::security_policy_is_provisioned
 
 #[cfg(test)]
 #[allow(
@@ -169,7 +167,7 @@ mod tests {
     }
 
     /// Announce a guard that could not run. Stderr is discarded on a passing
-    /// test, which is precisely why [`security_policy_is_provisioned`] exists —
+    /// test, which is precisely why `security_policy_is_provisioned` exists —
     /// this line is for someone reading a `--nocapture` run, not the safety net.
     fn skip_without_policy(guard: &str) {
         eprintln!(

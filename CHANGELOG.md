@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected `oxicrypt-cli`'s README and a comment in `oxi`, both of which said the CLI skips
   its power-up known-answer tests. It runs them, including the pre-operational integrity test,
   and therefore must be signed before it will start — which `cargo install` cannot do.
+- Corrected the intra-doc links across the workspace, which pointed at private items and at
+  bracketed text that is not a link. `cargo doc` now builds clean under `-D warnings`.
 - Aligned the CNSA 2.0 profile with CNSSP-15 (March 2025) Annex B. The suite names AES-256,
   ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful hash-based signatures;
   it names no Keccak-family hash or XOF for a software module, and SHA-3 appears there only for

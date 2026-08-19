@@ -298,8 +298,8 @@ pub fn multi_mcw(symbols: &[u8], bits_per_symbol: u8) -> MultiMcwEstimate {
 /// `multi_mcw_test(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
 /// The symbols are translated to a dense `0..alph_size` alphabet (see
-/// [`crate::dense_alphabet`]) so the per-symbol tables index correctly, then run
-/// through the same alphabet-generic [`multi_mcw_core`] as the bitstring track.
+/// `crate::dense_alphabet`) so the per-symbol tables index correctly, then run
+/// through the same alphabet-generic `multi_mcw_core` as the bitstring track.
 /// This is the literal-track input to `H_original`. The function is
 /// **deterministic** and does not panic.
 #[must_use]

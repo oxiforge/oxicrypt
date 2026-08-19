@@ -28,7 +28,7 @@
 //!
 //! EA seeds its xoshiro256** RNG from `/dev/urandom`, so its `X_cutoff` varies
 //! run-to-run. This port seeds from a fixed nothing-up-my-sleeve constant
-//! ([`permutation::SHUFFLE_SEED`]) so `X_cutoff` — and therefore the whole
+//! (`permutation::SHUFFLE_SEED`) so `X_cutoff` — and therefore the whole
 //! [`RestartResult`] — is reproducible (ISC-134). With a large
 //! `simulation_rounds` the cutoff is statistically stable regardless of seed;
 //! the fixed seed only removes the run-to-run jitter in the low-order count.
@@ -269,7 +269,7 @@ pub fn restart_validation(h_r: f64, h_c: f64, h_i: f64, sanity_passed: bool) -> 
 ///
 /// # Panics
 ///
-/// In debug builds, [`simulate_bound`]'s `debug_assert!`s fire on degenerate
+/// In debug builds, `simulate_bound`'s `debug_assert!`s fire on degenerate
 /// inputs (alphabet size <= 1, or `k_effective > alphabet_size`); callers (the
 /// CLI) reject single-symbol matrices before calling. In release these are no-ops
 /// and the function returns a result computed on the clamped values.

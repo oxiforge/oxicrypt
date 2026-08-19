@@ -1158,7 +1158,7 @@ pub fn kas_ffc_ssc_capability() -> JsonValue {
 /// confirmation. The MAC-confirmation variant
 /// (`KTS-OAEP-Party_V-confirmation`) and additional `l` widths /
 /// hash algorithms are deferred to follow-up arcs per the
-/// scoping in [`prd_rsa_oaep_kts_ifc.md`] §8 non-goals.
+/// scoping in `prd_rsa_oaep_kts_ifc.md` §8 non-goals.
 ///
 /// `prereqVals` is omitted to match the surrounding handler
 /// convention (KAS-ECC-SSC, KAS-FFC-SSC, every other cap in this

@@ -44,7 +44,7 @@
 //! first, and only escalate (exact big-integer tails for integer `H`,
 //! extended precision for fractional `H`) if any reference point is off. **The
 //! `f64` incomplete-beta method reproduces all 11 reference points exactly**
-//! (see [`tests`]), so no precision escalation was needed for any row class.
+//! (see `tests`), so no precision escalation was needed for any row class.
 //! The continued fraction is iterated to a 3e-16 relative tolerance, and the
 //! `qbinom` search hardens against the last-ULP wobble by stepping back/forward
 //! one index around the bisection result until the exact smallest `k` with

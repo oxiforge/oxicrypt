@@ -5,7 +5,7 @@
 //! The constraint table below transcribes the machine-checkable rules of
 //! the vendored NIST metadata schema
 //! (`vendor/entropy-source-metadata-schema.json`, ESV-Server `59e0438`,
-//! JSON Schema draft-07). A drift-guard test ([`tests::constraints_match_vendored_schema`])
+//! JSON Schema draft-07). A drift-guard test (`tests::constraints_match_vendored_schema`)
 //! re-derives every schema-derived constant in the table below from that
 //! vendored file, so a
 //! hand-transcription mistake fails the test rather than shipping.
@@ -33,8 +33,8 @@
 //! The file constraints are checked against the module's own SP 800-90B
 //! constants — [`oxicrypt_entropy::sp800_90b::RAW_DATA_SAMPLE_COUNT`] (the
 //! 1,000,000-sample ESV wire format) and the §3.1.4.1 restart dimensions
-//! [`RESTART_ROUNDS`](oxicrypt_entropy::sp800_90b::RESTART_ROUNDS) ×
-//! [`RESTART_SAMPLES_PER_ROUND`](oxicrypt_entropy::sp800_90b::RESTART_SAMPLES_PER_ROUND)
+//! [`RESTART_ROUNDS`] ×
+//! [`RESTART_SAMPLES_PER_ROUND`]
 //! — the *same* constants the module's dataset emitters produce against
 //! (entropy-crate ISC-97/99/108: `oxicrypt_entropy::collection`), so the
 //! validator and the emitter cannot drift. The reference client applies one
@@ -411,7 +411,7 @@ pub enum DataFileKind {
 pub enum FilePreflightError {
     /// The file's byte length — which, at one byte per sample, is the sample
     /// count — is not the required 1,000,000
-    /// ([`RAW_DATA_SAMPLE_COUNT`](oxicrypt_entropy::sp800_90b::RAW_DATA_SAMPLE_COUNT)).
+    /// ([`RAW_DATA_SAMPLE_COUNT`]).
     WrongSampleCount {
         /// The file's actual byte length.
         actual: usize,
@@ -433,8 +433,8 @@ pub enum FilePreflightError {
     /// A restart file whose registration `numberOfRestarts` ×
     /// `samplesPerRestart` is not the mandated 1000 × 1000 layout
     /// (SP 800-90B §3.1.4.1;
-    /// [`RESTART_ROUNDS`](oxicrypt_entropy::sp800_90b::RESTART_ROUNDS) ×
-    /// [`RESTART_SAMPLES_PER_ROUND`](oxicrypt_entropy::sp800_90b::RESTART_SAMPLES_PER_ROUND)).
+    /// [`RESTART_ROUNDS`] ×
+    /// [`RESTART_SAMPLES_PER_ROUND`]).
     /// Entropy-crate ISC-99 is the emitter-side consistency; this is the
     /// validator side.
     RestartDimensionsMismatch {
@@ -477,7 +477,7 @@ pub fn effective_sample_width(bits_per_sample: i64) -> u32 {
 /// cannot drift:
 ///
 /// 1. **Sample count / byte padding** — `bytes.len()` (one byte per sample)
-///    must equal [`RAW_DATA_SAMPLE_COUNT`](oxicrypt_entropy::sp800_90b::RAW_DATA_SAMPLE_COUNT)
+///    must equal [`RAW_DATA_SAMPLE_COUNT`]
 ///    (1,000,000).
 /// 2. **Symbol width** — every sample must fit in the effective
 ///    `min(bitsPerSample, 8)` width (the first offender is reported).

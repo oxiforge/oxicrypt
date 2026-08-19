@@ -109,9 +109,9 @@
 //!
 //! Construction runs a **two-stage** measured-never-assumed adequacy
 //! self-check and fails closed on either stage, carrying the measured
-//! [`AdequacyReport`](crate::timer::AdequacyReport) in the typed error:
+//! [`AdequacyReport`] in the typed error:
 //!
-//! 1. **Bare soundness** — [`measure_adequacy`](crate::timer::measure_adequacy)
+//! 1. **Bare soundness** — [`measure_adequacy`]
 //!    over back-to-back timer reads, gated by
 //!    [`ensure_sound`](crate::timer::AdequacyReport::ensure_sound):
 //!    monotonicity and effective granularity only. Bare reads establish that

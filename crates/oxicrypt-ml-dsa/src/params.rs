@@ -3,7 +3,7 @@
 //! Per-variant parameters (k, ℓ, η, τ, β, γ₁, γ₂, ω, λ) and their
 //! derived sizes (`PK_LEN`, `SK_LEN`, `SIG_LEN`, `CTILDE_LEN`,
 //! `ETA_PACKED`, `Z_PACKED`, `H_PACKED`, `W1_PACKED`) are emitted
-//! inside the [`ml_dsa_impl!`](crate::ml_dsa_impl::ml_dsa_impl)
+//! inside the `ml_dsa_impl!`
 //! macro and live in [`crate::ml_dsa_44`],
 //! [`crate::ml_dsa_65`], and [`crate::ml_dsa_87`].
 #![allow(clippy::integer_division)]

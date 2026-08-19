@@ -18,7 +18,7 @@
 //! processed by the tuple-counting algorithm of Aaron Kaufer
 //! (<http://www.untruth.org/~josh/sp80090b/Kaufer%20Further%20Improvements%20for%20SP%20800-90B%20Tuple%20Counts.pdf>).
 //! Splitting them would duplicate the (expensive) suffix-array build. This module
-//! mirrors that: [`sa_lcp`] builds the structure once and [`saalgs`] derives both.
+//! mirrors that: `sa_lcp` builds the structure once and `saalgs` derives both.
 //!
 //! # The estimators (SP 800-90B §6.3.5 / §6.3.6)
 //!
@@ -43,7 +43,7 @@
 //! `SAalgs` then applies Kaufer's conventions: it drops `lcp[0]` (the `erase`)
 //! so the working array `L` has `L[i] = lcp[i+1]`, sets `L[n] = 0`, and relies on
 //! `L[0] == 0`. This module reproduces that arrangement exactly (see
-//! [`sa_lcp`]).
+//! `sa_lcp`).
 //!
 //! ## t-Tuple estimate (§6.3.5)
 //!
@@ -894,7 +894,7 @@ fn saalgs(text: &[u8]) -> LrsEstimate {
 /// This is the `W` used by the SP 800-90B §5.3 LRS **IID test** (which runs on
 /// the *literal* raw symbols, not the bitstring track — see
 /// [`crate::iid_lrs`]). It reuses the suffix-array + Kasai-LCP machinery
-/// ([`sa_lcp`]) the §6.3.6 estimator already builds, so the SA-IS implementation
+/// (`sa_lcp`) the §6.3.6 estimator already builds, so the SA-IS implementation
 /// is not duplicated; the §6.3.6 estimator's `LrsEstimate.v` is the same value
 /// computed over the *bitstring* track.
 ///
@@ -948,7 +948,7 @@ pub fn lrs(symbols: &[u8], bits_per_symbol: u8) -> LrsEstimate {
 }
 
 /// Compute the §6.3.5 t-Tuple and §6.3.6 LRS estimates for the **literal track**:
-/// run [`saalgs`] over the raw symbols directly, mirroring the EA tool's
+/// run `saalgs` over the raw symbols directly, mirroring the EA tool's
 /// `SAalgs(data.symbols, data.len, data.alph_size, …, "Literal")`.
 ///
 /// The suffix-array core is alphabet-agnostic and both estimates depend only on

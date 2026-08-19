@@ -769,7 +769,7 @@ pub enum IndependenceError {
     /// A sample is too wide for the declared `bits_per_symbol`.
     ///
     /// EA v1.1.8 treats this as a hard error and performs no assessment. So does
-    /// this crate: [`tuple_codes`] does not mask, so a wider symbol packs into a
+    /// this crate: `tuple_codes` does not mask, so a wider symbol packs into a
     /// code outside the `2^(k·bits)` alphabet, which the histogram drops while
     /// the denominator still counts it. The resulting min-entropy is computed
     /// over a fraction of the data — at `bits = 4` over full-range bytes, 93% of

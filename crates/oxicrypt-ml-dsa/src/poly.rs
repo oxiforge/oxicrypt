@@ -4,7 +4,7 @@
 //! A `Poly` is a degree-255 polynomial with i32 coefficients mod q.
 //! The K/L-dependent `PolyVecK`/`PolyVecL` and the K×L matrix
 //! helpers are emitted per-variant inside the
-//! [`ml_dsa_impl!`](crate::ml_dsa_impl::ml_dsa_impl) macro so that
+//! `ml_dsa_impl!` macro so that
 //! each parameter set carries arrays of the correct fixed length.
 #![allow(
     clippy::indexing_slicing,
