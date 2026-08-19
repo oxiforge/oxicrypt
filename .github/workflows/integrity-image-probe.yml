@@ -744,3 +744,122 @@ jobs:
             subject.so
           if-no-files-found: warn
 
+  integrity-runtime:
+    name: integrity-runtime-${{ matrix.name }}
+    # ISC-8 of the platform workstream: no unsafe code enters the cryptographic
+    # boundary without a CI job that EXECUTES it on the target platform. This is
+    # that job. Neither macOS nor Windows can be run on the development host, so
+    # compiling is not evidence and nothing here is claimed on the strength of it.
+    #
+    # The test is run in both directions on purpose. "The signed binary starts"
+    # passes just as well when the integrity test has been silently skipped, so
+    # it proves nothing on its own; the unsigned control establishes that the
+    # test runs at all, and the tampered control establishes that it inspects
+    # the bytes rather than merely finding a slot.
+    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The harness control. This platform already had a working mechanism,
+          # so a failure here means the job is wrong rather than the port.
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            exe: ''
+          - name: macos-aarch64
+            runner: macos-15
+            exe: ''
+          - name: macos-x86_64
+            runner: macos-15-intel
+            exe: ''
+          - name: windows-x86_64
+            runner: windows-latest
+            exe: '.exe'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Build oxi and the signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-cli -p oxicrypt-integrity-sign
+          cp "target/release/oxi${{ matrix.exe }}" "subject${{ matrix.exe }}"
+          ls -l "subject${{ matrix.exe }}"
+
+      - name: CONTROL — an unsigned binary must refuse to become operational
+        shell: bash
+        run: |
+          set -euo pipefail
+          # oxi runs the full power-up set, the pre-operational integrity test
+          # among them, before dispatching a subcommand. Unsigned, its slot
+          # holds no MAC, so initialisation must fail — and if it does not,
+          # every assertion below would pass on a module that never tested
+          # itself.
+          set +e
+          OUT="$(./subject${{ matrix.exe }} hash 2>&1)"
+          set -e
+          echo "$OUT"
+          case "$OUT" in
+            *"module initialization failed"*)
+              echo "control ok: unsigned, the module refuses to start" ;;
+            *)
+              echo "control FAILED: an unsigned binary started; the test did not run" >&2
+              exit 1 ;;
+          esac
+
+      - name: THE TEST — a signed binary becomes operational
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN="target/release/oxicrypt-integrity-sign${{ matrix.exe }}"
+          "$SIGN" --show "subject${{ matrix.exe }}" | tee show.txt
+          "$SIGN" --sign "subject${{ matrix.exe }}"
+          "$SIGN" --verify "subject${{ matrix.exe }}"
+          set +e
+          OUT="$(./subject${{ matrix.exe }} hash 2>&1)"
+          set -e
+          echo "$OUT"
+          case "$OUT" in
+            *"module initialization failed"*)
+              echo "FAILED: a signed binary still refuses to start on ${{ matrix.name }}" >&2
+              exit 1 ;;
+            *)
+              echo "ok: signed, the module reaches operational on ${{ matrix.name }}" ;;
+          esac
+
+      - name: CONTROL — a byte changed inside the extent must be detected
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Without this, the step above is satisfied by a verifier that finds a
+          # slot and never compares anything. The offset comes from the signer's
+          # own report rather than a guess, so the byte is provably inside a
+          # hashed range — and from the MIDDLE of the largest range, because on
+          # ELF the extent begins at file offset zero and includes the program
+          # header table. A byte flipped there kills the process in the loader
+          # before the module runs, which reads as "undetected" while meaning
+          # "never tested". Measured, not theorised: it segfaulted.
+          PYBIN="$(command -v python3 || command -v python)"
+          OFF="$("$PYBIN" .github/probes/extent-tamper-offset.py show.txt)"
+          echo "flipping the byte at file offset ${OFF}"
+          "$PYBIN" .github/probes/flip-byte.py "subject${{ matrix.exe }}" "$OFF"
+          set +e
+          OUT="$(./subject${{ matrix.exe }} hash 2>&1)"
+          set -e
+          echo "$OUT"
+          case "$OUT" in
+            *"module initialization failed"*)
+              echo "control ok: a tampered byte inside the extent is detected" ;;
+            *)
+              echo "control FAILED: tampering inside the extent went undetected" >&2
+              exit 1 ;;
+          esac
