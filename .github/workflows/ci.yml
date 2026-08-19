@@ -270,6 +270,36 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
 
+      # Building `oxi` is not the same as producing a runnable `oxi`. An
+      # artifact that links the module must be signed after it is linked, and
+      # nothing in cargo runs at that point — so a build that succeeds still
+      # yields a binary that refuses to start. This exercises the one
+      # implementation of build-then-sign, which a developer also calls locally,
+      # so the two cannot drift. The release workflow does not use it yet: it
+      # publishes no `oxi` to sign.
+      - name: Sign oxi, and prove it could not start unsigned
+        run: |
+          set -euo pipefail
+          # The control first: without it, a signing step that silently did
+          # nothing would look identical to one that worked, because the check
+          # below would pass either way if the binary had been signed already.
+          #
+          # The existence test is part of the control, not throat-clearing. A
+          # missing or non-executable binary also exits non-zero, so without it
+          # the control reports "ok" for a binary it never ran — and `xtask sign`
+          # would then build one, sign it, and the step would pass green having
+          # tested nothing.
+          test -x ./target/release/oxi
+          if ./target/release/oxi --integrity; then
+            echo "control FAILED: an unsigned oxi reported a passing integrity test" >&2
+            exit 1
+          fi
+          echo "control ok: oxi exists, and unsigned it refuses to run"
+
+          cargo xtask sign oxicrypt-cli --release
+          ./target/release/oxi --integrity
+          ./target/release/oxi hash sha256 /dev/null
+
   # ISC-114's release-build guard, on a second machine (2026-08-10).
   #
   # `release_guard_delta_variance_persists` asserts that the jitter measurement

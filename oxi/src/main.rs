@@ -41,6 +41,16 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // --integrity: report why the module will or will not start, and exit.
+    //
+    // Handled here, ahead of initialization, because its whole purpose is to be
+    // reachable when initialization fails. A binary that cannot verify its own
+    // image otherwise reports a self-test failure named after a test, which
+    // tells the person holding it nothing about what to do next.
+    if args.iter().any(|a| a == "--integrity") {
+        return report_integrity();
+    }
+
     if args.len() < 2 {
         return usage();
     }
@@ -74,12 +84,98 @@ fn usage() -> ExitCode {
     eprintln!("  hmac <alg> <key-hex> [FILE]  HMAC a file or stdin");
     eprintln!("  rand <nbytes>                Generate random bytes (hex)");
     eprintln!("  --lama                       Dump LAMA manifest (YAML)");
+    eprintln!("  --integrity                  Report the integrity test's outcome");
     eprintln!();
     eprintln!("Algorithms:");
     eprintln!("  sha1, sha224, sha256, sha384, sha512");
     eprintln!("  sha512-224, sha512-256");
     eprintln!("  sha3-224, sha3-256, sha3-384, sha3-512");
     ExitCode::from(2)
+}
+
+/// Reports the pre-operational integrity test's outcome, and what to do about
+/// it.
+///
+/// Exit codes: `0` the image matched, `1` it did not or the slot is unusable,
+/// `3` the test was not performed and the image's state is unknown.
+///
+/// Runs the test rather than reading a stale indicator: `status()` latches on
+/// the first run and reads `NotRun` before one, so calling it alone here would
+/// report nothing at all. The technique's own CAST runs first because the
+/// integrity test depends on it, and skipping it would turn every answer into
+/// "the test was reached before the CAST it depends on".
+fn report_integrity() -> ExitCode {
+    if let Err(e) = oxicrypt_integrity::hmac_cast() {
+        println!("integrity: unavailable — the technique's own self-test failed: {e}");
+        println!("  This is the HMAC-SHA-256 implementation the test uses, not your binary.");
+        return ExitCode::FAILURE;
+    }
+
+    let _ = oxicrypt_integrity::verify_loaded_image();
+    let status = oxicrypt_integrity::status();
+    let (line, remedy): (&str, &[&str]) = match status {
+        oxicrypt_integrity::IntegrityStatus::Passed => (
+            "passed — this binary matches the reference recorded inside it",
+            &[],
+        ),
+        oxicrypt_integrity::IntegrityStatus::SlotInvalid => (
+            "not signed — this binary carries no valid integrity slot",
+            &[
+                "Sign it:  oxicrypt-integrity-sign --sign <this binary>",
+                "`cargo install` cannot do this: it has no step after linking in which",
+                "to write the slot. See docs/integrity-signing.md.",
+            ],
+        ),
+        oxicrypt_integrity::IntegrityStatus::Mismatch => (
+            "FAILED — this binary does not match the reference recorded inside it",
+            &[
+                "Something modified the binary after it was signed — stripping,",
+                "compression, or a platform signing tool. Rebuild and sign again,",
+                "signing last.",
+            ],
+        ),
+        oxicrypt_integrity::IntegrityStatus::Unreadable => (
+            "not performed — the module could not read its own loaded image",
+            &[
+                "This platform has no supported mechanism for the module to read",
+                "itself. The result says nothing about whether the image is intact.",
+            ],
+        ),
+        oxicrypt_integrity::IntegrityStatus::CastNotRun => (
+            "not performed — reached before the self-test it depends on",
+            &[],
+        ),
+        oxicrypt_integrity::IntegrityStatus::NotRun => {
+            ("not performed — the test did not run", &[])
+        }
+        oxicrypt_integrity::IntegrityStatus::Unknown => (
+            "unknown — the recorded indicator is not a value this module writes",
+            &[],
+        ),
+        // The enum is non-exhaustive. A variant this build has never heard of is
+        // reported as such rather than folded into one of the above, which would
+        // put a confident wrong label on an unrecognised state.
+        _ => (
+            "unrecognised — this build of `oxi` does not know that indicator",
+            &[],
+        ),
+    };
+
+    println!("integrity: {line}");
+    for note in remedy {
+        println!("  {note}");
+    }
+    // Three outcomes, three codes, because "the image is wrong" and "we could
+    // not look" call for different responses and a script should not have to
+    // parse prose to tell them apart. Both are non-zero: the module refuses to
+    // become operational either way, so reporting success would be reporting a
+    // binary as usable when every command it offers will fail.
+    match status {
+        oxicrypt_integrity::IntegrityStatus::Passed => ExitCode::SUCCESS,
+        oxicrypt_integrity::IntegrityStatus::Mismatch
+        | oxicrypt_integrity::IntegrityStatus::SlotInvalid => ExitCode::FAILURE,
+        _ => ExitCode::from(3),
+    }
 }
 
 /// Pre-operational self-tests for the services this CLI offers.

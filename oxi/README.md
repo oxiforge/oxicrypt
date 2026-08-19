@@ -22,14 +22,28 @@ Module image integrity (HMAC-SHA-256 over the loader-invariant image)
 and exits non-zero. It is behaving correctly: a module that cannot verify its own
 image refuses to become operational rather than proceeding untested.
 
+`oxi --integrity` answers the question directly, and is handled before the module
+is initialized so that it still works on a binary that cannot start:
+
+```
+$ oxi --integrity
+integrity: not signed — this binary carries no valid integrity slot
+  Sign it:  oxicrypt-integrity-sign --sign <this binary>
+  `cargo install` cannot do this: it has no step after linking in which
+  to write the slot. See docs/integrity-signing.md.
+```
+
 Until signed release artifacts are published, build and sign it yourself:
 
 ```sh
 git clone https://github.com/oxiforge/oxicrypt && cd oxicrypt
-cargo build --release -p oxicrypt-cli -p oxicrypt-integrity-sign
-./target/release/oxicrypt-integrity-sign --sign target/release/oxi
+cargo xtask sign oxicrypt-cli --release
 ./target/release/oxi hash sha256 ./some-file
 ```
+
+`cargo xtask sign` builds the package and the signer, writes the slot, and
+verifies the result. It is the same implementation CI uses, so a local build is
+signed the way CI builds one.
 
 The procedure, and what it is doing, is in
 [`docs/integrity-signing.md`](https://github.com/oxiforge/oxicrypt/blob/main/docs/integrity-signing.md).
@@ -41,6 +55,7 @@ oxi hash <alg> [FILE]            Hash a file or stdin
 oxi hmac <alg> <key-hex> [FILE]  HMAC a file or stdin
 oxi rand <nbytes>                Generate random bytes (hex)
 oxi --lama                       Dump the LAMA manifest (YAML)
+oxi --integrity                  Report the integrity test's outcome
 ```
 
 Algorithms: `sha1`, `sha224`, `sha256`, `sha384`, `sha512`, `sha512-224`,

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `docs/integrity-signing.md`, the one home for signing an artifact against the
   pre-operational integrity test. `docs/building.md`'s signing section named a build command
   that errors, a slot size 256 times smaller than the real one, and a MAC over the whole file.
+- Added `oxi --integrity`, which reports the pre-operational integrity test's outcome and what
+  to do about it. Handled before initialization, so it works on a binary that cannot start.
+- Added `cargo xtask sign`, one implementation of build-then-sign shared by local builds and CI.
 - Corrected `oxicrypt-cli`'s README and a comment in `oxi`, both of which said the CLI skips
   its power-up known-answer tests. It runs them, including the pre-operational integrity test,
   and therefore must be signed before it will start — which `cargo install` cannot do.

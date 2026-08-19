@@ -75,7 +75,7 @@ fi
 # Rust-relevance. A path-prefix proxy, deliberately coarse: a `.toml` under
 # crates/ can change a build output (cbindgen.toml regenerates a shipped
 # header), so narrowing this to `*.rs` would open a real hole to save minutes.
-rust_re='^(crates|benches|acvp-harness|esv-harness|oxi|tools|playground)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/'
+rust_re='^(crates|benches|acvp-harness|esv-harness|oxi|tools|playground|xtask)/|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rustfmt\.toml$|^\.cargo/'
 
 # oxicrypt-maxwell's dependency closure, from `cargo metadata` on 2026-08-04:
 # itself plus module, sha, test-vectors and zeroize. Manifests, the lockfile,

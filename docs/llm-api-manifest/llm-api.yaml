@@ -314,6 +314,11 @@ modules:
     no_std: false
     depends_on: []
 
+  - name: xtask
+    description: Out-of-boundary build automation carrying the one implementation of build-then-sign; publish = false, so no API surface is described here.
+    no_std: false
+    depends_on: []
+
   - name: ct-validation
     description: Out-of-boundary dudect-style timing-variation harness; publish = false, so no API surface is described here.
     no_std: false
