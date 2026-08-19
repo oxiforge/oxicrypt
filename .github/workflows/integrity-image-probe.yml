@@ -784,6 +784,16 @@ jobs:
           - name: linux-x86_64
             runner: ubuntu-latest
             exe: ''
+          # The release workflow cross-compiles a linux-aarch64 `oxi` on an
+          # x86_64 runner and ships it. Nothing there can execute it, so without
+          # this leg an arm64 Linux binary would reach users having never been
+          # started anywhere — and its provenance file says it starts as
+          # shipped. This is the leg that makes that sentence true. Note the
+          # android leg is NOT a substitute: it targets bionic and signs a
+          # cdylib, not this binary.
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            exe: ''
           - name: macos-aarch64
             runner: macos-15
             exe: ''

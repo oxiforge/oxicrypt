@@ -104,6 +104,63 @@ disagree. Any step that rewrites the artifact after signing — stripping,
 compressing, a platform signing tool — invalidates the slot and the module will
 refuse to become operational. Sign last.
 
+## Seeing the tests run
+
+`oxi selftest` reports each self-test by name and ends with an explicit
+indicator line. It is the *provided service* form of initiating the self-tests,
+which ISO/IEC 19790:2012 §7.10.1 and FIPS 140-3 IG 10.3.E accept at Security
+Levels 1 and 2 alongside resetting, rebooting and power cycling; the automatic
+periodic-testing obligations apply at Levels 3 and 4 and are not claimed. The
+indicator is required rather than cosmetic — IG reads `AS02.24` as exempting
+self-tests themselves from needing an indicator while requiring one of *a
+service that provides them*.
+
+It re-runs the test functions on an already-operational module; it does not
+re-enter the pre-operational sequence, which is one-shot per process. A failure
+places the module in the error state.
+
+## The project's own CLI
+
+`oxi` is an ordinary instance of everything above, not a special case. It links
+the module, so it is a loadable image carrying a MAC over itself, and it is
+signed exactly as your own binary is:
+
+```bash
+cargo build --release
+oxicrypt-integrity-sign --sign target/release/your-application target/release/oxi
+```
+
+**The unit is the loadable image, not the crate.** One invocation signs as many
+artifacts as you name, each getting its own slot; a static archive is refused,
+because it has no loaded image to verify against — you sign the binary it is
+linked into. So if you are assembling a module and want the CLI alongside it,
+`oxi` is simply one more artifact in that list.
+
+From a source checkout of this repository, `cargo xtask sign oxicrypt-cli
+--release` builds the package and the signer and does the same thing in one
+step. It is what CI runs.
+
+**`cargo install oxicrypt-cli` is the one path with no signing step**, because
+cargo has none after linking. An installed `oxi` therefore refuses to become
+operational and says so, naming the two commands that fix it:
+
+```
+$ oxi --integrity
+integrity: not signed — this binary carries no valid integrity slot
+  Sign it:  cargo install oxicrypt-integrity-sign
+            oxicrypt-integrity-sign --sign <this binary>
+```
+
+Downloading a signed `oxi` from the releases page avoids the step entirely.
+
+**`oxi` does not sign itself, deliberately.** A binary able to rewrite its own
+image is a capability with no cryptographic benefit — the key is a published
+constant, so self-signing attests nothing a separate signature does not — and
+two real costs: it would link an executable-format parser into the very extent
+the integrity test protects, and it would let a binary that has just failed the
+check re-sign itself into passing. Keeping the signer separate means the module
+never rewrites itself, which is both the simpler story and the true one.
+
 ## In your own test binaries
 
 A `cargo test` binary is never signed, so the real integrity test cannot pass

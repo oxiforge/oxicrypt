@@ -1,4 +1,5 @@
-# Release artifacts — prebuilt C libraries for consumers without a Rust toolchain.
+# Release artifacts — prebuilt C libraries, and the signed `oxi` CLI, for
+# consumers without a Rust toolchain.
 #
 # WHY THIS EXISTS
 #   Two independent reasons, and the second is the load-bearing one.
@@ -35,12 +36,38 @@
 #   * These builds are not bit-reproducible and are not claimed to be. Two runs
 #     of this workflow on the same tag can produce different bytes and
 #     therefore different integrity MACs. What is asserted is narrower and
-#     checkable: each published artifact's MAC is recorded in the release body,
-#     and `oxicrypt-integrity-sign --verify` confirms the artifact matches the MAC
-#     it ships with.
+#     checkable: each published artifact's MAC is recorded in the
+#     `BUILD-PROVENANCE.txt` inside its own tarball, and
+#     `oxicrypt-integrity-sign --verify` confirms the artifact matches it.
+#   * ⚠️ ARTIFACT NAMES CHANGED AT 0.24.0. The C library archive was
+#     `oxicrypt-<tag>-<platform>.tar.gz` through v0.23.2 and is now
+#     `oxicrypt-ffi-<tag>-<platform>.tar.gz`, because it is one delivery form
+#     of the module rather than the module, and the bare name said otherwise —
+#     most misleadingly beside the `oxicrypt-cli-` archives added in the same
+#     release. A script fetching "latest" by name breaks once; releases up to
+#     v0.23.2 keep their original asset names.
 #   * No macOS/Windows FIPS claim is implied by their presence here. They are
 #     built because the C API is portable; the validated configuration is
 #     whatever the Security Policy names, which is a narrower set.
+#
+# WHY `oxi` SHIPS HERE, AND WHY IT DID NOT BEFORE.
+#   `oxi` links the module, so like any such artifact it must be signed after
+#   linking. It was omitted from this workflow while the runtime could not
+#   verify a signed image on Mach-O or PE: shipping a binary that refuses to
+#   start on three of five platforms is worse than shipping none. Those readers
+#   now exist and are exercised on real runners by `integrity-image-probe.yml`,
+#   so the omission has no premise left.
+#
+#   It ships in its OWN tarball rather than beside the C libraries. The two have
+#   disjoint audiences — a C shop linking a `.a` has no use for a CLI, and
+#   someone who wants `oxi hash` should not download a static archive and a
+#   header to get it.
+#
+#   `cargo install oxicrypt-cli` remains available and remains unsigned on
+#   arrival: cargo has no post-link step, so that user has to run the signer
+#   themselves. What this workflow adds is the other door — a binary that is
+#   already signed when it reaches you, and whose MAC is recorded in a
+#   provenance file beside it.
 
 name: release-artifacts
 
@@ -115,12 +142,16 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             zig_target: x86_64-unknown-linux-gnu.2.17
+            cli: oxi
+            native: true
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
           - name: linux-aarch64
             runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             zig_target: aarch64-unknown-linux-gnu.2.17
+            cli: oxi
+            native: false
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
           # macOS runner labels age out faster than the rest of this matrix.
@@ -134,6 +165,8 @@ jobs:
           - name: macos-x86_64
             runner: macos-15-intel
             target: x86_64-apple-darwin
+            cli: oxi
+            native: true
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
           # macos-14 built successfully on 2026-08-07 but is marked deprecated
@@ -141,11 +174,15 @@ jobs:
           - name: macos-aarch64
             runner: macos-15
             target: aarch64-apple-darwin
+            cli: oxi
+            native: true
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
           - name: windows-x86_64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
+            cli: oxi.exe
+            native: true
             cdylib: oxicrypt_ffi.dll
             staticlib: oxicrypt_ffi.lib
 
@@ -188,6 +225,18 @@ jobs:
         if: matrix.zig_target == ''
         run: cargo build -p oxicrypt-ffi --release --target ${{ matrix.target }}
 
+      # The CLI, on the same toolchain path as the library beside it. The glibc
+      # floor matters here for the same reason: a binary built against the
+      # runner's glibc refuses to start on an older system, and `oxi` is the
+      # artifact most likely to be dropped onto an arbitrary machine.
+      - name: Build the CLI (glibc floor pinned)
+        if: matrix.zig_target != ''
+        run: cargo zigbuild -p oxicrypt-cli --release --target ${{ matrix.zig_target }}
+
+      - name: Build the CLI
+        if: matrix.zig_target == ''
+        run: cargo build -p oxicrypt-cli --release --target ${{ matrix.target }}
+
       - name: Build the signing tool
         # Built for the HOST, not the target: it has to run here. On the
         # cross-compiled Linux legs a target-built signer would not execute.
@@ -214,18 +263,64 @@ jobs:
           # slot was never written, and it fails in the consumer's hands, not
           # here. The static archive is deliberately absent: an archive has no
           # loadable image, so the consumer signs the binary they link it into.
-          n=$(grep -c '^signed ' /tmp/sign-output.txt)
+          n=$(grep -c '^signed ' /tmp/sign-output.txt || true)
           if [ "$n" -ne 1 ]; then
             echo "::error::expected 1 signed line, got $n — the shared library was not signed"
             exit 1
           fi
+
+      # Signed separately from the library, into its own output file, because
+      # each artifact ships a provenance record naming ITS MAC. One combined
+      # invocation would put both MACs in both files, and a provenance record
+      # listing a checksum for something not in the tarball is worse than one
+      # listing none.
+      - name: Sign the CLI's integrity slot
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="target/${{ matrix.target }}/release"
+          SIGNER="target/release/oxicrypt-integrity-sign"
+          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
+          "$SIGNER" --sign "$OUT/${{ matrix.cli }}" | tee /tmp/sign-cli.txt
+          n=$(grep -c '^signed ' /tmp/sign-cli.txt || true)
+          if [ "$n" -ne 1 ]; then
+            echo "::error::expected 1 signed line for the CLI, got $n"
+            exit 1
+          fi
+
+      # The strongest check available, and it is only available here: RUN the
+      # artifact that will ship. An offline `--verify` proves the file agrees
+      # with its own slot; running it proves the loaded image does, which is
+      # the property the module actually tests at startup and the one a
+      # consumer depends on. Skipped on the cross-compiled leg, where the
+      # runner cannot execute the target — stated rather than silently passed,
+      # so the gap is visible in the log.
+      - name: Prove the signed CLI starts
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="target/${{ matrix.target }}/release"
+          if [ "${{ matrix.native }}" != "true" ]; then
+            echo "NOT RUN on ${{ matrix.name }}: cross-compiled, this runner cannot execute it."
+            echo "Startup for this target is exercised by the integrity-runtime job in"
+            echo "integrity-image-probe.yml, whose matrix includes ${{ matrix.name }}."
+            exit 0
+          fi
+          "$OUT/${{ matrix.cli }}" --integrity
+          "$OUT/${{ matrix.cli }}" hash sha256 LICENSE-APACHE
+          echo "ok: the signed CLI reaches operational on ${{ matrix.name }}"
 
       - name: Stage the artifact set
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ inputs.tag || github.ref_name }}"
-          DIR="oxicrypt-${TAG}-${{ matrix.name }}"
+          # `oxicrypt-ffi-`, not a bare `oxicrypt-`. This archive is one
+          # DELIVERY FORM of the module — the C library — not the module in
+          # general: a Rust consumer takes the crates from the registry and
+          # never downloads this. The bare name read as "everything", and read
+          # that way most misleadingly beside `oxicrypt-cli-`.
+          DIR="oxicrypt-ffi-${TAG}-${{ matrix.name }}"
           mkdir -p "$DIR"
           cp "target/${{ matrix.target }}/release/${{ matrix.cdylib }}"    "$DIR/"
           cp "target/${{ matrix.target }}/release/${{ matrix.staticlib }}" "$DIR/"
@@ -252,7 +347,7 @@ jobs:
             echo "commit        : $(git rev-parse HEAD)"
             echo "built by      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo ""
-            echo "Integrity MACs (HMAC-SHA-256 over the binary, slot zeroed),"
+            echo "Integrity MACs (HMAC-SHA-256 over the loader-invariant extent),"
             echo "as emitted by oxicrypt-integrity-sign at signing time:"
             sed 's|^signed target/[^ ]*/release/|  |' /tmp/sign-output.txt
             echo ""
@@ -274,9 +369,78 @@ jobs:
           [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
           "$SIGNER" --verify \
             --cdylib-target  "$DIR/${{ matrix.cdylib }}" | tee /tmp/verify-output.txt
-          v=$(grep -c '^verify ok: ' /tmp/verify-output.txt)
+          v=$(grep -c '^verify ok: ' /tmp/verify-output.txt || true)
           if [ "$v" -ne 1 ]; then
             echo "::error::expected 1 verify-ok line on the staged copy, got $v"
+            exit 1
+          fi
+
+          tar -czf "${DIR}.tar.gz" "$DIR"
+          sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256" 2>/dev/null \
+            || shasum -a 256 "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
+          cat "${DIR}.tar.gz.sha256"
+
+      - name: Stage the CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          # `oxicrypt-cli-`, matching the crate name, not `oxi-` after the
+          # binary. The C library set is `oxicrypt-ffi-<tag>-<platform>.tar.gz`,
+          # two names differing by five characters mid-string are a trap on a
+          # release page listing ten of them. The binary inside is still `oxi`.
+          DIR="oxicrypt-cli-${TAG}-${{ matrix.name }}"
+          mkdir -p "$DIR"
+          cp "target/${{ matrix.target }}/release/${{ matrix.cli }}" "$DIR/"
+          cp LICENSE-APACHE LICENSE-MIT "$DIR/"
+
+          {
+            echo "oxi ${TAG} — ${{ matrix.name }}"
+            echo ""
+            echo "target triple : ${{ matrix.target }}"
+            echo "glibc floor   : ${{ matrix.zig_target && 'pinned 2.17 via cargo-zigbuild' || 'n/a' }}"
+            echo "rustc         : $(rustc --version)"
+            echo "commit        : $(git rev-parse HEAD)"
+            echo "built by      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "This binary is ALREADY SIGNED: its integrity slot was written"
+            echo "by the build above, so it needs no signing step from you. A"
+            echo "binary obtained through 'cargo install' does, because cargo has"
+            echo "no step after linking in which to write the slot:"
+            echo "  cargo install oxicrypt-integrity-sign"
+            echo "  oxicrypt-integrity-sign --sign <the binary>"
+            echo ""
+            if [ "${{ matrix.native }}" = "true" ]; then
+              echo "Startup was OBSERVED: this build was executed on the runner"
+              echo "that produced it and reported a passing integrity test."
+            else
+              echo "Startup was NOT observed on this platform: the artifact is"
+              echo "cross-compiled and the build runner cannot execute it. The"
+              echo "slot was verified offline against the file. Startup on this"
+              echo "target is exercised separately by the integrity-runtime job."
+            fi
+            echo ""
+            echo "Integrity MAC (HMAC-SHA-256 over the loader-invariant extent),"
+            echo "as emitted by oxicrypt-integrity-sign at signing time:"
+            sed 's|^signed target/[^ ]*/release/|  |' /tmp/sign-cli.txt
+            echo ""
+            echo "Check it yourself, without trusting this file:"
+            echo "  oxi --integrity"
+            echo ""
+            echo "The MAC attests integrity, not origin: the key is a published"
+            echo "constant. For origin, check this tarball against the SHA-256"
+            echo "published beside it in the release."
+          } > "$DIR/BUILD-PROVENANCE.txt"
+
+          # Verify the STAGED copy — the one that ships — not the build-directory
+          # original, so a truncated `cp` is caught here rather than by the
+          # consumer's power-up self-test.
+          SIGNER="target/release/oxicrypt-integrity-sign"
+          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
+          "$SIGNER" --verify "$DIR/${{ matrix.cli }}" | tee /tmp/verify-cli.txt
+          v=$(grep -c '^verify ok: ' /tmp/verify-cli.txt || true)
+          if [ "$v" -ne 1 ]; then
+            echo "::error::expected 1 verify-ok line on the staged CLI, got $v"
             exit 1
           fi
 
@@ -292,6 +456,10 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ inputs.tag || github.ref_name }}"
-          DIR="oxicrypt-${TAG}-${{ matrix.name }}"
+          DIR="oxicrypt-ffi-${TAG}-${{ matrix.name }}"
           gh release upload "$TAG" "${DIR}.tar.gz" "${DIR}.tar.gz.sha256" --clobber
           echo "uploaded ${DIR}.tar.gz to $TAG"
+
+          CLI="oxicrypt-cli-${TAG}-${{ matrix.name }}"
+          gh release upload "$TAG" "${CLI}.tar.gz" "${CLI}.tar.gz.sha256" --clobber
+          echo "uploaded ${CLI}.tar.gz to $TAG"

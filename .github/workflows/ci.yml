@@ -275,8 +275,8 @@ jobs:
       # nothing in cargo runs at that point — so a build that succeeds still
       # yields a binary that refuses to start. This exercises the one
       # implementation of build-then-sign, which a developer also calls locally,
-      # so the two cannot drift. The release workflow does not use it yet: it
-      # publishes no `oxi` to sign.
+      # so the two cannot drift. The release workflow signs `oxi` the same way
+      # and ships the result, so this exercises the path a release takes.
       - name: Sign oxi, and prove it could not start unsigned
         run: |
           set -euo pipefail

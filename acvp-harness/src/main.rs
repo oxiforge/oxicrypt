@@ -162,13 +162,19 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(0);
     }
 
-    // Self-signing has deliberately been removed: the Linux kernel
-    // refuses `O_TRUNC` writes to a file that currently backs a
-    // process image (`ETXTBSY`), so a running executable cannot
-    // rewrite its own embedded integrity slot. The standard
-    // development workflow is to build the harness, then run
-    // `oxicrypt-integrity-sign --sign target/debug/acvp-harness` from a
-    // separate process, and only then execute the harness.
+    // This harness is signed from a separate process, not by itself. The
+    // standard development workflow is to build it, run
+    // `oxicrypt-integrity-sign --sign target/debug/acvp-harness`, and only
+    // then execute it.
+    //
+    // Note the constraint that shapes this is narrower than it looks. A
+    // running executable cannot be WRITTEN — Linux refuses every write-open
+    // of a file backing a live process image with `ETXTBSY`, truncating or
+    // not — but it can be REPLACED, because `rename` rebinds the directory
+    // entry while the process keeps running from its original inode. That is
+    // how `oxi --self-sign` works. It is not done here because the harness is
+    // built and signed by a pipeline that already has a separate process to
+    // hand, where `oxi` is installed by `cargo install`, which has none.
     match initialize_with_tests(oxicrypt_integrity::KATS, POWER_UP_KATS) {
         Ok(()) | Err(Error::AlreadyInitialized) => {}
         Err(e) => {

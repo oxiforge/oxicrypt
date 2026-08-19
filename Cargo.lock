@@ -577,6 +577,7 @@ dependencies = [
  "oxicrypt-drbg",
  "oxicrypt-hmac",
  "oxicrypt-integrity",
+ "oxicrypt-integrity-sign",
  "oxicrypt-module",
  "oxicrypt-sha",
 ]

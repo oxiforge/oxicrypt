@@ -14,6 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Renamed the release artifacts.** The C library archive is now
+  `oxicrypt-ffi-<tag>-<platform>.tar.gz`, was `oxicrypt-<tag>-<platform>.tar.gz` through v0.23.2 — it
+  is one delivery form of the module rather than the module, and the bare name said otherwise. A
+  script that fetches the latest release by asset name must be updated; releases up to v0.23.2 keep
+  their original names. (#274)
+- Added the covered extent to `oxi --integrity`, reported where a comparison happened. (#274)
+- Added the remaining six HMAC variants to `oxi hmac` — `sha512-224`, `sha512-256` and the four
+  SHA3 sizes — so the command reaches every variant the power-up self-tests cover. (#274)
+- Added `oxi selftest`, which runs the module's self-tests on demand and reports each one by name
+  with the vector it is checked against, ending in an explicit indicator. A failure places the module
+  in the error state. (#274)
+- Added the remedy to the CLI's startup failure, which now names the two commands that fix it —
+  installing the signer and running it against the binary. (#274)
+- Added signed `oxi` binaries to the release artifacts, per platform, in their own tarball with a
+  provenance record. (#274)
+- Added the CLI's case to `docs/integrity-signing.md`, the one home for signing an artifact. (#274)
+- Added `verify_image` to `oxicrypt-integrity-sign`, one implementation of the offline check, shared
+  by the tool's `--verify` and the CLI's read-back. (#274)
 - Added `oxicrypt-imageread`, which reads the module's own loaded image on Darwin and Windows
   through `mach_vm_read_overwrite` and `ReadProcessMemory`. Every other target, Linux and Android
   included, compiles to a stub. (#273)

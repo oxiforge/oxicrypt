@@ -11,8 +11,8 @@
 //! This is the one implementation. CI calls it and a developer calls the same
 //! thing locally, so a mistake in it is visible in both at once rather than in
 //! whichever copy was not updated. The release workflow does not call it yet —
-//! it publishes no `oxi` to sign, because the platforms in its matrix cannot
-//! verify a signed binary at startup.
+//! it signs and publishes `oxi` for every platform in its matrix, each of
+//! which can now verify a signed binary at startup.
 //!
 //! It deliberately does not know how signing works: it shells out to
 //! `oxicrypt-integrity-sign`, which owns that.

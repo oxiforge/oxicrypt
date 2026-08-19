@@ -204,13 +204,31 @@ This prevents **new** leaks in what you push. It says nothing about what is alre
 4. gh pr create --title "..." --body "..."   # use the template
 5. Run requesting-code-review skill on the PR diff
 6. Apply or note (with reasoning) each review finding
-7. gh pr merge --squash --delete-branch
-8. git pull --rebase origin main
-9. bash scripts/tag-next-build.sh     # apply next vX.Y.Z.A tag
-10. git push origin <next-tag>
+7. git rebase -i main                 # squash to one commit, LOCALLY
+8. git push --force-with-lease
+9. git checkout main && git merge --ff-only <branch> && git push origin main
+10. git branch -d <branch> && git push origin --delete <branch> --no-verify
+11. bash scripts/tag-next-build.sh    # apply next vX.Y.Z.A tag
+12. git push origin <next-tag>
 ```
 
-The squash-merge takes the **PR title as the commit subject** and the **PR description as the commit body**. So the PR description is the historical record on `main`.
+**Squash locally, then fast-forward — never `gh pr merge --squash`.** Every commit
+in this repository is SSH-signed, and `--squash` and `--rebase` both re-create the
+commit *server-side*: the signature does not survive, and `main` gains an unsigned
+commit. `--merge` preserves the parents' signatures but adds a merge commit signed
+by GitHub's key rather than the author's. Squashing locally and fast-forwarding
+leaves `main`'s tip a commit the author signed, with no object created by anyone
+else — and it produces exactly the clean one-commit history `--squash` was chosen
+for.
+
+⚠️ **Push the rebased branch (step 8) BEFORE the fast-forward.** A local rebase
+rewrites the head SHA, and GitHub marks a PR merged only when the SHA it is
+tracking becomes reachable from the base. Fast-forwarding un-pushed rebased
+commits lands the content and leaves the PR to close as *abandoned* — the change
+ships, the review record does not.
+
+The one-commit history means the **commit message is the record on `main`**, so
+write it to stand alone; the PR description should say the same things.
 
 ### PR description structure
 
@@ -225,7 +243,7 @@ Use `.github/PULL_REQUEST_TEMPLATE.md`. Sections:
 
 ### Code-review gate
 
-Every PR must have the `requesting-code-review` skill invoked on its diff before squash-merge. Findings should be either applied or noted with reasoning in the PR thread. This is the third-party review that catches what the author is too close to see.
+Every PR must have the `requesting-code-review` skill invoked on its diff before merge. Findings should be either applied or noted with reasoning in the PR thread. This is the third-party review that catches what the author is too close to see.
 
 External contributors who don't have access to the skill can request maintainer review via standard `gh pr review` flow; maintainers run the skill on their behalf.
 

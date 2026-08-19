@@ -39,9 +39,7 @@ use oxicrypt_integrity_sign::image;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use oxicrypt_integrity::{
-    SLOT_SIZE, constant_time_eq, encode_hmac_hex, mac_over_file_ranges, slot,
-};
+use oxicrypt_integrity::{SLOT_SIZE, encode_hmac_hex, mac_over_file_ranges, slot};
 
 #[derive(Copy, Clone)]
 enum Mode {
@@ -174,15 +172,9 @@ fn sign(path: &Path) -> Result<(), String> {
 
 fn verify(path: &Path) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read: {e}"))?;
-    let (parsed, _) = read_slot(&bytes)?;
-    let computed = mac_over_file_ranges(&bytes, &parsed.ranges)
-        .map_err(|d| format!("cannot hash the extent: {d}"))?;
-    if constant_time_eq(&computed, &parsed.mac) {
-        println!("verify ok: {}", path.display());
-        Ok(())
-    } else {
-        Err("MAC mismatch — the file does not match its slot".to_owned())
-    }
+    oxicrypt_integrity_sign::verify_image(&bytes)?;
+    println!("verify ok: {}", path.display());
+    Ok(())
 }
 
 fn show(path: &Path) -> Result<(), String> {
