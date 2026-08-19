@@ -28,7 +28,7 @@ use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oxicrypt_integrity_sign::{elf, sign_image};
+use oxicrypt_integrity_sign::{elf, image, sign_image};
 
 unsafe extern "C" {
     fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
@@ -194,7 +194,7 @@ fn mapping_path_of(addr: usize) -> Option<String> {
 fn the_host_binary_is_unsigned() {
     let exe = std::env::current_exe().expect("test binary path");
     let bytes = std::fs::read(&exe).expect("read host");
-    let slot_off = elf::find_slot(&bytes).expect("the host carries a slot of its own");
+    let slot_off = image::find_slot(&bytes).expect("the host carries a slot of its own");
     let parsed = oxicrypt_integrity::slot::parse(&bytes[slot_off..slot_off + 16384]);
     assert!(
         matches!(

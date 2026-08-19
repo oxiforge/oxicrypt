@@ -26,46 +26,17 @@
 //! two sides would disagree. Only the file-backed prefix is in the
 //! extent.
 
-use oxicrypt_integrity::{SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC, SLOT_SIZE, slot::Range};
+use oxicrypt_integrity::{SLOT_SIZE, slot::Range};
+
+use crate::image::{
+    Layout, ensure_disjoint, ensure_non_empty, find_slot, slot_fits, subtract, u16_at, u32_at,
+    u64_at,
+};
 
 /// `p_type` value for a loadable segment.
 const PT_LOAD: u32 = 1;
 /// `p_flags` bit marking a segment writable.
 const PF_W: u32 = 0x2;
-
-/// What the signer needs to know about an artifact.
-pub struct Layout {
-    /// The loader-invariant extent, slot already subtracted, ascending.
-    pub ranges: Vec<Range>,
-    /// File offset of the integrity slot.
-    pub slot_file_off: usize,
-    /// Offset of the integrity slot from the image base.
-    pub slot_rva: u32,
-    /// Total file-backed bytes across all non-writable load segments,
-    /// before the slot was subtracted. Reported so an operator can see
-    /// what fraction of the mapped image the extent covers.
-    pub invariant_len: u64,
-    /// Total file-backed bytes across every load segment.
-    pub mapped_len: u64,
-}
-
-fn u16_at(bytes: &[u8], off: usize) -> Option<u16> {
-    let end = off.checked_add(2)?;
-    let arr: [u8; 2] = bytes.get(off..end)?.try_into().ok()?;
-    Some(u16::from_le_bytes(arr))
-}
-
-fn u32_at(bytes: &[u8], off: usize) -> Option<u32> {
-    let end = off.checked_add(4)?;
-    let arr: [u8; 4] = bytes.get(off..end)?.try_into().ok()?;
-    Some(u32::from_le_bytes(arr))
-}
-
-fn u64_at(bytes: &[u8], off: usize) -> Option<u64> {
-    let end = off.checked_add(8)?;
-    let arr: [u8; 8] = bytes.get(off..end)?.try_into().ok()?;
-    Some(u64::from_le_bytes(arr))
-}
 
 /// True when `bytes` looks like a little-endian 64-bit ELF image.
 #[must_use]
@@ -73,47 +44,6 @@ pub fn is_elf64_le(bytes: &[u8]) -> bool {
     bytes.get(..4) == Some(b"\x7fELF".as_slice())
         && bytes.get(4) == Some(&2)
         && bytes.get(5) == Some(&1)
-}
-
-/// Locates the integrity slot in an artifact's file bytes.
-///
-/// A candidate is accepted only when the footer magic sits at exactly
-/// `SLOT_SIZE - 16` past the header, which rejects an incidental
-/// occurrence of the header pattern. Exactly one slot must be present:
-/// zero means the artifact was never linked against the module, and
-/// more than one means the verifier could not tell which is
-/// authoritative.
-///
-/// # Errors
-///
-/// Returns a description when zero or several slots are found.
-pub fn find_slot(bytes: &[u8]) -> Result<usize, String> {
-    let mut found: Vec<usize> = Vec::new();
-    let Some(last) = bytes.len().checked_sub(SLOT_SIZE) else {
-        return Err("artifact is smaller than one integrity slot".to_owned());
-    };
-    let footer_at = SLOT_SIZE.saturating_sub(16);
-    for i in 0..=last {
-        if bytes.get(i..i.saturating_add(16)) != Some(SLOT_HEADER_MAGIC.as_slice()) {
-            continue;
-        }
-        let f = i.saturating_add(footer_at);
-        if bytes.get(f..f.saturating_add(16)) == Some(SLOT_FOOTER_MAGIC.as_slice()) {
-            found.push(i);
-        }
-    }
-    match found.as_slice() {
-        [one] => Ok(*one),
-        [] => Err(
-            "no integrity slot found — the artifact was not linked against oxicrypt-integrity, \
-             or the slot was stripped"
-                .to_owned(),
-        ),
-        many => Err(format!(
-            "{} integrity slots found; exactly one is required",
-            many.len()
-        )),
-    }
 }
 
 /// One `PT_LOAD` segment, reduced to what classification needs.
@@ -235,6 +165,7 @@ pub fn classify(bytes: &[u8]) -> Result<Layout, String> {
         .map(|s| segment_range(s, image_base, bytes.len()))
         .collect::<Result<Vec<_>, _>>()?;
     candidates.sort_by_key(|r| r.rva);
+    ensure_disjoint(&candidates)?;
     let invariant_len: u64 = candidates.iter().map(|r| u64::from(r.len)).sum();
 
     // The slot's position, in both coordinate spaces.
@@ -244,9 +175,9 @@ pub fn classify(bytes: &[u8]) -> Result<Layout, String> {
         .find(|s| {
             let start = usize::try_from(s.offset).unwrap_or(usize::MAX);
             let end = start.saturating_add(usize::try_from(s.filesz).unwrap_or(0));
-            slot_file_off >= start && slot_file_off < end
+            slot_fits(slot_file_off, start, end)
         })
-        .ok_or("the integrity slot lies outside every PT_LOAD segment")?;
+        .ok_or("no single PT_LOAD segment contains the whole integrity slot")?;
     // Offset of the slot within its segment. `find` above established
     // that the slot lies inside this segment, so the subtraction holds —
     // checked anyway, because the invariant lives in a different
@@ -269,6 +200,7 @@ pub fn classify(bytes: &[u8]) -> Result<Layout, String> {
 
     let slot_len = u32::try_from(SLOT_SIZE).map_err(|_| "slot size exceeds 32 bits")?;
     let ranges = subtract(&candidates, slot_rva, slot_len)?;
+    ensure_non_empty(&ranges)?;
 
     Ok(Layout {
         ranges,
@@ -277,98 +209,4 @@ pub fn classify(bytes: &[u8]) -> Result<Layout, String> {
         invariant_len,
         mapped_len,
     })
-}
-
-/// Removes `[cut_rva, cut_rva + cut_len)` from an ascending range list,
-/// splitting any range that straddles it.
-///
-/// Subtractive rather than masking: the excluded bytes are simply absent
-/// from the extent, so signer and verifier share one semantic — hash the
-/// listed ranges in order — with no zero-substitution on either side.
-///
-/// # Errors
-///
-/// Returns a description on arithmetic overflow.
-fn subtract(ranges: &[Range], cut_rva: u32, cut_len: u32) -> Result<Vec<Range>, String> {
-    let cut_end = cut_rva
-        .checked_add(cut_len)
-        .ok_or("subtracted region overflows")?;
-    let mut out: Vec<Range> = Vec::new();
-    for r in ranges {
-        let r_end = r.rva_end().ok_or("range overflows")?;
-        if r_end <= cut_rva || r.rva >= cut_end {
-            out.push(*r);
-            continue;
-        }
-        // Head: the part before the cut.
-        if r.rva < cut_rva {
-            let len = cut_rva.saturating_sub(r.rva);
-            out.push(Range {
-                rva: r.rva,
-                file_off: r.file_off,
-                len,
-            });
-        }
-        // Tail: the part after the cut.
-        if r_end > cut_end {
-            let skipped = cut_end.saturating_sub(r.rva);
-            out.push(Range {
-                rva: cut_end,
-                file_off: r
-                    .file_off
-                    .checked_add(skipped)
-                    .ok_or("range file offset overflows")?,
-                len: r_end.saturating_sub(cut_end),
-            });
-        }
-    }
-    Ok(out)
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
-mod tests {
-    use super::{Range, subtract};
-
-    fn r(rva: u32, file_off: u32, len: u32) -> Range {
-        Range { rva, file_off, len }
-    }
-
-    #[test]
-    fn subtract_splits_a_straddling_range_and_tracks_the_file_offset() {
-        // A 4 KiB range at RVA 0x1000 / file 0x2000, cut in the middle.
-        let out = subtract(&[r(0x1000, 0x2000, 0x1000)], 0x1400, 0x400).unwrap();
-        assert_eq!(
-            out,
-            vec![r(0x1000, 0x2000, 0x400), r(0x1800, 0x2800, 0x800)],
-            "the tail's file offset must advance by the same amount as its RVA"
-        );
-    }
-
-    #[test]
-    fn subtract_leaves_disjoint_ranges_untouched() {
-        let input = vec![r(0, 0, 0x100), r(0x8000, 0x8000, 0x100)];
-        assert_eq!(subtract(&input, 0x4000, 0x1000).unwrap(), input);
-    }
-
-    #[test]
-    fn subtract_drops_a_range_wholly_inside_the_cut() {
-        let out = subtract(&[r(0x1100, 0x1100, 0x100)], 0x1000, 0x1000).unwrap();
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn subtract_trims_a_range_starting_inside_the_cut() {
-        let out = subtract(&[r(0x1800, 0x1800, 0x1000)], 0x1000, 0x1000).unwrap();
-        assert_eq!(out, vec![r(0x2000, 0x2000, 0x800)]);
-    }
-
-    /// A cut abutting a range exactly must remove nothing — the boundary
-    /// case that decides whether the slot's neighbours survive intact.
-    #[test]
-    fn subtract_at_an_exact_boundary_removes_nothing() {
-        let input = vec![r(0x1000, 0x1000, 0x1000)];
-        assert_eq!(subtract(&input, 0x2000, 0x1000).unwrap(), input);
-        assert_eq!(subtract(&input, 0x0, 0x1000).unwrap(), input);
-    }
 }

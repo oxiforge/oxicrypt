@@ -34,7 +34,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
-use oxicrypt_integrity_sign::elf;
+use oxicrypt_integrity_sign::image;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -126,23 +126,12 @@ fn main() -> ExitCode {
     }
 }
 
-/// Reads an artifact and derives its extent, refusing formats whose
-/// classifier is not implemented yet rather than guessing.
-fn layout_of(path: &Path) -> Result<(Vec<u8>, elf::Layout), String> {
+/// Reads an artifact and derives its extent, refusing formats it does not
+/// classify rather than guessing.
+fn layout_of(path: &Path) -> Result<(Vec<u8>, image::Layout), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read: {e}"))?;
-    if elf::is_elf64_le(&bytes) {
-        let layout = elf::classify(&bytes)?;
-        return Ok((bytes, layout));
-    }
-    let hint = match bytes.get(..4) {
-        Some([0xcf | 0xce, 0xfa, 0xed, 0xfe]) => "Mach-O classification is not implemented",
-        Some([0xca, 0xfe, 0xba, 0xbe] | [0xbe, 0xba, 0xfe, 0xca]) => {
-            "Mach-O universal binaries are not supported; sign each architecture slice"
-        }
-        _ if bytes.get(..2) == Some(b"MZ".as_slice()) => "PE classification is not implemented",
-        _ => "unrecognised executable format",
-    };
-    Err(hint.to_owned())
+    let layout = oxicrypt_integrity_sign::classify(&bytes)?;
+    Ok((bytes, layout))
 }
 
 fn sign(path: &Path) -> Result<(), String> {
@@ -243,7 +232,7 @@ fn show(path: &Path) -> Result<(), String> {
 
 /// Locates and parses the slot in an artifact's file bytes.
 fn read_slot(bytes: &[u8]) -> Result<(slot::SlotImage, usize), String> {
-    let off = elf::find_slot(bytes)?;
+    let off = image::find_slot(bytes)?;
     let end = off.checked_add(SLOT_SIZE).ok_or("slot offset overflows")?;
     let window = bytes
         .get(off..end)
