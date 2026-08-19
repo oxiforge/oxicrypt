@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added `oxicrypt-imageread`, which reads the module's own loaded image on Darwin and Windows
+  through `mach_vm_read_overwrite` and `ReadProcessMemory`. Every other target, Linux and Android
+  included, compiles to a stub. (#273)
+- Completed the pre-operational integrity test on macOS and Windows. The signer could sign a Mach-O
+  or PE artifact that the runtime had no way to verify, so the module never became operational on
+  either. (#273)
+- Changed the Darwin extent to begin at the first `__TEXT` section, excluding the Mach header and
+  load-command table, which `codesign` rewrites. (#273)
+- Added `Unreadable::SelfReadFailed`, reported when the kernel refuses to copy the module's own
+  image. (#273)
+- Changed the in-boundary unsafe accounting to six exception crates of twenty-eight, from five of
+  twenty-seven. `oxicrypt-integrity` keeps `#![forbid(unsafe_code)]` on every target. (#273)
 - Added a guard deriving each algorithm profile's membership from the three gating
   predicates and failing when the approved-services table or either manifest disagrees.
 - Corrected the Rust version stated in the build documentation, which named 1.94 in four
