@@ -56,8 +56,8 @@ fn main() -> ExitCode {
     }
 
     // Initialize the module: the integrity group plus every algorithm group
-    // this binary can reach. Nothing checks that the second list covers the
-    // subcommands below — see `power_up_tests`.
+    // this binary can reach. That the second list covers the subcommands below
+    // is checked — see `power_up_tests`.
     if let Err(e) = init_module() {
         eprintln!("fatal: module initialization failed: {e}");
         return ExitCode::FAILURE;
@@ -187,10 +187,12 @@ fn report_integrity() -> ExitCode {
 /// `rand`.
 ///
 /// The module refuses to become operational without an integrity group,
-/// which is a separate parameter. That guarantee does NOT extend to this
-/// inventory: nothing checks that `tests` covers every algorithm the
-/// subcommands can reach, so adding a subcommand without adding its KATs
-/// here would still start. Keeping the two in step is this file's job.
+/// which is a separate parameter. That guarantee does not extend to this
+/// inventory — a subcommand added without its KATs would start, and run an
+/// algorithm that was never self-tested. So a test enforces the coverage the
+/// module does not: `the_inventory_covers_every_algorithm_the_subcommands_reach`
+/// derives the crates this file calls and requires each to appear here, with
+/// the two exemptions named and their reasons recorded beside them.
 fn power_up_tests() -> Vec<oxicrypt_module::KatEntry> {
     let groups: &[&[oxicrypt_module::KatEntry]] = &[
         oxicrypt_sha::KATS,
@@ -397,4 +399,133 @@ fn getrandom(buf: &mut [u8]) -> io::Result<()> {
     use std::io::Read as _;
     let mut f = std::fs::File::open("/dev/urandom")?;
     f.read_exact(buf)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    /// Crates whose KATs belong somewhere other than the inventory, with the
+    /// reason each is exempt.
+    ///
+    /// `oxicrypt-module` publishes no algorithm and no `KATS`. `oxicrypt-integrity`
+    /// publishes `KATS`, but they are passed as `initialize_with_tests`' *first*
+    /// argument — the module refuses to become operational without them, which is
+    /// a guarantee the inventory does not have and does not need to duplicate.
+    const NOT_IN_THE_INVENTORY: [(&str, &str); 2] = [
+        ("oxicrypt_module", "publishes no algorithm and no KATS"),
+        (
+            "oxicrypt_integrity",
+            "its KATS are the separate integrity argument, which the module requires",
+        ),
+    ];
+
+    /// Every `oxicrypt_*` crate whose items `src` calls.
+    fn crates_called(src: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for token in src.split("oxicrypt_").skip(1) {
+            let name: String = token
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            // A path, not a word: `oxicrypt_sha::sha256` counts, prose does not.
+            if !name.is_empty() && token.get(name.len()..).is_some_and(|r| r.starts_with("::")) {
+                out.insert(format!("oxicrypt_{name}"));
+            }
+        }
+        out
+    }
+
+    /// Every crate whose `KATS` the power-up inventory lists.
+    fn crates_in_inventory(src: &str) -> BTreeSet<String> {
+        let start = src
+            .find("fn power_up_tests()")
+            .expect("power_up_tests is no longer declared");
+        let rest = src.get(start..).unwrap_or_default();
+        let end = rest.find("\n}\n").expect("power_up_tests is unterminated");
+        crates_called(rest.get(..end).unwrap_or_default())
+            .into_iter()
+            .filter(|c| {
+                rest.get(..end)
+                    .unwrap_or_default()
+                    .contains(&format!("{c}::KATS"))
+            })
+            .collect()
+    }
+
+    /// The two scanners read paths, not prose, and each other's absence.
+    ///
+    /// Without this the check below is unfalsifiable: a scanner that returned
+    /// nothing would report a fully covered inventory.
+    #[test]
+    fn the_crate_scanners_catch_what_they_must() {
+        let called = crates_called("oxicrypt_sha::sha256(&x); oxicrypt_hmac::KATS");
+        assert!(called.contains("oxicrypt_sha") && called.contains("oxicrypt_hmac"));
+        // The mirror control: a mention that is not a path is not a call.
+        assert!(
+            crates_called("the oxicrypt_sha crate, and oxicrypt_drbg generally").is_empty(),
+            "prose must not read as a call"
+        );
+
+        let listed = crates_in_inventory(
+            "fn power_up_tests() {\n    oxicrypt_sha::KATS,\n    oxicrypt_hmac::KATS,\n}\n",
+        );
+        assert_eq!(
+            listed.len(),
+            2,
+            "the inventory scanner misread its own shape"
+        );
+        // A crate merely named inside the inventory, without its KATS, is not
+        // covered by it — which is exactly the drift this guards against.
+        let partial = crates_in_inventory(
+            "fn power_up_tests() {\n    oxicrypt_sha::KATS,\n    oxicrypt_aes::something_else,\n}\n",
+        );
+        assert_eq!(partial.len(), 1, "only a KATS reference counts as coverage");
+    }
+
+    /// Every algorithm crate the CLI can reach has its known-answer tests in the
+    /// power-up inventory.
+    ///
+    /// The module requires an integrity group before it will become operational.
+    /// That guarantee does not extend to this inventory, so a subcommand added
+    /// without its KATs would start and run an algorithm that was never
+    /// self-tested. This is the check that was missing.
+    #[test]
+    fn the_inventory_covers_every_algorithm_the_subcommands_reach() {
+        let src = include_str!("main.rs");
+        let called = crates_called(src);
+        let listed = crates_in_inventory(src);
+
+        assert!(
+            called.len() >= 4,
+            "read only {} oxicrypt crates from this file — the scanner is broken, not the file",
+            called.len()
+        );
+        assert!(
+            !listed.is_empty(),
+            "read no crates from the inventory — the scanner is broken"
+        );
+        for (exempt, reason) in NOT_IN_THE_INVENTORY {
+            assert!(!reason.is_empty());
+            assert!(
+                called.contains(exempt),
+                "the exemption names {exempt}, which this file no longer calls — remove it"
+            );
+        }
+
+        let exempt: BTreeSet<String> = NOT_IN_THE_INVENTORY
+            .iter()
+            .map(|(c, _)| (*c).to_string())
+            .collect();
+        let uncovered: Vec<&String> = called
+            .iter()
+            .filter(|c| !exempt.contains(*c) && !listed.contains(*c))
+            .collect();
+        assert!(
+            uncovered.is_empty(),
+            "these crates are reachable from a subcommand but their KATS are not in \
+             power_up_tests: {uncovered:?}"
+        );
+    }
 }

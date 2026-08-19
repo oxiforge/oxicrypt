@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added a check that `oxi`'s power-up inventory covers every algorithm crate its subcommands
+  reach. The module requires an integrity group; it does not require this, so a subcommand
+  added without its known-answer tests would have started.
 - Added `docs/integrity-signing.md`, the one home for signing an artifact against the
   pre-operational integrity test. `docs/building.md`'s signing section named a build command
   that errors, a slot size 256 times smaller than the real one, and a MAC over the whole file.
