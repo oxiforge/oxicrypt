@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   places where the workspace requires 1.95.
 - Added a guard tying every Rust-version statement in the tree to `Cargo.toml` and
   `rust-toolchain.toml`, the two files that own those values.
+- Added Mach-O and PE32+ classification to the integrity signer, which previously refused
+  both formats by name. Each hashes the region its loader maps executable and non-writable.
 - Aligned the CNSA 2.0 profile with CNSSP-15 (March 2025) Annex B. The suite names AES-256,
   ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful hash-based signatures;
   it names no Keccak-family hash or XOF for a software module, and SHA-3 appears there only for

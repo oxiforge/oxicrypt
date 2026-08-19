@@ -64,8 +64,9 @@ mod tests {
     /// crate while another gains it — fails by name, not just by count.
     /// `deny(unsafe_code)` deliberately does not qualify: the policy's claim
     /// is the compiler-hard forbid level.
-    const UNSAFE_EXCEPTIONS: [&str; 5] = [
+    const UNSAFE_EXCEPTIONS: [&str; 6] = [
         "oxicrypt-aes-accel",
+        "oxicrypt-imageread",
         "oxicrypt-keccak-accel",
         "oxicrypt-sha-accel",
         "oxicrypt-timer",

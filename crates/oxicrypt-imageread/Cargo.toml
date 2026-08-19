@@ -1,6 +1,6 @@
 [package]
-name = "oxicrypt-integrity"
-description = "Pre-operational software integrity self-test (ISO/IEC 19790:2012 7.10.2.2)"
+name = "oxicrypt-imageread"
+description = "Kernel-mediated self-image reads for the pre-operational integrity test."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,11 +14,6 @@ publish.workspace = true
 
 [lints]
 workspace = true
-
-[dependencies]
-oxicrypt-module = { workspace = true }
-oxicrypt-hmac = { workspace = true }
-oxicrypt-imageread = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

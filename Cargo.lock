@@ -689,10 +689,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxicrypt-imageread"
+version = "0.23.2"
+
+[[package]]
 name = "oxicrypt-integrity"
 version = "0.23.2"
 dependencies = [
  "oxicrypt-hmac",
+ "oxicrypt-imageread",
  "oxicrypt-module",
 ]
 

@@ -11,8 +11,46 @@
 #![forbid(unsafe_code)]
 
 pub mod elf;
+pub mod image;
+pub mod macho;
+pub mod pe;
 
 use oxicrypt_integrity::{SLOT_SIZE, mac_over_file_ranges, slot};
+
+/// Derives an image's loader-invariant extent, choosing the classifier from
+/// the image's own magic.
+///
+/// The three formats do not share a rule, only an output. ELF takes every
+/// non-writable load segment; Mach-O and PE take only what the loader maps
+/// executable, because each has a non-writable region that is nonetheless not
+/// reproducible from the file — `__LINKEDIT`, where `codesign` writes, and
+/// `.rdata`, where the loader applies base relocations. Each module states its
+/// own reasoning.
+///
+/// # Errors
+///
+/// Returns a description when the format is unrecognised or out of scope, or
+/// when the chosen classifier rejects the image.
+pub fn classify(image: &[u8]) -> Result<image::Layout, String> {
+    if elf::is_elf64_le(image) {
+        return elf::classify(image);
+    }
+    if macho::is_macho64_le(image) {
+        return macho::classify(image);
+    }
+    if pe::is_pe32plus(image) {
+        return pe::classify(image);
+    }
+    // Recognised but out of scope, so the refusal can say which rather than
+    // reporting every unclassifiable file the same way.
+    if let Some(reason) = macho::unsupported_reason(image) {
+        return Err(reason.to_owned());
+    }
+    if let Some(reason) = pe::unsupported_reason(image) {
+        return Err(reason.to_owned());
+    }
+    Err("unrecognised executable format".to_owned())
+}
 
 /// Signs `image` in place: derives its loader-invariant extent, computes
 /// the reference MAC over that extent's file bytes, and writes the range
@@ -23,7 +61,7 @@ use oxicrypt_integrity::{SLOT_SIZE, mac_over_file_ranges, slot};
 /// Returns a description when the image cannot be classified, the slot is
 /// missing or ambiguous, or the extent does not fit the slot's table.
 pub fn sign_image(image: &mut [u8]) -> Result<[u8; 32], String> {
-    let layout = elf::classify(image)?;
+    let layout = classify(image)?;
     write_extent(image, &layout.ranges, layout.slot_rva, layout.slot_file_off)
 }
 

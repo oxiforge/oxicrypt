@@ -9,19 +9,33 @@
 //! job is integrity, is the one failure mode worth spending effort to
 //! avoid.
 //!
-//! Targets with no file-shaped route — Darwin, Windows, and Android
-//! where the process is not dumpable — need a kernel-mediated copy
-//! (`mach_vm_read_overwrite`, `ReadProcessMemory`, `process_vm_readv`)
-//! and therefore an `extern` declaration. Those live in a separate
-//! exception crate and are not implemented here; on such targets
-//! [`verify_at`] reports [`Unreadable::NoMechanism`] and the module does
-//! not become operational. An unverifiable module is an error state, not
-//! a pass.
+//! Targets with no file-shaped route need a kernel-mediated copy and
+//! therefore an `extern` declaration, which lives in
+//! `oxicrypt-imageread` rather than here — that is what lets this crate
+//! keep its `forbid`. Darwin and Windows take that route through
+//! [`self_image`], with one mechanism and no fallback, because neither
+//! platform offers a second.
+//!
+//! Android is served by the file-shaped route above rather than by an
+//! exception: `/proc/self/mem` works for a dumpable process, and the
+//! backing file covers the case where it does not.
+//!
+//! A target with neither route reports [`Unreadable::NoMechanism`] and
+//! the module does not become operational. An unverifiable module is an
+//! error state, not a pass.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) use imp::verify_at;
+#[cfg(any(target_os = "macos", target_os = "ios", windows))]
+pub(crate) use self_image::verify_at;
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    windows
+)))]
 use crate::{IntegrityError, Unreadable};
 
 /// Fallback for targets with no implemented mechanism.
@@ -29,9 +43,85 @@ use crate::{IntegrityError, Unreadable};
 /// Reporting "the test was not performed" is the honest answer and the
 /// safe one: the runner latches the error state, so a target reaches
 /// operational only once its mechanism exists.
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    windows
+)))]
 pub(crate) fn verify_at(_slot_addr: usize) -> Result<(), IntegrityError> {
     Err(IntegrityError::Unreadable(Unreadable::NoMechanism))
+}
+
+/// Darwin and Windows — one mechanism, the loaded image itself.
+///
+/// There is no second mechanism to fall back to, and that is a property
+/// of the platforms rather than an omission: neither exposes a
+/// file-shaped route to a process's own memory, which is the whole
+/// reason `oxicrypt-imageread` exists. A read that fails here is
+/// therefore final, and the module enters its error state.
+#[cfg(any(target_os = "macos", target_os = "ios", windows))]
+mod self_image {
+    use oxicrypt_hmac::HmacSha256;
+    use oxicrypt_imageread::read_self;
+
+    use crate::slot::{self, SlotDefect};
+    use crate::{FIPS_INTEGRITY_KEY, IntegrityError, SLOT_SIZE, Unreadable, constant_time_eq};
+
+    /// Bytes hashed per read. Matches the Linux path's chunk for the
+    /// same reason: a multi-megabyte extent costs a few dozen calls
+    /// while the working buffer stays off the boot path's peak.
+    const CHUNK: usize = 64 * 1024;
+
+    /// Runs the pre-operational integrity test against the loaded image.
+    ///
+    /// The load base is derived from the slot rather than from any
+    /// image-walking API: the signer recorded the slot's offset from the
+    /// base, and the caller supplies the slot's address, so the
+    /// subtraction is the base. That keeps every executable-format
+    /// question on the signer's side of the boundary, where it belongs —
+    /// this crate parses no headers.
+    pub(crate) fn verify_at(slot_addr: usize) -> Result<(), IntegrityError> {
+        let mut slot_bytes = vec![0u8; SLOT_SIZE];
+        read_self(slot_addr, &mut slot_bytes)
+            .map_err(|e| IntegrityError::Unreadable(Unreadable::SelfReadFailed(e)))?;
+
+        let parsed = slot::parse(&slot_bytes).map_err(IntegrityError::SlotInvalid)?;
+        let base = (slot_addr as u64)
+            .checked_sub(u64::from(parsed.slot_rva))
+            .ok_or(IntegrityError::SlotInvalid(SlotDefect::SlotRvaTooLarge))?;
+
+        let mut mac = HmacSha256::new_internal(&FIPS_INTEGRITY_KEY);
+        let mut buf = vec![0u8; CHUNK];
+        for (index, range) in parsed.ranges.iter().enumerate() {
+            // The real table index, so a diagnostic names the range that
+            // actually failed rather than always naming the first.
+            let index = u32::try_from(index).unwrap_or(u32::MAX);
+            let overflow = || IntegrityError::SlotInvalid(SlotDefect::RangeOverflow(index));
+            let mut done: u32 = 0;
+            while done < range.len {
+                let remaining = range.len.saturating_sub(done);
+                let take = usize::try_from(remaining).unwrap_or(CHUNK).min(CHUNK);
+                let addr = base
+                    .checked_add(u64::from(range.rva))
+                    .and_then(|p| p.checked_add(u64::from(done)))
+                    .and_then(|p| usize::try_from(p).ok())
+                    .ok_or_else(overflow)?;
+                let window = buf.get_mut(..take).ok_or_else(overflow)?;
+                read_self(addr, window)
+                    .map_err(|e| IntegrityError::Unreadable(Unreadable::SelfReadFailed(e)))?;
+                mac.update(window);
+                done = done.saturating_add(u32::try_from(take).unwrap_or(0));
+            }
+        }
+
+        if constant_time_eq(&mac.finalize(), &parsed.mac) {
+            Ok(())
+        } else {
+            Err(IntegrityError::Mismatch)
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use oxicrypt_integrity::slot::Range;
-use oxicrypt_integrity_sign::{elf, sign_image, write_extent};
+use oxicrypt_integrity_sign::{elf, image, sign_image, write_extent};
 
 /// The probe binary cargo built for this test run.
 const PROBE: &str = env!("CARGO_BIN_EXE_integrity-probe");
@@ -297,7 +297,7 @@ fn a_changed_reference_mac_is_detected() {
     let probe = copy_probe("tamper-mac");
     sign(&probe);
     let bytes = read(&probe);
-    let slot_off = elf::find_slot(&bytes).expect("find slot");
+    let slot_off = image::find_slot(&bytes).expect("find slot");
     flip(&probe, slot_off + oxicrypt_integrity::slot::OFF_MAC);
     let (code, _) = run(&probe, &[]);
     assert_eq!(code, MISMATCH, "a changed reference MAC must fail the test");

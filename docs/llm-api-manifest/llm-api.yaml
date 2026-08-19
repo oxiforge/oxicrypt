@@ -220,6 +220,11 @@ modules:
       - oxicrypt-sha
       - oxicrypt-drbg
 
+  - name: oxicrypt-imageread
+    description: Kernel-mediated reads of the module's own loaded image via mach_vm_read_overwrite on Darwin and ReadProcessMemory on Windows, compiling to a NoMechanism stub on every other target including Linux and Android.
+    no_std: false
+    depends_on: []
+
   - name: oxicrypt-integrity
     description: HMAC-SHA-256 software integrity check over the module's loader-invariant runtime image, with a 16 KiB reserved slot carrying a range table and the reference MAC.
     no_std: false
@@ -16310,6 +16315,49 @@ functions:
 #
 # Names are unique across error types here, so resolution needs no
 # qualification by the function's return type.
+  - name: read_self
+    module: oxicrypt-imageread
+    description: Copy out.len() bytes beginning at addr in this process's own loaded image into out, through a kernel-mediated copy that reports an unmapped address rather than faulting.
+    signature: "pub fn read_self(addr: usize, out: &mut [u8]) -> Result<(), ReadError>"
+    parameters:
+      - name: addr
+        type: usize
+        description: Address in the loaded image, passed to the operating system as an opaque value and never dereferenced by this crate.
+      - name: out
+        type: "&mut [u8]"
+        description: Destination buffer whose length is the number of bytes requested.
+    returns:
+      type: "Result<(), ReadError>"
+      description: Ok when exactly out.len() bytes were copied.
+    error_variants:
+      - NoMechanism
+      - Os
+      - Short
+    preconditions:
+      - The integrity technique's own algorithm self-test has passed, since the caller is the integrity test.
+    postconditions:
+      - On Ok, out holds exactly out.len() bytes read from the loaded image.
+      - On Err, out's contents are unspecified and must not be used.
+      - An empty out returns Ok without invoking any mechanism.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: available
+    module: oxicrypt-imageread
+    description: Whether this target has a self-image read mechanism, answerable without provoking a read.
+    signature: "pub const fn available() -> bool"
+    returns:
+      type: bool
+      description: True on Darwin and Windows; false elsewhere, including Linux and Android, which reach their own image through a file.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
 error_types:
   - name: Error
     module: oxicrypt-module
@@ -16657,6 +16705,22 @@ error_types:
         description: A newtype over a String, so the cause is a human-readable message and callers cannot branch on it.
         recoverable: true
         user_action: Read the message. This is an operator tool outside the module boundary, so the text is the interface; nothing in the type identifies the cause programmatically.
+
+  - name: ReadError
+    module: oxicrypt-imageread
+    variants:
+      - name: NoMechanism
+        description: This target has no implemented self-image read mechanism.
+        recoverable: false
+        user_action: The module cannot perform its pre-operational integrity test on this platform and will not become operational.
+      - name: Os
+        description: The operating system refused the read and reported a status — a kern_return_t on Darwin, a GetLastError value on Windows.
+        recoverable: false
+        user_action: The address named by the artifact's range table is not readable. Re-sign the artifact, and treat a persistent failure as a corrupt or mismatched image.
+      - name: Short
+        description: The mechanism succeeded but supplied fewer bytes than requested, which means the request straddled the end of a mapping.
+        recoverable: false
+        user_action: A statement about the range table rather than about permissions. Re-sign the artifact with a signer matching this build.
 
 constants:
   - name: SHA1_DIGEST_SIZE
