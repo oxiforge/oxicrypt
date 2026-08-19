@@ -6,10 +6,11 @@
 # Two jobs, answering two different questions. `probe` asks what the *loader*
 # does to an image — which parts survive ASLR unchanged and still equal the file
 # on disk. `codesign-extent` asks what the *signing tool* does to it, which
-# matters because the Darwin extent is `__TEXT` and a Mach-O carries its header
-# and load commands at the start of `__TEXT`; a signature that adds a load
-# command writes inside the region the MAC covers. Each job documents itself
-# where it is defined.
+# matters because a Mach-O carries its header and load commands at the start of
+# `__TEXT`, and `codesign` rewrites them. That question has been answered: it
+# does, so the extent now begins at `__TEXT`'s first section and that job has
+# become the regression gate proving a signed artifact still verifies. Each job
+# documents itself where it is defined.
 #
 # What it establishes per platform: which parts of the loaded module are
 # identical across runs despite ASLR, and whether those parts equal the file
@@ -37,8 +38,21 @@
 # assuming a queued macOS job is merely waiting.
 name: integrity image probe
 
+# A push runs the gate alone. The stability probe re-measures ground that is
+# already settled, on runners billed at ten times the Linux rate, and it took
+# every push to this branch with it — so it is now opt-in and the gate, which
+# has to run on every change to the extent, is what a push triggers.
 on:
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: which jobs to run
+        default: gate
+        type: choice
+        options:
+          - gate
+          - probe
+          - all
   push:
     branches:
       - 'measure/integrity-image-**'
@@ -49,6 +63,8 @@ permissions:
 jobs:
   probe:
     name: ${{ matrix.name }}
+    # Opt-in: this measured the loaded image once and the answer has not moved.
+    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'probe' || inputs.jobs == 'all')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -199,6 +215,8 @@ jobs:
   # measurement observes.
   codesign-extent:
     name: codesign-extent-${{ matrix.name }}
+    # The regression gate on the Darwin extent, so a push must run it.
+    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -262,7 +280,7 @@ jobs:
           fi
           echo "control ok: codesign changed the file"
 
-      - name: THE ANSWER — does the recorded extent still verify?
+      - name: THE GATE — a signed artifact must still verify
         shell: bash
         run: |
           set -euo pipefail
@@ -274,6 +292,8 @@ jobs:
           "$SIGN" --show subject.dylib > after-show.txt 2>&1
           set -e
           echo "verify_after_codesign_exit=$VERIFY_EXIT" | tee answer.txt
+          # Read from the file rather than from $? after the pipeline above:
+          # `tee` succeeds regardless of what the signer decided.
           cat verify-after.txt
 
           echo "--- what codesign changed ---" | tee -a answer.txt
@@ -331,9 +351,16 @@ jobs:
           if [ "$VERIFY_EXIT" -eq 0 ]; then
             echo "RESULT: codesign does NOT disturb the recorded extent on ${{ matrix.name }}" | tee -a answer.txt
           else
-            echo "RESULT: codesign DOES disturb the recorded extent on ${{ matrix.name }}." | tee -a answer.txt
-            echo "This is a finding about the design, not a build failure. The Darwin path needs" | tee -a answer.txt
-            echo "rework — most likely signing after codesign rather than before it." | tee -a answer.txt
+            # This was a report while the question was open. It is a failure now:
+            # the extent excludes the header and load commands precisely so that
+            # this passes, and nothing else in the suite can see a regression —
+            # neither macOS nor codesign exists on the machines that run the
+            # gates, so this job is the only place the claim can be tested.
+            echo "RESULT: codesign DISTURBS the recorded extent on ${{ matrix.name }}." | tee -a answer.txt
+            echo "The Darwin extent begins at __TEXT's first section so that it does not." | tee -a answer.txt
+            echo "Either the exclusion regressed, or codesign now rewrites bytes inside the" | tee -a answer.txt
+            echo "sections themselves — the byte report above says which." | tee -a answer.txt
+            exit 1
           fi
 
       - name: Upload the measurement
@@ -351,3 +378,166 @@ jobs:
             before-otool.txt
             after-otool.txt
           if-no-files-found: error
+
+  authenticode-extent:
+    name: authenticode-extent-windows-x86_64
+    # The PE counterpart of codesign-extent, and open where that one is settled.
+    # Structurally PE is not the Mach-O problem: its headers are not part of any
+    # section, so `.text` — the only section in the extent — sits above them, and
+    # Authenticode writes the certificate-table directory entry and the checksum
+    # inside the optional header, both below where `.text` begins. That is an
+    # argument from layout, not a measurement, and this class has already been
+    # reasoned about wrongly twice. So it reports rather than gates until a run
+    # says what actually happens.
+    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Build the cdylib and the signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
+          cp target/release/oxicrypt_ffi.dll subject.dll
+          ls -l subject.dll
+
+      - name: Record the extent, then sign — CONTROL, must verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN=target/release/oxicrypt-integrity-sign.exe
+          "$SIGN" --show subject.dll | tee before-show.txt
+          "$SIGN" --sign subject.dll | tee sign.txt
+          # Without this, a later failure cannot be told apart from an extent
+          # that was never right on this platform.
+          "$SIGN" --verify subject.dll
+          echo "control ok: the artifact verifies before signtool runs"
+          cp subject.dll before.dll
+
+      - name: Locate signtool — CONTROL, it must exist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'x64\signtool.exe') } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          # A missing signtool must stop the run. Skipping the signing step and
+          # reporting "the extent survived" would be a measurement of nothing.
+          if (-not $sdk) { throw 'control FAILED: no signtool.exe under the Windows 10 SDK' }
+          $signtool = Join-Path $sdk.FullName 'x64\signtool.exe'
+          Write-Output "signtool: $signtool"
+          "SIGNTOOL=$signtool" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Authenticode sign — CONTROL, signtool must change the file
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+            -Subject 'CN=oxicrypt extent measurement' `
+            -CertStoreLocation Cert:\CurrentUser\My
+          & $env:SIGNTOOL sign /fd SHA256 /sha1 $cert.Thumbprint subject.dll
+          if ($LASTEXITCODE -ne 0) { throw "control FAILED: signtool exited $LASTEXITCODE" }
+          $before = (Get-FileHash before.dll -Algorithm SHA256).Hash
+          $after  = (Get-FileHash subject.dll -Algorithm SHA256).Hash
+          Write-Output "before: $before"
+          Write-Output "after:  $after"
+          # A signtool that no-opped would leave the artifact verifying and the
+          # measurement would read as "Authenticode is harmless" without
+          # Authenticode having done anything.
+          if ($before -eq $after) { throw 'control FAILED: signtool left the file byte-identical' }
+          Write-Output 'control ok: signtool changed the file'
+
+      - name: THE ANSWER — does the recorded extent still verify?
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN=target/release/oxicrypt-integrity-sign.exe
+          set +e
+          "$SIGN" --verify subject.dll > verify-after.txt 2>&1
+          VERIFY_EXIT=$?
+          "$SIGN" --show subject.dll > after-show.txt 2>&1
+          set -e
+          echo "verify_after_signtool_exit=$VERIFY_EXIT" | tee answer.txt
+          cat verify-after.txt
+
+          echo "--- extent, before vs after ---" | tee -a answer.txt
+          diff before-show.txt after-show.txt || true
+
+          echo "--- which bytes signtool rewrote ---" | tee -a answer.txt
+          # Bounded to `.text`, for the reason the Mach-O leg learned the hard
+          # way: everything outside the hashed region differs for reasons that
+          # say nothing about the extent, and counting those bytes produced a
+          # false platform finding once already.
+          # The runner image spells Python either way depending on the release;
+          # resolving it here beats a step that fails on a name.
+          PYBIN="$(command -v python3 || command -v python)"
+          "$PYBIN" - <<'PY' | tee -a answer.txt
+          import struct
+
+          a = open("before.dll", "rb").read()
+          b = open("subject.dll", "rb").read()
+
+          def text_section(img):
+              pe = struct.unpack_from("<I", img, 0x3c)[0]
+              assert img[pe:pe + 4] == b"PE\0\0", "not a PE image"
+              nsec = struct.unpack_from("<H", img, pe + 6)[0]
+              optsize = struct.unpack_from("<H", img, pe + 20)[0]
+              table = pe + 24 + optsize
+              for i in range(nsec):
+                  e = table + i * 40
+                  name = img[e:e + 8].rstrip(b"\0").decode("ascii", "replace")
+                  vsize, _rva, rawsize, rawptr = struct.unpack_from("<IIII", img, e + 8)
+                  if name == ".text":
+                      return rawptr, min(vsize, rawsize)
+              raise AssertionError(".text not found")
+
+          off, size = text_section(a)
+          off_b, size_b = text_section(b)
+          print(f"file length: {len(a)} -> {len(b)}")
+          print(f".text file bytes {off}..{off + size} before, {off_b}..{off_b + size_b} after")
+          if (off, size) != (off_b, size_b):
+              print("VERDICT: signtool MOVED or RESIZED .text; the extent's file offsets are stale.")
+          diffs = [i for i in range(off, off + size) if a[i] != b[i]]
+          if not diffs:
+              print("no byte inside .text changed")
+              print("VERDICT: Authenticode leaves the hashed region untouched.")
+          else:
+              print(f"changed bytes inside .text: {len(diffs)}")
+              print(f"  first changed offset: {diffs[0]}, last: {diffs[-1]}")
+              print("VERDICT: Authenticode rewrote bytes inside the extent.")
+          # Where the changes do land, for the record.
+          n = min(len(a), len(b))
+          outside = [i for i in range(n) if a[i] != b[i] and not (off <= i < off + size)]
+          print(f"changed bytes elsewhere in the common prefix: {len(outside)}"
+                + (f", first at {outside[0]}" if outside else ""))
+          PY
+
+          if [ "$VERIFY_EXIT" -eq 0 ]; then
+            echo "RESULT: Authenticode does NOT disturb the recorded extent on windows-x86_64" | tee -a answer.txt
+          else
+            echo "RESULT: Authenticode DOES disturb the recorded extent on windows-x86_64." | tee -a answer.txt
+            echo "This is a finding about the design, not a build failure. The byte report above" | tee -a answer.txt
+            echo "says whether a narrower extent would survive, as it did on Darwin." | tee -a answer.txt
+          fi
+
+      - name: Upload the measurement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authenticode-extent-windows-x86_64
+          path: |
+            before-show.txt
+            after-show.txt
+            verify-after.txt
+            answer.txt
+          if-no-files-found: warn
+
