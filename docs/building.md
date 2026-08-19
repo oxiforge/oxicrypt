@@ -6,7 +6,7 @@ validation.
 
 ## Prerequisites
 
-oxicrypt requires **Rust 1.94 or later**. Install it via
+oxicrypt requires **Rust 1.95 or later**. Install it via
 [rustup](https://rustup.rs/):
 
 ```bash
@@ -64,9 +64,9 @@ for file I/O and self-test orchestration.
 
 | OS | Architecture | Rust toolchain | Status |
 |----|-------------|---------------|--------|
-| Ubuntu 22.04 | x86_64 | stable 1.94+ | Primary CI |
-| macOS 14+ | aarch64 | stable 1.94+ | Tested |
-| Windows 11 | x86_64 | stable 1.94+ | Tested |
+| Ubuntu 22.04 | x86_64 | stable 1.95+ | Primary CI |
+| macOS 14+ | aarch64 | stable 1.95+ | Tested |
+| Windows 11 | x86_64 | stable 1.95+ | Tested |
 
 Additional platforms can be declared as vendor-affirmed operational
 environments under FIPS 140-3 IG D.G §3 equivalency. The certificate,

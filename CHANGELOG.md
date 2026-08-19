@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added a guard deriving each algorithm profile's membership from the three gating
+  predicates and failing when the approved-services table or either manifest disagrees.
+- Corrected the Rust version stated in the build documentation, which named 1.94 in four
+  places where the workspace requires 1.95.
+- Added a guard tying every Rust-version statement in the tree to `Cargo.toml` and
+  `rust-toolchain.toml`, the two files that own those values.
 - Aligned the CNSA 2.0 profile with CNSSP-15 (March 2025) Annex B. The suite names AES-256,
   ML-KEM-1024, ML-DSA-87, SHA-384 or SHA-512, and the SP 800-208 stateful hash-based signatures;
   it names no Keccak-family hash or XOF for a software module, and SHA-3 appears there only for

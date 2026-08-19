@@ -1473,7 +1473,9 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::KbkdfHmacSha384
             | Service::KbkdfHmacSha512
             | Service::KbkdfCmacAes256
-            // TLS 1.3 KDF — mandatory transport in CNSA 2.0
+            // No TLS KDF: Annex B names no protocol-specific key derivation
+            // function, and none is required in order to operate an algorithm
+            // the suite does name. Both reach the fail-safe default-block.
             // Post-quantum (CNSA 2.0 core)
             | Service::MlKem1024Encaps
             | Service::MlKem1024Decaps
