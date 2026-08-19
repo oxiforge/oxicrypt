@@ -1,5 +1,8 @@
 # oxicrypt
 
+[![CI](https://github.com/oxiforge/oxicrypt/actions/workflows/ci.yml/badge.svg)](https://github.com/oxiforge/oxicrypt/actions/workflows/ci.yml)
+[![integrity](https://github.com/oxiforge/oxicrypt/actions/workflows/integrity-image-probe.yml/badge.svg)](https://github.com/oxiforge/oxicrypt/actions/workflows/integrity-image-probe.yml)
+
 Pure-Rust FIPS 140-3 Level 1 cryptographic module.
 
 oxicrypt implements FIPS-approved cryptographic algorithms in pure Rust
