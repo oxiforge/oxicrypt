@@ -2,7 +2,7 @@
 //!
 //! # Why this crate exists at all
 //!
-//! [`oxicrypt-integrity`] keeps `#![forbid(unsafe_code)]`, because the
+//! `oxicrypt-integrity` keeps `#![forbid(unsafe_code)]`, because the
 //! failure mode of a raw pointer read, in the crate whose whole job is
 //! integrity, is the one failure mode worth spending effort to avoid.
 //! On Linux and Android it can hold that line completely: the loaded

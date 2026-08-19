@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 oxicrypt-module = { workspace = true }
 oxicrypt-hmac = { workspace = true }
+oxicrypt-imageread = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

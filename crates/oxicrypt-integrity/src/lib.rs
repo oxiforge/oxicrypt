@@ -104,18 +104,29 @@
 //!
 //! | Operational environment | Order | Mechanism | `unsafe` |
 //! |---|---|---|---|
-//! | Linux | 1 | `pread` on `/proc/self/mem` | none |
-//! | Linux | 2 | `pread` the backing file at the recorded `file_off` | none |
+//! | Linux, Android | 1 | `pread` on `/proc/self/mem` | none |
+//! | Linux, Android | 2 | `pread` the backing file at the recorded `file_off` | none |
+//! | Darwin | only | `mach_vm_read_overwrite`, in `oxicrypt-imageread` | in that crate |
+//! | Windows | only | `ReadProcessMemory`, in `oxicrypt-imageread` | in that crate |
 //!
-//! This crate carries `#![forbid(unsafe_code)]` and keeps it. Both Linux
-//! mechanisms are file reads, so a wrong offset is an error return or a
-//! short read rather than undefined behaviour — a property worth
-//! preserving in the crate whose entire job is integrity. Environments
-//! needing a non-file mechanism (Darwin, Windows, and Android where the
-//! process is not dumpable) are served by a separate exception crate and
-//! are **not implemented here**; on those targets
-//! [`verify_loaded_image`] reports [`Unreadable::NoMechanism`] and the
-//! module does not become operational.
+//! This crate carries `#![forbid(unsafe_code)]` and keeps it, on every
+//! target. The Linux and Android mechanisms are file reads, so a wrong
+//! offset is an error return or a short read rather than undefined
+//! behaviour — a property worth preserving in the crate whose entire job
+//! is integrity.
+//!
+//! Darwin and Windows expose no file-shaped route to a process's own
+//! memory, so their reads are system calls and the `extern` declarations
+//! live in `oxicrypt-imageread` rather than here. Both are
+//! kernel-mediated copies, chosen so that an address named by a corrupt
+//! range table returns a status instead of faulting. Those platforms
+//! have **one** mechanism and no fallback, which is a property of the
+//! platforms rather than an omission: a failed read is final and the
+//! module enters its error state.
+//!
+//! A target with neither route still reports
+//! [`Unreadable::NoMechanism`], and the module does not become
+//! operational — an unverifiable module is an error state, not a pass.
 //!
 //! The second Linux mechanism verifies the **file image** rather than the
 //! loaded image: a modification made to memory after loading would pass
@@ -323,6 +334,13 @@ pub enum Unreadable {
     /// Every mechanism was tried and each failed. Carries the first
     /// error from each, in the order attempted.
     AllMechanismsFailed(Vec<std::io::Error>),
+    /// The kernel refused to copy the module's own image.
+    ///
+    /// Darwin and Windows only. There is no second mechanism to fall
+    /// back to on those platforms, so this is final rather than one
+    /// failure among several — which is why it is its own variant
+    /// instead of an entry in [`Unreadable::AllMechanismsFailed`].
+    SelfReadFailed(oxicrypt_imageread::ReadError),
 }
 
 /// Failure of the pre-operational software integrity test.
@@ -387,6 +405,9 @@ impl core::fmt::Display for Unreadable {
                     write!(f, " [{e}]")?;
                 }
                 Ok(())
+            }
+            Self::SelfReadFailed(e) => {
+                write!(f, "the module's own image could not be read: {e}")
             }
         }
     }

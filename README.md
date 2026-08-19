@@ -162,7 +162,7 @@ tests, each traceable to its published source.
 
 ## Architecture
 
-oxicrypt is organized as a Cargo workspace with 29 crates — 18 algorithm
+oxicrypt is organized as a Cargo workspace with 30 crates — 18 algorithm
 crates, a module crate, an entropy-source scaffolding crate, and 9 supporting
 crates — plus tools:
 
@@ -192,6 +192,7 @@ crates/
   oxicrypt-xmss          XMSS signature verification (SP 800-208 §8.2)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
   oxicrypt-entropy       SP 800-90B entropy source in progress (jitter noise source, RCT/APT health tests, timer adequacy, cited spec constants; pre-validation — no entropy claims)
+  oxicrypt-imageread     Kernel-mediated self-image reads on Darwin and Windows for the integrity test
   oxicrypt-timer         Read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
   oxicrypt-ffi           C ABI wrappers (cdylib + staticlib) with profile selection
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors

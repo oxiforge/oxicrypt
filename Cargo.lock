@@ -697,6 +697,7 @@ name = "oxicrypt-integrity"
 version = "0.23.2"
 dependencies = [
  "oxicrypt-hmac",
+ "oxicrypt-imageread",
  "oxicrypt-module",
 ]
 
