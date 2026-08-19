@@ -246,6 +246,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Kept so the answer step can say *which* bytes moved, not merely that
+          # the verdict changed. "codesign broke it" and "codesign rewrote the
+          # load commands and nothing else" call for different remedies.
+          cp subject.dylib before.dylib
           codesign --force --sign - --timestamp=none subject.dylib
           codesign -dv subject.dylib 2>&1 | tee codesign-dv.txt
           shasum -a 256 subject.dylib | tee after-sha.txt
@@ -281,6 +285,40 @@ jobs:
           grep -A 6 'segname __TEXT' after-otool.txt | head -12 | tee -a answer.txt
           echo "--- extent, before vs after ---" | tee -a answer.txt
           diff before-show.txt after-show.txt || true
+
+          echo "--- which bytes codesign rewrote ---" | tee -a answer.txt
+          # The remedy depends on where the changes land. The Mach-O header and
+          # load-command table sit at the start of __TEXT, ahead of the first
+          # section, and they record __LINKEDIT's size — which every signature
+          # changes. If every rewritten byte lies before the first section's
+          # offset, an extent starting there instead of at the segment start
+          # would survive codesign, and the design has a fix rather than a wall.
+          FIRST_SECTION=$(awk '/segname __TEXT/{f=1} f&&/^ *offset /{print $2; exit}' after-otool.txt)
+          echo "first __TEXT section begins at file offset ${FIRST_SECTION}" | tee -a answer.txt
+          python3 - "$FIRST_SECTION" <<'PY' | tee -a answer.txt
+          import sys
+          first = int(sys.argv[1])
+          a = open("before.dylib", "rb").read()
+          b = open("subject.dylib", "rb").read()
+          n = min(len(a), len(b))
+          diffs = [i for i in range(n) if a[i] != b[i]]
+          print(f"file length: {len(a)} -> {len(b)}")
+          if not diffs:
+              print("no byte in the common prefix changed")
+          else:
+              before_first = [i for i in diffs if i < first]
+              after_first = [i for i in diffs if i >= first]
+              print(f"changed bytes in the common prefix: {len(diffs)}")
+              print(f"  before the first section (header + load commands): {len(before_first)}")
+              print(f"  at or after the first section:                     {len(after_first)}")
+              print(f"  first changed offset: {diffs[0]}, last: {diffs[-1]}")
+              if not after_first:
+                  print("VERDICT: every rewritten byte is header or load-command data.")
+                  print("An extent beginning at the first section would survive codesign.")
+              else:
+                  print("VERDICT: codesign rewrote bytes inside the sections themselves;")
+                  print(f"  the first such offset is {after_first[0]}.")
+          PY
 
           if [ "$VERIFY_EXIT" -eq 0 ]; then
             echo "RESULT: codesign does NOT disturb the recorded extent on ${{ matrix.name }}" | tee -a answer.txt
