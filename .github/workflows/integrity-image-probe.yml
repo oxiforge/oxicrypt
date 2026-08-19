@@ -9,8 +9,10 @@
 # matters because a Mach-O carries its header and load commands at the start of
 # `__TEXT`, and `codesign` rewrites them. That question has been answered: it
 # does, so the extent now begins at `__TEXT`'s first section and that job has
-# become the regression gate proving a signed artifact still verifies. Each job
-# documents itself where it is defined.
+# become the regression gate proving a signed artifact still verifies.
+# `authenticode-extent` asks the same of signtool on PE, and `android-extent`
+# asks whether the technique holds on the platform the workstream exists for.
+# Each job documents itself where it is defined.
 #
 # What it establishes per platform: which parts of the loaded module are
 # identical across runs despite ASLR, and whether those parts equal the file
@@ -539,5 +541,205 @@ jobs:
             after-show.txt
             verify-after.txt
             answer.txt
+          if-no-files-found: warn
+
+  android-extent:
+    name: android-extent-${{ matrix.abi }}
+    # Android is the platform this whole workstream exists because of: a CMVP
+    # resubmission elsewhere is gated on not being able to integrity-test there.
+    # So it is measured rather than argued from ELF being ELF.
+    #
+    # What this leg establishes: an Android ELF classifies, signs and verifies
+    # with the shipping signer, and the regions the extent covers are identical
+    # across runs under ASLR and equal to the file on disk — the two properties
+    # the whole technique rests on.
+    #
+    # What it does NOT establish, stated because the gap is easy to miss. This
+    # runs a native executable in an emulator, so it says nothing about (a) an
+    # app process, (b) a library mapped from inside an APK with
+    # extractNativeLibs=false, where /proc/self/maps reports offsets relative to
+    # the APK rather than to the ELF, or (c) arm64, where packed relative
+    # relocations change how many pointers land in .data.rel.ro. Each needs its
+    # own measurement and none of them is claimed here.
+    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # arm64 is the architecture Android actually ships on, and it packs
+      # relative relocations differently, so its coverage figure is its own
+      # measurement rather than the x86_64 one restated. One ABI failing must
+      # not suppress the other.
+      fail-fast: false
+      matrix:
+        include:
+          - abi: x86_64
+            runner: ubuntu-latest
+            target: x86_64-linux-android
+            clang: x86_64-linux-android24-clang
+            elf: 'ELF 64-bit LSB shared object, x86-64'
+            emulator: true
+          - abi: arm64-v8a
+            # Offline only, and the split is forced rather than chosen.
+            # `ubuntu-24.04-arm` exists but its image ships no Android NDK, and
+            # the NDK's host toolchain is published for x86_64 hosts — so the
+            # arm64 artifact is cross-built here, where the NDK is, while an
+            # arm64 emulator would need an arm64 host to reach KVM.
+            #
+            # What that costs is precise: the extent, its coverage and its range
+            # layout are measured for arm64; whether the loaded image matches
+            # the file is NOT, and no line below claims it does. Closing that
+            # needs a physical arm64 device.
+            runner: ubuntu-latest
+            target: aarch64-linux-android
+            clang: aarch64-linux-android24-clang
+            elf: 'ELF 64-bit LSB shared object, ARM aarch64'
+            emulator: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain and the Android target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - name: Locate the NDK — CONTROL, it must exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          # A missing NDK must stop the run. Falling through to a host build and
+          # reporting "the extent is stable" would be a measurement of Linux.
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            echo "control FAILED: no Android NDK on this runner" >&2
+            exit 1
+          fi
+          # The prebuilt directory is named for the HOST, which is not the
+          # target ABI and differs on an arm64 runner.
+          BIN=""
+          for host in linux-x86_64 linux-aarch64 linux-arm64; do
+            if [ -d "$NDK/toolchains/llvm/prebuilt/$host/bin" ]; then
+              BIN="$NDK/toolchains/llvm/prebuilt/$host/bin"
+              break
+            fi
+          done
+          if [ -z "$BIN" ]; then
+            echo "control FAILED: no prebuilt toolchain directory under $NDK" >&2
+            ls "$NDK/toolchains/llvm/prebuilt" >&2 || true
+            exit 1
+          fi
+          CLANG="$BIN/${{ matrix.clang }}"
+          if [ ! -x "$CLANG" ]; then
+            echo "control FAILED: no ${{ matrix.clang }} at $CLANG" >&2
+            ls "$BIN" | head -40 >&2
+            exit 1
+          fi
+          echo "NDK_CLANG=$CLANG" >> "$GITHUB_ENV"
+          echo "ndk: $NDK"
+
+      - name: Build the cdylib for Android and the signer for the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='${{ matrix.target }}'
+          UPPER="$(echo "$TARGET" | tr 'a-z-' 'A-Z_')"
+          LOWER="$(echo "$TARGET" | tr '-' '_')"
+          export "CC_${LOWER}=$NDK_CLANG"
+          export "AR_${LOWER}=$(dirname "$NDK_CLANG")/llvm-ar"
+          export "CARGO_TARGET_${UPPER}_LINKER=$NDK_CLANG"
+          cargo build --release -p oxicrypt-ffi --target "$TARGET"
+          cargo build --release -p oxicrypt-integrity-sign
+          cp "target/$TARGET/release/liboxicrypt_ffi.so" subject.so
+          file subject.so
+          # The artifact must really be an Android build for THIS ABI, not a
+          # host build that happened to land in that directory.
+          if ! file subject.so | grep -q '${{ matrix.elf }}'; then
+            echo "control FAILED: subject.so is not ${{ matrix.elf }}" >&2
+            exit 1
+          fi
+
+      - name: Classify, sign and verify the Android artifact — CONTROL
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN=target/release/oxicrypt-integrity-sign
+          # The first question is whether the shipping classifier handles an
+          # Android ELF at all. If it does not, nothing measured below matters.
+          "$SIGN" --show subject.so | tee android-show.txt
+          "$SIGN" --sign subject.so | tee android-sign.txt
+          "$SIGN" --verify subject.so
+          echo "control ok: an Android ELF classifies, signs and verifies offline"
+
+      - name: Compile the stability probe with the NDK
+        if: matrix.emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$NDK_CLANG" -O1 -Wall -Wextra -o probe .github/probes/image-stability-probe.c -ldl
+          file probe
+
+      - name: Enable KVM
+        if: matrix.emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Measure on the emulator — 20 runs under ASLR
+        if: matrix.emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: ${{ matrix.abi }}
+          target: google_apis
+          disable-animations: true
+          # ONE command. The action runs this input a line at a time, each in
+          # its own `/usr/bin/sh -c`, so a multi-line loop is split across
+          # shells and dies with a syntax error; that shell is also dash, which
+          # has no `pipefail`. The driver is a file for both reasons.
+          script: bash .github/probes/android-measure.sh runs.txt 20
+
+      - name: Analyse — fails if either positive control does not hold
+        if: matrix.emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          # An emulator step that produced nothing reads exactly like a clean
+          # run once the analyser is handed an empty file, so assert first.
+          RUNS=$(grep -c LOADBASE runs.txt || true)
+          echo "recorded ${RUNS} runs"
+          if [ "$RUNS" -ne 20 ]; then
+            echo "control FAILED: expected 20 runs, got ${RUNS}" >&2
+            exit 1
+          fi
+          python3 .github/probes/analyse.py < runs.txt | tee android-analysis.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Record the platform's own view of the image
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== the extent the signer recorded ==" | tee -a android-analysis.txt
+          cat android-show.txt | tee -a android-analysis.txt
+          if [ "${{ matrix.emulator }}" != "true" ]; then
+            echo "== NOT MEASURED on this ABI ==" | tee -a android-analysis.txt
+            echo "loaded-image stability requires an arm64 host or a device." \
+              | tee -a android-analysis.txt
+          fi
+          echo "== program headers ==" | tee -a android-analysis.txt
+          readelf -lW subject.so | tee -a android-analysis.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-extent-${{ matrix.abi }}
+          path: |
+            runs.txt
+            android-show.txt
+            android-analysis.txt
           if-no-files-found: warn
 
