@@ -17,6 +17,19 @@ No other build tools or system libraries are required. oxicrypt has zero
 third-party dependencies — all cryptographic code is pure Rust, written
 in-tree.
 
+## Installing the git hooks
+
+Enable the versioned hooks on a fresh clone. This activates the pre-commit
+doc-sync guard that keeps `docs/llm-api-manifest/llm-api.yaml` in step with the
+public API, and the pre-push gate suite:
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+The hooks live under `scripts/git-hooks/` so they are reviewable in PRs rather
+than hidden in each contributor's `.git/hooks/`.
+
 ## Compiling the workspace
 
 ```bash

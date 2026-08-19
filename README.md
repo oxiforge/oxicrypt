@@ -10,6 +10,62 @@ validation through an accredited CST laboratory.
 **Target:** FIPS 140-3 Level 1, following FIPS 140-3 Implementation
 Guidance D.G (March 2026).
 
+## Quick start
+
+Two ways in. Pick the one that matches what you want.
+
+### See it work — no Rust toolchain needed
+
+Download the CLI for your platform from the
+[latest release](https://github.com/oxiforge/oxicrypt/releases/latest):
+
+```bash
+tar -xzf oxicrypt-cli-<version>-<platform>.tar.gz
+cd oxicrypt-cli-<version>-<platform>
+./oxi --integrity     # the module verifies its own image, and reports what it covered
+./oxi selftest        # every self-test, named with the NIST vector it checks (currently 71)
+```
+
+Signed per platform, with a provenance record inside the tarball. `oxi` also
+hashes, HMACs and generates random bytes — see [its README](oxi/README.md).
+
+### Use it in your code
+
+Take only the algorithms you need; there is no aggregate crate to swallow whole.
+
+```bash
+cargo add oxicrypt-module oxicrypt-integrity oxicrypt-ml-kem   # whichever you want
+```
+
+`oxicrypt-integrity` is not optional. The module runs a pre-operational
+integrity test before any algorithm will produce output, and **a freshly
+compiled binary carries an empty slot, so it must be signed or it will not
+start**:
+
+```bash
+cargo install oxicrypt-integrity-sign
+oxicrypt-integrity-sign --sign target/release/my-app
+```
+
+Building oxicrypt yourself and signing the result is a fully supported path.
+The artifact is your module, and its self-test protects it exactly as it would
+one signed by anyone else.
+
+Full recipe, from an empty directory to a running module:
+[Building and signing your own module](docs/integrity-signing.md).
+
+### Building from source
+
+Compiling the workspace, building individual crates, running the ACVP
+harness, and enabling the versioned git hooks are in
+[`docs/building.md`](docs/building.md).
+
+### Requirements
+
+- **Rust 1.95+** (MSRV enforced in `Cargo.toml`; toolchain pinned via `rust-toolchain.toml`; workspace targets edition 2024)
+- No third-party dependencies — all cryptography is pure Rust, written in-tree
+- Builds on Linux, macOS, and Windows; `no_std` core crates work on any target
+
 ## Validation status
 
 oxicrypt holds **no NIST certificate**. Three separate validations apply, at
@@ -47,92 +103,6 @@ this is. If you need to satisfy a requirement for a *validated* module, that
 means a certificate number, and there is not one yet. See the
 [Roadmap](#roadmap) for sequencing.
 
-## Quick start
-
-```bash
-# Build the module and ACVP harness
-cargo build --workspace
-
-# Sign the harness binary for the integrity self-test
-cargo build -p oxicrypt-integrity-sign
-./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
-
-# Run all 152 power-up self-tests + software integrity check
-./target/debug/acvp-harness
-
-# Run the full test suite (121 ACVP round-trip + 7 CAVP SHS + unit tests)
-cargo test --workspace
-```
-
-### Requirements
-
-- **Rust 1.95+** (MSRV enforced in `Cargo.toml`; toolchain pinned via `rust-toolchain.toml`; workspace targets edition 2024)
-- No third-party dependencies — all cryptography is pure Rust, written in-tree
-- Builds on Linux, macOS, and Windows; `no_std` core crates work on any target
-
-### Using oxicrypt as a dependency
-
-Take only the algorithms you need — there is no aggregate crate you have to
-swallow whole. Crates do build on each other where the algorithms do (ECDSA
-needs SHA and a DRBG; CMAC needs AES), so cargo will pull in what your
-selection actually requires and nothing else.
-
-One crate comes along with every selection:
-
-```sh
-cargo add oxicrypt-aes          # whichever algorithms you want
-cargo add oxicrypt-integrity    # required: the pre-operational integrity test
-```
-
-`oxicrypt-integrity` is not optional. The module runs its integrity self-test
-before any algorithm will produce output, and the test is a parameter of
-initialization rather than something a caller can skip:
-
-```rust
-oxicrypt_module::initialize_with_tests(
-    oxicrypt_integrity::KATS,   // the integrity test — an empty slice is refused
-    MY_ALGORITHM_KATS,          // the power-up KATs for the crates you took
-)?;
-```
-
-It brings `oxicrypt-hmac` and `oxicrypt-sha` with it, because HMAC-SHA-256 is
-the integrity technique. How much that adds depends on what you already took:
-an ECDSA build reaches HMAC and SHA through its DRBG anyway, so integrity
-costs it one further crate, while a minimal AES-only build goes from 3 crates
-to 7.
-
-**Then sign your binary.** A freshly compiled artifact carries an empty
-integrity slot, so the self-test has no reference to compare against and the
-module refuses to become operational:
-
-```sh
-cargo install oxicrypt-integrity-sign
-cargo build --release
-oxicrypt-integrity-sign --sign target/release/my-app
-```
-
-The signer is also a library, so a build script can do this automatically
-rather than leaving it as a step to remember. See
-[`oxicrypt-integrity-sign`](tools/oxicrypt-integrity-sign/README.md) for both
-routes, and for what signing does and does not prove.
-
-Building oxicrypt yourself and signing the result is a fully supported path.
-The artifact is your module, and its self-test protects it exactly as it would
-one signed by anyone else.
-
-### Installing the git hooks
-
-Contributors should enable the versioned hooks on a fresh clone — this
-activates the pre-commit doc-sync guard that keeps
-`docs/llm-api-manifest/llm-api.yaml` in step with the public API:
-
-```bash
-git config core.hooksPath scripts/git-hooks
-```
-
-The hooks live under `scripts/git-hooks/` so they are reviewable in
-PRs rather than hidden in each contributor's `.git/hooks/`.
-
 ## Algorithms
 
 | Family | Algorithms | Standard |
@@ -155,8 +125,8 @@ PRs rather than hidden in each contributor's `.git/hooks/`.
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
 | Integrity | HMAC-SHA-256 over the loader-invariant module image | ISO/IEC 19790:2012 §7.10.2.2 (technique CAST: IG 10.2.A) |
 
-Every algorithm runs a known-answer test at module power-up. The 152
-power-up self-tests include CAVP-sourced vectors (with 9 SP 800-90A §9.3
+Every algorithm runs a known-answer test at module power-up. The power-up
+self-tests (currently 152) include CAVP-sourced vectors (with 9 SP 800-90A §9.3
 prediction-resistance DRBG KATs), plus 3 SP 800-90A §11.3 DRBG health
 tests, each traceable to its published source.
 
@@ -435,8 +405,8 @@ DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — complete SP 800-208 §A.3 grid (80 pairs) — and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 / Migration algorithm-profile gating enforced
 across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
-handlers, 152 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
-green.
+handlers, 152 power-up self-tests and 128 ACVP/CAVP round-trip tests, all
+green at this release.
 
 **Phase 3 (current)** — ACVP demo-server grading, gap resolution, and
 preparation of the validation submission package. Status:

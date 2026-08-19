@@ -1,8 +1,119 @@
-# Signing an artifact for the integrity test
+# Building and signing your own module
 
-The module runs a pre-operational integrity test before it becomes operational.
-This page is the one place that describes how to satisfy it: what to assemble,
-how to initialize, when to sign, and what to do in your own test binaries.
+This page is the one place that describes how to satisfy the pre-operational
+integrity test: what to assemble, how to initialize, when to sign, and what to
+do in your own test binaries. It opens with a complete worked example — an empty
+directory to a running module — and the reference material follows below.
+
+The short version: the module verifies its own image before it will do any work,
+so a binary you have just compiled has nothing to verify against and refuses to
+start until you sign it. Signing is one command.
+
+If you want the mechanism rather than the recipe, skip to
+[What the test actually checks](#what-the-test-actually-checks).
+
+## A module that works, start to finish
+
+Everything here comes from crates.io, so you get the current release.
+
+**1. A new crate**
+
+```sh
+cargo new hello-oxicrypt && cd hello-oxicrypt
+```
+
+**2. Take what you need**
+
+```sh
+cargo add oxicrypt-module oxicrypt-integrity oxicrypt-sha
+```
+
+`oxicrypt-module` is the boundary. `oxicrypt-integrity` is the pre-operational
+test, and it is not optional — the module will not start without it.
+`oxicrypt-sha` is the algorithm this example uses; swap in whichever you want,
+and add its `KATS` to the inventory in step 3.
+
+**3. Write it** — `src/main.rs`
+
+```rust
+use oxicrypt_module::KatEntry;
+
+fn main() {
+    // Your power-up inventory: the known-answer tests for every algorithm this
+    // binary can reach. Nothing checks that you got this right.
+    let algorithms: Vec<KatEntry> = oxicrypt_sha::KATS.to_vec();
+
+    // The integrity test is a separate argument because it runs first;
+    // everything after it depends on its verdict.
+    if let Err(e) = oxicrypt_module::initialize_with_tests(
+        oxicrypt_integrity::KATS,
+        &algorithms,
+    ) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+
+    println!("module state: {:?}", oxicrypt_module::state());
+
+    let digest = oxicrypt_sha::sha256(b"hello world").expect("sha256");
+    print!("sha256: ");
+    for b in digest {
+        print!("{b:02x}");
+    }
+    println!();
+}
+```
+
+**4. Build it, and watch it refuse**
+
+```sh
+cargo build --release
+./target/release/hello-oxicrypt
+```
+
+```
+FIPS power-up self-test failed: Module image integrity
+```
+
+This is the expected result at this step. The integrity slot is empty, the test
+has no reference to compare against, and a module that cannot verify itself does
+not become operational. Nothing is wrong.
+
+> A message beginning `this module did not check itself at startup` is a
+> different fault: the first argument to `initialize_with_tests` was an empty
+> slice rather than `oxicrypt_integrity::KATS`. Signing will not fix it — pass
+> the integrity group.
+
+**5. Sign it**
+
+```sh
+cargo install oxicrypt-integrity-sign
+oxicrypt-integrity-sign --sign target/release/hello-oxicrypt
+```
+
+**6. Run it**
+
+```
+module state: Operational
+sha256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+```
+
+That is your module. It verified its own image, ran SHA-256's known-answer test,
+and only then produced a digest.
+
+**7. Prove the check is real**
+
+Change one byte of the signed binary and it stops being a module:
+
+```sh
+cp target/release/hello-oxicrypt /tmp/backup
+printf '\x00' | dd of=target/release/hello-oxicrypt bs=1 seek=600000 count=1 conv=notrunc
+./target/release/hello-oxicrypt      # refuses again
+cp /tmp/backup target/release/hello-oxicrypt
+```
+
+Sign last, and re-sign after anything that rewrites the artifact — stripping,
+compression, a platform signing tool.
 
 ## What the test actually checks
 
@@ -45,6 +156,10 @@ oxicrypt-integrity
 
 Depending on `oxicrypt-integrity` pulls all six. The algorithm crates you
 actually use are separate and additional.
+
+How much that adds depends on what you already took: an ECDSA build reaches
+HMAC and SHA through its DRBG anyway, so integrity costs it one further crate,
+while a minimal AES-only build goes from 3 crates to 7.
 
 ## Assemble, initialize, build, sign, verify
 

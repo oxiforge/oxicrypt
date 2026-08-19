@@ -6,6 +6,12 @@ compilation, and never ships inside the module it signs. oxicrypt itself has
 not been submitted for FIPS 140-3 validation; nothing in this crate changes
 that.
 
+> **Assembling a module rather than signing one you already have?** Start with
+> [Building and signing your own module](https://github.com/oxiforge/oxicrypt/blob/main/docs/integrity-signing.md),
+> which works through the whole sequence — which crates to take, how to
+> initialize, then signing — from an empty directory. This page is the signer's
+> own reference.
+
 ## What it does
 
 oxicrypt runs a pre-operational integrity self-test at startup: before any
