@@ -131,18 +131,17 @@ Key lint policies (configured in the workspace `Cargo.toml`):
 
 ## Software integrity signing
 
-The FIPS 140-3 power-up self-test includes a software integrity check.
-After building the harness (or any binary linking `oxicrypt-module`),
-sign it:
+The module runs a pre-operational integrity test, and an artifact that links it
+must be signed before it can become operational. The whole procedure — what to
+assemble, when to sign, and what to do in test binaries that cannot be signed —
+is in [`integrity-signing.md`](integrity-signing.md).
+
+In short: build the artifact that will ship, then sign it last.
 
 ```bash
-cargo build -p oxicrypt-integrity
-./target/debug/oxicrypt-integrity-sign --sign target/debug/acvp-harness
+cargo build --release -p oxicrypt-integrity-sign
+./target/release/oxicrypt-integrity-sign --sign target/release/acvp-harness
 ```
-
-This embeds an HMAC-SHA-256 tag over the binary contents into a reserved
-64-byte slot. The module verifies this tag at power-up before running any
-cryptographic operations.
 
 ## Generating rustdoc
 
