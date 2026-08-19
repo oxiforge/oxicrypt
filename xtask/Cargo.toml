@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Build automation: the one implementation of build-then-sign, shared by local builds, CI and the release workflow."
+
+[lints]
+workspace = true

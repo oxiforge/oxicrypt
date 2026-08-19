@@ -210,6 +210,7 @@ tools/integrity-probe-so/  The same probe as a shared object, so a library verif
 tools/quickstarts/      Compiles the quickstart examples carried in the LAMA manifest
 esv-harness/            ESV protocol client for SP 800-90B entropy-source validation submissions
 oxi/                    Command-line interface (crate `oxicrypt-cli`) — hash, HMAC, encrypt, generate random bytes
+xtask/                  Build automation: the one implementation of build-then-sign
 ```
 
 The cryptographic boundary encompasses the `oxicrypt-*` crates compiled into a

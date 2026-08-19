@@ -1,0 +1,4 @@
+[alias]
+# One implementation of build-then-sign, shared by local builds and CI. See
+# xtask/src/main.rs for why it is not spelled out in each.
+xtask = "run --quiet --package xtask --"

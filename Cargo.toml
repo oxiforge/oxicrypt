@@ -41,6 +41,7 @@ members = [
     "tools/integrity-probe",
     "tools/integrity-probe-so",
     "tools/quickstarts",
+    "xtask",
 ]
 exclude = [
     "playground",
