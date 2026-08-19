@@ -673,7 +673,6 @@ jobs:
           echo "control ok: an Android ELF classifies, signs and verifies offline"
 
       - name: Compile the stability probe with the NDK
-        if: matrix.emulator
         shell: bash
         run: |
           set -euo pipefail
@@ -741,5 +740,7 @@ jobs:
             runs.txt
             android-show.txt
             android-analysis.txt
+            probe
+            subject.so
           if-no-files-found: warn
 
