@@ -57,7 +57,23 @@ on:
           - all
   push:
     branches:
+      - main
       - 'measure/integrity-image-**'
+    paths: &guarded
+      - 'crates/oxicrypt-integrity/**'
+      - 'crates/oxicrypt-imageread/**'
+      - 'tools/oxicrypt-integrity-sign/**'
+      - 'oxi/**'
+      - '.github/probes/**'
+      - '.github/workflows/integrity-image-probe.yml'
+  # A gate that only runs on the branch which introduced it stops guarding
+  # anything the moment that branch merges. These jobs are the only place the
+  # Darwin and Windows claims can be tested at all — neither platform exists
+  # where the ordinary gates run — so they follow the code onto main and onto
+  # any pull request that touches it. The path filter keeps 10x-billed macOS
+  # runners off changes that cannot affect the answer.
+  pull_request:
+    paths: *guarded
 
 permissions:
   contents: read
@@ -218,7 +234,7 @@ jobs:
   codesign-extent:
     name: codesign-extent-${{ matrix.name }}
     # The regression gate on the Darwin extent, so a push must run it.
-    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'all'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -391,7 +407,7 @@ jobs:
     # argument from layout, not a measurement, and this class has already been
     # reasoned about wrongly twice. So it reports rather than gates until a run
     # says what actually happens.
-    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'all'
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -561,7 +577,7 @@ jobs:
     # the APK rather than to the ELF, or (c) arm64, where packed relative
     # relocations change how many pointers land in .data.rel.ro. Each needs its
     # own measurement and none of them is claimed here.
-    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'all'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -756,7 +772,7 @@ jobs:
     # it proves nothing on its own; the unsigned control establishes that the
     # test runs at all, and the tampered control establishes that it inspects
     # the bytes rather than merely finding a slot.
-    if: github.event_name == 'push' || inputs.jobs == 'gate' || inputs.jobs == 'all'
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'all'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
