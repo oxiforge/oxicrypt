@@ -1886,7 +1886,13 @@ mod tests {
             "the shift is 1.5578 bits per sample",
             "CNSA 1.0 and CNSA 2.0 are both named",
             "TLS 1.2 KDF and TLS 1.3 KDF remain available",
-            "version = \"0.23.2\"",
+            // A synthetic version, deliberately. A negative fixture carrying the
+            // workspace's REAL current version collides with
+            // `bump-version.sh`'s surviving-literal guard at every release —
+            // the guard greps for the outgoing version across the tree, and a
+            // fixture holding it reads as an incomplete bump. The control works
+            // identically with a version that can never be ours.
+            "version = \"1.2.3\"",
             "inherited via `rust-version.workspace = true`",
             "SP 800-56Cr2 and RFC 8446 §7.1 apply",
         ] {

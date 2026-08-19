@@ -40,12 +40,16 @@
 #     `BUILD-PROVENANCE.txt` inside its own tarball, and
 #     `oxicrypt-integrity-sign --verify` confirms the artifact matches it.
 #   * ⚠️ ARTIFACT NAMES CHANGED AT 0.24.0. The C library archive was
-#     `oxicrypt-<tag>-<platform>.tar.gz` through v0.23.2 and is now
+#     `oxicrypt-<tag>-<platform>.tar.gz` through the 0.23 series and is now
 #     `oxicrypt-ffi-<tag>-<platform>.tar.gz`, because it is one delivery form
 #     of the module rather than the module, and the bare name said otherwise —
 #     most misleadingly beside the `oxicrypt-cli-` archives added in the same
-#     release. A script fetching "latest" by name breaks once; releases up to
-#     v0.23.2 keep their original asset names.
+#     release. A script fetching "latest" by name breaks once; every release
+#     through the 0.23 series keeps its original asset names.
+#     (Written without an exact version literal on purpose: `bump-version.sh`
+#     greps the tree for surviving literals of the outgoing version, so a
+#     historical reference spelled exactly would fail that guard at every
+#     future release.)
 #   * No macOS/Windows FIPS claim is implied by their presence here. They are
 #     built because the C API is portable; the validated configuration is
 #     whatever the Security Policy names, which is a narrower set.
