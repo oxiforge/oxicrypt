@@ -11,7 +11,7 @@
 lama: '0.1'
 library:
   name: acvp-harness
-  version: 0.23.2
+  version: 0.24.0
   description: ACVP protocol client for NIST's Automated Cryptographic Validation Test System.
   repository: https://github.com/oxiforge/oxicrypt
   license: Apache-2.0 OR MIT

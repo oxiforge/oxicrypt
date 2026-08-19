@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-19
+
 - **Renamed the release artifacts.** The C library archive is now
   `oxicrypt-ffi-<tag>-<platform>.tar.gz`, was `oxicrypt-<tag>-<platform>.tar.gz` through v0.23.2 — it
   is one delivery form of the module rather than the module, and the bare name said otherwise. A
