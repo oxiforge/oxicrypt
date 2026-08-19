@@ -30,7 +30,23 @@ int main(void) {
 
     /* Unknown profile rejected per F4 reviewer-framing. */
     int rc_bad = oxi_init(999);
+
+    /* Migration is profile 3 and must be in range; 4 is out of range. The
+       range check runs before the idempotent already-operational path, so
+       these hold whatever order the tests run in. They pin the accepted
+       range only — that 3 maps to Migration rather than to another profile
+       is pinned in the Rust suite, which can read the profile back. */
+    int rc_migration = oxi_init(3);
+    int rc_out_of_range = oxi_init(4);
     /* OxiResult::InvalidInput == 5 */
+    if (rc_out_of_range != 5) {
+        fprintf(stderr, "oxi_init(4) accepted an out-of-range profile: %d\n", rc_out_of_range);
+        return 1;
+    }
+    if (rc_migration == 5) {
+        fprintf(stderr, "oxi_init(3) rejected the Migration profile\n");
+        return 1;
+    }
     if (rc_bad != 5) {
         /* idempotent already-init path may return 0 first; if so the
          * existing module is operational and the profile-check

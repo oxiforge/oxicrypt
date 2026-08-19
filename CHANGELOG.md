@@ -24,8 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `AlgorithmProfile::Migration`, the union of the two suites, for a deployment running
   classical and post-quantum algorithms side by side. It is not a CNSA profile; the C ABI selects
   it with profile `3`.
-- Each profile membership now cites the clause of CNSSP-15 that admits it, and a test pins the
-  CNSA 1.0 set against the suite.
+- Each profile membership cites the clause of CNSSP-15 that admits it, and a test asserts each
+  profile's membership exactly, over every service, in both directions.
+- Removed PBKDF2 and the TLS KDFs from both CNSA profiles. Neither edition of CNSSP-15 names a
+  password-based or protocol-specific key derivation function, and neither is required in order to
+  operate an algorithm the suites do name.
+
+  **Consumers selecting a CNSA profile should read the two entries above as a behaviour change.**
+  Services outside the suite as CNSSP-15 defines it now return `Error::AlgorithmRestricted` where
+  earlier versions permitted them — under CNSA 1.0 that includes SHA-256, SHA-512 and their HMAC,
+  DRBG and KDF variants, the post-quantum algorithms and the stateful hash-based schemes; under
+  CNSA 2.0 it includes the Keccak-family hashes and XOFs. A deployment that needs the previous
+  breadth selects `Migration`, or `Unrestricted` for anything beyond the two suites. (#265)
 - Scoped `oxicrypt-xmss` to signature verification. **Breaking: `keygen`, `sign` and
   `XmssPrivateKey` are removed from the crate, and `oxi_xmss_keygen` and `oxi_xmss_sign` from the
   C ABI. (#264)**

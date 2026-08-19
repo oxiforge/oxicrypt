@@ -431,7 +431,7 @@ are fully implemented: P-384 ECDSA/ECDH, RSA-3072/4096 (PKCS#1 v1.5,
 PSS, OAEP, keygen with CRT + Bellcore verify-after-sign per IG D.G),
 DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — complete SP 800-208 §A.3 grid (80 pairs) — and XMSS
-(SP 800-208). CNSA 2.0 / CNSA 1.0 algorithm-profile gating enforced
+(SP 800-208). CNSA 2.0 / CNSA 1.0 / Migration algorithm-profile gating enforced
 across all algorithm crates and the C ABI (`oxicrypt-ffi`). 86 ACVP
 handlers, 152 power-up self-tests, 128 ACVP/CAVP round-trip tests — all
 green.

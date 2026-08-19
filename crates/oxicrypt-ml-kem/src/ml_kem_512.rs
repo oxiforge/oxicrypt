@@ -18,7 +18,7 @@
 //! # CNSA gating
 //!
 //! ML-KEM-512 is **not** part of CNSA 2.0 (which mandates ML-KEM-1024)
-//! and is **not** in the CNSA 1.0 transition allow-list either. The
+//! and is **not** in the CNSA 1.0 suite either. The
 //! [`Service::MlKem512Keygen`] / `Encaps` / `Decaps` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 //! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and

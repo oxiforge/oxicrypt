@@ -14,7 +14,7 @@
 //! # CNSA gating
 //!
 //! ML-KEM-768 is **not** part of CNSA 2.0 (which mandates ML-KEM-1024)
-//! and is **not** in the CNSA 1.0 transition allow-list either. The
+//! and is **not** in the CNSA 1.0 suite either. The
 //! [`Service::MlKem768Keygen`] / `Encaps` / `Decaps` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 

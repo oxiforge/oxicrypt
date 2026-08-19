@@ -14,7 +14,7 @@
 //! # CNSA gating
 //!
 //! ML-DSA-44 is **not** part of CNSA 2.0 (which mandates ML-DSA-87)
-//! and is **not** in the CNSA 1.0 transition allow-list. The
+//! and is **not** in the CNSA 1.0 suite. The
 //! [`Service::MlDsa44Sign`] / `Verify` / `Keygen` variants are
 //! permitted only under [`oxicrypt_module::AlgorithmProfile::Unrestricted`].
 //! See `crates/oxicrypt-module/src/lib.rs` `is_cnsa1_allowed` and

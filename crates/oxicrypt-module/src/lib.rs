@@ -44,7 +44,8 @@
 //!   shape that algorithm crates use to expose their power-up
 //!   KATs.
 //! - [`AlgorithmProfile`] — runtime selection of an algorithm
-//!   restriction policy (Unrestricted, CNSA 2.0, CNSA 1.0).
+//!   restriction policy (Unrestricted, CNSA 2.0, CNSA 1.0,
+//!   Migration).
 //!   Set once at initialization via
 //!   [`initialize_with_profile`].
 //! - [`Service`] — per-algorithm-and-parameter enumeration of
@@ -67,27 +68,42 @@
 //! permitted by the active profile return
 //! [`Error::AlgorithmRestricted`].
 //!
-//! Three profiles are defined:
+//! Four profiles are defined:
 //!
 //! - **Unrestricted** — all FIPS-approved algorithms are
 //!   available. This is the default, matching the behavior of
 //!   [`initialize_with_tests`].
-//! - **CNSA 2.0** (CNSSP 15) — only quantum-resistant
-//!   algorithms: AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87,
-//!   LMS and XMSS for software and firmware signing, plus
-//!   SHA3-384/512 and 256-bit SP 800-185 variants. Every
-//!   approved SP 800-208 LMS parameter set is permitted;
-//!   CNSSP-15 Annex B places no subset restriction on LMS.
-//!   No SLH-DSA parameter set is permitted — CNSSP-15 lists
-//!   none.
-//! - **CNSA 1.0** — classical algorithms for the transition
-//!   period: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072,
-//!   DH >= 3072.
+//! - **CNSA 2.0** — CNSSP-15 (March 2025) Annex B: AES-256,
+//!   SHA-384 or SHA-512, ML-KEM-1024, ML-DSA-87, and the
+//!   SP 800-208 stateful hash-based signatures for software and
+//!   firmware signing, together with the supporting services
+//!   those need at matching strength. Every approved LMS
+//!   parameter set is permitted; Annex B places no subset
+//!   restriction on LMS. No Keccak-family hash or XOF is
+//!   permitted: the suite names none for a software module, and
+//!   the policy states that algorithms using SHA3 as a component
+//!   do not thereby make SHA3 an approved hash function. No
+//!   SLH-DSA parameter set is permitted — CNSSP-15 lists none.
+//! - **CNSA 1.0** — CNSSP-15 (October 2016) Annex B: AES-256,
+//!   ECDH and ECDSA on P-384, SHA-384, and Diffie-Hellman and
+//!   RSA at a minimum 3072-bit modulus, with the supporting
+//!   services those need at matching strength. SHA-256 is
+//!   refused: the suite admits it only under a near-term
+//!   allowance scoped to UNCLASSIFIED data, a condition the
+//!   module cannot evaluate.
+//! - **Migration** — both suites at once, for a deployment
+//!   moving between them. It is **not** a CNSA profile and no
+//!   standard defines it; it is the union of the two above, and
+//!   is narrower than Unrestricted, which refuses nothing.
 //!
-//! Profiles nest: CNSA 2.0 is the most restrictive, CNSA 1.0
-//! is intermediate, Unrestricted allows everything. KATs still
-//! run all algorithms regardless of profile — the profile
-//! only restricts post-initialization service access.
+//! **The profiles do not nest.** Neither CNSA suite contains the
+//! other: CNSA 1.0 admits ECDSA, RSA and Diffie-Hellman that
+//! CNSA 2.0 refuses, and CNSA 2.0 admits the post-quantum and
+//! stateful hash-based algorithms that CNSA 1.0 refuses. The two
+//! overlap in AES-256 and SHA-384 and their matching-strength
+//! support, and nowhere else. KATs still run all algorithms
+//! regardless of profile — the profile only restricts
+//! post-initialization service access.
 //!
 //! # Sensitive security parameters (SSPs)
 //!
@@ -1378,10 +1394,10 @@ const fn is_allowed(profile: AlgorithmProfile, service: Service) -> bool {
         AlgorithmProfile::Cnsa1 => is_cnsa1_allowed(service),
         // Derived from the two suites rather than enumerated a third time:
         // a hand-written union is a third list to drift, and drift is the
-        // defect this work exists to repair.
-        AlgorithmProfile::Migration => {
-            is_cnsa1_allowed(service) || is_cnsa2_allowed(service) || is_lms_service(service)
-        }
+        // defect this work exists to repair. `is_cnsa2_allowed` already
+        // covers the LMS block, so naming it again here would be that third
+        // rule in miniature.
+        AlgorithmProfile::Migration => is_cnsa1_allowed(service) || is_cnsa2_allowed(service),
     }
 }
 
@@ -1436,9 +1452,10 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             // SHA-384, SHA-512
             | Service::Sha384
             | Service::Sha512
-            // SHA3-384, SHA3-512 (for internal / hardware — see plan note)
-            // SHAKE-256
-            // 256-bit SP 800-185 variants
+            // No Keccak-family service: Annex B allows SHA3-384/512 only
+            // for internal hardware functionality, which a software module
+            // cannot claim, and names no SHAKE, KMAC, TupleHash or
+            // ParallelHash at all.
             // HMAC with allowed hashes
             | Service::HmacSha384
             | Service::HmacSha512
@@ -1456,10 +1473,7 @@ const fn is_cnsa2_allowed(service: Service) -> bool {
             | Service::KbkdfHmacSha384
             | Service::KbkdfHmacSha512
             | Service::KbkdfCmacAes256
-            | Service::Pbkdf2HmacSha384
-            | Service::Pbkdf2HmacSha512
             // TLS 1.3 KDF — mandatory transport in CNSA 2.0
-            | Service::Tls13Kdf
             // Post-quantum (CNSA 2.0 core)
             | Service::MlKem1024Encaps
             | Service::MlKem1024Decaps
@@ -1553,8 +1567,6 @@ const fn is_cnsa1_allowed(service: Service) -> bool {
             | Service::HkdfSha384
             | Service::KbkdfHmacSha384
             | Service::KbkdfCmacAes256
-            | Service::Pbkdf2HmacSha384
-            | Service::Tls12Kdf
     )
 }
 
@@ -1854,8 +1866,6 @@ mod tests {
             Service::LmsSha256M32H10W4Sign,
             Service::Dh3072,
             Service::SlhDsaSha2256sSign,
-            Service::Tls12Kdf,
-            Service::Tls13Kdf,
         ];
         for svc in spot {
             assert!(
@@ -1886,7 +1896,6 @@ mod tests {
             Service::LmsSha256M32H10W4Sign,
             Service::LmsSha256M32H10W4Verify,
             Service::XmssVerify,
-            Service::Tls13Kdf,
         ];
         for svc in allowed {
             assert!(
@@ -1965,7 +1974,6 @@ mod tests {
             Service::Ed25519Verify,
             Service::RsaPssSign2048,
             Service::RsaOaep2048,
-            Service::Tls12Kdf,
             // No SLH-DSA parameter set is in CNSA 2.0 — CNSSP-15 lists none.
             Service::SlhDsaSha2128sSign,
             Service::MlDsa44Sign,
@@ -1983,60 +1991,538 @@ mod tests {
         }
     }
 
-    /// The exact CNSA 1.0 membership, pinned.
+    /// Every `Service` variant, so a profile's permitted set can be computed
+    /// rather than sampled.
     ///
-    /// Exhaustiveness over every `Service` is not expressible here — the enum
-    /// has no iterator, and the 336 variants would have to be listed to get
-    /// one. What this pins is the membership itself: adding a service to the
-    /// gate without adding it here, or removing one, fails. That is the drift
-    /// this work exists to stop, since both allow-lists were hand-written
-    /// match arms with no anchor to the documents they name.
-    #[test]
-    fn cnsa1_membership_is_pinned_at_the_2016_suite() {
-        let expected = [
-            Service::Aes256,
-            Service::Aes256Ecb,
-            Service::Aes256Cbc,
-            Service::Aes256Ctr,
-            Service::Aes256Gcm,
-            Service::Aes256Ccm,
-            Service::Aes256Kw,
-            Service::Aes256Kwp,
-            Service::EcdhP384,
-            Service::EcdsaP384Keygen,
-            Service::EcdsaP384Sign,
-            Service::EcdsaP384Verify,
-            Service::Sha384,
-            Service::Dh3072,
-            Service::RsaKeygen3072,
-            Service::RsaKeygen4096,
-            Service::RsaOaep3072,
-            Service::RsaOaep4096,
-            Service::RsaPkcs1v15Sign3072,
-            Service::RsaPkcs1v15Sign4096,
-            Service::RsaPkcs1v15Verify3072,
-            Service::RsaPkcs1v15Verify4096,
-            Service::RsaPssSign3072,
-            Service::RsaPssSign4096,
-            Service::RsaPssVerify3072,
-            Service::RsaPssVerify4096,
-            Service::CtrDrbgAes256,
-            Service::HashDrbgSha384,
-            Service::HmacDrbgSha384,
-            Service::HmacSha384,
-            Service::CmacAes256,
-            Service::HkdfSha384,
-            Service::KbkdfHmacSha384,
-            Service::KbkdfCmacAes256,
-            Service::Pbkdf2HmacSha384,
-            Service::Tls12Kdf,
-        ];
-        assert_eq!(expected.len(), 36, "CNSA 1.0 membership drift");
-        for svc in expected {
-            assert!(
-                is_allowed(AlgorithmProfile::Cnsa1, svc),
-                "{svc} is in CNSSP-15 (2016) Annex B and must be permitted"
+    /// The earlier membership test asserted only that an expected list was a
+    /// SUBSET of what the gate permits, with a length assertion on the test's
+    /// own array — a constant. It therefore could not see a widening: adding
+    /// `RsaKeygen2048` to the CNSA 1.0 gate left it green, which is precisely
+    /// the drift the test existed to catch. Enumerating the enum makes the
+    /// comparison exact in both directions.
+    const ALL_SERVICES: [Service; 336] = [
+        Service::Sha1,
+        Service::Sha224,
+        Service::Sha256,
+        Service::Sha384,
+        Service::Sha512,
+        Service::Sha512_224,
+        Service::Sha512_256,
+        Service::Sha3_224,
+        Service::Sha3_256,
+        Service::Sha3_384,
+        Service::Sha3_512,
+        Service::Shake128,
+        Service::Shake256,
+        Service::CShake128,
+        Service::CShake256,
+        Service::Kmac128,
+        Service::Kmac256,
+        Service::KmacXof128,
+        Service::KmacXof256,
+        Service::TupleHash128,
+        Service::TupleHash256,
+        Service::TupleHashXof128,
+        Service::TupleHashXof256,
+        Service::ParallelHash128,
+        Service::ParallelHash256,
+        Service::ParallelHashXof128,
+        Service::ParallelHashXof256,
+        Service::HmacSha1,
+        Service::HmacSha224,
+        Service::HmacSha256,
+        Service::HmacSha384,
+        Service::HmacSha512,
+        Service::HmacSha512_224,
+        Service::HmacSha512_256,
+        Service::HmacSha3_224,
+        Service::HmacSha3_256,
+        Service::HmacSha3_384,
+        Service::HmacSha3_512,
+        Service::CmacAes128,
+        Service::CmacAes192,
+        Service::CmacAes256,
+        Service::Aes128Ecb,
+        Service::Aes128Cbc,
+        Service::Aes128Ctr,
+        Service::Aes128Gcm,
+        Service::Aes128Ccm,
+        Service::Aes128Kw,
+        Service::Aes128Kwp,
+        Service::Aes192Ecb,
+        Service::Aes192Cbc,
+        Service::Aes192Ctr,
+        Service::Aes192Gcm,
+        Service::Aes192Ccm,
+        Service::Aes192Kw,
+        Service::Aes192Kwp,
+        Service::Aes256Ecb,
+        Service::Aes256Cbc,
+        Service::Aes256Ctr,
+        Service::Aes256Gcm,
+        Service::Aes256Ccm,
+        Service::Aes256Kw,
+        Service::Aes256Kwp,
+        Service::Aes128,
+        Service::Aes192,
+        Service::Aes256,
+        Service::CtrDrbgAes128,
+        Service::CtrDrbgAes192,
+        Service::CtrDrbgAes256,
+        Service::HashDrbgSha256,
+        Service::HashDrbgSha384,
+        Service::HashDrbgSha512,
+        Service::HmacDrbgSha256,
+        Service::HmacDrbgSha384,
+        Service::HmacDrbgSha512,
+        Service::HkdfSha1,
+        Service::HkdfSha256,
+        Service::HkdfSha384,
+        Service::HkdfSha512,
+        Service::KbkdfHmacSha256,
+        Service::KbkdfHmacSha384,
+        Service::KbkdfHmacSha512,
+        Service::KbkdfCmacAes128,
+        Service::KbkdfCmacAes192,
+        Service::KbkdfCmacAes256,
+        Service::Pbkdf2HmacSha1,
+        Service::Pbkdf2HmacSha224,
+        Service::Pbkdf2HmacSha256,
+        Service::Pbkdf2HmacSha384,
+        Service::Pbkdf2HmacSha512,
+        Service::RsaKeygen2048,
+        Service::RsaPkcs1v15Sign2048,
+        Service::RsaPssSign2048,
+        Service::RsaOaep2048,
+        Service::RsaPkcs1v15Verify2048,
+        Service::RsaPssVerify2048,
+        Service::RsaKeygen3072,
+        Service::RsaPkcs1v15Sign3072,
+        Service::RsaPssSign3072,
+        Service::RsaOaep3072,
+        Service::RsaPkcs1v15Verify3072,
+        Service::RsaPssVerify3072,
+        Service::RsaKeygen4096,
+        Service::RsaPkcs1v15Sign4096,
+        Service::RsaPssSign4096,
+        Service::RsaOaep4096,
+        Service::RsaPkcs1v15Verify4096,
+        Service::RsaPssVerify4096,
+        Service::EcdsaP256Sign,
+        Service::EcdsaP256Verify,
+        Service::EcdsaP256Keygen,
+        Service::EcdsaP384Sign,
+        Service::EcdsaP384Verify,
+        Service::EcdsaP384Keygen,
+        Service::EcdhP256,
+        Service::EcdhP384,
+        Service::Ed25519Sign,
+        Service::Ed25519Verify,
+        Service::Ed25519Keygen,
+        Service::Tls12Kdf,
+        Service::Tls13Kdf,
+        Service::MlKem1024Encaps,
+        Service::MlKem1024Decaps,
+        Service::MlKem1024Keygen,
+        Service::MlKem512Encaps,
+        Service::MlKem512Decaps,
+        Service::MlKem512Keygen,
+        Service::MlKem768Encaps,
+        Service::MlKem768Decaps,
+        Service::MlKem768Keygen,
+        Service::MlDsa87Sign,
+        Service::MlDsa87Verify,
+        Service::MlDsa87Keygen,
+        Service::MlDsa44Sign,
+        Service::MlDsa44Verify,
+        Service::MlDsa44Keygen,
+        Service::MlDsa65Sign,
+        Service::MlDsa65Verify,
+        Service::MlDsa65Keygen,
+        Service::SlhDsaSha2256sKeygen,
+        Service::SlhDsaSha2256sSign,
+        Service::SlhDsaSha2256sVerify,
+        Service::SlhDsaSha2128sKeygen,
+        Service::SlhDsaSha2128sSign,
+        Service::SlhDsaSha2128sVerify,
+        Service::SlhDsaSha2128fKeygen,
+        Service::SlhDsaSha2128fSign,
+        Service::SlhDsaSha2128fVerify,
+        Service::SlhDsaSha2192sKeygen,
+        Service::SlhDsaSha2192sSign,
+        Service::SlhDsaSha2192sVerify,
+        Service::SlhDsaSha2192fKeygen,
+        Service::SlhDsaSha2192fSign,
+        Service::SlhDsaSha2192fVerify,
+        Service::SlhDsaSha2256fKeygen,
+        Service::SlhDsaSha2256fSign,
+        Service::SlhDsaSha2256fVerify,
+        Service::SlhDsaShake128sKeygen,
+        Service::SlhDsaShake128sSign,
+        Service::SlhDsaShake128sVerify,
+        Service::SlhDsaShake128fKeygen,
+        Service::SlhDsaShake128fSign,
+        Service::SlhDsaShake128fVerify,
+        Service::SlhDsaShake192sKeygen,
+        Service::SlhDsaShake192sSign,
+        Service::SlhDsaShake192sVerify,
+        Service::SlhDsaShake192fKeygen,
+        Service::SlhDsaShake192fSign,
+        Service::SlhDsaShake192fVerify,
+        Service::SlhDsaShake256sKeygen,
+        Service::SlhDsaShake256sSign,
+        Service::SlhDsaShake256sVerify,
+        Service::SlhDsaShake256fKeygen,
+        Service::SlhDsaShake256fSign,
+        Service::SlhDsaShake256fVerify,
+        Service::LmsSha256M32H5W1Sign,
+        Service::LmsSha256M32H5W1Verify,
+        Service::LmsSha256M32H5W2Sign,
+        Service::LmsSha256M32H5W2Verify,
+        Service::LmsSha256M32H5W4Sign,
+        Service::LmsSha256M32H5W4Verify,
+        Service::LmsSha256M32H5W8Sign,
+        Service::LmsSha256M32H5W8Verify,
+        Service::LmsSha256M32H10W1Sign,
+        Service::LmsSha256M32H10W1Verify,
+        Service::LmsSha256M32H10W2Sign,
+        Service::LmsSha256M32H10W2Verify,
+        Service::LmsSha256M32H10W4Sign,
+        Service::LmsSha256M32H10W4Verify,
+        Service::LmsSha256M32H10W8Sign,
+        Service::LmsSha256M32H10W8Verify,
+        Service::LmsSha256M32H15W1Sign,
+        Service::LmsSha256M32H15W1Verify,
+        Service::LmsSha256M32H15W2Sign,
+        Service::LmsSha256M32H15W2Verify,
+        Service::LmsSha256M32H15W4Sign,
+        Service::LmsSha256M32H15W4Verify,
+        Service::LmsSha256M32H15W8Sign,
+        Service::LmsSha256M32H15W8Verify,
+        Service::LmsSha256M32H20W1Sign,
+        Service::LmsSha256M32H20W1Verify,
+        Service::LmsSha256M32H20W2Sign,
+        Service::LmsSha256M32H20W2Verify,
+        Service::LmsSha256M32H20W4Sign,
+        Service::LmsSha256M32H20W4Verify,
+        Service::LmsSha256M32H20W8Sign,
+        Service::LmsSha256M32H20W8Verify,
+        Service::LmsSha256M32H25W1Sign,
+        Service::LmsSha256M32H25W1Verify,
+        Service::LmsSha256M32H25W2Sign,
+        Service::LmsSha256M32H25W2Verify,
+        Service::LmsSha256M32H25W4Sign,
+        Service::LmsSha256M32H25W4Verify,
+        Service::LmsSha256M32H25W8Sign,
+        Service::LmsSha256M32H25W8Verify,
+        Service::LmsSha256M24H5W1Sign,
+        Service::LmsSha256M24H5W1Verify,
+        Service::LmsSha256M24H5W2Sign,
+        Service::LmsSha256M24H5W2Verify,
+        Service::LmsSha256M24H5W4Sign,
+        Service::LmsSha256M24H5W4Verify,
+        Service::LmsSha256M24H5W8Sign,
+        Service::LmsSha256M24H5W8Verify,
+        Service::LmsSha256M24H10W1Sign,
+        Service::LmsSha256M24H10W1Verify,
+        Service::LmsSha256M24H10W2Sign,
+        Service::LmsSha256M24H10W2Verify,
+        Service::LmsSha256M24H10W4Sign,
+        Service::LmsSha256M24H10W4Verify,
+        Service::LmsSha256M24H10W8Sign,
+        Service::LmsSha256M24H10W8Verify,
+        Service::LmsSha256M24H15W1Sign,
+        Service::LmsSha256M24H15W1Verify,
+        Service::LmsSha256M24H15W2Sign,
+        Service::LmsSha256M24H15W2Verify,
+        Service::LmsSha256M24H15W4Sign,
+        Service::LmsSha256M24H15W4Verify,
+        Service::LmsSha256M24H15W8Sign,
+        Service::LmsSha256M24H15W8Verify,
+        Service::LmsSha256M24H20W1Sign,
+        Service::LmsSha256M24H20W1Verify,
+        Service::LmsSha256M24H20W2Sign,
+        Service::LmsSha256M24H20W2Verify,
+        Service::LmsSha256M24H20W4Sign,
+        Service::LmsSha256M24H20W4Verify,
+        Service::LmsSha256M24H20W8Sign,
+        Service::LmsSha256M24H20W8Verify,
+        Service::LmsSha256M24H25W1Sign,
+        Service::LmsSha256M24H25W1Verify,
+        Service::LmsSha256M24H25W2Sign,
+        Service::LmsSha256M24H25W2Verify,
+        Service::LmsSha256M24H25W4Sign,
+        Service::LmsSha256M24H25W4Verify,
+        Service::LmsSha256M24H25W8Sign,
+        Service::LmsSha256M24H25W8Verify,
+        Service::LmsShakeM32H5W1Sign,
+        Service::LmsShakeM32H5W1Verify,
+        Service::LmsShakeM32H5W2Sign,
+        Service::LmsShakeM32H5W2Verify,
+        Service::LmsShakeM32H5W4Sign,
+        Service::LmsShakeM32H5W4Verify,
+        Service::LmsShakeM32H5W8Sign,
+        Service::LmsShakeM32H5W8Verify,
+        Service::LmsShakeM32H10W1Sign,
+        Service::LmsShakeM32H10W1Verify,
+        Service::LmsShakeM32H10W2Sign,
+        Service::LmsShakeM32H10W2Verify,
+        Service::LmsShakeM32H10W4Sign,
+        Service::LmsShakeM32H10W4Verify,
+        Service::LmsShakeM32H10W8Sign,
+        Service::LmsShakeM32H10W8Verify,
+        Service::LmsShakeM32H15W1Sign,
+        Service::LmsShakeM32H15W1Verify,
+        Service::LmsShakeM32H15W2Sign,
+        Service::LmsShakeM32H15W2Verify,
+        Service::LmsShakeM32H15W4Sign,
+        Service::LmsShakeM32H15W4Verify,
+        Service::LmsShakeM32H15W8Sign,
+        Service::LmsShakeM32H15W8Verify,
+        Service::LmsShakeM32H20W1Sign,
+        Service::LmsShakeM32H20W1Verify,
+        Service::LmsShakeM32H20W2Sign,
+        Service::LmsShakeM32H20W2Verify,
+        Service::LmsShakeM32H20W4Sign,
+        Service::LmsShakeM32H20W4Verify,
+        Service::LmsShakeM32H20W8Sign,
+        Service::LmsShakeM32H20W8Verify,
+        Service::LmsShakeM32H25W1Sign,
+        Service::LmsShakeM32H25W1Verify,
+        Service::LmsShakeM32H25W2Sign,
+        Service::LmsShakeM32H25W2Verify,
+        Service::LmsShakeM32H25W4Sign,
+        Service::LmsShakeM32H25W4Verify,
+        Service::LmsShakeM32H25W8Sign,
+        Service::LmsShakeM32H25W8Verify,
+        Service::LmsShakeM24H5W1Sign,
+        Service::LmsShakeM24H5W1Verify,
+        Service::LmsShakeM24H5W2Sign,
+        Service::LmsShakeM24H5W2Verify,
+        Service::LmsShakeM24H5W4Sign,
+        Service::LmsShakeM24H5W4Verify,
+        Service::LmsShakeM24H5W8Sign,
+        Service::LmsShakeM24H5W8Verify,
+        Service::LmsShakeM24H10W1Sign,
+        Service::LmsShakeM24H10W1Verify,
+        Service::LmsShakeM24H10W2Sign,
+        Service::LmsShakeM24H10W2Verify,
+        Service::LmsShakeM24H10W4Sign,
+        Service::LmsShakeM24H10W4Verify,
+        Service::LmsShakeM24H10W8Sign,
+        Service::LmsShakeM24H10W8Verify,
+        Service::LmsShakeM24H15W1Sign,
+        Service::LmsShakeM24H15W1Verify,
+        Service::LmsShakeM24H15W2Sign,
+        Service::LmsShakeM24H15W2Verify,
+        Service::LmsShakeM24H15W4Sign,
+        Service::LmsShakeM24H15W4Verify,
+        Service::LmsShakeM24H15W8Sign,
+        Service::LmsShakeM24H15W8Verify,
+        Service::LmsShakeM24H20W1Sign,
+        Service::LmsShakeM24H20W1Verify,
+        Service::LmsShakeM24H20W2Sign,
+        Service::LmsShakeM24H20W2Verify,
+        Service::LmsShakeM24H20W4Sign,
+        Service::LmsShakeM24H20W4Verify,
+        Service::LmsShakeM24H20W8Sign,
+        Service::LmsShakeM24H20W8Verify,
+        Service::LmsShakeM24H25W1Sign,
+        Service::LmsShakeM24H25W1Verify,
+        Service::LmsShakeM24H25W2Sign,
+        Service::LmsShakeM24H25W2Verify,
+        Service::LmsShakeM24H25W4Sign,
+        Service::LmsShakeM24H25W4Verify,
+        Service::LmsShakeM24H25W8Sign,
+        Service::LmsShakeM24H25W8Verify,
+        Service::XmssVerify,
+        Service::Dh3072,
+    ];
+
+    /// CNSA 1.0 permits exactly the CNSSP-15 (October 2016) Annex B suite and
+    /// the supporting services it needs at matching strength.
+    const EXPECTED_CNSA1: [Service; 34] = [
+        Service::Sha384,
+        Service::HmacSha384,
+        Service::CmacAes256,
+        Service::Aes256Ecb,
+        Service::Aes256Cbc,
+        Service::Aes256Ctr,
+        Service::Aes256Gcm,
+        Service::Aes256Ccm,
+        Service::Aes256Kw,
+        Service::Aes256Kwp,
+        Service::Aes256,
+        Service::CtrDrbgAes256,
+        Service::HashDrbgSha384,
+        Service::HmacDrbgSha384,
+        Service::HkdfSha384,
+        Service::KbkdfHmacSha384,
+        Service::KbkdfCmacAes256,
+        Service::RsaKeygen3072,
+        Service::RsaPkcs1v15Sign3072,
+        Service::RsaPssSign3072,
+        Service::RsaOaep3072,
+        Service::RsaPkcs1v15Verify3072,
+        Service::RsaPssVerify3072,
+        Service::RsaKeygen4096,
+        Service::RsaPkcs1v15Sign4096,
+        Service::RsaPssSign4096,
+        Service::RsaOaep4096,
+        Service::RsaPkcs1v15Verify4096,
+        Service::RsaPssVerify4096,
+        Service::EcdsaP384Sign,
+        Service::EcdsaP384Verify,
+        Service::EcdsaP384Keygen,
+        Service::EcdhP384,
+        Service::Dh3072,
+    ];
+
+    /// CNSA 2.0's non-LMS membership. The 160 LMS services are asserted by
+    /// count rather than listed, because `lms_all_160` already enumerates them.
+    const EXPECTED_CNSA2_NON_LMS: [Service; 30] = [
+        Service::Sha384,
+        Service::Sha512,
+        Service::HmacSha384,
+        Service::HmacSha512,
+        Service::CmacAes256,
+        Service::Aes256Ecb,
+        Service::Aes256Cbc,
+        Service::Aes256Ctr,
+        Service::Aes256Gcm,
+        Service::Aes256Ccm,
+        Service::Aes256Kw,
+        Service::Aes256Kwp,
+        Service::Aes256,
+        Service::CtrDrbgAes256,
+        Service::HashDrbgSha384,
+        Service::HashDrbgSha512,
+        Service::HmacDrbgSha384,
+        Service::HmacDrbgSha512,
+        Service::HkdfSha384,
+        Service::HkdfSha512,
+        Service::KbkdfHmacSha384,
+        Service::KbkdfHmacSha512,
+        Service::KbkdfCmacAes256,
+        Service::MlKem1024Encaps,
+        Service::MlKem1024Decaps,
+        Service::MlKem1024Keygen,
+        Service::MlDsa87Sign,
+        Service::MlDsa87Verify,
+        Service::MlDsa87Keygen,
+        Service::XmssVerify,
+    ];
+
+    /// Assert a profile permits EXACTLY `expected` (plus the LMS block when
+    /// `allow_lms`), checked over every variant so a widening cannot hide.
+    fn assert_exact_membership(profile: AlgorithmProfile, expected: &[Service], allow_lms: bool) {
+        for svc in ALL_SERVICES {
+            let want = expected.iter().any(|e| *e as u16 == svc as u16)
+                || (allow_lms && is_lms_service(svc));
+            assert_eq!(
+                is_allowed(profile, svc),
+                want,
+                "{svc} under {profile}: gate says {}, suite says {want}",
+                is_allowed(profile, svc)
             );
+        }
+    }
+
+    /// Every profile survives the round trip through the `PROFILE` atomic.
+    ///
+    /// `from_u8` had no test at all, and the omission was not visible from the
+    /// membership tests: those call the private `is_allowed` directly, so a
+    /// mutation mapping discriminant 3 to `Cnsa2` left the suite green while
+    /// every Migration deployment silently ran as CNSA 2.0 — refusing ECDSA
+    /// P-384, RSA and DH — and `oxi_active_profile()` reported `1` for a module
+    /// initialised with `3`. This goes through the entry point, which is the
+    /// only place that mapping is exercised.
+    #[test]
+    fn every_profile_round_trips_through_the_active_profile() {
+        for profile in [
+            AlgorithmProfile::Unrestricted,
+            AlgorithmProfile::Cnsa2,
+            AlgorithmProfile::Cnsa1,
+            AlgorithmProfile::Migration,
+        ] {
+            assert_eq!(
+                AlgorithmProfile::from_u8(profile as u8),
+                profile,
+                "{profile} did not survive the round trip through its discriminant"
+            );
+        }
+
+        // An unknown discriminant must not resolve to a permissive profile.
+        // `Unrestricted` refuses nothing, so it is the one answer that would
+        // turn a corrupted byte into an open module.
+        for raw in [4u8, 9, 200, 255] {
+            assert_ne!(
+                AlgorithmProfile::from_u8(raw),
+                AlgorithmProfile::Unrestricted,
+                "unknown discriminant {raw} must not open the module"
+            );
+        }
+    }
+
+    /// A profile initialised through the public entry point gates as itself.
+    ///
+    /// The membership tests reach `is_allowed` directly; this reaches it the
+    /// way a caller does, through `initialize_with_profile` and the `PROFILE`
+    /// atomic that `require_allowed` reads.
+    #[test]
+    fn migration_gates_as_itself_through_require_allowed() {
+        let guard = reset_for_test();
+        guard.reset();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Migration).unwrap();
+        assert_eq!(active_profile(), AlgorithmProfile::Migration);
+
+        // Permitted by CNSA 1.0 only — refused if this silently ran as CNSA 2.0.
+        assert!(
+            require_allowed(Service::EcdsaP384Sign).is_ok(),
+            "ECDSA P-384 is in CNSA 1.0 and must pass under Migration"
+        );
+        assert!(
+            require_allowed(Service::Dh3072).is_ok(),
+            "DH-3072 is in CNSA 1.0 and must pass under Migration"
+        );
+        // Permitted by CNSA 2.0 only — refused if this silently ran as CNSA 1.0.
+        assert!(
+            require_allowed(Service::MlKem1024Encaps).is_ok(),
+            "ML-KEM-1024 is in CNSA 2.0 and must pass under Migration"
+        );
+        // Refused by both, so refused here: Migration is a gate, not Unrestricted.
+        assert!(require_allowed(Service::Sha256).is_err());
+    }
+
+    /// Exact membership, both directions. A service added to or removed from
+    /// any gate fails here.
+    #[test]
+    fn profile_membership_is_exact() {
+        assert_eq!(
+            ALL_SERVICES.len(),
+            336,
+            "Service enumeration drift — a variant was added without listing it"
+        );
+
+        assert_exact_membership(AlgorithmProfile::Cnsa1, &EXPECTED_CNSA1, false);
+        assert_exact_membership(AlgorithmProfile::Cnsa2, &EXPECTED_CNSA2_NON_LMS, true);
+
+        // Migration is the union, so a service belongs iff either suite admits
+        // it. Expressed against the two gates rather than a third list.
+        for svc in ALL_SERVICES {
+            let want = is_allowed(AlgorithmProfile::Cnsa1, svc)
+                || is_allowed(AlgorithmProfile::Cnsa2, svc);
+            assert_eq!(
+                is_allowed(AlgorithmProfile::Migration, svc),
+                want,
+                "{svc}: Migration must permit exactly the union"
+            );
+        }
+
+        // Control: Unrestricted permits everything, so a gate that refused
+        // everything could not have satisfied the assertions above.
+        for svc in ALL_SERVICES {
+            assert!(is_allowed(AlgorithmProfile::Unrestricted, svc));
         }
     }
 
@@ -2054,7 +2540,6 @@ mod tests {
             Service::EcdhP384,
             Service::RsaPssSign3072,
             Service::Dh3072,
-            Service::Tls12Kdf,
         ] {
             assert!(
                 is_allowed(AlgorithmProfile::Migration, svc),
@@ -2073,7 +2558,6 @@ mod tests {
             Service::XmssVerify,
             Service::Sha512,
             Service::LmsSha256M32H10W4Sign,
-            Service::Tls13Kdf,
         ] {
             assert!(
                 is_allowed(AlgorithmProfile::Migration, svc),
@@ -2135,7 +2619,6 @@ mod tests {
             Service::CtrDrbgAes256,
             Service::HashDrbgSha384,
             Service::KbkdfHmacSha384,
-            Service::Tls12Kdf,
         ];
         for svc in allowed {
             assert!(
@@ -2179,7 +2662,6 @@ mod tests {
             Service::MlDsa87Sign,
             Service::XmssVerify,
             Service::LmsSha256M32H10W4Sign,
-            Service::Tls13Kdf,
         ];
         for svc in blocked {
             assert!(

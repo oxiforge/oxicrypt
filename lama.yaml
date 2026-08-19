@@ -21,9 +21,11 @@ library:
       - name: "Unrestricted"
         description: "All FIPS-approved algorithms available (default)"
       - name: "CNSA 2.0"
-        description: "Quantum-resistant: AES-256, SHA-384/512, ML-KEM-1024, ML-DSA-87, LMS, XMSS"
+        description: "CNSSP-15 (March 2025) Annex B: AES-256, SHA-384 or SHA-512, ML-KEM-1024, ML-DSA-87 and the SP 800-208 stateful hash-based signatures, with matching-strength support"
       - name: "CNSA 1.0"
-        description: "Classical transition: AES-256, SHA-384, ECDSA/ECDH P-384, RSA >= 3072, DH >= 3072"
+        description: "CNSSP-15 (October 2016) Annex B: AES-256, ECDH and ECDSA on P-384, SHA-384, and Diffie-Hellman and RSA at a minimum 3072-bit modulus, with matching-strength support"
+      - name: "Migration"
+        description: "Both suites at once for a deployment moving between them; not a CNSA profile and not defined by any standard"
 
 capabilities:
   - category: "Hashing"

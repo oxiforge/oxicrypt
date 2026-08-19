@@ -494,7 +494,7 @@ types:
       - name: Unrestricted
         description: All FIPS-approved algorithms available.
       - name: Cnsa2
-        description: "CNSA 2.0: quantum-resistant algorithms only."
+        description: "CNSA 2.0 per CNSSP-15 (March 2025) Annex B: AES-256, SHA-384 or SHA-512, ML-KEM-1024, ML-DSA-87 and the SP 800-208 stateful hash-based signatures, with matching-strength support."
       - name: Cnsa1
         description: "CNSA 1.0 per CNSSP-15 (October 2016) Annex B: AES-256, ECDH and ECDSA on P-384, SHA-384, and Diffie-Hellman and RSA at a minimum 3072-bit modulus."
       - name: Migration
@@ -7793,7 +7793,7 @@ functions:
       - name: profile
         type: int
         direction: in
-        description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
+        description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0, 3 = Migration."
     returns:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
@@ -7817,7 +7817,7 @@ functions:
     parameters: []
     returns:
       type: int
-      description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0."
+      description: "0 = Unrestricted, 1 = CNSA 2.0, 2 = CNSA 1.0, 3 = Migration."
     preconditions:
       - description: Module must be initialized.
     security:
