@@ -294,21 +294,29 @@ jobs:
           # offset, an extent starting there instead of at the segment start
           # would survive codesign, and the design has a fix rather than a wall.
           FIRST_SECTION=$(awk '/segname __TEXT/{f=1} f&&/^ *offset /{print $2; exit}' after-otool.txt)
+          TEXT_FILESIZE=$(awk '/segname __TEXT/{f=1} f&&/^ *filesize /{print $2; exit}' after-otool.txt)
           echo "first __TEXT section begins at file offset ${FIRST_SECTION}" | tee -a answer.txt
-          python3 - "$FIRST_SECTION" <<'PY' | tee -a answer.txt
+          echo "__TEXT spans file bytes 0..${TEXT_FILESIZE}" | tee -a answer.txt
+          python3 - "$FIRST_SECTION" "$TEXT_FILESIZE" <<'PY' | tee -a answer.txt
           import sys
           first = int(sys.argv[1])
+          text_end = int(sys.argv[2])
           a = open("before.dylib", "rb").read()
           b = open("subject.dylib", "rb").read()
-          n = min(len(a), len(b))
+          # Bounded to __TEXT deliberately. Comparing whole files answers a
+          # different question: __LINKEDIT follows __TEXT and grows by the
+          # signature, so every byte from its start onward differs for reasons
+          # that have nothing to do with the extent. Only __TEXT is hashed, so
+          # only __TEXT decides whether a narrower extent would survive.
+          n = min(len(a), len(b), text_end)
           diffs = [i for i in range(n) if a[i] != b[i]]
-          print(f"file length: {len(a)} -> {len(b)}")
+          print(f"file length: {len(a)} -> {len(b)}; compared __TEXT bytes 0..{n}")
           if not diffs:
-              print("no byte in the common prefix changed")
+              print("no byte inside __TEXT changed")
           else:
               before_first = [i for i in diffs if i < first]
               after_first = [i for i in diffs if i >= first]
-              print(f"changed bytes in the common prefix: {len(diffs)}")
+              print(f"changed bytes inside __TEXT: {len(diffs)}")
               print(f"  before the first section (header + load commands): {len(before_first)}")
               print(f"  at or after the first section:                     {len(after_first)}")
               print(f"  first changed offset: {diffs[0]}, last: {diffs[-1]}")
