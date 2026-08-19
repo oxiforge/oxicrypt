@@ -418,10 +418,11 @@ jobs:
               echo "Startup was OBSERVED: this build was executed on the runner"
               echo "that produced it and reported a passing integrity test."
             else
-              echo "Startup was NOT observed on this platform: the artifact is"
-              echo "cross-compiled and the build runner cannot execute it. The"
-              echo "slot was verified offline against the file. Startup on this"
-              echo "target is exercised separately by the integrity-runtime job."
+              echo "Startup on this target is covered by the integrity-runtime"
+              echo "job, which runs the module natively on this architecture at"
+              echo "every push. This particular artifact is cross-compiled, so"
+              echo "the runner that built it could not execute it; its slot was"
+              echo "verified offline against the file."
             fi
             echo ""
             echo "Integrity MAC (HMAC-SHA-256 over the loader-invariant extent),"

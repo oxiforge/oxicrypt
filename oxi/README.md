@@ -47,9 +47,7 @@ oxi --lama                       Dump the LAMA manifest (YAML)
 Algorithms: `sha1`, `sha224`, `sha256`, `sha384`, `sha512`, `sha512-224`,
 `sha512-256`, `sha3-224`, `sha3-256`, `sha3-384`, `sha3-512`.
 
-`hmac` takes all eleven: the five above plus `sha512-224`, `sha512-256`,
-`sha3-224`, `sha3-256`, `sha3-384`, `sha3-512` — the same set `oxi selftest`
-reports.
+`hmac` takes the same eleven, which is also the set `oxi selftest` reports.
 
 ## Watching the module test itself
 
