@@ -1068,7 +1068,13 @@ mod tests {
     /// same thing (`**[MARK: …confirm placement with the CST lab…]**`), which a
     /// `TODO`/`pending]` sweep does not see.
     const OPEN_MARKERS: &[(&str, usize)] = &[
-        ("TODO", 7),
+        // 7 → 8 when §1.5 gained its vendor-affirmed environments. The new
+        // marker is deliberate and is the honest state of that section: an
+        // affirmation is relative to a tested environment, and §1.4 does not
+        // yet name any, so §1.5 cannot be read on its own until it does. It
+        // resolves when §1.4 is filled from the lab submission, and this pin
+        // should drop back to 7 in the same change.
+        ("TODO", 8),
         ("TBD", 0),
         ("FIXME", 0),
         ("XXX", 0),
