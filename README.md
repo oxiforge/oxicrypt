@@ -102,9 +102,9 @@ different stages:
   nothing inside the module is seeded from it.
 
 If you want the approved algorithms implemented in pure Rust, that is what
-this is. If you need to satisfy a requirement for a *validated* module, that
-means a certificate number, and there is not one yet. See the
-[Roadmap](#roadmap) for sequencing.
+this is. *Approved*, *vetted*, *validated* and *certified* are defined in
+[`ISA.md` § Language](ISA.md#language). See the [Roadmap](#roadmap) for
+sequencing.
 
 ## Algorithms
 

@@ -25,9 +25,12 @@ repository, see `docs/security-policy/README.md` — for the authoritative unsaf
 defines a formal module boundary with power-up self-tests, and ships an ACVP test harness — targeting
 **CAVP algorithm validation** and **CMVP module validation** through an accredited CST laboratory.
 
-**Compliance target:** FIPS 140-3, following the current **Implementation Guidance** release (IG
-**D.G** as of March 2026). When the IG updates, reconcile any affected design decisions against the new
-text before shipping further work. This is load-bearing: it is the standard the module is built to.
+**Compliance target:** FIPS 140-3, following the current **Implementation Guidance**. The IG revision
+and the per-section dates this module reconciles against are stated once, in `ISA.md` — this line is a
+pointer, not a second copy, per *Canonical homes* below. When the IG updates, reconcile any affected
+design decisions against the new text before shipping further work. This is load-bearing: it is the
+standard the module is built to. Note the IG is a rolling document whose cover date moves on any
+amendment, so reconcile against the **section** dates rather than the cover.
 
 ## Key paths
 
@@ -71,6 +74,7 @@ picking a home or copying the fact into several places.
 | **Public API surface** (per crate) | **`docs/llm-api-manifest/llm-api.yaml`** | the full LAMA manifest |
 | **API-discovery summary** | **root `lama.yaml`** — concise capabilities + manifest pointer, conformant to the LAMA spec; no milestone/coverage/status | pointer only |
 | **Compliance target** (FIPS 140-3 IG revision) | **`ISA.md`** + `docs/security-policy/` | never restated as an inline constant |
+| **Project vocabulary** — terms that have caused a confusion, and what each excludes; the validated / certified / approved / vetted distinction above all | **`ISA.md` § Language** | `ISC-42` is its falsifier; `README.md` states the three validation stages and their status |
 | **Release history** — what shipped, when, under which tag | **git tags + `CHANGELOG.md`** | README/lama.yaml carry a pointer, never a milestone table |
 | **Release version** | **git tags** | `lama.yaml` / `README.md` stamped at release from the tag |
 | **Internal dependency version requirement** | **root `Cargo.toml` `[workspace.dependencies]`** — one `{ path, version }` entry per internal crate | members declare `{ workspace = true }`. One member (`esv-harness`) cannot inherit and states its own version; see below |

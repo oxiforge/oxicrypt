@@ -852,7 +852,7 @@ mod tests {
     /// above assert. `D.K R1` is cited by ISC-123 in longhand
     /// ("IG D.K Resolution-1"): the parser normalises that form, which is one
     /// reflow away from a silent false negative.
-    const KNOWN_UNCITED: &[&str] = &["D.J AC6", "D.K R1", "D.K R15", "D.K R22", "D.K R5"];
+    const KNOWN_UNCITED: &[&str] = &["D.J AC6", "D.K R1", "D.K R15", "D.K R5"];
 
     /// How many distinct resolutions the criteria cite. Pinned rather than
     /// bounded: a threshold is cleared by a deletion, and a citation silently

@@ -72,7 +72,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 - **Type:** `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `perf`
 - **Scope:** the affected crate or area (`acvp-harness`, `oxicrypt-aes`, `oxicrypt-ml-kem`, `repo`, etc.)
 - **Subject:** imperative mood, ≤72 chars, no trailing period
-- **Body:** structured per the PR template — Why / What / Test plan / Anti-criteria
+- **Body:** structured per the PR template — Why / What / Test plan
 
 ### Co-author trailer policy
 
@@ -238,8 +238,12 @@ Use `.github/PULL_REQUEST_TEMPLATE.md`. Sections:
 2. **Why** — motivation, prior art, the observation that drove this work
 3. **What changed** — file-by-file or area-by-area
 4. **Test plan** — checklist of gates passed (build / test / clippy / docs / sync hook / integrity-sign / live ACVTS if applicable)
-5. **Anti-criteria** — what's deliberately NOT in this PR (deferrals, out-of-scope work)
-6. **Code-review skill invocation** — findings and how each was actioned
+5. **Code-review skill invocation** — findings and how each was actioned
+
+Scope boundaries and deferrals belong in the review thread or an issue, not in the body. Squash-merge
+takes this body as the commit message on `main`, so a "deliberately not in this PR" section becomes a
+permanent forward-looking note attached to a change that shipped — and it dates the moment the next PR
+lands. State what the change does; let the diff and the issue tracker carry what it does not.
 
 ### Code-review gate
 

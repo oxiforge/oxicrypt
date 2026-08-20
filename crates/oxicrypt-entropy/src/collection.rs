@@ -1432,7 +1432,13 @@ mod tests {
     // ── ISC-116: dual lower/upper boundary per OE ────────────────────────
 
     #[test]
-    fn both_boundaries_emitted_per_oe() {
+    /// Asserts the harness emits a directory per boundary, with the three
+    /// expected files in each. It does **not** assert the two captures
+    /// differ: `collect_raw` currently discards its `boundary` argument, so
+    /// they are byte-identical in method and differ only by directory slug
+    /// and content-hash segment (#156). The former name claimed boundary
+    /// coverage while proving directory coverage.
+    fn both_boundary_directories_are_emitted() {
         let dir = temp_dir("dual-boundary");
         let plan = small_plan(dir.clone());
         let (mut factory, _) = CountingFactory::new();

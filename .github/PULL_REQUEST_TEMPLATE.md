@@ -23,7 +23,13 @@
 
 ## Test plan
 
-<!-- Check each gate that applies. Mark N/A for any that don't. -->
+<!--
+  A ticked box means DISPOSITIONED, not necessarily run. Tick an N/A row too,
+  with "N/A —" leading the label and the reason after it, so a tick is never
+  misread as "this ran". An unticked box means outstanding, so a PR ready for
+  review has none: a lone unticked N/A reads as unfinished work at a glance,
+  and the glance is what reviewers act on.
+-->
 
 - [ ] `cargo build --release --workspace` — clean
 - [ ] `cargo test --workspace --all-features` — green (X/X passing)
@@ -33,15 +39,6 @@
 - [ ] Security policy updated — or no gem surfaced (bypass, no note needed), or policy not provisioned
 - [ ] `oxicrypt-integrity-sign --sign` re-signed binary (harness rebuilds only) — HMAC `<paste>`
 - [ ] Live ACVTS run (if applicable) — session `<id>`, vector set `<id>`, verdict `passed`
-
-## Anti-criteria
-
-<!--
-  What's deliberately NOT in this PR. Out-of-scope items, deferrals,
-  capability-builder bugs that surfaced but won't be fixed here.
-  Anti-criteria prevent scope creep and document considered-and-
-  declined alternatives.
--->
 
 ## Code-review skill invocation
 
