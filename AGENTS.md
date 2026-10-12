@@ -330,7 +330,8 @@ crate — directly or by reference — do all that apply:
 5. **Release history (`changelog-gem`).** `CHANGELOG.md` follows Keep-a-Changelog with a standing
    `## [Unreleased]` section. Every PR that changes user-facing behavior adds its line under
    `[Unreleased]` **in that same PR**, citing its issue/PR number (`… (#N)`) and closing the issue via
-   `Closes #N` / `Fixes #N`. At release, `[Unreleased]` is renamed to the dated `vX.Y.Z` heading (with
+   `Closes #N` / `Fixes #N`. A change with no user-facing effect (contributor docs, tests, refactors,
+   CI) needs none. At release, `[Unreleased]` is renamed to the dated `vX.Y.Z` heading (with
    its `compare/` link) and a fresh empty `[Unreleased]` is opened — the version bump + signed tag ship
    in that same commit. `CHANGELOG.md` is the *one* home for human-readable release history (see
    Canonical homes); README/lama.yaml carry a pointer, never a milestone table. The org `changelog-gem`
