@@ -141,20 +141,22 @@ one survives.
 
 Three surfaces, one direction of flow — speculative → designed → actionable:
 
-- **GitHub Issues** hold every *concrete, scoped deliverable* (bugs, enhancements, docs). Type label
-  (`bug` / `enhancement` / `documentation`) + tier label (`tier:punchlist` hot → `tier:candidate` warm
+- **GitHub Issues** hold *concrete, scoped changes to released work* (bugs, enhancements, docs). A new
+  feature's own deliverables need no issues until the feature ships in a release. From then on, every
+  fix, tweak and update to it gets one. Type label (`bug` / `enhancement` / `documentation`) + tier label (`tier:punchlist` hot → `tier:candidate` warm
   → `tier:backlog` cold; **unlabeled tier = needs triage**). A PR closes its issue the ordinary way —
   `Closes #N` / `Fixes #N` in the PR or commit body, auto-closing on merge to `main`.
 - **`ROADMAP.md`** (root) holds *forward-looking work that is not yet a deliverable*: `Ideas`
   (speculative), `Designs` (design-first epics — one-line pointers to `docs/design/`), `Features`
   (wanted-but-deferred). Forward-only, no status/history. When an item is decomposed into actionable
-  work it **becomes GitHub issue(s) and is removed** from `ROADMAP.md`.
+  work it **is removed** from `ROADMAP.md`, and a change to released work becomes GitHub issue(s).
 - **`docs/design/*.md`** hold the *design-of-record* for design-first epics (RFC-lite: problem →
-  constraints / ISC invariants → approach → open questions). An accepted design spawns issues; the doc
-  **persists** as rationale. (None yet — created when the first design-first epic appears.)
+  constraints / ISC invariants → approach → open questions). An accepted design is built, through issues
+  when it changes released work; the doc **persists** as rationale. (None yet — created when the first design-first epic appears.)
 
-So: an idea enters `ROADMAP.md`; if it needs design, it gets a `docs/design/` doc; once actionable, it
-graduates into GitHub issues (the roadmap entry is removed, the design doc stays). Nothing here records
+So: an idea enters `ROADMAP.md`; if it needs design, it gets a `docs/design/` doc; once actionable, its
+roadmap entry is removed and it is built, with GitHub issues when it changes released work (the design
+doc stays). Nothing here records
 *status* or *history* — that is issues + git tags + `CHANGELOG.md`.
 
 ## Definition of done
