@@ -2162,6 +2162,34 @@ int oxi_lms_verify(const uint8_t *pk_ptr,
                    const uint8_t *sig_ptr);
 
 /*
+ Verify an LMS signature under whichever of the 80 SP 800-208
+ §4.1–§4.4 parameter pairs its public key names.
+
+ Reads the LMS and LM-OTS typecodes from the first 8 bytes of the
+ `pk_len`-byte public key and verifies through that pair's gated
+ `verify`, as `oxicrypt_lms::verify_any` does.
+
+ Returns `OxiResult::Ok = 0` for a valid signature,
+ `OxiResult::InvalidInput = 5` when the input names no pair (fewer than
+ 8 public-key bytes, a typecode pair outside the 80, or a `pk_len` or
+ `sig_len` that is not the named pair's), `OxiResult::TagMismatch = 22`
+ when the named pair's verifier rejects the signature, or a module
+ error variant from the named pair's gate.
+
+ # Safety
+
+ `pk_ptr` must be valid for `pk_len` bytes, `msg_ptr` for `msg_len`
+ bytes and `sig_ptr` for `sig_len` bytes. Each may be NULL only when
+ its length is 0.
+ */
+int oxi_lms_verify_any(const uint8_t *pk_ptr,
+                       uintptr_t pk_len,
+                       const uint8_t *msg_ptr,
+                       uintptr_t msg_len,
+                       const uint8_t *sig_ptr,
+                       uintptr_t sig_len);
+
+/*
  Verify an LMS signature for the SHA-256 M=32 H=5 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and

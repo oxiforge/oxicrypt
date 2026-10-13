@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a test running all 320 NIST ACVP `LMS-sigVer-1.0` vectors, four per parameter pair, and
   asserting each one's expected outcome. The vectors are vendored from ACVP-Server at the commit
   pinned in `vendor/nist/MANIFEST.toml`. (#281)
+- Added `oxicrypt_lms::verify_any` and the C function `oxi_lms_verify_any`, which verify an LMS
+  signature under whichever of the 80 parameter pairs the public key's typecodes name. Input
+  naming no pair is refused as `VerifyAnyError::Unroutable` (`InvalidInput = 5` in C), distinct
+  from a signature that fails to verify (`VerificationFailed`, `TagMismatch = 22` in C). (#277)
 - **Removed LMS key generation and signing.** SP 800-208 §8.1 confines both to hardware modules,
   so `oxicrypt-lms` offers verification only. A caller that generates keys or signs with
   `oxicrypt-lms` must move that work to a hardware module. Removed:

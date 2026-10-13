@@ -504,7 +504,7 @@ The `oxicrypt-ffi` crate currently exposes:
 | ML-KEM | ML-KEM-512/-768/-1024 keygen / encaps / decaps | FIPS 203 |
 | ML-DSA | ML-DSA-44/-65/-87 keygen / sign / verify | FIPS 204 |
 | SLH-DSA | SLH-DSA-{SHA2,SHAKE}-{128,192,256}{s,f} keygen / sign / verify | FIPS 205 |
-| LMS | 81 verification entry points: `oxi_lms_verify` (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) + 80 per-pair `oxi_lms_<family>_m<N>_h<H>_w<W>_verify` — byte-buffer pass-through | SP 800-208 §4.1–§4.4, §8.2, RFC 8554 |
+| LMS | 82 verification entry points: `oxi_lms_verify` (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) + 80 per-pair `oxi_lms_<family>_m<N>_h<H>_w<W>_verify` + `oxi_lms_verify_any`, which verifies under whichever pair the public key names — byte-buffer pass-through | SP 800-208 §4.1–§4.4, §8.2, RFC 8554 |
 | XMSS | XMSS-SHA2_10_256 verification — byte-buffer pass-through | SP 800-208 §8.2, RFC 8391 |
 | HMAC-DRBG (opaque handle) | SHA-256 / -384 / -512 — `new`, `instantiate`, `reseed`, `generate`, `free` | SP 800-90A §10.1.2 |
 | Hash-DRBG (opaque handle) | SHA-256 / -384 / -512 — same lifecycle | SP 800-90A §10.1.1 |

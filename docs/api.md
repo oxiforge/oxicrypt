@@ -492,7 +492,8 @@ Each (LMS, LM-OTS) parameter pair lives in its own module
 `lms_<family>_m<N>_h<H>_w<W>` over family ∈ {`sha256`, `shake`},
 N ∈ {24, 32}, H ∈ {5, 10, 15, 20, 25}, W ∈ {1, 2, 4, 8} (80 pairs). The
 crate root re-exports `verify` and the constants of the
-`lms_sha256_m32_h10_w4` pair.
+`lms_sha256_m32_h10_w4` pair, and holds `verify_any`, which verifies
+under whichever pair the public key names.
 
 ### Free functions (per pair module)
 
@@ -504,6 +505,23 @@ crate root re-exports `verify` and the constants of the
 `Err(Error::InvalidInput)` for an invalid one, plus the module-gating
 errors when the module is not operational or the active algorithm profile
 blocks the pair's `Lms…Verify` service.
+
+### Verifying under the pair the public key names
+
+| Function | Signature |
+|----------|-----------|
+| `verify_any` | `(public_key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), VerifyAnyError>` |
+
+`verify_any` reads the LMS and LM-OTS typecodes from the first 8 bytes of
+the public key and calls the `verify` of the pair module carrying them,
+which gates on that pair's own `Lms…Verify` service. It returns:
+
+| Result | Meaning |
+|--------|---------|
+| `Ok(())` | The signature verifies under the named pair. |
+| `Err(VerifyAnyError::Unroutable)` | The input names no pair: the key is shorter than 8 bytes, its typecode pair is not one of the 80, or the key or signature length is not the named pair's. No verifier ran. |
+| `Err(VerifyAnyError::VerificationFailed)` | The named pair's verifier rejected the signature. |
+| `Err(VerifyAnyError::Module(e))` | The module gate refused the named pair's service. |
 
 ### Constants (per pair module)
 

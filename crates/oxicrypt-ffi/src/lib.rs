@@ -4966,7 +4966,10 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_verify(
 //   XMSS — XMSS-SHA2_10_256, OID 0x00000001
 //
 // and `oxi_lms_<family>_m<N>_h<H>_w<W>_verify` covers each of the 80
-// LMS pairs of SP 800-208 §4.1–§4.4 by name.
+// LMS pairs of SP 800-208 §4.1–§4.4 by name. `oxi_lms_verify_any`
+// takes lengths with each buffer and verifies under whichever of the 80
+// pairs the public key's typecodes name; input naming no pair returns
+// `OxiResult::InvalidInput = 5`, distinct from `TagMismatch = 22`.
 //
 // Mapping of the upstream `Result` shape to `OxiResult`:
 //
@@ -5050,6 +5053,54 @@ pub unsafe extern "C" fn oxi_lms_verify(
         Ok(()) => R::Ok as c_int,
         Err(oxicrypt_module::Error::InvalidInput) => R::TagMismatch as c_int,
         Err(e) => R::from(e) as c_int,
+    }
+}
+
+/// Verify an LMS signature under whichever of the 80 SP 800-208
+/// §4.1–§4.4 parameter pairs its public key names.
+///
+/// Reads the LMS and LM-OTS typecodes from the first 8 bytes of the
+/// `pk_len`-byte public key and verifies through that pair's gated
+/// `verify`, as `oxicrypt_lms::verify_any` does.
+///
+/// Returns `OxiResult::Ok = 0` for a valid signature,
+/// `OxiResult::InvalidInput = 5` when the input names no pair (fewer than
+/// 8 public-key bytes, a typecode pair outside the 80, or a `pk_len` or
+/// `sig_len` that is not the named pair's), `OxiResult::TagMismatch = 22`
+/// when the named pair's verifier rejects the signature, or a module
+/// error variant from the named pair's gate.
+///
+/// # Safety
+///
+/// `pk_ptr` must be valid for `pk_len` bytes, `msg_ptr` for `msg_len`
+/// bytes and `sig_ptr` for `sig_len` bytes. Each may be NULL only when
+/// its length is 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_lms_verify_any(
+    pk_ptr: *const u8,
+    pk_len: usize,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    sig_ptr: *const u8,
+    sig_len: usize,
+) -> c_int {
+    let pk = match unsafe { slice_from_raw(pk_ptr, pk_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let sig = match unsafe { slice_from_raw(sig_ptr, sig_len) } {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match oxicrypt_lms::verify_any(pk, msg, sig) {
+        Ok(()) => R::Ok as c_int,
+        Err(oxicrypt_lms::VerifyAnyError::Unroutable) => R::InvalidInput as c_int,
+        Err(oxicrypt_lms::VerifyAnyError::VerificationFailed) => R::TagMismatch as c_int,
+        Err(oxicrypt_lms::VerifyAnyError::Module(e)) => R::from(e) as c_int,
     }
 }
 
@@ -10503,6 +10554,114 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_decrypt_sha256(
     };
     unsafe { *out_actual_len = actual };
     R::Ok as c_int
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing, clippy::panic)]
+mod lms_verify_any_tests {
+    use super::{R, oxi_lms_verify_any};
+    use core::ffi::c_int;
+    use oxicrypt_lms::lms_sha256_m32_h5_w1 as pair;
+
+    /// A public key naming LMS_SHA256_M32_H5 / LMOTS_SHA256_N32_W1, with
+    /// the LM-OTS typecode replaced by `lmots`.
+    fn pk(lmots: u32) -> [u8; pair::PUBLIC_KEY_LEN] {
+        let mut pk = [0u8; pair::PUBLIC_KEY_LEN];
+        pk[..4].copy_from_slice(&pair::LMS_TYPE.to_be_bytes());
+        pk[4..8].copy_from_slice(&lmots.to_be_bytes());
+        pk
+    }
+
+    fn call(pk: &[u8], sig: &[u8]) -> c_int {
+        unsafe {
+            oxi_lms_verify_any(
+                pk.as_ptr(),
+                pk.len(),
+                core::ptr::null(),
+                0,
+                sig.as_ptr(),
+                sig.len(),
+            )
+        }
+    }
+
+    /// The module is never initialised in this test binary, so a routed
+    /// pair reaches its gate and returns `NotOperational`. Input naming no
+    /// pair returns `InvalidInput` without reaching any gate.
+    #[test]
+    fn unroutable_input_is_invalid_input_and_routed_input_reaches_the_gate() {
+        let sig = [0u8; pair::SIGNATURE_LEN];
+        assert_eq!(
+            call(&pk(pair::LMOTS_TYPE), &sig),
+            R::NotOperational as c_int
+        );
+        // LMOTS_SHA256_N24_W1 under an N = 32 LMS typecode: no such pair.
+        assert_eq!(call(&pk(0x0000_0005), &sig), R::InvalidInput as c_int);
+        assert_eq!(
+            call(&pk(pair::LMOTS_TYPE), &sig[..sig.len() - 1]),
+            R::InvalidInput as c_int
+        );
+        assert_eq!(
+            call(&pk(pair::LMOTS_TYPE)[..7], &sig),
+            R::InvalidInput as c_int
+        );
+    }
+
+    #[test]
+    fn null_buffer_with_nonzero_length_is_null_pointer() {
+        let pk = pk(pair::LMOTS_TYPE);
+        let msg = [0u8; 16];
+        let sig = [0u8; pair::SIGNATURE_LEN];
+        let null = core::ptr::null();
+        let rc = |pk: *const u8, msg: *const u8, sig: *const u8| unsafe {
+            oxi_lms_verify_any(pk, pair::PUBLIC_KEY_LEN, msg, 16, sig, pair::SIGNATURE_LEN)
+        };
+        assert_eq!(
+            rc(null, msg.as_ptr(), sig.as_ptr()),
+            R::NullPointer as c_int
+        );
+        assert_eq!(rc(pk.as_ptr(), null, sig.as_ptr()), R::NullPointer as c_int);
+        assert_eq!(rc(pk.as_ptr(), msg.as_ptr(), null), R::NullPointer as c_int);
+        // Positive control: the same buffers, none NULL, reach the gate.
+        assert_eq!(
+            rc(pk.as_ptr(), msg.as_ptr(), sig.as_ptr()),
+            R::NotOperational as c_int
+        );
+    }
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// CNSA 1.0 permits no LMS service, so a routable key reaches the
+    /// named pair's gate and returns `AlgorithmRestricted`, while input
+    /// naming no pair still returns `InvalidInput`.
+    ///
+    /// Initialising the module is process-global and the other tests in
+    /// this module assert it is uninitialised, so this relies on the
+    /// workspace's test runner, nextest, running each test in its own
+    /// process.
+    #[test]
+    fn routable_key_under_cnsa1_is_algorithm_restricted() {
+        match oxicrypt_module::initialize_with_profile(
+            UNSIGNED_TEST_BINARY,
+            oxicrypt_lms::KATS,
+            oxicrypt_module::AlgorithmProfile::Cnsa1,
+        ) {
+            Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => {}
+            Err(e) => panic!("module failed to initialise: {e:?}"),
+        }
+        assert!(oxicrypt_module::is_operational());
+        let sig = [0u8; pair::SIGNATURE_LEN];
+        assert_eq!(
+            call(&pk(pair::LMOTS_TYPE), &sig),
+            R::AlgorithmRestricted as c_int
+        );
+        assert_eq!(call(&pk(0x0000_0005), &sig), R::InvalidInput as c_int);
+    }
 }
 
 #[cfg(test)]

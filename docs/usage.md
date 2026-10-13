@@ -400,6 +400,21 @@ use oxicrypt_lms::lms_sha256_m24_h10_w4::verify;
 verify(&public_key, b"message", &signature)?;
 ```
 
+When the pair is not known in advance, `verify_any` reads it from the
+public key's typecodes and routes to that pair's `verify`:
+
+```rust
+use oxicrypt_lms::{verify_any, VerifyAnyError};
+
+match verify_any(&public_key, b"message", &signature) {
+    Ok(()) => { /* valid */ }
+    // The key names none of the 80 pairs, or a length is not the pair's.
+    Err(VerifyAnyError::Unroutable) => { /* not an SP 800-208 LMS key */ }
+    Err(VerifyAnyError::VerificationFailed) => { /* invalid signature */ }
+    Err(VerifyAnyError::Module(e)) => { /* module not operational, or profile blocks the pair */ }
+}
+```
+
 ## XMSS (signature verification, SP 800-208 §8.2)
 
 XMSS is verification-only here. SP 800-208 §8.1 confines key generation

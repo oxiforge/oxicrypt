@@ -12,6 +12,11 @@
  * return TagMismatch = 22. A third check verifies the accepted signature
  * with one bit flipped, which must also return TagMismatch.
  *
+ * The same two vectors go through `oxi_lms_verify_any`, which must return
+ * Ok and TagMismatch for them, and InvalidInput = 5 for a public key whose
+ * typecode pair is not an SP 800-208 pair and for a signature one byte
+ * short of this pair's length.
+ *
  * The test runs under `AlgorithmProfile::Unrestricted` (= 0). Every LMS
  * pair is also permitted under CNSA 2.0 and Migration, since CNSSP-15
  * (2025) Annex B places no subset restriction on LMS parameter sets. CNSA
@@ -489,6 +494,40 @@ int main(void) {
         return 4;
     }
 
-    printf("test_lms_sha256_m32_h5_w4_smoke: OK (accept + reject + tamper-rejects)\n");
+    /* oxi_lms_verify_any routes on the public key's typecodes. */
+    rc = oxi_lms_verify_any(PK, sizeof(PK), ACCEPT_MSG, sizeof(ACCEPT_MSG), ACCEPT_SIG,
+                            sizeof(ACCEPT_SIG));
+    if (rc != 0) {
+        fprintf(stderr, "verify_any(tcId 89) rc=%d (expected 0)\n", rc);
+        return 5;
+    }
+
+    rc = oxi_lms_verify_any(PK, sizeof(PK), REJECT_MSG, sizeof(REJECT_MSG), REJECT_SIG,
+                            sizeof(REJECT_SIG));
+    if (rc != 22) {
+        fprintf(stderr, "verify_any(tcId 91) rc=%d (expected 22 TagMismatch)\n", rc);
+        return 6;
+    }
+
+    /* LMOTS_SHA256_N24_W1 under LMS_SHA256_M32_H5 names no pair. */
+    uint8_t pk_unroutable[LMS_SHA256_M32_H5_W4_PK_LEN];
+    memcpy(pk_unroutable, PK, sizeof(pk_unroutable));
+    pk_unroutable[7] = 0x05;
+    rc = oxi_lms_verify_any(pk_unroutable, sizeof(pk_unroutable), ACCEPT_MSG,
+                            sizeof(ACCEPT_MSG), ACCEPT_SIG, sizeof(ACCEPT_SIG));
+    if (rc != 5) {
+        fprintf(stderr, "verify_any(unroutable) rc=%d (expected 5 InvalidInput)\n", rc);
+        return 7;
+    }
+
+    rc = oxi_lms_verify_any(PK, sizeof(PK), ACCEPT_MSG, sizeof(ACCEPT_MSG), ACCEPT_SIG,
+                            sizeof(ACCEPT_SIG) - 1);
+    if (rc != 5) {
+        fprintf(stderr, "verify_any(short sig) rc=%d (expected 5 InvalidInput)\n", rc);
+        return 8;
+    }
+
+    printf("test_lms_sha256_m32_h5_w4_smoke: OK (accept + reject + tamper-rejects; "
+           "verify_any accept + reject + unroutable + length)\n");
     return 0;
 }

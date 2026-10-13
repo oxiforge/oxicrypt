@@ -190,7 +190,7 @@ modules:
       - oxicrypt-sha
 
   - name: oxicrypt-lms
-    description: "LMS signature verification (SP 800-208 §8.2, RFC 8554) for all 80 (LMS, LM-OTS) parameter pairs of SP 800-208 §4.1 (SHA-256), §4.2 (SHA-256/192), §4.3 (SHAKE256/256) and §4.4 (SHAKE256/192), one module per pair, holding no key material and offering no key generation or signing service."
+    description: "LMS signature verification (SP 800-208 §8.2, RFC 8554) for all 80 (LMS, LM-OTS) parameter pairs of SP 800-208 §4.1 (SHA-256), §4.2 (SHA-256/192), §4.3 (SHAKE256/256) and §4.4 (SHAKE256/192), one module per pair plus verify_any routing on the public key's typecodes, holding no key material and offering no key generation or signing service."
     no_std: true
     depends_on:
       - oxicrypt-module
@@ -1118,6 +1118,18 @@ types:
         description: Module state error (wraps oxicrypt_module::Error — NotOperational, AlgorithmRestricted, etc.).
       - name: OutputTooLong
         description: "Requested OKM length exceeds the algorithm maximum: 255*HashLen for HKDF; (2^32-1)*HashLen for PBKDF2."
+
+  - name: VerifyAnyError
+    module: oxicrypt-lms
+    kind: enum
+    description: Error type returned by verify_any, keeping input that names no LMS parameter pair apart from a signature that fails to verify.
+    variants:
+      - name: Unroutable
+        description: "The input names none of the 80 pairs: public key under 8 bytes, a typecode pair outside SP 800-208 §4.1-§4.4, or a key or signature length that is not the named pair's, so no verifier ran."
+      - name: VerificationFailed
+        description: The named pair's verifier rejected the signature.
+      - name: Module
+        description: The module gate refused the named pair's service (wraps oxicrypt_module::Error — NotOperational, AlgorithmRestricted).
 
   - name: MinEntropy
     module: oxicrypt-entropy
@@ -6228,6 +6240,46 @@ functions:
           condition: LMS blocked by active profile.
         - name: InvalidInput
           condition: Signature verification failed or malformed inputs.
+    preconditions:
+      - description: Module must be Operational.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: Operational
+    profiles:
+      - Unrestricted
+      - Cnsa2
+      - Migration
+
+  - name: verify_any
+    module: oxicrypt-lms
+    signature: "pub fn verify_any(public_key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), VerifyAnyError>"
+    description: Verify an LMS signature under whichever of the 80 SP 800-208 parameter pairs the public key's LMS and LM-OTS typecodes name, through that pair's gated verify.
+    parameters:
+      - name: public_key
+        type: "&[u8]"
+        direction: in
+        description: "LMS public key; bytes 0..4 hold the LMS typecode and bytes 4..8 the LM-OTS typecode."
+      - name: message
+        type: "&[u8]"
+        direction: in
+        description: "Original message."
+      - name: signature
+        type: "&[u8]"
+        direction: in
+        description: "LMS signature, of the named pair's SIGNATURE_LEN."
+    returns:
+      type: "Result<(), VerifyAnyError>"
+      description: "Ok(()) if the signature verifies under the named pair."
+      error_variants:
+        - name: Unroutable
+          condition: The typecodes name none of the 80 pairs, or a length is not the named pair's.
+        - name: VerificationFailed
+          condition: The named pair's verifier rejected the signature.
+        - name: Module
+          condition: Module not initialized, or the active profile blocks the named pair's service.
     preconditions:
       - description: Module must be Operational.
     thread_safety: thread-safe
@@ -12422,6 +12474,57 @@ functions:
       handles_secrets: false
       fips_approved: true
 
+  - name: oxi_lms_verify_any
+    module: oxicrypt-ffi
+    description: Verify an LMS signature under whichever of the 80 SP 800-208 parameter pairs the public key's typecodes name; each buffer is passed with its length.
+    signature: >-
+      int oxi_lms_verify_any(const uint8_t *pk_ptr, size_t pk_len,
+      const uint8_t *msg_ptr, size_t msg_len,
+      const uint8_t *sig_ptr, size_t sig_len)
+    parameters:
+      - name: pk_ptr
+        type: const uint8_t *
+        direction: in
+        description: LMS public key (length given by pk_len)
+      - name: pk_len
+        type: size_t
+        direction: in
+        description: Public key length in bytes
+      - name: msg_ptr
+        type: const uint8_t *
+        direction: in
+        description: Message bytes (length given by msg_len)
+      - name: msg_len
+        type: size_t
+        direction: in
+        description: Message length in bytes
+      - name: sig_ptr
+        type: const uint8_t *
+        direction: in
+        description: LMS signature (length given by sig_len)
+      - name: sig_len
+        type: size_t
+        direction: in
+        description: Signature length in bytes
+    returns:
+      type: int
+      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
+      error_variants:
+        - name: InvalidInput
+          condition: The input names no LMS pair (public key under 8 bytes, a typecode pair outside the 80, or a length that is not the named pair's); no verifier ran.
+        - name: TagMismatch
+          condition: The named pair's verifier ran and rejected the signature.
+        - name: NullPointer
+          condition: A NULL pointer was passed with a non-zero length.
+        - name: NotOperational
+          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
+        - name: AlgorithmRestricted
+          condition: The active algorithm profile does not permit the named pair's service.
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
   - name: oxi_xmss_verify
     module: oxicrypt-ffi
     description: Verify an XMSS signature (SP 800-208 / RFC 8391); reads the 68-byte public key from pk_ptr, msg, and the 2500-byte signature from sig_ptr.
@@ -16140,6 +16243,27 @@ error_types:
           For HKDF: reduce okm.len() to at most 255 * HashLen (e.g. 8160 for SHA-256).
           For PBKDF2: reduce to at most (2^32-1) * HashLen.
           For SP 800-108: reduce to fit a 32-bit bit-length field.
+
+  - name: VerifyAnyError
+    module: oxicrypt-lms
+    variants:
+      - name: Unroutable
+        description: The input names none of the 80 LMS parameter pairs, or a length is not the named pair's.
+        recoverable: false
+        user_action: >-
+          The public key is not an SP 800-208 LMS key, or the key or signature
+          was truncated or padded. Check the source of both.
+      - name: VerificationFailed
+        description: The named pair's verifier rejected the signature.
+        recoverable: false
+        user_action: Treat the message as unauthenticated.
+      - name: Module
+        description: Module state error (wraps oxicrypt_module::Error).
+        recoverable: false
+        user_action: >-
+          Check that initialize_with_tests() has been called (NotOperational)
+          or that the active algorithm profile permits LMS verification
+          (AlgorithmRestricted).
 
 # ─────────────────────────────────────────────────────────────────────
 # Constants
