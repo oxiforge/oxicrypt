@@ -254,8 +254,8 @@ capabilities:
 
   - category: "Post-quantum signatures (stateful hash-based)"
     algorithms:
-      - LMS (SP 800-208 §A.3 grid, stateful)
-      - XMSS-SHA2_10_256 (stateful)
+      - LMS signature verification (SP 800-208 §4.1–§4.4, 80 parameter pairs)
+      - XMSS-SHA2_10_256 signature verification
     standards:
       - SP 800-208
       - RFC 8554

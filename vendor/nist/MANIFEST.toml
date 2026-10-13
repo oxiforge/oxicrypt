@@ -124,8 +124,12 @@ ML_DSA_87_sigGen_int   = { dir = "ML-DSA-sigGen-FIPS204",     tgId = 12, tcIds =
 SLH_DSA_SHA2_256s_keyGen   = { dir = "SLH-DSA-keyGen-FIPS205", tgId = 9,  tcIds = [81, 82], parameterSet = "SLH-DSA-SHA2-256s" }
 SLH_DSA_SHA2_256s_sigGen_ext = { dir = "SLH-DSA-sigGen-FIPS205", tgId = 23, tcIds = [199],  parameterSet = "SLH-DSA-SHA2-256s", signatureInterface = "external", deterministic = true }
 SLH_DSA_SHA2_256s_sigGen_int = { dir = "SLH-DSA-sigGen-FIPS205", tgId = 33, tcIds = [285],  parameterSet = "SLH-DSA-SHA2-256s", signatureInterface = "internal", deterministic = true }
-LMS_SHA256_H10_keyGen  = { dir = "LMS-keyGen-1.0",  tgId = 27, tcIds = [89, 90],   lmsMode = "LMS_SHA256_M32_H10", lmOtsMode = "LMOTS_SHA256_N32_W4" }
 LMS_SHA256_H10_sigVer  = { dir = "LMS-sigVer-1.0",  tgId = 27, tcIds = [105, 107], lmsMode = "LMS_SHA256_M32_H10", lmOtsMode = "LMOTS_SHA256_N32_W4" }
+LMS_sigVer_all_pairs   = { dir = "LMS-sigVer-1.0",  file = "internalProjection.json", groups = 80, tests = 320, sha256 = "30fa373de135a7af633c762d71a0545fae80b2c99154d98c5172d53d622f3597" }
+LMS_SHA256_N32_CAST    = { dir = "LMS-sigVer-1.0",  tgId = 21, tcIds = [84, 83],   lmsMode = "LMS_SHA256_M32_H5",  lmOtsMode = "LMOTS_SHA256_N32_W1" }
+LMS_SHA256_N24_CAST    = { dir = "LMS-sigVer-1.0",  tgId = 1,  tcIds = [1, 2],     lmsMode = "LMS_SHA256_M24_H5",  lmOtsMode = "LMOTS_SHA256_N24_W1" }
+LMS_SHAKE_N32_CAST     = { dir = "LMS-sigVer-1.0",  tgId = 61, tcIds = [241, 244], lmsMode = "LMS_SHAKE_M32_H5",   lmOtsMode = "LMOTS_SHAKE_N32_W1" }
+LMS_SHAKE_N24_CAST     = { dir = "LMS-sigVer-1.0",  tgId = 41, tcIds = [164, 163], lmsMode = "LMS_SHAKE_M24_H5",   lmOtsMode = "LMOTS_SHAKE_N24_W1" }
 
 [acvp_server.aes_aft]
 ACVP_AES_ECB_1_0 = { dir = "ACVP-AES-ECB-1.0", groups = 6, tests = 18, sha256 = "a804bbe1b4efbb775ec5a365245739ffaedad50f43d91b07ede26733e0f3b256" }

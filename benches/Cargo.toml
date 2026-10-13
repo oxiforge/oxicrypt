@@ -37,7 +37,6 @@ entropy-bench = [
     "oxicrypt-entropy/raw-counter",
 ]
 parallel = [
-    "oxicrypt-lms/parallel",
     "oxicrypt-ml-kem/parallel",
     "oxicrypt-ml-dsa/parallel",
     "oxicrypt-slh-dsa/parallel",

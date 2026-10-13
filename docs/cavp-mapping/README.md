@@ -55,5 +55,5 @@ Two flavors of mapping note live here:
 - [`ml-kem.md`](ml-kem.md) — ML-KEM keyGen / encapDecap (FIPS 203).
 - [`ml-dsa.md`](ml-dsa.md) — ML-DSA keyGen / sigGen / sigVer (FIPS 204).
 - [`slh-dsa.md`](slh-dsa.md) — SLH-DSA keyGen / sigGen / sigVer (FIPS 205).
-- [`lms.md`](lms.md) — LMS keyGen / sigGen / sigVer (SP 800-208 / RFC 8554).
-- [`xmss.md`](xmss.md) — XMSS keyGen / sigGen / sigVer (SP 800-208 / RFC 8391).
+- [`lms.md`](lms.md) — LMS sigVer (SP 800-208 / RFC 8554).
+- [`xmss.md`](xmss.md) — XMSS sigVer (SP 800-208 / RFC 8391).

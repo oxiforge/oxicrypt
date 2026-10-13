@@ -115,11 +115,13 @@ One row per ACVP service — the (algorithm, mode, revision) tuple NIST register
 
 | Algorithm | Mode | Revision | Vector sets | Cases |
 |---|---|---|--:|--:|
-| `LMS` | keyGen | 1.0 | 3 | 432 |
-| `LMS` | sigGen | 1.0 | 4 | 800 |
-| `LMS` | sigGen | SP800-208 | 6 | 1184 |
+| `LMS` | keyGen † | 1.0 | 3 | 432 |
+| `LMS` | sigGen † | 1.0 | 4 | 800 |
+| `LMS` | sigGen † | SP800-208 | 6 | 1184 |
 | `LMS` | sigVer | 1.0 | 5 | 848 |
 | `LMS` | sigVer | SP800-208 | 1 | 320 |
+
+† Graded, and not offered by the module. SP 800-208 §8.1 confines LMS key generation and signing to hardware modules, so the module offers LMS signature verification only. These rows record what was graded.
 
 **ML-DSA** — 3 services
 

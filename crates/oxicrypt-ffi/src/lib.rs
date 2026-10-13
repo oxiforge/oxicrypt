@@ -171,6 +171,7 @@ fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
         oxicrypt_ecdh::KATS,
         oxicrypt_dh::KATS,
         oxicrypt_rsa::KATS,
+        oxicrypt_lms::KATS,
     ];
     let mut merged = Vec::new();
     for group in all_kats {
@@ -265,7 +266,7 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
         _ => return R::InvalidInput as c_int,
     };
     // Idempotent fast-path: skip KAT collection on already-operational
-    // re-init. `collect_kats` aggregates ~13 crate slices into a fresh
+    // re-init. `collect_kats` aggregates the crate KAT slices into a fresh
     // `Vec` and `initialize_with_profile` would discard them via
     // `AlreadyInitialized` regardless. One atomic load saves the
     // allocation on every subsequent call.
@@ -4954,37 +4955,20 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_verify(
 //
 // LMS (Leighton-Micali, RFC 8554) and XMSS (RFC 8391) are stateful
 // hash-based signature schemes approved by SP 800-208 for FIPS use,
-// and named in CNSA 2.0 for firmware signing. Both are wired to the
-// same parameter set per upstream:
+// and named in CNSA 2.0 for firmware signing. This C ABI offers
+// signature verification only, for both. SP 800-208 §8.1 confines
+// key generation and signing to hardware modules, and FIPS 140-3 IG
+// C.N resolutions 6 and 9 rule them out of a software module.
 //
-//   LMS  — LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4 (1024 sigs/key)
-//   XMSS — XMSS-SHA2_10_256, OID 0x00000001        (1024 sigs/key)
+// `oxi_lms_verify` / `oxi_xmss_verify` verify one parameter set each:
 //
-// Stateful means each leaf of the Merkle tree may sign exactly one
-// message; reusing a leaf is a catastrophic break of the scheme. The
-// caller is the SOLE custodian of the private-key state, and MUST
-// persist the updated `sk_out` after every sign before using the
-// signature. This C ABI surface encodes that obligation in its
-// signature shape: every sign call takes both an `sk_in` (pre-state)
-// and writes an `sk_out` (post-state, leaf index advanced by one).
-// There is no opaque handle, by design, so a caller cannot escape
-// the persistence contract by holding a long-lived in-memory state
-// and forgetting to write it down. See the FFI design note in the
-// PR body and `docs/security-policy/security-policy.md` §4 for the
-// rationale.
+//   LMS  — LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4
+//   XMSS — XMSS-SHA2_10_256, OID 0x00000001
 //
-// Mapping of upstream `Result` shapes to `OxiResult`:
+// and `oxi_lms_<family>_m<N>_h<H>_w<W>_verify` covers each of the 80
+// LMS pairs of SP 800-208 §4.1–§4.4 by name.
 //
-//   keygen → Result<(SK, [u8; PK_LEN]), Error>
-//     Ok                   → OxiResult::Ok = 0
-//     Err(NotOperational)  → OxiResult::NotOperational = 1
-//     Err(AlgorithmRestricted) → OxiResult::AlgorithmRestricted = 6
-//
-//   sign → Result<[u8; SIG_LEN], Error>
-//     Ok                   → OxiResult::Ok = 0; sk_out written
-//     Err(InvalidInput)    → OxiResult::InvalidInput = 5 (key
-//                            exhausted: leaf_index ≥ MAX_SIGNATURES)
-//     Err(NotOperational | AlgorithmRestricted) → as above
+// Mapping of the upstream `Result` shape to `OxiResult`:
 //
 //   verify → Result<(), Error>
 //     Ok                   → OxiResult::Ok = 0
@@ -4993,38 +4977,22 @@ pub unsafe extern "C" fn oxi_slh_dsa_shake_256f_verify(
 //                            and cryptographic mismatch into a single
 //                            discriminant — same upstream shape as
 //                            RSA verify, ML-DSA verify, SLH-DSA
-//                            verify; verify-mismatch convention
-//                            stabilized as arc pattern #7)
+//                            verify)
+//     Err(NotOperational)  → OxiResult::NotOperational = 1
+//     Err(AlgorithmRestricted) → OxiResult::AlgorithmRestricted = 6
 //
 // Byte layouts:
 //
 //   LMS  pk = 56 bytes   (lms_type(4) || ots_type(4) || I(16) || root(32))
-//   LMS  sk = 52 bytes   (seed(32) || I(16) || leaf_index(4)) — opaque,
-//        treat as a binary blob; produced by upstream `to_bytes()`
 //   LMS  sig = 2508 bytes (q(4) || ots_sig(2180) || lms_type(4)
 //        || auth_path(10×32))
 //
 //   XMSS pk = 68 bytes   (OID(4) || root(32) || PUB_SEED(32))
 //   XMSS sig = 2500 bytes (idx(4) || r(32) || wots_sig(67×32)
 //        || auth_path(10×32))
-//
-// Per-variant naming: this is `lms` / `xmss` (not `lms_sha256_m32_h10`
-// or `xmss_sha2_10_256`) because each upstream crate currently exposes
-// exactly one parameter set. Future parameter sets, if added upstream,
-// will land as new functions under qualified names per stabilized arc
-// pattern #8 (per-variant naming, no enum dispatch). Existing C
-// callers do not recompile when new variants ship.
 
 /// Length of an LMS public key in bytes (56).
 pub const OXI_LMS_PUBLIC_KEY_LEN: usize = 56;
-
-/// Length of an LMS opaque private-key blob in bytes (52).
-///
-/// This matches the upstream `LmsPrivateKey::to_bytes()` /
-/// `from_bytes()` round-trip layout: `seed(32) || I(16) ||
-/// leaf_index(4)`. Treat the blob as opaque; the C ABI never
-/// reaches inside it.
-pub const OXI_LMS_PRIVATE_KEY_LEN: usize = 52;
 
 /// Length of an LMS signature in bytes (2508).
 pub const OXI_LMS_SIGNATURE_LEN: usize = 2508;
@@ -5034,110 +5002,6 @@ pub const OXI_XMSS_PUBLIC_KEY_LEN: usize = 68;
 
 /// Length of an XMSS signature in bytes (2500).
 pub const OXI_XMSS_SIGNATURE_LEN: usize = 2500;
-
-/// Generate an LMS key pair from a 32-byte caller-supplied seed.
-///
-/// Reads exactly 32 bytes from `xi_ptr`, deterministically derives
-/// the tree seed and 16-byte identifier `I` via SHA-256, and writes
-/// the 52-byte opaque private-key blob into `sk_out` and the
-/// 56-byte public key into `pk_out`. The caller MUST source the 32
-/// seed bytes from an approved DRBG (SP 800-90A); the FFI performs
-/// no entropy generation.
-///
-/// `sk_out` is the persistence-of-record format. Treat it as an
-/// opaque blob and pass it back unchanged to [`oxi_lms_sign`].
-///
-/// Returns `OxiResult::Ok = 0` on success or a module error variant
-/// (`NotOperational`, `AlgorithmRestricted`).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a non-NULL
-/// writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    // Unreachable: slice_from_raw verified length == 32.
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h10_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe { core::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), sk_out, OXI_LMS_PRIVATE_KEY_LEN) };
-    unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), pk_out, OXI_LMS_PUBLIC_KEY_LEN) };
-    R::Ok as c_int
-}
-
-/// Sign a message with an LMS private key.
-///
-/// Reads the 52-byte opaque private-key blob from `sk_in_ptr`,
-/// `msg_len` bytes from `msg_ptr`, signs the message, advances the
-/// internal leaf index by one, writes the **updated** 52-byte blob
-/// into `sk_out`, and writes the 2508-byte signature into `sig_out`.
-///
-/// **Persistence contract:** the caller MUST persist `sk_out` (the
-/// post-state) before using `sig_out`. Failure to persist before a
-/// crash, followed by a restart that re-signs from the pre-state,
-/// reuses the same one-time key — a catastrophic break of LMS.
-///
-/// Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
-/// key is exhausted (1024 signatures already issued), or a module
-/// error variant.
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr` must be valid
-/// for `msg_len` bytes (NULL with len=0 is permitted). `sk_out`
-/// must be a non-NULL writable pointer to ≥52 bytes. `sig_out`
-/// must be a non-NULL writable pointer to ≥2508 bytes. `sk_in_ptr`
-/// and `sk_out` may alias (in-place advance is supported).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe { slice_from_raw(sk_in_ptr, OXI_LMS_PRIVATE_KEY_LEN) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    // Unreachable: slice_from_raw verified length == 52.
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h10_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h10_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe { core::ptr::copy_nonoverlapping(sk_bytes.as_ptr(), sk_out, OXI_LMS_PRIVATE_KEY_LEN) };
-    unsafe { core::ptr::copy_nonoverlapping(sig.as_ptr(), sig_out, OXI_LMS_SIGNATURE_LEN) };
-    R::Ok as c_int
-}
 
 /// Verify an LMS signature.
 ///
@@ -5189,123 +5053,7 @@ pub unsafe extern "C" fn oxi_lms_verify(
     }
 }
 
-// ── SHA-256 / M=32 family (RFC 8554 §A.1+§A.2) — 20 pairs × 3 ops = 60 fns ──
-
-/// Generate an LMS key pair for SHA-256 M=32 H=5 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h5_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=5 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 8684-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥8684 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h5_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h5_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h5_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
+// ── SHA-256 / M=32 family (SP 800-208 §4.1) — 20 pairs, verify only ──
 
 /// Verify an LMS signature for the SHA-256 M=32 H=5 W=1 variant.
 ///
@@ -5313,7 +5061,7 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w1_sign(
 /// 8684-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5358,129 +5106,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=5 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h5_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=5 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4460-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4460 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h5_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h5_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h5_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=5 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4460-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5525,129 +5157,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=5 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h5_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=5 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2348-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2348 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h5_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h5_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h5_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=5 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2348-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5692,129 +5208,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=5 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h5_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=5 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1292-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1292 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h5_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h5_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h5_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h5_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=5 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1292-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -5859,129 +5259,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h5_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=10 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h10_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=10 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 8844-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥8844 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h10_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h10_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h10_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=10 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 8844-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6026,129 +5310,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=10 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h10_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=10 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4620-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4620 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h10_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h10_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h10_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=10 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4620-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6193,129 +5361,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=10 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h10_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=10 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2508-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2508 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h10_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h10_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h10_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=10 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2508-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6360,129 +5412,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=10 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h10_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=10 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1452-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1452 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h10_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h10_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h10_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h10_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=10 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1452-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6527,129 +5463,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h10_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=15 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h15_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=15 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 9004-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥9004 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h15_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h15_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h15_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=15 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9004-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6694,129 +5514,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=15 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h15_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=15 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4780-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4780 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h15_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h15_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h15_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=15 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4780-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -6861,129 +5565,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=15 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h15_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=15 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2668-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2668 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h15_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h15_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h15_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=15 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2668-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -7028,129 +5616,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=15 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h15_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=15 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1612-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1612 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h15_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h15_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h15_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h15_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=15 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1612-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -7195,129 +5667,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h15_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=20 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h20_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=20 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 9164-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥9164 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h20_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h20_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h20_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=20 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9164-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -7362,129 +5718,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=20 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h20_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=20 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4940-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4940 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h20_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h20_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h20_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=20 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4940-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -7529,129 +5769,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=20 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h20_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=20 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2828-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2828 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h20_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h20_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h20_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=20 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2828-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -7696,129 +5820,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=20 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h20_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=20 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1772-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1772 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h20_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h20_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h20_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h20_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=20 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1772-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -7863,129 +5871,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h20_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=25 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h25_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=25 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 9324-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥9324 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h25_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h25_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h25_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=25 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9324-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -8030,129 +5922,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=25 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h25_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=25 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5100-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥5100 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h25_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h25_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h25_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=25 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 5100-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -8197,129 +5973,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=25 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h25_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=25 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2988-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2988 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h25_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h25_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h25_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=25 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2988-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -8364,129 +6024,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=32 H=25 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m32_h25_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=32 H=25 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1932-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1932 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m32_h25_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m32_h25_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m32_h25_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m32_h25_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=32 H=25 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1932-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 ///
 /// # Safety
 ///
@@ -8531,123 +6075,7 @@ pub unsafe extern "C" fn oxi_lms_sha256_m32_h25_w8_verify(
     }
 }
 
-// ── SHA-256 / M=24 family (RFC 8708 §4.1) — 20 pairs × 3 ops = 60 fns ──
-
-/// Generate an LMS key pair for SHA-256 M=24 H=5 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h5_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=5 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4956-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥4956 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h5_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h5_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h5_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
+// ── SHA-256 / M=24 family (SP 800-208 §4.2) — 20 pairs, verify only ──
 
 /// Verify an LMS signature for the SHA-256 M=24 H=5 W=1 variant.
 ///
@@ -8655,7 +6083,7 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w1_sign(
 /// 4956-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -8700,129 +6128,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=5 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h5_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=5 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2580-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2580 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h5_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h5_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h5_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=5 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2580-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -8867,129 +6179,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=5 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h5_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=5 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1380-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1380 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h5_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h5_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h5_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=5 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1380-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -9034,129 +6230,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=5 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h5_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=5 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 780-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥780 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h5_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h5_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h5_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h5_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=5 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 780-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -9201,129 +6281,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h5_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=10 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h10_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=10 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5076-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5076 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h10_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h10_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h10_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=10 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5076-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -9368,129 +6332,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=10 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h10_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=10 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2700-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2700 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h10_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h10_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h10_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=10 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2700-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -9535,129 +6383,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=10 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h10_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=10 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1500-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1500 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h10_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h10_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h10_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=10 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1500-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -9702,129 +6434,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=10 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h10_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=10 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 900-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥900 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h10_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h10_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h10_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h10_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=10 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 900-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -9869,129 +6485,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h10_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=15 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h15_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=15 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5196-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5196 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h15_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h15_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h15_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=15 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5196-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -10036,129 +6536,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=15 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h15_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=15 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2820-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2820 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h15_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h15_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h15_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=15 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2820-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -10203,129 +6587,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=15 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h15_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=15 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1620-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1620 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h15_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h15_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h15_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=15 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1620-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -10370,129 +6638,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=15 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h15_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=15 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1020-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1020 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h15_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h15_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h15_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h15_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=15 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1020-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -10537,129 +6689,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h15_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=20 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h20_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=20 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5316-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5316 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h20_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h20_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h20_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=20 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5316-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -10704,129 +6740,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=20 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h20_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=20 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2940-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2940 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h20_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h20_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h20_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=20 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2940-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -10871,129 +6791,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=20 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h20_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=20 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1740-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1740 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h20_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h20_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h20_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=20 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1740-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -11038,129 +6842,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=20 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h20_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=20 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1140-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1140 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h20_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h20_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h20_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h20_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=20 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1140-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -11205,129 +6893,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h20_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=25 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h25_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=25 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5436-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5436 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h25_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h25_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h25_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=25 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5436-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -11372,129 +6944,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=25 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h25_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=25 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 3060-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥3060 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h25_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h25_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h25_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=25 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 3060-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -11539,129 +6995,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=25 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h25_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=25 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1860-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1860 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h25_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h25_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h25_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=25 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1860-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -11706,129 +7046,13 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHA-256 M=24 H=25 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_sha256_m24_h25_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHA-256 M=24 H=25 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1260-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1260 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_sha256_m24_h25_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_sha256_m24_h25_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_sha256_m24_h25_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_sha256_m24_h25_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHA-256 M=24 H=25 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1260-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 ///
 /// # Safety
 ///
@@ -11873,123 +7097,7 @@ pub unsafe extern "C" fn oxi_lms_sha256_m24_h25_w8_verify(
     }
 }
 
-// ── SHAKE-256 / M=32 family (RFC 8708 §3.1) — 20 pairs × 3 ops = 60 fns ──
-
-/// Generate an LMS key pair for SHAKE-256 M=32 H=5 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h5_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=5 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 8684-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥8684 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h5_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h5_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h5_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h5_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
+// ── SHAKE-256 / M=32 family (SP 800-208 §4.3) — 20 pairs, verify only ──
 
 /// Verify an LMS signature for the SHAKE-256 M=32 H=5 W=1 variant.
 ///
@@ -11997,7 +7105,7 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w1_sign(
 /// 8684-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -12042,129 +7150,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=5 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h5_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=5 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4460-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4460 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h5_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h5_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h5_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h5_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=5 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4460-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -12209,129 +7201,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=5 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h5_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=5 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2348-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2348 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h5_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h5_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h5_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h5_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=5 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2348-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -12376,129 +7252,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=5 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h5_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=5 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1292-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1292 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h5_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h5_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h5_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h5_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=5 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1292-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -12543,129 +7303,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h5_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=10 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h10_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=10 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 8844-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥8844 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h10_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h10_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h10_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h10_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=10 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 8844-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -12710,129 +7354,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=10 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h10_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=10 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4620-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4620 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h10_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h10_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h10_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h10_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=10 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4620-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -12877,129 +7405,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=10 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h10_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=10 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2508-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2508 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h10_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h10_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h10_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h10_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=10 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2508-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -13044,129 +7456,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=10 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h10_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=10 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1452-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1452 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h10_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h10_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h10_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h10_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=10 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1452-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -13211,129 +7507,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h10_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=15 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h15_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=15 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 9004-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥9004 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h15_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h15_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h15_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h15_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=15 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9004-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -13378,129 +7558,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=15 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h15_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=15 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4780-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4780 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h15_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h15_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h15_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h15_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=15 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4780-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -13545,129 +7609,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=15 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h15_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=15 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2668-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2668 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h15_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h15_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h15_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h15_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=15 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2668-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -13712,129 +7660,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=15 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h15_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=15 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1612-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1612 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h15_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h15_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h15_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h15_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=15 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1612-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -13879,129 +7711,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h15_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=20 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h20_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=20 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 9164-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥9164 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h20_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h20_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h20_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h20_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=20 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9164-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -14046,129 +7762,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=20 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h20_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=20 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4940-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥4940 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h20_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h20_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h20_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h20_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=20 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 4940-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -14213,129 +7813,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=20 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h20_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=20 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2828-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2828 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h20_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h20_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h20_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h20_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=20 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2828-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -14380,129 +7864,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=20 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h20_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=20 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1772-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1772 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h20_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h20_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h20_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h20_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=20 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1772-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -14547,129 +7915,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h20_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=25 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h25_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=25 W=1 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 9324-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥9324 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h25_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h25_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h25_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h25_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=25 W=1 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 9324-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -14714,129 +7966,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=25 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h25_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=25 W=2 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5100-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥5100 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h25_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h25_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h25_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h25_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=25 W=2 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 5100-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -14881,129 +8017,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=25 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h25_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=25 W=4 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2988-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥2988 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h25_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h25_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h25_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h25_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=25 W=4 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 2988-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -15048,129 +8068,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=32 H=25 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
-/// private-key blob into `sk_out` and a 56-byte public key
-/// into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥52 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥56 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m32_h25_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=32 H=25 W=8 variant.
-///
-/// Reads the 52-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1932-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥52 bytes, `sig_out` ≥1932 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m32_h25_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m32_h25_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m32_h25_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m32_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m32_h25_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=32 H=25 W=8 variant.
 ///
 /// Reads 56-byte pk, `msg_len`-byte message, and
 /// 1932-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 ///
 /// # Safety
 ///
@@ -15215,123 +8119,7 @@ pub unsafe extern "C" fn oxi_lms_shake_m32_h25_w8_verify(
     }
 }
 
-// ── SHAKE-256 / M=24 family (RFC 8708 §4.2) — 20 pairs × 3 ops = 60 fns ──
-
-/// Generate an LMS key pair for SHAKE-256 M=24 H=5 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h5_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=5 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 4956-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥4956 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h5_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h5_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h5_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h5_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
+// ── SHAKE-256 / M=24 family (SP 800-208 §4.4) — 20 pairs, verify only ──
 
 /// Verify an LMS signature for the SHAKE-256 M=24 H=5 W=1 variant.
 ///
@@ -15339,7 +8127,7 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w1_sign(
 /// 4956-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -15384,129 +8172,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=5 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h5_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=5 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2580-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2580 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h5_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h5_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h5_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h5_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=5 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2580-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -15551,129 +8223,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=5 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h5_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=5 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1380-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1380 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h5_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h5_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h5_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h5_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=5 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1380-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -15718,129 +8274,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=5 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h5_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=5 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 780-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥780 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h5_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h5_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h5_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h5_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h5_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=5 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 780-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -15885,129 +8325,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h5_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=10 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h10_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=10 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5076-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5076 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h10_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h10_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h10_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h10_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=10 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5076-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -16052,129 +8376,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=10 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h10_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=10 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2700-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2700 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h10_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h10_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h10_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h10_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=10 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2700-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -16219,129 +8427,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=10 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h10_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=10 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1500-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1500 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h10_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h10_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h10_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h10_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=10 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1500-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -16386,129 +8478,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=10 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h10_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=10 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 900-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥900 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h10_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h10_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h10_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h10_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h10_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=10 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 900-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -16553,129 +8529,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h10_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=15 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h15_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=15 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5196-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5196 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h15_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h15_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h15_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h15_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=15 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5196-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -16720,129 +8580,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=15 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h15_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=15 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2820-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2820 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h15_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h15_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h15_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h15_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=15 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2820-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -16887,129 +8631,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=15 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h15_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=15 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1620-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1620 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h15_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h15_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h15_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h15_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=15 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1620-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -17054,129 +8682,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=15 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h15_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=15 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1020-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1020 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h15_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h15_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h15_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h15_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h15_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=15 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1020-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -17221,129 +8733,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h15_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=20 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h20_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=20 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5316-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5316 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h20_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h20_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h20_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h20_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=20 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5316-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -17388,129 +8784,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=20 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h20_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=20 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 2940-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥2940 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h20_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h20_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h20_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h20_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=20 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 2940-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -17555,129 +8835,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=20 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h20_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=20 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1740-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1740 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h20_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h20_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h20_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h20_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=20 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1740-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -17722,129 +8886,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=20 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h20_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=20 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1140-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1140 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h20_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h20_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h20_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h20_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h20_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=20 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1140-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -17889,129 +8937,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h20_w8_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=25 W=1.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w1_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h25_w1::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w1::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=25 W=1 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 5436-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥5436 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w1_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h25_w1::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h25_w1::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h25_w1::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w1::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h25_w1::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=25 W=1 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 5436-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -18056,129 +8988,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w1_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=25 W=2.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w2_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h25_w2::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w2::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=25 W=2 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 3060-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥3060 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w2_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h25_w2::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h25_w2::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h25_w2::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w2::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h25_w2::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=25 W=2 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 3060-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -18223,129 +9039,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w2_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=25 W=4.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w4_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h25_w4::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w4::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=25 W=4 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1860-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1860 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w4_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h25_w4::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h25_w4::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h25_w4::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w4::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h25_w4::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=25 W=4 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1860-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -18390,129 +9090,13 @@ pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w4_verify(
     }
 }
 
-/// Generate an LMS key pair for SHAKE-256 M=24 H=25 W=8.
-///
-/// Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
-/// private-key blob into `sk_out` and a 48-byte public key
-/// into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
-/// LMS-family contract (deterministic derivation from `xi`,
-/// persistence-of-record format, profile gating).
-///
-/// # Safety
-///
-/// `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
-/// writable pointer to ≥44 bytes. `pk_out` must be a
-/// non-NULL writable pointer to ≥48 bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w8_keygen(
-    xi_ptr: *const u8,
-    sk_out: *mut u8,
-    pk_out: *mut u8,
-) -> c_int {
-    let xi_slice = match unsafe { slice_from_raw(xi_ptr, 32) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || pk_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Ok(xi) = <&[u8; 32]>::try_from(xi_slice) else {
-        return R::Internal as c_int;
-    };
-    let (sk, pk) = match oxicrypt_lms::lms_shake_m24_h25_w8::keygen(xi) {
-        Ok(pair) => pair,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            pk.as_ptr(),
-            pk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w8::PUBLIC_KEY_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
-/// Sign a message with the LMS SHAKE-256 M=24 H=25 W=8 variant.
-///
-/// Reads the 44-byte opaque private-key blob from
-/// `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
-/// leaf index, writes the updated blob to `sk_out`, and writes the
-/// 1260-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
-/// See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
-/// be persisted before using `sig_out`).
-///
-/// # Safety
-///
-/// `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
-/// must be valid for `msg_len` bytes (NULL with len=0 permitted).
-/// `sk_out` ≥44 bytes, `sig_out` ≥1260 bytes.
-/// `sk_in_ptr` and `sk_out` may alias.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn oxi_lms_shake_m24_h25_w8_sign(
-    sk_in_ptr: *const u8,
-    msg_ptr: *const u8,
-    msg_len: usize,
-    sk_out: *mut u8,
-    sig_out: *mut u8,
-) -> c_int {
-    let sk_in = match unsafe {
-        slice_from_raw(
-            sk_in_ptr,
-            oxicrypt_lms::lms_shake_m24_h25_w8::PRIVATE_KEY_LEN,
-        )
-    } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let msg = match unsafe { slice_from_raw(msg_ptr, msg_len) } {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if sk_out.is_null() || sig_out.is_null() {
-        return R::NullPointer as c_int;
-    }
-    let Some(mut sk) = oxicrypt_lms::lms_shake_m24_h25_w8::LmsPrivateKey::from_bytes(sk_in) else {
-        return R::InvalidInput as c_int;
-    };
-    let sig = match oxicrypt_lms::lms_shake_m24_h25_w8::sign(&mut sk, msg) {
-        Ok(s) => s,
-        Err(oxicrypt_module::Error::InvalidInput) => return R::InvalidInput as c_int,
-        Err(e) => return R::from(e) as c_int,
-    };
-    let sk_bytes = sk.to_bytes();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sk_bytes.as_ptr(),
-            sk_out,
-            oxicrypt_lms::lms_shake_m24_h25_w8::PRIVATE_KEY_LEN,
-        );
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            sig.as_ptr(),
-            sig_out,
-            oxicrypt_lms::lms_shake_m24_h25_w8::SIGNATURE_LEN,
-        );
-    };
-    R::Ok as c_int
-}
-
 /// Verify an LMS signature for the SHAKE-256 M=24 H=25 W=8 variant.
 ///
 /// Reads 48-byte pk, `msg_len`-byte message, and
 /// 1260-byte signature. Returns `TagMismatch=22` on any
 /// verification failure (parse / structural / cryptographic — upstream
 /// collapses into a single `Err(InvalidInput)`; same convention as
-/// every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+/// every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 ///
 /// # Safety
 ///
@@ -19919,6 +10503,24 @@ pub unsafe extern "C" fn oxi_rsa_4096_oaep_decrypt_sha256(
     };
     unsafe { *out_actual_len = actual };
     R::Ok as c_int
+}
+
+#[cfg(test)]
+mod kat_tests {
+    use super::collect_kats;
+
+    /// `oxi_init` runs what `collect_kats` returns, so every LMS CAST must
+    /// be in it. Matched by name and counted, so dropping any one of the
+    /// four fails here.
+    #[test]
+    fn power_up_set_carries_every_lms_cast() {
+        let kats = collect_kats();
+        assert_eq!(oxicrypt_lms::KATS.len(), 4, "one LMS CAST per hash adapter");
+        for lms in oxicrypt_lms::KATS {
+            let hits = kats.iter().filter(|k| k.name == lms.name).count();
+            assert_eq!(hits, 1, "{} must run exactly once at oxi_init", lms.name);
+        }
+    }
 }
 
 #[cfg(test)]

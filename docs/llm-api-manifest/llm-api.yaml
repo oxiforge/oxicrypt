@@ -190,12 +190,12 @@ modules:
       - oxicrypt-sha
 
   - name: oxicrypt-lms
-    description: "LMS hash-based stateful signatures (SP 800-208, RFC 8554, RFC 8708): the full 80-pair §A.3 grid, each pair a distinct LmsPrivateKey type, with an optional alloc-gated LmsSigningKey tree cache and a default-off rayon parallel feature."
+    description: "LMS signature verification (SP 800-208 §8.2, RFC 8554) for all 80 (LMS, LM-OTS) parameter pairs of SP 800-208 §4.1 (SHA-256), §4.2 (SHA-256/192), §4.3 (SHAKE256/256) and §4.4 (SHAKE256/192), one module per pair, holding no key material and offering no key generation or signing service."
     no_std: true
     depends_on:
       - oxicrypt-module
       - oxicrypt-sha
-      - oxicrypt-zeroize
+      - oxicrypt-xof
 
   - name: oxicrypt-xmss
     description: XMSS signature verification for parameter set XMSS-SHA2_10_256 (SP 800-208 §8.2, RFC 8391 Algorithm 14), holding no key material and offering no key generation or signing service.
@@ -707,41 +707,6 @@ types:
     module: oxicrypt-eddsa
     kind: struct
     description: Ed25519 private key handle storing (seed, A); runs a sign-and-verify PCT on construction.
-    security:
-      contains_secret: true
-      zeroize_on_drop: true
-      constant_time: true
-
-  - name: LmsPrivateKey
-    module: oxicrypt-lms
-    kind: struct
-    description: LMS stateful private key (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) holding tree seed, identifier I, and current leaf index; the caller MUST persist key state after every sign call.
-    fields:
-      - name: seed
-        type: "[u8; 32]"
-        description: "Tree seed (secret)."
-      - name: identifier
-        type: "[u8; 16]"
-        description: "Tree identifier I (public, binds hash computations to this tree)."
-      - name: leaf_index
-        type: u32
-        description: "Next unused leaf index (0..1023)."
-    security:
-      contains_secret: true
-      zeroize_on_drop: true
-      constant_time: true
-
-  - name: LmsSigningKey
-    module: oxicrypt-lms
-    kind: struct
-    description: Cached LMS signing key wrapping LmsPrivateKey with a precomputed Merkle node table for O(H) signing (default-on alloc feature); STATEFUL, persist the wrapped key after every sign.
-    fields:
-      - name: key
-        type: LmsPrivateKey
-        description: "Wrapped stateful private key (secret; zeroized on Drop as usual)."
-      - name: nodes
-        type: "Vec<[u8; 32]>"
-        description: Merkle node table in RFC 8554 numbering (root = 1, leaves at 2^H..2^(H+1), slot 0 unused).
     security:
       contains_secret: true
       zeroize_on_drop: true
@@ -6227,95 +6192,15 @@ functions:
     profiles: [Unrestricted]
 
   # ── LMS (SP 800-208 / RFC 8554) ────────────────────────────────────
-
-  - name: keygen
-    module: oxicrypt-lms
-    signature: "pub fn keygen(xi: &[u8; 32]) -> Result<(LmsPrivateKey, [u8; 56]), Error>"
-    description: Generate an LMS key pair (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4); xi is a 32-byte secret DRBG seed, and the tree root takes ~0.5 s for 1024 leaves.
-    parameters:
-      - name: xi
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte secret seed for the Merkle tree."
-    returns:
-      type: "Result<(LmsPrivateKey, [u8; 56]), Error>"
-      description: "(private_key, public_key)."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: LMS blocked by active profile.
-    preconditions:
-      - description: Module must be Operational.
-      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
-    postconditions:
-      - description: Returns a fresh LMS key pair with leaf_index 0; the key can sign at most 1024 messages (MAX_SIGNATURES).
-    thread_safety: thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-      - Migration
-
-  - name: sign
-    module: oxicrypt-lms
-    signature: "pub fn sign(key: &mut LmsPrivateKey, message: &[u8]) -> Result<[u8; 2508], Error>"
-    description: Sign a message with LMS; STATEFUL, advances the leaf index by 1, the caller MUST persist the private key afterwards.
-    parameters:
-      - name: key
-        type: "&mut LmsPrivateKey"
-        direction: in-out
-        description: "Mutable private key handle. leaf_index is incremented."
-      - name: message
-        type: "&[u8]"
-        direction: in
-        description: "Message to sign (arbitrary length)."
-    returns:
-      type: "Result<[u8; 2508], Error>"
-      description: "2508-byte LMS signature: q (4) || LMOTS sig (2404) || LMS type (4) || auth path (10 × 32 = 320) minus padding overlaps."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: LMS blocked by active profile.
-        - name: InvalidInput
-          condition: Key exhausted (leaf_index >= 1024).
-    preconditions:
-      - description: Module must be Operational.
-      - description: key.leaf_index < 1024 (key not exhausted).
-    postconditions:
-      - description: key.leaf_index has been incremented by 1. Caller MUST persist key state.
-    thread_safety: not-thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-      - Migration
-    pitfalls:
-      - description: "LMS is STATEFUL: each private key can sign only 1024 messages, the caller must persist key state after every sign, and reusing a leaf index voids the whole tree's security."
-        wrong: |
-          let (mut sk, pk) = oxicrypt_lms::keygen(&seed)?;
-          let sig = oxicrypt_lms::sign(&mut sk, b"msg")?;
-          // BUG: sk not persisted — if process crashes, leaf index is lost
-        right: |
-          let (mut sk, pk) = oxicrypt_lms::keygen(&seed)?;
-          let sig = oxicrypt_lms::sign(&mut sk, b"msg")?;
-          persist_to_disk(&sk.to_bytes());  // MUST persist after every sign
+  # Verification only. The crate root re-exports the LMS_SHA256_M32_H10 /
+  # LMOTS_SHA256_N32_W4 pair shown here; each of the 80 per-pair modules
+  # (lms_<family>_m<N>_h<H>_w<W>) carries a verify of the same shape, sized
+  # by its own PUBLIC_KEY_LEN and SIGNATURE_LEN.
 
   - name: verify
     module: oxicrypt-lms
     signature: "pub fn verify(public_key: &[u8; 56], message: &[u8], signature: &[u8; 2508]) -> Result<(), Error>"
-    description: Verify an LMS signature; Ok(()) if valid, Err(InvalidInput) if not.
+    description: Verify an LMS signature (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4); Ok(()) if valid, Err(InvalidInput) if not.
     parameters:
       - name: public_key
         type: "&[u8; 56]"
@@ -6355,116 +6240,6 @@ functions:
       - Unrestricted
       - Cnsa2
       - Migration
-
-  # Cached signing (feature `alloc`, on by default); baseline H10/W4 shapes shown.
-
-  - name: "LmsSigningKey::new"
-    module: oxicrypt-lms
-    signature: "pub fn new(xi: &[u8; 32]) -> Result<(LmsSigningKey, [u8; 56]), Error>"
-    description: Generate a fresh LMS key pair and precompute the full Merkle node table; the returned LmsSigningKey signs in O(H) per signature.
-    parameters:
-      - name: xi
-        type: "&[u8; 32]"
-        constraints:
-          size: 32
-        direction: in
-        description: "32-byte secret seed for the Merkle tree (from an approved DRBG)."
-    returns:
-      type: "Result<(LmsSigningKey, [u8; 56]), Error>"
-      description: "(cached_signing_key, public_key)."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: LMS blocked by active profile.
-    preconditions:
-      - description: Module must be Operational.
-      - description: xi must be 32 bytes of fresh random data from an approved DRBG.
-    thread_safety: thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-      - Migration
-
-  - name: "LmsSigningKey::from_private_key"
-    module: oxicrypt-lms
-    signature: "pub fn from_private_key(key: LmsPrivateKey) -> Result<LmsSigningKey, Error>"
-    description: Wrap an existing private key (resumed from persisted state), rebuilding the Merkle node table from its seed; the current leaf_index is preserved so cached signing continues where the uncached key left off.
-    parameters:
-      - name: key
-        type: LmsPrivateKey
-        direction: in
-        description: "Private key to wrap; leaf state preserved."
-    returns:
-      type: "Result<LmsSigningKey, Error>"
-      description: "Cached signing key over the same key state."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: LMS blocked by active profile.
-    preconditions:
-      - description: Module must be Operational.
-    thread_safety: thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-      - Migration
-
-  - name: "LmsSigningKey::sign"
-    module: oxicrypt-lms
-    signature: "pub fn sign(&mut self, message: &[u8]) -> Result<[u8; 2508], Error>"
-    description: Sign a message reading the authentication path from the cached node table, O(H) per signature; STATEFUL, advances the wrapped key's leaf index by 1, returns Err(InvalidInput) on exhaustion, and the caller MUST persist private_key().to_bytes() afterwards.
-    parameters:
-      - name: message
-        type: "&[u8]"
-        direction: in
-        description: "Message to sign (arbitrary length)."
-    returns:
-      type: "Result<[u8; 2508], Error>"
-      description: "2508-byte LMS signature, byte-identical to the uncached sign."
-      error_variants:
-        - name: NotOperational
-          condition: Module not initialized.
-        - name: AlgorithmRestricted
-          condition: LMS blocked by active profile.
-        - name: InvalidInput
-          condition: Key exhausted (leaf_index >= 1024).
-    preconditions:
-      - description: Module must be Operational.
-      - description: Wrapped key not exhausted.
-    postconditions:
-      - description: Wrapped key's leaf_index incremented by 1. Caller MUST persist key state.
-    thread_safety: not-thread-safe
-    security:
-      constant_time: true
-      handles_secrets: true
-      fips_approved: true
-      fips_gate: Operational
-    profiles:
-      - Unrestricted
-      - Cnsa2
-      - Migration
-    pitfalls:
-      - description: "The same one-leaf-per-signature contract as the uncached sign applies: persist the wrapped private key after every call. The node table is public data and does not capture leaf state; only the wrapped LmsPrivateKey does."
-        wrong: |
-          let (mut csk, pk) = lms_sha256_m32_h10_w4::LmsSigningKey::new(&seed)?;
-          let sig = csk.sign(b"msg")?;
-          // BUG: wrapped key not persisted — crash loses the advanced leaf index
-        right: |
-          let (mut csk, pk) = lms_sha256_m32_h10_w4::LmsSigningKey::new(&seed)?;
-          let sig = csk.sign(b"msg")?;
-          persist_to_disk(&csk.private_key().to_bytes());  // MUST persist after every sign
 
   # ── XMSS (SP 800-208 / RFC 8391) ─────────────────────────────────
 
@@ -12604,86 +12379,9 @@ functions:
       fips_approved: true
 
   # ── LMS per-pair family ─────────────────────────────────────────
-  # Generic oxi_lms_* baseline (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4) plus 240 per-pair fns over the full SP 800-208 §A.3 grid (80 pairs × {keygen, sign, verify}).
-
-  - name: oxi_lms_keygen
-    module: oxicrypt-ffi
-    description: Generate an LMS key pair (LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4, SP 800-208 / RFC 8554) from a 32-byte caller-supplied seed; deterministically derives the tree seed and 16-byte identifier I, computes the 1024-leaf Merkle root, and writes the 52-byte opaque private-key blob into sk_out and the 56-byte public key into pk_out.
-    signature: >-
-      int oxi_lms_keygen(const uint8_t *xi_ptr,
-      uint8_t *sk_out, uint8_t *pk_out)
-    parameters:
-      - name: xi_ptr
-        type: const uint8_t *
-        direction: in
-        description: 32-byte caller-supplied seed
-      - name: sk_out
-        type: uint8_t *
-        direction: out
-        description: 52-byte opaque LMS private-key blob
-      - name: pk_out
-        type: uint8_t *
-        direction: out
-        description: 56-byte LMS public key
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
-
-  - name: oxi_lms_sign
-    module: oxicrypt-ffi
-    description: "Sign a message with an LMS private key (SP 800-208 / RFC 8554); reads the 52-byte opaque blob from sk_in_ptr, advances the leaf index, writes the updated blob into sk_out and the 2508-byte signature into sig_out."
-    signature: >-
-      int oxi_lms_sign(const uint8_t *sk_in_ptr,
-      const uint8_t *msg_ptr, size_t msg_len,
-      uint8_t *sk_out, uint8_t *sig_out)
-    parameters:
-      - name: sk_in_ptr
-        type: const uint8_t *
-        direction: in
-        description: 52-byte opaque LMS private-key blob (pre-state)
-      - name: msg_ptr
-        type: const uint8_t *
-        direction: in
-        description: Message bytes (length given by msg_len)
-      - name: msg_len
-        type: size_t
-        direction: in
-        description: Message length in bytes
-      - name: sk_out
-        type: uint8_t *
-        direction: out
-        description: 52-byte opaque LMS private-key blob (post-state, leaf index advanced; MUST be persisted before using sig_out)
-      - name: sig_out
-        type: uint8_t *
-        direction: out
-        description: 2508-byte LMS signature buffer
-    returns:
-      type: int
-      description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
-      error_variants:
-        - name: InvalidInput
-          condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
-        - name: NotOperational
-          condition: oxi_init has not completed successfully, or the module has entered the terminal Error state.
-        - name: AlgorithmRestricted
-          condition: The active algorithm profile does not permit this service.
-        - name: NullPointer
-          condition: A pointer argument that the call requires was NULL.
-    security:
-      constant_time: false
-      handles_secrets: true
-      fips_approved: true
+  # oxi_lms_verify covers LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4. The 80 per-pair
+  # oxi_lms_<family>_m<N>_h<H>_w<W>_verify functions, one per SP 800-208 §4.1-§4.4 pair,
+  # share its signature, sized by the pair's public-key and signature lengths.
 
   - name: oxi_lms_verify
     module: oxicrypt-ffi
@@ -16912,7 +16610,7 @@ constants:
     module: oxicrypt-lms
     type: u32
     value: "1024"
-    description: "Maximum signatures per LMS key (2^H where H=10)."
+    description: "Number of leaves, and so of signatures, in an LMS tree of this pair (2^H where H=10)."
 
   - name: SIGNATURE_LEN
     module: oxicrypt-xmss

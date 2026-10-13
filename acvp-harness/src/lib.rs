@@ -26,7 +26,7 @@
 //!   (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224,
 //!   SHA-512/256) in [`handlers::shs`].
 //!
-//! Subsequent chunks expanded the handler set to 78 algorithms covering
+//! The registry holds 83 handlers (pinned by `dispatch::tests`), covering
 //! AES (7 modes), DRBG (3 families), KDFs (HKDF, KBKDF, TLS, PBKDF),
 //! SP 800-185 derived functions (cSHAKE, KMAC, TupleHash, ParallelHash),
 //! ECDSA, EdDSA, RSA (all modes), KAS-ECC-SSC, KAS-FFC-SSC, and

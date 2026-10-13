@@ -2242,7 +2242,7 @@ mod tests {
     /// The gate body is read with its commentary stripped. A gate scanned as raw
     /// text would keep admitting whatever its comments still mention — deleting
     /// `|| is_lms_service(service)` while leaving the LMS comment block above it
-    /// would leave 160 services listed as permitted by a gate that refuses every
+    /// would leave 80 services listed as permitted by a gate that refuses every
     /// one of them.
     fn gate_services(name: &str) -> BTreeSet<String> {
         let body = code_only(&fn_body(
@@ -2285,11 +2285,29 @@ mod tests {
                 "`lms_block_contains` no longer names exactly two boundary variants"
             );
             let (lo, hi) = (bounds[0].min(bounds[1]), bounds[0].max(bounds[1]));
+            // The helper admits odd discriminants only. The fold applies the
+            // same parity, and must find exactly the 80 LMS verification
+            // services: a fold that ignored the parity, or a variant of any
+            // other family on an odd slot, changes that count.
+            assert!(
+                range.contains("discriminant & 1 == 1"),
+                "`lms_block_contains` no longer tests for odd discriminants"
+            );
+            let mut folded = 0usize;
             for (variant, (_, d)) in &owner {
-                if (lo..=hi).contains(d) {
+                if (lo..=hi).contains(d) && d % 2 == 1 {
+                    assert!(
+                        variant.starts_with("Lms"),
+                        "{variant} sits on an LMS slot ({d})"
+                    );
                     services.insert(variant.clone());
+                    folded = folded.saturating_add(1);
                 }
             }
+            assert_eq!(
+                folded, 80,
+                "the LMS fold admitted {folded} services, not 80"
+            );
         }
         services
     }
@@ -2507,28 +2525,39 @@ mod tests {
              has stopped matching and the variants beneath it are being dropped",
             owner.len()
         );
+        // Measured: 256 variants.
         assert!(
-            seen >= 300,
+            seen >= 256,
             "read only {seen} `Service` variants — the enum parser is broken, not the enum"
         );
 
         let c1 = gate_services("is_cnsa1_allowed");
         let c2 = gate_services("is_cnsa2_allowed");
-        // Measured: 34 and 190 (the latter including the 160-service LMS block).
+        // Measured: 34 and 110 (the latter including the 80-service LMS block).
         assert!(
-            c1.len() >= 30,
+            c1.len() >= 34,
             "is_cnsa1_allowed resolved only {} services — the gate scan is broken",
             c1.len()
         );
         assert!(
-            c2.len() >= 150,
-            "is_cnsa2_allowed resolved only {} services; the LMS block alone is 160, so this \
+            c2.len() >= 110,
+            "is_cnsa2_allowed resolved only {} services; the LMS block alone is 80, so this \
              is the scan failing, not the gate",
             c2.len()
         );
+        // One `Lms…Verify` service per SP 800-208 §4 parameter pair, and nothing
+        // else from the LMS crate: the block holds no signing service.
+        let lms: Vec<&String> = c2.iter().filter(|s| s.starts_with("Lms")).collect();
+        assert_eq!(
+            lms.len(),
+            80,
+            "CNSA 2.0 permits {} LMS services, not one per SP 800-208 parameter pair; the \
+             discriminant-range fold is broken or the block has changed",
+            lms.len()
+        );
         assert!(
-            c2.iter().any(|s| s.starts_with("Lms")),
-            "no LMS service is permitted by CNSA 2.0; the discriminant-range fold is broken"
+            lms.iter().all(|s| s.ends_with("Verify")),
+            "a non-verification LMS service is permitted by CNSA 2.0: {lms:?}"
         );
         assert!(
             !c1.iter().any(|s| s.starts_with("Pbkdf2"))

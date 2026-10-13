@@ -827,181 +827,105 @@ pub enum Service {
     SlhDsaShake256fSign = 354,
     SlhDsaShake256fVerify = 355,
 
-    // ----- oxicrypt-lms: SP 800-208 (RFC 8554 / RFC 8708) -----
-    // 160 per-pair entries (80 pairs × Sign + Verify), discriminants 500-659.
-    // Layout: 500-539 SHA-256/M=32, 540-579 SHA-256/M=24,
-    // 580-619 SHAKE/M=32, 620-659 SHAKE/M=24.
-    // Within each family: (H ascending, W ascending), Sign/Verify alternating.
-    // The block is contiguous and holds nothing but LMS, which is what lets
-    // `is_lms_service` range-test it; `lms_discriminant_block_is_contiguous_and_pure`
-    // pins that. All 80 pairs are permitted under every profile.
+    // ----- oxicrypt-lms: SP 800-208 §4.1–§4.4, verification only -----
+    // 80 per-pair entries on the odd discriminants 501-659.
+    // Layout: 501-539 SHA-256/M=32, 541-579 SHA-256/M=24,
+    // 581-619 SHAKE/M=32, 621-659 SHAKE/M=24.
+    // Within each family: (H ascending, W ascending). The even values in
+    // 500-658 are unassigned: SP 800-208 §8.1 confines LMS signing to
+    // hardware modules, so no signing service exists to hold them.
+    // The odd values in the block hold nothing but LMS, which is what lets
+    // `is_lms_service` test the block arithmetically;
+    // `lms_discriminant_slots_are_complete_and_pure` and a build-time
+    // assertion pin that. All 80 pairs are permitted under CNSA 2.0,
+    // Migration and Unrestricted, and refused under CNSA 1.0.
 
-    // SHA-256 / N=32 family (RFC 8554 §A.1+§A.2)
-    LmsSha256M32H5W1Sign = 500,
+    // SHA-256 / N=32 family (SP 800-208 §4.1)
     LmsSha256M32H5W1Verify = 501,
-    LmsSha256M32H5W2Sign = 502,
     LmsSha256M32H5W2Verify = 503,
-    LmsSha256M32H5W4Sign = 504,
     LmsSha256M32H5W4Verify = 505,
-    LmsSha256M32H5W8Sign = 506,
     LmsSha256M32H5W8Verify = 507,
-    LmsSha256M32H10W1Sign = 508,
     LmsSha256M32H10W1Verify = 509,
-    LmsSha256M32H10W2Sign = 510,
     LmsSha256M32H10W2Verify = 511,
-    LmsSha256M32H10W4Sign = 512,
     LmsSha256M32H10W4Verify = 513,
-    LmsSha256M32H10W8Sign = 514,
     LmsSha256M32H10W8Verify = 515,
-    LmsSha256M32H15W1Sign = 516,
     LmsSha256M32H15W1Verify = 517,
-    LmsSha256M32H15W2Sign = 518,
     LmsSha256M32H15W2Verify = 519,
-    LmsSha256M32H15W4Sign = 520,
     LmsSha256M32H15W4Verify = 521,
-    LmsSha256M32H15W8Sign = 522,
     LmsSha256M32H15W8Verify = 523,
-    LmsSha256M32H20W1Sign = 524,
     LmsSha256M32H20W1Verify = 525,
-    LmsSha256M32H20W2Sign = 526,
     LmsSha256M32H20W2Verify = 527,
-    LmsSha256M32H20W4Sign = 528,
     LmsSha256M32H20W4Verify = 529,
-    LmsSha256M32H20W8Sign = 530,
     LmsSha256M32H20W8Verify = 531,
-    LmsSha256M32H25W1Sign = 532,
     LmsSha256M32H25W1Verify = 533,
-    LmsSha256M32H25W2Sign = 534,
     LmsSha256M32H25W2Verify = 535,
-    LmsSha256M32H25W4Sign = 536,
     LmsSha256M32H25W4Verify = 537,
-    LmsSha256M32H25W8Sign = 538,
     LmsSha256M32H25W8Verify = 539,
 
-    // SHA-256 / N=24 family (RFC 8708 §4.1)
-    LmsSha256M24H5W1Sign = 540,
+    // SHA-256 / N=24 family (SP 800-208 §4.2)
     LmsSha256M24H5W1Verify = 541,
-    LmsSha256M24H5W2Sign = 542,
     LmsSha256M24H5W2Verify = 543,
-    LmsSha256M24H5W4Sign = 544,
     LmsSha256M24H5W4Verify = 545,
-    LmsSha256M24H5W8Sign = 546,
     LmsSha256M24H5W8Verify = 547,
-    LmsSha256M24H10W1Sign = 548,
     LmsSha256M24H10W1Verify = 549,
-    LmsSha256M24H10W2Sign = 550,
     LmsSha256M24H10W2Verify = 551,
-    LmsSha256M24H10W4Sign = 552,
     LmsSha256M24H10W4Verify = 553,
-    LmsSha256M24H10W8Sign = 554,
     LmsSha256M24H10W8Verify = 555,
-    LmsSha256M24H15W1Sign = 556,
     LmsSha256M24H15W1Verify = 557,
-    LmsSha256M24H15W2Sign = 558,
     LmsSha256M24H15W2Verify = 559,
-    LmsSha256M24H15W4Sign = 560,
     LmsSha256M24H15W4Verify = 561,
-    LmsSha256M24H15W8Sign = 562,
     LmsSha256M24H15W8Verify = 563,
-    LmsSha256M24H20W1Sign = 564,
     LmsSha256M24H20W1Verify = 565,
-    LmsSha256M24H20W2Sign = 566,
     LmsSha256M24H20W2Verify = 567,
-    LmsSha256M24H20W4Sign = 568,
     LmsSha256M24H20W4Verify = 569,
-    LmsSha256M24H20W8Sign = 570,
     LmsSha256M24H20W8Verify = 571,
-    LmsSha256M24H25W1Sign = 572,
     LmsSha256M24H25W1Verify = 573,
-    LmsSha256M24H25W2Sign = 574,
     LmsSha256M24H25W2Verify = 575,
-    LmsSha256M24H25W4Sign = 576,
     LmsSha256M24H25W4Verify = 577,
-    LmsSha256M24H25W8Sign = 578,
     LmsSha256M24H25W8Verify = 579,
 
-    // SHAKE-256 / N=32 family (RFC 8708 §3.1)
-    LmsShakeM32H5W1Sign = 580,
+    // SHAKE-256 / N=32 family (SP 800-208 §4.3)
     LmsShakeM32H5W1Verify = 581,
-    LmsShakeM32H5W2Sign = 582,
     LmsShakeM32H5W2Verify = 583,
-    LmsShakeM32H5W4Sign = 584,
     LmsShakeM32H5W4Verify = 585,
-    LmsShakeM32H5W8Sign = 586,
     LmsShakeM32H5W8Verify = 587,
-    LmsShakeM32H10W1Sign = 588,
     LmsShakeM32H10W1Verify = 589,
-    LmsShakeM32H10W2Sign = 590,
     LmsShakeM32H10W2Verify = 591,
-    LmsShakeM32H10W4Sign = 592,
     LmsShakeM32H10W4Verify = 593,
-    LmsShakeM32H10W8Sign = 594,
     LmsShakeM32H10W8Verify = 595,
-    LmsShakeM32H15W1Sign = 596,
     LmsShakeM32H15W1Verify = 597,
-    LmsShakeM32H15W2Sign = 598,
     LmsShakeM32H15W2Verify = 599,
-    LmsShakeM32H15W4Sign = 600,
     LmsShakeM32H15W4Verify = 601,
-    LmsShakeM32H15W8Sign = 602,
     LmsShakeM32H15W8Verify = 603,
-    LmsShakeM32H20W1Sign = 604,
     LmsShakeM32H20W1Verify = 605,
-    LmsShakeM32H20W2Sign = 606,
     LmsShakeM32H20W2Verify = 607,
-    LmsShakeM32H20W4Sign = 608,
     LmsShakeM32H20W4Verify = 609,
-    LmsShakeM32H20W8Sign = 610,
     LmsShakeM32H20W8Verify = 611,
-    LmsShakeM32H25W1Sign = 612,
     LmsShakeM32H25W1Verify = 613,
-    LmsShakeM32H25W2Sign = 614,
     LmsShakeM32H25W2Verify = 615,
-    LmsShakeM32H25W4Sign = 616,
     LmsShakeM32H25W4Verify = 617,
-    LmsShakeM32H25W8Sign = 618,
     LmsShakeM32H25W8Verify = 619,
 
-    // SHAKE-256 / N=24 family (RFC 8708 §4.2)
-    LmsShakeM24H5W1Sign = 620,
+    // SHAKE-256 / N=24 family (SP 800-208 §4.4)
     LmsShakeM24H5W1Verify = 621,
-    LmsShakeM24H5W2Sign = 622,
     LmsShakeM24H5W2Verify = 623,
-    LmsShakeM24H5W4Sign = 624,
     LmsShakeM24H5W4Verify = 625,
-    LmsShakeM24H5W8Sign = 626,
     LmsShakeM24H5W8Verify = 627,
-    LmsShakeM24H10W1Sign = 628,
     LmsShakeM24H10W1Verify = 629,
-    LmsShakeM24H10W2Sign = 630,
     LmsShakeM24H10W2Verify = 631,
-    LmsShakeM24H10W4Sign = 632,
     LmsShakeM24H10W4Verify = 633,
-    LmsShakeM24H10W8Sign = 634,
     LmsShakeM24H10W8Verify = 635,
-    LmsShakeM24H15W1Sign = 636,
     LmsShakeM24H15W1Verify = 637,
-    LmsShakeM24H15W2Sign = 638,
     LmsShakeM24H15W2Verify = 639,
-    LmsShakeM24H15W4Sign = 640,
     LmsShakeM24H15W4Verify = 641,
-    LmsShakeM24H15W8Sign = 642,
     LmsShakeM24H15W8Verify = 643,
-    LmsShakeM24H20W1Sign = 644,
     LmsShakeM24H20W1Verify = 645,
-    LmsShakeM24H20W2Sign = 646,
     LmsShakeM24H20W2Verify = 647,
-    LmsShakeM24H20W4Sign = 648,
     LmsShakeM24H20W4Verify = 649,
-    LmsShakeM24H20W8Sign = 650,
     LmsShakeM24H20W8Verify = 651,
-    LmsShakeM24H25W1Sign = 652,
     LmsShakeM24H25W1Verify = 653,
-    LmsShakeM24H25W2Sign = 654,
     LmsShakeM24H25W2Verify = 655,
-    LmsShakeM24H25W4Sign = 656,
     LmsShakeM24H25W4Verify = 657,
-    LmsShakeM24H25W8Sign = 658,
     LmsShakeM24H25W8Verify = 659,
 
     // ----- oxicrypt-xmss: SP 800-208 (stub) -----
@@ -1194,165 +1118,85 @@ impl fmt::Display for Service {
             Self::SlhDsaShake256fKeygen => "SLH-DSA-SHAKE-256f keygen",
             Self::SlhDsaShake256fSign => "SLH-DSA-SHAKE-256f sign",
             Self::SlhDsaShake256fVerify => "SLH-DSA-SHAKE-256f verify",
-            Self::LmsSha256M32H5W1Sign => "LMS SHA-256 M=32 H=5 W=1 sign",
             Self::LmsSha256M32H5W1Verify => "LMS SHA-256 M=32 H=5 W=1 verify",
-            Self::LmsSha256M32H5W2Sign => "LMS SHA-256 M=32 H=5 W=2 sign",
             Self::LmsSha256M32H5W2Verify => "LMS SHA-256 M=32 H=5 W=2 verify",
-            Self::LmsSha256M32H5W4Sign => "LMS SHA-256 M=32 H=5 W=4 sign",
             Self::LmsSha256M32H5W4Verify => "LMS SHA-256 M=32 H=5 W=4 verify",
-            Self::LmsSha256M32H5W8Sign => "LMS SHA-256 M=32 H=5 W=8 sign",
             Self::LmsSha256M32H5W8Verify => "LMS SHA-256 M=32 H=5 W=8 verify",
-            Self::LmsSha256M32H10W1Sign => "LMS SHA-256 M=32 H=10 W=1 sign",
             Self::LmsSha256M32H10W1Verify => "LMS SHA-256 M=32 H=10 W=1 verify",
-            Self::LmsSha256M32H10W2Sign => "LMS SHA-256 M=32 H=10 W=2 sign",
             Self::LmsSha256M32H10W2Verify => "LMS SHA-256 M=32 H=10 W=2 verify",
-            Self::LmsSha256M32H10W4Sign => "LMS SHA-256 M=32 H=10 W=4 sign",
             Self::LmsSha256M32H10W4Verify => "LMS SHA-256 M=32 H=10 W=4 verify",
-            Self::LmsSha256M32H10W8Sign => "LMS SHA-256 M=32 H=10 W=8 sign",
             Self::LmsSha256M32H10W8Verify => "LMS SHA-256 M=32 H=10 W=8 verify",
-            Self::LmsSha256M32H15W1Sign => "LMS SHA-256 M=32 H=15 W=1 sign",
             Self::LmsSha256M32H15W1Verify => "LMS SHA-256 M=32 H=15 W=1 verify",
-            Self::LmsSha256M32H15W2Sign => "LMS SHA-256 M=32 H=15 W=2 sign",
             Self::LmsSha256M32H15W2Verify => "LMS SHA-256 M=32 H=15 W=2 verify",
-            Self::LmsSha256M32H15W4Sign => "LMS SHA-256 M=32 H=15 W=4 sign",
             Self::LmsSha256M32H15W4Verify => "LMS SHA-256 M=32 H=15 W=4 verify",
-            Self::LmsSha256M32H15W8Sign => "LMS SHA-256 M=32 H=15 W=8 sign",
             Self::LmsSha256M32H15W8Verify => "LMS SHA-256 M=32 H=15 W=8 verify",
-            Self::LmsSha256M32H20W1Sign => "LMS SHA-256 M=32 H=20 W=1 sign",
             Self::LmsSha256M32H20W1Verify => "LMS SHA-256 M=32 H=20 W=1 verify",
-            Self::LmsSha256M32H20W2Sign => "LMS SHA-256 M=32 H=20 W=2 sign",
             Self::LmsSha256M32H20W2Verify => "LMS SHA-256 M=32 H=20 W=2 verify",
-            Self::LmsSha256M32H20W4Sign => "LMS SHA-256 M=32 H=20 W=4 sign",
             Self::LmsSha256M32H20W4Verify => "LMS SHA-256 M=32 H=20 W=4 verify",
-            Self::LmsSha256M32H20W8Sign => "LMS SHA-256 M=32 H=20 W=8 sign",
             Self::LmsSha256M32H20W8Verify => "LMS SHA-256 M=32 H=20 W=8 verify",
-            Self::LmsSha256M32H25W1Sign => "LMS SHA-256 M=32 H=25 W=1 sign",
             Self::LmsSha256M32H25W1Verify => "LMS SHA-256 M=32 H=25 W=1 verify",
-            Self::LmsSha256M32H25W2Sign => "LMS SHA-256 M=32 H=25 W=2 sign",
             Self::LmsSha256M32H25W2Verify => "LMS SHA-256 M=32 H=25 W=2 verify",
-            Self::LmsSha256M32H25W4Sign => "LMS SHA-256 M=32 H=25 W=4 sign",
             Self::LmsSha256M32H25W4Verify => "LMS SHA-256 M=32 H=25 W=4 verify",
-            Self::LmsSha256M32H25W8Sign => "LMS SHA-256 M=32 H=25 W=8 sign",
             Self::LmsSha256M32H25W8Verify => "LMS SHA-256 M=32 H=25 W=8 verify",
-            Self::LmsSha256M24H5W1Sign => "LMS SHA-256 M=24 H=5 W=1 sign",
             Self::LmsSha256M24H5W1Verify => "LMS SHA-256 M=24 H=5 W=1 verify",
-            Self::LmsSha256M24H5W2Sign => "LMS SHA-256 M=24 H=5 W=2 sign",
             Self::LmsSha256M24H5W2Verify => "LMS SHA-256 M=24 H=5 W=2 verify",
-            Self::LmsSha256M24H5W4Sign => "LMS SHA-256 M=24 H=5 W=4 sign",
             Self::LmsSha256M24H5W4Verify => "LMS SHA-256 M=24 H=5 W=4 verify",
-            Self::LmsSha256M24H5W8Sign => "LMS SHA-256 M=24 H=5 W=8 sign",
             Self::LmsSha256M24H5W8Verify => "LMS SHA-256 M=24 H=5 W=8 verify",
-            Self::LmsSha256M24H10W1Sign => "LMS SHA-256 M=24 H=10 W=1 sign",
             Self::LmsSha256M24H10W1Verify => "LMS SHA-256 M=24 H=10 W=1 verify",
-            Self::LmsSha256M24H10W2Sign => "LMS SHA-256 M=24 H=10 W=2 sign",
             Self::LmsSha256M24H10W2Verify => "LMS SHA-256 M=24 H=10 W=2 verify",
-            Self::LmsSha256M24H10W4Sign => "LMS SHA-256 M=24 H=10 W=4 sign",
             Self::LmsSha256M24H10W4Verify => "LMS SHA-256 M=24 H=10 W=4 verify",
-            Self::LmsSha256M24H10W8Sign => "LMS SHA-256 M=24 H=10 W=8 sign",
             Self::LmsSha256M24H10W8Verify => "LMS SHA-256 M=24 H=10 W=8 verify",
-            Self::LmsSha256M24H15W1Sign => "LMS SHA-256 M=24 H=15 W=1 sign",
             Self::LmsSha256M24H15W1Verify => "LMS SHA-256 M=24 H=15 W=1 verify",
-            Self::LmsSha256M24H15W2Sign => "LMS SHA-256 M=24 H=15 W=2 sign",
             Self::LmsSha256M24H15W2Verify => "LMS SHA-256 M=24 H=15 W=2 verify",
-            Self::LmsSha256M24H15W4Sign => "LMS SHA-256 M=24 H=15 W=4 sign",
             Self::LmsSha256M24H15W4Verify => "LMS SHA-256 M=24 H=15 W=4 verify",
-            Self::LmsSha256M24H15W8Sign => "LMS SHA-256 M=24 H=15 W=8 sign",
             Self::LmsSha256M24H15W8Verify => "LMS SHA-256 M=24 H=15 W=8 verify",
-            Self::LmsSha256M24H20W1Sign => "LMS SHA-256 M=24 H=20 W=1 sign",
             Self::LmsSha256M24H20W1Verify => "LMS SHA-256 M=24 H=20 W=1 verify",
-            Self::LmsSha256M24H20W2Sign => "LMS SHA-256 M=24 H=20 W=2 sign",
             Self::LmsSha256M24H20W2Verify => "LMS SHA-256 M=24 H=20 W=2 verify",
-            Self::LmsSha256M24H20W4Sign => "LMS SHA-256 M=24 H=20 W=4 sign",
             Self::LmsSha256M24H20W4Verify => "LMS SHA-256 M=24 H=20 W=4 verify",
-            Self::LmsSha256M24H20W8Sign => "LMS SHA-256 M=24 H=20 W=8 sign",
             Self::LmsSha256M24H20W8Verify => "LMS SHA-256 M=24 H=20 W=8 verify",
-            Self::LmsSha256M24H25W1Sign => "LMS SHA-256 M=24 H=25 W=1 sign",
             Self::LmsSha256M24H25W1Verify => "LMS SHA-256 M=24 H=25 W=1 verify",
-            Self::LmsSha256M24H25W2Sign => "LMS SHA-256 M=24 H=25 W=2 sign",
             Self::LmsSha256M24H25W2Verify => "LMS SHA-256 M=24 H=25 W=2 verify",
-            Self::LmsSha256M24H25W4Sign => "LMS SHA-256 M=24 H=25 W=4 sign",
             Self::LmsSha256M24H25W4Verify => "LMS SHA-256 M=24 H=25 W=4 verify",
-            Self::LmsSha256M24H25W8Sign => "LMS SHA-256 M=24 H=25 W=8 sign",
             Self::LmsSha256M24H25W8Verify => "LMS SHA-256 M=24 H=25 W=8 verify",
-            Self::LmsShakeM32H5W1Sign => "LMS SHAKE M=32 H=5 W=1 sign",
             Self::LmsShakeM32H5W1Verify => "LMS SHAKE M=32 H=5 W=1 verify",
-            Self::LmsShakeM32H5W2Sign => "LMS SHAKE M=32 H=5 W=2 sign",
             Self::LmsShakeM32H5W2Verify => "LMS SHAKE M=32 H=5 W=2 verify",
-            Self::LmsShakeM32H5W4Sign => "LMS SHAKE M=32 H=5 W=4 sign",
             Self::LmsShakeM32H5W4Verify => "LMS SHAKE M=32 H=5 W=4 verify",
-            Self::LmsShakeM32H5W8Sign => "LMS SHAKE M=32 H=5 W=8 sign",
             Self::LmsShakeM32H5W8Verify => "LMS SHAKE M=32 H=5 W=8 verify",
-            Self::LmsShakeM32H10W1Sign => "LMS SHAKE M=32 H=10 W=1 sign",
             Self::LmsShakeM32H10W1Verify => "LMS SHAKE M=32 H=10 W=1 verify",
-            Self::LmsShakeM32H10W2Sign => "LMS SHAKE M=32 H=10 W=2 sign",
             Self::LmsShakeM32H10W2Verify => "LMS SHAKE M=32 H=10 W=2 verify",
-            Self::LmsShakeM32H10W4Sign => "LMS SHAKE M=32 H=10 W=4 sign",
             Self::LmsShakeM32H10W4Verify => "LMS SHAKE M=32 H=10 W=4 verify",
-            Self::LmsShakeM32H10W8Sign => "LMS SHAKE M=32 H=10 W=8 sign",
             Self::LmsShakeM32H10W8Verify => "LMS SHAKE M=32 H=10 W=8 verify",
-            Self::LmsShakeM32H15W1Sign => "LMS SHAKE M=32 H=15 W=1 sign",
             Self::LmsShakeM32H15W1Verify => "LMS SHAKE M=32 H=15 W=1 verify",
-            Self::LmsShakeM32H15W2Sign => "LMS SHAKE M=32 H=15 W=2 sign",
             Self::LmsShakeM32H15W2Verify => "LMS SHAKE M=32 H=15 W=2 verify",
-            Self::LmsShakeM32H15W4Sign => "LMS SHAKE M=32 H=15 W=4 sign",
             Self::LmsShakeM32H15W4Verify => "LMS SHAKE M=32 H=15 W=4 verify",
-            Self::LmsShakeM32H15W8Sign => "LMS SHAKE M=32 H=15 W=8 sign",
             Self::LmsShakeM32H15W8Verify => "LMS SHAKE M=32 H=15 W=8 verify",
-            Self::LmsShakeM32H20W1Sign => "LMS SHAKE M=32 H=20 W=1 sign",
             Self::LmsShakeM32H20W1Verify => "LMS SHAKE M=32 H=20 W=1 verify",
-            Self::LmsShakeM32H20W2Sign => "LMS SHAKE M=32 H=20 W=2 sign",
             Self::LmsShakeM32H20W2Verify => "LMS SHAKE M=32 H=20 W=2 verify",
-            Self::LmsShakeM32H20W4Sign => "LMS SHAKE M=32 H=20 W=4 sign",
             Self::LmsShakeM32H20W4Verify => "LMS SHAKE M=32 H=20 W=4 verify",
-            Self::LmsShakeM32H20W8Sign => "LMS SHAKE M=32 H=20 W=8 sign",
             Self::LmsShakeM32H20W8Verify => "LMS SHAKE M=32 H=20 W=8 verify",
-            Self::LmsShakeM32H25W1Sign => "LMS SHAKE M=32 H=25 W=1 sign",
             Self::LmsShakeM32H25W1Verify => "LMS SHAKE M=32 H=25 W=1 verify",
-            Self::LmsShakeM32H25W2Sign => "LMS SHAKE M=32 H=25 W=2 sign",
             Self::LmsShakeM32H25W2Verify => "LMS SHAKE M=32 H=25 W=2 verify",
-            Self::LmsShakeM32H25W4Sign => "LMS SHAKE M=32 H=25 W=4 sign",
             Self::LmsShakeM32H25W4Verify => "LMS SHAKE M=32 H=25 W=4 verify",
-            Self::LmsShakeM32H25W8Sign => "LMS SHAKE M=32 H=25 W=8 sign",
             Self::LmsShakeM32H25W8Verify => "LMS SHAKE M=32 H=25 W=8 verify",
-            Self::LmsShakeM24H5W1Sign => "LMS SHAKE M=24 H=5 W=1 sign",
             Self::LmsShakeM24H5W1Verify => "LMS SHAKE M=24 H=5 W=1 verify",
-            Self::LmsShakeM24H5W2Sign => "LMS SHAKE M=24 H=5 W=2 sign",
             Self::LmsShakeM24H5W2Verify => "LMS SHAKE M=24 H=5 W=2 verify",
-            Self::LmsShakeM24H5W4Sign => "LMS SHAKE M=24 H=5 W=4 sign",
             Self::LmsShakeM24H5W4Verify => "LMS SHAKE M=24 H=5 W=4 verify",
-            Self::LmsShakeM24H5W8Sign => "LMS SHAKE M=24 H=5 W=8 sign",
             Self::LmsShakeM24H5W8Verify => "LMS SHAKE M=24 H=5 W=8 verify",
-            Self::LmsShakeM24H10W1Sign => "LMS SHAKE M=24 H=10 W=1 sign",
             Self::LmsShakeM24H10W1Verify => "LMS SHAKE M=24 H=10 W=1 verify",
-            Self::LmsShakeM24H10W2Sign => "LMS SHAKE M=24 H=10 W=2 sign",
             Self::LmsShakeM24H10W2Verify => "LMS SHAKE M=24 H=10 W=2 verify",
-            Self::LmsShakeM24H10W4Sign => "LMS SHAKE M=24 H=10 W=4 sign",
             Self::LmsShakeM24H10W4Verify => "LMS SHAKE M=24 H=10 W=4 verify",
-            Self::LmsShakeM24H10W8Sign => "LMS SHAKE M=24 H=10 W=8 sign",
             Self::LmsShakeM24H10W8Verify => "LMS SHAKE M=24 H=10 W=8 verify",
-            Self::LmsShakeM24H15W1Sign => "LMS SHAKE M=24 H=15 W=1 sign",
             Self::LmsShakeM24H15W1Verify => "LMS SHAKE M=24 H=15 W=1 verify",
-            Self::LmsShakeM24H15W2Sign => "LMS SHAKE M=24 H=15 W=2 sign",
             Self::LmsShakeM24H15W2Verify => "LMS SHAKE M=24 H=15 W=2 verify",
-            Self::LmsShakeM24H15W4Sign => "LMS SHAKE M=24 H=15 W=4 sign",
             Self::LmsShakeM24H15W4Verify => "LMS SHAKE M=24 H=15 W=4 verify",
-            Self::LmsShakeM24H15W8Sign => "LMS SHAKE M=24 H=15 W=8 sign",
             Self::LmsShakeM24H15W8Verify => "LMS SHAKE M=24 H=15 W=8 verify",
-            Self::LmsShakeM24H20W1Sign => "LMS SHAKE M=24 H=20 W=1 sign",
             Self::LmsShakeM24H20W1Verify => "LMS SHAKE M=24 H=20 W=1 verify",
-            Self::LmsShakeM24H20W2Sign => "LMS SHAKE M=24 H=20 W=2 sign",
             Self::LmsShakeM24H20W2Verify => "LMS SHAKE M=24 H=20 W=2 verify",
-            Self::LmsShakeM24H20W4Sign => "LMS SHAKE M=24 H=20 W=4 sign",
             Self::LmsShakeM24H20W4Verify => "LMS SHAKE M=24 H=20 W=4 verify",
-            Self::LmsShakeM24H20W8Sign => "LMS SHAKE M=24 H=20 W=8 sign",
             Self::LmsShakeM24H20W8Verify => "LMS SHAKE M=24 H=20 W=8 verify",
-            Self::LmsShakeM24H25W1Sign => "LMS SHAKE M=24 H=25 W=1 sign",
             Self::LmsShakeM24H25W1Verify => "LMS SHAKE M=24 H=25 W=1 verify",
-            Self::LmsShakeM24H25W2Sign => "LMS SHAKE M=24 H=25 W=2 sign",
             Self::LmsShakeM24H25W2Verify => "LMS SHAKE M=24 H=25 W=2 verify",
-            Self::LmsShakeM24H25W4Sign => "LMS SHAKE M=24 H=25 W=4 sign",
             Self::LmsShakeM24H25W4Verify => "LMS SHAKE M=24 H=25 W=4 verify",
-            Self::LmsShakeM24H25W8Sign => "LMS SHAKE M=24 H=25 W=8 sign",
             Self::LmsShakeM24H25W8Verify => "LMS SHAKE M=24 H=25 W=8 verify",
             Self::XmssVerify => "XMSS verify",
             Self::Dh3072 => "DH-3072",
@@ -1401,30 +1245,147 @@ const fn is_allowed(profile: AlgorithmProfile, service: Service) -> bool {
     }
 }
 
-/// True for every LMS service, matching on the contiguous discriminant
-/// block the `Service` enum reserves for LMS.
+/// True for every LMS service, matching on the discriminant block the
+/// `Service` enum reserves for LMS.
 ///
-/// A range test rather than 160 enumerated arms: the LMS block occupies
-/// `500..=659` with nothing else inside it. That is a property of the
-/// enum, not of this function, so it is pinned separately by
-/// `lms_discriminant_block_is_contiguous_and_pure` — without which a
-/// variant inserted into the range would silently become CNSA-permitted.
+/// An arithmetic test rather than 80 enumerated arms: the LMS services
+/// occupy every odd value in `501..=659` and nothing else does. That is a
+/// property of the enum, not of this function, so it is pinned separately
+/// by `lms_discriminant_slots_are_complete_and_pure` — without which a
+/// variant inserted on an odd value in the block would silently become
+/// CNSA-permitted.
 const fn is_lms_service(service: Service) -> bool {
     lms_block_contains(service as u16)
 }
 
-/// The range arithmetic behind [`is_lms_service`], over a raw discriminant.
+/// The arithmetic behind [`is_lms_service`], over a raw discriminant: an odd
+/// value in `501..=659`.
 ///
 /// Split out so the boundaries can be tested at all. `is_lms_service` takes a
 /// `Service`, and the LMS block sits at the very top of the enum — there is no
 /// variant above 659 — so a widened *upper* bound admits nothing today and no
-/// `Service`-typed probe can detect it. Over a raw `u16`, both edges are
-/// reachable: `lms_block_boundaries_are_exact` pins 499/500/659/660, which
-/// fails if either bound moves in either direction.
+/// `Service`-typed probe can detect it. Over a raw `u16`, both edges and the
+/// parity are reachable: `lms_block_boundaries_are_exact` pins
+/// 499/500/501/502/658/659/660/661, which fails if either bound moves in
+/// either direction or the parity test is dropped.
 const fn lms_block_contains(discriminant: u16) -> bool {
-    discriminant >= Service::LmsSha256M32H5W1Sign as u16
+    discriminant >= Service::LmsSha256M32H5W1Verify as u16
         && discriminant <= Service::LmsShakeM24H25W8Verify as u16
+        && discriminant & 1 == 1
 }
+
+/// Every LMS service, in discriminant order: one `Verify` per (LMS, LM-OTS)
+/// pair of SP 800-208 §4.1–§4.4. Explicit rather than generated: CMVP
+/// reviewers read this list, and a macro would hide exactly what it must
+/// show.
+const LMS_SERVICES: [Service; 80] = [
+    // SHA-256 / N=32 family (20 pairs).
+    Service::LmsSha256M32H5W1Verify,
+    Service::LmsSha256M32H5W2Verify,
+    Service::LmsSha256M32H5W4Verify,
+    Service::LmsSha256M32H5W8Verify,
+    Service::LmsSha256M32H10W1Verify,
+    Service::LmsSha256M32H10W2Verify,
+    Service::LmsSha256M32H10W4Verify,
+    Service::LmsSha256M32H10W8Verify,
+    Service::LmsSha256M32H15W1Verify,
+    Service::LmsSha256M32H15W2Verify,
+    Service::LmsSha256M32H15W4Verify,
+    Service::LmsSha256M32H15W8Verify,
+    Service::LmsSha256M32H20W1Verify,
+    Service::LmsSha256M32H20W2Verify,
+    Service::LmsSha256M32H20W4Verify,
+    Service::LmsSha256M32H20W8Verify,
+    Service::LmsSha256M32H25W1Verify,
+    Service::LmsSha256M32H25W2Verify,
+    Service::LmsSha256M32H25W4Verify,
+    Service::LmsSha256M32H25W8Verify,
+    // SHA-256 / N=24 family (20 pairs).
+    Service::LmsSha256M24H5W1Verify,
+    Service::LmsSha256M24H5W2Verify,
+    Service::LmsSha256M24H5W4Verify,
+    Service::LmsSha256M24H5W8Verify,
+    Service::LmsSha256M24H10W1Verify,
+    Service::LmsSha256M24H10W2Verify,
+    Service::LmsSha256M24H10W4Verify,
+    Service::LmsSha256M24H10W8Verify,
+    Service::LmsSha256M24H15W1Verify,
+    Service::LmsSha256M24H15W2Verify,
+    Service::LmsSha256M24H15W4Verify,
+    Service::LmsSha256M24H15W8Verify,
+    Service::LmsSha256M24H20W1Verify,
+    Service::LmsSha256M24H20W2Verify,
+    Service::LmsSha256M24H20W4Verify,
+    Service::LmsSha256M24H20W8Verify,
+    Service::LmsSha256M24H25W1Verify,
+    Service::LmsSha256M24H25W2Verify,
+    Service::LmsSha256M24H25W4Verify,
+    Service::LmsSha256M24H25W8Verify,
+    // SHAKE-256 / N=32 family (20 pairs).
+    Service::LmsShakeM32H5W1Verify,
+    Service::LmsShakeM32H5W2Verify,
+    Service::LmsShakeM32H5W4Verify,
+    Service::LmsShakeM32H5W8Verify,
+    Service::LmsShakeM32H10W1Verify,
+    Service::LmsShakeM32H10W2Verify,
+    Service::LmsShakeM32H10W4Verify,
+    Service::LmsShakeM32H10W8Verify,
+    Service::LmsShakeM32H15W1Verify,
+    Service::LmsShakeM32H15W2Verify,
+    Service::LmsShakeM32H15W4Verify,
+    Service::LmsShakeM32H15W8Verify,
+    Service::LmsShakeM32H20W1Verify,
+    Service::LmsShakeM32H20W2Verify,
+    Service::LmsShakeM32H20W4Verify,
+    Service::LmsShakeM32H20W8Verify,
+    Service::LmsShakeM32H25W1Verify,
+    Service::LmsShakeM32H25W2Verify,
+    Service::LmsShakeM32H25W4Verify,
+    Service::LmsShakeM32H25W8Verify,
+    // SHAKE-256 / N=24 family (20 pairs).
+    Service::LmsShakeM24H5W1Verify,
+    Service::LmsShakeM24H5W2Verify,
+    Service::LmsShakeM24H5W4Verify,
+    Service::LmsShakeM24H5W8Verify,
+    Service::LmsShakeM24H10W1Verify,
+    Service::LmsShakeM24H10W2Verify,
+    Service::LmsShakeM24H10W4Verify,
+    Service::LmsShakeM24H10W8Verify,
+    Service::LmsShakeM24H15W1Verify,
+    Service::LmsShakeM24H15W2Verify,
+    Service::LmsShakeM24H15W4Verify,
+    Service::LmsShakeM24H15W8Verify,
+    Service::LmsShakeM24H20W1Verify,
+    Service::LmsShakeM24H20W2Verify,
+    Service::LmsShakeM24H20W4Verify,
+    Service::LmsShakeM24H20W8Verify,
+    Service::LmsShakeM24H25W1Verify,
+    Service::LmsShakeM24H25W2Verify,
+    Service::LmsShakeM24H25W4Verify,
+    Service::LmsShakeM24H25W8Verify,
+];
+
+// Build-time check that the LMS services fill the odd discriminants
+// 501..=659 in order, one per slot, and that `lms_block_contains` admits
+// each. A missing, duplicated or moved LMS variant fails compilation.
+// Whether a non-LMS variant sits on an odd slot needs the full variant
+// list, so `lms_discriminant_slots_are_complete_and_pure` checks that.
+#[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+const _: () = {
+    let mut i = 0;
+    let mut slot: u16 = 501;
+    while i < LMS_SERVICES.len() {
+        let d = LMS_SERVICES[i] as u16;
+        assert!(d == slot, "LMS service out of its slot");
+        assert!(lms_block_contains(d), "LMS service outside the LMS block");
+        slot += 2;
+        i += 1;
+    }
+    assert!(
+        LMS_SERVICES[79] as u16 == 659,
+        "LMS block does not end at 659"
+    );
+};
 
 /// CNSA 2.0 allowed set — CNSSP-15 (March 2025) Annex B.
 ///
@@ -1665,7 +1626,7 @@ extern crate std;
 mod tests {
     use super::state_lock::reset_for_test;
     use super::{
-        AlgorithmProfile, Error, KatEntry, SelfTest, SelfTestFailure, Service, State,
+        AlgorithmProfile, Error, KatEntry, LMS_SERVICES, SelfTest, SelfTestFailure, Service, State,
         active_profile, enter_error_state, initialize_with_profile, initialize_with_tests,
         is_allowed, is_lms_service, is_operational, lms_block_contains, require_allowed,
         require_operational, state,
@@ -1865,7 +1826,7 @@ mod tests {
             Service::Ed25519Sign,
             Service::RsaPssSign2048,
             Service::MlKem1024Encaps,
-            Service::LmsSha256M32H10W4Sign,
+            Service::LmsSha256M32H10W4Verify,
             Service::Dh3072,
             Service::SlhDsaSha2256sSign,
         ];
@@ -1895,7 +1856,6 @@ mod tests {
             Service::MlDsa87Sign,
             Service::MlDsa87Verify,
             Service::MlDsa87Keygen,
-            Service::LmsSha256M32H10W4Sign,
             Service::LmsSha256M32H10W4Verify,
             Service::XmssVerify,
         ];
@@ -2002,7 +1962,12 @@ mod tests {
     /// `RsaKeygen2048` to the CNSA 1.0 gate left it green, which is precisely
     /// the drift the test existed to catch. Enumerating the enum makes the
     /// comparison exact in both directions.
-    const ALL_SERVICES: [Service; 336] = [
+    ///
+    /// The array type fixes the element count, so the compiler rejects a list
+    /// of the wrong length. A variant added to `Service` but not listed here
+    /// is not caught by this list; the exhaustive `Display` match is where the
+    /// compiler forces every variant to be named.
+    const ALL_SERVICES: [Service; 256] = [
         Service::Sha1,
         Service::Sha224,
         Service::Sha256,
@@ -2177,165 +2142,85 @@ mod tests {
         Service::SlhDsaShake256fKeygen,
         Service::SlhDsaShake256fSign,
         Service::SlhDsaShake256fVerify,
-        Service::LmsSha256M32H5W1Sign,
         Service::LmsSha256M32H5W1Verify,
-        Service::LmsSha256M32H5W2Sign,
         Service::LmsSha256M32H5W2Verify,
-        Service::LmsSha256M32H5W4Sign,
         Service::LmsSha256M32H5W4Verify,
-        Service::LmsSha256M32H5W8Sign,
         Service::LmsSha256M32H5W8Verify,
-        Service::LmsSha256M32H10W1Sign,
         Service::LmsSha256M32H10W1Verify,
-        Service::LmsSha256M32H10W2Sign,
         Service::LmsSha256M32H10W2Verify,
-        Service::LmsSha256M32H10W4Sign,
         Service::LmsSha256M32H10W4Verify,
-        Service::LmsSha256M32H10W8Sign,
         Service::LmsSha256M32H10W8Verify,
-        Service::LmsSha256M32H15W1Sign,
         Service::LmsSha256M32H15W1Verify,
-        Service::LmsSha256M32H15W2Sign,
         Service::LmsSha256M32H15W2Verify,
-        Service::LmsSha256M32H15W4Sign,
         Service::LmsSha256M32H15W4Verify,
-        Service::LmsSha256M32H15W8Sign,
         Service::LmsSha256M32H15W8Verify,
-        Service::LmsSha256M32H20W1Sign,
         Service::LmsSha256M32H20W1Verify,
-        Service::LmsSha256M32H20W2Sign,
         Service::LmsSha256M32H20W2Verify,
-        Service::LmsSha256M32H20W4Sign,
         Service::LmsSha256M32H20W4Verify,
-        Service::LmsSha256M32H20W8Sign,
         Service::LmsSha256M32H20W8Verify,
-        Service::LmsSha256M32H25W1Sign,
         Service::LmsSha256M32H25W1Verify,
-        Service::LmsSha256M32H25W2Sign,
         Service::LmsSha256M32H25W2Verify,
-        Service::LmsSha256M32H25W4Sign,
         Service::LmsSha256M32H25W4Verify,
-        Service::LmsSha256M32H25W8Sign,
         Service::LmsSha256M32H25W8Verify,
-        Service::LmsSha256M24H5W1Sign,
         Service::LmsSha256M24H5W1Verify,
-        Service::LmsSha256M24H5W2Sign,
         Service::LmsSha256M24H5W2Verify,
-        Service::LmsSha256M24H5W4Sign,
         Service::LmsSha256M24H5W4Verify,
-        Service::LmsSha256M24H5W8Sign,
         Service::LmsSha256M24H5W8Verify,
-        Service::LmsSha256M24H10W1Sign,
         Service::LmsSha256M24H10W1Verify,
-        Service::LmsSha256M24H10W2Sign,
         Service::LmsSha256M24H10W2Verify,
-        Service::LmsSha256M24H10W4Sign,
         Service::LmsSha256M24H10W4Verify,
-        Service::LmsSha256M24H10W8Sign,
         Service::LmsSha256M24H10W8Verify,
-        Service::LmsSha256M24H15W1Sign,
         Service::LmsSha256M24H15W1Verify,
-        Service::LmsSha256M24H15W2Sign,
         Service::LmsSha256M24H15W2Verify,
-        Service::LmsSha256M24H15W4Sign,
         Service::LmsSha256M24H15W4Verify,
-        Service::LmsSha256M24H15W8Sign,
         Service::LmsSha256M24H15W8Verify,
-        Service::LmsSha256M24H20W1Sign,
         Service::LmsSha256M24H20W1Verify,
-        Service::LmsSha256M24H20W2Sign,
         Service::LmsSha256M24H20W2Verify,
-        Service::LmsSha256M24H20W4Sign,
         Service::LmsSha256M24H20W4Verify,
-        Service::LmsSha256M24H20W8Sign,
         Service::LmsSha256M24H20W8Verify,
-        Service::LmsSha256M24H25W1Sign,
         Service::LmsSha256M24H25W1Verify,
-        Service::LmsSha256M24H25W2Sign,
         Service::LmsSha256M24H25W2Verify,
-        Service::LmsSha256M24H25W4Sign,
         Service::LmsSha256M24H25W4Verify,
-        Service::LmsSha256M24H25W8Sign,
         Service::LmsSha256M24H25W8Verify,
-        Service::LmsShakeM32H5W1Sign,
         Service::LmsShakeM32H5W1Verify,
-        Service::LmsShakeM32H5W2Sign,
         Service::LmsShakeM32H5W2Verify,
-        Service::LmsShakeM32H5W4Sign,
         Service::LmsShakeM32H5W4Verify,
-        Service::LmsShakeM32H5W8Sign,
         Service::LmsShakeM32H5W8Verify,
-        Service::LmsShakeM32H10W1Sign,
         Service::LmsShakeM32H10W1Verify,
-        Service::LmsShakeM32H10W2Sign,
         Service::LmsShakeM32H10W2Verify,
-        Service::LmsShakeM32H10W4Sign,
         Service::LmsShakeM32H10W4Verify,
-        Service::LmsShakeM32H10W8Sign,
         Service::LmsShakeM32H10W8Verify,
-        Service::LmsShakeM32H15W1Sign,
         Service::LmsShakeM32H15W1Verify,
-        Service::LmsShakeM32H15W2Sign,
         Service::LmsShakeM32H15W2Verify,
-        Service::LmsShakeM32H15W4Sign,
         Service::LmsShakeM32H15W4Verify,
-        Service::LmsShakeM32H15W8Sign,
         Service::LmsShakeM32H15W8Verify,
-        Service::LmsShakeM32H20W1Sign,
         Service::LmsShakeM32H20W1Verify,
-        Service::LmsShakeM32H20W2Sign,
         Service::LmsShakeM32H20W2Verify,
-        Service::LmsShakeM32H20W4Sign,
         Service::LmsShakeM32H20W4Verify,
-        Service::LmsShakeM32H20W8Sign,
         Service::LmsShakeM32H20W8Verify,
-        Service::LmsShakeM32H25W1Sign,
         Service::LmsShakeM32H25W1Verify,
-        Service::LmsShakeM32H25W2Sign,
         Service::LmsShakeM32H25W2Verify,
-        Service::LmsShakeM32H25W4Sign,
         Service::LmsShakeM32H25W4Verify,
-        Service::LmsShakeM32H25W8Sign,
         Service::LmsShakeM32H25W8Verify,
-        Service::LmsShakeM24H5W1Sign,
         Service::LmsShakeM24H5W1Verify,
-        Service::LmsShakeM24H5W2Sign,
         Service::LmsShakeM24H5W2Verify,
-        Service::LmsShakeM24H5W4Sign,
         Service::LmsShakeM24H5W4Verify,
-        Service::LmsShakeM24H5W8Sign,
         Service::LmsShakeM24H5W8Verify,
-        Service::LmsShakeM24H10W1Sign,
         Service::LmsShakeM24H10W1Verify,
-        Service::LmsShakeM24H10W2Sign,
         Service::LmsShakeM24H10W2Verify,
-        Service::LmsShakeM24H10W4Sign,
         Service::LmsShakeM24H10W4Verify,
-        Service::LmsShakeM24H10W8Sign,
         Service::LmsShakeM24H10W8Verify,
-        Service::LmsShakeM24H15W1Sign,
         Service::LmsShakeM24H15W1Verify,
-        Service::LmsShakeM24H15W2Sign,
         Service::LmsShakeM24H15W2Verify,
-        Service::LmsShakeM24H15W4Sign,
         Service::LmsShakeM24H15W4Verify,
-        Service::LmsShakeM24H15W8Sign,
         Service::LmsShakeM24H15W8Verify,
-        Service::LmsShakeM24H20W1Sign,
         Service::LmsShakeM24H20W1Verify,
-        Service::LmsShakeM24H20W2Sign,
         Service::LmsShakeM24H20W2Verify,
-        Service::LmsShakeM24H20W4Sign,
         Service::LmsShakeM24H20W4Verify,
-        Service::LmsShakeM24H20W8Sign,
         Service::LmsShakeM24H20W8Verify,
-        Service::LmsShakeM24H25W1Sign,
         Service::LmsShakeM24H25W1Verify,
-        Service::LmsShakeM24H25W2Sign,
         Service::LmsShakeM24H25W2Verify,
-        Service::LmsShakeM24H25W4Sign,
         Service::LmsShakeM24H25W4Verify,
-        Service::LmsShakeM24H25W8Sign,
         Service::LmsShakeM24H25W8Verify,
         Service::XmssVerify,
         Service::Dh3072,
@@ -2380,8 +2265,8 @@ mod tests {
         Service::Dh3072,
     ];
 
-    /// CNSA 2.0's non-LMS membership. The 160 LMS services are asserted by
-    /// count rather than listed, because `lms_all_160` already enumerates them.
+    /// CNSA 2.0's non-LMS membership. The 80 LMS services are asserted by
+    /// count rather than listed, because `LMS_SERVICES` already enumerates them.
     const EXPECTED_CNSA2_NON_LMS: [Service; 30] = [
         Service::Sha384,
         Service::Sha512,
@@ -2500,12 +2385,6 @@ mod tests {
     /// any gate fails here.
     #[test]
     fn profile_membership_is_exact() {
-        assert_eq!(
-            ALL_SERVICES.len(),
-            336,
-            "Service enumeration drift — a variant was added without listing it"
-        );
-
         assert_exact_membership(AlgorithmProfile::Cnsa1, &EXPECTED_CNSA1, false);
         assert_exact_membership(AlgorithmProfile::Cnsa2, &EXPECTED_CNSA2_NON_LMS, true);
 
@@ -2559,7 +2438,7 @@ mod tests {
             Service::MlDsa87Sign,
             Service::XmssVerify,
             Service::Sha512,
-            Service::LmsSha256M32H10W4Sign,
+            Service::LmsSha256M32H10W4Verify,
         ] {
             assert!(
                 is_allowed(AlgorithmProfile::Migration, svc),
@@ -2663,7 +2542,7 @@ mod tests {
             Service::MlKem1024Encaps,
             Service::MlDsa87Sign,
             Service::XmssVerify,
-            Service::LmsSha256M32H10W4Sign,
+            Service::LmsSha256M32H10W4Verify,
         ];
         for svc in blocked {
             assert!(
@@ -2673,192 +2552,17 @@ mod tests {
         }
     }
 
-    // The full LMS service enumeration, shared by the gating test and the
-    // discriminant-block test. Explicit rather than generated: CMVP reviewers
-    // read this list, and a macro would hide exactly what it must show.
-    #[allow(clippy::too_many_lines)]
-    fn lms_all_160() -> [Service; 160] {
-        [
-            // SHA-256 / N=32 family (20 pairs, 40 entries).
-            Service::LmsSha256M32H5W1Sign,
-            Service::LmsSha256M32H5W1Verify,
-            Service::LmsSha256M32H5W2Sign,
-            Service::LmsSha256M32H5W2Verify,
-            Service::LmsSha256M32H5W4Sign,
-            Service::LmsSha256M32H5W4Verify,
-            Service::LmsSha256M32H5W8Sign,
-            Service::LmsSha256M32H5W8Verify,
-            Service::LmsSha256M32H10W1Sign,
-            Service::LmsSha256M32H10W1Verify,
-            Service::LmsSha256M32H10W2Sign,
-            Service::LmsSha256M32H10W2Verify,
-            Service::LmsSha256M32H10W4Sign,
-            Service::LmsSha256M32H10W4Verify,
-            Service::LmsSha256M32H10W8Sign,
-            Service::LmsSha256M32H10W8Verify,
-            Service::LmsSha256M32H15W1Sign,
-            Service::LmsSha256M32H15W1Verify,
-            Service::LmsSha256M32H15W2Sign,
-            Service::LmsSha256M32H15W2Verify,
-            Service::LmsSha256M32H15W4Sign,
-            Service::LmsSha256M32H15W4Verify,
-            Service::LmsSha256M32H15W8Sign,
-            Service::LmsSha256M32H15W8Verify,
-            Service::LmsSha256M32H20W1Sign,
-            Service::LmsSha256M32H20W1Verify,
-            Service::LmsSha256M32H20W2Sign,
-            Service::LmsSha256M32H20W2Verify,
-            Service::LmsSha256M32H20W4Sign,
-            Service::LmsSha256M32H20W4Verify,
-            Service::LmsSha256M32H20W8Sign,
-            Service::LmsSha256M32H20W8Verify,
-            Service::LmsSha256M32H25W1Sign,
-            Service::LmsSha256M32H25W1Verify,
-            Service::LmsSha256M32H25W2Sign,
-            Service::LmsSha256M32H25W2Verify,
-            Service::LmsSha256M32H25W4Sign,
-            Service::LmsSha256M32H25W4Verify,
-            Service::LmsSha256M32H25W8Sign,
-            Service::LmsSha256M32H25W8Verify,
-            // SHA-256 / N=24 family (20 pairs, 40 entries).
-            Service::LmsSha256M24H5W1Sign,
-            Service::LmsSha256M24H5W1Verify,
-            Service::LmsSha256M24H5W2Sign,
-            Service::LmsSha256M24H5W2Verify,
-            Service::LmsSha256M24H5W4Sign,
-            Service::LmsSha256M24H5W4Verify,
-            Service::LmsSha256M24H5W8Sign,
-            Service::LmsSha256M24H5W8Verify,
-            Service::LmsSha256M24H10W1Sign,
-            Service::LmsSha256M24H10W1Verify,
-            Service::LmsSha256M24H10W2Sign,
-            Service::LmsSha256M24H10W2Verify,
-            Service::LmsSha256M24H10W4Sign,
-            Service::LmsSha256M24H10W4Verify,
-            Service::LmsSha256M24H10W8Sign,
-            Service::LmsSha256M24H10W8Verify,
-            Service::LmsSha256M24H15W1Sign,
-            Service::LmsSha256M24H15W1Verify,
-            Service::LmsSha256M24H15W2Sign,
-            Service::LmsSha256M24H15W2Verify,
-            Service::LmsSha256M24H15W4Sign,
-            Service::LmsSha256M24H15W4Verify,
-            Service::LmsSha256M24H15W8Sign,
-            Service::LmsSha256M24H15W8Verify,
-            Service::LmsSha256M24H20W1Sign,
-            Service::LmsSha256M24H20W1Verify,
-            Service::LmsSha256M24H20W2Sign,
-            Service::LmsSha256M24H20W2Verify,
-            Service::LmsSha256M24H20W4Sign,
-            Service::LmsSha256M24H20W4Verify,
-            Service::LmsSha256M24H20W8Sign,
-            Service::LmsSha256M24H20W8Verify,
-            Service::LmsSha256M24H25W1Sign,
-            Service::LmsSha256M24H25W1Verify,
-            Service::LmsSha256M24H25W2Sign,
-            Service::LmsSha256M24H25W2Verify,
-            Service::LmsSha256M24H25W4Sign,
-            Service::LmsSha256M24H25W4Verify,
-            Service::LmsSha256M24H25W8Sign,
-            Service::LmsSha256M24H25W8Verify,
-            // SHAKE-256 / N=32 family (20 pairs, 40 entries).
-            Service::LmsShakeM32H5W1Sign,
-            Service::LmsShakeM32H5W1Verify,
-            Service::LmsShakeM32H5W2Sign,
-            Service::LmsShakeM32H5W2Verify,
-            Service::LmsShakeM32H5W4Sign,
-            Service::LmsShakeM32H5W4Verify,
-            Service::LmsShakeM32H5W8Sign,
-            Service::LmsShakeM32H5W8Verify,
-            Service::LmsShakeM32H10W1Sign,
-            Service::LmsShakeM32H10W1Verify,
-            Service::LmsShakeM32H10W2Sign,
-            Service::LmsShakeM32H10W2Verify,
-            Service::LmsShakeM32H10W4Sign,
-            Service::LmsShakeM32H10W4Verify,
-            Service::LmsShakeM32H10W8Sign,
-            Service::LmsShakeM32H10W8Verify,
-            Service::LmsShakeM32H15W1Sign,
-            Service::LmsShakeM32H15W1Verify,
-            Service::LmsShakeM32H15W2Sign,
-            Service::LmsShakeM32H15W2Verify,
-            Service::LmsShakeM32H15W4Sign,
-            Service::LmsShakeM32H15W4Verify,
-            Service::LmsShakeM32H15W8Sign,
-            Service::LmsShakeM32H15W8Verify,
-            Service::LmsShakeM32H20W1Sign,
-            Service::LmsShakeM32H20W1Verify,
-            Service::LmsShakeM32H20W2Sign,
-            Service::LmsShakeM32H20W2Verify,
-            Service::LmsShakeM32H20W4Sign,
-            Service::LmsShakeM32H20W4Verify,
-            Service::LmsShakeM32H20W8Sign,
-            Service::LmsShakeM32H20W8Verify,
-            Service::LmsShakeM32H25W1Sign,
-            Service::LmsShakeM32H25W1Verify,
-            Service::LmsShakeM32H25W2Sign,
-            Service::LmsShakeM32H25W2Verify,
-            Service::LmsShakeM32H25W4Sign,
-            Service::LmsShakeM32H25W4Verify,
-            Service::LmsShakeM32H25W8Sign,
-            Service::LmsShakeM32H25W8Verify,
-            // SHAKE-256 / N=24 family (20 pairs, 40 entries).
-            Service::LmsShakeM24H5W1Sign,
-            Service::LmsShakeM24H5W1Verify,
-            Service::LmsShakeM24H5W2Sign,
-            Service::LmsShakeM24H5W2Verify,
-            Service::LmsShakeM24H5W4Sign,
-            Service::LmsShakeM24H5W4Verify,
-            Service::LmsShakeM24H5W8Sign,
-            Service::LmsShakeM24H5W8Verify,
-            Service::LmsShakeM24H10W1Sign,
-            Service::LmsShakeM24H10W1Verify,
-            Service::LmsShakeM24H10W2Sign,
-            Service::LmsShakeM24H10W2Verify,
-            Service::LmsShakeM24H10W4Sign,
-            Service::LmsShakeM24H10W4Verify,
-            Service::LmsShakeM24H10W8Sign,
-            Service::LmsShakeM24H10W8Verify,
-            Service::LmsShakeM24H15W1Sign,
-            Service::LmsShakeM24H15W1Verify,
-            Service::LmsShakeM24H15W2Sign,
-            Service::LmsShakeM24H15W2Verify,
-            Service::LmsShakeM24H15W4Sign,
-            Service::LmsShakeM24H15W4Verify,
-            Service::LmsShakeM24H15W8Sign,
-            Service::LmsShakeM24H15W8Verify,
-            Service::LmsShakeM24H20W1Sign,
-            Service::LmsShakeM24H20W1Verify,
-            Service::LmsShakeM24H20W2Sign,
-            Service::LmsShakeM24H20W2Verify,
-            Service::LmsShakeM24H20W4Sign,
-            Service::LmsShakeM24H20W4Verify,
-            Service::LmsShakeM24H20W8Sign,
-            Service::LmsShakeM24H20W8Verify,
-            Service::LmsShakeM24H25W1Sign,
-            Service::LmsShakeM24H25W1Verify,
-            Service::LmsShakeM24H25W2Sign,
-            Service::LmsShakeM24H25W2Verify,
-            Service::LmsShakeM24H25W4Sign,
-            Service::LmsShakeM24H25W4Verify,
-            Service::LmsShakeM24H25W8Sign,
-            Service::LmsShakeM24H25W8Verify,
-        ]
-    }
-
     #[test]
-    fn lms_gating_is_exhaustive_across_all_160_variants() {
-        // Enumerates every LMS Service variant (80 (LMS, LM-OTS) pairs ×
-        // {Sign, Verify} = 160 entries) and verifies that all 160 are
-        // gated as CNSA 2.0 permits them and CNSA 1.0 does not: the 2025
-        // Annex B places no subset restriction on LMS, while the 2016 suite
-        // names no stateful hash-based scheme at all.
-        // If a new LMS variant is added without a matching entry in
-        // `lms_all_160`, the length assertion catches the drift.
-        let all_160 = lms_all_160();
-        assert_eq!(all_160.len(), 160, "LMS enumeration drift");
+    fn lms_gating_is_exhaustive_across_all_80_variants() {
+        // Enumerates every LMS Service variant (one Verify per (LMS, LM-OTS)
+        // pair, 80 entries) and verifies that all 80 are gated as CNSA 2.0
+        // permits them and CNSA 1.0 does not: the 2025 Annex B places no
+        // subset restriction on LMS, while the 2016 suite names no stateful
+        // hash-based scheme at all.
+        let all_80 = LMS_SERVICES;
+        assert_eq!(all_80.len(), 80, "LMS enumeration drift");
 
-        for svc in all_160 {
+        for svc in all_80 {
             // Unrestricted: every LMS variant is permitted.
             assert!(
                 is_allowed(AlgorithmProfile::Unrestricted, svc),
@@ -2888,19 +2592,20 @@ mod tests {
     }
 
     #[test]
-    fn lms_discriminant_block_is_contiguous_and_pure() {
-        // `is_lms_service` range-tests `500..=659` instead of enumerating 160
-        // arms, which is only sound while that block holds every LMS service
-        // and nothing else. Enum discriminants are unique, so proving the 160
-        // LMS variants occupy the range exactly also proves no other variant
-        // can sit inside it.
-        let mut discriminants = [0u16; 160];
-        for (slot, svc) in discriminants.iter_mut().zip(lms_all_160()) {
+    fn lms_discriminant_slots_are_complete_and_pure() {
+        // `is_lms_service` tests "odd and in `501..=659`" instead of
+        // enumerating 80 arms, which is only sound while those 80 slots hold
+        // every LMS service and nothing else. Enum discriminants are unique,
+        // so proving the 80 LMS variants fill the odd slots exactly also
+        // proves no other variant can sit on one.
+        let mut discriminants = [0u16; 80];
+        for (slot, svc) in discriminants.iter_mut().zip(LMS_SERVICES) {
             *slot = svc as u16;
         }
         discriminants.sort_unstable();
 
-        // Strictly increasing after sorting == all 160 are distinct. The
+        // Each step after sorting is exactly 2: all 80 are distinct, all
+        // share one parity, and no odd slot between them is missing. The
         // comparison count is asserted too, so an empty or short sweep
         // cannot pass this vacuously.
         let mut compared = 0usize;
@@ -2908,23 +2613,29 @@ mod tests {
             let [lo, hi] = pair else {
                 unreachable!("windows(2) yields two-element slices")
             };
-            assert!(hi > lo, "duplicate LMS discriminant {lo}");
+            assert_eq!(*hi, lo + 2, "LMS slot after {lo} is missing or duplicated");
             compared += 1;
         }
-        assert_eq!(compared, 159, "distinctness sweep did not run in full");
+        assert_eq!(compared, 79, "slot sweep did not run in full");
 
         let (Some(&first), Some(&last)) = (discriminants.first(), discriminants.last()) else {
-            unreachable!("the array holds 160 elements")
+            unreachable!("the array holds 80 elements")
         };
-        assert_eq!(first, 500, "LMS block does not start at 500");
+        assert_eq!(first, 501, "LMS block does not start at 501");
         assert_eq!(last, 659, "LMS block does not end at 659");
-        // 160 distinct values spanning an inclusive range of 160 is exactly
-        // full occupancy — no gap a non-LMS variant could occupy.
-        assert_eq!(last - first + 1, 160, "LMS block is not contiguous");
 
-        for svc in lms_all_160() {
-            assert!(is_lms_service(svc), "{svc} must be inside the LMS range");
+        for svc in LMS_SERVICES {
+            assert!(is_lms_service(svc), "{svc} must be inside the LMS block");
         }
+
+        // No other variant anywhere in the enum is classed as LMS. This is
+        // what catches a foreign variant placed on an odd slot in the block,
+        // which the slot sweep above cannot see: it only reads the LMS list.
+        let lms_count = ALL_SERVICES
+            .iter()
+            .filter(|svc| is_lms_service(**svc))
+            .count();
+        assert_eq!(lms_count, 80, "a non-LMS variant sits on an LMS slot");
 
         // Positive control on the other side of the boundary: the nearest
         // non-LMS neighbours must not be swept in by a widened range.
@@ -2933,7 +2644,7 @@ mod tests {
             Service::XmssVerify,
             Service::Dh3072,
         ] {
-            assert!(!is_lms_service(svc), "{svc} must be outside the LMS range");
+            assert!(!is_lms_service(svc), "{svc} must be outside the LMS block");
         }
     }
 
@@ -3084,9 +2795,9 @@ mod tests {
             guard.reset();
             initialize_with_profile(UNSIGNED_TEST_BINARY, &[], profile).unwrap();
             for svc in [
-                Service::LmsSha256M24H5W1Sign,
+                Service::LmsSha256M24H5W1Verify,
                 Service::LmsSha256M24H25W8Verify,
-                Service::LmsShakeM24H10W4Sign,
+                Service::LmsShakeM24H10W4Verify,
                 Service::LmsShakeM24H25W8Verify,
             ] {
                 require_allowed(svc)
@@ -3104,12 +2815,16 @@ mod tests {
     #[test]
     fn lms_block_boundaries_are_exact() {
         assert!(!lms_block_contains(499), "499 is below the LMS block");
-        assert!(lms_block_contains(500), "500 is the first LMS discriminant");
+        assert!(!lms_block_contains(500), "500 is even");
+        assert!(lms_block_contains(501), "501 is the first LMS discriminant");
+        assert!(!lms_block_contains(502), "502 is even");
+        assert!(!lms_block_contains(658), "658 is even");
         assert!(lms_block_contains(659), "659 is the last LMS discriminant");
         assert!(!lms_block_contains(660), "660 is above the LMS block");
+        assert!(!lms_block_contains(661), "661 is above the LMS block");
 
         // ...and the block the arithmetic describes is the one the enum has.
-        assert_eq!(Service::LmsSha256M32H5W1Sign as u16, 500);
+        assert_eq!(Service::LmsSha256M32H5W1Verify as u16, 501);
         assert_eq!(Service::LmsShakeM24H25W8Verify as u16, 659);
     }
 

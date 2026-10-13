@@ -2138,61 +2138,6 @@ int oxi_slh_dsa_shake_256f_verify(const uint8_t *pk_ptr,
                                   const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair from a 32-byte caller-supplied seed.
-
- Reads exactly 32 bytes from `xi_ptr`, deterministically derives
- the tree seed and 16-byte identifier `I` via SHA-256, and writes
- the 52-byte opaque private-key blob into `sk_out` and the
- 56-byte public key into `pk_out`. The caller MUST source the 32
- seed bytes from an approved DRBG (SP 800-90A); the FFI performs
- no entropy generation.
-
- `sk_out` is the persistence-of-record format. Treat it as an
- opaque blob and pass it back unchanged to [`oxi_lms_sign`].
-
- Returns `OxiResult::Ok = 0` on success or a module error variant
- (`NotOperational`, `AlgorithmRestricted`).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a non-NULL
- writable pointer to ≥56 bytes.
- */
-int oxi_lms_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with an LMS private key.
-
- Reads the 52-byte opaque private-key blob from `sk_in_ptr`,
- `msg_len` bytes from `msg_ptr`, signs the message, advances the
- internal leaf index by one, writes the **updated** 52-byte blob
- into `sk_out`, and writes the 2508-byte signature into `sig_out`.
-
- **Persistence contract:** the caller MUST persist `sk_out` (the
- post-state) before using `sig_out`. Failure to persist before a
- crash, followed by a restart that re-signs from the pre-state,
- reuses the same one-time key — a catastrophic break of LMS.
-
- Returns `OxiResult::Ok = 0` on success, `InvalidInput = 5` if the
- key is exhausted (1024 signatures already issued), or a module
- error variant.
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr` must be valid
- for `msg_len` bytes (NULL with len=0 is permitted). `sk_out`
- must be a non-NULL writable pointer to ≥52 bytes. `sig_out`
- must be a non-NULL writable pointer to ≥2508 bytes. `sk_in_ptr`
- and `sk_out` may alias (in-place advance is supported).
- */
-int oxi_lms_sign(const uint8_t *sk_in_ptr,
-                 const uint8_t *msg_ptr,
-                 uintptr_t msg_len,
-                 uint8_t *sk_out,
-                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature.
 
  Reads the 56-byte public key from `pk_ptr`, `msg_len` bytes from
@@ -2217,53 +2162,13 @@ int oxi_lms_verify(const uint8_t *pk_ptr,
                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=5 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h5_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=5 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 8684-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥8684 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h5_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=5 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  8684-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2277,53 +2182,13 @@ int oxi_lms_sha256_m32_h5_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=5 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h5_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=5 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4460-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4460 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h5_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=5 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4460-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2337,53 +2202,13 @@ int oxi_lms_sha256_m32_h5_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=5 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h5_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=5 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2348-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2348 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h5_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=5 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2348-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2397,53 +2222,13 @@ int oxi_lms_sha256_m32_h5_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=5 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h5_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=5 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1292-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1292 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h5_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=5 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1292-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2457,53 +2242,13 @@ int oxi_lms_sha256_m32_h5_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=10 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h10_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=10 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 8844-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥8844 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h10_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=10 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  8844-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2517,53 +2262,13 @@ int oxi_lms_sha256_m32_h10_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=10 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h10_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=10 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4620-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4620 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h10_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=10 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4620-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2577,53 +2282,13 @@ int oxi_lms_sha256_m32_h10_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=10 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h10_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=10 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2508-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2508 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h10_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=10 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2508-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2637,53 +2302,13 @@ int oxi_lms_sha256_m32_h10_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=10 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h10_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=10 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1452-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1452 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h10_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=10 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1452-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2697,53 +2322,13 @@ int oxi_lms_sha256_m32_h10_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=15 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h15_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=15 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 9004-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥9004 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h15_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=15 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  9004-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2757,53 +2342,13 @@ int oxi_lms_sha256_m32_h15_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=15 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h15_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=15 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4780-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4780 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h15_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=15 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4780-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2817,53 +2362,13 @@ int oxi_lms_sha256_m32_h15_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=15 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h15_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=15 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2668-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2668 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h15_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=15 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2668-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2877,53 +2382,13 @@ int oxi_lms_sha256_m32_h15_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=15 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h15_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=15 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1612-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1612 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h15_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=15 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1612-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2937,53 +2402,13 @@ int oxi_lms_sha256_m32_h15_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=20 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h20_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=20 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 9164-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥9164 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h20_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=20 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  9164-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -2997,53 +2422,13 @@ int oxi_lms_sha256_m32_h20_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=20 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h20_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=20 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4940-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4940 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h20_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=20 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4940-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3057,53 +2442,13 @@ int oxi_lms_sha256_m32_h20_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=20 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h20_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=20 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2828-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2828 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h20_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=20 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2828-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3117,53 +2462,13 @@ int oxi_lms_sha256_m32_h20_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=20 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h20_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=20 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1772-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1772 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h20_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=20 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1772-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3177,53 +2482,13 @@ int oxi_lms_sha256_m32_h20_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=25 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h25_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=25 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 9324-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥9324 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h25_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=25 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  9324-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3237,53 +2502,13 @@ int oxi_lms_sha256_m32_h25_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=25 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h25_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=25 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5100-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥5100 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h25_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=25 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  5100-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3297,53 +2522,13 @@ int oxi_lms_sha256_m32_h25_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=25 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h25_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=25 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2988-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2988 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h25_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=25 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2988-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3357,53 +2542,13 @@ int oxi_lms_sha256_m32_h25_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=32 H=25 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8554 §A.1+§A.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_sha256_m32_h25_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=32 H=25 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1932-byte signature into `sig_out`. Spec: RFC 8554 §A.1+§A.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1932 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m32_h25_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=32 H=25 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1932-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8554 §A.1+§A.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.1.
 
  # Safety
 
@@ -3417,53 +2562,13 @@ int oxi_lms_sha256_m32_h25_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=5 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h5_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=5 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4956-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥4956 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h5_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=5 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  4956-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3477,53 +2582,13 @@ int oxi_lms_sha256_m24_h5_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=5 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h5_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=5 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2580-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2580 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h5_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=5 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2580-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3537,53 +2602,13 @@ int oxi_lms_sha256_m24_h5_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=5 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h5_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=5 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1380-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1380 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h5_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=5 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1380-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3597,53 +2622,13 @@ int oxi_lms_sha256_m24_h5_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=5 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h5_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=5 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 780-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥780 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h5_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=5 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  780-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3657,53 +2642,13 @@ int oxi_lms_sha256_m24_h5_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=10 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h10_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=10 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5076-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5076 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h10_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=10 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5076-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3717,53 +2662,13 @@ int oxi_lms_sha256_m24_h10_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=10 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h10_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=10 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2700-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2700 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h10_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=10 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2700-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3777,53 +2682,13 @@ int oxi_lms_sha256_m24_h10_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=10 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h10_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=10 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1500-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1500 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h10_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=10 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1500-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3837,53 +2702,13 @@ int oxi_lms_sha256_m24_h10_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=10 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h10_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=10 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 900-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥900 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h10_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=10 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  900-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3897,53 +2722,13 @@ int oxi_lms_sha256_m24_h10_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=15 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h15_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=15 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5196-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5196 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h15_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=15 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5196-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -3957,53 +2742,13 @@ int oxi_lms_sha256_m24_h15_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=15 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h15_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=15 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2820-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2820 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h15_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=15 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2820-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4017,53 +2762,13 @@ int oxi_lms_sha256_m24_h15_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=15 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h15_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=15 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1620-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1620 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h15_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=15 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1620-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4077,53 +2782,13 @@ int oxi_lms_sha256_m24_h15_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=15 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h15_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=15 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1020-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1020 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h15_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=15 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1020-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4137,53 +2802,13 @@ int oxi_lms_sha256_m24_h15_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=20 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h20_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=20 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5316-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5316 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h20_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=20 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5316-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4197,53 +2822,13 @@ int oxi_lms_sha256_m24_h20_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=20 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h20_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=20 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2940-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2940 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h20_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=20 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2940-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4257,53 +2842,13 @@ int oxi_lms_sha256_m24_h20_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=20 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h20_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=20 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1740-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1740 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h20_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=20 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1740-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4317,53 +2862,13 @@ int oxi_lms_sha256_m24_h20_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=20 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h20_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=20 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1140-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1140 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h20_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=20 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1140-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4377,53 +2882,13 @@ int oxi_lms_sha256_m24_h20_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=25 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h25_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=25 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5436-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5436 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h25_w1_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=25 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5436-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4437,53 +2902,13 @@ int oxi_lms_sha256_m24_h25_w1_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=25 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h25_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=25 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 3060-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥3060 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h25_w2_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=25 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  3060-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4497,53 +2922,13 @@ int oxi_lms_sha256_m24_h25_w2_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=25 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h25_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=25 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1860-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1860 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h25_w4_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=25 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1860-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4557,53 +2942,13 @@ int oxi_lms_sha256_m24_h25_w4_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHA-256 M=24 H=25 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_sha256_m24_h25_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHA-256 M=24 H=25 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1260-byte signature into `sig_out`. Spec: RFC 8708 §4.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1260 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_sha256_m24_h25_w8_sign(const uint8_t *sk_in_ptr,
-                                   const uint8_t *msg_ptr,
-                                   uintptr_t msg_len,
-                                   uint8_t *sk_out,
-                                   uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHA-256 M=24 H=25 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1260-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.2.
 
  # Safety
 
@@ -4617,53 +2962,13 @@ int oxi_lms_sha256_m24_h25_w8_verify(const uint8_t *pk_ptr,
                                      const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=5 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h5_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=5 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 8684-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥8684 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h5_w1_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=5 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  8684-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -4677,53 +2982,13 @@ int oxi_lms_shake_m32_h5_w1_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=5 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h5_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=5 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4460-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4460 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h5_w2_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=5 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4460-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -4737,53 +3002,13 @@ int oxi_lms_shake_m32_h5_w2_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=5 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h5_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=5 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2348-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2348 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h5_w4_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=5 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2348-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -4797,53 +3022,13 @@ int oxi_lms_shake_m32_h5_w4_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=5 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h5_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=5 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1292-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1292 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h5_w8_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=5 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1292-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -4857,53 +3042,13 @@ int oxi_lms_shake_m32_h5_w8_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=10 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h10_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=10 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 8844-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥8844 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h10_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=10 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  8844-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -4917,53 +3062,13 @@ int oxi_lms_shake_m32_h10_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=10 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h10_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=10 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4620-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4620 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h10_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=10 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4620-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -4977,53 +3082,13 @@ int oxi_lms_shake_m32_h10_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=10 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h10_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=10 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2508-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2508 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h10_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=10 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2508-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5037,53 +3102,13 @@ int oxi_lms_shake_m32_h10_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=10 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h10_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=10 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1452-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1452 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h10_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=10 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1452-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5097,53 +3122,13 @@ int oxi_lms_shake_m32_h10_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=15 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h15_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=15 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 9004-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥9004 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h15_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=15 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  9004-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5157,53 +3142,13 @@ int oxi_lms_shake_m32_h15_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=15 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h15_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=15 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4780-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4780 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h15_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=15 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4780-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5217,53 +3162,13 @@ int oxi_lms_shake_m32_h15_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=15 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h15_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=15 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2668-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2668 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h15_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=15 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2668-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5277,53 +3182,13 @@ int oxi_lms_shake_m32_h15_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=15 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h15_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=15 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1612-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1612 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h15_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=15 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1612-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5337,53 +3202,13 @@ int oxi_lms_shake_m32_h15_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=20 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h20_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=20 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 9164-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥9164 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h20_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=20 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  9164-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5397,53 +3222,13 @@ int oxi_lms_shake_m32_h20_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=20 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h20_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=20 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4940-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥4940 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h20_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=20 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  4940-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5457,53 +3242,13 @@ int oxi_lms_shake_m32_h20_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=20 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h20_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=20 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2828-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2828 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h20_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=20 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2828-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5517,53 +3262,13 @@ int oxi_lms_shake_m32_h20_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=20 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h20_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=20 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1772-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1772 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h20_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=20 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1772-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5577,53 +3282,13 @@ int oxi_lms_shake_m32_h20_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=25 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h25_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=25 W=1 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 9324-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥9324 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h25_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=25 W=1 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  9324-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5637,53 +3302,13 @@ int oxi_lms_shake_m32_h25_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=25 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h25_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=25 W=2 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5100-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥5100 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h25_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=25 W=2 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  5100-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5697,53 +3322,13 @@ int oxi_lms_shake_m32_h25_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=25 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h25_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=25 W=4 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2988-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥2988 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h25_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=25 W=4 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  2988-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5757,53 +3342,13 @@ int oxi_lms_shake_m32_h25_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=32 H=25 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 52-byte opaque
- private-key blob into `sk_out` and a 56-byte public key
- into `pk_out`. Spec: RFC 8708 §3.1. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥52 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥56 bytes.
- */
-int oxi_lms_shake_m32_h25_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=32 H=25 W=8 variant.
-
- Reads the 52-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1932-byte signature into `sig_out`. Spec: RFC 8708 §3.1.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 52 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥52 bytes, `sig_out` ≥1932 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m32_h25_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=32 H=25 W=8 variant.
 
  Reads 56-byte pk, `msg_len`-byte message, and
  1932-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §3.1.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.3.
 
  # Safety
 
@@ -5817,53 +3362,13 @@ int oxi_lms_shake_m32_h25_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=5 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h5_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=5 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 4956-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥4956 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h5_w1_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=5 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  4956-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -5877,53 +3382,13 @@ int oxi_lms_shake_m24_h5_w1_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=5 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h5_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=5 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2580-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2580 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h5_w2_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=5 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2580-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -5937,53 +3402,13 @@ int oxi_lms_shake_m24_h5_w2_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=5 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h5_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=5 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1380-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1380 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h5_w4_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=5 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1380-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -5997,53 +3422,13 @@ int oxi_lms_shake_m24_h5_w4_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=5 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h5_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=5 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 780-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥780 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h5_w8_sign(const uint8_t *sk_in_ptr,
-                                 const uint8_t *msg_ptr,
-                                 uintptr_t msg_len,
-                                 uint8_t *sk_out,
-                                 uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=5 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  780-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6057,53 +3442,13 @@ int oxi_lms_shake_m24_h5_w8_verify(const uint8_t *pk_ptr,
                                    const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=10 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h10_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=10 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5076-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5076 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h10_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=10 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5076-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6117,53 +3462,13 @@ int oxi_lms_shake_m24_h10_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=10 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h10_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=10 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2700-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2700 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h10_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=10 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2700-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6177,53 +3482,13 @@ int oxi_lms_shake_m24_h10_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=10 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h10_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=10 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1500-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1500 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h10_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=10 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1500-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6237,53 +3502,13 @@ int oxi_lms_shake_m24_h10_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=10 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h10_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=10 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 900-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥900 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h10_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=10 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  900-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6297,53 +3522,13 @@ int oxi_lms_shake_m24_h10_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=15 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h15_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=15 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5196-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5196 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h15_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=15 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5196-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6357,53 +3542,13 @@ int oxi_lms_shake_m24_h15_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=15 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h15_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=15 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2820-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2820 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h15_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=15 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2820-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6417,53 +3562,13 @@ int oxi_lms_shake_m24_h15_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=15 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h15_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=15 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1620-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1620 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h15_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=15 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1620-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6477,53 +3582,13 @@ int oxi_lms_shake_m24_h15_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=15 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h15_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=15 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1020-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1020 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h15_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=15 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1020-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6537,53 +3602,13 @@ int oxi_lms_shake_m24_h15_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=20 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h20_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=20 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5316-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5316 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h20_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=20 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5316-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6597,53 +3622,13 @@ int oxi_lms_shake_m24_h20_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=20 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h20_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=20 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 2940-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥2940 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h20_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=20 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  2940-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6657,53 +3642,13 @@ int oxi_lms_shake_m24_h20_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=20 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h20_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=20 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1740-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1740 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h20_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=20 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1740-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6717,53 +3662,13 @@ int oxi_lms_shake_m24_h20_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=20 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h20_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=20 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1140-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1140 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h20_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=20 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1140-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6777,53 +3682,13 @@ int oxi_lms_shake_m24_h20_w8_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=25 W=1.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h25_w1_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=25 W=1 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 5436-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥5436 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h25_w1_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=25 W=1 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  5436-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6837,53 +3702,13 @@ int oxi_lms_shake_m24_h25_w1_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=25 W=2.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h25_w2_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=25 W=2 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 3060-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥3060 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h25_w2_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=25 W=2 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  3060-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6897,53 +3722,13 @@ int oxi_lms_shake_m24_h25_w2_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=25 W=4.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h25_w4_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=25 W=4 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1860-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1860 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h25_w4_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=25 W=4 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1860-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 
@@ -6957,53 +3742,13 @@ int oxi_lms_shake_m24_h25_w4_verify(const uint8_t *pk_ptr,
                                     const uint8_t *sig_ptr);
 
 /*
- Generate an LMS key pair for SHAKE-256 M=24 H=25 W=8.
-
- Reads 32 bytes from `xi_ptr`, writes a 44-byte opaque
- private-key blob into `sk_out` and a 48-byte public key
- into `pk_out`. Spec: RFC 8708 §4.2. See [`oxi_lms_keygen`] for the
- LMS-family contract (deterministic derivation from `xi`,
- persistence-of-record format, profile gating).
-
- # Safety
-
- `xi_ptr` must be valid for 32 bytes. `sk_out` must be a non-NULL
- writable pointer to ≥44 bytes. `pk_out` must be a
- non-NULL writable pointer to ≥48 bytes.
- */
-int oxi_lms_shake_m24_h25_w8_keygen(const uint8_t *xi_ptr, uint8_t *sk_out, uint8_t *pk_out);
-
-/*
- Sign a message with the LMS SHAKE-256 M=24 H=25 W=8 variant.
-
- Reads the 44-byte opaque private-key blob from
- `sk_in_ptr`, signs `msg_len` bytes from `msg_ptr`, advances the
- leaf index, writes the updated blob to `sk_out`, and writes the
- 1260-byte signature into `sig_out`. Spec: RFC 8708 §4.2.
- See [`oxi_lms_sign`] for the persistence contract (`sk_out` MUST
- be persisted before using `sig_out`).
-
- # Safety
-
- `sk_in_ptr` must be valid for 44 bytes. `msg_ptr`
- must be valid for `msg_len` bytes (NULL with len=0 permitted).
- `sk_out` ≥44 bytes, `sig_out` ≥1260 bytes.
- `sk_in_ptr` and `sk_out` may alias.
- */
-int oxi_lms_shake_m24_h25_w8_sign(const uint8_t *sk_in_ptr,
-                                  const uint8_t *msg_ptr,
-                                  uintptr_t msg_len,
-                                  uint8_t *sk_out,
-                                  uint8_t *sig_out);
-
-/*
  Verify an LMS signature for the SHAKE-256 M=24 H=25 W=8 variant.
 
  Reads 48-byte pk, `msg_len`-byte message, and
  1260-byte signature. Returns `TagMismatch=22` on any
  verification failure (parse / structural / cryptographic — upstream
  collapses into a single `Err(InvalidInput)`; same convention as
- every other oxicrypt verify FFI). Spec: RFC 8708 §4.2.
+ every other oxicrypt verify FFI). Spec: SP 800-208 §4.4.
 
  # Safety
 

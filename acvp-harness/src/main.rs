@@ -555,7 +555,7 @@ fn print_demo_run_usage() {
     eprintln!("                        one vector set per session, unless the pair serves several");
     eprintln!("                        ACVP revisions — then add --revision (see below)");
     eprintln!("  --revision <rev>      narrow to one ACVP revision when an (algorithm, mode) pair");
-    eprintln!("                        has handlers for several — LMS sigGen/sigVer each serve");
+    eprintln!("                        has handlers for several — LMS sigVer serves");
     eprintln!("                        1.0 and SP800-208; without this both register");
     eprintln!("  --paramset <NAME>     for --algorithm SLH-DSA only: restrict to one of the 12");
     eprintln!("                        FIPS 205 §11 Table 2 paramSets (e.g. SLH-DSA-SHA2-128s);");

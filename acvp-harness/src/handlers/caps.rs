@@ -1838,24 +1838,6 @@ fn lms_specific_capabilities() -> JsonValue {
     ])
 }
 
-/// Build an ACVP registration block for LMS / keyGen / 1.0.
-///
-/// Cap shape per `draft-celi-acvp-lms §7.3.3`. The advertised grid is
-/// the LMS types and LMOTS pairings built in `oxicrypt-lms`; the
-/// registration is generated from that set rather than enumerated
-/// to `specificCapabilities` when their primitives ship.
-pub fn lms_keygen_capability(caps_filter: Option<&str>) -> JsonValue {
-    obj(vec![
-        ("algorithm", str_val("LMS")),
-        ("mode", str_val("keyGen")),
-        ("revision", str_val("1.0")),
-        (
-            "specificCapabilities",
-            lms_specific_capabilities_filtered(caps_filter),
-        ),
-    ])
-}
-
 /// Read a string-valued field off a `JsonValue::Object`, or `None` if absent /
 /// non-object / non-string. Local helper for [`lms_specific_capabilities_filtered`].
 fn obj_str_field<'a>(v: &'a JsonValue, key: &str) -> Option<&'a str> {
@@ -1906,35 +1888,11 @@ fn lms_specific_capabilities_filtered(filter: Option<&str>) -> JsonValue {
     JsonValue::Array(kept)
 }
 
-/// Build an ACVP registration block for LMS / sigGen / 1.0.
-///
-/// Cap shape per `draft-celi-acvp-lms §7.3.4`. Same subset
-/// rationale as [`lms_keygen_capability`].
-///
-/// LMS sigGen has an inverted ACVP protocol model vs ML-DSA /
-/// SLH-DSA: per `§9.2` Table 16 the IUT supplies its own
-/// `publicKey` at group level in the response (the server prompt
-/// has no key information per §8.2.1 Table 9 / §8.2.2 Table 10).
-/// This is structural for stateful HBS — the server can't dictate
-/// a key for a one-time-leaf scheme. The handler in `lms.rs`
-/// generates a deterministic per-group key from `tgId` so prompt
-/// replays produce identical responses.
-pub fn lms_siggen_capability(caps_filter: Option<&str>) -> JsonValue {
-    obj(vec![
-        ("algorithm", str_val("LMS")),
-        ("mode", str_val("sigGen")),
-        ("revision", str_val("1.0")),
-        (
-            "specificCapabilities",
-            lms_specific_capabilities_filtered(caps_filter),
-        ),
-    ])
-}
-
 /// Build an ACVP registration block for LMS / sigVer / 1.0.
 ///
-/// Cap shape per `draft-celi-acvp-lms §7.3.5`. Same subset
-/// rationale as [`lms_keygen_capability`].
+/// Cap shape per `draft-celi-acvp-lms §7.3.5`. The advertised grid is
+/// the LMS types and LMOTS pairings built in `oxicrypt-lms`, narrowed by
+/// `caps_filter` when one is given.
 pub fn lms_sigver_capability(caps_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
@@ -1961,27 +1919,6 @@ pub fn lms_sigver_capability(caps_filter: Option<&str>) -> JsonValue {
 /// constrained.
 const LMS_SP800_208_MESSAGE_LENGTHS: &[i64] = &[128, 1024, 8192];
 
-/// Build an ACVP registration block for LMS / sigGen / `SP800-208`.
-///
-/// The `SP800-208` counterpart to [`lms_siggen_capability`], adding the
-/// top-level `messageLength` domain that revision `1.0` lacks. The
-/// inverted key model is unchanged from revision `1.0` — the IUT still
-/// supplies its own group-level `publicKey` in the response — so this
-/// shares `handle_siggen_group`, which decodes each test's `message`
-/// with no fixed-size assumption.
-pub fn lms_siggen_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
-    obj(vec![
-        ("algorithm", str_val("LMS")),
-        ("mode", str_val("sigGen")),
-        ("revision", str_val("SP800-208")),
-        (
-            "specificCapabilities",
-            lms_specific_capabilities_filtered(caps_filter),
-        ),
-        ("messageLength", num_array(LMS_SP800_208_MESSAGE_LENGTHS)),
-    ])
-}
-
 /// Build an ACVP registration block for LMS / sigVer / `SP800-208`.
 ///
 /// Distinct from [`lms_sigver_capability`] (revision `1.0`), not a
@@ -1997,9 +1934,6 @@ pub fn lms_siggen_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
 /// inside `specificCapabilities`. The registration declares
 /// `specificCapabilities` only — per the draft a registration must not
 /// carry both `capabilities` and `specificCapabilities`.
-///
-/// There is deliberately no keyGen counterpart: key generation has no
-/// message, so the server advertises `SP800-208` for sigGen/sigVer only.
 pub fn lms_sigver_sp800_208_capability(caps_filter: Option<&str>) -> JsonValue {
     obj(vec![
         ("algorithm", str_val("LMS")),
@@ -2183,32 +2117,21 @@ mod tests {
     fn lms_caps_unfiltered_advertises_the_full_80_grid() {
         // No filter == the full grid, byte-identical to the pre-filter behaviour.
         assert_eq!(
-            lms_pairs(&lms_keygen_capability(None)).len(),
+            lms_pairs(&lms_sigver_capability(None)).len(),
             80,
             "the full LMS grid is 80 (lmsMode, lmOtsMode) pairs"
         );
-        assert_eq!(lms_pairs(&lms_siggen_capability(None)).len(), 80);
-        assert_eq!(lms_pairs(&lms_sigver_capability(None)).len(), 80);
     }
 
     #[test]
     fn lms_sp800_208_cap_shape() {
-        for (mode, cap) in [
-            ("sigGen", lms_siggen_sp800_208_capability(None)),
-            ("sigVer", lms_sigver_sp800_208_capability(None)),
-        ] {
-            check_sp800_208_cap(mode, &cap);
-        }
-    }
-
-    /// Shared assertions for both SP800-208 LMS capability blocks.
-    fn check_sp800_208_cap(mode: &str, cap: &JsonValue) {
+        let cap = &lms_sigver_sp800_208_capability(None);
         assert_eq!(obj_str_field(cap, "algorithm"), Some("LMS"));
-        assert_eq!(obj_str_field(cap, "mode"), Some(mode));
+        assert_eq!(obj_str_field(cap, "mode"), Some("sigVer"));
         assert_eq!(
             obj_str_field(cap, "revision"),
             Some("SP800-208"),
-            "{mode} must register under the new revision, not 1.0"
+            "sigVer must register under the SP800-208 revision, not 1.0"
         );
 
         // Same 80-pair grid as revision 1.0 — the revision changes the
@@ -2240,24 +2163,19 @@ mod tests {
         );
 
         // The matching revision-1.0 block must NOT sprout a messageLength.
-        let v1 = if mode == "sigGen" {
-            lms_siggen_capability(None)
-        } else {
-            lms_sigver_capability(None)
-        };
-        let JsonValue::Object(v1_fields) = v1 else {
+        let JsonValue::Object(v1_fields) = lms_sigver_capability(None) else {
             panic!("capability is a JSON object");
         };
         assert!(
             !v1_fields.iter().any(|(k, _)| k == "messageLength"),
-            "messageLength applies only to the SP800-208 revision ({mode})"
+            "messageLength applies only to the SP800-208 revision"
         );
     }
 
     #[test]
     fn lms_caps_filter_scopes_to_the_tall_tree_subset() {
         // Tall-tree H{20,25} × W{4,8} across the four hash/length families.
-        let cap = lms_keygen_capability(Some("H20+W4,H20+W8,H25+W4,H25+W8"));
+        let cap = lms_sigver_capability(Some("H20+W4,H20+W8,H25+W4,H25+W8"));
         let pairs = lms_pairs(&cap);
         assert_eq!(pairs.len(), 16, "2 heights × 2 widths × 4 families");
         for (lms, lmots) in &pairs {
@@ -2275,7 +2193,7 @@ mod tests {
 
     #[test]
     fn lms_caps_filter_or_clause_keeps_every_h25() {
-        let cap = lms_siggen_capability(Some("H25"));
+        let cap = lms_sigver_sp800_208_capability(Some("H25"));
         let pairs = lms_pairs(&cap);
         assert_eq!(pairs.len(), 16, "H25 across 4 widths × 4 families");
         assert!(pairs.iter().all(|(lms, _)| lms.contains("H25")));
@@ -2292,7 +2210,7 @@ mod tests {
     #[test]
     fn lms_caps_filter_separators_only_selects_nothing() {
         // A spec with no non-empty clause keeps no pair (rather than everything).
-        let cap = lms_keygen_capability(Some(",,"));
+        let cap = lms_sigver_capability(Some(",,"));
         assert_eq!(lms_pairs(&cap).len(), 0);
     }
 }

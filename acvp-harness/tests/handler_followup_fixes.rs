@@ -1020,22 +1020,15 @@ fn slh_dsa_keygen_reads_separate_skseed_skprf_pkseed_fields() {
     );
 }
 
-// ── LMS keyGen: consume the server-supplied identifier `i` ──────────
+// ── LMS: verification only ──────────────────────────────────────────
 
-/// Per `lms §8.1.2 Table 8` (and RFC 8554 §5.3), the LMS keyGen test
-/// case carries the public-key identifier `i` (16 B) alongside the OTS
-/// `seed` (32 B for SHA256 variants). Both feed the keygen — the
-/// resulting public key embeds `i` at bytes 8..24 and computes the
-/// Merkle root from `(seed, i)`. Pre-fix, the handler at
-/// `lms.rs:118-129` consumed only `seed`, calling
-/// `oxicrypt_lms::keygen_internal(&seed)` which derives an identifier
-/// internally — producing a public key that does not match what the
-/// server expects.
-fn lms_keygen_seed_and_id_prompt(seed_hex: &str, i_hex: &str) -> JsonValue {
+/// An LMS prompt for `mode`, carrying the fields the keyGen (`seed`, `i`)
+/// and sigGen (`message`) modes would read.
+fn lms_prompt(mode: &str) -> JsonValue {
     let prompt_text = format!(
         r#"{{
             "algorithm": "LMS",
-            "mode":      "keyGen",
+            "mode":      "{mode}",
             "revision":  "1.0",
             "testGroups": [{{
                 "tgId": 1,
@@ -1045,62 +1038,67 @@ fn lms_keygen_seed_and_id_prompt(seed_hex: &str, i_hex: &str) -> JsonValue {
                 "tests": [
                     {{
                         "tcId": 1,
-                        "seed": "{seed_hex}",
-                        "i":    "{i_hex}"
+                        "seed": "{seed}",
+                        "i":    "{i}",
+                        "message": "00"
                     }}
                 ]
             }}]
-        }}"#
+        }}"#,
+        seed = "04".repeat(32),
+        i = "05".repeat(16),
     );
     parse(&prompt_text)
 }
 
+/// SP 800-208 §8.1 confines LMS key generation and signing to hardware
+/// modules, so a keyGen or sigGen prompt must find no handler rather than
+/// produce a key or a signature.
 #[test]
-fn lms_keygen_consumes_server_supplied_identifier() {
+fn lms_generation_modes_find_no_handler() {
     ensure_initialized().unwrap();
+    let registry = dispatch::with_default_handlers();
+    for mode in ["keyGen", "sigGen"] {
+        let Err(err) = dispatch::process(&lms_prompt(mode), &registry) else {
+            panic!("LMS {mode} must have no handler");
+        };
+        assert!(
+            matches!(err, dispatch::DispatchError::UnsupportedAlgorithm { .. }),
+            "LMS {mode}: expected UnsupportedAlgorithm, got {err}"
+        );
+    }
+}
 
-    let seed = [0x04u8; 32];
-    let i = [0x05u8; 16];
-
-    // Reference pk: keygen_from_parts is the ACVP-shaped primitive
-    // (per its doc-comment), which takes seed AND identifier
-    // separately and embeds the supplied identifier in the public key.
-    let (_expected_sk, expected_pk) = oxicrypt_lms::keygen_from_parts(&seed, &i);
-
-    let response = dispatch_ok(&lms_keygen_seed_and_id_prompt(
-        &hex::encode_upper(&seed),
-        &hex::encode_upper(&i),
+/// A sigVer signature of the wrong length for the group's pair is a
+/// malformed prompt, reported as an error, not a `testPassed: false`.
+#[test]
+fn lms_sigver_wrong_length_signature_is_an_error() {
+    ensure_initialized().unwrap();
+    let registry = dispatch::with_default_handlers();
+    let pk = format!("0000000600000003{}", "00".repeat(48));
+    let prompt = parse(&format!(
+        r#"{{
+            "algorithm": "LMS",
+            "mode":      "sigVer",
+            "revision":  "1.0",
+            "testGroups": [{{
+                "tgId": 1,
+                "testType": "AFT",
+                "lmsMode":   "LMS_SHA256_M32_H10",
+                "lmOtsMode": "LMOTS_SHA256_N32_W4",
+                "publicKey": "{pk}",
+                "tests": [{{ "tcId": 1, "message": "00", "signature": "00" }}]
+            }}]
+        }}"#
     ));
-
-    let groups = response
-        .get("testGroups")
-        .and_then(JsonValue::as_array)
-        .unwrap();
-    let tests = groups[0]
-        .get("tests")
-        .and_then(JsonValue::as_array)
-        .unwrap();
-    let pk_hex = tests[0]
-        .get("publicKey")
-        .and_then(JsonValue::as_str)
-        .unwrap();
-    let pk_bytes = hex::decode(pk_hex).unwrap();
-
-    // Bytes 8..24 of the LMS public key are the identifier `I` per RFC
-    // 8554 §5.3. If the handler ignored the supplied `i`, this slice
-    // would not equal the prompt's `i`.
-    assert_eq!(
-        &pk_bytes[8..24],
-        &i[..],
-        "handler must consume the server-supplied `i` field per lms \
-         §8.1.2 Table 8 / RFC 8554 §5.3 — bytes 8..24 of the public key \
-         must equal the prompt's `i`",
-    );
-    assert_eq!(
-        pk_bytes,
-        expected_pk.to_vec(),
-        "handler must call oxicrypt_lms::keygen_from_parts(seed, i) to \
-         produce a public key whose Merkle root depends on the supplied \
-         identifier",
+    let Err(err) = dispatch::process(&prompt, &registry) else {
+        panic!("a one-byte LMS signature must not produce a verdict");
+    };
+    assert!(
+        matches!(
+            err,
+            dispatch::DispatchError::Crypto("LMS SigVer: signature has wrong length")
+        ),
+        "expected the wrong-length signature error, got {err}"
     );
 }

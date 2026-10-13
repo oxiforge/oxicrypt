@@ -1,6 +1,11 @@
 # oxicrypt-lms
 
-LMS hash-based signatures (SP 800-208) for CNSA 2.0 firmware signing
+LMS signature verification (SP 800-208) for CNSA 2.0 firmware signing
+
+Verifies LMS signatures for all 80 (LMS, LM-OTS) parameter-set pairs that
+SP 800-208 §4.1–§4.4 approve. Key generation and signing are not offered:
+SP 800-208 §8.1 confines them to hardware modules, and FIPS 140-3 IG C.N
+resolutions 6 and 9 rule out offering them in a software module at all.
 
 Part of [oxicrypt](https://github.com/oxiforge/oxicrypt) — a cryptographic module targeting
 FIPS 140-3 Level 1, written entirely in Rust. No C, and no FFI into legacy

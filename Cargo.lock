@@ -734,8 +734,6 @@ dependencies = [
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-xof",
- "oxicrypt-zeroize",
- "rayon",
 ]
 
 [[package]]

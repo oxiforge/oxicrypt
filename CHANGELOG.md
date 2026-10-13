@@ -14,6 +14,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added LMS signature verification for all 80 (LMS, LM-OTS) parameter pairs of SP 800-208
+  §4.1 (SHA-256), §4.2 (SHA-256/192), §4.3 (SHAKE256/256) and §4.4 (SHAKE256/192), each its own
+  approved `Lms…Verify` service, with the service discriminants unchanged. (#281)
+- Added four LMS known-answer self-tests to the power-up set, one per hash adapter (SHA-256 and
+  SHAKE256 at N = 32 and N = 24). Each verifies a NIST ACVP sigVer vector marked valid and
+  rejects one marked invalid, on the pair's H = 5, W = 1 instance. (#281)
+- Added a test running all 320 NIST ACVP `LMS-sigVer-1.0` vectors, four per parameter pair, and
+  asserting each one's expected outcome. The vectors are vendored from ACVP-Server at the commit
+  pinned in `vendor/nist/MANIFEST.toml`. (#281)
+- **Removed LMS key generation and signing.** SP 800-208 §8.1 confines both to hardware modules,
+  so `oxicrypt-lms` offers verification only. A caller that generates keys or signs with
+  `oxicrypt-lms` must move that work to a hardware module. Removed:
+  - Rust: `keygen`, `keygen_internal`, `keygen_from_parts`, `sign`, `sign_internal`,
+    `LmsPrivateKey`, `LmsSigningKey` and `PRIVATE_KEY_LEN`, from every per-pair module and from
+    the crate root, and each per-pair module's `KATS`. The crate-level `oxicrypt_lms::KATS` holds
+    the LMS self-tests.
+  - The 80 `Lms…Sign` variants of `oxicrypt_module::Service`.
+  - The `alloc` and `parallel` features of `oxicrypt-lms`, and with them its `rayon` and
+    `oxicrypt-zeroize` dependencies. A build enabling `oxicrypt-lms/alloc` or
+    `oxicrypt-lms/parallel` must drop the feature.
+  - C ABI: `oxi_lms_keygen`, `oxi_lms_sign`, the 80 per-pair `oxi_lms_<pair>_keygen` and 80
+    `oxi_lms_<pair>_sign` functions, and `OXI_LMS_PRIVATE_KEY_LEN`. `oxi_lms_verify` and the 80
+    `oxi_lms_<pair>_verify` functions remain.
+  - `acvp-harness`: the LMS `keyGen` and `sigGen` handlers, leaving 83 registered handlers. LMS
+    `sigVer` is served under revisions `1.0` and `SP800-208`. (#281)
+
 ## [0.24.0] - 2026-08-19
 
 - **Renamed the release artifacts.** The C library archive is now

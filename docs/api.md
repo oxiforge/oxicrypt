@@ -26,12 +26,12 @@ build the rustdoc with `cargo doc --workspace --no-deps`.
 | `oxicrypt-ml-kem` | ML-KEM-512/768/1024 (FIPS 203) | Yes |
 | `oxicrypt-ml-dsa` | ML-DSA-44/65/87 (FIPS 204) | Yes |
 | `oxicrypt-slh-dsa` | SLH-DSA 12 param sets (FIPS 205) | Yes¹ |
-| `oxicrypt-lms` | LMS / LM-OTS stateful HBS (SP 800-208) | Yes¹ |
+| `oxicrypt-lms` | LMS / LM-OTS signature verification, 80 parameter pairs (SP 800-208) | Yes |
 | `oxicrypt-xmss` | XMSS-SHA2_10_256 stateful HBS (SP 800-208) | Yes |
 | `oxicrypt-test-vectors` | Generated KAT constants | Yes |
 
-¹ `oxicrypt-slh-dsa` and `oxicrypt-lms` are `no_std` by default; the
-optional `parallel` feature pulls in `rayon` (hence `std`).
+¹ `oxicrypt-slh-dsa` is `no_std` by default; the optional `parallel`
+feature pulls in `rayon` (hence `std`).
 
 ### Out-of-boundary / tooling crates
 
@@ -470,61 +470,62 @@ pub const SIG_LEN: usize;  // param-set dependent (e.g. 29 792 for SHA2-256s)
 
 ## LMS — `oxicrypt_lms`
 
-Leighton-Micali stateful hash-based signatures (SP 800-208 / RFC 8554 /
-RFC 8708). **Stateful**: each Merkle-tree leaf signs exactly one message;
-the signer must persist the private key's leaf index after every
-signature to avoid catastrophic one-time-key reuse.
+Leighton-Micali hash-based signature verification (SP 800-208 /
+RFC 8554), over every (LMS, LM-OTS) parameter pair SP 800-208 approves:
+the SHA-256 sets of §4.1, the SHA-256/192 sets of §4.2, the SHAKE256/256
+sets of §4.3 and the SHAKE256/192 sets of §4.4.
+
+### Verification only
+
+This crate verifies signatures and does nothing else. SP 800-208 §8.1
+confines LMS key generation and signature generation to hardware modules
+at FIPS 140-3 Level 3 physical security or higher, and FIPS 140-3 IG C.N
+resolutions 9 and 6 place them beyond a software module's reach as either
+an approved or a non-approved service. §8.2 places no such restriction on
+verification. The signing keys for the signatures verified here are
+produced elsewhere, in practice by a hardware module.
+
+There is no private key type and no secret material: a verifier reads
+only the public key, the message and the signature.
 
 Each (LMS, LM-OTS) parameter pair lives in its own module
 `lms_<family>_m<N>_h<H>_w<W>` over family ∈ {`sha256`, `shake`},
 N ∈ {24, 32}, H ∈ {5, 10, 15, 20, 25}, W ∈ {1, 2, 4, 8} (80 pairs). The
-crate root re-exports the `lms_sha256_m32_h10_w4` baseline pair.
-
-### Key types
-
-`LmsPrivateKey` — zeroize-on-Drop private key with a stateful leaf
-counter; `leaf_index() -> u32`, `is_exhausted() -> bool`,
-`to_bytes() -> [u8; PRIVATE_KEY_LEN]`, `from_bytes(&[u8]) -> Option<Self>`.
+crate root re-exports `verify` and the constants of the
+`lms_sha256_m32_h10_w4` pair.
 
 ### Free functions (per pair module)
 
 | Function | Signature |
 |----------|-----------|
-| `keygen` | `(xi: &[u8; 32]) -> Result<(LmsPrivateKey, [u8; PUBLIC_KEY_LEN]), Error>` |
-| `sign` | `(key: &mut LmsPrivateKey, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error>` |
 | `verify` | `(public_key: &[u8; PUBLIC_KEY_LEN], message: &[u8], signature: &[u8; SIGNATURE_LEN]) -> Result<(), Error>` |
 
-`keygen` returns `(sk, pk)` — the private key first, then the public key.
-`sign` advances the leaf index; it returns `Err(Error::InvalidInput)`
-once the tree is exhausted.
-
-### Cached signing — `LmsSigningKey` (feature `alloc`)
-
-Precomputes the full Merkle node table once (cost ≈ one keygen), taking
-per-signature tree cost from O(2^H) to O(H). Signatures are
-byte-identical to the uncached path.
-
-```rust
-impl LmsSigningKey {
-    pub fn new(xi: &[u8; 32]) -> Result<(Self, [u8; PUBLIC_KEY_LEN]), Error>;
-    pub fn from_private_key(key: LmsPrivateKey) -> Result<Self, Error>;
-    pub fn sign(&mut self, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error>;
-    pub fn leaf_index(&self) -> u32;
-    pub fn is_exhausted(&self) -> bool;
-    pub fn public_key(&self) -> [u8; PUBLIC_KEY_LEN];
-    pub fn private_key(&self) -> &LmsPrivateKey;   // borrow to persist state
-    pub fn into_private_key(self) -> LmsPrivateKey;
-}
-```
+`verify` returns `Ok(())` for a valid signature and
+`Err(Error::InvalidInput)` for an invalid one, plus the module-gating
+errors when the module is not operational or the active algorithm profile
+blocks the pair's `Lms…Verify` service.
 
 ### Constants (per pair module)
 
 ```rust
+pub const N: usize;              // hash output length, 24 or 32
+pub const H: usize;              // tree height
+pub const W: u32;                // Winternitz parameter
+pub const LMS_TYPE: u32;         // LMS typecode
+pub const LMOTS_TYPE: u32;       // LM-OTS typecode
 pub const MAX_SIGNATURES: u32;   // 2^H
+pub const OTS_SIG_LEN: usize;
 pub const SIGNATURE_LEN: usize;
-pub const PUBLIC_KEY_LEN: usize;
-pub const PRIVATE_KEY_LEN: usize;
+pub const PUBLIC_KEY_LEN: usize; // 24 + N
 ```
+
+### Power-up self-test
+
+`oxicrypt_lms::KATS` holds four known-answer verification self-tests,
+one per hash adapter (SHA-256 with N = 32 and N = 24, SHAKE256 with
+N = 32 and N = 24), each on the pair's H = 5, W = 1 instance. Each
+verifies a NIST ACVP sigVer vector marked valid and rejects one marked
+invalid.
 
 ## XMSS — `oxicrypt_xmss`
 

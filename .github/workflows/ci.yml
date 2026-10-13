@@ -376,9 +376,8 @@ jobs:
 
   # Non-default feature configs — the local pre-push hook tests
   # default features only, so this job is cloud CI's unique
-  # coverage: the rayon `parallel` path (incl. the golden-pin
-  # byte-anchor of the parallel-built node table) and the SHA-NI
-  # `accel-sha` dispatch/equivalence suites. Runner hardware may
+  # coverage: the SHA-NI `accel-sha` dispatch/equivalence suites
+  # among them. Runner hardware may
   # lack SHA-NI; the detection contract makes those tests
   # fail-portable, so the suite is meaningful either way.
   features:
@@ -387,8 +386,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - crate: oxicrypt-lms
-            flags: --features parallel
           - crate: oxicrypt-sha
             flags: --features accel-sha
           - crate: oxicrypt-sha-accel

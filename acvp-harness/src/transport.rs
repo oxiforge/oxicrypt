@@ -122,8 +122,8 @@ pub struct AcvpConfig {
     pub filter_mode: Option<String>,
     /// Optional: only register handlers whose `revision()` matches this
     /// string. Needed once one `(algorithm, mode)` pair is served by
-    /// more than one handler — LMS sigGen and sigVer each have a `1.0`
-    /// and an `SP800-208` handler.
+    /// more than one handler — LMS sigVer has a `1.0` and an `SP800-208`
+    /// handler.
     ///
     /// Omitting it on such a pair no longer registers both silently:
     /// `run_demo` refuses a capability set containing the same
@@ -802,8 +802,8 @@ fn parse_https_url(url: &str) -> Result<(String, u16, String), String> {
 ///
 /// `filter_alg` + `filter_mode` alone no longer guarantee a single
 /// registration. Once an (algorithm, mode) pair is served by handlers
-/// for more than one ACVP revision — LMS sigGen and sigVer each serve
-/// `1.0` and `SP800-208` — that pair matches every such handler and
+/// for more than one ACVP revision — LMS sigVer serves `1.0` and
+/// `SP800-208` — that pair matches every such handler and
 /// registers one capability block per revision, i.e. several vector
 /// sets in one session. `filter_revision` is what restores the
 /// one-vector-set-per-session property ACVTS demo etiquette requires;
@@ -2587,8 +2587,8 @@ mod tests {
     }
 
     /// `--revision` must isolate one handler when an (algorithm, mode)
-    /// pair is served by several. LMS sigGen/sigVer each have a `1.0`
-    /// and an `SP800-208` handler; registering both in one session
+    /// pair is served by several. LMS sigVer has a `1.0` and an
+    /// `SP800-208` handler; registering both in one session
     /// would produce two vector sets and re-grade passed coverage.
     #[test]
     fn build_capabilities_revision_filter_isolates_one_registration() {
@@ -2608,21 +2608,19 @@ mod tests {
                 .collect()
         };
 
-        for mode in ["sigGen", "sigVer"] {
-            // No revision filter: both LMS revisions register.
-            let both = build_capabilities(&registry, Some("LMS"), Some(mode), None, None);
-            assert_eq!(
-                both.len(),
-                2,
-                "{mode}: 1.0 and SP800-208 both register without a revision filter"
-            );
+        // No revision filter: both LMS revisions register.
+        let both = build_capabilities(&registry, Some("LMS"), Some("sigVer"), None, None);
+        assert_eq!(
+            both.len(),
+            2,
+            "sigVer: 1.0 and SP800-208 both register without a revision filter"
+        );
 
-            // With the filter: exactly one, and the right one.
-            for want in ["1.0", "SP800-208"] {
-                let caps = build_capabilities(&registry, Some("LMS"), Some(mode), Some(want), None);
-                assert_eq!(caps.len(), 1, "{mode}/{want}: exactly one registration");
-                assert_eq!(revision_of(&caps), vec![want.to_string()]);
-            }
+        // With the filter: exactly one, and the right one.
+        for want in ["1.0", "SP800-208"] {
+            let caps = build_capabilities(&registry, Some("LMS"), Some("sigVer"), Some(want), None);
+            assert_eq!(caps.len(), 1, "sigVer/{want}: exactly one registration");
+            assert_eq!(revision_of(&caps), vec![want.to_string()]);
         }
 
         // A revision no handler serves yields nothing rather than
@@ -2658,8 +2656,8 @@ mod tests {
         // Several modes at one revision is ordinary, not a duplicate.
         assert!(
             revision_duplicate(&[
-                cap("LMS", Some("sigGen"), "SP800-208"),
-                cap("LMS", Some("sigVer"), "SP800-208"),
+                cap("ML-DSA", Some("sigGen"), "FIPS204"),
+                cap("ML-DSA", Some("sigVer"), "FIPS204"),
             ])
             .is_none(),
             "distinct modes are not a revision duplicate"
@@ -2700,19 +2698,19 @@ mod tests {
         let _ = crate::ensure_initialized();
         let r = crate::dispatch::with_default_handlers();
 
-        let both = build_capabilities(&r, Some("LMS"), None, Some("SP800-208"), None);
+        let all = build_capabilities(&r, Some("ML-DSA"), None, Some("FIPS204"), None);
         assert_eq!(
-            both.len(),
-            2,
-            "algorithm + revision is still both LMS modes"
+            all.len(),
+            3,
+            "algorithm + revision is still every ML-DSA mode"
         );
         assert!(
-            revision_duplicate(&both).is_none(),
+            revision_duplicate(&all).is_none(),
             "but they differ by mode, which is ordinary and stays permitted"
         );
 
-        for mode in ["sigGen", "sigVer"] {
-            let caps = build_capabilities(&r, Some("LMS"), Some(mode), Some("SP800-208"), None);
+        for mode in ["keyGen", "sigGen", "sigVer"] {
+            let caps = build_capabilities(&r, Some("ML-DSA"), Some(mode), Some("FIPS204"), None);
             assert_eq!(
                 caps.len(),
                 1,

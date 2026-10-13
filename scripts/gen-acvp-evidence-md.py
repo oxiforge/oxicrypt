@@ -49,6 +49,17 @@ def family(alg):
             'ML-KEM': 'ML-KEM', 'ML-DSA': 'ML-DSA', 'SLH-DSA': 'SLH-DSA', 'LMS': 'LMS'}.get(a, alg)
 
 
+# Graded services the module does not offer, keyed (algorithm, mode), with the reason. The rows stay:
+# they record what NIST graded. The label keeps a reader from taking a graded service for a current
+# capability.
+NOT_OFFERED = {
+    ('LMS', 'keyGen'): 'SP 800-208 §8.1 confines LMS key generation and signing to hardware '
+                       'modules, so the module offers LMS signature verification only.',
+    ('LMS', 'sigGen'): 'SP 800-208 §8.1 confines LMS key generation and signing to hardware '
+                       'modules, so the module offers LMS signature verification only.',
+}
+
+
 def render(doc):
     s = doc['summary']
     rows = doc['sessions']
@@ -103,12 +114,21 @@ def render(doc):
         w('')
         w('| Algorithm | Mode | Revision | Vector sets | Cases |')
         w('|---|---|---|--:|--:|')
+        reasons = []
         for svc in svcs:
             alg, mode, rev = svc
             cases = cases_by_svc.get(svc)
-            w(f"| `{alg}` | {mode or '—'} | {rev} | {vsets_by_svc[svc]} "
+            mark = ''
+            if (alg, mode) in NOT_OFFERED:
+                mark = ' †'
+                if NOT_OFFERED[(alg, mode)] not in reasons:
+                    reasons.append(NOT_OFFERED[(alg, mode)])
+            w(f"| `{alg}` | {mode or '—'}{mark} | {rev} | {vsets_by_svc[svc]} "
               f"| {cases if cases else '—'} |")
         w('')
+        for reason in reasons:
+            w(f'† Graded, and not offered by the module. {reason} These rows record what was graded.')
+            w('')
     w('<details>')
     w(f"<summary>Full session record — all {s['vector_sets_graded']} graded vector sets, with the "
       'NIST identifiers</summary>')

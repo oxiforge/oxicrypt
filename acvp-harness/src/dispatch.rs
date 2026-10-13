@@ -217,9 +217,8 @@ impl Default for Registry {
 /// the harness currently knows how to dispatch.
 ///
 /// The registered set is the sequence of `register` calls in this
-/// function. It is deliberately not restated here: a second copy of the
-/// list drifts from the first, and the two counts this doc block used to
-/// carry had both gone stale.
+/// function. It is not restated here, because a second copy of the list
+/// would drift from the first; `registry_lookup` pins the count.
 ///
 /// Two structural facts do belong here. A handler occupies either an
 /// `(algorithm, None, revision)` slot or an `(algorithm, mode, revision)`
@@ -345,10 +344,7 @@ pub fn with_default_handlers() -> Registry {
     r.register(Box::new(handlers::slh_dsa::SlhDsaKeyGenHandler));
     r.register(Box::new(handlers::slh_dsa::SlhDsaSigGenHandler));
     r.register(Box::new(handlers::slh_dsa::SlhDsaSigVerHandler));
-    // LMS (keyGen / sigGen / sigVer, SP 800-208 / RFC 8554)
-    r.register(Box::new(handlers::lms::LmsKeyGenHandler));
-    r.register(Box::new(handlers::lms::LmsSigGenHandler));
-    r.register(Box::new(handlers::lms::LmsSigGenSp800208Handler));
+    // LMS (sigVer only, SP 800-208 §8.2 / RFC 8554)
     r.register(Box::new(handlers::lms::LmsSigVerHandler));
     r.register(Box::new(handlers::lms::LmsSigVerSp800208Handler));
     // XMSS (sigVer only, SP 800-208 §8.2 / RFC 8391)
@@ -519,18 +515,18 @@ mod tests {
         assert!(r.find("SLH-DSA", Some("keyGen"), "FIPS205").is_some());
         assert!(r.find("SLH-DSA", Some("sigGen"), "FIPS205").is_some());
         assert!(r.find("SLH-DSA", Some("sigVer"), "FIPS205").is_some());
-        // LMS (SP 800-208)
-        assert!(r.find("LMS", Some("keyGen"), "1.0").is_some());
-        assert!(r.find("LMS", Some("sigGen"), "1.0").is_some());
+        // LMS (SP 800-208). Verification only: §8.1 confines key generation
+        // and signing to hardware modules, so their absence is a property to
+        // pin rather than an omission.
         assert!(r.find("LMS", Some("sigVer"), "1.0").is_some());
-        // LMS sigGen/sigVer also register under the SP800-208 revision, which
-        // the demo server advertises alongside 1.0 (catalog ids 218/219). Both
-        // must resolve — the registry keys on (algorithm, mode, revision).
-        assert!(r.find("LMS", Some("sigGen"), "SP800-208").is_some());
+        // sigVer also registers under the SP800-208 revision, which the demo
+        // server advertises alongside 1.0. Both must resolve — the registry
+        // keys on (algorithm, mode, revision).
         assert!(r.find("LMS", Some("sigVer"), "SP800-208").is_some());
-        // No keyGen under SP800-208: key generation has no message, so the
-        // server advertises the revision for the signing modes only.
-        assert!(r.find("LMS", Some("keyGen"), "SP800-208").is_none());
+        for rev in ["1.0", "SP800-208"] {
+            assert!(r.find("LMS", Some("keyGen"), rev).is_none());
+            assert!(r.find("LMS", Some("sigGen"), rev).is_none());
+        }
         // XMSS (SP 800-208). Verification only: §8.1 confines key generation
         // and signing to hardware modules, so the absence of those two is a
         // property to pin rather than an omission.
@@ -542,9 +538,9 @@ mod tests {
         assert!(r.find("UNKNOWN", None, "1.0").is_none());
         assert!(r.find("KDA", None, "Sp800-56Cr2").is_none());
         assert!(r.find("KDA", Some("HKDF"), "1.0").is_none());
-        // 86 since XMSS keyGen and sigGen left the registry; the count is
-        // asserted so a handler cannot be added or dropped unnoticed.
-        assert_eq!(r.len(), 86);
+        // The count is asserted so a handler cannot be added or dropped
+        // unnoticed.
+        assert_eq!(r.len(), 83);
         assert!(!r.is_empty());
     }
 

@@ -382,35 +382,22 @@ verify(&pk, b"firmware image", b"", &sig)?;
 The other 11 parameter sets live in their own
 `slh_dsa_{sha2,shake}_{128,192,256}{s,f}` modules with the same API.
 
-## LMS (stateful hash-based signatures, SP 800-208)
+## LMS (signature verification, SP 800-208 §8.2)
 
-LMS is **stateful**: every leaf signs exactly one message. After each
-signature you MUST persist the updated private-key state (including its
-leaf index) before the signature leaves the process — reusing a leaf is a
-catastrophic key-recovery failure.
-
-```rust
-use oxicrypt_lms::lms_sha256_m32_h10_w4::{keygen, sign, verify, LmsPrivateKey};
-
-// keygen returns (private key, public key) — note the order.
-let (mut sk, pk) = keygen(&xi)?;
-
-let sig = sign(&mut sk, b"message")?;  // advances sk.leaf_index by one
-// Persist sk.to_bytes() to durable storage HERE, before using the signature.
-
-verify(&pk, b"message", &sig)?;
-```
-
-For high-throughput signing, wrap the key in `LmsSigningKey` (feature
-`alloc`), which precomputes the Merkle tree once and is byte-identical to
-the free `sign`:
+LMS is verification-only here, across all 80 SP 800-208 parameter pairs.
+SP 800-208 §8.1 confines key generation and signing to hardware modules,
+so this crate holds no key material and offers neither service;
+signatures come from elsewhere, in practice from a hardware module that
+owns the tree state.
 
 ```rust
-use oxicrypt_lms::lms_sha256_m32_h10_w4::LmsSigningKey;
+use oxicrypt_lms::lms_sha256_m24_h10_w4::verify;
 
-let (mut signer, pk) = LmsSigningKey::new(&xi)?;
-let sig = signer.sign(b"message")?;
-// Persist signer.private_key().to_bytes() after each signature.
+// Pick the module matching the signer's (LMS, LM-OTS) parameter pair.
+// `public_key` is `PUBLIC_KEY_LEN` bytes and `signature` `SIGNATURE_LEN`,
+// both produced by the signer. Their typecodes name the pair, and
+// `verify` rejects a key or signature from any other pair.
+verify(&public_key, b"message", &signature)?;
 ```
 
 ## XMSS (signature verification, SP 800-208 §8.2)
