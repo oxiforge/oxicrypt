@@ -29,8 +29,8 @@
 //! | `v`          | `:expr` | `⌈(⌊lg((2^W-1)·U)⌋ + 1) / W⌉`       |
 //! | `p`          | `:expr` | `U + V` — total chains              |
 //! | `ls`         | `:expr` | `16 - V·W` — checksum left-shift    |
-//! | `lms_type`   | `:expr` | Typecode (SP 800-208 §4)            |
-//! | `lmots_type` | `:expr` | Typecode (SP 800-208 §4)            |
+//! | `lms_type`   | `:expr` | Typecode of the SP 800-208 §4 set   |
+//! | `lmots_type` | `:expr` | Typecode of the SP 800-208 §4 set   |
 //! | `svc_verify` | `:path` | `Service::…Verify` discriminant     |
 //!
 //! No `:literal` captures. No nested macros. No inner `(N) =>` arms.

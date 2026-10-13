@@ -13,12 +13,11 @@
 //!   - `<pair>_sigver_sig.bin` (signature from chosen test)
 //!
 //! Per-pair external grounding catches parameter-table errors that a
-//! self-consistent macro instantiation cannot — a wrong P / U / V / LS
-//! produces a signature parse-length mismatch and verify returns false
-//! before any hash chain runs. The macro shape (single-layer, `:expr`
-//! numerics, hash adapter as `:path`) structurally excludes the
-//! SLH-DSA B7 `:literal` hygiene bug class (see CMVP gem in
-//! `docs/security-policy/security-policy.md`).
+//! self-consistent macro instantiation cannot. A wrong P changes
+//! `SIGNATURE_LEN`, so the fixture no longer converts to the pair's
+//! signature array and the test fails. A wrong U, V or LS leaves the
+//! length unchanged but changes the digits each hash chain is walked
+//! from, so the computed root does not match and verify returns false.
 //!
 //! The full four-vector group for every pair, including the cases NIST
 //! marks invalid, is run by `tests/acvp_sigver_all_pairs.rs`.

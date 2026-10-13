@@ -52,7 +52,7 @@
 //! CNSA 2.0 permits every one of the 80 pairs. CNSA 1.0 permits none of
 //! them: CNSSP-15 (October 2016) names no stateful hash-based signature
 //! scheme. `Migration` permits them, as the union of the two suites.
-//! CNSSP-15 Annex B states "all parameters appropriate to protect to TOP
+//! CNSSP-15 (2025) Annex B states "all parameters appropriate to protect to TOP
 //! SECRET" for LMS, recommending LMS-SHA-256/192, and so places no subset
 //! restriction on the parameter sets — see
 //! `oxicrypt_module::is_allowed`.
@@ -420,7 +420,8 @@ mod tests {
     }
 
     /// Each CAST's reject vector is refused by the verifier the CAST runs,
-    /// and its accept vector stops verifying once a single bit changes.
+    /// and its accept vector stops verifying with one bit flipped in an
+    /// LM-OTS chain value of the signature or in the public key's root.
     #[test]
     fn cast_vectors_carry_their_known_answers() {
         use lms_sha256_m24_h5_w1 as sha256_n24;

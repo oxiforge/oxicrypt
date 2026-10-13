@@ -31,7 +31,7 @@
 use oxicrypt_sha::sha256::Sha256;
 use oxicrypt_xof::Shake256;
 
-/// SHA-256 / N=32 adapter — the legacy LMS family from RFC 8554.
+/// SHA-256 / N=32 adapter — SP 800-208 §4.1 (LMS_SHA256_M32), defined in RFC 8554.
 ///
 /// Wraps `oxicrypt_sha::sha256::Sha256` to expose a uniform shape that
 /// the `lms_impl!` macro can call without family-specific branches.
