@@ -86,6 +86,38 @@ mod tests {
             .expect("repo root resolves")
     }
 
+    /// Directory names no tree walk in this suite descends into: version
+    /// control metadata, build output, and git worktrees. A worktree under
+    /// `.worktrees/` is a separate checkout of another branch, gated by its
+    /// own run of this suite; walking it here would hold that branch's files
+    /// to this branch's expectations.
+    fn is_outside_the_tree(name: &str) -> bool {
+        matches!(name, ".git" | "target" | ".worktrees")
+    }
+
+    #[test]
+    fn tree_walks_skip_only_metadata_build_output_and_worktrees() {
+        for skipped in [".git", "target", ".worktrees"] {
+            assert!(
+                is_outside_the_tree(skipped),
+                "`{skipped}` must not be walked"
+            );
+        }
+        for walked in [
+            "vendor",
+            "docs",
+            "crates",
+            "scripts",
+            "worktrees",
+            ".worktrees-old",
+        ] {
+            assert!(
+                !is_outside_the_tree(walked),
+                "`{walked}` is part of the tree and must be walked"
+            );
+        }
+    }
+
     fn read_doc(rel: &str) -> String {
         let path = repo_root().join(rel);
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
@@ -393,7 +425,7 @@ mod tests {
                 let path = entry.path();
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if name == ".git" || name == "target" {
+                if is_outside_the_tree(&name) {
                     continue;
                 }
                 if path.is_dir() {
@@ -1313,7 +1345,7 @@ mod tests {
                 let path = entry.path();
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if name == ".git" || name == "target" || name == "vendor" {
+                if is_outside_the_tree(&name) || name == "vendor" {
                     continue;
                 }
                 if path.is_dir() {
@@ -1415,7 +1447,7 @@ mod tests {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if path.is_dir() {
-                    if !matches!(name.as_ref(), "target" | ".git") {
+                    if !is_outside_the_tree(&name) {
                         walk(&path, out);
                     }
                 } else if name.ends_with(".rs") {
@@ -1825,7 +1857,7 @@ mod tests {
                 let path = entry.path();
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if name == "target" || name == ".git" {
+                if is_outside_the_tree(&name) {
                     continue;
                 }
                 if path.is_dir() {
