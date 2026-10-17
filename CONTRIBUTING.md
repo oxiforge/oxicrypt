@@ -200,8 +200,6 @@ This prevents **new** leaks in what you push. It says nothing about what is alre
 8. git push --force-with-lease
 9. git checkout main && git merge --ff-only <branch> && git push origin main
 10. git branch -d <branch> && git push origin --delete <branch> --no-verify
-11. bash scripts/tag-next-build.sh    # apply next vX.Y.Z.A tag
-12. git push origin <next-tag>
 ```
 
 **Squash locally, then fast-forward — never `gh pr merge --squash`.** Every commit

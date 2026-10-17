@@ -1761,14 +1761,28 @@ mod tests {
         sides
     }
 
-    /// The `## [Unreleased]` section of a changelog: the current text.
-    /// Released sections are frozen history and are not read.
+    /// The `## [Unreleased]` section of a changelog, or "" when it has no
+    /// such heading; the sweep's liveness check uses it to find the heading.
     fn unreleased(changelog: &str) -> String {
         changelog
             .split("\n## [")
             .find(|section| section.starts_with("Unreleased]"))
             .unwrap_or("")
             .to_string()
+    }
+
+    /// The changelog text a reader takes as current: the `## [Unreleased]`
+    /// section and the newest released section below it, which a release
+    /// leaves holding every note it ships. Older sections are frozen history.
+    fn current_changelog(changelog: &str) -> String {
+        let sections: Vec<&str> = changelog.split("\n## [").collect();
+        match sections.iter().position(|s| s.starts_with("Unreleased]")) {
+            Some(i) => sections
+                .get(i..sections.len().min(i.saturating_add(2)))
+                .unwrap_or_default()
+                .join("\n## ["),
+            None => String::new(),
+        }
     }
 
     /// The `description` values of a `Cargo.toml`, one paragraph each.
@@ -1811,7 +1825,7 @@ mod tests {
         let text = if ext == Some("rs") {
             crate_doc(text)
         } else if file == Some("CHANGELOG.md") {
-            unreleased(text)
+            current_changelog(text)
         } else if file == Some("Cargo.toml") {
             descriptions(text)
         } else {
@@ -2055,14 +2069,16 @@ mod tests {
     fn the_boundary_side_reader_stays_quiet_on_correct_prose() {
         let sides = crate_sides();
 
-        // A Rust file is read by its `//!` lines: the crate doc fires, and a
-        // code line between doc lines neither joins nor fires.
         let changelog = "# Changelog\n\n## [Unreleased]\n\n- `oxicrypt-aes` sits outside the boundary.\n\n\
-                         ## [0.1.0] - 2026-01-01\n\n- `oxicrypt-sha` sits outside the boundary.\n";
-        assert_eq!(
-            file_boundary_violations("CHANGELOG.md", changelog, &sides).len(),
-            1,
-            "only the unreleased section is current text"
+                         ## [0.2.0] - 2026-02-01\n\n- `oxicrypt-sha` sits outside the boundary.\n\n\
+                         ## [0.1.0] - 2026-01-01\n\n- `oxicrypt-hmac` sits outside the boundary.\n";
+        let found = file_boundary_violations("CHANGELOG.md", changelog, &sides);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(
+            found.iter().any(|v| v.contains("`oxicrypt-aes`"))
+                && found.iter().any(|v| v.contains("`oxicrypt-sha`"))
+                && !found.iter().any(|v| v.contains("`oxicrypt-hmac`")),
+            "the unreleased and newest released sections are current text, older ones are not: {found:?}"
         );
         let manifest = "[package]\nname = \"x\"\ndescription = \"Inside the boundary: the C ABI.\"\n\
                         # The C ABI sits inside the boundary.\n";
@@ -2071,6 +2087,8 @@ mod tests {
             1,
             "a manifest is read by its description alone"
         );
+        // A Rust file is read by its `//!` lines: the crate doc fires, and a
+        // code line between doc lines neither joins nor fires.
         let doc = "//! The C ABI shim resides inside the\n//! module boundary.\n\
                    //! `oxicrypt-aes` is a cipher\n\
                    let x = 1; // inside the boundary\n";
@@ -2256,13 +2274,15 @@ documented here only for completeness:
 
     /// No current prose places a crate on the side of the boundary opposite
     /// to the one `OUT_OF_BOUNDARY` assigns it: markdown, the `## [Unreleased]`
-    /// section of `CHANGELOG.md`, every `Cargo.toml` `description`, the `//!`
+    /// section of `CHANGELOG.md` and the newest released section below it,
+    /// every `Cargo.toml` `description`, the `//!`
     /// documentation of every `.rs` file under `crates/` and `tools/` and of
     /// the two binaries' roots, and `cbindgen.toml`.
     ///
     /// `cbindgen.toml` is swept because its header preamble is copied into the
     /// generated C header, the copy a C API consumer reads; the header itself
-    /// is not swept. Released changelog sections are frozen history.
+    /// is not swept. Changelog sections older than the newest release are
+    /// frozen history.
     #[test]
     fn prose_places_each_crate_on_its_side_of_the_boundary() {
         let root = repo_root();
@@ -2281,8 +2301,9 @@ documented here only for completeness:
                 "the sweep does not reach `{reached}`"
             );
         }
+        // The section is found even when empty, as it is right after a release.
         assert!(
-            unreleased(&read_doc("CHANGELOG.md")).contains("- "),
+            unreleased(&read_doc("CHANGELOG.md")).starts_with("Unreleased]"),
             "the CHANGELOG has no readable `## [Unreleased]` section"
         );
 

@@ -5,14 +5,13 @@ All notable changes to **oxicrypt** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Release tags vs. internal-build tags.** Released versions tag `vX.Y.Z` (semver,
-> eventually published to crates.io). Between releases, internal builds tag `vX.Y.Z.A`
-> in git-tag space only — the `.A` increments per merged PR and resets when `X.Y.Z`
-> changes (see [`CONTRIBUTING.md`](CONTRIBUTING.md)). This changelog tracks **releases**;
-> the `0.1.0` entry folds in the pre-1.0 `v0.0.0.A` internal builds that preceded the
-> first minor bump.
+> **Release tags.** From 0.2.0 on, each release is tagged `vX.Y.Z`, and from 0.22.0 on each
+> is also published to crates.io. 0.1.0 is tagged `v0.1.0.1` and folds in the `v0.0.0.A`
+> internal-build tags before it.
 
 ## [Unreleased]
+
+## [0.25.0] - 2026-10-17
 
 - **Breaking: the pre-operational integrity test verifies an ML-DSA-87 signature** (FIPS 204)
   over the module's loaded image in place of the HMAC-SHA-256 of 0.24.0, one of the two approved
@@ -28,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `slot::encode` takes the slot's fields and signature, and `slot::extent_len` takes entries.
   `SlotImage` loses `flags`, `slot_rva`, `mac` and `ranges` and gains `fields` and `signature`:
   `flags` and `slot_rva` move into `fields`, the extent is `fields.entries`, and the ML-DSA-87
-  signature replaces the MAC.
+  signature replaces the MAC. (#285)
 - **Breaking:** `oxicrypt_integrity::SlotDefect` describes the version-4 slot: its range variants
   are renamed for entries (`NoEntries`, `TooManyEntries`, `EmptyEntry`, `EntryOverflow`,
   `EntryOutOfBounds`), new variants name the other defects, and it is `#[non_exhaustive]`.
@@ -38,12 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Unreadable`, the test not performed, not slot damage. On Darwin and Windows,
   where the signature input is bounded by the image file's size, a file shorter than the slot's
   signed length reports `Unreadable::FileLength`. `oxicrypt_imageread::ReadError` gains
-  `InvalidName` and `NoImage` and is `#[non_exhaustive]`.
+  `InvalidName` and `NoImage` and is `#[non_exhaustive]`. (#285)
 - **The verifying key is a build-time input.** Set `OXICRYPT_INTEGRITY_VERIFY_KEY` (a 2,592-byte
   ML-DSA-87 public key file) or `OXICRYPT_INTEGRITY_VERIFY_KEY_HEX` (its 5,184 hex digits) when
   building. A key of any other length, an all-zero key and a hex value that is not UTF-8 stop the
   build. A build without either compiles, but the module reports `NoVerifyKey` and never becomes
-  operational.
+  operational. (#285)
 - **Breaking:** `oxicrypt-integrity-sign` signs with a key you generate. `--keygen <dir>` writes
   a key pair, atomically, outside any git work tree: the private key is the 32-byte ML-DSA-87
   key-generation seed, and reading it runs a pairwise consistency test. `--sign` requires
@@ -58,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `write_extent` take the key, an `oxicrypt_integrity_sign::SigningKey`. The signer runs on
   Windows too, drawing from `BCryptGenRandom`. `--sign` reminds you to sign a PE image that
   carries a certificate table again with `signtool`, and `--loader` is refused for a Mach-O or
-  PE image.
+  PE image. (#285)
 - **Breaking:** `IntegrityStatus::Mismatch` and `IntegrityError::Mismatch` are renamed
   `SignatureInvalid` (status 2). The status adds `NoVerifyKey` (8), `KeyMismatch` (9) for a slot
   signed for a different key, `SlotDamaged` (10) for a damaged slot, key record or bound import,
@@ -72,11 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the failure in words, and
   `oxicrypt_integrity::verify_key_fingerprint()` and `oxi_integrity_key_fingerprint()`, which
   takes the buffer's length and returns `BufferTooSmall` for one under 32 bytes, give the
-  fingerprint of the key the module trusts.
+  fingerprint of the key the module trusts. (#285)
 - `oxi --integrity` prints the key fingerprint, a `detail:` line and any start error. It starts
   the module with the same self-tests as every other command, exits 3 when the test was not
   performed or could not decide, naming the CAST when an integrity CAST failed, and exits 4
-  naming the test when the image matches but a later self-test fails.
+  naming the test when the image matches but a later self-test fails. (#285)
 - **The integrity extent covers every file-backed byte the loader maps**: ELF on Linux (glibc)
   and Android (bionic) for x86-64 and AArch64, Mach-O dylibs on macOS for arm64 and x86_64, and
   PE32+ DLLs and EXEs on Windows for x86_64. The signer types each byte from the image's own
@@ -84,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   glibc|bionic` overrides it for `--sign`, `--verify` and `--show`), and `--show` reports the
   bytes and entries of each kind. The signed image ends where a Mach-O code signature or a PE
   certificate table begins, so a platform signature can be added after integrity signing.
-  `docs/design/integrity-extent-v2.md` states the typing for each format.
+  `docs/design/integrity-extent-v2.md` states the typing for each format. (#285)
 - The integrity test no longer reads the backing file in place of the loaded image. On Linux
   and Android it reads through `/proc/self/mem` and then `process_vm_readv`, so a non-dumpable
   process still verifies itself, and a process without `/proc/self/maps` reports `Unreadable`.
@@ -92,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mapped from inside an APK and the image's own slice of a universal Mach-O file; thin dylibs are
   signed before `lipo` joins them. A second load of the same library, as by `dlmopen`, does not
   disturb the first one's test. `oxicrypt-imageread` reads the thread id through the `gettid`
-  system call, so it links against glibc older than 2.30.
+  system call, so it links against glibc older than 2.30. (#285)
 - `oxicrypt-integrity-sign` refuses, by name, an image whose layout it cannot type, and
   `docs/design/integrity-extent-v2.md` describes the refusals for each format. Among them are an
   ELF segment both writable and executable (`WritableExecutable`), the x86-64 PLT-rewrite tags
@@ -106,25 +105,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and age; keep that file beside the artifact when signing. `--verify` verifies the signature
   before it classifies the image, names a slot typed for a different loader than the artifact
   declares (`LoaderMismatch`), and decodes every Mach-O chain word and PE import record against
-  the signed table (`FixupMismatch`, `ImportMismatch`).
+  the signed table (`FixupMismatch`, `ImportMismatch`). (#285)
 - `cargo xtask sign` builds, signs and verifies an artifact, and refuses, before building, an
   environment that lacks a link setting the format needs, naming each one missing: for Apple
   targets chained fixups, the zero-fill segment, unmerged globals on arm64
   (`-C llvm-args=-aarch64-enable-global-merge=false`), full debug information, a packed dSYM and
   a `MACOSX_DEPLOYMENT_TARGET` of at least 12.0 on arm64 and 13.0 on x86_64; for Windows `.bss`
   in a section of its own (`-C link-arg=/MERGE:.bss=.zbss`) and full debug information; for
-  Android 16 KiB pages.
-- **Release artifacts cover Android, and each is loaded before it ships.** The release workflow
+  Android 16 KiB pages. (#285)
+- **Release artifacts cover Android.** The release workflow
   builds the C library for Android arm64 and x86_64 beside Linux, macOS and Windows, and signs
-  every artifact in its format's order. Each library is loaded through `oxi_init` and each `oxi`
-  run before release, on the runner that built it or, for Android x86_64, an emulator; Android
-  arm64 is verified offline only. A release is signed with the project's release key, whose
-  public half is `keys/release-integrity-verify.pub`, only for a `vX.Y.Z` tag whose commit is on
-  `main`, and each provenance file records the key source, the key's fingerprint and the
-  artifact's signature.
+  every shared library and `oxi` in its format's order; the static archive ships unsigned. Each
+  shared library is loaded through `oxi_init` and each `oxi` run before release, on the runner
+  that built it or, for Android x86_64, an emulator, except Android arm64, which is verified
+  offline only. A release is signed with the project's release key, whose public half is
+  `keys/release-integrity-verify.pub`, only for a published release whose `vX.Y.Z` (or
+  `vX.Y.Z-suffix`) tag names a commit on `main`, and each provenance file records the key
+  source, the key's fingerprint and the SHA-256 of the artifact's signature. (#285)
 - The integrity check wipes the buffers it owns when they are dropped, and ML-DSA-87
   verification, key generation and signing wipe every intermediate they own, on every return
-  path.
+  path. (#285)
 - While the power-up self-tests run, the guarded `*_internal` functions and output points are open
   only to the thread running them. A call from any other thread made while initialisation is
   running, or paused, returns `NotOperational` naming `SelfTest`; once the module is
@@ -133,7 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builds of ML-KEM, ML-DSA and SLH-DSA check the module state once on the calling thread and pass
   the proof to their worker threads, which until the module is operational come from a pool each
   crate keeps for its own sweeps, so an application whose rayon workers all wait in `initialize`
-  cannot starve the self-tests.
+  cannot starve the self-tests. (#285)
 - **Breaking:** `oxicrypt_module::Error` is `#[non_exhaustive]`. Initialising a module whose
   initialisation failed returns the new `Error::AlreadyFailed` (formerly `NotOperational`), and
   runs no test: a failed initialisation is
@@ -143,7 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `NotOperational` naming `SelfTest`. A platform that gives the initialising thread no id
   the module can record fails initialisation with `SelfTestFailed` naming
   `oxicrypt_module::THREAD_ID_CHECK`, and `oxicrypt-module` does not compile for a target without
-  64-bit atomics.
+  64-bit atomics. (#285)
 - **Breaking:** the module tests itself on demand by restarting.
   `oxicrypt_integrity::verify_loaded_image()` runs only inside the power-up self-tests; at any
   other time it runs nothing, changes no state and returns `IntegrityError::Module`, carrying
@@ -152,7 +152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including a direct call on an operational module; a call the module refuses, before
   initialisation or from another thread during the self-tests, runs nothing and changes nothing.
   `oxi selftest` shows the integrity test's verdict from the process's start instead of running
-  it again, and runs the algorithm self-tests again.
+  it again, and runs the algorithm self-tests again. (#285)
 
 - Added LMS signature verification for all 80 (LMS, LM-OTS) parameter pairs of SP 800-208
   §4.1 (SHA-256), §4.2 (SHA-256/192), §4.3 (SHAKE256/256) and §4.4 (SHAKE256/192), each its own
@@ -188,7 +188,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `oxicrypt_module::initialize_with_profile` changing the active algorithm profile when
   called after the module was initialised, or while another call was running the power-up
   self-tests. Only the call that initialises the module sets the profile; every other call
-  leaves it unchanged, as the `oxi_init` documentation states.
+  leaves it unchanged, as the `oxi_init` documentation states. (#285)
 - Fixed the SLH-DSA power-up self-tests to the form FIPS 140-3 IG 10.3.A item 16 requires.
   `oxicrypt_slh_dsa::KATS` now holds six CASTs: key
   generation compared to a precomputed private key, deterministic signature generation compared
@@ -281,43 +281,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `keygen4096::generate_4096` are renamed `generate_2048_internal`, `generate_3072_internal`
     and `generate_4096_internal`, refuse outside `SelfTest` and `Operational`, and their modules
     are hidden; `KeygenError` gains a `Module` variant. The approved services are
-    `RsaPrivateKey2048::generate` and its 3072-bit and 4096-bit counterparts.
+    `RsaPrivateKey2048::generate` and its 3072-bit and 4096-bit counterparts. (#285)
 - **Breaking:** new enum variants. `ModeError::Module`, `IntegrityError::Module`,
   `DrbgError::Module`, `EntropyError::Module`, `TimerError::Module` and `SourceError::Module` carry
   the module's refusal. `IntegrityError` is now `#[non_exhaustive]`. An entropy
   pipeline that meets a refusal reports `EntropyError::Module` and is not poisoned, where it
   previously reported `NotReady` or `ConditionerKat`; `JitterSource::new` reports
-  `TimerError::Module` where it reported `TimerError::Unavailable`.
+  `TimerError::Module` where it reported `TimerError::Unavailable`. (#285)
 - **Breaking:** the public arithmetic modules `oxicrypt_ecdsa::{p256_point, p256_scalar,
   p384_point, p384_scalar}`, `oxicrypt_eddsa::{edwards, scalar}`, `oxicrypt_rsa::{mont*, bigint*,
   pkcs1_v15, pss, oaep}` and `oxicrypt_sha::keccak`, and the accelerator functions
   `oxicrypt_aes_accel::{encrypt_block, decrypt_block, ghash_mul}` and
   `oxicrypt_sha_accel::sha256_compress`, and the `oxicrypt_aes::modes::BlockCipher` trait, are
   hidden from the documentation. They are building
-  blocks outside the module's service interface.
+  blocks outside the module's service interface. (#285)
 - **Breaking (C):** the AES functions of the C library, and the HMAC-DRBG `reseed` and
   `generate` functions, return `NotOperational = 1` once the module has left `Operational`, for
-  handles created earlier. `oxi_integrity_status` can return `Refused = 7`.
+  handles created earlier. `oxi_integrity_status` can return `Refused = 7`. (#285)
 - Fixed HKDF-Expand never returning in a release build when asked for exactly 255 blocks, the
   RFC 5869 maximum: its one-byte block counter wrapped to 0 after the last block, and the loop
   compared it with 255 again. (A debug build panicked on the overflow instead.) The SP 800-108
   counter-mode loop had the same shape at `u32::MAX` blocks. TLS 1.3 HKDF-Expand-Label and the
   Hash_DRBG derivation function now refuse more than 255 blocks with `InvalidInput`, where they
-  previously wrapped their counter and returned output RFC 5869 and SP 800-90A do not define.
+  previously wrapped their counter and returned output RFC 5869 and SP 800-90A do not define. (#285)
 - `tls13_hkdf_expand_label` and `tls13_derive_secret` (and their C functions) refuse an output
-  longer than 65535 bytes with `InvalidInput`; HkdfLabel previously stated a saturated length.
+  longer than 65535 bytes with `InvalidInput`; HkdfLabel previously stated a saturated length. (#285)
 - `tls13_hkdf_expand_label` and `tls13_derive_secret` (and their C functions) refuse a label that
   is empty or longer than 249 bytes, or a context longer than 255 bytes, with `InvalidInput`; they
   previously truncated it silently into a different `HkdfLabel`. RFC 8446 §7.1 bounds the
-  prefixed label to 7–255 bytes and the context to 0–255.
+  prefixed label to 7–255 bytes and the context to 0–255. (#285)
 - Hash_DRBG zeroizes its working buffers (the seed material holding the entropy input, copies of
   `V`, and the derivation and generation blocks) on every return path, and PBKDF2 no longer
-  increments its block counter past the last block.
+  increments its block counter past the last block. (#285)
 - `EntropyRng` no longer prints its buffered conditioned output in its `Debug` output, and
-  zeroizes that buffer as soon as it is drained, and when it is dropped or unwrapped.
+  zeroizes that buffer as soon as it is drained, and when it is dropped or unwrapped. (#285)
 - Fixed `maxwell independence` exiting successfully, with no input hash in its sidecar, when the
   module did not start; it now exits with a failure. The signer, `collect` and `maxwell` also
-  run the XOF self-tests.
+  run the XOF self-tests. (#285)
 - Corrected `docs/api.md`, which listed `oxicrypt-zeroize`, `oxicrypt-sha-accel`,
   `oxicrypt-aes-accel`, `oxicrypt-timer` and `oxicrypt-entropy` as outside the cryptographic
   boundary. They are inside it. It now lists `oxicrypt-keccak-accel` and `oxicrypt-imageread`,
@@ -960,7 +960,11 @@ fix, and the first new primitive (TLS 1.3 KDF) — and retires that train.
 ### Changed
 - Workspace version `0.0.0` → `0.1.0`.
 
-[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/oxiforge/oxicrypt/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/oxiforge/oxicrypt/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/oxiforge/oxicrypt/compare/v0.23.2...v0.24.0
+[0.23.2]: https://github.com/oxiforge/oxicrypt/compare/v0.23.1...v0.23.2
+[0.23.1]: https://github.com/oxiforge/oxicrypt/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/oxiforge/oxicrypt/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/oxiforge/oxicrypt/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/oxiforge/oxicrypt/compare/v0.20.0...v0.21.0
