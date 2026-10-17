@@ -58,6 +58,8 @@
     clippy::trivially_copy_pass_by_ref
 )]
 
+use oxicrypt_module::{SelfTestStarted, require_self_test_started_token};
+
 use crate::modes::{BlockCipher, ModeError};
 
 /// Semiblock size in bytes. AES has a 128-bit block, so each
@@ -87,7 +89,12 @@ pub const KWP_IV_PREFIX: [u8; 4] = [0xA6, 0x59, 0x59, 0xA6];
 ///
 /// Laid out in this shape so both KW wrapping and the n ≥ 3 case of
 /// KWP wrapping share the same core loop.
-fn w_core<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
+fn w_core<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+    a: &mut [u8; SEMI],
+    r_out: &mut [u8],
+) {
     let n = r_out.len() / SEMI;
     for j in 0..6u64 {
         for i in 1..=n {
@@ -95,7 +102,7 @@ fn w_core<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
             let mut blk = [0u8; 16];
             blk[..SEMI].copy_from_slice(a);
             blk[SEMI..].copy_from_slice(&r_out[(i - 1) * SEMI..i * SEMI]);
-            cipher.encrypt_block(&mut blk);
+            cipher.encrypt_block_with(started, &mut blk);
             // A = MSB_64(B_out) XOR t, where t = n*j + i.
             a.copy_from_slice(&blk[..SEMI]);
             let t: u64 = (n as u64) * j + (i as u64);
@@ -110,7 +117,12 @@ fn w_core<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
 }
 
 /// Core "W^-1" unwrapping function (SP 800-38F §6.1, Algorithm 2).
-fn w_core_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
+fn w_core_inv<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+    a: &mut [u8; SEMI],
+    r_out: &mut [u8],
+) {
     let n = r_out.len() / SEMI;
     for j in (0..6u64).rev() {
         for i in (1..=n).rev() {
@@ -122,7 +134,7 @@ fn w_core_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) 
                 blk[k] = a[k] ^ tb[k];
             }
             blk[SEMI..].copy_from_slice(&r_out[(i - 1) * SEMI..i * SEMI]);
-            cipher.decrypt_block(&mut blk);
+            cipher.decrypt_block_with(started, &mut blk);
             a.copy_from_slice(&blk[..SEMI]);
             r_out[(i - 1) * SEMI..i * SEMI].copy_from_slice(&blk[SEMI..]);
         }
@@ -148,6 +160,7 @@ pub fn kw_wrap<B: BlockCipher>(
     plaintext: &[u8],
     ciphertext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if plaintext.len() < 2 * SEMI
         || plaintext.len() % SEMI != 0
         || ciphertext_out.len() != plaintext.len() + SEMI
@@ -156,7 +169,7 @@ pub fn kw_wrap<B: BlockCipher>(
     }
     let mut a = KW_DEFAULT_IV;
     ciphertext_out[SEMI..].copy_from_slice(plaintext);
-    w_core(cipher, &mut a, &mut ciphertext_out[SEMI..]);
+    w_core(cipher, started, &mut a, &mut ciphertext_out[SEMI..]);
     ciphertext_out[..SEMI].copy_from_slice(&a);
     Ok(())
 }
@@ -172,6 +185,7 @@ pub fn kw_unwrap<B: BlockCipher>(
     ciphertext: &[u8],
     plaintext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if ciphertext.len() < 3 * SEMI
         || ciphertext.len() % SEMI != 0
         || plaintext_out.len() != ciphertext.len() - SEMI
@@ -181,7 +195,7 @@ pub fn kw_unwrap<B: BlockCipher>(
     let mut a = [0u8; SEMI];
     a.copy_from_slice(&ciphertext[..SEMI]);
     plaintext_out.copy_from_slice(&ciphertext[SEMI..]);
-    w_core_inv(cipher, &mut a, plaintext_out);
+    w_core_inv(cipher, started, &mut a, plaintext_out);
     if !ct_eq8(&a, &KW_DEFAULT_IV) {
         return Err(ModeError::TagMismatch);
     }
@@ -202,6 +216,7 @@ pub fn kwp_wrap<B: BlockCipher>(
     plaintext: &[u8],
     ciphertext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     let mli = plaintext.len();
     if mli == 0 || mli > u32::MAX as usize {
         return Err(ModeError::LengthMismatch);
@@ -226,7 +241,7 @@ pub fn kwp_wrap<B: BlockCipher>(
         let mut blk = [0u8; 16];
         blk[..SEMI].copy_from_slice(&aiv);
         blk[SEMI..SEMI + mli].copy_from_slice(plaintext);
-        cipher.encrypt_block(&mut blk);
+        cipher.encrypt_block_with(started, &mut blk);
         ciphertext_out.copy_from_slice(&blk);
     } else {
         // Multi-semiblock path: run W with A = AIV over the padded
@@ -236,7 +251,7 @@ pub fn kwp_wrap<B: BlockCipher>(
         for b in &mut ciphertext_out[SEMI + mli..] {
             *b = 0;
         }
-        w_core(cipher, &mut a, &mut ciphertext_out[SEMI..]);
+        w_core(cipher, started, &mut a, &mut ciphertext_out[SEMI..]);
         ciphertext_out[..SEMI].copy_from_slice(&a);
     }
     Ok(())
@@ -258,6 +273,7 @@ pub fn kwp_unwrap<B: BlockCipher>(
     ciphertext: &[u8],
     plaintext_out_scratch: &mut [u8],
 ) -> Result<usize, ModeError> {
+    let started = &require_self_test_started_token()?;
     if ciphertext.len() < 2 * SEMI
         || ciphertext.len() % SEMI != 0
         || plaintext_out_scratch.len() != ciphertext.len() - SEMI
@@ -269,13 +285,13 @@ pub fn kwp_unwrap<B: BlockCipher>(
         // Single AES block direct decrypt path.
         let mut blk = [0u8; 16];
         blk.copy_from_slice(ciphertext);
-        cipher.decrypt_block(&mut blk);
+        cipher.decrypt_block_with(started, &mut blk);
         aiv.copy_from_slice(&blk[..SEMI]);
         plaintext_out_scratch.copy_from_slice(&blk[SEMI..]);
     } else {
         aiv.copy_from_slice(&ciphertext[..SEMI]);
         plaintext_out_scratch.copy_from_slice(&ciphertext[SEMI..]);
-        w_core_inv(cipher, &mut aiv, plaintext_out_scratch);
+        w_core_inv(cipher, started, &mut aiv, plaintext_out_scratch);
     }
 
     // Check prefix constant bytes with a constant-time comparison.
@@ -323,14 +339,19 @@ pub fn kwp_unwrap<B: BlockCipher>(
 
 /// Inverse-cipher core "W" wrapping function. Identical to [`w_core`]
 /// but invokes `cipher.decrypt_block` as the underlying block primitive.
-fn w_core_inverse_cipher<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
+fn w_core_inverse_cipher<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+    a: &mut [u8; SEMI],
+    r_out: &mut [u8],
+) {
     let n = r_out.len() / SEMI;
     for j in 0..6u64 {
         for i in 1..=n {
             let mut blk = [0u8; 16];
             blk[..SEMI].copy_from_slice(a);
             blk[SEMI..].copy_from_slice(&r_out[(i - 1) * SEMI..i * SEMI]);
-            cipher.decrypt_block(&mut blk);
+            cipher.decrypt_block_with(started, &mut blk);
             a.copy_from_slice(&blk[..SEMI]);
             let t: u64 = (n as u64) * j + (i as u64);
             let tb = t.to_be_bytes();
@@ -345,7 +366,12 @@ fn w_core_inverse_cipher<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: 
 /// Inverse-cipher core "W^-1" unwrapping function. Identical to
 /// [`w_core_inv`] but invokes `cipher.encrypt_block` as the
 /// underlying block primitive.
-fn w_core_inverse_cipher_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_out: &mut [u8]) {
+fn w_core_inverse_cipher_inv<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+    a: &mut [u8; SEMI],
+    r_out: &mut [u8],
+) {
     let n = r_out.len() / SEMI;
     for j in (0..6u64).rev() {
         for i in (1..=n).rev() {
@@ -356,7 +382,7 @@ fn w_core_inverse_cipher_inv<B: BlockCipher>(cipher: &B, a: &mut [u8; SEMI], r_o
                 blk[k] = a[k] ^ tb[k];
             }
             blk[SEMI..].copy_from_slice(&r_out[(i - 1) * SEMI..i * SEMI]);
-            cipher.encrypt_block(&mut blk);
+            cipher.encrypt_block_with(started, &mut blk);
             a.copy_from_slice(&blk[..SEMI]);
             r_out[(i - 1) * SEMI..i * SEMI].copy_from_slice(&blk[SEMI..]);
         }
@@ -372,6 +398,7 @@ pub fn kw_wrap_inverse_cipher<B: BlockCipher>(
     plaintext: &[u8],
     ciphertext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if plaintext.len() < 2 * SEMI
         || plaintext.len() % SEMI != 0
         || ciphertext_out.len() != plaintext.len() + SEMI
@@ -380,7 +407,7 @@ pub fn kw_wrap_inverse_cipher<B: BlockCipher>(
     }
     let mut a = KW_DEFAULT_IV;
     ciphertext_out[SEMI..].copy_from_slice(plaintext);
-    w_core_inverse_cipher(cipher, &mut a, &mut ciphertext_out[SEMI..]);
+    w_core_inverse_cipher(cipher, started, &mut a, &mut ciphertext_out[SEMI..]);
     ciphertext_out[..SEMI].copy_from_slice(&a);
     Ok(())
 }
@@ -396,6 +423,7 @@ pub fn kw_unwrap_inverse_cipher<B: BlockCipher>(
     ciphertext: &[u8],
     plaintext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if ciphertext.len() < 3 * SEMI
         || ciphertext.len() % SEMI != 0
         || plaintext_out.len() != ciphertext.len() - SEMI
@@ -405,7 +433,7 @@ pub fn kw_unwrap_inverse_cipher<B: BlockCipher>(
     let mut a = [0u8; SEMI];
     a.copy_from_slice(&ciphertext[..SEMI]);
     plaintext_out.copy_from_slice(&ciphertext[SEMI..]);
-    w_core_inverse_cipher_inv(cipher, &mut a, plaintext_out);
+    w_core_inverse_cipher_inv(cipher, started, &mut a, plaintext_out);
     if !ct_eq8(&a, &KW_DEFAULT_IV) {
         return Err(ModeError::TagMismatch);
     }
@@ -421,6 +449,7 @@ pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(
     plaintext: &[u8],
     ciphertext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     let mli = plaintext.len();
     if mli == 0 || mli > u32::MAX as usize {
         return Err(ModeError::LengthMismatch);
@@ -443,7 +472,7 @@ pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(
         let mut blk = [0u8; 16];
         blk[..SEMI].copy_from_slice(&aiv);
         blk[SEMI..SEMI + mli].copy_from_slice(plaintext);
-        cipher.decrypt_block(&mut blk);
+        cipher.decrypt_block_with(started, &mut blk);
         ciphertext_out.copy_from_slice(&blk);
     } else {
         let mut a = aiv;
@@ -451,7 +480,7 @@ pub fn kwp_wrap_inverse_cipher<B: BlockCipher>(
         for b in &mut ciphertext_out[SEMI + mli..] {
             *b = 0;
         }
-        w_core_inverse_cipher(cipher, &mut a, &mut ciphertext_out[SEMI..]);
+        w_core_inverse_cipher(cipher, started, &mut a, &mut ciphertext_out[SEMI..]);
         ciphertext_out[..SEMI].copy_from_slice(&a);
     }
     Ok(())
@@ -469,6 +498,7 @@ pub fn kwp_unwrap_inverse_cipher<B: BlockCipher>(
     ciphertext: &[u8],
     plaintext_out_scratch: &mut [u8],
 ) -> Result<usize, ModeError> {
+    let started = &require_self_test_started_token()?;
     if ciphertext.len() < 2 * SEMI
         || ciphertext.len() % SEMI != 0
         || plaintext_out_scratch.len() != ciphertext.len() - SEMI
@@ -481,13 +511,13 @@ pub fn kwp_unwrap_inverse_cipher<B: BlockCipher>(
         // the AES forward cipher.
         let mut blk = [0u8; 16];
         blk.copy_from_slice(ciphertext);
-        cipher.encrypt_block(&mut blk);
+        cipher.encrypt_block_with(started, &mut blk);
         aiv.copy_from_slice(&blk[..SEMI]);
         plaintext_out_scratch.copy_from_slice(&blk[SEMI..]);
     } else {
         aiv.copy_from_slice(&ciphertext[..SEMI]);
         plaintext_out_scratch.copy_from_slice(&ciphertext[SEMI..]);
-        w_core_inverse_cipher_inv(cipher, &mut aiv, plaintext_out_scratch);
+        w_core_inverse_cipher_inv(cipher, started, &mut aiv, plaintext_out_scratch);
     }
 
     let mut diff: u8 = 0;
@@ -522,6 +552,7 @@ mod tests {
     // RFC 3394 §4.1 — AES-128 wrap of 128-bit key.
     #[test]
     fn rfc3394_4_1_aes128_wrap_128() {
+        crate::test_support::start_module();
         let kek: [u8; 16] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
             0x0E, 0x0F,
@@ -534,7 +565,7 @@ mod tests {
             0x1F, 0xA6, 0x8B, 0x0A, 0x81, 0x12, 0xB4, 0x47, 0xAE, 0xF3, 0x4B, 0xD8, 0xFB, 0x5A,
             0x7B, 0x82, 0x9D, 0x3E, 0x86, 0x23, 0x71, 0xD2, 0xCF, 0xE5,
         ];
-        let k = Aes128Key::new_internal(&kek);
+        let k = Aes128Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 24];
         kw_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -546,6 +577,7 @@ mod tests {
     // RFC 3394 §4.6 — AES-256 wrap of 256-bit key.
     #[test]
     fn rfc3394_4_6_aes256_wrap_256() {
+        crate::test_support::start_module();
         let kek: [u8; 32] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
             0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
@@ -561,7 +593,7 @@ mod tests {
             0xF8, 0x26, 0x3F, 0x57, 0x86, 0xE2, 0xD8, 0x0E, 0xD3, 0x26, 0xCB, 0xC7, 0xF0, 0xE7,
             0x1A, 0x99, 0xF4, 0x3B, 0xFB, 0x98, 0x8B, 0x9B, 0x7A, 0x02, 0xDD, 0x21,
         ];
-        let k = Aes256Key::new_internal(&kek);
+        let k = Aes256Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 40];
         kw_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -573,6 +605,7 @@ mod tests {
     // RFC 5649 §6 — AES-192 KWP wrap of 7-byte key (single-block path).
     #[test]
     fn rfc5649_kwp_aes192_7_bytes() {
+        crate::test_support::start_module();
         let kek: [u8; 24] = [
             0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1,
             0x6e, 0xa1, 0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
@@ -582,7 +615,7 @@ mod tests {
             0xaf, 0xbe, 0xb0, 0xf0, 0x7d, 0xfb, 0xf5, 0x41, 0x92, 0x00, 0xf2, 0xcc, 0xb5, 0x0b,
             0xb2, 0x4f,
         ];
-        let k = Aes192Key::new_internal(&kek);
+        let k = Aes192Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 16];
         kwp_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -595,6 +628,7 @@ mod tests {
     // RFC 5649 §6 — AES-192 KWP wrap of 20-byte key (multi-semiblock path).
     #[test]
     fn rfc5649_kwp_aes192_20_bytes() {
+        crate::test_support::start_module();
         let kek: [u8; 24] = [
             0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1,
             0x6e, 0xa1, 0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
@@ -608,7 +642,7 @@ mod tests {
             0x48, 0xee, 0x5a, 0xe6, 0xae, 0x53, 0x60, 0xd1, 0xae, 0x6a, 0x5f, 0x54, 0xf3, 0x73,
             0xfa, 0x54, 0x3b, 0x6a,
         ];
-        let k = Aes192Key::new_internal(&kek);
+        let k = Aes192Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 32];
         kwp_wrap(&k, &pt, &mut ct).unwrap();
         assert_eq!(ct, expected);
@@ -620,9 +654,10 @@ mod tests {
 
     #[test]
     fn kw_rejects_tampered_icv() {
+        crate::test_support::start_module();
         let kek = [0u8; 16];
         let pt = [0xaau8; 16];
-        let k = Aes128Key::new_internal(&kek);
+        let k = Aes128Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 24];
         kw_wrap(&k, &pt, &mut ct).unwrap();
         ct[0] ^= 1;
@@ -637,6 +672,7 @@ mod tests {
     // direction — wrapped output is verified to differ.
     #[test]
     fn kw_inverse_cipher_round_trip_aes128() {
+        crate::test_support::start_module();
         let kek = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
             0x0E, 0x0F,
@@ -645,7 +681,7 @@ mod tests {
             0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
             0xEE, 0xFF,
         ];
-        let k = Aes128Key::new_internal(&kek);
+        let k = Aes128Key::new_internal(&kek).unwrap();
         let mut ct_inv = [0u8; 24];
         kw_wrap_inverse_cipher(&k, &pt, &mut ct_inv).unwrap();
         let mut back = [0u8; 16];
@@ -661,12 +697,13 @@ mod tests {
 
     #[test]
     fn kw_inverse_cipher_round_trip_aes192() {
+        crate::test_support::start_module();
         let kek = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
             0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
         ];
         let pt = [0x5au8; 32];
-        let k = Aes192Key::new_internal(&kek);
+        let k = Aes192Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 40];
         kw_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
         let mut back = [0u8; 32];
@@ -676,6 +713,7 @@ mod tests {
 
     #[test]
     fn kw_inverse_cipher_round_trip_aes256() {
+        crate::test_support::start_module();
         let kek = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
             0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
@@ -686,7 +724,7 @@ mod tests {
             0xEE, 0xFF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
             0x0C, 0x0D, 0x0E, 0x0F,
         ];
-        let k = Aes256Key::new_internal(&kek);
+        let k = Aes256Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 40];
         kw_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
         let mut back = [0u8; 32];
@@ -699,9 +737,10 @@ mod tests {
     // probability, and vice versa.
     #[test]
     fn kw_cross_direction_rejects() {
+        crate::test_support::start_module();
         let kek = [0x42u8; 16];
         let pt = [0xa5u8; 24];
-        let k = Aes128Key::new_internal(&kek);
+        let k = Aes128Key::new_internal(&kek).unwrap();
         let mut ct_fwd = [0u8; 32];
         kw_wrap(&k, &pt, &mut ct_fwd).unwrap();
         let mut back = [0u8; 24];
@@ -719,12 +758,13 @@ mod tests {
     // both and verify divergence from the forward direction.
     #[test]
     fn kwp_inverse_cipher_round_trip_single_block() {
+        crate::test_support::start_module();
         let kek = [
             0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1,
             0x6e, 0xa1, 0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
         ];
         let pt = [0x46u8, 0x6f, 0x72, 0x50, 0x61, 0x73, 0x69]; // 7 bytes -> 1 block
-        let k = Aes192Key::new_internal(&kek);
+        let k = Aes192Key::new_internal(&kek).unwrap();
         let mut ct_inv = [0u8; 16];
         kwp_wrap_inverse_cipher(&k, &pt, &mut ct_inv).unwrap();
         let mut scratch = [0u8; 8];
@@ -740,6 +780,7 @@ mod tests {
 
     #[test]
     fn kwp_inverse_cipher_round_trip_multi_block() {
+        crate::test_support::start_module();
         let kek = [
             0x58, 0x40, 0xdf, 0x6e, 0x29, 0xb0, 0x2a, 0xf1, 0xab, 0x49, 0x3b, 0x70, 0x5b, 0xf1,
             0x6e, 0xa1, 0xae, 0x83, 0x38, 0xf4, 0xdc, 0xc1, 0x76, 0xa8,
@@ -748,7 +789,7 @@ mod tests {
             0xc3, 0x7b, 0x7e, 0x64, 0x92, 0x58, 0x43, 0x40, 0xbe, 0xd1, 0x22, 0x07, 0x80, 0x89,
             0x41, 0x15, 0x50, 0x68, 0xf7, 0x38,
         ]; // 20 bytes -> 24-byte padded
-        let k = Aes192Key::new_internal(&kek);
+        let k = Aes192Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 32];
         kwp_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
         let mut scratch = [0u8; 24];
@@ -759,9 +800,10 @@ mod tests {
 
     #[test]
     fn kwp_inverse_cipher_rejects_tampered_icv() {
+        crate::test_support::start_module();
         let kek = [0u8; 16];
         let pt = [0xc3u8; 24];
-        let k = Aes128Key::new_internal(&kek);
+        let k = Aes128Key::new_internal(&kek).unwrap();
         let mut ct = [0u8; 32];
         kwp_wrap_inverse_cipher(&k, &pt, &mut ct).unwrap();
         ct[0] ^= 1;

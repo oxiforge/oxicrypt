@@ -13,6 +13,21 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 const SLH_DSA_SHA2_128S_SIGGEN_SK: &[u8] = &[
     0x10, 0x1E, 0xFB, 0x63, 0x97, 0xEE, 0xB5, 0x8B, 0xC1, 0x81, 0x8F, 0x3E, 0x8D, 0x21, 0x48, 0xC6,
     0x8F, 0x38, 0x68, 0xC7, 0x40, 0xDA, 0x63, 0xD4, 0x01, 0x2E, 0x25, 0xF3, 0x16, 0xAE, 0xAF, 0x6A,
@@ -881,8 +896,10 @@ const SLH_DSA_SHA2_128S_SIGGEN_EXP_SIG: &[u8] = &[
 
 #[test]
 fn slh_dsa_sha2_128s_siggen_kat() {
+    start_module();
     let sk: [u8; 64] = SLH_DSA_SHA2_128S_SIGGEN_SK.try_into().unwrap();
-    let sig = oxicrypt_slh_dsa::slh_dsa_sha2_128s::sign_internal(&sk, SLH_DSA_SHA2_128S_SIGGEN_MSG);
+    let sig = oxicrypt_slh_dsa::slh_dsa_sha2_128s::sign_internal(&sk, SLH_DSA_SHA2_128S_SIGGEN_MSG)
+        .unwrap();
     assert_eq!(sig.len(), 7_856);
     assert_eq!(
         &sig[..],

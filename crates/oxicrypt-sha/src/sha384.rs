@@ -6,7 +6,10 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use crate::sha512::{BLOCK_SIZE as SHA512_BLOCK, Sha512State};
-use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
+};
 
 /// Output length of SHA-384 in bytes.
 pub const DIGEST_SIZE: usize = 48;
@@ -37,17 +40,25 @@ impl Sha384 {
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Sha384)?;
-        Ok(Self::new_internal())
+        Ok(Self::new_unguarded())
     }
 
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
     ///
-    /// Used by this crate's power-up KAT and by downstream crates
-    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
-    /// the module is still in `SelfTest`. Public callers must use
-    /// [`Sha384::new`] instead.
+    /// Used by power-up KATs and by other algorithm crates that compose
+    /// this hash. Returns [`Error::NotOperational`] unless
+    /// [`require_self_test_started`] admits the call: in `Operational`, or in
+    /// `SelfTest` on the thread running the power-up self-tests. Public
+    /// callers use the gated constructor instead.
     #[doc(hidden)]
-    pub const fn new_internal() -> Self {
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Ok(Self::new_unguarded())
+    }
+
+    /// The initial state, for this crate's own use once a gate or guard
+    /// has passed.
+    pub(crate) const fn new_unguarded() -> Self {
         Self {
             inner: Sha512State::with_iv(H0),
         }
@@ -59,7 +70,29 @@ impl Sha384 {
     }
 
     /// Finalizes and returns the 48-byte digest.
-    pub fn finalize(mut self) -> [u8; DIGEST_SIZE] {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a hasher built before a failure produces no digest after it.
+    pub fn finalize(self) -> Result<[u8; DIGEST_SIZE], Error> {
+        require_self_test_started()?;
+        Ok(self.finalize_unchecked())
+    }
+
+    /// [`Self::finalize`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn finalize_with(self, _started: &oxicrypt_module::SelfTestStarted) -> [u8; DIGEST_SIZE] {
+        self.finalize_unchecked()
+    }
+
+    /// The finalization step, for this crate's own use once a gate or
+    /// guard has passed.
+    pub(crate) fn finalize_unchecked(mut self) -> [u8; DIGEST_SIZE] {
         self.inner.finalize_state();
         let mut out = [0u8; DIGEST_SIZE];
         for (chunk, word) in out.chunks_exact_mut(8).zip(self.inner.state.iter().take(6)) {
@@ -73,7 +106,7 @@ impl Sha384 {
 pub fn sha384(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
     let mut h = Sha384::new()?;
     h.update(data);
-    Ok(h.finalize())
+    Ok(h.finalize_unchecked())
 }
 
 /// Expected digest for the NIST SHA-384 example:
@@ -94,9 +127,9 @@ const KAT_ABC_DIGEST: [u8; DIGEST_SIZE] = [
 /// Sourced from NIST CAVP SHS (`SHA384ShortMsg.rsp`, Len=8) via
 /// `oxicrypt-test-vectors`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
-    let mut h = Sha384::new_internal();
+    let mut h = Sha384::new_unguarded();
     h.update(&oxicrypt_test_vectors::SHA_384_MSG);
-    if h.finalize() == oxicrypt_test_vectors::SHA_384_MD {
+    if h.finalize_unchecked() == oxicrypt_test_vectors::SHA_384_MD {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -157,9 +190,9 @@ mod tests {
 
     #[test]
     fn kat_abc_appendix_d1() {
-        let mut h = Sha384::new_internal();
+        let mut h = Sha384::new_unguarded();
         h.update(b"abc");
-        assert_eq!(h.finalize(), KAT_ABC_DIGEST);
+        assert_eq!(h.finalize_unchecked(), KAT_ABC_DIGEST);
     }
 
     #[test]
@@ -169,9 +202,9 @@ mod tests {
             "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da\
              274edebfe76f65fbd51ad2f14898b95b",
         );
-        let mut h = Sha384::new_internal();
+        let mut h = Sha384::new_unguarded();
         h.update(b"");
-        assert_eq!(h.finalize(), expected);
+        assert_eq!(h.finalize_unchecked(), expected);
     }
 
     #[test]
@@ -183,9 +216,9 @@ mod tests {
             "09330c33f71147e83d192fc782cd1b4753111b173b3b05d22fa08086e3b0f712\
              fcc7c71a557e2db966c3e9fa91746039",
         );
-        let mut h = Sha384::new_internal();
+        let mut h = Sha384::new_unguarded();
         h.update(msg);
-        assert_eq!(h.finalize(), expected);
+        assert_eq!(h.finalize_unchecked(), expected);
     }
 
     #[test]
@@ -196,7 +229,7 @@ mod tests {
         let mut h = Sha384::new().unwrap();
         h.update(&msg[..20]);
         h.update(&msg[20..]);
-        assert_eq!(h.finalize(), one_shot);
+        assert_eq!(h.finalize_unchecked(), one_shot);
     }
 
     #[test]

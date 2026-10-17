@@ -1,4 +1,4 @@
-//! Regression tests for ACVP handler-layer follow-ups:
+//! Tests of three ACVP handlers against prompt shapes they must accept:
 //!
 //! 1. `ctrDRBG` no-df non-PR generate pads or truncates the
 //!    additional_input to seed_len before calling upstream
@@ -543,7 +543,7 @@ fn kmac128_unified_handler_dispatches_xof_false() {
     let mut expected = vec![0u8; 32];
     let mut m = Kmac128::new(&key_bytes, &[]).unwrap();
     m.update(&msg_bytes);
-    m.finalize_into(&mut expected);
+    m.finalize_into(&mut expected).unwrap();
     assert_eq!(mac, hex::encode_upper(&expected));
 }
 
@@ -573,7 +573,7 @@ fn kmac128_unified_handler_dispatches_xof_true() {
     let mut m = KmacXof128::new(&key_bytes, &[]).unwrap();
     m.update(&msg_bytes);
     m.finalize();
-    m.squeeze(&mut expected);
+    m.squeeze(&mut expected).unwrap();
     assert_eq!(mac, hex::encode_upper(&expected));
 }
 
@@ -625,7 +625,7 @@ fn kmac128_unified_handler_defaults_to_non_xof_when_flag_absent() {
     let mut expected = vec![0u8; 32];
     let mut m = Kmac128::new(&key_bytes, &[]).unwrap();
     m.update(&msg_bytes);
-    m.finalize_into(&mut expected);
+    m.finalize_into(&mut expected).unwrap();
     assert_eq!(mac, hex::encode_upper(&expected));
 }
 
@@ -992,7 +992,7 @@ fn slh_dsa_keygen_reads_separate_skseed_skprf_pkseed_fields() {
     concat[..32].copy_from_slice(&sk_seed);
     concat[32..64].copy_from_slice(&sk_prf);
     concat[64..].copy_from_slice(&pk_seed);
-    let (expected_pk, _expected_sk) = oxicrypt_slh_dsa::keygen_internal(&concat);
+    let (expected_pk, _expected_sk) = oxicrypt_slh_dsa::keygen_internal(&concat).unwrap();
 
     let response = dispatch_ok(&slh_dsa_keygen_3field_prompt(
         &hex::encode_upper(&sk_seed),
@@ -1069,13 +1069,55 @@ fn lms_generation_modes_find_no_handler() {
     }
 }
 
-/// A sigVer signature of the wrong length for the group's pair is a
-/// malformed prompt, reported as an error, not a `testPassed: false`.
-#[test]
-fn lms_sigver_wrong_length_signature_is_an_error() {
+/// The vendored NIST LMS sigVer accept vector (`LMS_SHA256_M32_H10` /
+/// `LMOTS_SHA256_N32_W4`): its public key, message and signature.
+fn lms_accept_vector() -> (String, String, Vec<u8>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../vendor/nist/acvp-server/gen-val/json-files/LMS-sigVer-1.0/kat-slice.json");
+    let vector_text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let doc = parse(&vector_text);
+    let group = &doc.get("testGroups").and_then(JsonValue::as_array).unwrap()[0];
+    assert_eq!(
+        group.get("lmsMode").and_then(JsonValue::as_str),
+        Some("LMS_SHA256_M32_H10")
+    );
+    assert_eq!(
+        group.get("lmOtsMode").and_then(JsonValue::as_str),
+        Some("LMOTS_SHA256_N32_W4")
+    );
+    let test = first_test(group);
+    assert_eq!(
+        test.get("testPassed").and_then(JsonValue::as_bool),
+        Some(true)
+    );
+    let field = |name: &str| {
+        test.get(name)
+            .and_then(JsonValue::as_str)
+            .unwrap()
+            .to_string()
+    };
+    let signature = hex::decode(&field("signature")).unwrap();
+    (field("publicKey"), field("message"), signature)
+}
+
+/// Runs one LMS sigVer group with `public_key` and one test case per
+/// signature, and returns the response's `testPassed` verdicts in order.
+fn lms_sigver_verdicts(
+    public_key: &str,
+    message: &str,
+    signatures: &[Vec<u8>],
+) -> Result<Vec<bool>, dispatch::DispatchError> {
     ensure_initialized().unwrap();
-    let registry = dispatch::with_default_handlers();
-    let pk = format!("0000000600000003{}", "00".repeat(48));
+    let tests: Vec<String> = (1..)
+        .zip(signatures)
+        .map(|(tc_id, sig): (u32, _)| {
+            format!(
+                r#"{{ "tcId": {tc_id}, "message": "{message}", "signature": "{}" }}"#,
+                hex::encode_upper(sig)
+            )
+        })
+        .collect();
     let prompt = parse(&format!(
         r#"{{
             "algorithm": "LMS",
@@ -1086,19 +1128,101 @@ fn lms_sigver_wrong_length_signature_is_an_error() {
                 "testType": "AFT",
                 "lmsMode":   "LMS_SHA256_M32_H10",
                 "lmOtsMode": "LMOTS_SHA256_N32_W4",
-                "publicKey": "{pk}",
-                "tests": [{{ "tcId": 1, "message": "00", "signature": "00" }}]
+                "publicKey": "{public_key}",
+                "tests": [{}]
             }}]
-        }}"#
+        }}"#,
+        tests.join(",")
     ));
-    let Err(err) = dispatch::process(&prompt, &registry) else {
-        panic!("a one-byte LMS signature must not produce a verdict");
+    let registry = dispatch::with_default_handlers();
+    let response = dispatch::process(&prompt, &registry)?;
+    let group = &response
+        .get("testGroups")
+        .and_then(JsonValue::as_array)
+        .unwrap()[0];
+    let results = group.get("tests").and_then(JsonValue::as_array).unwrap();
+    assert_eq!(results.len(), signatures.len());
+    Ok(results
+        .iter()
+        .map(|t| t.get("testPassed").and_then(JsonValue::as_bool).unwrap())
+        .collect())
+}
+
+/// Grades `signature` as the second test case of a group whose first case
+/// is the unedited accept vector, and returns the second verdict. The
+/// first must pass, so a rejection of the second is attributable to the
+/// edit and not to a broken group.
+fn lms_sigver_edited_verdict(edit: impl FnOnce(&mut Vec<u8>)) -> bool {
+    let (pk, msg, sig) = lms_accept_vector();
+    let mut edited = sig.clone();
+    edit(&mut edited);
+    let verdicts = lms_sigver_verdicts(&pk, &msg, &[sig, edited])
+        .unwrap_or_else(|e| panic!("a malformed signature must not fail the group: {e}"));
+    assert!(verdicts[0], "the unedited accept vector must verify");
+    verdicts[1]
+}
+
+/// Byte offset of the LMS typecode inside an `LMS_SHA256_M32_H10` /
+/// `LMOTS_SHA256_N32_W4` signature: after `q` and the LM-OTS signature.
+const LMS_SIG_LMS_TYPE_AT: usize = 4 + oxicrypt_lms::lms_sha256_m32_h10_w4::OTS_SIG_LEN;
+
+#[test]
+fn lms_sigver_accept_vector_passes() {
+    assert!(lms_sigver_edited_verdict(|_| {}));
+}
+
+/// A signature one byte short of the pair's length fails its test case,
+/// as XMSS and ML-DSA grade a wrong-length signature.
+#[test]
+fn lms_sigver_short_signature_fails_the_test_case() {
+    assert!(!lms_sigver_edited_verdict(|sig| {
+        sig.pop();
+    }));
+}
+
+#[test]
+fn lms_sigver_long_signature_fails_the_test_case() {
+    assert!(!lms_sigver_edited_verdict(|sig| sig.push(0)));
+}
+
+#[test]
+fn lms_sigver_one_byte_signature_fails_the_test_case() {
+    assert!(!lms_sigver_edited_verdict(|sig| sig.truncate(1)));
+}
+
+/// A signature of the right length whose LM-OTS typecode is another
+/// pair's (`LMOTS_SHA256_N32_W1`, not W4) fails its test case.
+#[test]
+fn lms_sigver_signature_with_another_lmots_typecode_fails_the_test_case() {
+    assert!(!lms_sigver_edited_verdict(|sig| {
+        sig[4..8].copy_from_slice(&0x0000_0001u32.to_be_bytes());
+    }));
+}
+
+/// A signature of the right length whose LMS typecode is another pair's
+/// (`LMS_SHA256_M32_H5`, not H10) fails its test case.
+#[test]
+fn lms_sigver_signature_with_another_lms_typecode_fails_the_test_case() {
+    assert!(!lms_sigver_edited_verdict(|sig| {
+        sig[LMS_SIG_LMS_TYPE_AT..LMS_SIG_LMS_TYPE_AT + 4]
+            .copy_from_slice(&0x0000_0005u32.to_be_bytes());
+    }));
+}
+
+/// A public key of the wrong length for the group's pair is a malformed
+/// group: no test case can be graded, so the group is an error.
+#[test]
+fn lms_sigver_wrong_length_public_key_is_an_error() {
+    let (pk, msg, sig) = lms_accept_vector();
+    let short_pk = &pk[..pk.len() - 2];
+    let Err(err) = lms_sigver_verdicts(short_pk, &msg, &[sig]) else {
+        panic!("a short LMS public key must not produce verdicts");
     };
     assert!(
         matches!(
             err,
-            dispatch::DispatchError::Crypto("LMS SigVer: signature has wrong length")
+            dispatch::DispatchError::Crypto("LMS SigVer: publicKey has wrong length")
         ),
-        "expected the wrong-length signature error, got {err}"
+        "expected the wrong-length public key error, got {err}"
     );
 }

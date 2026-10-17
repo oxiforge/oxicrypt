@@ -241,7 +241,16 @@ impl<'m, T: TimerRead> JitterSource<'m, T> {
     /// unsound (non-monotonic / too coarse), or the operational
     /// workload-delta signal lacks variety (too uniform) — the latter also
     /// being the structural compiler-elision guard.
+    ///
+    /// [`TimerError::Module`] when the module refuses the workload's
+    /// SHA-256: [`oxicrypt_module::require_self_test_started`] admits the
+    /// call only in `Operational`, or in `SelfTest` on the thread running
+    /// the power-up self-tests.
     pub fn new(mut timer: T, config: JitterConfig<'m>) -> Result<Self, TimerError> {
+        // The workload hashes with SHA-256, which refuses unless
+        // `require_self_test_started` admits the call: in `Operational`, or
+        // in `SelfTest` on the thread running the power-up self-tests.
+        oxicrypt_module::require_self_test_started().map_err(TimerError::Module)?;
         // Stage 1 — soundness on the BARE back-to-back read signal. Bare
         // reads establish monotonicity and effective granularity; their
         // near-constant spacing on quiet hardware is not operational variety,
@@ -271,7 +280,7 @@ impl<'m, T: TimerRead> JitterSource<'m, T> {
         // recorded in the report as evidence but must not refuse
         // construction. An elided workload collapses this signal's variety
         // to the bare-read profile and TooUniform refuses construction.
-        let workload_report = source.measure_workload_adequacy();
+        let workload_report = source.measure_workload_adequacy()?;
         workload_report.ensure_varied(&source.config.adequacy)?;
         source.adequacy = workload_report;
         Ok(source)
@@ -288,16 +297,22 @@ impl<'m, T: TimerRead> JitterSource<'m, T> {
     /// gate on this report structurally catches optimizer damage at
     /// construction. A backwards [`measure_once`](Self::measure_once) delta
     /// is recorded in the report as a monotonicity violation (evidence),
-    /// but stage 2 does not gate on it — see the construction comment.
-    fn measure_workload_adequacy(&mut self) -> AdequacyReport {
+    /// but stage 2 does not gate on it — see the construction comment. A
+    /// refusal from the module ends the measurement with
+    /// [`TimerError::Module`] and is never recorded as a violation.
+    fn measure_workload_adequacy(&mut self) -> Result<AdequacyReport, TimerError> {
         let rounds = self.config.adequacy.workload_samples;
         let mut acc = AdequacyAccumulator::new();
         let mut done: u32 = 0;
         while done < rounds {
-            acc.record(self.measure_once().map_err(|()| TimerError::Backwards));
+            match self.measure_once() {
+                Ok(delta) => acc.record(Ok(delta)),
+                Err(Measure::Backwards) => acc.record(Err(TimerError::Backwards)),
+                Err(Measure::Refused(e)) => return Err(TimerError::Module(e)),
+            }
             done = done.saturating_add(1);
         }
-        acc.finish()
+        Ok(acc.finish())
     }
 
     /// The workload-signal adequacy report (the operational evidence): the
@@ -328,7 +343,7 @@ impl<'m, T: TimerRead> JitterSource<'m, T> {
     /// is best-effort by contract). Per-round work amounts derive from the
     /// last measured delta — see "Per-round variable work" in the module
     /// docs for why the steer is deltas-only and how that fails closed.
-    fn workload(&mut self) {
+    fn workload(&mut self, started: &oxicrypt_module::SelfTestStarted) {
         use oxicrypt_sha::Sha256;
         // XOR-fold the full delta into the steered bits: on counters whose
         // increments are coarse multiples, the low delta bits are constant
@@ -345,20 +360,16 @@ impl<'m, T: TimerRead> JitterSource<'m, T> {
         // Masked to 6 bits — the cast cannot truncate a meaningful value.
         #[allow(clippy::cast_possible_truncation)]
         let extra_touches = ((steer >> 3) & WALK_TOUCHES_STEER_MASK) as usize;
-        // new_internal: the documented module-state bypass. The load-bearing
-        // justification: THE ENTROPY IS IN THE TIMING OF COMPUTING THE HASH,
-        // NEVER IN THE DIGEST VALUE — the digest only steers the memory walk,
-        // so SHA correctness is not security-relevant on this path and the
-        // entropy claim is untainted by skipping the per-use operational
-        // gate. (The module's SHA-256 power-up self-test still validates the
-        // algorithm itself; the bypass skips only the per-call state check.)
-        // Secondarily: the entropy source runs pre-operational by definition
-        // — it feeds the seeding path Operational state depends on.
+        // Each round builds the hasher with the constant initialiser, as in
+        // the workload whose timing was assessed. The module's state check
+        // is made once by the caller, outside the timed window, and
+        // `started` is its proof. THE ENTROPY IS IN THE TIMING OF COMPUTING THE HASH, NEVER IN
+        // THE DIGEST VALUE: the digest only steers the memory walk.
         for _ in 0..hash_loops {
-            let mut hasher = Sha256::new_internal();
+            let mut hasher = Sha256::new_with(started);
             hasher.update(core::hint::black_box(&self.state));
             hasher.update(core::hint::black_box(&self.walk[..64]));
-            self.state = core::hint::black_box(hasher.finalize());
+            self.state = core::hint::black_box(hasher.finalize_with(started));
         }
         let digest = self.state;
         // Data-dependent walk: indices derived from the fresh digest.
@@ -385,15 +396,29 @@ impl<'m, T: TimerRead> JitterSource<'m, T> {
     /// Measures one workload duration, returning the raw delta. A valid
     /// delta becomes the steer for the next round's work amounts; a
     /// backwards (discarded) delta leaves the steer unchanged.
-    fn measure_once(&mut self) -> Result<u64, ()> {
+    ///
+    /// A refusal from the module (its self-tests have not started, or it has
+    /// failed) is reported as [`Measure::Refused`], distinct from a
+    /// backwards delta, and is checked before the first timer read.
+    fn measure_once(&mut self) -> Result<u64, Measure> {
+        let started =
+            oxicrypt_module::require_self_test_started_token().map_err(Measure::Refused)?;
         let width = self.timer.width_bits();
         let t0 = self.timer.read();
-        self.workload();
+        self.workload(&started);
         let t1 = self.timer.read();
-        let delta = wrapping_delta(t0, t1, width).map_err(|_| ())?;
+        let delta = wrapping_delta(t0, t1, width).map_err(|_| Measure::Backwards)?;
         self.steer = delta;
         Ok(delta)
     }
+}
+
+/// Why one workload measurement produced no delta.
+enum Measure {
+    /// The read went backwards; the delta is discarded and remeasured.
+    Backwards,
+    /// The module refused the workload's hash computation.
+    Refused(oxicrypt_module::Error),
 }
 
 impl<T: TimerRead> Sealed for JitterSource<'_, T> {}
@@ -412,10 +437,12 @@ impl<T: TimerRead> NoiseSource for JitterSource<'_, T> {
     fn sample(&mut self) -> Result<RawSample, SourceError> {
         let mut backwards: u32 = 0;
         loop {
-            if let Ok(delta) = self.measure_once() {
+            match self.measure_once() {
                 // Digitization: low 4 bits of the delta.
                 #[allow(clippy::cast_possible_truncation)]
-                return Ok((delta & 0x0F) as u8);
+                Ok(delta) => return Ok((delta & 0x0F) as u8),
+                Err(Measure::Refused(e)) => return Err(SourceError::Module(e)),
+                Err(Measure::Backwards) => (),
             }
             // Backwards delta: discard and remeasure, bounded.
             backwards = backwards.saturating_add(1);
@@ -522,6 +549,7 @@ mod tests {
 
     #[test]
     fn construction_runs_adequacy_and_refuses_coarse_timers() {
+        crate::test_support::start_module();
         // ISC-19 wiring: an inadequate timer never yields a source. A coarse
         // timer fails at the BARE soundness stage (TooCoarse), and the typed
         // error carries the measured report.
@@ -540,6 +568,7 @@ mod tests {
 
     #[test]
     fn ensure_sound_and_ensure_varied_split_policy() {
+        crate::test_support::start_module();
         // Direct test of the split gates on the AdequacyReport policy
         // (mock timers cannot exercise the two signals distinctly, so the
         // policy is verified on constructed reports).
@@ -584,6 +613,7 @@ mod tests {
 
     #[test]
     fn constant_step_timer_refused_at_workload_stage_with_report() {
+        crate::test_support::start_module();
         // Sound (monotonic, fine) but perfectly uniform: passes the bare
         // soundness stage, then the workload-signal stage refuses TooUniform,
         // and the attached report shows the collapsed variety. This is also
@@ -603,6 +633,7 @@ mod tests {
 
     #[test]
     fn workload_amounts_are_coupled_to_the_steer() {
+        crate::test_support::start_module();
         // The steer→work coupling oracle: with state normalized, equal
         // steers perform identical work (equal post-workload state) and
         // different steers perform different work (different hash-chain
@@ -620,15 +651,17 @@ mod tests {
         a.steer = 0;
         b.steer = 0;
         c.steer = 0x1FF; // folds to a different hash-chain depth than 0
-        a.workload();
-        b.workload();
-        c.workload();
+        let started = oxicrypt_module::require_self_test_started_token().unwrap();
+        a.workload(&started);
+        b.workload(&started);
+        c.workload(&started);
         assert_eq!(a.state, b.state, "equal steer must perform equal work");
         assert_ne!(a.state, c.state, "steer change must change the work");
     }
 
     #[test]
     fn dead_timer_refusal_survives_operator_config() {
+        crate::test_support::start_module();
         // The hard floor: even with the variety bound configured to 1, a
         // report showing a single distinct delta (the dead-timer fixed
         // point) still refuses TooUniform — the documented dead-timer
@@ -656,6 +689,7 @@ mod tests {
 
     #[test]
     fn period_two_delta_orbit_refused_at_workload_stage() {
+        crate::test_support::start_module();
         // Fail-closed for short deterministic orbits: a sound timer whose
         // deltas cycle between two values yields exactly 2 distinct workload
         // deltas — under the stage-2 variety bound, so construction refuses.
@@ -674,6 +708,7 @@ mod tests {
 
     #[test]
     fn construction_populates_both_adequacy_reports() {
+        crate::test_support::start_module();
         // A varied timer constructs; both the bare soundness signal and the
         // operational workload signal are measured and retained.
         let src = JitterSource::new(VariedTimer { n: 0, v: 0 }, cfg()).unwrap();
@@ -693,6 +728,7 @@ mod tests {
 
     #[test]
     fn spec_and_ceiling_are_the_design_values() {
+        crate::test_support::start_module();
         let src = JitterSource::new(VariedTimer { n: 0, v: 0 }, cfg()).unwrap();
         assert_eq!(src.spec().sample_width_bits(), 4);
         assert!(!src.spec().is_binary());
@@ -701,6 +737,7 @@ mod tests {
 
     #[test]
     fn samples_are_low_four_bits_and_vary() {
+        crate::test_support::start_module();
         let mut src = JitterSource::new(VariedTimer { n: 0, v: 0 }, cfg()).unwrap();
         let mut seen = [false; 16];
         for _ in 0..512 {
@@ -714,6 +751,7 @@ mod tests {
 
     #[test]
     fn debug_never_exposes_buffers() {
+        crate::test_support::start_module();
         // ISC-53 posture: Debug shows identity, never sample-bearing state.
         let src = JitterSource::new(VariedTimer { n: 0, v: 0 }, cfg()).unwrap();
         let s = debug_to_buf(&src);
@@ -759,6 +797,7 @@ mod tests {
     fn release_guard_delta_variance_persists() {
         use crate::source::TimerSource as TS;
         use crate::timer::PlatformTimer;
+        crate::test_support::start_module();
         let timer = PlatformTimer::new(TS::RawCounter).unwrap();
         let src = JitterSource::new(timer, JitterConfig::default());
         // On a host whose timer passes adequacy, variance must be present.
@@ -782,6 +821,7 @@ mod tests {
         use crate::pipeline::EntropyPipeline;
         use crate::source::TimerSource as TS;
         use crate::timer::PlatformTimer;
+        crate::test_support::start_module();
         let timer = PlatformTimer::new(TS::RawCounter).unwrap();
         let src = JitterSource::new(timer, JitterConfig::default()).unwrap();
         // Claim 0.5 bit/sample (≤ the 1-bit ceiling; APT grid row 0.5).

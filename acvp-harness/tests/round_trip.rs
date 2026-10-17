@@ -1857,6 +1857,7 @@ fn assert_tls12_kdf_round_trip(relative: &str, label: &str) {
 
 #[test]
 fn tls12_kdf_rfc7627_round_trip() {
+    acvp_harness::ensure_initialized().unwrap();
     assert_tls12_kdf_round_trip(
         "../vendor/nist/acvp-server/gen-val/json-files/TLS-v1.2-KDF-RFC7627/kat-slice.json",
         "TLS-v1.2-KDF-RFC7627",
@@ -1869,6 +1870,7 @@ fn tls12_kdf_rfc7627_round_trip() {
 
 #[test]
 fn kdf_comp_tls_round_trip() {
+    acvp_harness::ensure_initialized().unwrap();
     assert_tls12_kdf_round_trip(
         "../vendor/nist/acvp-server/gen-val/json-files/kdf-components-tls-1.0/kat-slice.json",
         "kdf-components-tls",

@@ -158,7 +158,7 @@ macro_rules! keygen_arm {
         seed[..$n].copy_from_slice($sk_seed);
         seed[$n..2 * $n].copy_from_slice($sk_prf);
         seed[2 * $n..].copy_from_slice($pk_seed);
-        let (pk, sk) = $keygen_fn(&seed);
+        let (pk, sk) = $keygen_fn(&seed)?;
         (hex::encode_upper(&pk), hex::encode_upper(&sk))
     }};
 }
@@ -332,7 +332,7 @@ macro_rules! siggen_arm {
         let sk: [u8; $sk_len] = $sk_bytes.as_slice().try_into().map_err(|_| {
             DispatchError::Crypto("SLH-DSA SigGen: sk has wrong length for parameterSet")
         })?;
-        let sig = $sign_fn(&sk, $message);
+        let sig = $sign_fn(&sk, $message)?;
         hex::encode_upper(&sig)
     }};
 }
@@ -490,7 +490,7 @@ macro_rules! sigver_arm {
             DispatchError::Crypto("SLH-DSA SigVer: pk has wrong length for parameterSet")
         })?;
         if let Ok(sig) = <[u8; $sig_len]>::try_from($sig_bytes.as_slice()) {
-            $verify_fn(&pk, $message, &sig)
+            $verify_fn(&pk, $message, &sig)?
         } else {
             false
         }

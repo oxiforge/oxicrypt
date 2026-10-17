@@ -15,7 +15,7 @@
 //! - `domainParameterGenerationMode = "MODP-3072"` — RFC 3526 Group
 //!   15 safe-prime, 384-byte exponent and shared-secret values.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -123,7 +123,7 @@ fn handle_aft(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
         let x = decode_field_3072(tc, "x")?;
         let y = decode_field_3072(tc, "y")?;
         let z = oxicrypt_dh::compute_shared_secret_3072_internal(&x, &y)
-            .ok_or(DispatchError::Crypto("KAS-FFC-SSC: DH computation failed"))?;
+            .map_err(primitive_err("KAS-FFC-SSC: DH computation failed"))?;
         Ok(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
@@ -131,11 +131,10 @@ fn handle_aft(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
     } else {
         let peer_y = decode_field_3072(tc, "ephemeralPublicServer")?;
         let mut drbg = super::os_entropy::build_seeded_drbg()?;
-        let (x_iut, y_iut) = oxicrypt_dh::generate_keypair_3072_internal(&mut drbg).ok_or(
-            DispatchError::Crypto("KAS-FFC-SSC: ephemeral keygen failed"),
-        )?;
+        let (x_iut, y_iut) = oxicrypt_dh::generate_keypair_3072_internal(&mut drbg)
+            .map_err(primitive_err("KAS-FFC-SSC: ephemeral keygen failed"))?;
         let z = oxicrypt_dh::compute_shared_secret_3072_internal(&x_iut, &peer_y)
-            .ok_or(DispatchError::Crypto("KAS-FFC-SSC: DH computation failed"))?;
+            .map_err(primitive_err("KAS-FFC-SSC: DH computation failed"))?;
         Ok(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             (
@@ -156,9 +155,8 @@ fn handle_val(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
         .ok_or(DispatchError::MissingField("tcId"))?;
     let x_iut = decode_field_3072(tc, "ephemeralPrivateIut")?;
     let peer_y = decode_field_3072(tc, "ephemeralPublicServer")?;
-    let computed = oxicrypt_dh::compute_shared_secret_3072_internal(&x_iut, &peer_y).ok_or(
-        DispatchError::Crypto("KAS-FFC-SSC: VAL DH computation failed"),
-    )?;
+    let computed = oxicrypt_dh::compute_shared_secret_3072_internal(&x_iut, &peer_y)
+        .map_err(primitive_err("KAS-FFC-SSC: VAL DH computation failed"))?;
     let candidate = hex::decode(
         tc.get("z")
             .and_then(JsonValue::as_str)

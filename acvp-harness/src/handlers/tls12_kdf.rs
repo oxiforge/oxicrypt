@@ -109,7 +109,7 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
                 &server_random,
                 &client_random,
                 &mut key_block,
-            ),
+            )?,
             "SHA2-384" => oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<
                 oxicrypt_hmac::HmacSha384,
                 48,
@@ -119,7 +119,7 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
                 &server_random,
                 &client_random,
                 &mut key_block,
-            ),
+            )?,
             "SHA2-512" => oxicrypt_tls_kdf::tls12_extended_master_secret_internal::<
                 oxicrypt_hmac::HmacSha512,
                 64,
@@ -129,7 +129,7 @@ fn handle_tls12_kdf_group(group: &JsonValue) -> Result<JsonValue, DispatchError>
                 &server_random,
                 &client_random,
                 &mut key_block,
-            ),
+            )?,
             _ => {
                 return Err(DispatchError::Unsupported(
                     "TLS v1.2 KDF: unsupported hashAlg",

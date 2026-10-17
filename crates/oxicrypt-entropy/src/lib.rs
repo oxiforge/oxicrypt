@@ -106,3 +106,23 @@ pub mod collection;
 
 #[cfg(test)]
 mod kat_tests;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
+    }
+}

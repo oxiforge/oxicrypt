@@ -655,14 +655,17 @@ pub fn resolve_datasets_dir(dir: Option<&Path>) -> PathBuf {
 
 /// Compute the lowercase-hex SHA-256 of `data`, powering the module up
 /// with the real KAT set first (the same gated-SHA provenance path the parity
-/// harness uses). Returns `None` on a module/service error.
+/// harness uses).
 ///
 /// Used by the `independence` sidecar to record `input_sha256`.
-#[must_use]
-pub fn sha256_hex(data: &[u8]) -> Option<String> {
-    ensure_module_powered_up().ok()?;
-    let digest = oxicrypt_sha::sha256(data).ok()?;
-    Some(hex(&digest))
+///
+/// # Errors
+///
+/// Returns the module's error if it does not start or refuses the hash.
+pub fn sha256_hex(data: &[u8]) -> Result<String, oxicrypt_module::Error> {
+    ensure_module_powered_up()?;
+    let digest = oxicrypt_sha::sha256(data)?;
+    Ok(hex(&digest))
 }
 
 /// Lowercase-hex encode a digest.
@@ -676,27 +679,30 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Stands in for the pre-operational integrity test.
+/// The integrity group `maxwell` starts the module with: the HMAC-SHA-256
+/// CAST, standing in for the integrity group of an artifact that is not
+/// the module image.
 ///
-/// `maxwell` is out-of-boundary tooling that is never signed — it ships
-/// to nobody and no release pipeline runs `oxicrypt-integrity-sign` against
-/// it — so the real integrity test can never pass inside it. The module
-/// requires an integrity group to initialise at all, so this stub is
-/// declared here, visibly, rather than the module offering any way to
-/// skip the requirement.
-const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
-    name: "integrity not verifiable in the unsigned maxwell binary",
-    run: || Ok(()),
+/// `maxwell` is out-of-boundary tooling and is not the module image, so it
+/// initialises the module without the image check.
+const TOOL_INTEGRITY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "HMAC-SHA-256 CAST (stand-in integrity group)",
+    run: oxicrypt_integrity::hmac_cast,
 }];
 
-/// Power the module up to `Operational` with the unsigned-binary
-/// integrity stub and the real SHA-256 KAT set so the gated
+/// Power the module up to `Operational` with the HMAC-SHA-256 CAST as its
+/// integrity group and the real SHA, XOF and HMAC KAT sets so the gated
 /// `oxicrypt_sha::sha256` provenance hash can run. Idempotent and
 /// concurrency-safe: the module's state machine lets exactly one caller
-/// win the `PowerOff -> SelfTest` transition; every later call returns
-/// `AlreadyInitialized`, which is success for our purposes.
+/// win the `PowerOff -> SelfTest` transition, and a later call after a
+/// successful start returns `AlreadyInitialized`, treated as success.
 fn ensure_module_powered_up() -> Result<(), oxicrypt_module::Error> {
-    match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, oxicrypt_sha::KATS) {
+    let tests: Vec<oxicrypt_module::KatEntry> =
+        [oxicrypt_sha::KATS, oxicrypt_xof::KATS, oxicrypt_hmac::KATS]
+            .iter()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+    match oxicrypt_module::initialize_with_tests(TOOL_INTEGRITY, &tests) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
         Err(e) => Err(e),
     }

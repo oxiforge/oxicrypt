@@ -65,20 +65,12 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 <type>(<scope>): <subject>
 
 <body>
-
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 ```
 
 - **Type:** `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `perf`
 - **Scope:** the affected crate or area (`acvp-harness`, `oxicrypt-aes`, `oxicrypt-ml-kem`, `repo`, etc.)
 - **Subject:** imperative mood, ≤72 chars, no trailing period
 - **Body:** structured per the PR template — Why / What / Test plan
-
-### Co-author trailer policy
-
-Keep `Co-Authored-By: Claude <model-id> <noreply@anthropic.com>` (or whichever Anthropic model is in use) on **every commit that contains AI-generated code**. Strip the trailer only when the commit is purely human-authored.
-
-For a FIPS-adjacent project where chain-of-trust matters, hiding the AI's role would be its own form of dishonesty. Honest disclosure of provenance is the brand.
 
 ## Local pre-PR gate stack
 
@@ -91,7 +83,7 @@ All of these must be clean before opening a PR. They run on your local machine u
 | Clippy (strict) | `cargo clippy --all-targets --all-features --release -- -D warnings` |
 | Rustdocs | `cargo doc --no-deps --workspace` (no warnings) |
 | Doc-sync hook | Activated via `git config core.hooksPath scripts/git-hooks` (one-time setup above) |
-| Integrity-sign (harness rebuilds) | `./target/release/oxicrypt-integrity-sign --sign ./target/release/acvp-harness` |
+| Integrity-sign (harness rebuilds) | build with `OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub`, then `./target/release/oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key ./target/release/acvp-harness`, with a pair from `oxicrypt-integrity-sign --keygen <dir>` outside the tree |
 
 `-D warnings` promotes Clippy lints to errors. The project uses pedantic-tier lints; this gate is intentionally strict.
 

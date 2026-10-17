@@ -44,10 +44,21 @@
 //!
 //! # Power-up self-tests
 //!
-//! [`KATS`] aggregates the per-variant power-up KATs (one entry per
-//! parameter set; each runs a deterministic keygen → sign → verify
-//! round-trip plus a wrong-message + tampered-signature negative
-//! oracle).
+//! [`KATS`] holds the power-up cryptographic algorithm self-tests
+//! required by FIPS 140-3 IG 10.3.A item 15, each a known-answer test
+//! against NIST vectors. Item 15 is met on ML-DSA-87, approved under the
+//! CNSA 2.0, Migration and Unrestricted profiles, so the self-tested set is
+//! one that CNSA 2.0 uses, by key generation compared to the
+//! expected private key, deterministic signature generation compared byte
+//! for byte to the expected signature, and verification of a valid
+//! signature. Two further signing CASTs follow the Note 23 recommendation
+//! with vectors from NIST's list of rejection test cases: one on ML-DSA-87,
+//! whose loop rejects on the z bound, the r0 bound and the number of
+//! hints, and one on ML-DSA-44, whose loop also rejects on the ct0 bound,
+//! a check that can reject only for ML-DSA-44. NIST publishes those cases
+//! as SHA2-256 digests of the key pair and the signature, so these two
+//! CASTs compare digests. All three parameter sets share one
+//! implementation through the `ml_dsa_impl!` macro.
 //!
 //! # Backward compatibility
 //!
@@ -90,8 +101,10 @@
 //! Public entry points (`keygen`, `sign`, `verify` per variant) gate
 //! on [`oxicrypt_module::require_operational`] and
 //! [`oxicrypt_module::require_allowed`]. The `*_internal` surface
-//! (hidden) runs gate-free so power-up KATs can execute during
-//! `SelfTest`.
+//! (hidden) runs without the operational gate so power-up KATs can
+//! execute during `SelfTest`; it calls
+//! [`oxicrypt_module::require_self_test_started`] instead, so it refuses
+//! in every state other than `SelfTest` and `Operational`.
 //!
 //! # Timing properties
 //!
@@ -124,12 +137,18 @@
 #![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
 
+mod cast;
+mod cast_vectors;
 mod field;
 pub(crate) mod ml_dsa_impl;
 mod ntt;
 /// Shared parameter constants common across all three ML-DSA variants.
 pub mod params;
 mod poly;
+#[cfg(test)]
+mod rejection_counts;
+#[cfg(feature = "parallel")]
+mod sweep;
 
 use oxicrypt_module::Error;
 
@@ -203,21 +222,84 @@ pub(crate) fn build_external_prefix(ctx: &[u8]) -> Result<ExternalPrefix, Error>
     })
 }
 
-// ── KATS aggregate ───────────────────────────────────────────────────
+// ── Wiped temporaries ────────────────────────────────────────────────
 
-use oxicrypt_module::KatEntry;
+/// A byte buffer that is zeroised when it is dropped, so a temporary of the
+/// key generation, signing or verification algorithm that the function owns
+/// is wiped on every return path, including an early `?`.
+pub(crate) struct Wiped<const N: usize>(pub(crate) [u8; N]);
 
-/// Power-up KATs aggregated across all three ML-DSA parameter sets.
-///
-/// Each entry runs a deterministic keygen → sign → verify round-trip
-/// plus wrong-message + tampered-signature negative oracles for its
-/// variant. The aggregated slice is what `oxicrypt-integrity`
-/// registers with [`oxicrypt_module::initialize_with_tests`].
-pub const KATS: &[KatEntry] = &[
-    ml_dsa_44::KAT_ENTRY,
-    ml_dsa_65::KAT_ENTRY,
-    ml_dsa_87::KAT_ENTRY,
-];
+impl<const N: usize> Drop for Wiped<N> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.0);
+        #[cfg(test)]
+        wipe_witness::record(self.0.iter().all(|&b| b == 0));
+    }
+}
+
+/// [`Wiped`] for 32-bit words, the scratch of the coefficient packers.
+pub(crate) struct WipedWords<const N: usize>(pub(crate) [u32; N]);
+
+impl<const N: usize> Drop for WipedWords<N> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize_u32(&mut self.0);
+        #[cfg(test)]
+        wipe_witness::record(self.0.iter().all(|&w| w == 0));
+    }
+}
+
+/// What the last `Drop` of a [`Wiped`] or [`WipedWords`] on this thread
+/// left in its buffer, read by the drop itself while the buffer is still
+/// owned. Reading the memory after the drop would need `unsafe` and would
+/// be a read of freed storage; this observes the same fact soundly.
+#[cfg(test)]
+mod wipe_witness {
+    extern crate std;
+
+    std::thread_local! {
+        static LAST: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+    }
+
+    pub(crate) fn record(zeroed: bool) {
+        LAST.with(|c| c.set(Some(zeroed)));
+    }
+
+    /// `Some(true)` when the last drop left its buffer all zero.
+    pub(crate) fn take() -> Option<bool> {
+        LAST.with(core::cell::Cell::take)
+    }
+}
+
+#[cfg(test)]
+mod wiped_tests {
+    use super::{Wiped, WipedWords, wipe_witness};
+
+    /// Dropping a buffer that holds data leaves it all zero.
+    #[test]
+    fn dropping_a_wiped_buffer_zeroes_it() {
+        let _ = wipe_witness::take();
+        drop(Wiped([0xa5u8; 64]));
+        assert_eq!(wipe_witness::take(), Some(true));
+        drop(WipedWords([0xdead_beef_u32; 8]));
+        assert_eq!(wipe_witness::take(), Some(true));
+        // Control: nothing dropped, nothing recorded.
+        assert_eq!(wipe_witness::take(), None);
+    }
+
+    /// Dropping a polynomial that holds coefficients leaves it all zero.
+    #[test]
+    fn dropping_a_polynomial_zeroes_it() {
+        let _ = wipe_witness::take();
+        let mut p = crate::poly::Poly::zero();
+        p.coeffs = [0x1234; crate::params::N];
+        drop(p);
+        assert_eq!(wipe_witness::take(), Some(true));
+    }
+}
+
+// ── Power-up self-tests ──────────────────────────────────────────────
+
+pub use cast::{KATS, VERIFY_CAST_NAME, verify_cast};
 
 // ── Crate-internal tests (NTT roundtrip / field arithmetic) ──────────
 
@@ -274,5 +356,25 @@ mod internal_tests {
         for i in 0..N {
             assert_eq!(reduce32(result[i]), original[i], "roundtrip failed at {i}");
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
     }
 }

@@ -20,6 +20,7 @@
 //! Run with:
 //!   cargo test -p acvp-harness --test gen_rsa_pss_sigver_slice -- --ignored --nocapture
 
+use acvp_harness::ensure_initialized;
 use std::io::Write;
 
 fn hex_decode(s: &str) -> Vec<u8> {
@@ -52,6 +53,7 @@ const SALT_HEX: &str = "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF001122334455
 #[test]
 #[ignore]
 fn generate_rsa_pss_sigver_slice() {
+    ensure_initialized().expect("FIPS init");
     let n = hex_decode(N_HEX);
     let d = hex_decode(D_HEX);
     let e_bytes = hex_decode(E_HEX);
@@ -77,7 +79,7 @@ fn generate_rsa_pss_sigver_slice() {
 
         // Valid test
         assert!(
-            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig),
+            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig).unwrap(),
             "PSS verify failed for valid test {i}"
         );
         tests.push(format!(
@@ -92,7 +94,8 @@ fn generate_rsa_pss_sigver_slice() {
         let mut bad_sig = sig;
         bad_sig[100] ^= 0x01;
         assert!(
-            !oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &bad_sig),
+            !oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &bad_sig)
+                .unwrap(),
             "PSS verify should fail for tampered sig {i}"
         );
         tests.push(format!(

@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 oxicrypt-integrity = { workspace = true }
+oxicrypt-module = { workspace = true }
 
 [dev-dependencies]
 oxicrypt-integrity-sign = { path = "../oxicrypt-integrity-sign" }

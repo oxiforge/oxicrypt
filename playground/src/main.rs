@@ -178,12 +178,12 @@ fn main() {
     // Each side computes the shared secret from their private key
     // and the other's public key:
     let secret_ab = oxicrypt_ecdh::compute_shared_secret_p256(
-        alice.private_scalar(),
+        alice.private_scalar().expect("private scalar"),
         &bob.public_key(),
     ).expect("ecdh alice→bob");
 
     let secret_ba = oxicrypt_ecdh::compute_shared_secret_p256(
-        bob.private_scalar(),
+        bob.private_scalar().expect("private scalar"),
         &alice.public_key(),
     ).expect("ecdh bob→alice");
 

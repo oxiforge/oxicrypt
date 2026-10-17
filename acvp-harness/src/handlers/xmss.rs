@@ -101,7 +101,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
         let passed =
             if let Ok(sig) = <[u8; oxicrypt_xmss::SIGNATURE_LEN]>::try_from(sig_bytes.as_slice()) {
-                oxicrypt_xmss::verify_internal(&pk, &message, &sig)
+                oxicrypt_xmss::verify_internal(&pk, &message, &sig)?
             } else {
                 false
             };

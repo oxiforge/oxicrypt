@@ -58,14 +58,14 @@ fn kmacxof128_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = KmacXof128::new(key, s).expect("KmacXof128::new");
     m.update(msg);
     m.finalize();
-    m.squeeze(out);
+    m.squeeze(out).unwrap();
 }
 
 fn kmacxof256_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = KmacXof256::new(key, s).expect("KmacXof256::new");
     m.update(msg);
     m.finalize();
-    m.squeeze(out);
+    m.squeeze(out).unwrap();
 }
 
 type KmacXofComputeFn = fn(&[u8], &[u8], &[u8], &mut [u8]);
@@ -177,7 +177,7 @@ fn tuplehashxof128_compute(elems: &[&[u8]], s: &[u8], out: &mut [u8]) {
         h.update(e);
     }
     h.finalize();
-    h.squeeze(out);
+    h.squeeze(out).unwrap();
 }
 
 fn tuplehashxof256_compute(elems: &[&[u8]], s: &[u8], out: &mut [u8]) {
@@ -186,7 +186,7 @@ fn tuplehashxof256_compute(elems: &[&[u8]], s: &[u8], out: &mut [u8]) {
         h.update(e);
     }
     h.finalize();
-    h.squeeze(out);
+    h.squeeze(out).unwrap();
 }
 
 fn gen_tuplehashxof_slice(
@@ -282,14 +282,14 @@ fn parallelhashxof128_compute(msg: &[u8], block_size: usize, s: &[u8], out: &mut
     let mut h = ParallelHashXof128::new(block_size, s).expect("ParallelHashXof128::new");
     h.update(msg);
     h.finalize();
-    h.squeeze(out);
+    h.squeeze(out).unwrap();
 }
 
 fn parallelhashxof256_compute(msg: &[u8], block_size: usize, s: &[u8], out: &mut [u8]) {
     let mut h = ParallelHashXof256::new(block_size, s).expect("ParallelHashXof256::new");
     h.update(msg);
     h.finalize();
-    h.squeeze(out);
+    h.squeeze(out).unwrap();
 }
 
 fn gen_parallelhashxof_slice(

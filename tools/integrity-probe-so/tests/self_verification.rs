@@ -11,7 +11,7 @@
 //! binary — is never signed.** It links `oxicrypt-integrity` through the
 //! signer library, so it carries its own unsigned slot. A verifier that
 //! looked at the host would therefore report "never signed" and could
-//! never report success, whatever we did to the library. Every pass below
+//! never report success, whatever was done to the library. Every pass below
 //! is evidence that the library, not the host, was the thing verified.
 
 #![allow(
@@ -28,7 +28,7 @@ use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oxicrypt_integrity_sign::{elf, image, sign_image};
+use oxicrypt_integrity_sign::{SigningKey, elf, embed_verify_key, image, sign_image};
 
 unsafe extern "C" {
     fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
@@ -39,8 +39,16 @@ unsafe extern "C" {
 const RTLD_NOW: c_int = 2;
 
 const OPERATIONAL: i32 = 0;
-const MISMATCH: i32 = 3;
+const SIGNATURE_INVALID: i32 = 3;
 const SLOT_INVALID: i32 = 4;
+
+/// The key pair these tests sign with, derived once per test process from a
+/// fixed seed and written into each library copy's key record, which is
+/// what a build with `OXICRYPT_INTEGRITY_VERIFY_KEY` set produces.
+fn test_key() -> &'static SigningKey {
+    static KEY: std::sync::OnceLock<SigningKey> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| SigningKey::from_seed(&[0x42; 32]).expect("derive the test key pair"))
+}
 
 /// The cdylib cargo built for this package.
 ///
@@ -104,13 +112,15 @@ fn scratch(tag: &str) -> PathBuf {
 /// gets a distinct shared object rather than the loader's cached one.
 fn copy_cdylib(tag: &str) -> PathBuf {
     let dst = scratch(tag);
-    std::fs::copy(built_cdylib(), &dst).expect("copy cdylib");
+    let mut bytes = std::fs::read(built_cdylib()).expect("read cdylib");
+    embed_verify_key(&mut bytes, test_key().public_key()).expect("embed the test key");
+    std::fs::write(&dst, &bytes).expect("write cdylib copy");
     dst
 }
 
 fn sign(path: &Path) {
     let mut bytes = std::fs::read(path).expect("read");
-    sign_image(&mut bytes).expect("sign");
+    sign_image(&mut bytes, test_key()).expect("sign");
     std::fs::write(path, &bytes).expect("write");
 }
 
@@ -120,12 +130,17 @@ fn flip(path: &Path, offset: usize) {
     std::fs::write(path, &bytes).expect("write");
 }
 
-/// A file offset inside the library's extent, in its executable segment.
+mod padding;
+
+/// A file offset inside the library's signed extent that nothing parses or
+/// executes before the integrity test: padding between two sections. A byte
+/// in code could be one the start-up or self-test path runs, which crashes
+/// the process before the module can refuse.
 fn offset_inside_extent(path: &Path) -> usize {
     let bytes = std::fs::read(path).expect("read");
     let ranges = elf::classify(&bytes).expect("classify").ranges;
-    let last = ranges.last().expect("extent has ranges");
-    (last.file_off + last.len / 2) as usize
+    let extent: Vec<(u32, u32)> = ranges.iter().map(|r| (r.file_off, r.len)).collect();
+    padding::padding_offset(&bytes, &extent)
 }
 
 /// Loads the library and returns `(status code, slot address, the path
@@ -195,7 +210,8 @@ fn the_host_binary_is_unsigned() {
     let exe = std::env::current_exe().expect("test binary path");
     let bytes = std::fs::read(&exe).expect("read host");
     let slot_off = image::find_slot(&bytes).expect("the host carries a slot of its own");
-    let parsed = oxicrypt_integrity::slot::parse(&bytes[slot_off..slot_off + 16384]);
+    let parsed =
+        oxicrypt_integrity::slot::parse(&bytes[slot_off..slot_off + oxicrypt_integrity::SLOT_SIZE]);
     assert!(
         matches!(
             parsed,
@@ -258,7 +274,7 @@ fn tampering_with_the_library_is_what_changes_the_verdict() {
     flip(&tampered, off);
     assert_eq!(
         load_and_probe(&tampered).0,
-        MISMATCH,
+        SIGNATURE_INVALID,
         "a changed byte in the library's code must fail the library's own test"
     );
     let _ = std::fs::remove_file(&so);

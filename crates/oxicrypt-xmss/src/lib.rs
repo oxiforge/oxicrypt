@@ -51,7 +51,7 @@ mod wots;
 
 use wots::N;
 
-use oxicrypt_module::{Error, KatEntry, SelfTestFailure, Service};
+use oxicrypt_module::{Error, KatEntry, SelfTestFailure, Service, require_self_test_started};
 
 // ── Public constants ────────────────────────────────────────────
 
@@ -90,9 +90,9 @@ fn to_byte_idx(idx: u32) -> [u8; N] {
 /// H_msg(r ‖ ROOT ‖ toByte(idx,n), M) — randomized message hash.
 ///
 /// SHA-256(toByte(2,32) || r || ROOT || toByte(idx,32) || M)
-fn h_msg(r: &[u8; N], root: &[u8; N], idx: u32, message: &[u8]) -> [u8; N] {
+fn h_msg(r: &[u8; N], root: &[u8; N], idx: u32, message: &[u8]) -> Result<[u8; N], Error> {
     use oxicrypt_sha::sha256::Sha256;
-    let mut h = Sha256::new_internal();
+    let mut h = Sha256::new_internal()?;
     h.update(&PAD_H_MSG);
     h.update(r);
     h.update(root);
@@ -117,26 +117,41 @@ pub fn verify(
 ) -> Result<(), Error> {
     oxicrypt_module::require_operational()?;
     oxicrypt_module::require_allowed(Service::XmssVerify)?;
-    if verify_internal(public_key, message, signature) {
+    if verify_internal_unguarded(public_key, message, signature)? {
         Ok(())
     } else {
         Err(Error::InvalidInput)
     }
 }
 
-/// Internal verify bypassing module gating (for self-tests).
+/// Internal verify without the operational gate (for self-tests).
+///
+/// Returns [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
 #[doc(hidden)]
 pub fn verify_internal(
     public_key: &[u8; PUBLIC_KEY_LEN],
     message: &[u8],
     signature: &[u8; SIGNATURE_LEN],
-) -> bool {
+) -> Result<bool, Error> {
+    require_self_test_started()?;
+    verify_internal_unguarded(public_key, message, signature)
+}
+
+/// Body of [`verify_internal`], run once its guard has passed.
+fn verify_internal_unguarded(
+    public_key: &[u8; PUBLIC_KEY_LEN],
+    message: &[u8],
+    signature: &[u8; SIGNATURE_LEN],
+) -> Result<bool, Error> {
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
     // Parse public key.
     let pk_oid = u32::from_be_bytes([public_key[0], public_key[1], public_key[2], public_key[3]]);
     if pk_oid != tree::XMSS_OID {
-        return false;
+        return Ok(false);
     }
     let mut expected_root = [0u8; N];
     expected_root.copy_from_slice(&public_key[4..4 + N]);
@@ -146,7 +161,7 @@ pub fn verify_internal(
     // Parse signature.
     let idx = u32::from_be_bytes([signature[0], signature[1], signature[2], signature[3]]);
     if idx >= tree::NUM_LEAVES {
-        return false;
+        return Ok(false);
     }
 
     let mut r = [0u8; N];
@@ -169,10 +184,10 @@ pub fn verify_internal(
     }
 
     // Recompute message hash.
-    let msg_hash = h_msg(&r, &expected_root, idx, message);
+    let msg_hash = h_msg(&r, &expected_root, idx, message)?;
 
     // Compute root from signature.
-    let computed_root = tree::root_from_sig(&msg_hash, &wots_sig, &pub_seed, idx, &auth);
+    let computed_root = tree::root_from_sig(&msg_hash, &wots_sig, &pub_seed, idx, &auth)?;
 
     // Compare the root recomputed from the signature against the
     // root parsed from `public_key`.
@@ -180,7 +195,7 @@ pub fn verify_internal(
     for i in 0..N {
         diff |= computed_root[i] ^ expected_root[i];
     }
-    diff == 0
+    Ok(diff == 0)
 }
 
 // ── Power-up self-test ──────────────────────────────────────────
@@ -199,7 +214,9 @@ pub const KATS: &[KatEntry] = &[KatEntry {
 /// file read at run time.
 fn self_test() -> Result<(), SelfTestFailure> {
     // Known answer: this signature is valid under this key for this message.
-    if !verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &kat::KAT_SIGNATURE) {
+    if !verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &kat::KAT_SIGNATURE)
+        .map_err(|_| SelfTestFailure)?
+    {
         return Err(SelfTestFailure);
     }
 
@@ -210,7 +227,9 @@ fn self_test() -> Result<(), SelfTestFailure> {
     {
         tampered[64] ^= 0x01;
     }
-    if verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &tampered) {
+    if verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &tampered)
+        .map_err(|_| SelfTestFailure)?
+    {
         return Err(SelfTestFailure);
     }
 
@@ -218,7 +237,7 @@ fn self_test() -> Result<(), SelfTestFailure> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic)]
+#[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
     use oxicrypt_module::{KatEntry, initialize_with_tests};
@@ -235,8 +254,17 @@ mod tests {
         run: || Ok(()),
     }];
 
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+    }
+
     #[test]
     fn self_test_passes() {
+        start_module();
         self_test().expect("power-up KAT failed");
     }
 
@@ -245,13 +273,14 @@ mod tests {
     /// pinned rather than assumed.
     #[test]
     fn self_test_fails_on_a_corrupted_vector() {
+        start_module();
         let mut sig = kat::KAT_SIGNATURE;
         sig[64] ^= 0x01;
-        assert!(!verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &sig));
+        assert!(!verify_internal(&kat::KAT_PUBLIC_KEY, &kat::KAT_MSG, &sig).unwrap());
 
         let mut pk = kat::KAT_PUBLIC_KEY;
         pk[8] ^= 0x01;
-        assert!(!verify_internal(&pk, &kat::KAT_MSG, &kat::KAT_SIGNATURE));
+        assert!(!verify_internal(&pk, &kat::KAT_MSG, &kat::KAT_SIGNATURE).unwrap());
     }
 
     #[test]
@@ -283,8 +312,29 @@ mod tests {
     /// suite stays green — parameter confusion with no probe.
     #[test]
     fn rejects_a_public_key_with_a_foreign_oid() {
+        start_module();
         let mut pk = kat::KAT_PUBLIC_KEY;
         pk[3] = 0x02; // XMSS-SHA2_16_256, not this crate's parameter set
-        assert!(!verify_internal(&pk, &kat::KAT_MSG, &kat::KAT_SIGNATURE));
+        assert!(!verify_internal(&pk, &kat::KAT_MSG, &kat::KAT_SIGNATURE).unwrap());
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
     }
 }

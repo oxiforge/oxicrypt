@@ -59,7 +59,7 @@ fn shake128_ldt(pattern: &[u8], full_bytes: u64, out_bytes: usize) -> Vec<u8> {
     }
     xof.finalize();
     let mut out = vec![0u8; out_bytes];
-    xof.squeeze(&mut out);
+    xof.squeeze(&mut out).unwrap();
     out
 }
 
@@ -78,7 +78,7 @@ fn shake256_ldt(pattern: &[u8], full_bytes: u64, out_bytes: usize) -> Vec<u8> {
     }
     xof.finalize();
     let mut out = vec![0u8; out_bytes];
-    xof.squeeze(&mut out);
+    xof.squeeze(&mut out).unwrap();
     out
 }
 

@@ -18,6 +18,21 @@
 
 use oxicrypt_ml_dsa::{SIG_LEN, SK_LEN, sign_internal};
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 fn load(name: &str) -> Vec<u8> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/");
     std::fs::read(format!("{path}{name}")).expect("test data not found")
@@ -37,6 +52,7 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
 /// reference signature byte-for-byte.
 #[test]
 fn acvts_730469_tc8_siggen_make_hint_neg_gamma2_boundary() {
+    start_module();
     let sk = load_arr::<SK_LEN>("mldsa87_acvts_tc8_siggen_sk.bin");
     let m_prime = load("mldsa87_acvts_tc8_siggen_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_acvts_tc8_siggen_signature.bin");

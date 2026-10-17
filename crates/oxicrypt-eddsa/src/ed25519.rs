@@ -25,7 +25,10 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
+};
 use oxicrypt_sha::sha512::Sha512;
 
 use crate::edwards::EdwardsPoint;
@@ -54,34 +57,42 @@ fn clamp(buf: &mut [u8; 32]) {
 /// Compute `SHA-512` of the concatenation of up to three byte slices.
 /// Uses the module-internal constructor so this path is callable from
 /// power-up self tests.
-fn sha512_cat(parts: &[&[u8]]) -> [u8; 64] {
-    let mut h = Sha512::new_internal();
+fn sha512_cat(parts: &[&[u8]]) -> Result<[u8; 64], Error> {
+    let mut h = Sha512::new_internal()?;
     for p in parts {
         h.update(p);
     }
     h.finalize()
 }
 
-/// Internal Ed25519 keygen. Skips the module-operational gate so it
-/// can run from the power-up KAT; public callers should use
+/// Internal Ed25519 keygen. Skips the operational and profile gates
+/// so it can run from the power-up KAT, and refuses unless
+/// [`require_self_test_started`] admits the call (in `Operational`, or in
+/// `SelfTest` on the thread running the power-up self-tests); public
+/// callers should use
 /// [`keygen`] instead.
 #[doc(hidden)]
-pub fn keygen_internal(seed: &[u8; SEED_LEN]) -> [u8; PUBLIC_KEY_LEN] {
-    let h = sha512_cat(&[seed]);
+pub fn keygen_internal(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
+    require_self_test_started()?;
+    let h = sha512_cat(&[seed])?;
     let mut s_bytes = [0u8; 32];
     s_bytes.copy_from_slice(&h[..32]);
     clamp(&mut s_bytes);
     let s = Scalar::from_bytes(&s_bytes);
-    EdwardsPoint::BASE.mul(&s).compress()
+    Ok(EdwardsPoint::BASE.mul(&s).compress())
 }
 
-/// Internal Ed25519 sign. Skips the module-operational gate so it
-/// can run from the power-up KAT; public callers should use
+/// Internal Ed25519 sign. Skips the operational and profile gates
+/// so it can run from the power-up KAT, and refuses unless
+/// [`require_self_test_started`] admits the call (in `Operational`, or in
+/// `SelfTest` on the thread running the power-up self-tests); public
+/// callers should use
 /// [`sign`] instead.
 #[doc(hidden)]
-pub fn sign_internal(seed: &[u8; SEED_LEN], message: &[u8]) -> [u8; SIGNATURE_LEN] {
+pub fn sign_internal(seed: &[u8; SEED_LEN], message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
+    require_self_test_started()?;
     // h = SHA512(seed); split into scalar half and prefix half.
-    let h = sha512_cat(&[seed]);
+    let h = sha512_cat(&[seed])?;
     let mut s_bytes = [0u8; 32];
     s_bytes.copy_from_slice(&h[..32]);
     clamp(&mut s_bytes);
@@ -92,12 +103,12 @@ pub fn sign_internal(seed: &[u8; SEED_LEN], message: &[u8]) -> [u8; SIGNATURE_LE
     let a_bytes = EdwardsPoint::BASE.mul(&s).compress();
 
     // r = SHA512(prefix || M) mod L; R = [r]B
-    let r_hash = sha512_cat(&[prefix, message]);
+    let r_hash = sha512_cat(&[prefix, message])?;
     let r = reduce_wide(&r_hash);
     let r_point_bytes = EdwardsPoint::BASE.mul(&r).compress();
 
     // k = SHA512(R || A || M) mod L
-    let k_hash = sha512_cat(&[&r_point_bytes, &a_bytes, message]);
+    let k_hash = sha512_cat(&[&r_point_bytes, &a_bytes, message])?;
     let k = reduce_wide(&k_hash);
 
     // S = (r + k * s) mod L
@@ -106,19 +117,22 @@ pub fn sign_internal(seed: &[u8; SEED_LEN], message: &[u8]) -> [u8; SIGNATURE_LE
     let mut sig = [0u8; SIGNATURE_LEN];
     sig[..32].copy_from_slice(&r_point_bytes);
     sig[32..].copy_from_slice(&big_s.to_bytes());
-    sig
+    Ok(sig)
 }
 
-/// Internal Ed25519 verify. Skips the module-operational gate so it
-/// can run from the power-up KAT; public callers should use
+/// Internal Ed25519 verify. Skips the operational and profile gates
+/// so it can run from the power-up KAT, and refuses unless
+/// [`require_self_test_started`] admits the call (in `Operational`, or in
+/// `SelfTest` on the thread running the power-up self-tests); public
+/// callers should use
 /// [`verify`] instead.
 #[doc(hidden)]
-#[must_use]
 pub fn verify_internal(
     public_key: &[u8; PUBLIC_KEY_LEN],
     message: &[u8],
     signature: &[u8; SIGNATURE_LEN],
-) -> bool {
+) -> Result<bool, Error> {
+    require_self_test_started()?;
     // Split the signature.
     let mut r_bytes = [0u8; 32];
     r_bytes.copy_from_slice(&signature[..32]);
@@ -127,20 +141,20 @@ pub fn verify_internal(
 
     // RFC 8032 §5.1.7 step 2: reject non-canonical S.
     if !is_canonical_encoding(&s_bytes) {
-        return false;
+        return Ok(false);
     }
 
     // Decode A and R. `decompress` already enforces canonical y
     // encoding and the quadratic-residue check.
     let Some(a_point) = EdwardsPoint::decompress(public_key) else {
-        return false;
+        return Ok(false);
     };
     let Some(r_point) = EdwardsPoint::decompress(&r_bytes) else {
-        return false;
+        return Ok(false);
     };
 
     // k = SHA512(R || A || M) mod L
-    let k_hash = sha512_cat(&[&r_bytes, public_key, message]);
+    let k_hash = sha512_cat(&[&r_bytes, public_key, message])?;
     let k = reduce_wide(&k_hash);
 
     // Compute sB and R + kA, then compare compressed encodings.
@@ -153,7 +167,7 @@ pub fn verify_internal(
     let ka = a_point.mul(&k);
     let rhs = r_point.add(&ka);
 
-    sb.compress() == rhs.compress()
+    Ok(sb.compress() == rhs.compress())
 }
 
 /// Derive the Ed25519 public key (compressed `A = [s]B`) from a
@@ -164,7 +178,7 @@ pub fn verify_internal(
 pub fn keygen(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
     require_operational()?;
     require_allowed(Service::Ed25519Keygen)?;
-    Ok(keygen_internal(seed))
+    keygen_internal(seed)
 }
 
 /// Sign `message` under `seed` and return the 64-byte Ed25519
@@ -175,7 +189,7 @@ pub fn keygen(seed: &[u8; SEED_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
 pub fn sign(seed: &[u8; SEED_LEN], message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
     require_operational()?;
     require_allowed(Service::Ed25519Sign)?;
-    Ok(sign_internal(seed, message))
+    sign_internal(seed, message)
 }
 
 /// Strict, non-cofactored Ed25519 signature verification per
@@ -190,7 +204,7 @@ pub fn verify(
 ) -> Result<bool, Error> {
     require_operational()?;
     require_allowed(Service::Ed25519Verify)?;
-    Ok(verify_internal(public_key, message, signature))
+    verify_internal(public_key, message, signature)
 }
 
 // ------------------------------------------------------------------
@@ -252,7 +266,7 @@ impl Ed25519PrivateKey {
     pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Ed25519Keygen)?;
-        Self::generate_internal(drbg).ok_or(Error::InvalidInput)
+        Self::generate_internal(drbg)
     }
 
     /// Import an Ed25519 private key from its 32-byte seed, derive
@@ -267,7 +281,7 @@ impl Ed25519PrivateKey {
     pub fn from_seed(seed: &[u8; SEED_LEN]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Ed25519Keygen)?;
-        Self::from_seed_internal(seed).ok_or(Error::InvalidInput)
+        Self::from_seed_internal(seed)
     }
 
     /// Sign `message` under this private key and return the 64-byte
@@ -280,40 +294,58 @@ impl Ed25519PrivateKey {
     pub fn sign(&self, message: &[u8]) -> Result<[u8; SIGNATURE_LEN], Error> {
         require_operational()?;
         require_allowed(Service::Ed25519Sign)?;
-        Ok(sign_internal(&self.seed, message))
+        sign_internal(&self.seed, message)
     }
 
     /// Return the 32-byte compressed Ed25519 public key this handle
     /// commits to.
-    #[must_use]
-    pub fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
-        self.public_key
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure outputs nothing after it.
+    pub fn public_key(&self) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
+        require_self_test_started()?;
+        Ok(self.public_key)
     }
 
     /// Return a reference to the raw seed bytes. Intended for
     /// callers that need to re-export the key. Zeroization of any
     /// copy the caller makes is the caller's responsibility.
-    #[must_use]
-    pub fn seed(&self) -> &[u8; SEED_LEN] {
-        &self.seed
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a CSP is not output in `PowerOff`, `Error` or
+    /// `IntegrityUnverified`.
+    pub fn seed(&self) -> Result<&[u8; SEED_LEN], Error> {
+        require_self_test_started()?;
+        Ok(&self.seed)
     }
 
-    // -- internal, module-state-gate-bypassing helpers --
+    // -- internal helpers, reached after a gate or guard has passed --
 
-    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Option<Self> {
+    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
         let mut seed = [0u8; SEED_LEN];
-        drbg.generate(None, &mut seed).ok()?;
+        drbg.generate(None, &mut seed).map_err(|e| match e {
+            oxicrypt_drbg::DrbgError::Module(e) => e,
+            _ => Error::InvalidInput,
+        })?;
         Self::from_seed_internal(&seed)
     }
 
-    fn from_seed_internal(seed: &[u8; SEED_LEN]) -> Option<Self> {
-        let public_key = keygen_internal(seed);
+    fn from_seed_internal(seed: &[u8; SEED_LEN]) -> Result<Self, Error> {
+        let public_key = keygen_internal(seed)?;
         let handle = Ed25519PrivateKey {
             seed: *seed,
             public_key,
         };
         handle.run_pct()?;
-        Some(handle)
+        Ok(handle)
     }
 
     /// Run the IG 10.3.A pairwise consistency test: sign a fixed
@@ -323,16 +355,16 @@ impl Ed25519PrivateKey {
     /// Ed25519's deterministic nonce derivation means there is no
     /// per-signature randomness to vary, so this is a single
     /// sign-and-verify round trip rather than a retry loop.
-    fn run_pct(&self) -> Option<()> {
-        let sig = sign_internal(&self.seed, PCT_PROBE_MSG);
-        if verify_internal(&self.public_key, PCT_PROBE_MSG, &sig) {
-            Some(())
+    fn run_pct(&self) -> Result<(), Error> {
+        let sig = sign_internal(&self.seed, PCT_PROBE_MSG)?;
+        if verify_internal(&self.public_key, PCT_PROBE_MSG, &sig)? {
+            Ok(())
         } else {
             // A sign-then-verify failure on a freshly generated key
             // would indicate either a corrupted seed or a broken
             // sign/verify primitive. Either way, refuse to hand
             // back a handle.
-            None
+            Err(Error::InvalidInput)
         }
     }
 }
@@ -376,15 +408,15 @@ const KAT_SIGNATURE: [u8; 64] = [
 /// that returned `true` unconditionally would also be caught.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     // Positive: keygen + sign + verify must all match the KAT.
-    let pk = keygen_internal(&KAT_SEED);
+    let pk = keygen_internal(&KAT_SEED).map_err(|_| SelfTestFailure)?;
     if pk != KAT_PUBLIC_KEY {
         return Err(SelfTestFailure);
     }
-    let sig = sign_internal(&KAT_SEED, &[]);
+    let sig = sign_internal(&KAT_SEED, &[]).map_err(|_| SelfTestFailure)?;
     if sig != KAT_SIGNATURE {
         return Err(SelfTestFailure);
     }
-    if !verify_internal(&KAT_PUBLIC_KEY, &[], &KAT_SIGNATURE) {
+    if !verify_internal(&KAT_PUBLIC_KEY, &[], &KAT_SIGNATURE).map_err(|_| SelfTestFailure)? {
         return Err(SelfTestFailure);
     }
 
@@ -392,7 +424,7 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     // Catches a broken verifier that always returns `true`.
     let mut tampered = KAT_SIGNATURE;
     tampered[0] ^= 0x01;
-    if verify_internal(&KAT_PUBLIC_KEY, &[], &tampered) {
+    if verify_internal(&KAT_PUBLIC_KEY, &[], &tampered).map_err(|_| SelfTestFailure)? {
         return Err(SelfTestFailure);
     }
 
@@ -402,10 +434,8 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     // sign-then-verify probe through the internal helpers, so a
     // faulted PCT would latch the module into Error state here
     // rather than on first production use.
-    let Some(handle) = Ed25519PrivateKey::from_seed_internal(&KAT_SEED) else {
-        return Err(SelfTestFailure);
-    };
-    if handle.public_key() != KAT_PUBLIC_KEY {
+    let handle = Ed25519PrivateKey::from_seed_internal(&KAT_SEED).map_err(|_| SelfTestFailure)?;
+    if handle.public_key != KAT_PUBLIC_KEY {
         return Err(SelfTestFailure);
     }
 
@@ -432,6 +462,14 @@ mod tests {
 
     fn init_with_tests(tests: &[KatEntry]) -> Result<(), oxicrypt_module::Error> {
         oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
+    }
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    fn start_module() {
+        let _ = init_with_tests(&[]);
+        assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
     }
 
     // RFC 8032 §7.1 test vectors (pure Ed25519).
@@ -527,50 +565,57 @@ mod tests {
 
     #[test]
     fn rfc8032_keygen_matches() {
+        start_module();
         for v in &rfc8032_vectors() {
-            assert_eq!(keygen_internal(&v.sk), v.pk);
+            assert_eq!(keygen_internal(&v.sk).unwrap(), v.pk);
         }
     }
 
     #[test]
     fn rfc8032_sign_matches() {
+        start_module();
         for v in &rfc8032_vectors() {
-            let got = sign_internal(&v.sk, v.msg);
+            let got = sign_internal(&v.sk, v.msg).unwrap();
             assert_eq!(got, v.sig, "signature mismatch");
         }
     }
 
     #[test]
     fn rfc8032_verify_accepts() {
+        start_module();
         for v in &rfc8032_vectors() {
-            assert!(verify_internal(&v.pk, v.msg, &v.sig));
+            assert!(verify_internal(&v.pk, v.msg, &v.sig).unwrap());
         }
     }
 
     #[test]
     fn verify_rejects_tampered_message() {
+        start_module();
         let v = &rfc8032_vectors()[1];
         let bad = [v.msg[0] ^ 0x01];
-        assert!(!verify_internal(&v.pk, &bad, &v.sig));
+        assert!(!verify_internal(&v.pk, &bad, &v.sig).unwrap());
     }
 
     #[test]
     fn verify_rejects_tampered_signature() {
+        start_module();
         let v = &rfc8032_vectors()[0];
         let mut bad = v.sig;
         bad[0] ^= 0x01;
-        assert!(!verify_internal(&v.pk, v.msg, &bad));
+        assert!(!verify_internal(&v.pk, v.msg, &bad).unwrap());
     }
 
     #[test]
     fn verify_rejects_wrong_public_key() {
+        start_module();
         let v0 = &rfc8032_vectors()[0];
         let v1 = &rfc8032_vectors()[1];
-        assert!(!verify_internal(&v1.pk, v0.msg, &v0.sig));
+        assert!(!verify_internal(&v1.pk, v0.msg, &v0.sig).unwrap());
     }
 
     #[test]
     fn verify_rejects_non_canonical_s() {
+        start_module();
         // Take a valid signature and replace S with L itself. L is
         // not canonical (RFC 8032 §5.1.7 step 2 requires S < L).
         let l_bytes: [u8; 32] = [
@@ -581,11 +626,12 @@ mod tests {
         let v = &rfc8032_vectors()[0];
         let mut bad = v.sig;
         bad[32..].copy_from_slice(&l_bytes);
-        assert!(!verify_internal(&v.pk, v.msg, &bad));
+        assert!(!verify_internal(&v.pk, v.msg, &bad).unwrap());
     }
 
     #[test]
     fn self_test_passes() {
+        start_module();
         self_test().unwrap();
     }
 
@@ -604,11 +650,11 @@ mod tests {
 
         for v in &rfc8032_vectors() {
             let key = Ed25519PrivateKey::from_seed(&v.sk).unwrap();
-            assert_eq!(key.public_key(), v.pk);
-            assert_eq!(key.seed(), &v.sk);
+            assert_eq!(key.public_key().unwrap(), v.pk);
+            assert_eq!(key.seed().unwrap(), &v.sk);
             let sig = key.sign(v.msg).unwrap();
             assert_eq!(sig, v.sig);
-            assert!(verify_internal(&key.public_key(), v.msg, &sig));
+            assert!(verify_internal(&key.public_key().unwrap(), v.msg, &sig).unwrap());
         }
     }
 
@@ -626,24 +672,23 @@ mod tests {
 
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-r9-eddsa-entropy-input",
-            b"oxicrypt-r9-eddsa-nonce",
-            b"oxicrypt-r9-eddsa-personalization",
+            b"oxicrypt-eddsa-entropy-input",
+            b"oxicrypt-eddsa-nonce",
+            b"oxicrypt-eddsa-personalization",
         )
         .unwrap();
         let key = Ed25519PrivateKey::generate(&mut drbg).unwrap();
 
         // Round-trip via the handle.
-        let sig = key.sign(b"oxicrypt-ed25519-r9-smoke").unwrap();
-        assert!(verify_internal(
-            &key.public_key(),
-            b"oxicrypt-ed25519-r9-smoke",
-            &sig
-        ));
+        let sig = key.sign(b"ed25519 smoke").unwrap();
+        assert!(verify_internal(&key.public_key().unwrap(), b"ed25519 smoke", &sig).unwrap());
 
         // And the stored public key must match re-derivation from
         // the stored seed via the primitive.
-        assert_eq!(key.public_key(), keygen_internal(key.seed()));
+        assert_eq!(
+            key.public_key().unwrap(),
+            keygen_internal(key.seed().unwrap()).unwrap()
+        );
     }
 
     #[test]
@@ -667,8 +712,9 @@ mod tests {
             seed: v.sk,
             public_key: other_pk,
         };
-        assert!(
-            bad_handle.run_pct().is_none(),
+        assert_eq!(
+            bad_handle.run_pct(),
+            Err(Error::InvalidInput),
             "PCT should reject a handle whose stored public key does not match its seed"
         );
 
@@ -677,7 +723,7 @@ mod tests {
             seed: v.sk,
             public_key: v.pk,
         };
-        assert!(good_handle.run_pct().is_some());
+        assert_eq!(good_handle.run_pct(), Ok(()));
     }
 
     #[test]

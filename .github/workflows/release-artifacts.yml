@@ -16,62 +16,81 @@
 #      workflow's real output; the convenience is a side effect.
 #
 # TRIGGER POLICY — deliberately not `push`.
-#   `ci.yml` documents why this repository burns no default CI minutes: a full
-#   cycle costs 1.5-2h of Free-tier 2-core runner time. This workflow does not
-#   change that policy. It fires on `release: published` — an event a human
-#   causes by hand, at most once per release — so it costs minutes exactly when
-#   the artifacts are wanted and never otherwise. `workflow_dispatch` is kept
-#   for re-runs when a release already exists (a failed matrix leg, a runner
-#   outage) and takes the tag as an input.
+#   It fires on `release: published` — an event a human causes by hand, at
+#   most once per release — so it runs exactly when the artifacts are wanted
+#   and never otherwise. `workflow_dispatch` runs it
+#   by hand as a dry run: every artifact is built, signed and verified exactly
+#   as for a release and uploaded as a workflow artifact, and nothing is
+#   attached to any release. Only a published release attaches artifacts; a
+#   release whose run failed is re-run from that run, which keeps its commit
+#   and tag ref.
 #
 # WHAT IS NOT COVERED — stated here rather than discovered later.
 #   * The Linux `.so` carries a glibc floor: a shared object built against
-#     glibc N cannot load on a system with an older one. This is a live hazard
-#     in this project's own history (a VM build against glibc 2.43 could not be
-#     loaded by an older host). `cargo-zigbuild` is used for the Linux legs
-#     precisely because it lets the floor be PINNED and stated
+#     glibc N cannot load on a system with an older one. `cargo-zigbuild` is
+#     used for the Linux legs because it lets the floor be PINNED and stated
 #     (`...-gnu.2.17`) rather than inherited from whatever the runner image
 #     happens to ship. The `.a` has no such floor — it is linked into the
 #     consumer's own binary against their libc.
 #   * These builds are not bit-reproducible and are not claimed to be. Two runs
 #     of this workflow on the same tag can produce different bytes and
-#     therefore different integrity MACs. What is asserted is narrower and
-#     checkable: each published artifact's MAC is recorded in the
-#     `BUILD-PROVENANCE.txt` inside its own tarball, and
-#     `oxicrypt-integrity-sign --verify` confirms the artifact matches it.
-#   * ⚠️ ARTIFACT NAMES CHANGED AT 0.24.0. The C library archive was
-#     `oxicrypt-<tag>-<platform>.tar.gz` through the 0.23 series and is now
+#     therefore different integrity signatures. What is asserted is narrower
+#     and checkable: each published artifact's signature and verify-key
+#     fingerprint are recorded in the `BUILD-PROVENANCE.txt` inside its own
+#     tarball, and `oxicrypt-integrity-sign --verify` confirms the artifact
+#     matches them.
+#   * The Android arm64 library is signed and verified offline, but no runner
+#     here can load it: the hosted arm64 runners offer no Android emulator, and
+#     the x86_64 emulator runs only x86_64 code. Its provenance file says so.
+#   * macOS artifacts carry an ad-hoc code signature and Windows artifacts no
+#     Authenticode signature: the project has no Apple or Authenticode signing
+#     identity. A dry run Authenticode-signs the Windows artifacts with a
+#     certificate it creates, so the full Windows signing order is exercised.
+#   * Artifact names: the C library archive is
 #     `oxicrypt-ffi-<tag>-<platform>.tar.gz`, because it is one delivery form
-#     of the module rather than the module, and the bare name said otherwise —
-#     most misleadingly beside the `oxicrypt-cli-` archives added in the same
-#     release. A script fetching "latest" by name breaks once; every release
-#     through the 0.23 series keeps its original asset names.
-#     (Written without an exact version literal on purpose: `bump-version.sh`
-#     greps the tree for surviving literals of the outgoing version, so a
-#     historical reference spelled exactly would fail that guard at every
-#     future release.)
+#     of the module rather than the module, and the CLI archive beside it is
+#     `oxicrypt-cli-<tag>-<platform>`. CHANGELOG.md records the releases whose
+#     assets carry earlier names. No exact version literal appears here:
+#     `bump-version.sh` greps the tree for surviving literals of the outgoing
+#     version, and fails on one.
 #   * No macOS/Windows FIPS claim is implied by their presence here. They are
 #     built because the C API is portable; the validated configuration is
 #     whatever the Security Policy names, which is a narrower set.
 #
-# WHY `oxi` SHIPS HERE, AND WHY IT DID NOT BEFORE.
-#   `oxi` links the module, so like any such artifact it must be signed after
-#   linking. It was omitted from this workflow while the runtime could not
-#   verify a signed image on Mach-O or PE: shipping a binary that refuses to
-#   start on three of five platforms is worse than shipping none. Those readers
-#   now exist and are exercised on real runners by `integrity-image-probe.yml`,
-#   so the omission has no premise left.
+# THE SIGNING KEY
+#   Every artifact that links the module embeds the verifying key at build
+#   time and is signed with its private half. `scripts/release-signing-key.sh`
+#   supplies both, from the source the run names:
+#     test       one pair generated per run by the `test-key` job and given to
+#                every build job, so every artifact of a run carries one
+#                fingerprint (dry runs);
+#     ci-secret  the project's release key: the ML-DSA-87 seed from the
+#                OXICRYPT_RELEASE_SIGNING_KEY secret of the `release`
+#                environment, the public half from
+#                keys/release-integrity-verify.pub in the repository;
+#     hardware-token, kms   documented in that script, not implemented.
+#   `guard` admits ci-secret only for a run that attaches to a release, and a
+#   run that attaches to a release only with ci-secret. With ci-secret, the
+#   private key file exists only during the step that signs: that step writes
+#   it, holds its path in a shell variable, and erases it when it ends, and the
+#   step after erases it again before any action runs. A test key pair is
+#   generated once per run by the `test-key` job, fetched into each build
+#   job's key directory before it builds, and erased the same way.
+#   Build jobs hold read-only repository permissions and no persisted
+#   credentials; the `publish` job, which writes the release, never sees a key.
 #
-#   It ships in its OWN tarball rather than beside the C libraries. The two have
-#   disjoint audiences — a C shop linking a `.a` has no use for a CLI, and
-#   someone who wants `oxi hash` should not download a static archive and a
-#   header to get it.
-#
-#   `cargo install oxicrypt-cli` remains available and remains unsigned on
-#   arrival: cargo has no post-link step, so that user has to run the signer
-#   themselves. What this workflow adds is the other door — a binary that is
-#   already signed when it reaches you, and whose MAC is recorded in a
-#   provenance file beside it.
+# THE ORDER, PER FORMAT (docs/integrity-signing.md)
+#   ELF (glibc and bionic): link, split the debug information, strip, add a
+#   debuglink, integrity sign. Mach-O: link with chained fixups and the
+#   zero-fill segment, codesign twice, integrity sign against the first, final
+#   codesign. PE: link with `.bss` in a section of its own and full debug
+#   information, then (with a certificate) signtool, integrity sign against the
+#   image as linked, final signtool; without a certificate, integrity sign
+#   only. `scripts/release-sign.sh` performs each. Each artifact is then
+#   checked twice: offline with `--verify`, and by loading it — `dlopen` (or
+#   `LoadLibrary`) and `oxi_init` for the library, running `oxi` for the CLI —
+#   with the unsigned artifact as the control that shows the integrity test
+#   runs.
 
 name: release-artifacts
 
@@ -81,24 +100,106 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to build and attach to (e.g. v1.2.3)"
-        required: true
+        description: "Existing release tag to build (vX.Y.Z); empty builds the dispatched ref"
+        required: false
+        default: ''
         type: string
+      signing_key_source:
+        description: "Where the integrity signing key comes from (scripts/release-signing-key.sh)"
+        type: choice
+        default: test
+        options:
+          - test
+          - hardware-token
+          - kms
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  MACHO_SIGNED_RUSTFLAGS: >-
+    -C llvm-args=-aarch64-enable-global-merge=false
+    -C link-arg=-Wl,-fixup_chains
+    -C link-arg=-Wl,-rename_section,__DATA,__bss,__ZEROFILL,__bss
+    -C link-arg=-Wl,-rename_section,__DATA,__common,__ZEROFILL,__common
+  PE_SIGNED_RUSTFLAGS: -C link-arg=/MERGE:.bss=.zbss
 
 jobs:
+  # Decides, before anything reads a secret, what this run builds and whether
+  # it may publish. Only a published release attaches artifacts; its tag must
+  # resolve to a commit on main, and every job checks out that commit. A
+  # dispatched run never publishes.
+  guard:
+    name: guard (what to build, whether to publish)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.decide.outputs.sha }}
+      label: ${{ steps.decide.outputs.label }}
+      tag: ${{ steps.decide.outputs.tag }}
+      publish: ${{ steps.decide.outputs.publish }}
+      key_source: ${{ steps.decide.outputs.key_source }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide and validate
+        id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SOURCE: ${{ inputs.signing_key_source }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::$*"; exit 1; }
+          if [ "$EVENT" = release ]; then
+            publish=true; source=ci-secret; tag="$RELEASE_TAG"
+          else
+            publish=false; source="$INPUT_SOURCE"; tag="$INPUT_TAG"
+          fi
+          case "$source" in
+            test | ci-secret | hardware-token | kms) ;;
+            *) refuse "unknown signing key source" ;;
+          esac
+          sha="$EVENT_SHA"
+          if [ -n "$tag" ]; then
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+              || refuse "the tag is not of the form vX.Y.Z or vX.Y.Z-suffix"
+            sha="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}")" \
+              || refuse "refs/tags/$tag does not exist"
+          fi
+          if [ "$publish" = true ]; then
+            [ "$source" = ci-secret ] || refuse "a run that attaches to a release signs with ci-secret only"
+            [ -n "$tag" ] || refuse "a run that attaches to a release must name its tag"
+            [ "$EVENT" = release ] || refuse "only a published release attaches artifacts"
+            [ "$sha" = "$EVENT_SHA" ] || refuse "the release's commit is not the tag's commit"
+            git merge-base --is-ancestor "$sha" origin/main || refuse "$tag is not on main"
+          else
+            [ "$source" != ci-secret ] || refuse "ci-secret is admitted only for a run that attaches to a release"
+          fi
+          if [ -n "$tag" ]; then label="$tag"; else label="dryrun-${sha:0:12}"; fi
+          {
+            echo "sha=$sha"
+            echo "label=$label"
+            echo "tag=$tag"
+            echo "publish=$publish"
+            echo "key_source=$source"
+          } | tee -a "$GITHUB_OUTPUT"
+
   header:
     name: header (drift check)
+    needs: guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
 
       - name: Install pinned toolchain
         # rust-toolchain.toml pins the channel; `rustup show` materialises it.
@@ -106,7 +207,7 @@ jobs:
         # release build must not float to whatever `stable` is that week.
         run: rustup show active-toolchain || rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # `include/oxicrypt.h` is committed AND generated by build.rs via
       # cbindgen. Shipping the committed copy is right — it is the one the
@@ -125,75 +226,143 @@ jobs:
           fi
           echo "header: committed copy matches cbindgen output"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: oxicrypt-header
           path: crates/oxicrypt-ffi/include/oxicrypt.h
           if-no-files-found: error
 
+  # One test key pair for the whole run, so every artifact of a dry run
+  # carries the same fingerprint, as a release's do. It is a test key: the
+  # private half travels as a short-lived workflow artifact, readable by
+  # anyone who can read the run, and nothing trusts it.
+  test-key:
+    name: test key (one per run)
+    needs: guard
+    if: needs.guard.outputs.key_source == 'test'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
+
+      - name: Generate the run's test key pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          cargo build -p oxicrypt-integrity-sign --release
+          target/release/oxicrypt-integrity-sign --keygen "$RUNNER_TEMP/test-key"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: integrity-test-key
+          path: ${{ runner.temp }}/test-key/
+          retention-days: 1
+          if-no-files-found: error
+
+  # Two jobs with one definition (the YAML anchors below): `build` for a run
+  # that does not publish, which enters no environment, and `build-release`
+  # for one that does, which enters the `release` environment holding the
+  # release key. The guard's `publish` output selects exactly one.
   build:
     name: ${{ matrix.name }}
-    needs: header
+    needs: [guard, header, test-key]
+    # test-key is skipped when the run signs with another source.
+    if: >-
+      always() && needs.guard.result == 'success' && needs.header.result == 'success'
+      && (needs.test-key.result == 'success' || needs.test-key.result == 'skipped')
+      && needs.guard.outputs.publish != 'true'
     runs-on: ${{ matrix.runner }}
-    strategy:
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    env: &build-env
+      KEY_SOURCE: ${{ needs.guard.outputs.key_source }}
+      LABEL: ${{ needs.guard.outputs.label }}
+      PUBLISH: ${{ needs.guard.outputs.publish }}
+    strategy: &build-strategy
       # One failing platform must not suppress the others: a partial release
-      # that names what is missing beats no release at all, and the missing
-      # leg can be re-run via workflow_dispatch.
+      # that names what is missing beats no release at all, and the release's
+      # own run can be re-run once the cause is fixed.
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
             runner: ubuntu-latest
+            format: elf
             target: x86_64-unknown-linux-gnu
             zig_target: x86_64-unknown-linux-gnu.2.17
             cli: oxi
-            native: true
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
+            load: host
+          # Built on an arm64 runner, so the artifact that ships is loaded and
+          # run by the job that built it.
           - name: linux-aarch64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
+            format: elf
             target: aarch64-unknown-linux-gnu
             zig_target: aarch64-unknown-linux-gnu.2.17
             cli: oxi
-            native: false
             cdylib: liboxicrypt_ffi.so
             staticlib: liboxicrypt_ffi.a
-          # macOS runner labels age out faster than the rest of this matrix.
-          # `macos-13` was retired from GitHub's available images between this
-          # workflow being written and its first run: the job sat queued for
-          # over two hours and was never assigned a runner, while every other
-          # leg finished in about two minutes. A retired label does not fail —
-          # it queues forever, which reads like scarcity rather than removal.
-          # Check https://github.com/actions/runner-images for the current set
+            load: host
+          # macOS runner labels are retired upstream, and a retired label
+          # does not fail: the job queues indefinitely. Check
+          # https://github.com/actions/runner-images for the current set
           # before assuming a queued macOS job is merely waiting.
           - name: macos-x86_64
             runner: macos-15-intel
+            format: macho
             target: x86_64-apple-darwin
+            minos: '13.0'
             cli: oxi
-            native: true
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
-          # macos-14 built successfully on 2026-08-07 but is marked deprecated
-          # upstream, so it is moved ahead of retirement rather than after it.
+            load: host
           - name: macos-aarch64
             runner: macos-15
+            format: macho
             target: aarch64-apple-darwin
+            minos: '12.0'
             cli: oxi
-            native: true
             cdylib: liboxicrypt_ffi.dylib
             staticlib: liboxicrypt_ffi.a
+            load: host
           - name: windows-x86_64
             runner: windows-latest
+            format: pe
             target: x86_64-pc-windows-msvc
             cli: oxi.exe
-            native: true
             cdylib: oxicrypt_ffi.dll
             staticlib: oxicrypt_ffi.lib
+            load: host
+          - name: android-x86_64
+            runner: ubuntu-latest
+            format: android
+            target: x86_64-linux-android
+            abi: x86_64
+            cli: ''
+            cdylib: liboxicrypt_ffi.so
+            staticlib: liboxicrypt_ffi.a
+            load: emulator
+          - name: android-aarch64
+            runner: ubuntu-latest
+            format: android
+            target: aarch64-linux-android
+            abi: arm64-v8a
+            cli: ''
+            cdylib: liboxicrypt_ffi.so
+            staticlib: liboxicrypt_ffi.a
+            load: none
 
-    steps:
-      - uses: actions/checkout@v4
+    steps: &build-steps
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
 
       - name: Install pinned toolchain and target
         shell: bash
@@ -202,7 +371,7 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup target add ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -217,254 +386,437 @@ jobs:
           cargo install cargo-zigbuild --locked
           zig version || python3 -m ziglang version
 
-      # Two separate build invocations would be wrong: `crate-type =
-      # ["cdylib", "staticlib"]` means one `cargo build` produces both, from
-      # one compilation. Building twice risks shipping a .so and a .a that
-      # were not made from the same object code.
-      - name: Build (glibc floor pinned)
-        if: matrix.zig_target != ''
-        run: cargo zigbuild -p oxicrypt-ffi --release --target ${{ matrix.zig_target }}
+      - name: Locate the NDK
+        if: matrix.format == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CLANG="$BIN/${{ matrix.target }}24-clang"
+          if [ -z "$NDK" ] || [ ! -x "$CLANG" ]; then
+            echo "::error::no Android NDK clang at $CLANG"
+            exit 1
+          fi
+          grep Pkg.Revision "$NDK/source.properties"
+          echo "NDK_BIN=$BIN" >> "$GITHUB_ENV"
+          echo "NDK_CLANG=$CLANG" >> "$GITHUB_ENV"
 
-      - name: Build
-        if: matrix.zig_target == ''
-        run: cargo build -p oxicrypt-ffi --release --target ${{ matrix.target }}
-
-      # The CLI, on the same toolchain path as the library beside it. The glibc
-      # floor matters here for the same reason: a binary built against the
-      # runner's glibc refuses to start on an older system, and `oxi` is the
-      # artifact most likely to be dropped onto an arbitrary machine.
-      - name: Build the CLI (glibc floor pinned)
-        if: matrix.zig_target != ''
-        run: cargo zigbuild -p oxicrypt-cli --release --target ${{ matrix.zig_target }}
-
-      - name: Build the CLI
-        if: matrix.zig_target == ''
-        run: cargo build -p oxicrypt-cli --release --target ${{ matrix.target }}
-
+      # Built for the HOST, which runs it.
       - name: Build the signing tool
-        # Built for the HOST, not the target: it has to run here. On the
-        # cross-compiled Linux legs a target-built signer would not execute.
-        run: cargo build -p oxicrypt-integrity-sign --release
-
-      # ORDER IS LOAD-BEARING. Signing rewrites the MAC slot inside the binary,
-      # so it mutates the file. A checksum taken before this step describes
-      # bytes nobody will ever receive.
-      # Only `--sign` prints the MAC ("signed <path> -> <hex>"); `--verify`
-      # prints "verify ok: <path>" and no hex. So the MAC recorded in the
-      # provenance file has to be captured HERE. Deriving it from `--verify`
-      # output later would silently record nothing.
-      - name: Sign the integrity slot
         shell: bash
         run: |
           set -euo pipefail
-          OUT="target/${{ matrix.target }}/release"
-          SIGNER="target/release/oxicrypt-integrity-sign"
-          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
-          "$SIGNER" --sign \
-            --cdylib-target  "$OUT/${{ matrix.cdylib }}" | tee /tmp/sign-output.txt
-          # Positive control: one loadable image in, one MAC line out. A
-          # silently skipped target would leave a signed-looking artifact whose
-          # slot was never written, and it fails in the consumer's hands, not
-          # here. The static archive is deliberately absent: an archive has no
-          # loadable image, so the consumer signs the binary they link it into.
-          n=$(grep -c '^signed ' /tmp/sign-output.txt || true)
-          if [ "$n" -ne 1 ]; then
-            echo "::error::expected 1 signed line, got $n — the shared library was not signed"
-            exit 1
+          cargo build -p oxicrypt-integrity-sign --release
+          SIGNER="$PWD/target/release/oxicrypt-integrity-sign"
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          echo "SIGNER=$SIGNER" >> "$GITHUB_ENV"
+
+      - name: Fetch the run's test key pair
+        if: env.KEY_SOURCE == 'test'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: integrity-test-key
+          path: ${{ runner.temp }}/integrity-key
+
+      # THE SEAM, public half. Writes OXICRYPT_INTEGRITY_VERIFY_KEY (what
+      # every build below embeds) and INTEGRITY_KEY_FINGERPRINT (what every
+      # signed artifact must report). Nothing here is secret.
+      - name: Verifying key
+        shell: bash
+        run: bash scripts/release-signing-key.sh public "$KEY_SOURCE" "$RUNNER_TEMP/integrity-key" "$SIGNER"
+
+      # One invocation per leg: `crate-type = ["cdylib", "staticlib"]` means
+      # one `cargo build` produces both from one compilation, so the .so and
+      # .a cannot come from different object code. The CLI is built in the
+      # same invocation, with the same flags.
+      - name: Build, with the format's link settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          T='${{ matrix.target }}'
+          case '${{ matrix.format }}' in
+            elf)
+              cargo zigbuild --release --target '${{ matrix.zig_target }}' -p oxicrypt-ffi -p oxicrypt-cli
+              ;;
+            macho)
+              # Chained fixups, the zero-fill segment and unmerged globals, at
+              # the deployment target each architecture's chained fixups
+              # need; full debug information in a packed dSYM, from which the
+              # signer reads the module statics.
+              MACOSX_DEPLOYMENT_TARGET='${{ matrix.minos }}' RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" \
+                CARGO_PROFILE_RELEASE_DEBUG=full CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed \
+                cargo build --release --target "$T" -p oxicrypt-ffi -p oxicrypt-cli
+              ;;
+            pe)
+              # `.bss` in a section of its own, and a program database that
+              # names the module statics.
+              RUSTFLAGS="$PE_SIGNED_RUSTFLAGS" CARGO_PROFILE_RELEASE_DEBUG=full \
+                cargo build --release --target "$T" -p oxicrypt-ffi -p oxicrypt-cli
+              ;;
+            android)
+              UPPER="$(echo "$T" | tr 'a-z-' 'A-Z_')"
+              LOWER="$(echo "$T" | tr '-' '_')"
+              # Linked for 16 KiB pages, which also load on 4 KiB devices.
+              env "CC_${LOWER}=$NDK_CLANG" "AR_${LOWER}=$NDK_BIN/llvm-ar" \
+                "CARGO_TARGET_${UPPER}_LINKER=$NDK_CLANG" \
+                "CARGO_TARGET_${UPPER}_RUSTFLAGS=-C link-arg=-Wl,-z,max-page-size=16384" \
+                cargo build --release --target "$T" -p oxicrypt-ffi
+              ;;
+          esac
+          OUT="$PWD/target/$T/release"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          # The artifacts as linked, kept unsigned: the control for the load
+          # checks below.
+          mkdir -p unsigned
+          cp "$OUT/${{ matrix.cdylib }}" unsigned/
+          if [ -n '${{ matrix.cli }}' ]; then cp "$OUT/${{ matrix.cli }}" unsigned/; fi
+
+      - name: Assert the link — chained fixups and floor (Mach-O), 16 KiB pages (Android)
+        if: matrix.format == 'macho' || matrix.format == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ matrix.format }}' = macho ]; then
+            for A in '${{ matrix.cdylib }}' '${{ matrix.cli }}'; do
+              otool -l "$OUT/$A" > "$A.otool"
+              python3 .github/probes/macho-chained.py assert "$A.otool" --minos '${{ matrix.minos }}'
+            done
+          else
+            bash .github/probes/elf-page-align.sh "$OUT/${{ matrix.cdylib }}" 16384 "$NDK_BIN/llvm-readelf"
           fi
 
-      # Signed separately from the library, into its own output file, because
-      # each artifact ships a provenance record naming ITS MAC. One combined
-      # invocation would put both MACs in both files, and a provenance record
-      # listing a checksum for something not in the tarball is worse than one
-      # listing none.
-      - name: Sign the CLI's integrity slot
+      # A release has no Authenticode certificate and signs PE artifacts with
+      # the integrity signer alone. A dry run creates one, so the full order
+      # (signtool, integrity sign against the image as linked, signtool) runs.
+      - name: Create a test Authenticode certificate (dry run)
+        if: runner.os == 'Windows' && env.PUBLISH != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'x64\signtool.exe') } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $sdk) { throw 'no signtool.exe under the Windows 10 SDK' }
+          "SIGNTOOL=$(Join-Path $sdk.FullName 'x64\signtool.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=oxicrypt release dry run' -CertStoreLocation Cert:\CurrentUser\My
+          "AUTHENTICODE_THUMBPRINT=$($c.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # THE SEAM, private half, and the only step that holds the private key.
+      # Its path lives in a shell variable, never in GITHUB_ENV, and the trap
+      # erases it on every exit from this step. The secret is mapped into this
+      # step alone, and only when the release key is asked for.
+      # Signing rewrites the artifact, so any checksum taken before this step
+      # describes bytes nobody receives. Each artifact gets its own record,
+      # because each tarball's provenance file names only its own signature.
+      # release-sign.sh also prints the signature and the key fingerprint as
+      # `provenance:` lines in the log; the provenance file is built from the
+      # signer's own lines in sign-lib.txt and sign-cli.txt.
+      - name: Sign, in the format's order, and verify offline
         shell: bash
+        env:
+          OXICRYPT_RELEASE_SIGNING_KEY: ${{ needs.guard.outputs.key_source == 'ci-secret' && secrets.OXICRYPT_RELEASE_SIGNING_KEY || '' }}
         run: |
           set -euo pipefail
-          OUT="target/${{ matrix.target }}/release"
-          SIGNER="target/release/oxicrypt-integrity-sign"
-          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
-          "$SIGNER" --sign "$OUT/${{ matrix.cli }}" | tee /tmp/sign-cli.txt
-          n=$(grep -c '^signed ' /tmp/sign-cli.txt || true)
-          if [ "$n" -ne 1 ]; then
-            echo "::error::expected 1 signed line for the CLI, got $n"
-            exit 1
+          KEY_DIR="$RUNNER_TEMP/integrity-key"
+          trap 'bash scripts/release-signing-key.sh --erase "$KEY_DIR"' EXIT
+          KEY="$(bash scripts/release-signing-key.sh private "$KEY_SOURCE" "$KEY_DIR")"
+          unset OXICRYPT_RELEASE_SIGNING_KEY
+          if [ '${{ matrix.format }}' = android ]; then
+            export OBJCOPY="$NDK_BIN/llvm-objcopy" STRIP="$NDK_BIN/llvm-strip"
+          fi
+          INTEGRITY_SIGNING_KEY="$KEY" bash scripts/release-sign.sh "$SIGNER" "$OUT/${{ matrix.cdylib }}" sign-lib.txt
+          if [ -n '${{ matrix.cli }}' ]; then
+            INTEGRITY_SIGNING_KEY="$KEY" bash scripts/release-sign.sh "$SIGNER" "$OUT/${{ matrix.cli }}" sign-cli.txt
           fi
 
-      # The strongest check available, and it is only available here: RUN the
-      # artifact that will ship. An offline `--verify` proves the file agrees
-      # with its own slot; running it proves the loaded image does, which is
-      # the property the module actually tests at startup and the one a
-      # consumer depends on. Skipped on the cross-compiled leg, where the
-      # runner cannot execute the target — stated rather than silently passed,
-      # so the gap is visible in the log.
-      - name: Prove the signed CLI starts
+      # Again, whatever the step above did, before any action runs.
+      - name: Erase the signing key
+        if: always()
         shell: bash
-        run: |
-          set -euo pipefail
-          OUT="target/${{ matrix.target }}/release"
-          if [ "${{ matrix.native }}" != "true" ]; then
-            echo "NOT RUN on ${{ matrix.name }}: cross-compiled, this runner cannot execute it."
-            echo "Startup for this target is exercised by the integrity-runtime job in"
-            echo "integrity-image-probe.yml, whose matrix includes ${{ matrix.name }}."
-            exit 0
-          fi
-          "$OUT/${{ matrix.cli }}" --integrity
-          "$OUT/${{ matrix.cli }}" hash sha256 LICENSE-APACHE
-          echo "ok: the signed CLI reaches operational on ${{ matrix.name }}"
+        run: bash scripts/release-signing-key.sh --erase "$RUNNER_TEMP/integrity-key"
 
-      - name: Stage the artifact set
+      - name: Load the signed artifacts — the library through oxi_init, the CLI by running it
+        if: matrix.load == 'host'
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag || github.ref_name }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            rustc -O -o harness.exe .github/probes/pe-ffi-operational.rs
+            bash scripts/release-load-check.sh library ./harness.exe \
+              "$(cygpath -w "$PWD/unsigned/${{ matrix.cdylib }}")" "$(cygpath -w "$OUT/${{ matrix.cdylib }}")" "$SIGNER"
+          else
+            cc -O1 -Wall -Wextra -o harness .github/probes/ffi-operational.c -ldl
+            bash scripts/release-load-check.sh library ./harness \
+              "$PWD/unsigned/${{ matrix.cdylib }}" "$OUT/${{ matrix.cdylib }}" "$SIGNER"
+          fi
+          bash scripts/release-load-check.sh cli "unsigned/${{ matrix.cli }}" "$OUT/${{ matrix.cli }}" "$SIGNER"
+          echo "LOADED=loaded and reached operational on the runner that built it" >> "$GITHUB_ENV"
+
+      - name: Build the Android load harness
+        if: matrix.load == 'emulator'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$NDK_CLANG" -O1 -Wall -Wextra -Wl,-z,max-page-size=16384 -o harness .github/probes/ffi-operational.c -ldl
+          mkdir -p load
+          cp harness load/harness
+          cp "unsigned/${{ matrix.cdylib }}" load/unsigned.so
+          cp "$OUT/${{ matrix.cdylib }}" load/signed.so
+
+      - name: Enable KVM
+        if: matrix.load == 'emulator'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Load the signed library on the emulator through oxi_init
+        if: matrix.load == 'emulator'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: ${{ matrix.abi }}
+          target: google_apis
+          disable-animations: true
+          # ONE command: the action runs each line of `script` in its own
+          # shell.
+          script: bash scripts/release-load-check.sh adb-library load/harness load/unsigned.so load/signed.so "$SIGNER"
+
+      - name: Record the load check
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.load }}' in
+            host) ;;
+            emulator) echo "LOADED=loaded and reached operational on an Android ${{ matrix.abi }} emulator" >> "$GITHUB_ENV" ;;
+            none)
+              echo "::warning::NOT LOADED: no runner here can execute ${{ matrix.name }}; verified offline only."
+              echo "LOADED=NOT loaded: no runner available to this workflow executes this target; verified offline only" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Stage the library
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
           # `oxicrypt-ffi-`, not a bare `oxicrypt-`. This archive is one
           # DELIVERY FORM of the module — the C library — not the module in
           # general: a Rust consumer takes the crates from the registry and
-          # never downloads this. The bare name read as "everything", and read
-          # that way most misleadingly beside `oxicrypt-cli-`.
-          DIR="oxicrypt-ffi-${TAG}-${{ matrix.name }}"
+          # never downloads this.
+          DIR="oxicrypt-ffi-${LABEL}-${{ matrix.name }}"
           mkdir -p "$DIR"
-          cp "target/${{ matrix.target }}/release/${{ matrix.cdylib }}"    "$DIR/"
-          cp "target/${{ matrix.target }}/release/${{ matrix.staticlib }}" "$DIR/"
+          cp "$OUT/${{ matrix.cdylib }}"    "$DIR/"
+          cp "$OUT/${{ matrix.staticlib }}" "$DIR/"
           cp crates/oxicrypt-ffi/include/oxicrypt.h "$DIR/"
           cp LICENSE-APACHE LICENSE-MIT "$DIR/"
 
-          # The provenance record travels WITH the artifact. A consumer holding
-          # only the tarball can still answer "what produced this, and what
-          # should its integrity MAC be?" without access to this run's logs,
-          # which expire.
+          # The provenance record travels WITH the artifact, so a consumer
+          # holding only the tarball can answer "what produced this, and what
+          # should its integrity signature be?" after this run's logs expire.
           {
-            echo "oxicrypt ${TAG} — ${{ matrix.name }}"
+            echo "oxicrypt ${LABEL} — ${{ matrix.name }}"
             echo ""
             echo "target triple : ${{ matrix.target }}"
             echo "glibc floor   : ${{ matrix.zig_target && 'pinned 2.17 via cargo-zigbuild' || 'n/a' }}"
             echo "rustc         : $(rustc --version)"
-            # `git rev-parse HEAD`, NOT `github.sha`. On a workflow_dispatch,
-            # github.sha is the SHA of the ref the run was launched from --
-            # normally the default branch -- while the checkout above uses
-            # `inputs.tag`. The two coincide for a `release: published` run and
-            # diverge for every manual re-dispatch, so provenance built by the
-            # documented recovery path named a commit that was not the release.
-            # Reading the working tree cannot disagree with what was compiled.
             echo "commit        : $(git rev-parse HEAD)"
-            echo "built by      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "built by      : $RUN_URL"
+            echo "key source    : $KEY_SOURCE"
+            echo "load check    : $LOADED"
             echo ""
-            echo "Integrity MACs (HMAC-SHA-256 over the loader-invariant extent),"
-            echo "as emitted by oxicrypt-integrity-sign at signing time:"
-            sed 's|^signed target/[^ ]*/release/|  |' /tmp/sign-output.txt
+            if [ "$KEY_SOURCE" = "ci-secret" ]; then
+              echo "Signed with the project's release key, whose fingerprint is"
+              echo "$INTEGRITY_KEY_FINGERPRINT."
+            else
+              echo "NOT RELEASE-SIGNED. Signed with a test key generated for this"
+              echo "build run. It shows the file is unchanged since that run signed"
+              echo "it; it does not show who built it."
+            fi
             echo ""
+            echo "Integrity signature (ML-DSA-87 over the slot and the typed"
+            echo "extent, named by its SHA-256 digest) and the fingerprint of the"
+            echo "embedded verify key, as emitted by oxicrypt-integrity-sign at"
+            echo "signing time:"
+            grep -E '^(signed |  verify key: )' sign-lib.txt | sed -E 's#^signed .*[/\\]#  #'
             echo ""
             echo "The static archive ships unsigned. An archive has no loadable"
-            echo "image, so sign the binary you link it into:"
-            echo "  oxicrypt-integrity-sign --sign <your-binary>"
+            echo "image, so sign the binary you link it into, with a key pair of"
+            echo "your own whose verify key the binary was built with:"
+            echo "  oxicrypt-integrity-sign --keygen <dir outside your source tree>"
+            echo "  OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub <your build>"
+            echo "  oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key <your-binary>"
+            echo "On Apple platforms, renew its code signature after that:"
+            echo "  codesign --force --sign - <your-binary>"
             echo ""
             echo "Verify locally with:"
             echo "  cargo install oxicrypt-integrity-sign"
             echo "  oxicrypt-integrity-sign --verify <file>"
           } > "$DIR/BUILD-PROVENANCE.txt"
 
-          # Verify the STAGED copies, not the build-directory originals. The
-          # copies are what ship, and this is the last point at which a
-          # truncated or mangled `cp` is still catchable here rather than by
-          # the consumer's power-up self-test.
-          SIGNER="target/release/oxicrypt-integrity-sign"
-          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
-          "$SIGNER" --verify \
-            --cdylib-target  "$DIR/${{ matrix.cdylib }}" | tee /tmp/verify-output.txt
-          v=$(grep -c '^verify ok: ' /tmp/verify-output.txt || true)
-          if [ "$v" -ne 1 ]; then
-            echo "::error::expected 1 verify-ok line on the staged copy, got $v"
-            exit 1
-          fi
+          # Verify the STAGED copy, the one that ships, so a truncated `cp` is
+          # caught here rather than by the consumer's power-up self-test.
+          "$SIGNER" --verify "$DIR/${{ matrix.cdylib }}" | tee verify-lib.txt
+          grep -qxF "verify ok: $DIR/${{ matrix.cdylib }} (verify key $INTEGRITY_KEY_FINGERPRINT)" verify-lib.txt \
+            || { echo "::error::the staged library does not verify against $INTEGRITY_KEY_FINGERPRINT"; exit 1; }
 
           tar -czf "${DIR}.tar.gz" "$DIR"
           sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256" 2>/dev/null \
             || shasum -a 256 "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
           cat "${DIR}.tar.gz.sha256"
+          mkdir -p dist
+          mv "${DIR}.tar.gz" "${DIR}.tar.gz.sha256" dist/
 
       - name: Stage the CLI
+        if: matrix.cli != ''
         shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag || github.ref_name }}"
-          # `oxicrypt-cli-`, matching the crate name, not `oxi-` after the
-          # binary. The C library set is `oxicrypt-ffi-<tag>-<platform>.tar.gz`,
-          # two names differing by five characters mid-string are a trap on a
-          # release page listing ten of them. The binary inside is still `oxi`.
-          DIR="oxicrypt-cli-${TAG}-${{ matrix.name }}"
+          # `oxicrypt-cli-`, matching the crate name. The binary inside is
+          # still `oxi`.
+          DIR="oxicrypt-cli-${LABEL}-${{ matrix.name }}"
           mkdir -p "$DIR"
-          cp "target/${{ matrix.target }}/release/${{ matrix.cli }}" "$DIR/"
+          cp "$OUT/${{ matrix.cli }}" "$DIR/"
           cp LICENSE-APACHE LICENSE-MIT "$DIR/"
 
           {
-            echo "oxi ${TAG} — ${{ matrix.name }}"
+            echo "oxi ${LABEL} — ${{ matrix.name }}"
             echo ""
             echo "target triple : ${{ matrix.target }}"
             echo "glibc floor   : ${{ matrix.zig_target && 'pinned 2.17 via cargo-zigbuild' || 'n/a' }}"
             echo "rustc         : $(rustc --version)"
             echo "commit        : $(git rev-parse HEAD)"
-            echo "built by      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "built by      : $RUN_URL"
+            echo "key source    : $KEY_SOURCE"
+            echo "load check    : $LOADED"
             echo ""
             echo "This binary is ALREADY SIGNED: its integrity slot was written"
-            echo "by the build above, so it needs no signing step from you. A"
-            echo "binary obtained through 'cargo install' does, because cargo has"
-            echo "no step after linking in which to write the slot:"
-            echo "  cargo install oxicrypt-integrity-sign"
-            echo "  oxicrypt-integrity-sign --sign <the binary>"
-            echo ""
-            if [ "${{ matrix.native }}" = "true" ]; then
-              echo "Startup was OBSERVED: this build was executed on the runner"
-              echo "that produced it and reported a passing integrity test."
+            echo "by the build above, so it needs no signing step from you."
+            if [ "$KEY_SOURCE" = "ci-secret" ]; then
+              echo "It is signed with the project's release key, whose fingerprint"
+              echo "is $INTEGRITY_KEY_FINGERPRINT."
             else
-              echo "Startup on this target is covered by the integrity-runtime"
-              echo "job, which runs the module natively on this architecture at"
-              echo "every push. This particular artifact is cross-compiled, so"
-              echo "the runner that built it could not execute it; its slot was"
-              echo "verified offline against the file."
+              echo "It is NOT RELEASE-SIGNED: the key was a test key generated for"
+              echo "this build run."
             fi
             echo ""
-            echo "Integrity MAC (HMAC-SHA-256 over the loader-invariant extent),"
-            echo "as emitted by oxicrypt-integrity-sign at signing time:"
-            sed 's|^signed target/[^ ]*/release/|  |' /tmp/sign-cli.txt
+            echo "A binary obtained through 'cargo install' needs signing, because"
+            echo "cargo has no step after linking in which to write the slot, and"
+            echo "it must be built with the verify key of a pair you generate:"
+            echo "  cargo install oxicrypt-integrity-sign"
+            echo "  oxicrypt-integrity-sign --keygen <dir outside your source tree>"
+            echo "  OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub cargo install oxicrypt-cli"
+            echo "  oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key <the binary>"
+            echo ""
+            echo "Integrity signature (ML-DSA-87 over the slot and the typed"
+            echo "extent, named by its SHA-256 digest) and the fingerprint of the"
+            echo "embedded verify key, as emitted by oxicrypt-integrity-sign at"
+            echo "signing time:"
+            grep -E '^(signed |  verify key: )' sign-cli.txt | sed -E 's#^signed .*[/\\]#  #'
             echo ""
             echo "Check it yourself, without trusting this file:"
             echo "  oxi --integrity"
-            echo ""
-            echo "The MAC attests integrity, not origin: the key is a published"
-            echo "constant. For origin, check this tarball against the SHA-256"
-            echo "published beside it in the release."
           } > "$DIR/BUILD-PROVENANCE.txt"
 
-          # Verify the STAGED copy — the one that ships — not the build-directory
-          # original, so a truncated `cp` is caught here rather than by the
-          # consumer's power-up self-test.
-          SIGNER="target/release/oxicrypt-integrity-sign"
-          [ -x "$SIGNER" ] || SIGNER="target/release/oxicrypt-integrity-sign.exe"
-          "$SIGNER" --verify "$DIR/${{ matrix.cli }}" | tee /tmp/verify-cli.txt
-          v=$(grep -c '^verify ok: ' /tmp/verify-cli.txt || true)
-          if [ "$v" -ne 1 ]; then
-            echo "::error::expected 1 verify-ok line on the staged CLI, got $v"
-            exit 1
-          fi
+          "$SIGNER" --verify "$DIR/${{ matrix.cli }}" | tee verify-cli.txt
+          grep -qxF "verify ok: $DIR/${{ matrix.cli }} (verify key $INTEGRITY_KEY_FINGERPRINT)" verify-cli.txt \
+            || { echo "::error::the staged CLI does not verify against $INTEGRITY_KEY_FINGERPRINT"; exit 1; }
 
           tar -czf "${DIR}.tar.gz" "$DIR"
           sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256" 2>/dev/null \
             || shasum -a 256 "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256"
           cat "${DIR}.tar.gz.sha256"
+          mkdir -p dist
+          mv "${DIR}.tar.gz" "${DIR}.tar.gz.sha256" dist/
 
-      - name: Attach to the release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            dist/
+            sign-lib.txt
+            sign-cli.txt
+          if-no-files-found: error
+
+  build-release:
+    name: ${{ matrix.name }} (release)
+    needs: [guard, header]
+    if: needs.guard.outputs.publish == 'true'
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    env: *build-env
+    strategy: *build-strategy
+    steps: *build-steps
+
+  # Every artifact of a run must name one verify key: the release key on a
+  # release, the run's test key on a dry run. Each job already checks its own
+  # artifacts against the fingerprint its key step reported; this checks the
+  # jobs against each other.
+  one-key:
+    name: one verify key across every artifact
+    needs: [build, build-release]
+    # Exactly one of the two build jobs runs; the other is skipped.
+    if: >-
+      always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+      && contains(needs.*.result, 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: records
+
+      - name: Every signed artifact names the same verify key
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat records/*/sign-*.txt > all-signs.txt
+          grep '^  verify key: sha256:' all-signs.txt | sort | uniq -c | tee keys.txt
+          SIGNED="$(grep -cE '^signed .* -> signature sha256:[0-9a-f]{64}$' all-signs.txt)"
+          KEYS="$(wc -l < keys.txt)"
+          echo "signed artifacts: $SIGNED; distinct verify keys: $KEYS"
+          # 7 libraries and 5 CLIs.
+          if [ "$SIGNED" -ne 12 ] || [ "$KEYS" -ne 1 ]; then
+            echo "::error::expected 12 signed artifacts under one verify key, got $SIGNED under $KEYS"
+            exit 1
+          fi
+
+  # The only job that writes to the repository, and it holds no key: it
+  # attaches what the build jobs uploaded.
+  publish:
+    name: attach to the release
+    needs: [guard, build-release, one-key]
+    if: needs.guard.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: records
+
+      - name: Attach every tarball and checksum
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag || github.ref_name }}"
-          DIR="oxicrypt-ffi-${TAG}-${{ matrix.name }}"
-          gh release upload "$TAG" "${DIR}.tar.gz" "${DIR}.tar.gz.sha256" --clobber
-          echo "uploaded ${DIR}.tar.gz to $TAG"
-
-          CLI="oxicrypt-cli-${TAG}-${{ matrix.name }}"
-          gh release upload "$TAG" "${CLI}.tar.gz" "${CLI}.tar.gz.sha256" --clobber
-          echo "uploaded ${CLI}.tar.gz to $TAG"
+          n=0
+          while IFS= read -r f; do
+            gh release upload "$TAG" "$f" --clobber
+            echo "uploaded $(basename "$f") to $TAG"
+            n=$((n + 1))
+          done < <(find records -path '*/dist/*' -type f | sort)
+          # 7 library and 5 CLI tarballs, each with its checksum.
+          [ "$n" -eq 24 ] || { echo "::error::attached $n files, expected 24"; exit 1; }

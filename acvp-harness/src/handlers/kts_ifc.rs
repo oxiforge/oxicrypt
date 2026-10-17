@@ -63,7 +63,7 @@
 //! mandate the server include — non-CRT is the load-bearing path
 //! for the seeded-keypair shape.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -195,7 +195,7 @@ fn handle_initiator_2048(tc: &JsonValue, l_bytes: usize) -> Result<JsonValue, Di
     let e = decode_e(tc, "serverE")?;
     let (z, seed) = sample_z_and_seed(l_bytes)?;
     let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(&n, e, b"", &z, &seed)
-        .ok_or(DispatchError::Crypto("KTS-IFC: OAEP encrypt 2048 failed"))?;
+        .map_err(primitive_err("KTS-IFC: OAEP encrypt 2048 failed"))?;
     Ok(initiator_response(tc_id, &ct, &z))
 }
 
@@ -206,7 +206,7 @@ fn handle_initiator_3072(tc: &JsonValue, l_bytes: usize) -> Result<JsonValue, Di
     let e = decode_e(tc, "serverE")?;
     let (z, seed) = sample_z_and_seed(l_bytes)?;
     let ct = oxicrypt_rsa::rsa3072::oaep_encrypt_internal(&n, e, b"", &z, &seed)
-        .ok_or(DispatchError::Crypto("KTS-IFC: OAEP encrypt 3072 failed"))?;
+        .map_err(primitive_err("KTS-IFC: OAEP encrypt 3072 failed"))?;
     Ok(initiator_response(tc_id, &ct, &z))
 }
 
@@ -217,7 +217,7 @@ fn handle_initiator_4096(tc: &JsonValue, l_bytes: usize) -> Result<JsonValue, Di
     let e = decode_e(tc, "serverE")?;
     let (z, seed) = sample_z_and_seed(l_bytes)?;
     let ct = oxicrypt_rsa::rsa4096::oaep_encrypt_internal(&n, e, b"", &z, &seed)
-        .ok_or(DispatchError::Crypto("KTS-IFC: OAEP encrypt 4096 failed"))?;
+        .map_err(primitive_err("KTS-IFC: OAEP encrypt 4096 failed"))?;
     Ok(initiator_response(tc_id, &ct, &z))
 }
 
@@ -235,7 +235,7 @@ fn handle_responder_2048(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
     let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
     let z_len =
         oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(&n, &d, b"", &ct, &mut out)
-            .ok_or(DispatchError::Crypto("KTS-IFC: OAEP decrypt 2048 failed"))?;
+            .map_err(primitive_err("KTS-IFC: OAEP decrypt 2048 failed"))?;
     Ok(responder_response(tc_id, &out[..z_len]))
 }
 
@@ -247,7 +247,7 @@ fn handle_responder_3072(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
     let ct: [u8; MB] = decode_fixed::<MB>(tc, "serverC")?;
     let mut out = [0u8; MB];
     let z_len = oxicrypt_rsa::rsa3072::oaep_decrypt_nocrt_internal(&n, &d, b"", &ct, &mut out)
-        .ok_or(DispatchError::Crypto("KTS-IFC: OAEP decrypt 3072 failed"))?;
+        .map_err(primitive_err("KTS-IFC: OAEP decrypt 3072 failed"))?;
     Ok(responder_response(tc_id, &out[..z_len]))
 }
 
@@ -259,7 +259,7 @@ fn handle_responder_4096(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
     let ct: [u8; MB] = decode_fixed::<MB>(tc, "serverC")?;
     let mut out = [0u8; MB];
     let z_len = oxicrypt_rsa::rsa4096::oaep_decrypt_nocrt_internal(&n, &d, b"", &ct, &mut out)
-        .ok_or(DispatchError::Crypto("KTS-IFC: OAEP decrypt 4096 failed"))?;
+        .map_err(primitive_err("KTS-IFC: OAEP decrypt 4096 failed"))?;
     Ok(responder_response(tc_id, &out[..z_len]))
 }
 

@@ -44,17 +44,14 @@
 //!
 //! Because the inner-loop body differs, this module ships its own
 //! group driver and MCT engine rather than reusing
-//! `super::sha3::handle_hash_group`. The sha3 driver is intentionally
-//! left untouched (per `feedback_refinements_only_as_needed`); a
-//! generalization across hash families is deferred until a third
-//! family with a different MCT shape lands.
+//! `super::sha3::handle_hash_group`. The sha3 driver has its own copy of
+//! this loop.
 //!
 //! # Streaming hasher API
 //!
 //! oxicrypt-sha's SHA-1/SHA-2 streaming hashers expose
-//! `new() -> Result<Self, Error>` (vs sha3's infallible
-//! `new_internal()`), so the LDT helpers handle the `Result` via `?`
-//! and map the error into `DispatchError::Crypto`.
+//! `new() -> Result<Self, Error>`, so the LDT helpers handle the
+//! `Result` via `?` and map the error into `DispatchError::Crypto`.
 
 use crate::dispatch::{AlgorithmHandler, DispatchError};
 use crate::hex;
@@ -524,7 +521,7 @@ fn ldt_stream_sha1(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchE
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }
 
 fn ldt_stream_sha224(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchError> {
@@ -544,7 +541,7 @@ fn ldt_stream_sha224(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, Dispatc
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }
 
 fn ldt_stream_sha256(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchError> {
@@ -564,7 +561,7 @@ fn ldt_stream_sha256(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, Dispatc
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }
 
 fn ldt_stream_sha384(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchError> {
@@ -584,7 +581,7 @@ fn ldt_stream_sha384(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, Dispatc
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }
 
 fn ldt_stream_sha512(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchError> {
@@ -604,7 +601,7 @@ fn ldt_stream_sha512(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, Dispatc
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }
 
 fn ldt_stream_sha512_224(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchError> {
@@ -625,7 +622,7 @@ fn ldt_stream_sha512_224(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, Dis
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }
 
 fn ldt_stream_sha512_256(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, DispatchError> {
@@ -646,5 +643,5 @@ fn ldt_stream_sha512_256(pattern: &[u8], full_bytes: u64) -> Result<Vec<u8>, Dis
             .map_err(|_| DispatchError::Crypto("LDT: remaining overflows usize"))?;
         hasher.update(&pattern[..tail]);
     }
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }

@@ -10,6 +10,21 @@
 //!   - sigVer  tgId=27, tcId=105: (public_key, message, signature) → fail
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 use oxicrypt_lms::{PUBLIC_KEY_LEN, SIGNATURE_LEN, verify_internal};
 
 // ── Vector helpers ──────────────────────────────────────────────────────────
@@ -32,12 +47,13 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
 /// Verifies that a valid NIST ACVP signature is accepted.
 #[test]
 fn nist_sigver_pass() {
+    start_module();
     let pk = load_arr::<PUBLIC_KEY_LEN>("lms_sha256_h10_nist_sigver_pk.bin");
     let message = load("lms_sha256_h10_nist_sigver_message.bin");
     let sig = load_arr::<SIGNATURE_LEN>("lms_sha256_h10_nist_sigver_signature.bin");
 
     assert!(
-        verify_internal(&pk, &message, &sig),
+        verify_internal(&pk, &message, &sig).unwrap(),
         "LMS sigVer: verify_internal rejected valid NIST ACVP signature (tgId=27, tcId=107)"
     );
 }
@@ -50,12 +66,13 @@ fn nist_sigver_pass() {
 /// path of the verification logic.
 #[test]
 fn nist_sigver_fail() {
+    start_module();
     let pk = load_arr::<PUBLIC_KEY_LEN>("lms_sha256_h10_nist_sigver_fail_pk.bin");
     let message = load("lms_sha256_h10_nist_sigver_fail_message.bin");
     let sig = load_arr::<SIGNATURE_LEN>("lms_sha256_h10_nist_sigver_fail_signature.bin");
 
     assert!(
-        !verify_internal(&pk, &message, &sig),
+        !verify_internal(&pk, &message, &sig).unwrap(),
         "LMS sigVer: verify_internal accepted invalid NIST ACVP signature (tgId=27, tcId=105)"
     );
 }

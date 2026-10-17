@@ -17,6 +17,18 @@ workspace = true
 
 [dependencies]
 
+# The OS thread id that records which thread owns the `SelfTest` phase. Only
+# the operating systems the id is implemented for link it, so a build for a
+# target without an operating system keeps this crate's dependency graph empty.
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios", windows))'.dependencies]
+oxicrypt-imageread = { workspace = true }
+
+[dev-dependencies]
+# The thread tests call a real guarded `*_internal` function and a real
+# approved service. A dev-dependency cycle is sound for integration tests:
+# they link the one copy of this crate that `oxicrypt-sha` links.
+oxicrypt-sha = { path = "../oxicrypt-sha" }
+
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
 # per-crate table: cargo strips [workspace] when it packages a member, so a

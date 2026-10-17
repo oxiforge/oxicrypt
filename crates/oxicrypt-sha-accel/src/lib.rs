@@ -1,14 +1,16 @@
 //! CPU-intrinsic SHA-256 acceleration (x86_64 SHA-NI) for `oxicrypt-sha`.
 //!
 //! This is one of the small readily auditable in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
-//! `oxicrypt-aes-accel`, `oxicrypt-keccak-accel` and `oxicrypt-timer`). It
-//! implements the sanctioned **CPU-intrinsic acceleration** category:
-//! feature-gated, default-off, runtime-detected, with equivalence to the
-//! portable implementation proven by KAT + cross-path oracle. All other
-//! in-boundary crates remain `#![forbid(unsafe_code)]`; the authoritative
-//! unsafe-code accounting lives in
-//! `docs/security-policy/security-policy.md` §9.2 "Isolation of `unsafe`".
+//! workspace that use `unsafe`. It implements the sanctioned
+//! **CPU-intrinsic acceleration** category: feature-gated, default-off,
+//! runtime-detected, with equivalence to the portable implementation
+//! proven by KAT + cross-path oracle.
+//! The workspace's `AGENTS.md` names the in-boundary crates that use
+//! `unsafe`, and `tools/doc-guard` checks that list against the crates.
+//! Every in-boundary crate outside that list is
+//! `#![forbid(unsafe_code)]`. The module's Security Policy, withheld
+//! from this repository (see `docs/security-policy/README.md`), holds
+//! the authoritative accounting.
 //!
 //! # Why a separate crate?
 //!
@@ -40,14 +42,13 @@
 //! # Scope
 //!
 //! SHA-256 compression only. SHA-1 acceleration is explicitly out of
-//! scope (legacy-use algorithm). AArch64 SHA2 intrinsics are a
-//! documented follow-up under the same sanctioned category.
+//! scope (legacy-use algorithm). There is no AArch64 SHA2 intrinsics
+//! path.
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU intrinsics and CPUID.
-// The other in-boundary crates that use unsafe are oxicrypt-zeroize,
-// oxicrypt-aes-accel, oxicrypt-keccak-accel and oxicrypt-timer; every
-// other in-boundary crate forbids it.
+// The workspace's `AGENTS.md` names the other in-boundary crates that
+// use unsafe; every other in-boundary crate forbids it.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Returns `true` if the running CPU supports the SHA-NI accelerated
@@ -82,6 +83,7 @@ pub fn sha256_compress_available() -> bool {
 /// **untouched** and the caller must run its portable compression
 /// instead. This fail-portable contract makes a silently wrong digest
 /// unreachable: there is no code path that partially applies the block.
+#[doc(hidden)]
 pub fn sha256_compress(state: &mut [u32; 8], block: &[u8; 64]) -> bool {
     #[cfg(target_arch = "x86_64")]
     {

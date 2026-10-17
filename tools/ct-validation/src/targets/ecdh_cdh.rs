@@ -41,7 +41,7 @@ pub fn run(cfg: &RunConfig) -> VerdictReport {
         d[0] = 0;
         d[31] |= 1;
         let r = compute_shared_secret_p256_internal(&d, &PEER_PK);
-        std::hint::black_box(r);
+        let _ = std::hint::black_box(r);
     });
 
     run_target("ecdh_p256_cdh", &FIXED_D, target, cfg)

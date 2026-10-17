@@ -27,23 +27,39 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oxicrypt_integrity::slot::Range;
-use oxicrypt_integrity_sign::{elf, image, sign_image, write_extent};
+use oxicrypt_integrity::slot::{EntryKind, Range};
+use oxicrypt_integrity_sign::{
+    SigningKey, elf, embed_verify_key, image, sign_image, write_entries,
+};
 
 /// The probe binary cargo built for this test run.
 const PROBE: &str = env!("CARGO_BIN_EXE_integrity-probe");
 
 /// Status indicators, mirroring the probe's exit codes.
 const OPERATIONAL: i32 = 0;
-const MISMATCH: i32 = 3;
+const SIGNATURE_INVALID: i32 = 3;
 const SLOT_INVALID: i32 = 4;
 const CAST_NOT_RUN: i32 = 7;
 const INTEGRITY_UNVERIFIED: i32 = 9;
-/// Status-indicator discriminants, per Security Policy §5.2.
+const NO_VERIFY_KEY: i32 = 10;
+const KEY_MISMATCH: i32 = 11;
+/// Status-indicator discriminants, as `IntegrityStatus` numbers them.
 const STATUS_PASSED: u8 = 1;
 const STATUS_SLOT_INVALID: u8 = 3;
-const STATUS_MISMATCH: u8 = 2;
+const STATUS_SIGNATURE_INVALID: u8 = 2;
 const STATUS_CAST_NOT_RUN: u8 = 5;
+const STATUS_NO_VERIFY_KEY: u8 = 8;
+
+/// The key pair these tests sign with, derived once per test process from a
+/// fixed seed.
+///
+/// Cargo builds the probe without `OXICRYPT_INTEGRITY_VERIFY_KEY`, so each
+/// copy has the test key's public half written into its key record first,
+/// which is what a build with the variable set produces.
+fn test_key() -> &'static SigningKey {
+    static KEY: std::sync::OnceLock<SigningKey> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| SigningKey::from_seed(&[0x42; 32]).expect("derive the test key pair"))
+}
 
 fn scratch(tag: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -57,10 +73,12 @@ fn scratch(tag: &str) -> PathBuf {
     p
 }
 
-/// An unsigned copy of the probe, executable.
+/// An unsigned copy of the probe embedding the test key, executable.
 fn copy_probe(tag: &str) -> PathBuf {
     let dst = scratch(tag);
-    std::fs::copy(PROBE, &dst).expect("copy probe");
+    let mut bytes = read(Path::new(PROBE));
+    embed_verify_key(&mut bytes, test_key().public_key()).expect("embed the test key");
+    write(&dst, &bytes);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -78,10 +96,11 @@ fn write(path: &Path, bytes: &[u8]) {
     std::fs::write(path, bytes).expect("write artifact");
 }
 
-/// Signs an artifact in place, the way the build pipeline would.
+/// Signs an artifact in place with the test key, the way the build
+/// pipeline would.
 fn sign(path: &Path) {
     let mut bytes = read(path);
-    sign_image(&mut bytes).expect("sign");
+    sign_image(&mut bytes, test_key()).expect("sign");
     write(path, &bytes);
 }
 
@@ -125,7 +144,7 @@ fn run(path: &Path, args: &[&str]) -> (i32, String) {
     (code, String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The status indicator the probe reported, per Security Policy §5.2.
+/// The status indicator the probe reported.
 fn status(stdout: &str) -> u8 {
     stdout
         .lines()
@@ -155,35 +174,37 @@ fn is_in_extent(ranges: &[Range], file_off: u32) -> bool {
         .any(|r| file_off >= r.file_off && file_off < r.file_off + r.len)
 }
 
-/// A file offset inside the extent — specifically in the executable
-/// segment, which is the last and largest range.
+/// A file offset inside the extent that nothing parses or executes before
+/// the integrity test: padding between two sections.
 fn offset_inside_extent(path: &Path) -> usize {
     let ranges = extent_of(path);
-    let last = ranges.last().expect("extent has ranges");
-    let off = last.file_off + last.len / 2;
+    let extent: Vec<(u32, u32)> = ranges.iter().map(|r| (r.file_off, r.len)).collect();
+    let off = padding::padding_offset(&read(path), &extent);
     assert!(
-        is_in_extent(&ranges, off),
+        is_in_extent(&ranges, u32::try_from(off).expect("offset fits u32")),
         "premise failed: chosen offset {off:#x} is not in the extent"
     );
-    off as usize
+    off
 }
 
-/// A file offset the loader rewrites — inside a writable segment, and
-/// therefore outside the extent by construction.
+/// Padding between sections: a hashed byte nothing executes before the
+/// integrity test runs.
+#[path = "../../integrity-probe-so/tests/padding/mod.rs"]
+mod padding;
+
+/// A file offset the loader overwrites without reading: a byte of a
+/// relocation destination, which the extent types as a `Hole`.
 fn offset_the_loader_rewrites(path: &Path) -> usize {
-    let bytes = read(path);
-    let writable = elf::writable_ranges(&bytes).expect("writable ranges");
-    let first = writable.first().expect("image has a writable segment");
-    // Into the segment rather than at its very edge, so the byte is a
-    // relocated word rather than a boundary artefact.
-    let off = first.file_off + 0x10;
-    assert!(
-        off < first.file_off + first.len,
-        "premise failed: writable segment is too small"
-    );
+    let layout = elf::classify(&read(path)).expect("classify");
+    let carrier = layout
+        .entries
+        .iter()
+        .find(|e| e.hole_len() > 0)
+        .expect("premise failed: the image has no relocation destination");
+    let off = carrier.file_off + carrier.len + 1;
     assert!(
         !is_in_extent(&extent_of(path), off),
-        "premise failed: chosen offset {off:#x} IS in the extent, so this is not the control it claims to be"
+        "premise failed: chosen offset {off:#x} IS in the hashed extent, so this is not the control it claims to be"
     );
     off as usize
 }
@@ -208,8 +229,8 @@ fn an_unsigned_artifact_refuses_to_become_operational() {
 /// `initialize_with_tests` reports every self-test failure as the same
 /// payload-less `SelfTestFailure`, so a consumer reading its return value
 /// cannot tell a corrupt module from an environment that could not supply
-/// the module's bytes. Security Policy §5.2 requires that distinction to
-/// be retrievable; this pins that it is, through a real boot rather than
+/// the module's bytes. An operator must be able to retrieve that
+/// distinction; this pins that it can, through a real boot rather than
 /// by calling the verifier directly.
 #[test]
 fn the_status_indicator_distinguishes_causes_the_boot_result_cannot() {
@@ -235,8 +256,8 @@ fn the_status_indicator_distinguishes_causes_the_boot_result_cannot() {
     assert_eq!(
         status(&out),
         STATUS_SLOT_INVALID,
-        "an unsigned artifact must report SlotInvalid, not Mismatch — the two send an operator to \
-         different places"
+        "an unsigned artifact must report SlotInvalid, not SignatureInvalid: the two send an \
+         operator to different places"
     );
     let _ = std::fs::remove_file(&unsigned);
 }
@@ -260,24 +281,27 @@ fn a_byte_changed_inside_the_extent_is_detected() {
     let off = offset_inside_extent(&probe);
     flip(&probe, off);
     let (code, out) = run(&probe, &[]);
-    assert_eq!(code, MISMATCH, "a changed code byte must fail the test");
-    // The exit code comes from the probe's own match on `IntegrityError`;
-    // the indicator comes from `IntegrityStatus::of`. Asserting only the
-    // former leaves the mapping unpinned, so assert both.
+    assert_eq!(
+        code, SIGNATURE_INVALID,
+        "a changed code byte must fail the test"
+    );
+    // The exit code and the printed indicator both come from the latched
+    // `IntegrityStatus`; asserting both pins the probe's mapping as well as
+    // the indicator.
     assert_eq!(
         status(&out),
-        STATUS_MISMATCH,
-        "a corrupt image must report Mismatch, not another cause"
+        STATUS_SIGNATURE_INVALID,
+        "a corrupt image must report SignatureInvalid, not another cause"
     );
     let _ = std::fs::remove_file(&probe);
 }
 
 /// The mirror control, and the one that carries the design.
 ///
-/// Changing a byte the loader rewrites must **not** fail: those bytes
-/// are outside the extent on purpose. Without this, the two tamper tests
-/// above are equally consistent with hashing the whole file — which is
-/// the scheme this design replaced.
+/// Changing a byte the loader overwrites must **not** fail: a relocation
+/// destination is a `Hole`, its value covered by the relocation table.
+/// Without this, the tamper tests in this file are equally consistent with
+/// an extent that hashes the whole file.
 #[test]
 fn a_byte_the_loader_rewrites_is_outside_the_extent() {
     let probe = copy_probe("tamper-relro");
@@ -287,26 +311,193 @@ fn a_byte_the_loader_rewrites_is_outside_the_extent() {
     let (code, _) = run(&probe, &[]);
     assert_eq!(
         code, OPERATIONAL,
-        "a byte in a writable segment is not in the extent, so it must not affect the verdict"
+        "a byte of a relocation destination is a hole, so it must not affect the verdict"
     );
     let _ = std::fs::remove_file(&probe);
 }
 
+/// A changed byte of initialised writable data, which the extent hashes
+/// from the image file, is detected.
 #[test]
-fn a_changed_reference_mac_is_detected() {
-    let probe = copy_probe("tamper-mac");
+fn a_changed_file_only_byte_is_detected() {
+    let probe = copy_probe("tamper-fileonly");
     sign(&probe);
-    let bytes = read(&probe);
-    let slot_off = image::find_slot(&bytes).expect("find slot");
-    flip(&probe, slot_off + oxicrypt_integrity::slot::OFF_MAC);
+    let layout = elf::classify(&read(&probe)).expect("classify");
+    let data = layout
+        .entries
+        .iter()
+        .find(|e| e.kind == EntryKind::FileOnly)
+        .expect("premise failed: the image has no FileOnly region");
+    flip(&probe, (data.file_off + data.len / 2) as usize);
     let (code, _) = run(&probe, &[]);
-    assert_eq!(code, MISMATCH, "a changed reference MAC must fail the test");
+    assert_eq!(
+        code, SIGNATURE_INVALID,
+        "a changed FileOnly byte must be refused"
+    );
     let _ = std::fs::remove_file(&probe);
 }
 
-/// Twenty passes mean the hashed region produced the identical MAC
-/// twenty times: had any byte in it varied between runs, the comparison
-/// against the fixed reference would have failed. The ASLR assertion is
+/// The file offset of `.dynamic`'s `DT_PLTGOT` value: a `Relative` word
+/// glibc rebases but, with every symbol bound at load, never reads, so a
+/// change to it survives loading and reaches the integrity test.
+fn pltgot_value_offset(bytes: &[u8]) -> usize {
+    let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]) as usize;
+    let u64_at = |o: usize| {
+        usize::try_from(u64::from_le_bytes(bytes[o..o + 8].try_into().unwrap())).unwrap()
+    };
+    let (phoff, phnum) = (u64_at(0x20), u16_at(0x38));
+    let dynamic = (0..phnum)
+        .map(|i| phoff + 56 * i)
+        .find(|&p| u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap()) == 2)
+        .expect("premise failed: no PT_DYNAMIC");
+    let (off, len) = (u64_at(dynamic + 8), u64_at(dynamic + 32));
+    (off..off + len)
+        .step_by(16)
+        .find(|&e| u64_at(e) == 3)
+        .map(|e| e + 8)
+        .expect("premise failed: no DT_PLTGOT")
+}
+
+/// A changed `Relative` word is detected: the loader adds the load bias to
+/// it, and the integrity test checks it after subtracting that bias.
+#[test]
+fn a_changed_relative_word_is_detected() {
+    let probe = copy_probe("tamper-relative");
+    sign(&probe);
+    let bytes = read(&probe);
+    let off = pltgot_value_offset(&bytes);
+    let layout = elf::classify(&bytes).expect("classify");
+    assert!(
+        layout.entries.iter().any(|e| e.kind == EntryKind::Relative
+            && (e.file_off as usize..(e.file_off + e.len) as usize).contains(&off)),
+        "premise failed: DT_PLTGOT's value at {off:#x} is not a Relative entry"
+    );
+    let mut tampered = bytes;
+    tampered[off + 1] ^= 0x08;
+    write(&probe, &tampered);
+    let (code, _) = run(&probe, &[]);
+    assert_eq!(
+        code, SIGNATURE_INVALID,
+        "a changed Relative word must be refused"
+    );
+    let _ = std::fs::remove_file(&probe);
+}
+
+/// A symbol table that has lost the module's state symbol, as a strip of
+/// that one symbol leaves it, cannot show the state is not file-backed, so
+/// signing is refused.
+#[test]
+fn signing_refuses_a_symbol_table_without_the_module_state() {
+    let probe = copy_probe("strip-state");
+    let bytes = read(&probe);
+    let state = std::process::Command::new("readelf")
+        .args(["-sW"])
+        .arg(&probe)
+        .output()
+        .expect("premise failed: readelf did not run");
+    let listing = String::from_utf8_lossy(&state.stdout).into_owned();
+    let name = listing
+        .split_whitespace()
+        .find(|w| w.contains("15oxicrypt_module5STATE"))
+        .expect("premise failed: the probe's symbol table names no module state")
+        .to_owned();
+    let stripped = scratch("strip-state-out");
+    let status = std::process::Command::new("objcopy")
+        .arg(format!("--strip-symbol={name}"))
+        .arg(&probe)
+        .arg(&stripped)
+        .status()
+        .expect("premise failed: objcopy did not run");
+    assert!(status.success(), "premise failed: objcopy failed");
+    let mut out = read(&stripped);
+    let after = std::process::Command::new("readelf")
+        .args(["-sW"])
+        .arg(&stripped)
+        .output()
+        .expect("premise failed: readelf did not run");
+    assert!(
+        !String::from_utf8_lossy(&after.stdout).contains(&name),
+        "premise failed: the state symbol survived in the symbol table"
+    );
+    let err = sign_image(&mut out, test_key()).expect_err("signing must be refused");
+    assert!(
+        err.starts_with("StaticsUnchecked") && err.contains("oxicrypt_module::STATE"),
+        "{err}"
+    );
+    // Control: the unstripped copy signs.
+    assert!(sign_image(&mut bytes.clone(), test_key()).is_ok());
+    let _ = std::fs::remove_file(&probe);
+    let _ = std::fs::remove_file(&stripped);
+}
+
+#[test]
+fn a_changed_signature_is_detected() {
+    let probe = copy_probe("tamper-sig");
+    sign(&probe);
+    let bytes = read(&probe);
+    let slot_off = image::find_slot(&bytes).expect("find slot");
+    flip(&probe, slot_off + oxicrypt_integrity::slot::OFF_SIG);
+    let (code, _) = run(&probe, &[]);
+    assert_eq!(
+        code, SIGNATURE_INVALID,
+        "a changed signature must fail the test"
+    );
+    let _ = std::fs::remove_file(&probe);
+}
+
+/// The boot reports the fingerprint of the key it verified against, and it
+/// is the test key's.
+#[test]
+fn the_module_reports_the_key_it_verified_against() {
+    let probe = copy_probe("fingerprint");
+    sign(&probe);
+    let (code, out) = run(&probe, &[]);
+    assert_eq!(code, OPERATIONAL);
+    let expected = oxicrypt_integrity::format_fingerprint(
+        &test_key().fingerprint().expect("fingerprint the test key"),
+    );
+    assert!(
+        out.contains(&format!("verify-key: {expected}")),
+        "the reported fingerprint must be the embedded key's, got: {out}"
+    );
+}
+
+/// A module built without a verifying key never becomes operational, and
+/// says why.
+#[test]
+fn a_module_without_a_verifying_key_reports_no_verify_key() {
+    let probe = copy_probe("no-key");
+    let mut bytes = read(&probe);
+    embed_verify_key(&mut bytes, &[0u8; oxicrypt_integrity::key::VERIFY_KEY_LEN])
+        .expect("clear the key");
+    write(&probe, &bytes);
+    let (code, out) = run(&probe, &[]);
+    assert_eq!(
+        code, NO_VERIFY_KEY,
+        "a key-less build must refuse to operate"
+    );
+    assert_eq!(status(&out), STATUS_NO_VERIFY_KEY);
+    let _ = std::fs::remove_file(&probe);
+}
+
+/// A slot signed for one key in an artifact that embeds another is a key
+/// mismatch, refused before any signature is checked.
+#[test]
+fn an_artifact_embedding_a_different_key_reports_key_mismatch() {
+    let probe = copy_probe("key-mismatch");
+    sign(&probe);
+    let other = SigningKey::from_seed(&[0x24; 32]).expect("derive a second key");
+    let mut bytes = read(&probe);
+    embed_verify_key(&mut bytes, other.public_key()).expect("swap the key");
+    write(&probe, &bytes);
+    let (code, _) = run(&probe, &[]);
+    assert_eq!(code, KEY_MISMATCH);
+    let _ = std::fs::remove_file(&probe);
+}
+
+/// Twenty passes mean the signed region read back identically twenty
+/// times: had any byte in it varied between runs, the signature would have
+/// failed to verify. The ASLR assertion is
 /// the control — a stable verdict from an image that never moved would
 /// be no evidence of relocation stability at all.
 #[test]
@@ -329,9 +520,9 @@ fn the_extent_is_relocation_stable_across_twenty_runs() {
 
 /// The negative control for the test above.
 ///
-/// An extent widened to cover a writable segment must fail, because the
-/// loader has rewritten those bytes and they no longer match the file the
-/// signer hashed. This is what makes the twenty-run result meaningful:
+/// An extent that hashes the relocation destinations as `Plain` must fail,
+/// because the loader has rewritten those bytes and they no longer match the
+/// file the signer hashed. This is what makes the twenty-run result meaningful:
 /// the probe demonstrably can detect an unstable region, so a STABLE
 /// verdict is a finding rather than a silent no-op.
 #[test]
@@ -339,25 +530,30 @@ fn an_extent_widened_to_a_relocated_region_fails() {
     let probe = copy_probe("widened");
     let mut bytes = read(&probe);
     let layout = elf::classify(&bytes).expect("classify");
-    let writable = elf::writable_ranges(&bytes).expect("writable ranges");
-    let relocated = *writable.first().expect("image has a writable segment");
-
-    let mut widened = layout.ranges.clone();
-    widened.push(relocated);
-    widened.sort_by_key(|r| r.rva);
+    let mut widened = layout.entries.clone();
+    let mut retyped = 0;
+    for e in &mut widened {
+        if e.kind == EntryKind::Hole {
+            e.kind = EntryKind::Plain;
+            retyped += 1;
+        } else if e.kind == EntryKind::Plain && e.meta > 0 {
+            e.len += e.hole_len();
+            e.meta = 0;
+            retyped += 1;
+        }
+    }
     assert!(
-        widened.len() > layout.ranges.len(),
-        "premise failed: the extent was not actually widened"
+        retyped > 0,
+        "premise failed: no relocation destination was retyped"
     );
 
-    write_extent(&mut bytes, &widened, layout.slot_rva, layout.slot_file_off)
-        .expect("write widened extent");
+    write_entries(&mut bytes, &layout, &widened, test_key()).expect("write widened extent");
     write(&probe, &bytes);
 
     let (code, _) = run(&probe, &[]);
     assert_eq!(
-        code, MISMATCH,
-        "an extent covering loader-written bytes must fail — if this passes, the probe cannot \
+        code, SIGNATURE_INVALID,
+        "an extent covering loader-written bytes must fail; if this passes, the probe cannot \
          detect an unstable region and the stability result above is worthless"
     );
     let _ = std::fs::remove_file(&probe);
@@ -382,7 +578,7 @@ fn omitting_the_technique_cast_makes_the_integrity_test_refuse() {
     let (code, out) = run(&probe, &["--skip-cast"]);
     assert_eq!(
         code, CAST_NOT_RUN,
-        "the integrity test must refuse to use HMAC before its CAST has passed"
+        "the integrity test must refuse to use ML-DSA-87 before its CAST has passed"
     );
     assert_eq!(
         status(&out),
@@ -395,30 +591,38 @@ fn omitting_the_technique_cast_makes_the_integrity_test_refuse() {
 /// The indicator latches on the first run and a later run cannot revise it.
 ///
 /// `verify_loaded_image` is public and may be called again after boot. If
-/// the record simply took the most recent outcome, a second run that
-/// succeeds would rewrite the indicator to `Passed` while the module
-/// stayed permanently latched in `Error` — the query would then
-/// contradict the module state it exists to explain.
+/// the record simply took the most recent outcome, a second run would
+/// rewrite the indicator while the module stayed permanently latched in
+/// `Error` — the query would then contradict the module state it exists
+/// to explain.
 ///
-/// `--relatch-probe` is the only arrangement that can tell the two apart:
-/// boot with the CAST omitted so the first run records `CastNotRun`, then
-/// run the CAST and verify again, which on this signed artifact succeeds.
-/// A latching record still reports 5; a last-write-wins record reports 1.
+/// `--relatch-probe` on a tampered artifact tells the two apart: the boot's
+/// run records `SignatureInvalid`, then the probe verifies again. The module
+/// has latched its error state and refuses its primitives, so the second
+/// run's outcome differs, and a direct call records nothing: the indicator
+/// must still report 2.
 #[test]
-fn the_indicator_latches_and_a_later_successful_run_cannot_revise_it() {
+fn the_indicator_latches_and_a_later_run_cannot_revise_it() {
     let probe = copy_probe("relatch");
     sign(&probe);
+    let off = offset_inside_extent(&probe);
+    flip(&probe, off);
 
-    let (_, out) = run(&probe, &["--skip-cast", "--relatch-probe"]);
+    let (code, out) = run(&probe, &["--relatch-probe"]);
+    assert_eq!(
+        code, SIGNATURE_INVALID,
+        "control: the tampered artifact must fail its boot"
+    );
     assert!(
-        out.contains("second-run-ok: true"),
-        "control: the second run must actually SUCCEED, or this test cannot \
+        out.contains("second-run-refused: true"),
+        "control: the second run must reach a DIFFERENT outcome, or this test cannot \
          distinguish a latch from last-write-wins — got: {out}"
     );
     assert_eq!(
         status(&out),
-        STATUS_CAST_NOT_RUN,
-        "the indicator must still report the first run's CastNotRun, not the second run's success"
+        STATUS_SIGNATURE_INVALID,
+        "the indicator must still report the first run's SignatureInvalid, not the second run's \
+         refusal"
     );
     let _ = std::fs::remove_file(&probe);
 }
@@ -455,23 +659,39 @@ fn a_module_initialised_with_no_integrity_group_refuses_to_operate() {
     let _ = std::fs::remove_file(&probe);
 }
 
-/// Signing twice must produce the same artifact.
+/// Signing again writes only the signature field, and writes the same
+/// signature.
 ///
-/// The slot is outside the extent, so writing the MAC cannot change the
-/// bytes the MAC was computed over. Re-signing an already-signed artifact
-/// is therefore a no-op — which is the circularity resolution, observable
-/// from outside.
+/// The signature field is the one byte range the signature does not cover,
+/// so writing it cannot change what was signed. ML-DSA-87 signing here is
+/// deterministic, so re-signing a file whose signature field was cleared
+/// restores it byte for byte, and nothing else in the file moves.
 #[test]
-fn signing_is_idempotent_because_the_slot_is_outside_the_extent() {
-    let probe = copy_probe("idempotent");
+fn re_signing_changes_only_the_signature_field() {
+    let probe = copy_probe("resign");
     sign(&probe);
     let once = read(&probe);
+    let slot_off = image::find_slot(&once).expect("find slot");
+    let sig = slot_off + oxicrypt_integrity::slot::OFF_SIG
+        ..slot_off + oxicrypt_integrity::slot::OFF_SIG + oxicrypt_integrity::slot::SIG_LEN;
+    let mut cleared = once.clone();
+    cleared[sig.clone()].fill(0);
+    assert_ne!(cleared, once, "control: the signature field was not empty");
+    write(&probe, &cleared);
     sign(&probe);
     let twice = read(&probe);
-    assert_eq!(
-        once, twice,
-        "re-signing changed the artifact, so the slot is inside the hashed extent"
+    let changed: Vec<usize> = (0..once.len())
+        .filter(|&i| cleared[i] != twice[i])
+        .collect();
+    assert!(
+        !changed.is_empty(),
+        "control: re-signing wrote the cleared signature field"
     );
+    assert!(
+        changed.iter().all(|i| sig.contains(i)),
+        "re-signing changed a byte outside the signature field"
+    );
+    assert_eq!(twice, once, "re-signing wrote a different signature");
     let (code, _) = run(&probe, &[]);
     assert_eq!(code, OPERATIONAL);
     let _ = std::fs::remove_file(&probe);

@@ -13,8 +13,11 @@
 //! to the largest supported digest (SHA-512 = 64 bytes). Each
 //! variant only reads/writes the leftmost `OUTLEN` bytes.
 //!
-//! Power-up KATs bypass the module state machine via the
-//! `new_internal` HMAC constructors from `oxicrypt-hmac`.
+//! Power-up KATs reach HMAC through the `new_internal` constructors from
+//! `oxicrypt-hmac`, which skip the operational gate and refuse unless
+//! [`oxicrypt_module::require_self_test_started`] admits the call: in
+//! `Operational`, or in `SelfTest` on the thread running the power-up
+//! self-tests.
 
 #![allow(
     clippy::indexing_slicing,
@@ -58,7 +61,14 @@ pub trait HmacAlg {
     /// Compute `HMAC(key, parts concatenated)` into `out[..OUTLEN]`.
     ///
     /// `out.len()` must be `>= OUTLEN`.
-    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests); the HMAC is built by `oxicrypt-hmac`'s `new_internal`.
+    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error>;
 }
 
 /// `HmacAlg` over HMAC-SHA-256.
@@ -71,39 +81,42 @@ pub struct HmacSha512Alg;
 impl HmacAlg for HmacSha256Alg {
     const OUTLEN: usize = 32;
     const DRBG_SERVICE: Service = Service::HmacDrbgSha256;
-    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
-        let mut h = HmacSha256::new_internal(key);
+    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error> {
+        let mut h = HmacSha256::new_internal(key)?;
         for p in parts {
             h.update(p);
         }
-        let tag = h.finalize();
+        let tag = h.finalize()?;
         out[..32].copy_from_slice(&tag);
+        Ok(())
     }
 }
 
 impl HmacAlg for HmacSha384Alg {
     const OUTLEN: usize = 48;
     const DRBG_SERVICE: Service = Service::HmacDrbgSha384;
-    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
-        let mut h = HmacSha384::new_internal(key);
+    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error> {
+        let mut h = HmacSha384::new_internal(key)?;
         for p in parts {
             h.update(p);
         }
-        let tag = h.finalize();
+        let tag = h.finalize()?;
         out[..48].copy_from_slice(&tag);
+        Ok(())
     }
 }
 
 impl HmacAlg for HmacSha512Alg {
     const OUTLEN: usize = 64;
     const DRBG_SERVICE: Service = Service::HmacDrbgSha512;
-    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
-        let mut h = HmacSha512::new_internal(key);
+    fn mac(key: &[u8], parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error> {
+        let mut h = HmacSha512::new_internal(key)?;
         for p in parts {
             h.update(p);
         }
-        let tag = h.finalize();
+        let tag = h.finalize()?;
         out[..64].copy_from_slice(&tag);
+        Ok(())
     }
 }
 
@@ -140,7 +153,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
     ///
     /// `provided_data == None` corresponds to the "Null" case where
     /// only the first pair of HMAC calls runs.
-    fn update(&mut self, provided_data: Option<&[u8]>) {
+    fn update(&mut self, provided_data: Option<&[u8]>) -> Result<(), Error> {
         let outlen = H::OUTLEN;
         // Step 1: K = HMAC(K, V || 0x00 || provided_data)
         let sep0 = [0x00u8];
@@ -158,7 +171,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
             &self.key[..outlen],
             &[&v_slice[..outlen], &sep0, pd],
             &mut new_key[..outlen],
-        );
+        )?;
         self.key[..outlen].copy_from_slice(&new_key[..outlen]);
 
         // Step 2: V = HMAC(K, V)
@@ -167,12 +180,12 @@ impl<H: HmacAlg> HmacDrbg<H> {
             &self.key[..outlen],
             &[&v_slice[..outlen]],
             &mut new_v[..outlen],
-        );
+        )?;
         self.v[..outlen].copy_from_slice(&new_v[..outlen]);
 
         // Step 3: If provided_data is Null, return.
         if provided_data.is_none() {
-            return;
+            return Ok(());
         }
 
         // Step 4: K = HMAC(K, V || 0x01 || provided_data)
@@ -186,7 +199,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
             &self.key[..outlen],
             &[&v_slice2[..outlen], &sep1, pd],
             &mut new_key[..outlen],
-        );
+        )?;
         self.key[..outlen].copy_from_slice(&new_key[..outlen]);
 
         // Step 5: V = HMAC(K, V)
@@ -194,8 +207,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
             &self.key[..outlen],
             &[&v_slice2[..outlen]],
             &mut new_v[..outlen],
-        );
+        )?;
         self.v[..outlen].copy_from_slice(&new_v[..outlen]);
+        Ok(())
     }
 
     /// HMAC_DRBG Instantiate — SP 800-90A §10.1.2.3.
@@ -244,7 +258,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         // is always constructed (possibly length 0). Per the spec,
         // an empty-but-present provided_data still runs the full
         // two-round update; we reflect that by passing Some(&[]).
-        self.update(Some(seed));
+        self.update(Some(seed))?;
         self.reseed_counter = 1;
         self.instantiated = true;
         Ok(())
@@ -266,13 +280,27 @@ impl<H: HmacAlg> HmacDrbg<H> {
         seed_material[..entropy.len()].copy_from_slice(entropy);
         seed_material[entropy.len()..entropy.len() + additional_input.len()]
             .copy_from_slice(additional_input);
-        self.update(Some(&seed_material[..total]));
+        self.update(Some(&seed_material[..total]))?;
         self.reseed_counter = 1;
         Ok(())
     }
 
     /// HMAC_DRBG Generate — SP 800-90A §10.1.2.5.
     pub fn generate(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = self.generate_unwiped(additional_input, out);
+        if result.is_err() {
+            // A failed call leaves no generated bytes in the caller's buffer.
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::generate`]; the caller wipes `out` if it fails.
+    fn generate_unwiped(
         &mut self,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
@@ -291,7 +319,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
                 return Err(DrbgError::InputTooLong);
             }
             // Step 2: if additional_input != Null, Update.
-            self.update(Some(ai));
+            self.update(Some(ai))?;
         }
 
         // Step 3/4: produce bytes by V = HMAC(K, V).
@@ -305,7 +333,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
                 &self.key[..outlen],
                 &[&v_tmp[..outlen]],
                 &mut new_v[..outlen],
-            );
+            )?;
             self.v[..outlen].copy_from_slice(&new_v[..outlen]);
             let take = core::cmp::min(outlen, out.len() - produced);
             out[produced..produced + take].copy_from_slice(&self.v[..take]);
@@ -313,7 +341,7 @@ impl<H: HmacAlg> HmacDrbg<H> {
         }
 
         // Step 6: (Key, V) = Update(additional_input, Key, V)
-        self.update(additional_input);
+        self.update(additional_input)?;
         self.reseed_counter += 1;
         Ok(())
     }
@@ -395,6 +423,7 @@ mod tests {
     // NIST CAVP HMAC_DRBG no-reseed SHA-256 Count=0.
     #[test]
     fn cavp_hmac_drbg_sha256_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("ca851911349384bffe89de1cbdc46e6831e44d34a4fb935ee285dd14b71a7488");
         let nonce: [u8; 16] = hex_to_bytes("659ba96c601dc69fc902940805ec0ca8");
@@ -411,6 +440,7 @@ mod tests {
 
     #[test]
     fn cavp_hmac_drbg_sha384_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("a1dc2dfeda4f3a1124e0e75ebfbe5f98cac11018221dda3fdcf8f9125d68447a");
         let nonce: [u8; 16] = hex_to_bytes("bae5ea27166540515268a493a96b5187");
@@ -430,6 +460,7 @@ mod tests {
     // explicit `reseed(e, ai)` followed by `generate(None, out)`.
     #[test]
     fn generate_pr_matches_reseed_then_generate() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] = [0x11u8; 32];
         let nonce: [u8; 16] = [0x22u8; 16];
         let reseed_e: [u8; 32] = [0x33u8; 32];
@@ -451,6 +482,7 @@ mod tests {
 
     #[test]
     fn cavp_hmac_drbg_sha512_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("35049f389a33c0ecb1293238fd951f8ffd517dfde06041d32945b3e26914ba15");
         let nonce: [u8; 16] = hex_to_bytes("f7328760be6168e6aa9fb54784989a11");

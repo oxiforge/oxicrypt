@@ -865,8 +865,7 @@ fn cmd_periodicity(args: &[String]) -> ExitCode {
 
 /// Compute the SHA-256 of the input as lowercase hex, powering the module
 /// up with the real KAT set first (the parity-harness provenance path).
-/// Returns `None` on a service error — the sidecar then carries `null`.
-fn input_sha256_hex(data: &[u8]) -> Option<String> {
+fn input_sha256_hex(data: &[u8]) -> Result<String, oxicrypt_module::Error> {
     oxicrypt_maxwell::parity::sha256_hex(data)
 }
 
@@ -1121,8 +1120,16 @@ fn cmd_independence(args: &[String]) -> ExitCode {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs())
     );
-    let sha = input_sha256_hex(&data);
-    let sidecar_ok = match write_sidecar(&report, &run_utc, sha.as_deref(), &prov, &dir) {
+    // The sidecar is evidence: without its provenance hash it is not
+    // written and the run fails.
+    let sha = match input_sha256_hex(&data) {
+        Ok(sha) => sha,
+        Err(e) => {
+            eprintln!("maxwell: the module did not start: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let sidecar_ok = match write_sidecar(&report, &run_utc, Some(&sha), &prov, &dir) {
         Ok(path) => {
             println!("  sidecar: {}", path.display());
             true

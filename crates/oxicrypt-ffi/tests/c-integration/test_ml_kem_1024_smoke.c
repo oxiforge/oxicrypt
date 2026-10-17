@@ -4,11 +4,8 @@
  * FIPS 203 §6.1–§6.3, parameter set k=4. Byte counts: d=z=m=32,
  * ek=1568, dk=3168, ct=1568, ss=32.
  *
- * Backfill: ML-KEM-1024 shipped in the original C ABI round without
- * a C smoke test. Per the PQ-family C-smoke-test precedent established
- * with this commit (see security-policy §4.7 "ML-KEM C ABI smoke-test
- * precedent for PQ families"), all three ML-KEM parameter sets carry
- * a parallel C round-trip exercise.
+ * All three ML-KEM parameter sets carry a parallel C round-trip
+ * exercise; this is the ML-KEM-1024 one.
  *
  * Decapsulate tamper-detection follows the FIPS 203 §6.3 implicit-
  * rejection contract: tampered ciphertext does NOT surface as an
@@ -25,8 +22,8 @@
 int main(void) {
     /* profile=0 = Unrestricted (per oxi_active_profile mapping):
      * ML-KEM-1024 is also allowed under CNSA2=1, but we pin to
-     * Unrestricted=0 to match the 512/768 tests in this round
-     * (those variants are NOT in CNSA1/CNSA2 allow-lists). */
+     * Unrestricted=0 to match the 512/768 tests (those variants are
+     * NOT in CNSA1/CNSA2 allow-lists). */
     if (oxi_init(0) != 0) {
         fprintf(stderr, "oxi_init(Unrestricted) failed\n");
         return 1;

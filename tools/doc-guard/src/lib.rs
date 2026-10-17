@@ -1098,13 +1098,9 @@ mod tests {
     /// same thing (`**[MARK: …confirm placement with the CST lab…]**`), which a
     /// `TODO`/`pending]` sweep does not see.
     const OPEN_MARKERS: &[(&str, usize)] = &[
-        // 7 → 8 when §1.5 gained its vendor-affirmed environments. The new
-        // marker is deliberate and is the honest state of that section: an
-        // affirmation is relative to a tested environment, and §1.4 does not
-        // yet name any, so §1.5 cannot be read on its own until it does. It
-        // resolves when §1.4 is filled from the lab submission, and this pin
-        // should drop back to 7 in the same change.
-        ("TODO", 8),
+        // Each count is the number of markers of that kind open in the
+        // Security Policy. Lower it in the change that resolves one.
+        ("TODO", 2),
         ("TBD", 0),
         ("FIXME", 0),
         ("XXX", 0),
@@ -1323,6 +1319,1294 @@ mod tests {
             });
             assert!(listed, "README crate tree: `{name}` row missing");
         }
+    }
+
+    // ----- which side of the boundary prose places a crate on -----
+    //
+    // The accounting tests above check numerals and crate-set membership. A
+    // sentence placing a crate on the wrong side of the boundary carries no
+    // numeral, so it passes them while contradicting `OUT_OF_BOUNDARY`. The
+    // sweep below reads the side each sentence assigns to a named crate.
+
+    /// The side of the module boundary a phrase places its subject on.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Side {
+        Inside,
+        Outside,
+    }
+
+    /// Word sequences that name `oxicrypt-ffi` without spelling the crate
+    /// name, as the C API documents and the generated header do.
+    const FFI_ALIASES: [[&str; 2]; 4] = [
+        ["ffi", "shim"],
+        ["abi", "shim"],
+        ["ffi", "crate"],
+        ["c", "abi"],
+    ];
+
+    /// Verbs after `boundary` that open a list of what is inside it.
+    const BOUNDARY_ENUMERATORS: [&str; 6] = [
+        "covers",
+        "contains",
+        "includes",
+        "comprises",
+        "holds",
+        "encompasses",
+    ];
+
+    /// Verbs that make a later boundary phrase a report of what something
+    /// else said ("corrected the table, which listed `x` as outside the
+    /// boundary") rather than a statement of this document's own.
+    const REPORTING_VERBS: [&str; 7] = [
+        "listed",
+        "placed",
+        "described",
+        "marked",
+        "stated",
+        "called",
+        "claimed",
+    ];
+
+    /// Abbreviations whose trailing period does not end a sentence.
+    const ABBREVIATIONS: [&str; 5] = ["e.g.", "i.e.", "vs.", "etc.", "cf."];
+
+    /// Words that end the reach of a boundary phrase: a subject on the far
+    /// side of one belongs to a different clause.
+    const CLAUSE_STOPS: [&str; 8] = [
+        "which", "whose", "where", "while", "whereas", "but", "unlike", "except",
+    ];
+
+    /// Verbs that make a following `in-boundary` / `out-of-boundary`
+    /// adjective a statement about the subject ("`x` is an in-boundary crate")
+    /// rather than a description of the noun after it.
+    const COPULAS: [&str; 6] = ["is", "are", "was", "be", "remains", "stays"];
+
+    /// One word of prose.
+    #[derive(Debug)]
+    struct Word {
+        /// Lower-cased, with emphasis and code markers and surrounding
+        /// punctuation removed, and a possessive `'s` dropped.
+        text: String,
+        /// The crates the raw token names: a crate name, a `crates/<name>`
+        /// path, an `<name>::item` path, the snake-case spelling, or the
+        /// text or target of a markdown link.
+        crates: Vec<String>,
+        /// A comma directly follows the word.
+        comma: bool,
+        /// A semicolon directly follows the word, ending a clause.
+        semicolon: bool,
+        /// A colon directly follows the word.
+        colon: bool,
+    }
+
+    /// A sentence, or a whole table row.
+    #[derive(Debug)]
+    struct Sentence {
+        words: Vec<Word>,
+        table_row: bool,
+    }
+
+    /// The crates of `sides` that `raw` names.
+    fn crates_in(raw: &str, sides: &BTreeMap<String, Side>) -> Vec<String> {
+        // `oxicrypt-*` names every crate in the workspace.
+        if raw.contains("oxicrypt-*") {
+            return sides.keys().cloned().collect();
+        }
+        let mut found: Vec<String> = Vec::new();
+        for piece in raw.split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_')) {
+            let name = piece.to_lowercase().replace('_', "-");
+            if sides.contains_key(&name) && !found.contains(&name) {
+                found.push(name);
+            }
+        }
+        found
+    }
+
+    fn prose_word(raw: &str, sides: &BTreeMap<String, Side>) -> Word {
+        let bare: String = raw.chars().filter(|c| !matches!(c, '`' | '*')).collect();
+        let trimmed = bare
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '-')
+            .to_lowercase();
+        // A dash standing alone is kept as a word: it can open a list.
+        let text = if matches!(bare.as_str(), "—" | "–" | "--") {
+            "—".to_string()
+        } else {
+            trimmed
+                .strip_suffix("'s")
+                .or_else(|| trimmed.strip_suffix("’s"))
+                .unwrap_or(&trimmed)
+                .to_string()
+        };
+        Word {
+            text,
+            crates: crates_in(raw, sides),
+            comma: bare.trim_end_matches([')', '"', '\'']).ends_with(','),
+            semicolon: bare.trim_end_matches([')', '"', '\'']).ends_with(';'),
+            colon: bare.trim_end_matches([')', '"', '\'']).ends_with(':'),
+        }
+    }
+
+    /// Whether `raw` ends a sentence: it ends in `.`, `!` or `?` and is not
+    /// one of `ABBREVIATIONS`.
+    fn ends_sentence(raw: &str) -> bool {
+        let bare: String = raw.chars().filter(|c| !matches!(c, '`' | '*')).collect();
+        let bare = bare.trim_end_matches([')', '"', '\'']);
+        let lead = bare
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        bare.ends_with(['.', '!', '?']) && !ABBREVIATIONS.contains(&lead.as_str())
+    }
+
+    /// The sentences of `text`.
+    ///
+    /// A sentence ends at a sentence-ending word, at a blank line, and at the
+    /// start of a table row, list item, block quote or heading; a table row is
+    /// kept whole as one unit. A numbered item needs no rule of its own: its
+    /// `1.` already ends the sentence before it. A fenced code block in
+    /// markdown is not prose and is skipped: a crate tree drawn in one has no
+    /// sentence boundaries. With `toml` no line starts a unit, so a sentence
+    /// wrapped across ` * ` or `#` comment lines reads as one sentence rather
+    /// than as a list item or heading per line.
+    fn prose_sentences(text: &str, toml: bool, sides: &BTreeMap<String, Side>) -> Vec<Sentence> {
+        let mut units: Vec<(String, bool)> = Vec::new();
+        let mut current = (String::new(), false);
+        let mut in_fence = false;
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if !toml && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
+                in_fence = !in_fence;
+                units.push(std::mem::take(&mut current));
+                continue;
+            }
+            if in_fence {
+                continue;
+            }
+            let table_row = !toml && trimmed.starts_with('|');
+            let starts_unit = !toml
+                && (table_row
+                    || trimmed.starts_with("- ")
+                    || trimmed.starts_with("* ")
+                    || trimmed.starts_with('#')
+                    || trimmed.starts_with('>'));
+            if trimmed.is_empty() || starts_unit || current.1 {
+                units.push(std::mem::take(&mut current));
+            }
+            current.1 = table_row;
+            current.0.push(' ');
+            current.0.push_str(trimmed);
+        }
+        units.push(current);
+
+        let mut sentences = Vec::new();
+        for (unit, table_row) in units {
+            let mut words = Vec::new();
+            for raw in unit.split_whitespace() {
+                let w = prose_word(raw, sides);
+                if !w.text.is_empty() || !w.crates.is_empty() {
+                    words.push(w);
+                }
+                if !table_row && ends_sentence(raw) && !words.is_empty() {
+                    sentences.push(Sentence {
+                        words: std::mem::take(&mut words),
+                        table_row,
+                    });
+                }
+            }
+            if !words.is_empty() {
+                sentences.push(Sentence { words, table_row });
+            }
+        }
+        for sentence in &mut sentences {
+            let words = &mut sentence.words;
+            for i in 1..words.len() {
+                let prev = i.saturating_sub(1);
+                let pair = [words[prev].text.as_str(), words[i].text.as_str()];
+                if words[prev].crates.is_empty()
+                    && sides.contains_key("oxicrypt-ffi")
+                    && FFI_ALIASES.contains(&pair)
+                {
+                    words[prev].crates.push("oxicrypt-ffi".to_string());
+                }
+            }
+        }
+        sentences
+    }
+
+    /// A boundary phrase found in a sentence.
+    struct Phrase {
+        side: Side,
+        start: usize,
+        end: usize,
+        /// `in-boundary`, `out-of-boundary`, `out of boundary` or `boundary
+        /// crates`: an adjective describing the noun it precedes.
+        adjective: bool,
+    }
+
+    /// The boundary phrase starting at `w[i]`, if any.
+    ///
+    /// `inside`, `within` and `outside`, and `in` followed by a determiner,
+    /// state a side when `boundary` follows within six words. `outside world`
+    /// states nothing.
+    fn phrase_at(w: &[Word], i: usize) -> Option<Phrase> {
+        let text = |k: usize| w.get(k).map_or("", |x| x.text.as_str());
+        let adjective = |side, end| {
+            Some(Phrase {
+                side,
+                start: i,
+                end,
+                adjective: true,
+            })
+        };
+        let next = i.saturating_add(1);
+        match text(i) {
+            "in-boundary" => return adjective(Side::Inside, next),
+            "out-of-boundary" => return adjective(Side::Outside, next),
+            "out" if text(next) == "of" && text(next.saturating_add(1)) == "boundary" => {
+                return adjective(Side::Outside, next.saturating_add(2));
+            }
+            "boundary" if matches!(text(next), "crate" | "crates") => {
+                return adjective(Side::Inside, next);
+            }
+            "boundary" if BOUNDARY_ENUMERATORS.contains(&text(next)) => {
+                return adjective(Side::Inside, next.saturating_add(1));
+            }
+            _ => {}
+        }
+        let (side, from) = match text(i) {
+            "inside" | "within" => (Side::Inside, next),
+            "outside" if text(next) != "world" => (Side::Outside, next),
+            "in" if matches!(text(next), "the" | "its" | "this" | "that") => {
+                (Side::Inside, next.saturating_add(1))
+            }
+            _ => return None,
+        };
+        (from..=i.saturating_add(6))
+            .find(|&k| text(k) == "boundary")
+            .map(|k| Phrase {
+                side,
+                start: i,
+                end: k.saturating_add(1),
+                adjective: false,
+            })
+    }
+
+    /// Whether the phrase is negated: `not`, `never` or `no longer` directly
+    /// before it. A negated phrase states no side and binds nothing.
+    fn negated(w: &[Word], start: usize) -> bool {
+        let before = |back: usize| {
+            start
+                .checked_sub(back)
+                .and_then(|k| w.get(k))
+                .map_or("", |x| x.text.as_str())
+        };
+        matches!(before(1), "not" | "never") || (before(2) == "no" && before(1) == "longer")
+    }
+
+    /// Whether an adjective phrase is predicated of the subject before it.
+    fn predicated(w: &[Word], start: usize) -> bool {
+        let before = |back: usize| {
+            start
+                .checked_sub(back)
+                .and_then(|k| w.get(k))
+                .map_or("", |x| x.text.as_str())
+        };
+        COPULAS.contains(&before(1))
+            || (matches!(before(1), "a" | "an") && COPULAS.contains(&before(2)))
+    }
+
+    /// The crates a predicate phrase starting at `start` describes: the
+    /// nearest crate named before it, and those joined to that one as a list
+    /// by `and` / `or` (with commas once a conjunction has joined the list).
+    /// The search stops at `floor` (the end of the previous phrase), at a
+    /// clause stop and at a semicolon.
+    fn subjects_before(w: &[Word], start: usize, floor: usize) -> Vec<String> {
+        let mut subjects = Vec::new();
+        let mut last: Option<usize> = None;
+        let mut joined = false;
+        for k in (floor..start).rev() {
+            let word = &w[k];
+            if CLAUSE_STOPS.contains(&word.text.as_str()) || word.semicolon {
+                break;
+            }
+            if word.crates.is_empty() {
+                continue;
+            }
+            if let Some(after) = last {
+                let gap: Vec<&str> = w[k.saturating_add(1)..after]
+                    .iter()
+                    .map(|x| x.text.as_str())
+                    .collect();
+                let conj = !gap.is_empty() && gap.iter().all(|g| matches!(*g, "and" | "or"));
+                if conj {
+                    joined = true;
+                } else if !(gap.is_empty() && word.comma && joined) {
+                    break;
+                }
+            }
+            subjects.extend(word.crates.iter().cloned());
+            last = Some(k);
+        }
+        subjects
+    }
+
+    /// The crates named after an adjective phrase, up to the next phrase,
+    /// clause stop or semicolon: "the in-boundary crates are `a`, `b`".
+    fn subjects_after(w: &[Word], end: usize) -> Vec<String> {
+        let mut subjects = Vec::new();
+        for k in end..w.len() {
+            if CLAUSE_STOPS.contains(&w[k].text.as_str())
+                || phrase_at(w, k).is_some()
+                || (k > end && w[k].text == "—")
+            {
+                break;
+            }
+            subjects.extend(w[k].crates.iter().cloned());
+            if w[k].semicolon {
+                break;
+            }
+        }
+        subjects
+    }
+
+    /// Whether a predicate phrase ending before `w[end]` opens a list of what
+    /// it describes: "everything inside the boundary — `a`, `b`" or "inside
+    /// the boundary: `a`, `b`".
+    fn opens_list(w: &[Word], end: usize) -> bool {
+        end.checked_sub(1)
+            .and_then(|k| w.get(k))
+            .is_some_and(|x| x.colon)
+            || w.get(end).is_some_and(|x| x.text == "—")
+    }
+
+    /// Every (crate, stated side, sentence) in `text` that contradicts `sides`.
+    ///
+    /// A predicate phrase ("sits outside the boundary") binds to the nearest
+    /// crate named before it and to the crates listed with that one. An
+    /// adjective phrase binds forward to the crates named after it, unless a
+    /// copula makes it a predicate ("`x` is an in-boundary crate"). In a table
+    /// row every phrase binds every crate in the row, whichever cell comes
+    /// first.
+    fn boundary_side_violations(
+        text: &str,
+        toml: bool,
+        sides: &BTreeMap<String, Side>,
+    ) -> Vec<(String, Side, String)> {
+        let mut found = Vec::new();
+        for sentence in prose_sentences(text, toml, sides) {
+            let w = &sentence.words;
+            let joined = || {
+                w.iter()
+                    .map(|x| x.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let mut floor = 0;
+            let mut i = 0;
+            while i < w.len() {
+                let Some(phrase) = phrase_at(w, i) else {
+                    i = i.saturating_add(1);
+                    continue;
+                };
+                let reported_speech = w.get(floor..phrase.start).is_some_and(|before| {
+                    before
+                        .iter()
+                        .any(|x| REPORTING_VERBS.contains(&x.text.as_str()))
+                });
+                if !negated(w, phrase.start) && !reported_speech {
+                    let mut subjects: Vec<String> = if sentence.table_row {
+                        w.iter().flat_map(|x| x.crates.iter().cloned()).collect()
+                    } else if phrase.adjective && !predicated(w, phrase.start) {
+                        subjects_after(w, phrase.end)
+                    } else {
+                        let before = subjects_before(w, phrase.start, floor);
+                        if before.is_empty() && opens_list(w, phrase.end) {
+                            subjects_after(w, phrase.end)
+                        } else {
+                            before
+                        }
+                    };
+                    let mut seen = BTreeSet::new();
+                    subjects.retain(|name| seen.insert(name.clone()));
+                    for name in subjects {
+                        if sides[&name] != phrase.side {
+                            found.push((name, phrase.side, joined()));
+                        }
+                    }
+                }
+                floor = phrase.end;
+                i = phrase.end;
+            }
+        }
+        found
+    }
+
+    /// The boundary side of every crate under `crates/`, from `OUT_OF_BOUNDARY`.
+    fn crate_sides() -> BTreeMap<String, Side> {
+        let a = accounting();
+        let sides: BTreeMap<String, Side> = workspace_crates()
+            .into_iter()
+            .map(|name| {
+                let side = if OUT_OF_BOUNDARY.contains(&name.as_str()) {
+                    Side::Outside
+                } else {
+                    Side::Inside
+                };
+                (name, side)
+            })
+            .collect();
+        assert_eq!(
+            sides.values().filter(|s| **s == Side::Inside).count(),
+            a.in_boundary
+        );
+        sides
+    }
+
+    /// The `## [Unreleased]` section of a changelog: the current text.
+    /// Released sections are frozen history and are not read.
+    fn unreleased(changelog: &str) -> String {
+        changelog
+            .split("\n## [")
+            .find(|section| section.starts_with("Unreleased]"))
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// The `description` values of a `Cargo.toml`, one paragraph each.
+    fn descriptions(manifest: &str) -> String {
+        manifest
+            .lines()
+            .filter_map(|l| {
+                let (key, value) = l.split_once('=')?;
+                (key.trim() == "description").then(|| value.trim().trim_matches('"').to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// The `//!` documentation of a Rust source file, as markdown. Every
+    /// other line becomes a blank line, so a crate doc never runs on into
+    /// code.
+    fn crate_doc(src: &str) -> String {
+        src.lines()
+            .map(|l| {
+                let t = l.trim_start();
+                t.strip_prefix("//!")
+                    .map_or("", |rest| rest.strip_prefix(' ').unwrap_or(rest))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The wrong boundary statements in one swept file, one line each.
+    /// `name` is the file's path relative to the repository root; a `.toml`
+    /// file is read with its comment decoration stripped, and a `.rs` file
+    /// by its `//!` documentation alone.
+    fn file_boundary_violations(
+        name: &str,
+        text: &str,
+        sides: &BTreeMap<String, Side>,
+    ) -> Vec<String> {
+        let ext = Path::new(name).extension().and_then(|e| e.to_str());
+        let file = Path::new(name).file_name().and_then(|f| f.to_str());
+        let text = if ext == Some("rs") {
+            crate_doc(text)
+        } else if file == Some("CHANGELOG.md") {
+            unreleased(text)
+        } else if file == Some("Cargo.toml") {
+            descriptions(text)
+        } else {
+            text.to_string()
+        };
+        boundary_side_violations(&text, ext == Some("toml"), sides)
+            .into_iter()
+            .map(|(krate, side, sentence)| {
+                format!("{name}: `{krate}` stated {side:?}: {sentence:?}")
+            })
+            .collect()
+    }
+
+    /// The names of the crates `boundary_side_violations` reports in `text`.
+    fn reported(text: &str, toml: bool, sides: &BTreeMap<String, Side>) -> Vec<String> {
+        boundary_side_violations(text, toml, sides)
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect()
+    }
+
+    /// Statements the side reader must report, with the full report: the
+    /// text, whether it is read as TOML, and the crates reported in order.
+    const MUST_FIRE: &[(&str, bool, &[&str])] = &[
+        // Statements that place `oxicrypt-ffi` inside the boundary, in prose
+        // and in a numbered list.
+        (
+            "**Boundary note:** The C FFI shim resides *inside* the FIPS 140-3 module\n\
+                 boundary. It is thin glue that calls the same Rust functions.",
+            false,
+            FFI,
+        ),
+        (
+            "5. The FFI crate is workspace-internal and ships inside the FIPS\n   \
+                 boundary alongside the algorithm crates.",
+            false,
+            FFI,
+        ),
+        // A sentence wrapped across decorated comment lines reads as one
+        // sentence only with the decoration stripped.
+        (
+            "header = \"\"\"/*\n * The C ABI shim resides INSIDE the FIPS 140-3\n \
+                 * module boundary.\n */\"\"\"",
+            true,
+            FFI,
+        ),
+        (
+            "# The C ABI shim resides inside the\n# module boundary.",
+            true,
+            FFI,
+        ),
+        // Phrasings.
+        ("`oxicrypt-ffi` is in the boundary.", false, FFI),
+        (
+            "`oxicrypt-ffi` is in the cryptographic boundary.",
+            false,
+            FFI,
+        ),
+        ("`oxicrypt-ffi` is in the module boundary.", false, FFI),
+        ("`oxicrypt-ffi` sits within the boundary.", false, FFI),
+        ("`oxicrypt-aes` is out of boundary.", false, AES),
+        ("`oxicrypt-aes` is out-of-boundary.", false, AES),
+        (
+            "`oxicrypt-maxwell` is an in-boundary estimator.",
+            false,
+            &["oxicrypt-maxwell"],
+        ),
+        (
+            "The boundary crates are `oxicrypt-ffi` and `oxicrypt-aes`.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-aes` sits outside the boundary's edge.",
+            false,
+            AES,
+        ),
+        // Window edges: `boundary` six words on fires, seven does not.
+        (
+            "`oxicrypt-aes` sits outside a b c d e boundary.",
+            false,
+            AES,
+        ),
+        (
+            "`oxicrypt-aes` sits outside a b c d e f boundary.",
+            false,
+            &[],
+        ),
+        // A phrase before the names binds forward.
+        (
+            "The in-boundary crates are `oxicrypt-aes`, `oxicrypt-ffi`.",
+            false,
+            FFI,
+        ),
+        (
+            "Out-of-boundary crates: `oxicrypt-maxwell`, `oxicrypt-aes`.",
+            false,
+            AES,
+        ),
+        ("| in-boundary | `oxicrypt-ffi` |", false, FFI),
+        // The `docs/api.md` table shape: the side cell after the name.
+        (
+            "| `oxicrypt-zeroize` | Out-of-boundary tooling / internal |",
+            false,
+            &["oxicrypt-zeroize"],
+        ),
+        // Two wrong crates in one sentence are both reported.
+        (
+            "`oxicrypt-aes` and `oxicrypt-sha` sit outside the boundary.",
+            false,
+            &["oxicrypt-sha", "oxicrypt-aes"],
+        ),
+        (
+            "`oxicrypt-aes`, `oxicrypt-ffi` and `oxicrypt-sha` sit outside the boundary.",
+            false,
+            &["oxicrypt-sha", "oxicrypt-aes"],
+        ),
+        // Spellings that name the crate.
+        ("`crates/oxicrypt-ffi` is inside the boundary.", false, FFI),
+        ("`oxicrypt_ffi` is inside the boundary.", false, FFI),
+        (
+            "[`oxicrypt-ffi`](crates/oxicrypt-ffi) is inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "[the C library](crates/oxicrypt-ffi) is inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-ffi::oxi_init` is inside the boundary.",
+            false,
+            FFI,
+        ),
+        // A list after the boundary, and the C ABI named as such.
+        (
+            "Everything inside the cryptographic module boundary — the algorithm\n\
+                 implementations, the module state machine, the power-up and conditional\n\
+                 self-tests, the integrity check, and the C ABI.",
+            false,
+            FFI,
+        ),
+        (
+            "The boundary covers `oxicrypt-aes`, `oxicrypt-sha` and the C ABI.",
+            false,
+            FFI,
+        ),
+        ("The boundary contains `oxicrypt-ffi`.", false, FFI),
+        (
+            "Inside the boundary: `oxicrypt-aes` and `oxicrypt-ffi`.",
+            false,
+            FFI,
+        ),
+        ("The C ABI sits inside the boundary.", false, FFI),
+        // `oxicrypt-*` names every crate.
+        (
+            "The cryptographic boundary encompasses the `oxicrypt-*` crates compiled into a\n\
+             single module binary. The ACVP harness and tools are outside the boundary.",
+            false,
+            &["oxicrypt-ffi", "oxicrypt-maxwell"],
+        ),
+        // `or` joins a list like `and`.
+        (
+            "`oxicrypt-aes` or `oxicrypt-sha` sits outside the boundary.",
+            false,
+            &["oxicrypt-sha", "oxicrypt-aes"],
+        ),
+        // `in` with any determiner.
+        ("`oxicrypt-ffi` is in its boundary.", false, FFI),
+        ("`oxicrypt-ffi` is in this boundary.", false, FFI),
+        ("`oxicrypt-ffi` is in that boundary.", false, FFI),
+        // Every enumerating verb.
+        ("The boundary includes the C ABI.", false, FFI),
+        ("The boundary comprises the C ABI.", false, FFI),
+        ("The boundary holds the C ABI.", false, FFI),
+        // A negation two words back does not negate.
+        (
+            "`oxicrypt-ffi` is not just inside the boundary.",
+            false,
+            FFI,
+        ),
+        // An abbreviation does not end the sentence, in any case.
+        (
+            "`oxicrypt-ffi` (i.e. the C library) sits inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-ffi`, its header etc. sit inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-ffi` (cf. the header) sits inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-ffi`, E.g. its header, sits inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-ffi`, e.g. its header, sits inside the boundary.",
+            false,
+            FFI,
+        ),
+        (
+            "`oxicrypt-ffi` (vs. the bindings) sits inside the boundary.",
+            false,
+            FFI,
+        ),
+    ];
+
+    const FFI: &[&str] = &["oxicrypt-ffi"];
+    const AES: &[&str] = &["oxicrypt-aes"];
+
+    /// The side reader reports exactly the crates a wrong statement places on
+    /// the wrong side, and stays quiet on correct sentences.
+    ///
+    /// Without this the sweep is unfalsifiable: a reader that returned
+    /// nothing would report every file clean. Each must-fire case states the
+    /// full report, so a reader that blamed an extra crate fails too.
+    #[test]
+    fn the_boundary_side_reader_catches_what_it_must() {
+        let sides = crate_sides();
+        for &(text, toml, expected) in MUST_FIRE {
+            assert_eq!(
+                reported(text, toml, &sides),
+                expected,
+                "wrong report for {text:?}"
+            );
+        }
+    }
+
+    /// The mirror of `the_boundary_side_reader_catches_what_it_must`: correct
+    /// sentences, and the reader's own clause and sentence limits, report
+    /// nothing.
+    #[test]
+    fn the_boundary_side_reader_stays_quiet_on_correct_prose() {
+        let sides = crate_sides();
+
+        // A Rust file is read by its `//!` lines: the crate doc fires, and a
+        // code line between doc lines neither joins nor fires.
+        let changelog = "# Changelog\n\n## [Unreleased]\n\n- `oxicrypt-aes` sits outside the boundary.\n\n\
+                         ## [0.1.0] - 2026-01-01\n\n- `oxicrypt-sha` sits outside the boundary.\n";
+        assert_eq!(
+            file_boundary_violations("CHANGELOG.md", changelog, &sides).len(),
+            1,
+            "only the unreleased section is current text"
+        );
+        let manifest = "[package]\nname = \"x\"\ndescription = \"Inside the boundary: the C ABI.\"\n\
+                        # The C ABI sits inside the boundary.\n";
+        assert_eq!(
+            file_boundary_violations("crates/x/Cargo.toml", manifest, &sides).len(),
+            1,
+            "a manifest is read by its description alone"
+        );
+        let doc = "//! The C ABI shim resides inside the\n//! module boundary.\n\
+                   //! `oxicrypt-aes` is a cipher\n\
+                   let x = 1; // inside the boundary\n";
+        assert_eq!(
+            file_boundary_violations("crates/x/src/lib.rs", doc, &sides).len(),
+            1,
+            "crate doc misread"
+        );
+
+        // Must NOT fire — the mirror control. Without it the reader could be
+        // widened until it fired on every sentence naming a crate and the
+        // checks above would still pass.
+        for text in [
+            "The FFI crate sits outside the FIPS boundary and translates for the \
+             in-boundary algorithm crates.",
+            "`oxicrypt-ffi` sits **outside** the boundary to offer a C ABI.",
+            "The C FFI shim resides *outside* the FIPS 140-3 module boundary. It is \
+             thin glue calling the functions inside the boundary.",
+            "`oxicrypt-entropy` is inside the CMVP module boundary.",
+            "`oxicrypt-sha` and `oxicrypt-sha-accel` sit inside the boundary.",
+            "| `oxicrypt-ffi` | out | — | C ABI |\n| `oxicrypt-aes` | in | inside the boundary |",
+            "Unlike `oxicrypt-aes`, `oxicrypt-ffi` is outside the boundary.",
+            "`oxicrypt-ffi` wraps the in-boundary crates.",
+            "`oxicrypt-ffi` wraps `oxicrypt-aes`, which is inside the boundary.",
+            "`oxicrypt-aes` talks to the outside world through the boundary.",
+            "Everything inside the cryptographic module boundary: the algorithm\n\
+             implementations, the module state machine, the power-up and conditional\n\
+             self-tests, and the integrity check. The C ABI (`oxicrypt-ffi`) sits outside\n\
+             the boundary and is in scope too.",
+            "The module sits inside the boundary and calls `oxicrypt-ffi`.",
+            "Everything inside the boundary — the algorithms and the self-tests — and the C ABI.",
+            "The C ABI sits outside the boundary.",
+            "`AGENTS.md` states which crates are inside the cryptographic boundary, and\n\
+             `tools/doc-guard` checks that statement against the workspace: every crate\n\
+             under `crates/` except `oxicrypt-ffi`, the C ABI, and `oxicrypt-maxwell`, the\n\
+             entropy-assessment tool. The ACVP harness and tools are outside the boundary.",
+            "Corrected the table, which listed `oxicrypt-zeroize` and `oxicrypt-aes` as outside \
+             the cryptographic boundary.",
+            "Corrected `SECURITY.md`, which listed the C ABI among the things inside the \
+             cryptographic boundary.",
+            "`oxicrypt-aes` is the cipher; the signer is a tool outside the boundary.",
+            "Out-of-boundary crates: `oxicrypt-ffi`; `oxicrypt-aes` is the cipher.",
+            // Negation states no side.
+            "`oxicrypt-ffi` is not inside the boundary.",
+            "`oxicrypt-aes` is never outside the boundary.",
+            "`oxicrypt-ffi` is no longer inside the boundary.",
+            // Prefix and exact: neither `in-boundary-x` nor `boundaryless`
+            // is a boundary phrase.
+            "`oxicrypt-ffi` is in-boundary-adjacent.",
+            "`oxicrypt-ffi` sits inside the boundaryless region.",
+            // Each sentence splitter: merged, the crate before it would bind
+            // to the phrase after it.
+            "`oxicrypt-ffi` is the C library\n\nThe module sits inside the boundary.",
+            "`oxicrypt-ffi` is the C library\n# Inside the boundary",
+            "`oxicrypt-ffi` is the C library\n> inside the boundary",
+            "`oxicrypt-ffi` is the C library\n1. inside the boundary",
+            "`oxicrypt-ffi` is the C library\n- inside the boundary",
+            "`oxicrypt-ffi` is the C library\n| inside the boundary |",
+            "`oxicrypt-ffi` is the C library. Inside the boundary are the rest.",
+            "```\noxicrypt-ffi\n```\nThe rest sit inside the boundary.",
+        ] {
+            let found = boundary_side_violations(text, false, &sides);
+            assert!(found.is_empty(), "reader fired on {text:?}: {found:?}");
+        }
+    }
+
+    /// The per-file check fires on a document-shaped input: a table placing
+    /// five in-boundary crates outside the boundary.
+    #[test]
+    fn the_boundary_sweep_fires_on_a_wrong_real_document() {
+        const WRONG_API_TABLE: &str = "\
+### Out-of-boundary / tooling crates
+
+These crates are not part of the module's public cryptographic
+API. They are internal infrastructure or out-of-boundary tooling and are
+documented here only for completeness:
+
+| Crate | Purpose |
+|-------|---------|
+| `oxicrypt-zeroize` | Out-of-boundary tooling / internal — volatile memory zeroization primitive |
+| `oxicrypt-sha-accel` | Out-of-boundary tooling / internal — SHA hardware-acceleration backend |
+| `oxicrypt-aes-accel` | Out-of-boundary tooling / internal — AES hardware-acceleration backend |
+| `oxicrypt-timer` | Out-of-boundary tooling / internal — jitter-source timing primitive |
+| `oxicrypt-entropy` | Out-of-boundary tooling / internal — entropy-source assessment support |
+| `oxicrypt-maxwell` | Out-of-boundary tooling / internal — SP 800-90B entropy-estimation tooling |
+| `oxicrypt-ffi` | Out-of-boundary tooling / internal — C ABI foreign-function interface |
+";
+        let found = file_boundary_violations("docs/api.md", WRONG_API_TABLE, &crate_sides());
+        for name in [
+            "oxicrypt-zeroize",
+            "oxicrypt-sha-accel",
+            "oxicrypt-aes-accel",
+            "oxicrypt-timer",
+            "oxicrypt-entropy",
+        ] {
+            assert!(
+                found
+                    .iter()
+                    .any(|l| l.starts_with(&format!("docs/api.md: `{name}` stated Outside"))),
+                "the sweep missed `{name}`: {found:?}"
+            );
+        }
+        assert_eq!(found.len(), 5, "the sweep blamed a correct row: {found:?}");
+    }
+
+    /// The files the boundary sweep reads: markdown, `cbindgen.toml` and
+    /// every `Cargo.toml` anywhere in the tree, every `.rs` file under
+    /// `crates/` and `tools/`, and the two binaries' roots.
+    fn swept_files(root: &Path) -> Vec<PathBuf> {
+        fn walk(dir: &Path, rs_too: bool, out: &mut Vec<PathBuf>) {
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if is_outside_the_tree(&name) || name == "node_modules" {
+                    continue;
+                }
+                let ext = path.extension().and_then(|e| e.to_str());
+                if path.is_dir() {
+                    walk(&path, rs_too, out);
+                } else if (rs_too && ext == Some("rs"))
+                    || (!rs_too
+                        && (ext == Some("md") || name == "cbindgen.toml" || name == "Cargo.toml"))
+                {
+                    out.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(root, false, &mut files);
+        for dir in ["crates", "tools"] {
+            walk(&root.join(dir), true, &mut files);
+        }
+        files.push(root.join("oxi/src/main.rs"));
+        files.push(root.join("acvp-harness/src/main.rs"));
+        files
+    }
+
+    /// The wrong boundary statements across `files`, each a
+    /// (repository-relative name, contents) pair.
+    fn sweep_boundary(files: &[(String, String)], sides: &BTreeMap<String, Side>) -> Vec<String> {
+        files
+            .iter()
+            .flat_map(|(name, text)| file_boundary_violations(name, text, sides))
+            .collect()
+    }
+
+    /// The sweep reports a wrong statement from every kind of file it reads,
+    /// and nothing for a correct one.
+    #[test]
+    fn the_boundary_sweep_reports_every_wrong_file() {
+        let files: Vec<(String, String)> = [
+            ("docs/a.md", "`oxicrypt-ffi` sits inside the boundary."),
+            ("docs/b.md", "`oxicrypt-ffi` sits outside the boundary."),
+            (
+                "crates/x/cbindgen.toml",
+                "header = \"\"\"/*\n * The C ABI shim resides INSIDE the FIPS 140-3\n \
+                 * module boundary.\n */\"\"\"",
+            ),
+            (
+                "crates/x/src/lib.rs",
+                "//! `oxicrypt-aes` sits outside the boundary.\n",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name.to_string(), text.to_string()))
+        .collect();
+        let found = sweep_boundary(&files, &crate_sides());
+        assert_eq!(found.len(), 3, "the sweep misreported: {found:?}");
+        for (line, file) in
+            found
+                .iter()
+                .zip(["docs/a.md", "crates/x/cbindgen.toml", "crates/x/src/lib.rs"])
+        {
+            assert!(
+                line.starts_with(&format!("{file}: ")),
+                "{line:?} is not from {file}"
+            );
+        }
+    }
+
+    /// No current prose places a crate on the side of the boundary opposite
+    /// to the one `OUT_OF_BOUNDARY` assigns it: markdown, the `## [Unreleased]`
+    /// section of `CHANGELOG.md`, every `Cargo.toml` `description`, the `//!`
+    /// documentation of every `.rs` file under `crates/` and `tools/` and of
+    /// the two binaries' roots, and `cbindgen.toml`.
+    ///
+    /// `cbindgen.toml` is swept because its header preamble is copied into the
+    /// generated C header, the copy a C API consumer reads; the header itself
+    /// is not swept. Released changelog sections are frozen history.
+    #[test]
+    fn prose_places_each_crate_on_its_side_of_the_boundary() {
+        let root = repo_root();
+        let paths = swept_files(&root);
+        for reached in [
+            "docs/c-api-design.md",
+            "crates/oxicrypt-ffi/cbindgen.toml",
+            "crates/oxicrypt-ffi/src/lib.rs",
+            "crates/oxicrypt-ffi/Cargo.toml",
+            "CHANGELOG.md",
+            "oxi/src/main.rs",
+            "acvp-harness/src/main.rs",
+        ] {
+            assert!(
+                paths.iter().any(|f| f.ends_with(reached)),
+                "the sweep does not reach `{reached}`"
+            );
+        }
+        assert!(
+            unreleased(&read_doc("CHANGELOG.md")).contains("- "),
+            "the CHANGELOG has no readable `## [Unreleased]` section"
+        );
+
+        let files: Vec<(String, String)> = paths
+            .iter()
+            .map(|file| {
+                let text = fs::read_to_string(file)
+                    .unwrap_or_else(|e| panic!("read {}: {e}", file.display()));
+                let rel = file
+                    .strip_prefix(&root)
+                    .unwrap_or(file)
+                    .display()
+                    .to_string();
+                (rel, text)
+            })
+            .collect();
+        let wrong = sweep_boundary(&files, &crate_sides());
+        assert!(
+            wrong.is_empty(),
+            "prose places a crate on the wrong side of the boundary (OUT_OF_BOUNDARY is the \
+             reference):\n{}",
+            wrong.join("\n")
+        );
+    }
+
+    // ----- the round-trip test counts -----
+
+    /// The names of the test functions in `src`: the function declared after
+    /// each line whose trimmed start is `#[test]` (including `#[test] fn` on
+    /// one line) or `#[tokio::test`, outside a `/* */` block comment.
+    fn test_fn_names(src: &str) -> Vec<String> {
+        let mut depth: usize = 0;
+        let mut pending = false;
+        let mut names = Vec::new();
+        for line in src.lines() {
+            let trimmed = line.trim_start();
+            if depth == 0
+                && (trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test"))
+            {
+                pending = true;
+            }
+            if pending
+                && depth == 0
+                && let Some((_, rest)) = line.split_once("fn ")
+            {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                names.push(name);
+                pending = false;
+            }
+            let code = line.split("//").next().unwrap_or(line);
+            depth = depth.saturating_add(code.matches("/*").count());
+            depth = depth.saturating_sub(code.matches("*/").count());
+        }
+        names
+    }
+
+    /// Whether `hay` contains `needle` at a word start: the character before
+    /// the match, if any, is not alphanumeric.
+    fn contains_at_word_start(hay: &str, needle: &str) -> bool {
+        hay.match_indices(needle).any(|(at, _)| {
+            !hay[..at]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric)
+        })
+    }
+
+    #[test]
+    fn the_round_trip_counters_count_what_they_must() {
+        for (src, expected) in [
+            ("#[test]\nfn a() {}", &["a"][..]),
+            (
+                "    #[test]\n    fn a_round_trip() {}",
+                &["a_round_trip"][..],
+            ),
+            ("#[test] fn a() {}", &["a"][..]),
+            ("#[tokio::test]\nasync fn a() {}", &["a"][..]),
+            (
+                "#[tokio::test(flavor = \"multi_thread\")]\nasync fn a() {}",
+                &["a"][..],
+            ),
+            ("#[test]\n#[ignore]\nfn a() {}", &["a"][..]),
+            ("/*\n#[test]\nfn a() {}\n*/\n#[test]\nfn b() {}", &["b"][..]),
+            ("/* one */\n#[test]\nfn a() {}", &["a"][..]),
+            ("// #[test]\nfn a() {}", &[][..]),
+            ("#[testing]\nfn a() {}", &[][..]),
+        ] {
+            assert_eq!(test_fn_names(src), expected, "misread {src:?}");
+        }
+        assert!(contains_at_word_start("has 121 tests", "121 tests"));
+        assert!(contains_at_word_start("121 tests", "121 tests"));
+        assert!(!contains_at_word_start("has 121 tests", "21 tests"));
+    }
+
+    /// Every way the round-trip figures in `readme` and `building` disagree
+    /// with the test sources: the `_round_trip` tests of `round_trip.rs` and
+    /// `shs_round_trip.rs`, and the further tests of `round_trip.rs`.
+    fn round_trip_claim_errors(
+        acvp_src: &str,
+        shs_src: &str,
+        readme: &str,
+        building: &str,
+    ) -> Vec<String> {
+        let split = |src: &str| {
+            let names = test_fn_names(src);
+            let round_trips = names.iter().filter(|n| n.ends_with("_round_trip")).count();
+            (round_trips, names.len().saturating_sub(round_trips))
+        };
+        let (acvp, further) = split(acvp_src);
+        let (shs, shs_other) = split(shs_src);
+        let mut errors = Vec::new();
+        if acvp == 0 || shs == 0 {
+            errors.push(format!("no round trips counted: {acvp} and {shs}"));
+        }
+        if shs_other != 0 {
+            errors.push(format!(
+                "shs_round_trip.rs holds {shs_other} test(s) that are not round trips; state them \
+                 in the docs"
+            ));
+        }
+        if further != 1 {
+            errors.push(format!(
+                "docs/building.md names one ACVP envelope test; restate it for {further}"
+            ));
+        }
+
+        let readme = normalized(readme);
+        for claim in [
+            format!("{acvp} ACVP round-trip tests plus {shs} CAVP SHS round-trip tests"),
+            format!("{further} further test in `acvp-harness/tests/round_trip.rs`"),
+        ] {
+            if !contains_at_word_start(&readme, &claim) {
+                errors.push(format!("README: {claim:?} missing"));
+            }
+        }
+        let total = format!("{} ACVP/CAVP round-trip tests", acvp.saturating_add(shs));
+        let stated: Vec<&str> = readme
+            .match_indices(" ACVP/CAVP round-trip tests")
+            .map(|(at, _)| readme[..at].rsplit(' ').next().unwrap_or(""))
+            .collect();
+        if stated.is_empty() {
+            errors.push(format!("README: {total:?} missing"));
+        }
+        for n in stated {
+            if format!("{n} ACVP/CAVP round-trip tests") != total {
+                errors.push(format!("README states {n} where the sum is {total:?}"));
+            }
+        }
+
+        let building = normalized(building);
+        let listed = format!("{acvp} ACVP round-trip tests, {shs} CAVP SHS round-trip tests");
+        if !contains_at_word_start(&building, &listed) {
+            errors.push(format!("docs/building.md: {listed:?} missing"));
+        }
+        errors
+    }
+
+    /// Each round-trip claim fails when its figure is wrong, including a
+    /// figure that only matches as the tail of a longer number.
+    #[test]
+    fn the_round_trip_claims_fail_when_wrong() {
+        let acvp = "#[test]\nfn a_round_trip() {}\n#[test]\nfn b_round_trip() {}\n\
+                    #[test]\nfn envelope() {}\n";
+        let shs = "#[test]\nfn s_round_trip() {}\n";
+        let readme = "2 ACVP round-trip tests plus 1 CAVP SHS round-trip tests check the \
+                      handlers, and 1 further test in `acvp-harness/tests/round_trip.rs` \
+                      checks fields. Phase 2: 3 ACVP/CAVP round-trip tests, all green.";
+        let building = "The suite includes 2 ACVP round-trip tests, 1 CAVP SHS round-trip \
+                        tests, an ACVP envelope test, and unit tests.";
+        assert_eq!(
+            round_trip_claim_errors(acvp, shs, readme, building),
+            Vec::<String>::new(),
+            "the correct fixture must pass"
+        );
+
+        let two_further = "#[test]\nfn a_round_trip() {}\n#[test]\nfn b_round_trip() {}\n\
+                           #[test]\nfn e() {}\n#[test]\nfn f() {}\n";
+        for (case, acvp_src, shs_src, readme_text, building_text, expected) in [
+            (
+                "README split prefixed",
+                acvp,
+                shs,
+                readme.replacen("2 ACVP", "12 ACVP", 1),
+                building.to_string(),
+                "README: \"2 ACVP",
+            ),
+            (
+                "README further figure",
+                acvp,
+                shs,
+                readme.replace("1 further", "3 further"),
+                building.to_string(),
+                "README: \"1 further",
+            ),
+            (
+                "README total",
+                acvp,
+                shs,
+                readme.replace("3 ACVP/CAVP", "4 ACVP/CAVP"),
+                building.to_string(),
+                "README states 4",
+            ),
+            (
+                "building.md figure",
+                acvp,
+                shs,
+                readme.to_string(),
+                building.replace("2 ACVP", "3 ACVP"),
+                "docs/building.md",
+            ),
+            (
+                "building.md prefixed",
+                acvp,
+                shs,
+                readme.to_string(),
+                building.replace("2 ACVP", "12 ACVP"),
+                "docs/building.md",
+            ),
+            (
+                "SHS file holds another test",
+                acvp,
+                "#[test]\nfn s_round_trip() {}\n#[test]\nfn other() {}\n",
+                readme.to_string(),
+                building.to_string(),
+                "shs_round_trip.rs holds 1",
+            ),
+            (
+                "two further tests",
+                two_further,
+                shs,
+                readme.replace("1 further", "2 further"),
+                building.to_string(),
+                "restate it for 2",
+            ),
+        ] {
+            let errors = round_trip_claim_errors(acvp_src, shs_src, &readme_text, &building_text);
+            assert!(
+                errors.iter().any(|e| e.contains(expected)),
+                "{case}: expected an error containing {expected:?}, got {errors:?}"
+            );
+        }
+    }
+
+    /// The round-trip figures the README and `docs/building.md` state match
+    /// the test sources.
+    #[test]
+    fn docs_state_the_round_trip_test_counts() {
+        let errors = round_trip_claim_errors(
+            &read_doc("acvp-harness/tests/round_trip.rs"),
+            &read_doc("acvp-harness/tests/shs_round_trip.rs"),
+            &read_doc("README.md"),
+            &read_doc("docs/building.md"),
+        );
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+    }
+
+    /// The rows of the `ISA.md` Features table that are missing or state the
+    /// wrong boundary side.
+    fn isa_features_errors(isa: &str, sides: &BTreeMap<String, Side>) -> Vec<String> {
+        sides
+            .iter()
+            .filter_map(|(name, side)| {
+                let expected = if *side == Side::Inside { "in" } else { "out" };
+                let row = format!("| `{name}` | {expected} |");
+                (!isa.lines().any(|l| l.starts_with(&row))).then_some(row)
+            })
+            .collect()
+    }
+
+    /// The `ISA.md` Features table has a row for every crate under `crates/`,
+    /// and its boundary column agrees with `OUT_OF_BOUNDARY`.
+    #[test]
+    fn isa_features_table_lists_every_crate_on_its_side() {
+        let sides: BTreeMap<String, Side> = [
+            ("oxicrypt-aes".to_string(), Side::Inside),
+            ("oxicrypt-ffi".to_string(), Side::Outside),
+        ]
+        .into_iter()
+        .collect();
+        let good = "| `oxicrypt-aes` | in | — | x |\n| `oxicrypt-ffi` | out | — | x |\n";
+        assert!(isa_features_errors(good, &sides).is_empty());
+        let wrong_side = "| `oxicrypt-aes` | out | — | x |\n| `oxicrypt-ffi` | out | — | x |\n";
+        assert_eq!(
+            isa_features_errors(wrong_side, &sides),
+            ["| `oxicrypt-aes` | in |"]
+        );
+        let missing = "| `oxicrypt-aes` | in | — | x |\nSee `oxicrypt-ffi` | out |.\n";
+        assert_eq!(
+            isa_features_errors(missing, &sides),
+            ["| `oxicrypt-ffi` | out |"]
+        );
+
+        let errors = isa_features_errors(&read_doc("ISA.md"), &crate_sides());
+        assert!(
+            errors.is_empty(),
+            "ISA.md Features table lacks these rows: {errors:?}"
+        );
+    }
+
+    /// The crates of `crates` with no `| `name` |` row in `api`.
+    fn api_md_missing_rows(api: &str, crates: &BTreeSet<String>) -> Vec<String> {
+        crates
+            .iter()
+            .filter(|name| !api.lines().any(|l| l.starts_with(&format!("| `{name}` |"))))
+            .cloned()
+            .collect()
+    }
+
+    /// `docs/api.md` has a table row for every crate under `crates/`.
+    #[test]
+    fn api_md_lists_every_crate() {
+        let crates: BTreeSet<String> = ["oxicrypt-aes", "oxicrypt-sha"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+        let api = "| `oxicrypt-aes` | AES |\nSee `oxicrypt-sha` for hashing.\n\
+                   | `oxicrypt-sha-accel` | SHA-NI |\n";
+        assert_eq!(api_md_missing_rows(api, &crates), ["oxicrypt-sha"]);
+
+        let missing = api_md_missing_rows(&read_doc("docs/api.md"), &workspace_crates());
+        assert!(missing.is_empty(), "docs/api.md has no row for {missing:?}");
     }
 
     /// Every `ISC-N` cited anywhere in the tree resolves to a criterion defined

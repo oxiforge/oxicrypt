@@ -49,7 +49,7 @@ impl AlgorithmHandler for Shake128Handler {
                 Shake128::new().map_err(|_| DispatchError::Crypto("Shake128::new returned Err"))?;
             x.update(msg);
             x.finalize();
-            x.squeeze(out);
+            x.squeeze(out)?;
             Ok(())
         })
     }
@@ -71,7 +71,7 @@ impl AlgorithmHandler for Shake256Handler {
                 Shake256::new().map_err(|_| DispatchError::Crypto("Shake256::new returned Err"))?;
             x.update(msg);
             x.finalize();
-            x.squeeze(out);
+            x.squeeze(out)?;
             Ok(())
         })
     }
@@ -415,7 +415,7 @@ fn shake_ldt_stream(
             }
             xof.finalize();
             let mut out = vec![0u8; out_bytes];
-            xof.squeeze(&mut out);
+            xof.squeeze(&mut out)?;
             Ok(out)
         }
         256 => {
@@ -432,7 +432,7 @@ fn shake_ldt_stream(
             }
             xof.finalize();
             let mut out = vec![0u8; out_bytes];
-            xof.squeeze(&mut out);
+            xof.squeeze(&mut out)?;
             Ok(out)
         }
         _ => Err(DispatchError::Unsupported(

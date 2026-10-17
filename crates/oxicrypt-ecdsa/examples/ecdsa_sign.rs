@@ -26,7 +26,7 @@ fn main() {
     // Generate a keypair:
     let private_key =
         oxicrypt_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg).expect("ecdsa keygen");
-    let public_key = private_key.public_key();
+    let public_key = private_key.public_key().expect("public key");
     println!("Public key: {}...", hex(&public_key[..32]));
 
     // Sign:

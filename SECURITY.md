@@ -13,9 +13,10 @@ a fix before public disclosure. There is no bug bounty.
 
 ## What is in scope
 
-Everything inside the cryptographic module boundary — the algorithm
+Everything inside the cryptographic module boundary: the algorithm
 implementations, the module state machine, the power-up and conditional
-self-tests, the integrity check, and the C ABI.
+self-tests, and the integrity check. The C ABI (`oxicrypt-ffi`) sits outside
+the boundary and is in scope too.
 
 Findings of particular interest, because they are the ones this project exists to
 get right:

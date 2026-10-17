@@ -115,6 +115,9 @@ impl<S: NoiseSource> EntropyPipeline<S> {
     ///   [`Self::on_demand_test`] for re-testing).
     /// - [`EntropyError::ConditionerKat`] if the conditioning KAT fails —
     ///   the pipeline is then permanently poisoned.
+    /// - [`EntropyError::Module`] if the module refuses the KAT's hash
+    ///   computation. The pipeline is not poisoned and startup can be
+    ///   retried once the module has started.
     /// - [`EntropyError::Health`] on a test failure — the pipeline is then
     ///   permanently poisoned.
     /// - [`EntropyError::Source`] if the source fails to produce samples.
@@ -123,7 +126,7 @@ impl<S: NoiseSource> EntropyPipeline<S> {
             State::AwaitingStartup => (),
             State::Operational | State::Poisoned => return Err(EntropyError::NotReady),
         }
-        if !Conditioner::startup_kat() {
+        if !Conditioner::startup_kat()? {
             self.state = State::Poisoned;
             return Err(EntropyError::ConditionerKat);
         }
@@ -214,19 +217,21 @@ impl<S: NoiseSource> EntropyPipeline<S> {
     ///   and its hash state is zeroized on drop. No block is emitted.
     /// - [`EntropyError::Source`] if the source fails mid-block (no
     ///   poisoning; the partial block is abandoned the same way).
+    /// - [`EntropyError::Module`] if the module refuses the conditioning
+    ///   hash (no poisoning).
     pub fn conditioned_block(&mut self) -> Result<[u8; CONDITIONED_BLOCK_LEN], EntropyError> {
         match self.state {
             State::Operational => (),
             State::AwaitingStartup | State::Poisoned => return Err(EntropyError::NotReady),
         }
-        let mut hasher = Conditioner::begin_block();
+        let mut hasher = Conditioner::begin_block()?;
         let mut drawn: u32 = 0;
         while drawn < self.conditioner.samples_per_block() {
             let sample = self.sample()?;
             hasher.update(&[sample]);
             drawn = drawn.saturating_add(1);
         }
-        Ok(hasher.finalize())
+        Ok(hasher.finalize()?)
     }
 
     /// The conditioner configuration derived from this pipeline's claim.
@@ -379,6 +384,7 @@ mod tests {
 
     #[test]
     fn claim_above_ceiling_is_refused() {
+        crate::test_support::start_module();
         let err = EntropyPipeline::new(
             PrngMock::new(),
             MinEntropy::from_steps(4 * 256 + 1),
@@ -396,11 +402,13 @@ mod tests {
 
     #[test]
     fn claim_at_ceiling_is_accepted() {
+        crate::test_support::start_module();
         assert!(EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(4), alpha20()).is_ok());
     }
 
     #[test]
     fn unsupported_alpha_is_typed_at_construction() {
+        crate::test_support::start_module();
         // An α with no table coverage (e.g. 2⁻²⁵) is a typed refusal at
         // construction — cutoffs are table-borne, never computed in-boundary.
         let a25 = Alpha::from_exp(25).unwrap();
@@ -413,6 +421,7 @@ mod tests {
 
     #[test]
     fn default_alpha_30_is_now_supported() {
+        crate::test_support::start_module();
         // The ratified default α = 2⁻³⁰ is table-covered (generated grid):
         // construction succeeds where it previously returned UnsupportedAlpha.
         // PrngMock is an 8-bit (non-binary) source; H = 2 → cutoff 190.
@@ -425,6 +434,7 @@ mod tests {
 
     #[test]
     fn no_output_before_startup() {
+        crate::test_support::start_module();
         let mut p = healthy_pipeline();
         assert_eq!(p.sample().unwrap_err(), EntropyError::NotReady);
         assert!(!p.is_operational());
@@ -432,6 +442,7 @@ mod tests {
 
     #[test]
     fn startup_passes_then_samples_flow() {
+        crate::test_support::start_module();
         let mut p = healthy_pipeline();
         p.run_startup().unwrap();
         assert!(p.is_operational());
@@ -442,6 +453,7 @@ mod tests {
 
     #[test]
     fn startup_samples_are_discarded_never_reused() {
+        crate::test_support::start_module();
         // After startup the source has emitted exactly STARTUP_MIN_SAMPLES;
         // the first released sample is emission #1025 — fresh, not a
         // replayed startup sample.
@@ -454,6 +466,7 @@ mod tests {
 
     #[test]
     fn startup_twice_is_refused() {
+        crate::test_support::start_module();
         let mut p = healthy_pipeline();
         p.run_startup().unwrap();
         assert_eq!(p.run_startup().unwrap_err(), EntropyError::NotReady);
@@ -463,6 +476,7 @@ mod tests {
 
     #[test]
     fn dead_source_trips_rct_during_startup() {
+        crate::test_support::start_module();
         // H = 2.0, α = 2⁻²⁰ → C = 11: the constant stream fails startup
         // at the spec-expected count, and the pipeline poisons permanently.
         let mut p = EntropyPipeline::new(DeadMock, MinEntropy::from_bits(2), alpha20()).unwrap();
@@ -476,6 +490,7 @@ mod tests {
 
     #[test]
     fn oscillating_source_trips_apt_within_one_window() {
+        crate::test_support::start_module();
         // Wide (8-bit) source alternating two values under an H = 8 claim:
         // W = 512, C = 13 — trips well inside the first window (the 13th
         // reference occurrence arrives by sample 25).
@@ -492,6 +507,7 @@ mod tests {
 
     #[test]
     fn poisoned_pipeline_never_recovers() {
+        crate::test_support::start_module();
         let mut p = EntropyPipeline::new(DeadMock, MinEntropy::from_bits(2), alpha20()).unwrap();
         let _ = p.run_startup();
         assert!(p.is_poisoned());
@@ -502,6 +518,7 @@ mod tests {
 
     #[test]
     fn on_demand_runs_from_clean_state() {
+        crate::test_support::start_module();
         // Drive the continuous RCT to the brink (10 of 11 repeats is
         // impossible to arrange through a PRNG source, so probe the
         // mechanism instead: on-demand succeeds on a healthy source and
@@ -615,6 +632,7 @@ mod tests {
     #[test]
     fn on_demand_replaces_the_continuous_monitor() {
         const LIMIT: u32 = 4096;
+        crate::test_support::start_module();
 
         // Baseline: from a clean monitor, how many identical samples trip the RCT?
         let mut clean =
@@ -677,6 +695,7 @@ mod tests {
 
     #[test]
     fn on_demand_before_startup_is_refused() {
+        crate::test_support::start_module();
         let mut p = healthy_pipeline();
         assert_eq!(p.on_demand_test().unwrap_err(), EntropyError::NotReady);
     }
@@ -712,12 +731,14 @@ mod tests {
 
     #[test]
     fn no_conditioned_output_before_startup() {
+        crate::test_support::start_module();
         let mut p = healthy_pipeline();
         assert_eq!(p.conditioned_block().unwrap_err(), EntropyError::NotReady);
     }
 
     #[test]
     fn conditioned_block_consumes_margin_derived_sample_count() {
+        crate::test_support::start_module();
         // Claim H = 2.0 → ⌈(256+64)/2⌉ = 160 samples per block.
         let mut p = healthy_pipeline();
         p.run_startup().unwrap();
@@ -729,6 +750,7 @@ mod tests {
 
     #[test]
     fn conditioned_blocks_are_stateless_across_blocks() {
+        crate::test_support::start_module();
         // Block 2 must equal a fresh SHA-256 over exactly the source's
         // post-startup samples 161..=320 — any chained state from block 1
         // would change it.
@@ -741,15 +763,16 @@ mod tests {
         for _ in 0..(STARTUP_MIN_SAMPLES + 160) {
             let _ = replay.sample().unwrap();
         }
-        let mut fresh = crate::conditioner::Conditioner::begin_block();
+        let mut fresh = crate::conditioner::Conditioner::begin_block().unwrap();
         for _ in 0..160 {
             fresh.update(&[replay.sample().unwrap()]);
         }
-        assert_eq!(block2, fresh.finalize());
+        assert_eq!(block2, fresh.finalize().unwrap());
     }
 
     #[test]
     fn health_failure_mid_block_poisons_and_emits_nothing() {
+        crate::test_support::start_module();
         // Source dies 16 samples into the first conditioned block: RCT
         // (C = 11 at H = 2, α = 2⁻²⁰) trips inside the block; the partial
         // block is abandoned and the pipeline poisons permanently.
@@ -778,11 +801,13 @@ mod tests {
 
     #[test]
     fn timer_source_metadata_shape_holds() {
+        crate::test_support::start_module();
         // Keep the TimerSource surface exercised from this module too.
         let m = SourceMetadata {
             timer_source: Some(TimerSource::OsNanoClock),
             ..meta()
         };
+        crate::test_support::start_module();
         assert_eq!(m.timer_source, Some(TimerSource::OsNanoClock));
     }
 

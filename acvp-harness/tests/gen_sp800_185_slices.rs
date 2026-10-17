@@ -60,14 +60,14 @@ fn cshake128_compute(msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut x = CShake128::new(b"", s).expect("CShake128::new");
     x.update(msg);
     x.finalize();
-    x.squeeze(out);
+    x.squeeze(out).unwrap();
 }
 
 fn cshake256_compute(msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut x = CShake256::new(b"", s).expect("CShake256::new");
     x.update(msg);
     x.finalize();
-    x.squeeze(out);
+    x.squeeze(out).unwrap();
 }
 
 fn gen_cshake_slice(
@@ -163,13 +163,13 @@ fn gen_cshake_slice(
 fn kmac128_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = Kmac128::new(key, s).expect("Kmac128::new");
     m.update(msg);
-    m.finalize_into(out);
+    m.finalize_into(out).unwrap();
 }
 
 fn kmac256_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = Kmac256::new(key, s).expect("Kmac256::new");
     m.update(msg);
-    m.finalize_into(out);
+    m.finalize_into(out).unwrap();
 }
 
 type KmacComputeFn = fn(&[u8], &[u8], &[u8], &mut [u8]);
@@ -276,7 +276,7 @@ fn tuplehash128_compute(elems: &[&[u8]], s: &[u8], out: &mut [u8]) {
     for e in elems {
         h.update(e);
     }
-    h.finalize_into(out);
+    h.finalize_into(out).unwrap();
 }
 
 fn tuplehash256_compute(elems: &[&[u8]], s: &[u8], out: &mut [u8]) {
@@ -284,7 +284,7 @@ fn tuplehash256_compute(elems: &[&[u8]], s: &[u8], out: &mut [u8]) {
     for e in elems {
         h.update(e);
     }
-    h.finalize_into(out);
+    h.finalize_into(out).unwrap();
 }
 
 fn gen_tuplehash_slice(
@@ -384,13 +384,13 @@ fn gen_tuplehash_slice(
 fn parallelhash128_compute(msg: &[u8], block_size: usize, s: &[u8], out: &mut [u8]) {
     let mut h = ParallelHash128::new(block_size, s).expect("ParallelHash128::new");
     h.update(msg);
-    h.finalize_into(out);
+    h.finalize_into(out).unwrap();
 }
 
 fn parallelhash256_compute(msg: &[u8], block_size: usize, s: &[u8], out: &mut [u8]) {
     let mut h = ParallelHash256::new(block_size, s).expect("ParallelHash256::new");
     h.update(msg);
-    h.finalize_into(out);
+    h.finalize_into(out).unwrap();
 }
 
 fn gen_parallelhash_slice(

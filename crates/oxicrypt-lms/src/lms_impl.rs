@@ -161,8 +161,8 @@ macro_rules! lms_impl {
                 chain_idx: u16,
                 j: u8,
                 tmp: &[u8; N],
-            ) -> [u8; N] {
-                let mut h = <$hasher>::new_internal();
+            ) -> Result<[u8; N], Error> {
+                let mut h = <$hasher>::new_internal()?;
                 h.update(i_val);
                 h.update(&q.to_be_bytes());
                 h.update(&chain_idx.to_be_bytes());
@@ -179,12 +179,12 @@ macro_rules! lms_impl {
                 start_j: u8,
                 count: u8,
                 start_val: &[u8; N],
-            ) -> [u8; N] {
+            ) -> Result<[u8; N], Error> {
                 let mut tmp = *start_val;
                 for step in 0..count {
-                    tmp = chain_step(i_val, q, chain_idx, start_j + step, &tmp);
+                    tmp = chain_step(i_val, q, chain_idx, start_j + step, &tmp)?;
                 }
-                tmp
+                Ok(tmp)
             }
 
             /// Message hash: `Q = H(I || u32str(q) || u16str(D_MESG) || C || message)`.
@@ -193,8 +193,8 @@ macro_rules! lms_impl {
                 q: u32,
                 c: &[u8; N],
                 message: &[u8],
-            ) -> [u8; N] {
-                let mut h = <$hasher>::new_internal();
+            ) -> Result<[u8; N], Error> {
+                let mut h = <$hasher>::new_internal()?;
                 h.update(i_val);
                 h.update(&q.to_be_bytes());
                 h.update(&D_MESG.to_be_bytes());
@@ -210,22 +210,22 @@ macro_rules! lms_impl {
                 q: u32,
                 message: &[u8],
                 ots_sig: &[u8],
-            ) -> Option<[u8; N]> {
+            ) -> Result<Option<[u8; N]>, Error> {
                 if ots_sig.len() != OTS_SIG_LEN {
-                    return None;
+                    return Ok(None);
                 }
 
                 let sig_type = u32::from_be_bytes([ots_sig[0], ots_sig[1], ots_sig[2], ots_sig[3]]);
                 if sig_type != LMOTS_TYPE {
-                    return None;
+                    return Ok(None);
                 }
 
                 let mut c = [0u8; N];
                 c.copy_from_slice(&ots_sig[4..4 + N]);
 
-                let q_hash = compute_q(i_val, q, &c, message);
+                let q_hash = compute_q(i_val, q, &c, message)?;
 
-                let mut kc = <$hasher>::new_internal();
+                let mut kc = <$hasher>::new_internal()?;
                 kc.update(i_val);
                 kc.update(&q.to_be_bytes());
                 kc.update(&D_PBLC.to_be_bytes());
@@ -236,11 +236,11 @@ macro_rules! lms_impl {
                     let off = 4 + N + i * N;
                     let mut y_i = [0u8; N];
                     y_i.copy_from_slice(&ots_sig[off..off + N]);
-                    let z_i = chain(i_val, q, i as u16, a, remaining, &y_i);
+                    let z_i = chain(i_val, q, i as u16, a, remaining, &y_i)?;
                     kc.update(&z_i);
                 }
 
-                Some(kc.finalize())
+                Ok(Some(kc.finalize()?))
             }
         }
 
@@ -256,8 +256,12 @@ macro_rules! lms_impl {
             use super::*;
 
             /// Leaf hash: `H(I || u32str(r) || u16str(D_LEAF) || Kc)`.
-            pub(super) fn hash_leaf(i_val: &[u8; 16], r: u32, kc: &[u8; N]) -> [u8; N] {
-                let mut h = <$hasher>::new_internal();
+            pub(super) fn hash_leaf(
+                i_val: &[u8; 16],
+                r: u32,
+                kc: &[u8; N],
+            ) -> Result<[u8; N], Error> {
+                let mut h = <$hasher>::new_internal()?;
                 h.update(i_val);
                 h.update(&r.to_be_bytes());
                 h.update(&D_LEAF.to_be_bytes());
@@ -271,8 +275,8 @@ macro_rules! lms_impl {
                 r: u32,
                 left: &[u8; N],
                 right: &[u8; N],
-            ) -> [u8; N] {
-                let mut h = <$hasher>::new_internal();
+            ) -> Result<[u8; N], Error> {
+                let mut h = <$hasher>::new_internal()?;
                 h.update(i_val);
                 h.update(&r.to_be_bytes());
                 h.update(&D_INTR.to_be_bytes());
@@ -288,19 +292,19 @@ macro_rules! lms_impl {
                 candidate_k: &[u8; N],
                 q: u32,
                 auth: &[[u8; N]; H],
-            ) -> [u8; N] {
+            ) -> Result<[u8; N], Error> {
                 let mut node_idx = MAX_SIGNATURES + q;
-                let mut tmp = hash_leaf(i_val, node_idx, candidate_k);
+                let mut tmp = hash_leaf(i_val, node_idx, candidate_k)?;
                 for sibling in auth {
                     let parent = node_idx >> 1;
                     if node_idx & 1 == 0 {
-                        tmp = hash_internal(i_val, parent, &tmp, sibling);
+                        tmp = hash_internal(i_val, parent, &tmp, sibling)?;
                     } else {
-                        tmp = hash_internal(i_val, parent, sibling, &tmp);
+                        tmp = hash_internal(i_val, parent, sibling, &tmp)?;
                     }
                     node_idx = parent;
                 }
-                tmp
+                Ok(tmp)
             }
         }
 
@@ -323,35 +327,50 @@ macro_rules! lms_impl {
         ) -> ::core::result::Result<(), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_verify)?;
-            if verify_internal(public_key, message, signature) {
+            if verify_internal_unguarded(public_key, message, signature)? {
                 Ok(())
             } else {
                 Err(Error::InvalidInput)
             }
         }
 
-        /// Gate-free verify — returns the boolean outcome directly.
+        /// Verify without the operational gate.
         ///
         /// `false` covers a malformed public key or signature (a typecode
         /// that is not this pair's, or a leaf index `q` at or above
         /// [`MAX_SIGNATURES`]) as well as a signature that fails to match.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn verify_internal(
             public_key: &[u8; PUBLIC_KEY_LEN],
             message: &[u8],
             signature: &[u8; SIGNATURE_LEN],
-        ) -> bool {
+        ) -> Result<bool, Error> {
+            oxicrypt_module::require_self_test_started()?;
+            verify_internal_unguarded(public_key, message, signature)
+        }
+
+        /// Body of [`verify_internal`], run once its guard has passed.
+        fn verify_internal_unguarded(
+            public_key: &[u8; PUBLIC_KEY_LEN],
+            message: &[u8],
+            signature: &[u8; SIGNATURE_LEN],
+        ) -> Result<bool, Error> {
             #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
             let pk_lms_type =
                 u32::from_be_bytes([public_key[0], public_key[1], public_key[2], public_key[3]]);
             if pk_lms_type != LMS_TYPE {
-                return false;
+                return Ok(false);
             }
             let pk_ots_type =
                 u32::from_be_bytes([public_key[4], public_key[5], public_key[6], public_key[7]]);
             if pk_ots_type != LMOTS_TYPE {
-                return false;
+                return Ok(false);
             }
             let mut i_val = [0u8; 16];
             i_val.copy_from_slice(&public_key[8..24]);
@@ -360,7 +379,7 @@ macro_rules! lms_impl {
 
             let q = u32::from_be_bytes([signature[0], signature[1], signature[2], signature[3]]);
             if q >= MAX_SIGNATURES {
-                return false;
+                return Ok(false);
             }
 
             let ots_sig = &signature[4..4 + OTS_SIG_LEN];
@@ -372,7 +391,7 @@ macro_rules! lms_impl {
                 signature[4 + OTS_SIG_LEN + 3],
             ]);
             if sig_lms_type != LMS_TYPE {
-                return false;
+                return Ok(false);
             }
 
             let auth_start = 4 + OTS_SIG_LEN + 4;
@@ -383,18 +402,18 @@ macro_rules! lms_impl {
             }
 
             let Some(candidate_k) =
-                lmots_internals::ots_verify_candidate(&i_val, q, message, ots_sig)
+                lmots_internals::ots_verify_candidate(&i_val, q, message, ots_sig)?
             else {
-                return false;
+                return Ok(false);
             };
 
-            let computed_root = tree_internals::walk_auth_path(&i_val, &candidate_k, q, &auth);
+            let computed_root = tree_internals::walk_auth_path(&i_val, &candidate_k, q, &auth)?;
 
             let mut diff = 0u8;
             for i in 0..N {
                 diff |= computed_root[i] ^ expected_root[i];
             }
-            diff == 0
+            Ok(diff == 0)
         }
     };
 }

@@ -63,6 +63,7 @@ mod tests {
 
     #[test]
     fn ascii_mode_reads_customization_field_as_bytes() {
+        crate::ensure_initialized().unwrap();
         let t = obj(&[
             ("customization", JsonValue::String("hello".to_string())),
             (
@@ -76,6 +77,7 @@ mod tests {
 
     #[test]
     fn hex_mode_reads_customization_hex_field_decoded() {
+        crate::ensure_initialized().unwrap();
         let t = obj(&[
             (
                 "customization",
@@ -92,6 +94,7 @@ mod tests {
 
     #[test]
     fn ascii_mode_missing_field_yields_empty() {
+        crate::ensure_initialized().unwrap();
         let t = obj(&[]);
         let s = read_customization_field(&t, false).unwrap();
         assert!(s.is_empty());
@@ -99,6 +102,7 @@ mod tests {
 
     #[test]
     fn hex_mode_missing_field_yields_empty() {
+        crate::ensure_initialized().unwrap();
         let t = obj(&[]);
         let s = read_customization_field(&t, true).unwrap();
         assert!(s.is_empty());
@@ -106,6 +110,7 @@ mod tests {
 
     #[test]
     fn ascii_mode_empty_string_yields_empty() {
+        crate::ensure_initialized().unwrap();
         let t = obj(&[("customization", JsonValue::String(String::new()))]);
         let s = read_customization_field(&t, false).unwrap();
         assert!(s.is_empty());
@@ -113,6 +118,7 @@ mod tests {
 
     #[test]
     fn hex_mode_empty_string_yields_empty() {
+        crate::ensure_initialized().unwrap();
         let t = obj(&[("customizationHex", JsonValue::String(String::new()))]);
         let s = read_customization_field(&t, true).unwrap();
         assert!(s.is_empty());

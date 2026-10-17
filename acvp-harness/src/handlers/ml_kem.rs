@@ -19,7 +19,7 @@
 //! cap entry and a match arm in each group driver, but no new handler
 //! struct.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -166,17 +166,17 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         let (ek_hex, dk_hex) = match parameter_set {
             "ML-KEM-512" => {
                 let (ek, dk) = oxicrypt_ml_kem::ml_kem_512::keygen_internal(&d, &z)
-                    .ok_or(DispatchError::Crypto("ML-KEM-512 KeyGen failed"))?;
+                    .map_err(primitive_err("ML-KEM-512 KeyGen failed"))?;
                 (hex::encode_upper(&ek), hex::encode_upper(&dk))
             }
             "ML-KEM-768" => {
                 let (ek, dk) = oxicrypt_ml_kem::ml_kem_768::keygen_internal(&d, &z)
-                    .ok_or(DispatchError::Crypto("ML-KEM-768 KeyGen failed"))?;
+                    .map_err(primitive_err("ML-KEM-768 KeyGen failed"))?;
                 (hex::encode_upper(&ek), hex::encode_upper(&dk))
             }
             "ML-KEM-1024" => {
                 let (ek, dk) = oxicrypt_ml_kem::ml_kem_1024::keygen_internal(&d, &z)
-                    .ok_or(DispatchError::Crypto("ML-KEM-1024 KeyGen failed"))?;
+                    .map_err(primitive_err("ML-KEM-1024 KeyGen failed"))?;
                 (hex::encode_upper(&ek), hex::encode_upper(&dk))
             }
             other => return Err(unsupported_parameter_set(other)),
@@ -248,21 +248,21 @@ fn handle_encaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     .as_slice()
                     .try_into()
                     .map_err(|_| DispatchError::Crypto("ML-KEM-512 Encaps: ek is not 800 bytes"))?;
-                let (ss, ct) = oxicrypt_ml_kem::ml_kem_512::encaps_internal(&ek, &m);
+                let (ss, ct) = oxicrypt_ml_kem::ml_kem_512::encaps_internal(&ek, &m)?;
                 (hex::encode_upper(&ss), hex::encode_upper(&ct))
             }
             "ML-KEM-768" => {
                 let ek: [u8; 1184] = ek_bytes.as_slice().try_into().map_err(|_| {
                     DispatchError::Crypto("ML-KEM-768 Encaps: ek is not 1184 bytes")
                 })?;
-                let (ss, ct) = oxicrypt_ml_kem::ml_kem_768::encaps_internal(&ek, &m);
+                let (ss, ct) = oxicrypt_ml_kem::ml_kem_768::encaps_internal(&ek, &m)?;
                 (hex::encode_upper(&ss), hex::encode_upper(&ct))
             }
             "ML-KEM-1024" => {
                 let ek: [u8; 1568] = ek_bytes.as_slice().try_into().map_err(|_| {
                     DispatchError::Crypto("ML-KEM-1024 Encaps: ek is not 1568 bytes")
                 })?;
-                let (ss, ct) = oxicrypt_ml_kem::ml_kem_1024::encaps_internal(&ek, &m);
+                let (ss, ct) = oxicrypt_ml_kem::ml_kem_1024::encaps_internal(&ek, &m)?;
                 (hex::encode_upper(&ss), hex::encode_upper(&ct))
             }
             other => return Err(unsupported_parameter_set(other)),
@@ -333,7 +333,7 @@ fn handle_decaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     let c: [u8; 768] = c_bytes.as_slice().try_into().map_err(|_| {
                         DispatchError::Crypto("ML-KEM-512 Decaps: c is not 768 bytes")
                     })?;
-                    let ss = oxicrypt_ml_kem::ml_kem_512::decaps_internal(&dk, &c);
+                    let ss = oxicrypt_ml_kem::ml_kem_512::decaps_internal(&dk, &c)?;
                     hex::encode_upper(&ss)
                 }
                 "ML-KEM-768" => {
@@ -343,7 +343,7 @@ fn handle_decaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     let c: [u8; 1088] = c_bytes.as_slice().try_into().map_err(|_| {
                         DispatchError::Crypto("ML-KEM-768 Decaps: c is not 1088 bytes")
                     })?;
-                    let ss = oxicrypt_ml_kem::ml_kem_768::decaps_internal(&dk, &c);
+                    let ss = oxicrypt_ml_kem::ml_kem_768::decaps_internal(&dk, &c)?;
                     hex::encode_upper(&ss)
                 }
                 "ML-KEM-1024" => {
@@ -353,7 +353,7 @@ fn handle_decaps_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     let c: [u8; 1568] = c_bytes.as_slice().try_into().map_err(|_| {
                         DispatchError::Crypto("ML-KEM-1024 Decaps: c is not 1568 bytes")
                     })?;
-                    let ss = oxicrypt_ml_kem::ml_kem_1024::decaps_internal(&dk, &c);
+                    let ss = oxicrypt_ml_kem::ml_kem_1024::decaps_internal(&dk, &c)?;
                     hex::encode_upper(&ss)
                 }
                 other => return Err(unsupported_parameter_set(other)),

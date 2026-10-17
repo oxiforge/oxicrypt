@@ -17,7 +17,7 @@
 //! Supported configurations:
 //! - `modulo = 2048`, `hashAlg = "SHA2-256"`, empty label
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -169,7 +169,7 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
                 let ct =
                     oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(&n, e, label, &msg, &seed)
-                        .ok_or(DispatchError::Crypto("RSA OAEP: encrypt failed"))?;
+                        .map_err(primitive_err("RSA OAEP: encrypt failed"))?;
 
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -206,14 +206,14 @@ fn handle_oaep_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
                         &n, e, &p, &q, &dp, &dq, &qinv, label, &ct, &mut out,
                     )
-                    .ok_or(DispatchError::Crypto("RSA OAEP: CRT decrypt failed"))?
+                    .map_err(primitive_err("RSA OAEP: CRT decrypt failed"))?
                 } else {
                     // Non-CRT path: (n, d).
                     let d: [u8; N_BYTES] = decode_fixed(group, "d")?;
                     oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_nocrt_internal(
                         &n, &d, label, &ct, &mut out,
                     )
-                    .ok_or(DispatchError::Crypto("RSA OAEP: decrypt failed"))?
+                    .map_err(primitive_err("RSA OAEP: decrypt failed"))?
                 };
 
                 results.push(JsonValue::Object(vec![

@@ -2,8 +2,8 @@
 //!
 //! Each Rust error variant maps to a distinct `OxiResult` discriminant.
 //! `OxiResult::Internal = 255` is reserved for "should-never-happen"
-//! cases — exhaustive mapping prevents the review-time aliasing concern
-//! flagged by `feedback_cmvp_reviewer_framing`.
+//! cases. The mapping is exhaustive, so two failure modes never share a
+//! code.
 //!
 //! Discriminants are banded by source crate so reviewers can locate
 //! the originating failure mode at a glance:
@@ -97,8 +97,8 @@ pub enum OxiResult {
     /// AAD length exceeds the mode's allowed maximum.
     InvalidAadLength = 27,
     /// The module was initialised without the pre-operational software
-    /// integrity test, so it was never verified against its reference
-    /// MAC. Distinct from `SelfTestFailed`: no test failed, none ran.
+    /// integrity test, so it was never verified against its integrity
+    /// signature. Distinct from `SelfTestFailed`: no test failed, none ran.
     IntegrityUnverified = 28,
 
     /// Catch-all for "should-never-happen" cases. New error sources should
@@ -110,7 +110,11 @@ pub enum OxiResult {
 impl From<oxicrypt_module::Error> for OxiResult {
     fn from(e: oxicrypt_module::Error) -> Self {
         match e {
-            oxicrypt_module::Error::NotOperational { .. } => OxiResult::NotOperational,
+            // A second initialisation of a module whose first one failed
+            // reports what a C caller already received for it: the module
+            // is not operational.
+            oxicrypt_module::Error::NotOperational { .. }
+            | oxicrypt_module::Error::AlreadyFailed => OxiResult::NotOperational,
             oxicrypt_module::Error::SelfTestFailed { .. } => OxiResult::SelfTestFailed,
             oxicrypt_module::Error::ConditionalTestFailed { .. } => {
                 OxiResult::ConditionalTestFailed
@@ -120,6 +124,12 @@ impl From<oxicrypt_module::Error> for OxiResult {
             oxicrypt_module::Error::AlgorithmRestricted { .. } => OxiResult::AlgorithmRestricted,
             oxicrypt_module::Error::NotImplemented => OxiResult::NotImplemented,
             oxicrypt_module::Error::IntegrityNotAttested => OxiResult::IntegrityUnverified,
+            // `oxicrypt_module::Error` is non-exhaustive, so a variant it
+            // adds later reaches this arm and reports `Internal` until it is
+            // mapped above. No test here can see such a variant; the test
+            // `module_error_maps_to_distinct_oxi_results` checks only the nine
+            // variants it names.
+            _ => OxiResult::Internal,
         }
     }
 }
@@ -135,12 +145,12 @@ impl From<oxicrypt_aes::ModeError> for OxiResult {
             oxicrypt_aes::ModeError::InvalidTagLength => OxiResult::InvalidTagLength,
             oxicrypt_aes::ModeError::InvalidPayloadLength => OxiResult::InvalidPayloadLength,
             oxicrypt_aes::ModeError::InvalidAadLength => OxiResult::InvalidAadLength,
+            oxicrypt_aes::ModeError::Module(e) => OxiResult::from(e),
         }
     }
 }
 
 /// Convert a `Result<(), oxicrypt_module::Error>` into the C `int` status code.
-#[allow(dead_code)] // call sites land in Task 6 (renamed init) + Task 7 (AES-GCM exposure)
 pub(crate) fn status_module(r: Result<(), oxicrypt_module::Error>) -> c_int {
     match r {
         Ok(()) => OxiResult::Ok as c_int,
@@ -149,7 +159,6 @@ pub(crate) fn status_module(r: Result<(), oxicrypt_module::Error>) -> c_int {
 }
 
 /// Convert a `Result<(), oxicrypt_aes::ModeError>` into the C `int` status code.
-#[allow(dead_code)] // call sites land in Task 7 (AES-GCM exposure)
 pub(crate) fn status_aes(r: Result<(), oxicrypt_aes::ModeError>) -> c_int {
     match r {
         Ok(()) => OxiResult::Ok as c_int,
@@ -191,6 +200,7 @@ impl From<oxicrypt_drbg::DrbgError> for OxiResult {
             // SP 800-90A Table 3 max_number_of_bits_per_request — output bound,
             // semantically identical to KDF's HKDF-Expand 255*HashLen ceiling.
             oxicrypt_drbg::DrbgError::RequestTooLong => OxiResult::OutputTooLong,
+            oxicrypt_drbg::DrbgError::Module(m) => OxiResult::from(m),
         }
     }
 }
@@ -210,8 +220,10 @@ mod tests {
 
     #[test]
     fn module_error_maps_to_distinct_oxi_results() {
-        // Every oxicrypt_module::Error variant maps to a distinct
-        // OxiResult discriminant — no aliasing.
+        // Each of the nine oxicrypt_module::Error variants that exist today
+        // maps to its own OxiResult, never to the `Internal` catch-all.
+        // AlreadyFailed deliberately shares NotOperational. The list is
+        // kept by hand: a variant the module adds later is not caught here.
         let mappings = [
             (
                 OxiResult::from(oxicrypt_module::Error::NotOperational {
@@ -234,6 +246,10 @@ mod tests {
                 OxiResult::AlreadyInitialized,
             ),
             (
+                OxiResult::from(oxicrypt_module::Error::AlreadyFailed),
+                OxiResult::NotOperational,
+            ),
+            (
                 OxiResult::from(oxicrypt_module::Error::InvalidInput),
                 OxiResult::InvalidInput,
             ),
@@ -241,8 +257,20 @@ mod tests {
                 OxiResult::from(oxicrypt_module::Error::NotImplemented),
                 OxiResult::NotImplemented,
             ),
+            (
+                OxiResult::from(oxicrypt_module::Error::AlgorithmRestricted {
+                    service: oxicrypt_module::Service::Sha256,
+                }),
+                OxiResult::AlgorithmRestricted,
+            ),
+            (
+                OxiResult::from(oxicrypt_module::Error::IntegrityNotAttested),
+                OxiResult::IntegrityUnverified,
+            ),
         ];
+        assert_eq!(mappings.len(), 9, "one case per variant named above");
         for (got, expected) in mappings {
+            assert_ne!(got, OxiResult::Internal);
             assert_eq!(got, expected);
         }
     }

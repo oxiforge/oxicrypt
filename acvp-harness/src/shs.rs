@@ -256,6 +256,7 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
 
     #[test]
     fn registry_lookup() {
+        crate::ensure_initialized().unwrap();
         let r = with_default_shs_handlers();
         assert_eq!(r.len(), 7);
         assert!(!r.is_empty());

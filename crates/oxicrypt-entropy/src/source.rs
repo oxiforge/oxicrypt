@@ -113,6 +113,9 @@ pub enum SourceError {
     /// The source cannot currently produce samples (backend unavailable,
     /// unsupported configuration, or exhausted test source).
     Unavailable,
+    /// The module refused the computation the source needs, because its
+    /// self-tests have not started or it has failed.
+    Module(oxicrypt_module::Error),
 }
 
 /// A noise source: stage one of `NoiseSource → health tests → conditioner`.

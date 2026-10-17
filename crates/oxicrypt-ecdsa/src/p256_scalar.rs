@@ -83,6 +83,13 @@ pub struct Scalar {
 }
 
 impl Scalar {
+    /// Overwrites the limbs with zeros. `Scalar` is `Copy` and has no
+    /// destructor, so a temporary that must not outlive its use is wiped
+    /// explicitly.
+    pub(crate) fn wipe(&mut self) {
+        oxicrypt_zeroize::zeroize_u64(&mut self.limbs);
+    }
+
     /// The additive identity (`0`).
     pub const ZERO: Scalar = Scalar { limbs: [0; 4] };
 

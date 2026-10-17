@@ -16,6 +16,7 @@
     clippy::many_single_char_names
 )]
 
+use oxicrypt_module::Error;
 use oxicrypt_sha::sha256::Sha256;
 
 use crate::adrs::Adrs;
@@ -50,8 +51,8 @@ const PAD_PRF: [u8; N] = {
 };
 
 /// PRF(KEY, M) = SHA-256(toByte(3,32) || KEY || M)
-fn prf(key: &[u8; N], m: &[u8]) -> [u8; N] {
-    let mut h = Sha256::new_internal();
+fn prf(key: &[u8; N], m: &[u8]) -> Result<[u8; N], Error> {
+    let mut h = Sha256::new_internal()?;
     h.update(&PAD_PRF);
     h.update(key);
     h.update(m);
@@ -64,18 +65,23 @@ fn prf(key: &[u8; N], m: &[u8]) -> [u8; N] {
 /// BM_0 = PRF(pub_seed, ADRS{keyAndMask=1})
 /// BM_1 = PRF(pub_seed, ADRS{keyAndMask=2})
 /// return H(KEY, (left XOR BM_0) || (right XOR BM_1))
-fn rand_hash(left: &[u8; N], right: &[u8; N], pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8; N] {
+fn rand_hash(
+    left: &[u8; N],
+    right: &[u8; N],
+    pub_seed: &[u8; N],
+    adrs: &mut Adrs,
+) -> Result<[u8; N], Error> {
     adrs.set_key_and_mask(0);
-    let key = prf(pub_seed, &adrs.bytes());
+    let key = prf(pub_seed, &adrs.bytes())?;
 
     adrs.set_key_and_mask(1);
-    let bm_0 = prf(pub_seed, &adrs.bytes());
+    let bm_0 = prf(pub_seed, &adrs.bytes())?;
 
     adrs.set_key_and_mask(2);
-    let bm_1 = prf(pub_seed, &adrs.bytes());
+    let bm_1 = prf(pub_seed, &adrs.bytes())?;
 
     // H(KEY, (left XOR BM_0) || (right XOR BM_1))
-    let mut hasher = Sha256::new_internal();
+    let mut hasher = Sha256::new_internal()?;
     hasher.update(&PAD_H);
     hasher.update(&key);
     // First n bytes: left XOR BM_0
@@ -99,7 +105,7 @@ fn rand_hash(left: &[u8; N], right: &[u8; N], pub_seed: &[u8; N], adrs: &mut Adr
 ///
 /// The L-tree uses RAND_HASH at each level, with an L-tree ADRS
 /// encoding the leaf index and tree height.
-fn ltree(pk: &[[u8; N]; wots::LEN], pub_seed: &[u8; N], leaf_idx: u32) -> [u8; N] {
+fn ltree(pk: &[[u8; N]; wots::LEN], pub_seed: &[u8; N], leaf_idx: u32) -> Result<[u8; N], Error> {
     // Copy into a working buffer. Max 67 elements.
     let mut buf = [[0u8; N]; wots::LEN];
     buf.copy_from_slice(pk);
@@ -115,7 +121,7 @@ fn ltree(pk: &[[u8; N]; wots::LEN], pub_seed: &[u8; N], leaf_idx: u32) -> [u8; N
         for i in 0..half {
             adrs.set_tree_height(height);
             adrs.set_tree_index(i as u32);
-            buf[i] = rand_hash(&buf[2 * i], &buf[2 * i + 1], pub_seed, &mut adrs);
+            buf[i] = rand_hash(&buf[2 * i], &buf[2 * i + 1], pub_seed, &mut adrs)?;
         }
         if len_prime % 2 == 1 {
             buf[half] = buf[len_prime - 1];
@@ -123,7 +129,7 @@ fn ltree(pk: &[[u8; N]; wots::LEN], pub_seed: &[u8; N], leaf_idx: u32) -> [u8; N
         len_prime = len_prime.div_ceil(2);
         height += 1;
     }
-    buf[0]
+    Ok(buf[0])
 }
 
 // ── Leaf computation ────────────────────────────────────────────
@@ -134,8 +140,8 @@ fn compute_leaf_from_sig(
     sig: &[[u8; N]; wots::LEN],
     pub_seed: &[u8; N],
     leaf_idx: u32,
-) -> [u8; N] {
-    let pk = wots::wots_pk_from_sig(msg_hash, sig, pub_seed, leaf_idx);
+) -> Result<[u8; N], Error> {
+    let pk = wots::wots_pk_from_sig(msg_hash, sig, pub_seed, leaf_idx)?;
     ltree(&pk, pub_seed, leaf_idx)
 }
 
@@ -146,7 +152,7 @@ fn hash_tree_node(
     pub_seed: &[u8; N],
     height: u32,
     index: u32,
-) -> [u8; N] {
+) -> Result<[u8; N], Error> {
     let mut adrs = Adrs::new();
     adrs.set_type(Adrs::TREE_HASH);
     adrs.set_tree_height(height);
@@ -163,7 +169,7 @@ pub(crate) fn walk_auth_path(
     pub_seed: &[u8; N],
     q: u32,
     auth: &[[u8; N]; H],
-) -> [u8; N] {
+) -> Result<[u8; N], Error> {
     let mut tmp = *candidate_leaf;
     let mut idx = q;
     for height in 0..H {
@@ -171,13 +177,13 @@ pub(crate) fn walk_auth_path(
         // RFC 8391 Algorithm 13 sets the tree height to `k`, the height of
         // the pair being combined, not the height of their parent.
         if idx & 1 == 0 {
-            tmp = hash_tree_node(&tmp, &auth[height], pub_seed, height as u32, parent_idx);
+            tmp = hash_tree_node(&tmp, &auth[height], pub_seed, height as u32, parent_idx)?;
         } else {
-            tmp = hash_tree_node(&auth[height], &tmp, pub_seed, height as u32, parent_idx);
+            tmp = hash_tree_node(&auth[height], &tmp, pub_seed, height as u32, parent_idx)?;
         }
         idx = parent_idx;
     }
-    tmp
+    Ok(tmp)
 }
 
 /// Compute a candidate leaf from a WOTS+ signature and walk the
@@ -188,13 +194,13 @@ pub(crate) fn root_from_sig(
     pub_seed: &[u8; N],
     q: u32,
     auth: &[[u8; N]; H],
-) -> [u8; N] {
-    let leaf = compute_leaf_from_sig(msg_hash, wots_sig, pub_seed, q);
+) -> Result<[u8; N], Error> {
+    let leaf = compute_leaf_from_sig(msg_hash, wots_sig, pub_seed, q)?;
     walk_auth_path(&leaf, pub_seed, q, auth)
 }
 
 #[cfg(test)]
-#[allow(clippy::panic)]
+#[allow(clippy::panic, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -209,12 +215,13 @@ mod tests {
     /// signs leaf 0, where the index is zero and the bug is invisible.
     #[test]
     fn tree_index_reaches_the_hash() {
+        crate::test_support::start_module();
         let l = [0x11u8; N];
         let r = [0x22u8; N];
         let seed = [0x33u8; N];
         assert_ne!(
-            hash_tree_node(&l, &r, &seed, 3, 0),
-            hash_tree_node(&l, &r, &seed, 3, 999),
+            hash_tree_node(&l, &r, &seed, 3, 0).unwrap(),
+            hash_tree_node(&l, &r, &seed, 3, 999).unwrap(),
             "index 0 and index 999 hashed identically"
         );
     }
@@ -224,12 +231,13 @@ mod tests {
     /// address encoding.
     #[test]
     fn tree_height_reaches_the_hash() {
+        crate::test_support::start_module();
         let l = [0x11u8; N];
         let r = [0x22u8; N];
         let seed = [0x33u8; N];
         assert_ne!(
-            hash_tree_node(&l, &r, &seed, 3, 0),
-            hash_tree_node(&l, &r, &seed, 4, 0),
+            hash_tree_node(&l, &r, &seed, 3, 0).unwrap(),
+            hash_tree_node(&l, &r, &seed, 4, 0).unwrap(),
             "height 3 and height 4 hashed identically"
         );
     }

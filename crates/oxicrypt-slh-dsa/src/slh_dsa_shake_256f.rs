@@ -14,8 +14,8 @@
 //! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
 //! CNSSP 15 lists no SLH-DSA parameter set, so SHAKE-256f is permitted
-//! in the FIPS 140-3 Unrestricted profile only. CNSA 2.0 gating is
-//! denied at the Service-enum layer in Batch 4.
+//! in the FIPS 140-3 Unrestricted profile only. Its `Service`
+//! variants are refused under both CNSA profiles.
 //!
 //! # External vs internal API
 //!
@@ -57,9 +57,6 @@ crate::slh_dsa_impl::slh_dsa_impl! {
     svc_keygen = Service::SlhDsaShake256fKeygen;
     svc_sign = Service::SlhDsaShake256fSign;
     svc_verify = Service::SlhDsaShake256fVerify;
-    kat_seed_offset = 11u8;
-    kat_msg = b"SLH-DSA-SHAKE-256f self-test message (FIPS 205)";
-    kat_name = "SLH-DSA-SHAKE-256f KAT (keygen + sign + verify round-trip, FIPS 205)";
 }
 
 #[cfg(test)]
@@ -69,6 +66,7 @@ mod variant_tests {
 
     #[test]
     fn key_sizes_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(PK_LEN, 64);
         assert_eq!(SK_LEN, 128);
         assert_eq!(SIG_LEN, 49_856);
@@ -76,6 +74,7 @@ mod variant_tests {
 
     #[test]
     fn parameter_constants_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(N, 32);
         assert_eq!(H, 68);
         assert_eq!(D, 17);

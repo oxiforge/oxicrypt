@@ -20,8 +20,9 @@
 //! * The reseed interval is hardcoded at `2^48`, the value SP 800-90A
 //!   Table 2 gives for every hash variant.
 //! * Hash algorithm hand-off uses the `_internal` constructors
-//!   exported by `oxicrypt-sha`, which bypass the module state machine
-//!   so that DRBG self-tests can run during Init.
+//!   exported by `oxicrypt-sha`, which skip the operational gate so that
+//!   DRBG self-tests can run during `SelfTest`, and refuse in every state
+//!   other than `SelfTest` and `Operational`.
 
 #![allow(
     clippy::indexing_slicing,
@@ -72,7 +73,14 @@ pub trait HashAlg {
     /// bytes into `out`.
     ///
     /// `out.len()` must be `>= OUTLEN`.
-    fn digest_parts(parts: &[&[u8]], out: &mut [u8]);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests); the hash is built by `oxicrypt-sha`'s `new_internal`.
+    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error>;
 }
 
 /// `HashAlg` implementation for SHA-256.
@@ -86,13 +94,14 @@ impl HashAlg for Sha256Alg {
     const OUTLEN: usize = 32;
     const SEEDLEN: usize = 55; // 440 bits
     const DRBG_SERVICE: Service = Service::HashDrbgSha256;
-    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) {
-        let mut ctx = Sha256::new_internal();
+    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error> {
+        let mut ctx = Sha256::new_internal()?;
         for p in parts {
             ctx.update(p);
         }
-        let digest = ctx.finalize();
+        let digest = Wiped(ctx.finalize()?);
         out[..32].copy_from_slice(&digest);
+        Ok(())
     }
 }
 
@@ -100,13 +109,14 @@ impl HashAlg for Sha384Alg {
     const OUTLEN: usize = 48;
     const SEEDLEN: usize = 111; // 888 bits
     const DRBG_SERVICE: Service = Service::HashDrbgSha384;
-    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) {
-        let mut ctx = Sha384::new_internal();
+    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error> {
+        let mut ctx = Sha384::new_internal()?;
         for p in parts {
             ctx.update(p);
         }
-        let digest = ctx.finalize();
+        let digest = Wiped(ctx.finalize()?);
         out[..48].copy_from_slice(&digest);
+        Ok(())
     }
 }
 
@@ -114,13 +124,14 @@ impl HashAlg for Sha512Alg {
     const OUTLEN: usize = 64;
     const SEEDLEN: usize = 111; // 888 bits
     const DRBG_SERVICE: Service = Service::HashDrbgSha512;
-    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) {
-        let mut ctx = Sha512::new_internal();
+    fn digest_parts(parts: &[&[u8]], out: &mut [u8]) -> Result<(), Error> {
+        let mut ctx = Sha512::new_internal()?;
         for p in parts {
             ctx.update(p);
         }
-        let digest = ctx.finalize();
+        let digest = Wiped(ctx.finalize()?);
         out[..64].copy_from_slice(&digest);
+        Ok(())
     }
 }
 
@@ -182,19 +193,19 @@ impl<H: HashAlg> HashDrbg<H> {
         if total > HASH_DRBG_MAX_DF_INPUT {
             return Err(Error::InvalidInput);
         }
-        let mut seed_material = [0u8; HASH_DRBG_MAX_DF_INPUT];
+        let mut seed_material = Wiped([0u8; HASH_DRBG_MAX_DF_INPUT]);
         seed_material[..entropy.len()].copy_from_slice(entropy);
         seed_material[entropy.len()..entropy.len() + nonce.len()].copy_from_slice(nonce);
         let off = entropy.len() + nonce.len();
         seed_material[off..off + personalization.len()].copy_from_slice(personalization);
 
         // seed = Hash_df(seed_material, seedlen)
-        hash_df::<H>(&seed_material[..total], &mut self.v[..H::SEEDLEN]);
+        hash_df::<H>(&seed_material[..total], &mut self.v[..H::SEEDLEN])?;
         // C = Hash_df(0x00 || V, seedlen)
-        let mut prefixed = [0u8; 1 + MAX_SEEDLEN];
+        let mut prefixed = Wiped([0u8; 1 + MAX_SEEDLEN]);
         prefixed[0] = 0x00;
         prefixed[1..1 + H::SEEDLEN].copy_from_slice(&self.v[..H::SEEDLEN]);
-        hash_df::<H>(&prefixed[..1 + H::SEEDLEN], &mut self.c[..H::SEEDLEN]);
+        hash_df::<H>(&prefixed[..1 + H::SEEDLEN], &mut self.c[..H::SEEDLEN])?;
         self.reseed_counter = 1;
         self.instantiated = true;
         Ok(())
@@ -213,7 +224,7 @@ impl<H: HashAlg> HashDrbg<H> {
         if total > HASH_DRBG_MAX_DF_INPUT {
             return Err(DrbgError::InputTooLong);
         }
-        let mut seed_material = [0u8; HASH_DRBG_MAX_DF_INPUT];
+        let mut seed_material = Wiped([0u8; HASH_DRBG_MAX_DF_INPUT]);
         seed_material[0] = 0x01;
         seed_material[1..1 + H::SEEDLEN].copy_from_slice(&self.v[..H::SEEDLEN]);
         let mut off = 1 + H::SEEDLEN;
@@ -221,11 +232,11 @@ impl<H: HashAlg> HashDrbg<H> {
         off += entropy.len();
         seed_material[off..off + additional_input.len()].copy_from_slice(additional_input);
 
-        hash_df::<H>(&seed_material[..total], &mut self.v[..H::SEEDLEN]);
-        let mut prefixed = [0u8; 1 + MAX_SEEDLEN];
+        hash_df::<H>(&seed_material[..total], &mut self.v[..H::SEEDLEN])?;
+        let mut prefixed = Wiped([0u8; 1 + MAX_SEEDLEN]);
         prefixed[0] = 0x00;
         prefixed[1..1 + H::SEEDLEN].copy_from_slice(&self.v[..H::SEEDLEN]);
-        hash_df::<H>(&prefixed[..1 + H::SEEDLEN], &mut self.c[..H::SEEDLEN]);
+        hash_df::<H>(&prefixed[..1 + H::SEEDLEN], &mut self.c[..H::SEEDLEN])?;
         self.reseed_counter = 1;
         Ok(())
     }
@@ -235,6 +246,20 @@ impl<H: HashAlg> HashDrbg<H> {
     /// If `additional_input` is present its length must fit within
     /// `HASH_DRBG_MAX_DF_INPUT - 1 - SEEDLEN`.
     pub fn generate(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = self.generate_unwiped(additional_input, out);
+        if result.is_err() {
+            // A failed call leaves no generated bytes in the caller's buffer.
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::generate`]; the caller wipes `out` if it fails.
+    fn generate_unwiped(
         &mut self,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
@@ -258,27 +283,27 @@ impl<H: HashAlg> HashDrbg<H> {
             {
                 return Err(DrbgError::InputTooLong);
             }
-            let mut w = [0u8; MAX_OUTLEN];
+            let mut w = Wiped([0u8; MAX_OUTLEN]);
             let prefix = [0x02u8];
-            H::digest_parts(&[&prefix, &self.v[..H::SEEDLEN], ai], &mut w[..H::OUTLEN]);
+            H::digest_parts(&[&prefix, &self.v[..H::SEEDLEN], ai], &mut w[..H::OUTLEN])?;
             // V = (V + w) mod 2^(8*SEEDLEN)
             add_into_be(&mut self.v[..H::SEEDLEN], &w[..H::OUTLEN]);
         }
 
         // Step 3: returned_bits = Hashgen(requested, V)
-        self.hashgen(out);
+        self.hashgen(out)?;
 
         // Step 4: H = Hash(0x03 || V)
-        let mut h = [0u8; MAX_OUTLEN];
+        let mut h = Wiped([0u8; MAX_OUTLEN]);
         let prefix = [0x03u8];
-        H::digest_parts(&[&prefix, &self.v[..H::SEEDLEN]], &mut h[..H::OUTLEN]);
+        H::digest_parts(&[&prefix, &self.v[..H::SEEDLEN]], &mut h[..H::OUTLEN])?;
 
         // Step 5: V = (V + H + C + reseed_counter) mod 2^(8*SEEDLEN)
         add_into_be(&mut self.v[..H::SEEDLEN], &h[..H::OUTLEN]);
         let c_copy_len = H::SEEDLEN;
         // Borrow gymnastics: copy C into a temp to avoid aliased borrow
         // of &self in add_into_be.
-        let mut c_tmp = [0u8; MAX_SEEDLEN];
+        let mut c_tmp = Wiped([0u8; MAX_SEEDLEN]);
         c_tmp[..c_copy_len].copy_from_slice(&self.c[..c_copy_len]);
         add_into_be(&mut self.v[..H::SEEDLEN], &c_tmp[..c_copy_len]);
         let rc_be = self.reseed_counter.to_be_bytes();
@@ -324,19 +349,20 @@ impl<H: HashAlg> HashDrbg<H> {
     }
 
     /// `Hashgen(requested_bytes, V)` — SP 800-90A §10.1.1.4 step 3.
-    fn hashgen(&mut self, out: &mut [u8]) {
-        let mut data = [0u8; MAX_SEEDLEN];
+    fn hashgen(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        let mut data = Wiped([0u8; MAX_SEEDLEN]);
         data[..H::SEEDLEN].copy_from_slice(&self.v[..H::SEEDLEN]);
         let mut produced = 0usize;
-        let mut block = [0u8; MAX_OUTLEN];
+        let mut block = Wiped([0u8; MAX_OUTLEN]);
         while produced < out.len() {
-            H::digest_parts(&[&data[..H::SEEDLEN]], &mut block[..H::OUTLEN]);
+            H::digest_parts(&[&data[..H::SEEDLEN]], &mut block[..H::OUTLEN])?;
             let take = core::cmp::min(H::OUTLEN, out.len() - produced);
             out[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
             // data = (data + 1) mod 2^(8*SEEDLEN)
             increment_be(&mut data[..H::SEEDLEN]);
         }
+        Ok(())
     }
 }
 
@@ -353,27 +379,78 @@ impl<H: HashAlg> Drop for HashDrbg<H> {
     }
 }
 
+/// A secret-bearing working buffer (entropy input, a copy of `V`, a
+/// derivation block), zeroized when it goes out of scope on success and on
+/// an early return alike.
+struct Wiped<const N: usize>([u8; N]);
+
+impl<const N: usize> core::ops::Deref for Wiped<N> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<const N: usize> core::ops::DerefMut for Wiped<N> {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl<const N: usize> Drop for Wiped<N> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.0);
+        #[cfg(test)]
+        wipe_witness::record(self.0.iter().all(|&b| b == 0));
+    }
+}
+
+/// What the last `Drop` of a [`Wiped`] on this thread left in its buffer,
+/// read by the drop itself while the buffer is still owned.
+#[cfg(test)]
+mod wipe_witness {
+    extern crate std;
+
+    std::thread_local! {
+        static LAST: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+    }
+
+    pub(super) fn record(zeroed: bool) {
+        LAST.with(|c| c.set(Some(zeroed)));
+    }
+
+    /// `Some(true)` when the last drop left its buffer all zero.
+    pub(super) fn take() -> Option<bool> {
+        LAST.with(core::cell::Cell::take)
+    }
+}
+
 /// `Hash_df(input_string, no_of_bits_to_return)` — SP 800-90A §10.3.1.
 ///
 /// Writes exactly `out.len()` derived bytes. `out.len()` must be at
 /// most 255 × `OUTLEN` (the counter in Hash_df is a single byte).
-pub(crate) fn hash_df<H: HashAlg>(input: &[u8], out: &mut [u8]) {
+pub(crate) fn hash_df<H: HashAlg>(input: &[u8], out: &mut [u8]) -> Result<(), Error> {
     let no_bytes = out.len();
+    // The one-byte counter covers at most 255 blocks.
+    if no_bytes > 255 * H::OUTLEN {
+        return Err(Error::InvalidInput);
+    }
     let no_bits_be = ((no_bytes as u32) * 8).to_be_bytes();
     let mut counter: u8 = 1;
     let mut produced = 0usize;
-    let mut block = [0u8; MAX_OUTLEN];
+    let mut block = Wiped([0u8; MAX_OUTLEN]);
     while produced < no_bytes {
         let counter_byte = [counter];
         H::digest_parts(
             &[&counter_byte, &no_bits_be, input],
             &mut block[..H::OUTLEN],
-        );
+        )?;
         let take = core::cmp::min(H::OUTLEN, no_bytes - produced);
         out[produced..produced + take].copy_from_slice(&block[..take]);
         produced += take;
         counter = counter.wrapping_add(1);
     }
+    Ok(())
 }
 
 /// `dst = (dst + src) mod 2^(8*dst.len())` interpreted as big-endian.
@@ -426,6 +503,31 @@ fn increment_be(buf: &mut [u8]) {
 mod tests {
     use super::*;
 
+    /// Dropping a working buffer that holds data leaves it all zero.
+    #[test]
+    fn dropping_a_wiped_buffer_zeroes_it() {
+        let _ = super::wipe_witness::take();
+        drop(super::Wiped([0xa5u8; 55]));
+        assert_eq!(super::wipe_witness::take(), Some(true));
+        // Control: nothing dropped, nothing recorded.
+        assert_eq!(super::wipe_witness::take(), None);
+    }
+
+    /// Hash_df finishes at 255 blocks, the most its one-byte counter
+    /// numbers, and refuses one byte more.
+    #[test]
+    fn hash_df_reaches_255_blocks_and_refuses_more() {
+        crate::test_support::start_module();
+        let mut out = [0u8; 255 * 32];
+        hash_df::<Sha256Alg>(b"input", &mut out).unwrap();
+        assert_ne!(&out[254 * 32..], &[0u8; 32][..]);
+        let mut too_long = [0u8; 255 * 32 + 1];
+        assert_eq!(
+            hash_df::<Sha256Alg>(b"input", &mut too_long),
+            Err(Error::InvalidInput)
+        );
+    }
+
     fn hex_to_bytes<const N: usize>(hex: &str) -> [u8; N] {
         let bytes = hex.as_bytes();
         assert_eq!(bytes.len(), N * 2, "hex length mismatch");
@@ -454,6 +556,7 @@ mod tests {
     // COUNT = 0
     #[test]
     fn cavp_hash_drbg_sha256_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("a65ad0f345db4e0effe875c3a2e71f42c7129d620ff5c119a9ef55f05185e0fb");
         let nonce: [u8; 16] = hex_to_bytes("8581f9317517276e06e9607ddbcbcc2e");
@@ -470,6 +573,7 @@ mod tests {
 
     #[test]
     fn cavp_hash_drbg_sha384_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("9ef0b00381d6c8c54d08fcadc6f5ef331134bb986373f65c6a14f553bcb6c55d");
         let nonce: [u8; 16] = hex_to_bytes("9fce26ada7b1de39590312bd9d81c4f5");
@@ -486,6 +590,7 @@ mod tests {
 
     #[test]
     fn cavp_hash_drbg_sha512_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("6b50a7d8f8a55d7a3df8bb40bcc3b722d8708de67fda010b03c4c84d72096f8c");
         let nonce: [u8; 16] = hex_to_bytes("3ec649cc6256d9fa31db7a2904aaf025");
@@ -503,6 +608,7 @@ mod tests {
     // Consistency check for §9.3.1 prediction-resistance generate.
     #[test]
     fn generate_pr_matches_reseed_then_generate() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] = [0x11u8; 32];
         let nonce: [u8; 16] = [0x22u8; 16];
         let reseed_e: [u8; 32] = [0x33u8; 32];
@@ -524,6 +630,7 @@ mod tests {
 
     #[test]
     fn add_into_be_basic() {
+        crate::test_support::start_module();
         let mut dst = [0x00u8, 0x00, 0xff];
         let src = [0x02u8];
         add_into_be(&mut dst, &src);
@@ -532,6 +639,7 @@ mod tests {
 
     #[test]
     fn add_into_be_wraps() {
+        crate::test_support::start_module();
         let mut dst = [0xffu8, 0xff, 0xff];
         let src = [0x01u8];
         add_into_be(&mut dst, &src);

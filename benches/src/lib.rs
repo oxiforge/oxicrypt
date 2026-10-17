@@ -27,7 +27,9 @@ const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::Ka
 /// EdDSA, ECDH and KDF KATs. The PQ, LMS, XMSS and RSA crates export
 /// `KATS` too and are deliberately not loaded here.
 ///
-/// Call once before any benchmark function that touches gated API.
+/// Call once before any benchmark function that touches gated API or
+/// runs a KAT: the `*_internal` functions the KATs use refuse until the
+/// module's self-tests have started.
 pub fn init_module() {
     let all_kats: Vec<oxicrypt_module::KatEntry> = [
         oxicrypt_sha::KATS,

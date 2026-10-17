@@ -62,7 +62,7 @@ use oxicrypt_sha::Sha256;
 let mut hasher = Sha256::new()?;
 hasher.update(b"hello ");
 hasher.update(b"world");
-let digest = hasher.finalize();  // [u8; 32]
+let digest = hasher.finalize()?;  // [u8; 32]
 ```
 
 All SHA-2 and SHA-3 variants follow the same pattern: `Sha1`, `Sha224`,
@@ -77,7 +77,7 @@ use oxicrypt_hmac::HmacSha256;
 
 let mut mac = HmacSha256::new(b"my-secret-key")?;
 mac.update(b"message to authenticate");
-let tag = mac.finalize();  // [u8; 32]
+let tag = mac.finalize()?;  // [u8; 32]
 ```
 
 All eleven HMAC instantiations are available: `HmacSha1`, `HmacSha224`,
@@ -101,7 +101,7 @@ xof.update(b"hello ");
 xof.update(b"world");
 xof.finalize();
 let mut out = [0u8; 100];
-xof.squeeze(&mut out);          // squeeze may be called repeatedly
+xof.squeeze(&mut out)?;         // squeeze may be called repeatedly
 ```
 
 ### KMAC (keyed MAC)
@@ -262,7 +262,7 @@ let key = EcdsaP256PrivateKey::generate(&mut drbg)?;
 let sig = key.sign_sha256(&mut drbg, b"message")?;  // [u8; 64] = r || s
 
 // Get the public key for verification
-let pk = key.public_key();  // [u8; 65] = 0x04 || X || Y
+let pk = key.public_key()?;  // [u8; 65] = 0x04 || X || Y
 ```
 
 ### Verification
@@ -289,7 +289,7 @@ let key = Ed25519PrivateKey::generate(&mut drbg)?;
 let sig = key.sign(b"message")?;  // [u8; 64]
 
 // Verify
-let pk = key.public_key();
+let pk = key.public_key()?;
 let valid = oxicrypt_eddsa::verify(&pk, b"message", &sig)?;
 ```
 

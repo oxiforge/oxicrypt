@@ -98,6 +98,9 @@ lms_verify_bench!(
 
 /// Each power-up CAST, timed as the module runs it.
 fn bench_lms_cast(c: &mut Criterion) {
+    // The KATs call `*_internal` functions, which refuse until the
+    // module's self-tests have started.
+    oxicrypt_bench::init_module();
     let mut group = c.benchmark_group("LMS CAST");
     group.warm_up_time(Duration::from_secs(1));
     for kat in oxicrypt_lms::KATS {

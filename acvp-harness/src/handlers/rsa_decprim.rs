@@ -144,19 +144,20 @@ fn handle_decprim_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         };
 
         match result {
-            Some(pt) => {
+            Ok(pt) => {
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
                     ("testPassed".to_string(), JsonValue::Bool(true)),
                     ("pt".to_string(), JsonValue::String(hex::encode_upper(&pt))),
                 ]));
             }
-            None => {
+            Err(oxicrypt_module::Error::InvalidInput) => {
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
                     ("testPassed".to_string(), JsonValue::Bool(false)),
                 ]));
             }
+            Err(e) => return Err(DispatchError::Module(e)),
         }
     }
 

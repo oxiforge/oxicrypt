@@ -21,7 +21,7 @@
 //! The hash is FNV-1a 64. It measures INVARIANCE, not integrity.
 //!
 //! Build: rustc -O -o win-probe.exe win-image-stability-probe.rs
-//! Run:   win-probe.exe <path-to-dll>
+//! Run:   win-probe.exe [--relocs] <path-to-dll>
 
 use std::fs;
 
@@ -87,10 +87,17 @@ struct Section {
 }
 
 fn main() {
-    let path = match std::env::args().nth(1) {
-        Some(p) => p,
-        None => {
-            eprintln!("usage: win-probe.exe <dll>");
+    // `--relocs` also prints every base relocation entry, one `RELOCENT` line
+    // each, for the fixup cross-check against an independent parse.
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let per_entry = args.first().map(|a| a == "--relocs").unwrap_or(false);
+    if per_entry {
+        args.remove(0);
+    }
+    let path = match args.first() {
+        Some(p) if args.len() == 1 => p.clone(),
+        _ => {
+            eprintln!("usage: win-probe.exe [--relocs] <dll>");
             std::process::exit(2);
         }
     };
@@ -241,6 +248,9 @@ fn main() {
                         continue; // IMAGE_REL_BASED_ABSOLUTE — padding
                     }
                     let rva = page_rva + (ent & 0x0fff) as u32;
+                    if per_entry {
+                        println!("RELOCENT rva=0x{rva:x} type={typ}");
+                    }
                     total += 1;
                     match sections.iter().position(|s| {
                         rva >= s.virtual_address && rva < s.virtual_address + s.virtual_size

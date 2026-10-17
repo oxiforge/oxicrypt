@@ -35,7 +35,7 @@ fn bench_ecdsa_p256_verify(c: &mut Criterion) {
 
     let mut drbg = make_drbg();
     let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("keygen");
-    let pk = sk.public_key();
+    let pk = sk.public_key().expect("public key");
     let msg = b"benchmark message for ECDSA P-256";
     let sig = sk.sign_sha256(&mut drbg, msg).expect("sign");
 

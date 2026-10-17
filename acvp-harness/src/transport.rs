@@ -133,8 +133,7 @@ pub struct AcvpConfig {
     pub filter_revision: Option<String>,
     /// Optional: when set, restrict an `acvp_capabilities_filtered`-
     /// aware handler (currently only the SLH-DSA family) to a single
-    /// parameter set, producing one vector set per session per
-    /// `feedback_single_algo_per_acvts_session`. Other handlers
+    /// parameter set, producing one vector set per session. Other handlers
     /// (whose default `acvp_capabilities_filtered` delegates to
     /// `acvp_capabilities`) ignore the filter and advertise their
     /// usual cap. The CLI parser validates this against the
@@ -210,11 +209,15 @@ pub fn totp_now(secret: &[u8]) -> Result<String, String> {
 /// Generate an 8-digit TOTP code for a specific time counter value.
 pub fn totp_at(secret: &[u8], counter: u64) -> Result<String, String> {
     let counter_bytes = counter.to_be_bytes();
-    // Use oxicrypt's own HMAC-SHA-256 (internal constructor to avoid
-    // module-state gating — we're in the harness, not the module).
-    let mut mac = oxicrypt_hmac::HmacSha256::new_internal(secret);
+    // oxicrypt's own HMAC-SHA-256, through the internal constructor: the
+    // harness starts the module before it logs in, and the TOTP is not an
+    // approved service.
+    let mut mac = oxicrypt_hmac::HmacSha256::new_internal(secret)
+        .map_err(|e| format!("HMAC-SHA-256 refused: {e}"))?;
     mac.update(&counter_bytes);
-    let hmac_result = mac.finalize();
+    let hmac_result = mac
+        .finalize()
+        .map_err(|e| format!("HMAC-SHA-256 refused: {e}"))?;
 
     // Dynamic truncation per RFC 4226 §5.4.
     let offset = (hmac_result.get(31).copied().unwrap_or(0) & 0x0f) as usize;
@@ -2207,9 +2210,8 @@ fn poll_verdict(
             // Persist the full /results body in the transcript so an
             // operator can recover the per-tcId pass/fail cluster for a
             // failed vector set without re-fetching against ACVTS (which
-            // would burn another login slot). Per
-            // `project_acvts_verdict_fetch_url_pattern`, /results is the
-            // only endpoint that carries the per-tcId verdict array.
+            // would burn another login slot). /results is the only
+            // endpoint that carries the per-tcId verdict array.
             log.log("verdict_body", &resp.body);
             return Ok(disposition.to_string());
         }
@@ -2236,6 +2238,7 @@ mod tests {
 
     #[test]
     fn token_refresh_threshold_boundaries() {
+        crate::ensure_initialized().unwrap();
         assert!(!token_needs_refresh(0));
         assert!(!token_needs_refresh(TOKEN_REFRESH_MARGIN_SECS - 1));
         assert!(token_needs_refresh(TOKEN_REFRESH_MARGIN_SECS));
@@ -2245,6 +2248,7 @@ mod tests {
 
     #[test]
     fn fresh_token_does_not_need_refresh() {
+        crate::ensure_initialized().unwrap();
         let t = SessionToken::new("jwt".to_string());
         assert!(!t.needs_refresh());
         assert_eq!(t.bearer(), "jwt");
@@ -2252,6 +2256,7 @@ mod tests {
 
     #[test]
     fn aged_token_needs_refresh_mocked_expiry() {
+        crate::ensure_initialized().unwrap();
         let aged = SessionToken::with_age("jwt".to_string(), std::time::Duration::from_mins(25));
         assert!(aged.needs_refresh());
         let young = SessionToken::with_age("jwt".to_string(), std::time::Duration::from_mins(5));
@@ -2260,6 +2265,7 @@ mod tests {
 
     #[test]
     fn submit_retry_only_once_and_only_on_auth_statuses() {
+        crate::ensure_initialized().unwrap();
         assert!(submit_should_refresh_retry(401, false));
         assert!(submit_should_refresh_retry(403, false));
         assert!(!submit_should_refresh_retry(401, true));
@@ -2271,6 +2277,7 @@ mod tests {
 
     #[test]
     fn connection_is_dead_detects_write_side_death() {
+        crate::ensure_initialized().unwrap();
         // Broken pipe on the request write — the canonical B7 surface.
         assert!(connection_is_dead(
             "write to s_client stdin: Broken pipe (os error 32)"
@@ -2282,6 +2289,7 @@ mod tests {
 
     #[test]
     fn connection_is_dead_detects_read_side_death() {
+        crate::ensure_initialized().unwrap();
         // An idle socket reaped mid-run most often surfaces read-side:
         // clean EOF, a short read_exact, or a peer/middlebox reset.
         assert!(connection_is_dead(
@@ -2304,6 +2312,7 @@ mod tests {
 
     #[test]
     fn connection_is_dead_ignores_http_and_malformed_errors() {
+        crate::ensure_initialized().unwrap();
         // HTTP-level and parse-level failures must NOT trigger a reconnect
         // (retrying can't fix them, and they don't mean a dead socket).
         assert!(!connection_is_dead("bad HTTP status code: 503"));
@@ -2317,6 +2326,7 @@ mod tests {
 
     #[test]
     fn totp_deterministic_8_digit() {
+        crate::ensure_initialized().unwrap();
         let secret = b"12345678901234567890";
         // Same counter should produce the same code.
         let a = totp_at(secret, 1).unwrap();
@@ -2331,11 +2341,13 @@ mod tests {
 
     #[test]
     fn base64_decode_empty() {
+        crate::ensure_initialized().unwrap();
         assert!(base64_decode("").unwrap().is_empty());
     }
 
     #[test]
     fn base64_decode_basic() {
+        crate::ensure_initialized().unwrap();
         // "Hello" → "SGVsbG8=" (with padding) or "SGVsbG8" (without)
         assert_eq!(base64_decode("SGVsbG8=").unwrap(), b"Hello");
         assert_eq!(base64_decode("SGVsbG8").unwrap(), b"Hello");
@@ -2343,6 +2355,7 @@ mod tests {
 
     #[test]
     fn base64_decode_url_alphabet() {
+        crate::ensure_initialized().unwrap();
         // "?>" base64-standard = "Pz4=", base64url = "Pz4="; pick a value
         // that actually differs: byte 0xFB (rare in text) → "+w==" /
         // "-w==". This proves the decoder accepts both alphabets.
@@ -2352,84 +2365,100 @@ mod tests {
 
     #[test]
     fn base64_decode_ignores_whitespace() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(base64_decode("SGVs\nbG8=").unwrap(), b"Hello");
         assert_eq!(base64_decode("  SGVsbG8  ").unwrap(), b"Hello");
     }
 
     #[test]
     fn base64_decode_rejects_invalid() {
+        crate::ensure_initialized().unwrap();
         assert!(base64_decode("SG!Vs").is_err());
     }
 
     #[test]
     fn clamp_retry_hint_typical() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(clamp_retry_hint(60), Some(60));
     }
 
     #[test]
     fn clamp_retry_hint_below_floor() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(clamp_retry_hint(2), Some(5));
     }
 
     #[test]
     fn clamp_retry_hint_above_ceiling() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(clamp_retry_hint(300), Some(120));
     }
 
     #[test]
     fn clamp_retry_hint_zero_falls_through() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(clamp_retry_hint(0), None);
     }
 
     #[test]
     fn clamp_retry_hint_negative_falls_through() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(clamp_retry_hint(-1), None);
     }
 
     #[test]
     fn clamp_retry_hint_at_boundaries() {
+        crate::ensure_initialized().unwrap();
         assert_eq!(clamp_retry_hint(5), Some(5));
         assert_eq!(clamp_retry_hint(120), Some(120));
     }
 
     #[test]
     fn is_error_disposition_dispatch() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("DISPATCH_ERROR"));
     }
 
     #[test]
     fn is_error_disposition_fetch() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("FETCH_ERROR"));
     }
 
     #[test]
     fn is_error_disposition_parse() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("PARSE_ERROR"));
     }
 
     #[test]
     fn is_error_disposition_submit_plain() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("SUBMIT_ERROR"));
     }
 
     #[test]
     fn is_error_disposition_submit_http_status() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("SUBMIT_HTTP_500"));
         assert!(is_error_disposition("SUBMIT_HTTP_400"));
     }
 
     #[test]
     fn is_error_disposition_retry_timeout() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("RETRY_TIMEOUT"));
     }
 
     #[test]
     fn is_error_disposition_poll_error() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("POLL_ERROR"));
     }
 
     #[test]
     fn is_error_disposition_http_4xx_5xx() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("HTTP_404"));
         assert!(is_error_disposition("HTTP_500"));
         assert!(is_error_disposition("HTTP_503"));
@@ -2437,11 +2466,13 @@ mod tests {
 
     #[test]
     fn is_error_disposition_passed_is_not_error() {
+        crate::ensure_initialized().unwrap();
         assert!(!is_error_disposition("passed"));
     }
 
     #[test]
     fn is_error_disposition_failed_verdict_is_not_harness_error() {
+        crate::ensure_initialized().unwrap();
         // ACVP-grader test failures are a meaningful outcome, not a
         // harness-level error. Exit code stays 0; the disposition
         // string in stdout/transcript carries the signal.
@@ -2450,30 +2481,35 @@ mod tests {
 
     #[test]
     fn is_error_disposition_unknown_disposition_is_not_error() {
+        crate::ensure_initialized().unwrap();
         assert!(!is_error_disposition("incomplete"));
         assert!(!is_error_disposition(""));
     }
 
     #[test]
     fn scan_connection_close_missing_header() {
+        crate::ensure_initialized().unwrap();
         let buf = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
         assert!(!scan_connection_close(buf));
     }
 
     #[test]
     fn scan_connection_close_keep_alive() {
+        crate::ensure_initialized().unwrap();
         let buf = b"HTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n";
         assert!(!scan_connection_close(buf));
     }
 
     #[test]
     fn scan_connection_close_lowercase() {
+        crate::ensure_initialized().unwrap();
         let buf = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
         assert!(scan_connection_close(buf));
     }
 
     #[test]
     fn scan_connection_close_mixed_case_value() {
+        crate::ensure_initialized().unwrap();
         let buf_a = b"HTTP/1.1 200 OK\r\nConnection: Close\r\n\r\n";
         let buf_b = b"HTTP/1.1 200 OK\r\nConnection: CLOSE\r\n\r\n";
         assert!(scan_connection_close(buf_a));
@@ -2482,6 +2518,7 @@ mod tests {
 
     #[test]
     fn scan_connection_close_substring_is_not_a_token_match() {
+        crate::ensure_initialized().unwrap();
         // "closeAfter" contains "close" as a substring but is a
         // different token. RFC 9110 Connection-header values are
         // tokens, not free-form text.
@@ -2491,18 +2528,21 @@ mod tests {
 
     #[test]
     fn scan_connection_close_comma_list_contains_close() {
+        crate::ensure_initialized().unwrap();
         let buf = b"HTTP/1.1 200 OK\r\nConnection: keep-alive, close\r\n\r\n";
         assert!(scan_connection_close(buf));
     }
 
     #[test]
     fn scan_connection_close_comma_list_without_close() {
+        crate::ensure_initialized().unwrap();
         let buf = b"HTTP/1.1 200 OK\r\nConnection: keep-alive, upgrade\r\n\r\n";
         assert!(!scan_connection_close(buf));
     }
 
     #[test]
     fn scan_connection_close_header_name_case_insensitive() {
+        crate::ensure_initialized().unwrap();
         // RFC 9110 §5.1: header field names are case-insensitive.
         let buf = b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n";
         assert!(scan_connection_close(buf));
@@ -2510,6 +2550,7 @@ mod tests {
 
     #[test]
     fn is_error_disposition_persist_error() {
+        crate::ensure_initialized().unwrap();
         assert!(is_error_disposition("PERSIST_ERROR"));
     }
 
@@ -2539,6 +2580,7 @@ mod tests {
 
     #[test]
     fn submit_and_mark_success_advances_status_to_submitted() {
+        crate::ensure_initialized().unwrap();
         let (root, session, response_body) = pending_session("ok");
         let outcome = submit_and_mark(&session, &response_body, |body| {
             // The closure receives the exact cached bytes.
@@ -2555,6 +2597,7 @@ mod tests {
 
     #[test]
     fn submit_and_mark_transport_error_leaves_pending_state_for_resubmit() {
+        crate::ensure_initialized().unwrap();
         let (root, session, response_body) = pending_session("broken-pipe");
         // Simulated TLS keep-alive death mid-POST (the 2026-05-17 LMS
         // B7 failure mode).
@@ -2573,6 +2616,7 @@ mod tests {
 
     #[test]
     fn submit_and_mark_http_error_leaves_pending_state() {
+        crate::ensure_initialized().unwrap();
         let (root, session, response_body) = pending_session("http-500");
         let outcome = submit_and_mark(&session, &response_body, |_| {
             Ok(HttpResponse {
@@ -2633,6 +2677,7 @@ mod tests {
     /// ambiguous, so pin it directly.
     #[test]
     fn revision_duplicate_finds_same_service_under_two_revisions() {
+        crate::ensure_initialized().unwrap();
         let cap = |alg: &str, mode: Option<&str>, rev: &str| {
             let mut f = vec![("algorithm".to_string(), JsonValue::String(alg.into()))];
             if let Some(m) = mode {

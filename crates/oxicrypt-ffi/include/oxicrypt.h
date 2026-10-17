@@ -105,8 +105,8 @@ typedef struct OxiHmacDrbgSha512 OxiHmacDrbgSha512;
 /*
  Opaque RSA-2048 private-key handle that has passed an IG 10.3.A
  pairwise consistency test at construction time. Mirrors the
- `OxiEcdsaP256PrivateKey` pattern and inherits the same PCT-at-
- construction structural argument from security-policy §4.8.
+ `OxiEcdsaP256PrivateKey` pattern: its only constructor runs the
+ PCT, so no handle exists that has not passed it.
 
  */
 typedef struct OxiRsaPrivateKey2048 OxiRsaPrivateKey2048;
@@ -168,20 +168,21 @@ const char *lama_manifest(void);
  - `3` — Migration (both suites at once; not a CNSA profile)
 
  Any other value returns [`OxiResult::InvalidInput`] without
- performing initialisation. This is per F4 reviewer-framing —
- distinct error variants per failure mode rather than silently
- defaulting unknown codes to a profile.
+ performing initialisation, rather than silently defaulting an unknown
+ code to a profile.
 
- Idempotent: calling `oxi_init` more than once returns
- [`OxiResult::Ok`] on the second call. **The first init's outcome
- is authoritative** — both the success/failure state AND the
- active profile are determined by the first successful call. A
- second call passing a *different* profile selector is silently
- accepted and the *original* profile remains active. Callers that
- need to verify which profile is in effect must call
- [`oxi_active_profile`] after `oxi_init` returns.
+ Initialisation happens once per process, and **the first init's
+ outcome is authoritative**. A later call runs no self-test and
+ returns that outcome: [`OxiResult::Ok`] if the first call succeeded,
+ and [`OxiResult::NotOperational`] if it failed, because a failed
+ initialisation is terminal until the process restarts. The active
+ profile is the one the first successful call selected; a later call
+ passing a *different* profile selector is accepted and the
+ *original* profile remains active. Callers that need to verify which
+ profile is in effect must call [`oxi_active_profile`] after
+ `oxi_init` returns.
 
- Must be called exactly once before any other `oxi_*` function.
+ Must be called before any other `oxi_*` function.
  Returns `0` on success or a non-zero `OxiResult` discriminant.
 
  # Safety
@@ -232,20 +233,31 @@ int oxi_is_operational(void);
  | Value | Meaning |
  |---|---|
  | 0 | `NotRun` — the test has not run in this process |
- | 1 | `Passed` — the image matched its reference MAC |
- | 2 | `Mismatch` — the image does not match its reference MAC |
- | 3 | `SlotInvalid` — the slot is absent, malformed, or impossible |
- | 4 | `Unreadable` — the test was **not performed** |
- | 5 | `CastNotRun` — the test was reached before its CAST |
+ | 1 | `Passed` — the signature over the image verified |
+ | 2 | `SignatureInvalid` — the image does not match its signature |
+ | 3 | `SlotInvalid` — the slot is the unsigned template, as in an unsigned build or a signed one whose slot was overwritten; not on its own a reason to sign (see the remedies below) |
+ | 4 | `Unreadable` — the test was **not performed**; do not sign, and obtain a fresh copy if it persists |
+ | 5 | `CastNotRun` — the test was reached before its CASTs passed |
  | 6 | `Unknown` — the record held a value this module never writes |
+ | 7 | `Refused` — the module refused a primitive, so the test was **not performed** |
+ | 8 | `NoVerifyKey` — the library carries no verifying key, as in a key-less build or a signed one whose key was zeroed; as for 3 |
+ | 9 | `KeyMismatch` — the slot was signed for a different key than the library embeds |
+ | 10 | `SlotDamaged` — the slot, the key record or a bound import is damaged; do not re-sign |
+
+ Remedies: no value is on its own a reason to sign the library. If you
+ built it from source yourself and have not signed it yet, sign it with
+ your own key; if you received it from anyone else, do not sign it and
+ obtain a fresh copy from its publisher. For 2, 9 and 10, never sign it
+ again.
 
  This exists because `oxi_init` cannot carry the distinction: a
  failing self-test returns [`OxiResult::SelfTestFailed`] whatever the
- cause, so `Mismatch` and `Unreadable` are indistinguishable from its
- return value alone. Security Policy §5.2 requires an operator and a
- test laboratory to be able to tell those two apart — a corrupt module
- from an environment that could not supply the module's own bytes —
- and this query is how that is retrieved.
+ cause, so `SignatureInvalid` and `Unreadable` are indistinguishable from
+ its return value alone. An operator and a test laboratory must be able
+ to tell those apart — a corrupt module from
+ one signed for another key, one built without a key, and an environment
+ that could not supply the module's own bytes — and this query is how
+ that is retrieved.
 
  The value latches on the first run and nothing is re-run here, so a
  later call cannot revise it and this is safe to call from the error
@@ -257,6 +269,60 @@ int oxi_is_operational(void);
  No pointers; always safe to call.
  */
 int oxi_integrity_status(void);
+
+/*
+ Writes the fingerprint of the verifying key this library embeds: the
+ SHA-256 of the encoded ML-DSA-87 public key, 32 bytes, to `out`.
+
+ The fingerprint names the signer this build trusts: a project release
+ embeds the project key, a source build the builder's own. It is recorded
+ when the integrity test reads the key, so it is available after
+ [`oxi_init`] whether or not the test passed, and it equals the
+ fingerprint `oxicrypt-integrity-sign --show` prints for the file.
+
+ Returns:
+ - [`OxiResult::Ok`] — the fingerprint was written to `out[0..32]`.
+ - [`OxiResult::NullPointer`] — `out` is null.
+ - [`OxiResult::BufferTooSmall`] — `out_len` is less than 32. Nothing is
+   written.
+ - [`OxiResult::NotOperational`] — no fingerprint is known, and nothing
+   is written. The integrity test has not read a key: `oxi_init` has not
+   run it, its CAST failed first, the key record could not be read or
+   is malformed, or the library embeds no key. `oxi_integrity_status`
+   tells these apart (`NotRun`, `CastNotRun`, `Unreadable`,
+   `SlotDamaged`, `NoVerifyKey`).
+
+ # Safety
+
+ `out` must be valid for writes of `out_len` bytes.
+ */
+int oxi_integrity_key_fingerprint(uint8_t *out, uintptr_t out_len);
+
+/*
+ Writes the integrity test's failure in words, NUL-terminated UTF-8, to
+ `out`: the cause the status value cannot carry, such as which slot
+ defect, which memory route's error, or which lengths disagreed.
+
+ `*written` always receives the number of bytes the text needs including
+ its NUL, or 0 when there is none, so a caller can pass `out_len` 0 to
+ size the buffer first.
+
+ Returns:
+ - [`OxiResult::Ok`] — the text and its NUL were written.
+ - [`OxiResult::NullPointer`] — `written` is null, or `out` is null with a
+   non-zero `out_len`; in the second case `*written` still receives the
+   size.
+ - [`OxiResult::BufferTooSmall`] — `out_len` is less than `*written`.
+   Nothing is written to `out`.
+ - [`OxiResult::NotOperational`] — the boot sequence's integrity test has
+   not failed in this process, so there is no text; `*written` is 0.
+
+ # Safety
+
+ `out` must be valid for writes of `out_len` bytes and `written` for one
+ `usize`.
+ */
+int oxi_integrity_status_detail(uint8_t *out, uintptr_t out_len, uintptr_t *written);
 
 /*
  Compute SHA-256 over `data_len` bytes at `data_ptr`.
@@ -717,6 +783,10 @@ int oxi_hkdf_sha512_expand(const uint8_t *prk_ptr,
  `length || "tls13 " + label || context` and runs HKDF-Expand
  (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
 
+ Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+ hash blocks, if the label is empty or longer than 249 bytes, or if the
+ context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+
  # Safety
 
  All pointer/length pairs must be valid. `out` must be a writable
@@ -737,6 +807,10 @@ int oxi_tls13_hkdf_expand_label_sha256(const uint8_t *secret_ptr,
  Builds the HkdfLabel wire structure
  `length || "tls13 " + label || context` and runs HKDF-Expand
  (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
+
+ Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+ hash blocks, if the label is empty or longer than 249 bytes, or if the
+ context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
 
  # Safety
 
@@ -759,6 +833,10 @@ int oxi_tls13_hkdf_expand_label_sha384(const uint8_t *secret_ptr,
  out_len)`. The caller computes `Hash(messages)` (the running
  transcript hash) and passes it as `transcript_hash`.
 
+ Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+ hash blocks, if the label is empty or longer than 249 bytes, or if the
+ context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+
  # Safety
 
  All pointer/length pairs must be valid. `out` must be a writable
@@ -779,6 +857,10 @@ int oxi_tls13_derive_secret_sha256(const uint8_t *secret_ptr,
  Equivalent to `HKDF-Expand-Label(secret, label, transcript_hash,
  out_len)`. The caller computes `Hash(messages)` (the running
  transcript hash) and passes it as `transcript_hash`.
+
+ Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+ hash blocks, if the label is empty or longer than 249 bytes, or if the
+ context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
 
  # Safety
 
@@ -921,8 +1003,7 @@ int oxi_ecdh_p384_compute_shared_secret(const uint8_t *d_ptr,
  pointer (the FFI projects `*mut OxiHmacDrbgSha256` to
  `&mut HmacDrbgSha256` for the duration of this call, which
  Rust's exclusivity rule enforces internally but cannot enforce
- across the C boundary). See the per-call-mutating-handle
- paragraph in `docs/security-policy/security-policy.md` §4.8.
+ across the C boundary).
 
  Returns `OxiResult::Ok = 0` on success;
  `OxiResult::NullPointer = 10` if any pointer is NULL;
@@ -981,8 +1062,7 @@ int oxi_ecdh_p384_generate_keypair(OxiHmacDrbgSha256 *drbg,
 
  The shared secret is the **raw** FFC-DH output; the caller MUST
  run an SP 800-56C Rev. 2 extractor over `Z` before using it as
- keying material — same discipline as ECDH (see security-policy
- §4.8 ECDH raw-Z paragraph).
+ keying material — same discipline as ECDH.
 
  Peer public key undergoes SP 800-56Ar3 §5.6.2.3.1 partial
  validation (`2 ≤ y ≤ p − 2`) before any modular exponentiation;
@@ -1069,9 +1149,9 @@ int oxi_rsa_pkcs1_v15_verify_2048_sha256(const uint8_t *n_ptr,
  Reads exactly 256 bytes from `n_ptr`, takes `e` as `uint64_t`,
  reads `msg_len` bytes from `msg_ptr`, and reads exactly 256 bytes
  from `sig_ptr`. Returns `Ok = 0` on a valid signature,
- `TagMismatch = 22` on any verification failure (see TagMismatch
- paragraph in security-policy §4.8 for upstream-Err mapping
- rationale), or a module error variant.
+ `TagMismatch = 22` on any verification failure (the upstream
+ verifier reports a malformed input and a bad signature as the same
+ error), or a module error variant.
 
  # Safety
 
@@ -1435,8 +1515,7 @@ int oxi_ml_kem_1024_encapsulate(const uint8_t *ek_ptr,
  shape, no `TagMismatch = 22` mapping. The FO transform's
  implicit-rejection branch absorbs tampered ciphertext into a
  deterministic-but-pseudorandom shared secret in constant time;
- tamper does NOT surface as a discriminant. See the
- decapsulate-implicit-rejection paragraph in security-policy §4.9.
+ tamper does NOT surface as a discriminant.
 
  Returns `OxiResult::Ok = 0` on success, or a module error
  variant (`NotOperational`, `AlgorithmRestricted`).
@@ -1509,8 +1588,7 @@ int oxi_ml_kem_512_encapsulate(const uint8_t *ek_ptr,
  shape, no `TagMismatch = 22` mapping. The FO transform's
  implicit-rejection branch absorbs tampered ciphertext into a
  deterministic-but-pseudorandom shared secret in constant time;
- tamper does NOT surface as a discriminant. See the
- decapsulate-implicit-rejection paragraph in security-policy §4.9.
+ tamper does NOT surface as a discriminant.
 
  Returns `OxiResult::Ok = 0` on success, or a module error
  variant (`NotOperational`, `AlgorithmRestricted`).
@@ -1583,8 +1661,7 @@ int oxi_ml_kem_768_encapsulate(const uint8_t *ek_ptr,
  shape, no `TagMismatch = 22` mapping. The FO transform's
  implicit-rejection branch absorbs tampered ciphertext into a
  deterministic-but-pseudorandom shared secret in constant time;
- tamper does NOT surface as a discriminant. See the
- decapsulate-implicit-rejection paragraph in security-policy §4.9.
+ tamper does NOT surface as a discriminant.
 
  Returns `OxiResult::Ok = 0` on success, or a module error
  variant (`NotOperational`, `AlgorithmRestricted`).
@@ -3866,6 +3943,10 @@ void oxi_ecdsa_p256_private_key_free(OxiEcdsaP256PrivateKey *key);
  `OxiResult::NotOperational = 1` if the handle has been
  finalised (today: never — no `_finalize` exists for this handle).
 
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
+
  # Safety
 
  `key` must be a live handle from
@@ -3901,9 +3982,8 @@ int oxi_ecdsa_p256_private_key_public_key(const OxiEcdsaP256PrivateKey *key,
  [`oxi_ecdsa_p256_private_key_new_generate`]. `drbg` must be a
  live, instantiated handle from [`oxi_hmac_drbg_sha256_new`] +
  [`oxi_hmac_drbg_sha256_instantiate`]; the caller MUST serialise
- concurrent calls on the same `drbg` pointer per the
- per-call-mutating-handle thread-safety contract documented in
- security-policy §4.8. `msg_ptr` must be valid for `msg_len` bytes.
+ concurrent calls on the same `drbg` pointer, because every call
+ mutates the DRBG's state. `msg_ptr` must be valid for `msg_len` bytes.
  `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
  */
 int oxi_ecdsa_p256_private_key_sign_sha256(const OxiEcdsaP256PrivateKey *key,
@@ -3943,6 +4023,10 @@ void oxi_ecdsa_p384_private_key_free(OxiEcdsaP384PrivateKey *key);
  Copy the uncompressed SEC1 public key (`0x04 || X(48) || Y(48)`,
  97 bytes) from an ECDSA P-384 private-key handle into the caller
  buffer.
+
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
 
  # Safety
 
@@ -4038,6 +4122,10 @@ void oxi_rsa_2048_private_key_free(OxiRsaPrivateKey2048 *key);
  Returns `OxiResult::Ok = 0` on success;
  `OxiResult::NullPointer = 10` if either pointer is NULL.
 
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
+
  # Safety
 
  `key` must be a live handle. `modulus_out` must be a non-NULL
@@ -4051,6 +4139,10 @@ int oxi_rsa_2048_modulus(const OxiRsaPrivateKey2048 *key, uint8_t *modulus_out);
 
  Returns `OxiResult::Ok = 0` on success;
  `OxiResult::NullPointer = 10` if either pointer is NULL.
+
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
 
  # Safety
 
@@ -4090,8 +4182,8 @@ int oxi_rsa_2048_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey2048 *key,
 
  `key` must be a live handle. `drbg` must be a live, instantiated
  DRBG handle; the caller MUST serialise concurrent calls on the
- same `drbg` pointer per the per-call-mutating-handle thread-
- safety contract documented in security-policy.md. `msg_ptr` must
+ same `drbg` pointer, because every call mutates the DRBG's
+ state. `msg_ptr` must
  be valid for `msg_len` bytes. `sig_out` must be a non-NULL
  writable pointer to ≥256 bytes.
  */
@@ -4189,6 +4281,10 @@ void oxi_rsa_3072_private_key_free(OxiRsaPrivateKey3072 *key);
  Copy the 384-byte big-endian public modulus `n` from an RSA-3072
  handle. See [`oxi_rsa_2048_modulus`].
 
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
+
  # Safety
 
  `key` must be a live handle. `modulus_out` must be a non-NULL
@@ -4199,6 +4295,10 @@ int oxi_rsa_3072_modulus(const OxiRsaPrivateKey3072 *key, uint8_t *modulus_out);
 /*
  Copy the public exponent `e` from an RSA-3072 handle. See
  [`oxi_rsa_2048_public_exponent`].
+
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
 
  # Safety
 
@@ -4302,6 +4402,10 @@ void oxi_rsa_4096_private_key_free(OxiRsaPrivateKey4096 *key);
  Copy the 512-byte big-endian public modulus `n` from an RSA-4096
  handle.
 
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
+
  # Safety
 
  `key` must be a live handle. `modulus_out` must be a non-NULL
@@ -4311,6 +4415,10 @@ int oxi_rsa_4096_modulus(const OxiRsaPrivateKey4096 *key, uint8_t *modulus_out);
 
 /*
  Copy the public exponent `e` from an RSA-4096 handle.
+
+ Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+ `Operational` states, including for a handle created before the module
+ entered `Error`.
 
  # Safety
 
@@ -4422,7 +4530,7 @@ void oxi_aes256_free(OxiAes256Key *handle);
  Buffer requirements:
  - `iv` — exactly 12 readable bytes (96-bit nonce).
  - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
-   when `aad_len == 0` (per F9).
+   when `aad_len == 0`.
  - `plaintext` — `pt_len` readable bytes; may be NULL when
    `pt_len == 0`.
  - `ciphertext` — `pt_len` writable bytes.
@@ -4544,7 +4652,7 @@ int oxi_aes256_ctr(const OxiAes256Key *key,
  Buffer requirements:
  - `nonce` — `nonce_len` readable bytes; valid range 7..=13 per SP 800-38C.
  - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
-   when `aad_len == 0` (per F9, AAD logically defined by length).
+   when `aad_len == 0` (AAD is defined by its length).
  - `plaintext` — `pt_len` readable bytes; may be NULL when `pt_len == 0`.
  - `tlen` — tag length in bytes; valid set {4, 6, 8, 10, 12, 14, 16}.
  - `out` — exactly `pt_len + tlen` writable bytes; layout `C || T`.

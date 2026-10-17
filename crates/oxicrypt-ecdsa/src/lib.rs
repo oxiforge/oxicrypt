@@ -104,7 +104,9 @@
 //!
 //! Every public ECDSA entry point calls
 //! [`oxicrypt_module::require_operational`]; the `*_internal` helpers
-//! skip the gate so that self-tests can run during `SelfTest`.
+//! skip the gate so that self-tests can run during `SelfTest`. They call
+//! [`oxicrypt_module::require_self_test_started`] instead, so they refuse
+//! in every state other than `SelfTest` and `Operational`.
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -113,12 +115,16 @@ use oxicrypt_module::KatEntry;
 pub mod p256_ecdsa;
 pub mod p256_field;
 pub mod p256_keygen;
+#[doc(hidden)]
 pub mod p256_point;
+#[doc(hidden)]
 pub mod p256_scalar;
 pub mod p384_ecdsa;
 pub mod p384_field;
 pub mod p384_keygen;
+#[doc(hidden)]
 pub mod p384_point;
+#[doc(hidden)]
 pub mod p384_scalar;
 pub mod p384_stub;
 

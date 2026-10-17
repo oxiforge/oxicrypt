@@ -90,9 +90,10 @@ impl AlgorithmHandler for LmsSigVerSp800208Handler {
 /// against the (already-parsed) per-pair public key. The closure
 /// captures a typed `[u8; PUBLIC_KEY_LEN]` per pair, so the caller's
 /// per-test loop stays uniform. It returns `None` when the signature is
-/// not the pair's `SIGNATURE_LEN`, so the caller can report a malformed
-/// prompt rather than a verification verdict.
-type LmsVerifier = Box<dyn Fn(&[u8], &[u8]) -> Option<bool>>;
+/// not the pair's `SIGNATURE_LEN`; the caller grades that test case as
+/// failed, as it does a signature whose typecodes are not the pair's. A
+/// refusal from the module is an error, not a verdict.
+type LmsVerifier = Box<dyn Fn(&[u8], &[u8]) -> Option<Result<bool, oxicrypt_module::Error>>>;
 
 #[allow(clippy::too_many_lines)]
 fn dispatch_sigver(
@@ -977,9 +978,9 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("signature"))?,
         )?;
 
-        let passed = verifier(&message, &sig_bytes).ok_or(DispatchError::Crypto(
-            "LMS SigVer: signature has wrong length",
-        ))?;
+        // A signature of the wrong length for the pair cannot verify, so it
+        // fails this test case only, never the whole group.
+        let passed = verifier(&message, &sig_bytes).transpose()?.unwrap_or(false);
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),

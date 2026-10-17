@@ -34,7 +34,10 @@
 )]
 
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key, BlockCipher};
-use oxicrypt_module::{Error, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestStarted, Service, require_allowed, require_operational,
+    require_self_test_started_token,
+};
 
 /// AES block size in bytes. Always 16 for AES.
 pub const BLOCK_SIZE: usize = 16;
@@ -49,9 +52,12 @@ const RB_128: u8 = 0x87;
 /// x^128 + x^7 + x^2 + x + 1 (so multiplication by x is a 1-bit left
 /// shift, conditionally XOR'd with R_b = 0x87 if the high bit was
 /// set).
-fn derive_subkeys<B: BlockCipher>(cipher: &B) -> ([u8; BLOCK_SIZE], [u8; BLOCK_SIZE]) {
+fn derive_subkeys<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+) -> ([u8; BLOCK_SIZE], [u8; BLOCK_SIZE]) {
     let mut l = [0u8; BLOCK_SIZE];
-    cipher.encrypt_block(&mut l);
+    cipher.encrypt_block_with(started, &mut l);
     let k1 = shift_with_rb(&l);
     let k2 = shift_with_rb(&k1);
     (k1, k2)
@@ -81,8 +87,26 @@ fn shift_with_rb(b: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
 /// Returns the tag `T = CIPH_K(C_{n-1} XOR M_n*)` from SP 800-38B
 /// §6.2. The empty message is handled by the `if msg.is_empty()`
 /// branch (n = 1, M_1* = 10^{b-1}).
-pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let (k1, k2) = derive_subkeys(cipher);
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
+pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    let started = require_self_test_started_token()?;
+    Ok(cmac_tag_with(cipher, &started, msg))
+}
+
+/// The CMAC computation behind [`cmac_tag`], for a caller that checked
+/// the module state once at its own entry point and holds the proof.
+fn cmac_tag_with<B: BlockCipher>(
+    cipher: &B,
+    started: &SelfTestStarted,
+    msg: &[u8],
+) -> [u8; BLOCK_SIZE] {
+    let (k1, k2) = derive_subkeys(cipher, started);
 
     // Partition into n 128-bit blocks; track whether the last block
     // is complete or needs padding.
@@ -100,7 +124,7 @@ pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> [u8; BLOCK_SIZE] {
         for k in 0..BLOCK_SIZE {
             c[k] ^= msg[start + k];
         }
-        cipher.encrypt_block(&mut c);
+        cipher.encrypt_block_with(started, &mut c);
     }
 
     // Final block M_n*: last 16 bytes of msg if complete_last, else
@@ -125,17 +149,22 @@ pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> [u8; BLOCK_SIZE] {
     for k in 0..BLOCK_SIZE {
         c[k] ^= m_n[k];
     }
-    cipher.encrypt_block(&mut c);
+    cipher.encrypt_block_with(started, &mut c);
     c
 }
 
-/// Compute an AES-128 CMAC tag (internal, no FIPS gating).
+/// Compute an AES-128 CMAC tag (internal, without the operational and
+/// profile gates).
 ///
-/// For KAT and internal use only. Public callers must use [`cmac_aes128`].
+/// For KAT and internal use only. Returns [`Error::NotOperational`]
+/// unless [`oxicrypt_module::require_self_test_started`] admits the call:
+/// in `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests. Public callers must use [`cmac_aes128`].
 #[inline]
-pub fn cmac_aes128_internal(key: &[u8; 16], msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let k = Aes128Key::new_internal(key);
-    cmac_tag(&k, msg)
+pub fn cmac_aes128_internal(key: &[u8; 16], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    let started = require_self_test_started_token()?;
+    let k = Aes128Key::new_internal(key)?;
+    Ok(cmac_tag_with(&k, &started, msg))
 }
 
 /// Compute an AES-128 CMAC tag.
@@ -148,16 +177,21 @@ pub fn cmac_aes128_internal(key: &[u8; 16], msg: &[u8]) -> [u8; BLOCK_SIZE] {
 pub fn cmac_aes128(key: &[u8; 16], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
     require_operational()?;
     require_allowed(Service::CmacAes128)?;
-    Ok(cmac_aes128_internal(key, msg))
+    cmac_aes128_internal(key, msg)
 }
 
-/// Compute an AES-192 CMAC tag (internal, no FIPS gating).
+/// Compute an AES-192 CMAC tag (internal, without the operational and
+/// profile gates).
 ///
-/// For KAT and internal use only. Public callers must use [`cmac_aes192`].
+/// For KAT and internal use only. Returns [`Error::NotOperational`]
+/// unless [`oxicrypt_module::require_self_test_started`] admits the call:
+/// in `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests. Public callers must use [`cmac_aes192`].
 #[inline]
-pub fn cmac_aes192_internal(key: &[u8; 24], msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let k = Aes192Key::new_internal(key);
-    cmac_tag(&k, msg)
+pub fn cmac_aes192_internal(key: &[u8; 24], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    let started = require_self_test_started_token()?;
+    let k = Aes192Key::new_internal(key)?;
+    Ok(cmac_tag_with(&k, &started, msg))
 }
 
 /// Compute an AES-192 CMAC tag.
@@ -170,16 +204,21 @@ pub fn cmac_aes192_internal(key: &[u8; 24], msg: &[u8]) -> [u8; BLOCK_SIZE] {
 pub fn cmac_aes192(key: &[u8; 24], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
     require_operational()?;
     require_allowed(Service::CmacAes192)?;
-    Ok(cmac_aes192_internal(key, msg))
+    cmac_aes192_internal(key, msg)
 }
 
-/// Compute an AES-256 CMAC tag (internal, no FIPS gating).
+/// Compute an AES-256 CMAC tag (internal, without the operational and
+/// profile gates).
 ///
-/// For KAT and internal use only. Public callers must use [`cmac_aes256`].
+/// For KAT and internal use only. Returns [`Error::NotOperational`]
+/// unless [`oxicrypt_module::require_self_test_started`] admits the call:
+/// in `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests. Public callers must use [`cmac_aes256`].
 #[inline]
-pub fn cmac_aes256_internal(key: &[u8; 32], msg: &[u8]) -> [u8; BLOCK_SIZE] {
-    let k = Aes256Key::new_internal(key);
-    cmac_tag(&k, msg)
+pub fn cmac_aes256_internal(key: &[u8; 32], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
+    let started = require_self_test_started_token()?;
+    let k = Aes256Key::new_internal(key)?;
+    Ok(cmac_tag_with(&k, &started, msg))
 }
 
 /// Compute an AES-256 CMAC tag.
@@ -192,7 +231,7 @@ pub fn cmac_aes256_internal(key: &[u8; 32], msg: &[u8]) -> [u8; BLOCK_SIZE] {
 pub fn cmac_aes256(key: &[u8; 32], msg: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
     require_operational()?;
     require_allowed(Service::CmacAes256)?;
-    Ok(cmac_aes256_internal(key, msg))
+    cmac_aes256_internal(key, msg)
 }
 
 #[cfg(test)]
@@ -203,6 +242,7 @@ mod tests {
     // NIST CMAC examples, AES-128 — Mlen = 0
     #[test]
     fn sp38b_d1_example1_aes128_empty() {
+        crate::test_support::start_module();
         let key: [u8; 16] = [
             0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
             0x4f, 0x3c,
@@ -211,12 +251,13 @@ mod tests {
             0xbb, 0x1d, 0x69, 0x29, 0xe9, 0x59, 0x37, 0x28, 0x7f, 0xa3, 0x7d, 0x12, 0x9b, 0x75,
             0x67, 0x46,
         ];
-        assert_eq!(cmac_aes128_internal(&key, &[]), expected);
+        assert_eq!(cmac_aes128_internal(&key, &[]).unwrap(), expected);
     }
 
     // NIST CMAC examples, AES-128 — Mlen = 128
     #[test]
     fn sp38b_d1_example2_aes128_one_block() {
+        crate::test_support::start_module();
         let key: [u8; 16] = [
             0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
             0x4f, 0x3c,
@@ -229,12 +270,13 @@ mod tests {
             0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44, 0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a,
             0x28, 0x7c,
         ];
-        assert_eq!(cmac_aes128_internal(&key, &msg), expected);
+        assert_eq!(cmac_aes128_internal(&key, &msg).unwrap(), expected);
     }
 
     // NIST CMAC examples, AES-192 — Mlen = 512
     #[test]
     fn sp38b_d2_example4_aes192_four_blocks() {
+        crate::test_support::start_module();
         let key: [u8; 24] = [
             0x8e, 0x73, 0xb0, 0xf7, 0xda, 0x0e, 0x64, 0x52, 0xc8, 0x10, 0xf3, 0x2b, 0x80, 0x90,
             0x79, 0xe5, 0x62, 0xf8, 0xea, 0xd2, 0x52, 0x2c, 0x6b, 0x7b,
@@ -250,13 +292,14 @@ mod tests {
             0xa1, 0xd5, 0xdf, 0x0e, 0xed, 0x79, 0x0f, 0x79, 0x4d, 0x77, 0x58, 0x96, 0x59, 0xf3,
             0x9a, 0x11,
         ];
-        assert_eq!(cmac_aes192_internal(&key, &msg), expected);
+        assert_eq!(cmac_aes192_internal(&key, &msg).unwrap(), expected);
     }
 
     // NIST CMAC examples, AES-256 — Mlen = 320
     // (Partial final block — exercises the K2 subkey path.)
     #[test]
     fn sp38b_d3_example3_aes256_partial_block() {
+        crate::test_support::start_module();
         let key: [u8; 32] = [
             0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d,
             0x77, 0x81, 0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3,
@@ -271,6 +314,6 @@ mod tests {
             0xaa, 0xf3, 0xd8, 0xf1, 0xde, 0x56, 0x40, 0xc2, 0x32, 0xf5, 0xb1, 0x69, 0xb9, 0xc9,
             0x11, 0xe6,
         ];
-        assert_eq!(cmac_aes256_internal(&key, &msg), expected);
+        assert_eq!(cmac_aes256_internal(&key, &msg).unwrap(), expected);
     }
 }

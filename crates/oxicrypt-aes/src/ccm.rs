@@ -57,6 +57,8 @@
     clippy::needless_range_loop
 )]
 
+use oxicrypt_module::{SelfTestStarted, require_self_test_started_token};
+
 use crate::modes::{BlockCipher, ModeError};
 
 /// AES block size in bytes. Always 16 for AES.
@@ -145,9 +147,14 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Absorb a single partial-or-full block (already zero-padded) into
 /// the running CBC-MAC state.
-fn cbc_mac_block<B2: BlockCipher>(cipher: &B2, y: &mut [u8; B], block: &[u8; B]) {
+fn cbc_mac_block<B2: BlockCipher>(
+    cipher: &B2,
+    started: &SelfTestStarted,
+    y: &mut [u8; B],
+    block: &[u8; B],
+) {
     xor_block(y, block);
-    cipher.encrypt_block(y);
+    cipher.encrypt_block_with(started, y);
 }
 
 /// Compute the raw CBC-MAC tag `Y_r` over `B0 || format(A) ||
@@ -157,6 +164,7 @@ fn cbc_mac_block<B2: BlockCipher>(cipher: &B2, y: &mut [u8; B], block: &[u8; B])
 /// decryption use byte-for-byte identical CBC-MAC inputs.
 fn ccm_mac<C: BlockCipher>(
     cipher: &C,
+    started: &SelfTestStarted,
     nonce: &[u8],
     aad: &[u8],
     plaintext: &[u8],
@@ -164,7 +172,7 @@ fn ccm_mac<C: BlockCipher>(
 ) -> [u8; B] {
     // Y0 = B0
     let mut y = format_b0(nonce, !aad.is_empty(), tlen, plaintext.len() as u64);
-    cipher.encrypt_block(&mut y);
+    cipher.encrypt_block_with(started, &mut y);
 
     // Absorb associated data per §A.2.2.
     if !aad.is_empty() {
@@ -194,21 +202,21 @@ fn ccm_mac<C: BlockCipher>(
         // Copy the leading AAD bytes into the remaining space.
         let take = core::cmp::min(B - prefix_len, aad.len());
         first[prefix_len..prefix_len + take].copy_from_slice(&aad[..take]);
-        cbc_mac_block(cipher, &mut y, &first);
+        cbc_mac_block(cipher, started, &mut y, &first);
 
         // Absorb full middle blocks then the final zero-padded tail.
         let mut off = take;
         while aad.len() - off >= B {
             let mut blk = [0u8; B];
             blk.copy_from_slice(&aad[off..off + B]);
-            cbc_mac_block(cipher, &mut y, &blk);
+            cbc_mac_block(cipher, started, &mut y, &blk);
             off += B;
         }
         let rem = aad.len() - off;
         if rem > 0 {
             let mut blk = [0u8; B];
             blk[..rem].copy_from_slice(&aad[off..]);
-            cbc_mac_block(cipher, &mut y, &blk);
+            cbc_mac_block(cipher, started, &mut y, &blk);
         }
     }
 
@@ -217,14 +225,14 @@ fn ccm_mac<C: BlockCipher>(
     while plaintext.len() - off >= B {
         let mut blk = [0u8; B];
         blk.copy_from_slice(&plaintext[off..off + B]);
-        cbc_mac_block(cipher, &mut y, &blk);
+        cbc_mac_block(cipher, started, &mut y, &blk);
         off += B;
     }
     let rem = plaintext.len() - off;
     if rem > 0 {
         let mut blk = [0u8; B];
         blk[..rem].copy_from_slice(&plaintext[off..]);
-        cbc_mac_block(cipher, &mut y, &blk);
+        cbc_mac_block(cipher, started, &mut y, &blk);
     }
     y
 }
@@ -273,24 +281,25 @@ pub fn ccm_encrypt<C: BlockCipher>(
     tlen: usize,
     out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     validate_params(nonce.len(), aad.len(), plaintext.len(), tlen)?;
     if out.len() != plaintext.len() + tlen {
         return Err(ModeError::LengthMismatch);
     }
 
     // Raw CBC-MAC tag.
-    let y = ccm_mac(cipher, nonce, aad, plaintext, tlen);
+    let y = ccm_mac(cipher, started, nonce, aad, plaintext, tlen);
 
     // Keystream block 0 is used to mask the tag.
     let mut s0 = format_ctr(nonce, 0);
-    cipher.encrypt_block(&mut s0);
+    cipher.encrypt_block_with(started, &mut s0);
 
     // CTR-encrypt plaintext into out[..plen] starting from block 1.
     let mut off = 0usize;
     let mut i: u64 = 1;
     while off < plaintext.len() {
         let mut s = format_ctr(nonce, i);
-        cipher.encrypt_block(&mut s);
+        cipher.encrypt_block_with(started, &mut s);
         let take = core::cmp::min(B, plaintext.len() - off);
         for k in 0..take {
             out[off + k] = plaintext[off + k] ^ s[k];
@@ -321,6 +330,7 @@ pub fn ccm_decrypt<C: BlockCipher>(
     tlen: usize,
     out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if ciphertext.len() < tlen {
         return Err(ModeError::LengthMismatch);
     }
@@ -335,7 +345,7 @@ pub fn ccm_decrypt<C: BlockCipher>(
     let mut i: u64 = 1;
     while off < plen {
         let mut s = format_ctr(nonce, i);
-        cipher.encrypt_block(&mut s);
+        cipher.encrypt_block_with(started, &mut s);
         let take = core::cmp::min(B, plen - off);
         for k in 0..take {
             out[off + k] = ciphertext[off + k] ^ s[k];
@@ -347,9 +357,9 @@ pub fn ccm_decrypt<C: BlockCipher>(
     // Recompute raw CBC-MAC over the recovered plaintext and the
     // same formatted AAD, then mask with S0 to compare against the
     // transmitted tag with a constant-time comparison.
-    let y = ccm_mac(cipher, nonce, aad, &out[..plen], tlen);
+    let y = ccm_mac(cipher, started, nonce, aad, &out[..plen], tlen);
     let mut s0 = format_ctr(nonce, 0);
-    cipher.encrypt_block(&mut s0);
+    cipher.encrypt_block_with(started, &mut s0);
     let mut expected_tag = [0u8; B];
     for k in 0..tlen {
         expected_tag[k] = y[k] ^ s0[k];
@@ -378,6 +388,7 @@ mod tests {
     // CAVP CCMVS CCM-VPT, AES-128. Source: VPT128.rsp Count=160.
     #[test]
     fn cavp_vpt128_plen16_count160() {
+        crate::test_support::start_module();
         let key: [u8; 16] = [
             0x70, 0x01, 0x0e, 0xd9, 0x0e, 0x61, 0x86, 0xec, 0xad, 0x41, 0xf0, 0xd3, 0xc7, 0xc4,
             0x2f, 0xf8,
@@ -399,7 +410,7 @@ mod tests {
             0x58, 0x12, 0xee, 0xf0, 0x8e, 0x3f, 0xb1, 0x5f, 0x42, 0x27, 0xe0, 0xd9, 0x89, 0xa4,
             0xd5, 0x87, 0xa8, 0xcf,
         ];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let mut out = [0u8; 32];
         ccm_encrypt(&k, &nonce, &aad, &pt, 16, &mut out).unwrap();
         assert_eq!(out, expected_ct);
@@ -411,6 +422,7 @@ mod tests {
     // CAVP CCMVS CCM-VPT, AES-192. Source: VPT192.rsp Count=160.
     #[test]
     fn cavp_vpt192_plen16_count160() {
+        crate::test_support::start_module();
         let key: [u8; 24] = [
             0x68, 0x73, 0xf1, 0xc6, 0xc3, 0x09, 0x75, 0xaf, 0xf6, 0xf0, 0x84, 0x70, 0x26, 0x43,
             0x21, 0x13, 0x0a, 0x6e, 0x59, 0x84, 0xad, 0xe3, 0x24, 0xe9,
@@ -432,7 +444,7 @@ mod tests {
             0x26, 0xaf, 0x40, 0xbc, 0xe5, 0x8f, 0xd4, 0xcd, 0x65, 0x48, 0xdf, 0x90, 0xa0, 0x33,
             0x7c, 0x84, 0x20, 0x04,
         ];
-        let k = Aes192Key::new_internal(&key);
+        let k = Aes192Key::new_internal(&key).unwrap();
         let mut out = [0u8; 32];
         ccm_encrypt(&k, &nonce, &aad, &pt, 16, &mut out).unwrap();
         assert_eq!(out, expected_ct);
@@ -444,6 +456,7 @@ mod tests {
     // CAVP CCMVS CCM-VPT, AES-256. Source: VPT256.rsp Count=160.
     #[test]
     fn cavp_vpt256_plen16_count160() {
+        crate::test_support::start_module();
         let key: [u8; 32] = [
             0xee, 0x8c, 0xe1, 0x87, 0x16, 0x97, 0x79, 0xd1, 0x3e, 0x44, 0x3d, 0x64, 0x28, 0xe3,
             0x8b, 0x38, 0xb5, 0x5d, 0xfb, 0x90, 0xf0, 0x22, 0x8a, 0x8a, 0x4e, 0x62, 0xf8, 0xf5,
@@ -466,7 +479,7 @@ mod tests {
             0xd2, 0x2a, 0x6f, 0x9d, 0x28, 0xfc, 0xb6, 0x42, 0x34, 0xe1, 0xcd, 0x79, 0x3c, 0x41,
             0x44, 0xf1, 0xda, 0x50,
         ];
-        let k = Aes256Key::new_internal(&key);
+        let k = Aes256Key::new_internal(&key).unwrap();
         let mut out = [0u8; 32];
         ccm_encrypt(&k, &nonce, &aad, &pt, 16, &mut out).unwrap();
         assert_eq!(out, expected_ct);
@@ -480,6 +493,7 @@ mod tests {
     #[test]
     fn ccm_rejects_bit_flip() {
         use crate::modes::ModeError;
+        crate::test_support::start_module();
         let key: [u8; 16] = [
             0x70, 0x01, 0x0e, 0xd9, 0x0e, 0x61, 0x86, 0xec, 0xad, 0x41, 0xf0, 0xd3, 0xc7, 0xc4,
             0x2f, 0xf8,
@@ -498,7 +512,7 @@ mod tests {
             0xd5, 0x87, 0xa8, 0xcf,
         ];
         ct[0] ^= 0x01;
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let mut dec = [0u8; 16];
         let err = ccm_decrypt(&k, &nonce, &aad, &ct, 16, &mut dec).unwrap_err();
         assert_eq!(err, ModeError::TagMismatch);

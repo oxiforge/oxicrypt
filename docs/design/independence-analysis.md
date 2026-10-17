@@ -216,8 +216,7 @@ maxwell independence <FILE> <BITS_PER_SYMBOL> [--claim <H>] [--metadata <FILE>] 
   marked `"characterization": true` (schema-versioned per ISC-14; G16 semantics — health
   battery live, trips recorded, no filtering; prefer a trip-free run for the package,
   re-collect on trip). Implementation details follow a build-time survey of `collection.rs`;
-  because that survey is a judgment point, this slice runs attended-or-reviewed, not in an
-  unattended night.
+  because that survey is a judgment point, it is reviewed before the run.
 - **The run (attended, bare metal):** both boundaries × ≥10M; then per boundary
   `maxwell independence characterization.bin 4 --claim 0.5 --metadata metadata.json` +
   `maxwell periodicity` on the same capture (10M pads to 16.7M complex ≈ 400 MiB —

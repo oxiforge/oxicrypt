@@ -29,18 +29,21 @@
 
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+use oxicrypt_module::Error;
 use oxicrypt_sha::sha256::{DIGEST_SIZE as SHA256_DIGEST_SIZE, Sha256};
 
-/// One-shot `SHA-256` that bypasses the module operational gate.
+/// One-shot `SHA-256` for the RSA encoding steps.
 ///
-/// Used by the RSA sign/verify primitives which are themselves gated
-/// at a higher level (or invoked from the power-up KAT where no gate
-/// applies). Keeping the bypass behind a hidden helper keeps
-/// `fips-sha::sha256::sha256` out of callers that also want to run
-/// during `SelfTest`.
-#[doc(hidden)]
-pub fn sha256_internal(msg: &[u8]) -> [u8; SHA256_DIGEST_SIZE] {
-    let mut h = Sha256::new_internal();
+/// Used by the RSA sign, verify and OAEP primitives, which are
+/// themselves gated (or guarded by
+/// [`oxicrypt_module::require_self_test_started`]) before they reach
+/// it, so they can run during `SelfTest`. Crate-private: it is not
+/// reachable from outside the crate.
+///
+/// A caller that returns `Option` or `bool` treats a refusal as a failed
+/// operation: no output, or a verification that does not pass.
+pub(crate) fn sha256_digest(msg: &[u8]) -> Result<[u8; SHA256_DIGEST_SIZE], Error> {
+    let mut h = Sha256::new_internal()?;
     h.update(msg);
     h.finalize()
 }
@@ -109,6 +112,7 @@ mod tests {
 
     #[test]
     fn em_has_canonical_layout_for_256_bytes() {
+        crate::test_support::start_module();
         let digest = [0x42u8; SHA256_DIGEST_SIZE];
         let mut em = [0u8; 256];
         encode_sha256(&digest, &mut em).unwrap();
@@ -128,6 +132,7 @@ mod tests {
 
     #[test]
     fn em_rejects_too_short_buffer() {
+        crate::test_support::start_module();
         let digest = [0u8; SHA256_DIGEST_SIZE];
         let mut em = [0u8; 61]; // tLen + 11 = 62, so 61 is too small
         assert!(encode_sha256(&digest, &mut em).is_none());
@@ -135,6 +140,7 @@ mod tests {
 
     #[test]
     fn ct_eq_zero_for_mismatch() {
+        crate::test_support::start_module();
         assert_eq!(ct_eq(b"abc", b"abd"), 0);
         assert_eq!(ct_eq(b"abc", b"abc"), 1);
         assert_eq!(ct_eq(b"abc", b"abcd"), 0);

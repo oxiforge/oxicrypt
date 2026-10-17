@@ -1,7 +1,7 @@
 //! Declarative macro that generates a full ML-DSA parameter-set
 //! implementation (FIPS 204 §6 internal primitives + §5.2 external
-//! `ctx`-framing wrappers + power-up KAT) from a small parameter
-//! tuple.
+//! `ctx`-framing wrappers) from a small parameter tuple. The power-up
+//! self-tests are in `cast`.
 //!
 //! This is the encoding/wiring single source of truth for ML-DSA-44,
 //! ML-DSA-65, and ML-DSA-87. It mirrors the
@@ -52,10 +52,9 @@
 //! | `pack_eta`, `unpack_eta`, `pack_z`, `unpack_z`, `pack_t0`, `unpack_t0`, `pack_t1`, `unpack_t1`, `pack_hint`, `unpack_hint`, `pack_pk/sk/sig`, `unpack_pk/sk/sig`, `pack_w1` | private | Per-variant byte encoding |
 //! | `ml_dsa_keygen`, `ml_dsa_sign`, `ml_dsa_verify` | private | FIPS 204 §6 internal primitives |
 //! | `keygen`, `sign`, `verify` | `pub` | Module-gated FIPS 204 §5.2 external API (with `ctx` framing) |
-//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | Gate-free FIPS 204 §6 mirrors |
-//! | `KATS`, `KAT_ENTRY`, `self_test` | `pub` | Power-up self-test |
+//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | FIPS 204 §6 mirrors without the operational gate |
 //!
-//! # Architectural note (CMVP gem)
+//! # Architectural note
 //!
 //! The macro is the **single source of truth for every parameter-set
 //! divergence** in ML-DSA. There is no parallel hand-written
@@ -91,12 +90,8 @@ macro_rules! ml_dsa_impl {
         svc_keygen = $svc_keygen:expr;
         svc_sign = $svc_sign:expr;
         svc_verify = $svc_verify:expr;
-        // KAT seeds.
-        kat_xi = $kat_xi:expr;
-        kat_msg = $kat_msg:expr;
-        kat_name = $kat_name:expr;
     ) => {
-        use oxicrypt_module::{Error, KatEntry, SelfTestFailure, Service};
+        use oxicrypt_module::{Error, SelfTestStarted, Service};
         use oxicrypt_xof::{Shake128, Shake256};
         use $crate::field::reduce32;
         use $crate::params::{D, N, Q, SEED_LEN as SHARED_SEED_LEN, T0_PACKED, T1_PACKED};
@@ -501,13 +496,13 @@ macro_rules! ml_dsa_impl {
 
         /// RejNTTPoly: rejection-sample a polynomial in NTT domain
         /// from a SHAKE-128 stream (FIPS 204 §7.3 Algorithm 30).
-        fn rej_ntt_poly(xof: &mut Shake128) -> Poly {
+        fn rej_ntt_poly(xof: &mut Shake128, started: &SelfTestStarted) -> Poly {
             let mut poly = Poly::zero();
             let mut j: usize = 0;
-            let mut buf = [0u8; 3];
+            let mut buf = $crate::Wiped([0u8; 3]);
             while j < N {
-                xof.squeeze(&mut buf);
-                let t = ((buf[0] as u32) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16))
+                xof.squeeze_with(started, &mut buf.0);
+                let t = ((buf.0[0] as u32) | ((buf.0[1] as u32) << 8) | ((buf.0[2] as u32) << 16))
                     & 0x7F_FFFF;
                 if t < Q as u32 {
                     poly.coeffs[j] = t as i32;
@@ -523,19 +518,20 @@ macro_rules! ml_dsa_impl {
         /// Sequential build (default, `no_std`): the rows are filled in
         /// order, each cell from its own fresh local XOF.
         #[cfg(all(not(feature = "parallel"), not(feature = "accel-keccak")))]
-        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+        fn expand_a(rho: &[u8; 32]) -> Result<[[Poly; L]; K], Error> {
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut mat: [[Poly; L]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
             for i in 0..K {
                 for j in 0..L {
-                    let mut xof = Shake128::new_internal();
+                    let mut xof = Shake128::new_internal()?;
                     xof.update(rho);
                     xof.update(&[j as u8, i as u8]);
                     xof.finalize();
-                    mat[i][j] = rej_ntt_poly(&mut xof);
+                    mat[i][j] = rej_ntt_poly(&mut xof, &started);
                 }
             }
-            mat
+            Ok(mat)
         }
 
         /// ExpandA (FIPS 204 §7.3 Algorithm 32): A[i][j] ←
@@ -551,26 +547,29 @@ macro_rules! ml_dsa_impl {
         /// output is byte-identical to the sequential build regardless
         /// of thread count.
         #[cfg(all(feature = "parallel", not(feature = "accel-keccak")))]
-        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+        fn expand_a(rho: &[u8; 32]) -> Result<[[Poly; L]; K], Error> {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
             };
 
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut mat: [[Poly; L]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
-            (&mut mat[..])
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, row)| {
-                    for j in 0..L {
-                        let mut xof = Shake128::new_internal();
-                        xof.update(rho);
-                        xof.update(&[j as u8, i as u8]);
-                        xof.finalize();
-                        row[j] = rej_ntt_poly(&mut xof);
-                    }
-                });
-            mat
+            crate::sweep::run(|| {
+                (&mut mat[..]).par_iter_mut().enumerate().try_for_each(
+                    |(i, row)| -> Result<(), Error> {
+                        for j in 0..L {
+                            let mut xof = Shake128::new_with(&started);
+                            xof.update(rho);
+                            xof.update(&[j as u8, i as u8]);
+                            xof.finalize();
+                            row[j] = rej_ntt_poly(&mut xof, &started);
+                        }
+                        Ok(())
+                    },
+                )
+            })??;
+            Ok(mat)
         }
 
         /// `RejNTTPoly` batched four cells at a time over the AVX2 4-way
@@ -588,7 +587,12 @@ macro_rules! ml_dsa_impl {
         /// driven in lockstep and *re-squeezed* (never truncated) until
         /// all four reach `N` accepted coefficients.
         #[cfg(feature = "accel-keccak")]
-        fn fill_cells_accel(rho: &[u8; 32], cells: &[(usize, usize)], out: &mut [Poly]) {
+        fn fill_cells_accel(
+            rho: &[u8; 32],
+            cells: &[(usize, usize)],
+            out: &mut [Poly],
+            started: &SelfTestStarted,
+        ) {
             use oxicrypt_sha::keccak::Sponge4;
 
             // SHAKE-128 rate in bytes. It is a multiple of 3, so each
@@ -608,7 +612,7 @@ macro_rules! ml_dsa_impl {
                     inputs[lane][32] = j as u8;
                     inputs[lane][33] = i as u8;
                 }
-                let mut sponge = Sponge4::<SHAKE128_RATE>::new();
+                let mut sponge = Sponge4::<SHAKE128_RATE>::new_with(started);
                 sponge.absorb_4([
                     inputs[0].as_slice(),
                     inputs[1].as_slice(),
@@ -677,11 +681,11 @@ macro_rules! ml_dsa_impl {
             // scalar single-sponge path.
             while base < total {
                 let (i, j) = cells[base];
-                let mut xof = Shake128::new_internal();
+                let mut xof = Shake128::new_with(started);
                 xof.update(rho);
                 xof.update(&[j as u8, i as u8]);
                 xof.finalize();
-                out[base] = rej_ntt_poly(&mut xof);
+                out[base] = rej_ntt_poly(&mut xof, started);
                 base += 1;
             }
         }
@@ -692,7 +696,7 @@ macro_rules! ml_dsa_impl {
         /// Each cell is a pure function of ρ and (i, j), so the output is
         /// byte-identical to the scalar build.
         #[cfg(all(feature = "accel-keccak", not(feature = "parallel")))]
-        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+        fn expand_a(rho: &[u8; 32]) -> Result<[[Poly; L]; K], Error> {
             let mut cells = [(0usize, 0usize); K * L];
             let mut n = 0;
             for i in 0..K {
@@ -701,8 +705,9 @@ macro_rules! ml_dsa_impl {
                     n += 1;
                 }
             }
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut out: [Poly; K * L] = core::array::from_fn(|_| Poly::zero());
-            fill_cells_accel(rho, &cells, &mut out);
+            fill_cells_accel(rho, &cells, &mut out, &started);
 
             let mut mat: [[Poly; L]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
@@ -713,7 +718,7 @@ macro_rules! ml_dsa_impl {
                     n += 1;
                 }
             }
-            mat
+            Ok(mat)
         }
 
         /// ExpandA — AVX2 batched build under `parallel`: the rayon row
@@ -723,28 +728,31 @@ macro_rules! ml_dsa_impl {
         /// slots and recombined by position, so the output is
         /// byte-identical regardless of thread count or batching.
         #[cfg(all(feature = "accel-keccak", feature = "parallel"))]
-        fn expand_a(rho: &[u8; 32]) -> [[Poly; L]; K] {
+        fn expand_a(rho: &[u8; 32]) -> Result<[[Poly; L]; K], Error> {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
             };
 
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut mat: [[Poly; L]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
-            (&mut mat[..])
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, row)| {
-                    let mut cells = [(0usize, 0usize); L];
-                    for j in 0..L {
-                        cells[j] = (i, j);
-                    }
-                    let mut out: [Poly; L] = core::array::from_fn(|_| Poly::zero());
-                    fill_cells_accel(rho, &cells, &mut out);
-                    for j in 0..L {
-                        row[j] = out[j].clone();
-                    }
-                });
-            mat
+            crate::sweep::run(|| {
+                (&mut mat[..])
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(i, row)| {
+                        let mut cells = [(0usize, 0usize); L];
+                        for j in 0..L {
+                            cells[j] = (i, j);
+                        }
+                        let mut out: [Poly; L] = core::array::from_fn(|_| Poly::zero());
+                        fill_cells_accel(rho, &cells, &mut out, &started);
+                        for j in 0..L {
+                            row[j] = out[j].clone();
+                        }
+                    });
+            })?;
+            Ok(mat)
         }
 
         /// RejBoundedPoly: rejection-sample coefficients in [−η, η]
@@ -753,13 +761,13 @@ macro_rules! ml_dsa_impl {
         ///
         /// η=2: half-byte threshold 15; coefficient = 2 − (t mod 5).
         /// η=4: half-byte threshold 9;  coefficient = 4 − t.
-        fn rej_bounded_poly(xof: &mut Shake256) -> Poly {
+        fn rej_bounded_poly(xof: &mut Shake256, started: &SelfTestStarted) -> Poly {
             let mut poly = Poly::zero();
             let mut j: usize = 0;
-            let mut buf = [0u8; 1];
+            let mut buf = $crate::Wiped([0u8; 1]);
             while j < N {
-                xof.squeeze(&mut buf);
-                let b = buf[0];
+                xof.squeeze_with(started, &mut buf.0);
+                let b = buf.0[0];
                 let t0 = b & 0x0F;
                 let t1 = b >> 4;
                 if ETA == 2 {
@@ -799,25 +807,26 @@ macro_rules! ml_dsa_impl {
         /// ExpandS (FIPS 204 §7.3 Algorithm 33):
         /// s₁[r] ← RejBoundedPoly(SHAKE-256(σ ‖ r))   for r ∈ [0, ℓ)
         /// s₂[r] ← RejBoundedPoly(SHAKE-256(σ ‖ ℓ+r)) for r ∈ [0, k)
-        fn expand_s(sigma: &[u8; 64]) -> (PolyVecL, PolyVecK) {
+        fn expand_s(sigma: &[u8; 64]) -> Result<(PolyVecL, PolyVecK), Error> {
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut s1 = PolyVecL::zero();
             let mut s2 = PolyVecK::zero();
             for r in 0..L {
-                let mut xof = Shake256::new_internal();
+                let mut xof = Shake256::new_internal()?;
                 xof.update(sigma);
                 xof.update(&[r as u8, (r >> 8) as u8]);
                 xof.finalize();
-                s1.polys[r] = rej_bounded_poly(&mut xof);
+                s1.polys[r] = rej_bounded_poly(&mut xof, &started);
             }
             for r in 0..K {
-                let mut xof = Shake256::new_internal();
+                let mut xof = Shake256::new_internal()?;
                 xof.update(sigma);
                 let idx = L + r;
                 xof.update(&[idx as u8, (idx >> 8) as u8]);
                 xof.finalize();
-                s2.polys[r] = rej_bounded_poly(&mut xof);
+                s2.polys[r] = rej_bounded_poly(&mut xof, &started);
             }
-            (s1, s2)
+            Ok((s1, s2))
         }
 
         /// Sample a single mask polynomial with coefficients in
@@ -827,16 +836,17 @@ macro_rules! ml_dsa_impl {
         /// 4 coeffs.
         /// γ₁ = 2¹⁷: 18 bits/coeff, 576 bytes XOF output, 9 bytes →
         /// 4 coeffs.
-        fn sample_mask_poly(seed: &[u8; 64], counter: u16) -> Poly {
+        fn sample_mask_poly(seed: &[u8; 64], counter: u16) -> Result<Poly, Error> {
             let mut poly = Poly::zero();
-            let mut xof = Shake256::new_internal();
+            let mut xof = Shake256::new_internal()?;
             xof.update(seed);
             xof.update(&counter.to_le_bytes());
             xof.finalize();
 
             if GAMMA1 == (1 << 19) {
-                let mut buf = [0u8; 640];
-                xof.squeeze(&mut buf);
+                let mut wiped = $crate::Wiped([0u8; 640]);
+                xof.squeeze(&mut wiped.0)?;
+                let buf = &wiped.0;
                 for i in 0..N / 4 {
                     let off = i * 10;
                     let b0 = buf[off] as u32;
@@ -862,8 +872,9 @@ macro_rules! ml_dsa_impl {
                 }
             } else {
                 // GAMMA1 == 1 << 17
-                let mut buf = [0u8; 576];
-                xof.squeeze(&mut buf);
+                let mut wiped = $crate::Wiped([0u8; 576]);
+                xof.squeeze(&mut wiped.0)?;
+                let buf = &wiped.0;
                 for i in 0..N / 4 {
                     let off = i * 9;
                     let b0 = buf[off] as u32;
@@ -887,36 +898,36 @@ macro_rules! ml_dsa_impl {
                     poly.coeffs[4 * i + 3] = GAMMA1 - c3 as i32;
                 }
             }
-            poly
+            Ok(poly)
         }
 
         /// ExpandMask (FIPS 204 §7.3 Algorithm 34): y[r] ←
         /// SampleMaskPoly(ρ'', κ + r) for r ∈ [0, ℓ).
-        fn expand_mask(seed: &[u8; 64], kappa: u16) -> PolyVecL {
+        fn expand_mask(seed: &[u8; 64], kappa: u16) -> Result<PolyVecL, Error> {
             let mut y = PolyVecL::zero();
             for r in 0..L {
-                y.polys[r] = sample_mask_poly(seed, kappa + r as u16);
+                y.polys[r] = sample_mask_poly(seed, kappa + r as u16)?;
             }
-            y
+            Ok(y)
         }
 
         /// SampleInBall (FIPS 204 §7.3 Algorithm 29).
-        fn sample_in_ball(seed: &[u8]) -> Poly {
+        fn sample_in_ball(seed: &[u8]) -> Result<Poly, Error> {
             let mut c = Poly::zero();
-            let mut xof = Shake256::new_internal();
+            let mut xof = Shake256::new_internal()?;
             xof.update(seed);
             xof.finalize();
 
-            let mut sign_bytes = [0u8; 8];
-            xof.squeeze(&mut sign_bytes);
-            let mut signs = u64::from_le_bytes(sign_bytes);
+            let mut sign_bytes = $crate::Wiped([0u8; 8]);
+            xof.squeeze(&mut sign_bytes.0)?;
+            let mut signs = u64::from_le_bytes(sign_bytes.0);
 
             for i in (N - TAU)..N {
                 let j = {
-                    let mut buf = [0u8; 1];
+                    let mut buf = $crate::Wiped([0u8; 1]);
                     loop {
-                        xof.squeeze(&mut buf);
-                        let val = buf[0] as usize;
+                        xof.squeeze(&mut buf.0)?;
+                        let val = buf.0[0] as usize;
                         if val <= i {
                             break val;
                         }
@@ -927,7 +938,7 @@ macro_rules! ml_dsa_impl {
                 signs >>= 1;
                 c.coeffs[j] = if sign == 0 { 1 } else { Q - 1 };
             }
-            c
+            Ok(c)
         }
 
         // ── Byte encoding (per-variant) ─────────────────────────────────
@@ -940,7 +951,8 @@ macro_rules! ml_dsa_impl {
             debug_assert!(buf.len() >= ETA_PACKED);
             if ETA == 2 {
                 for i in 0..N / 8 {
-                    let mut t = [0u8; 8];
+                    let mut wiped = $crate::Wiped([0u8; 8]);
+                    let t = &mut wiped.0;
                     for j in 0..8 {
                         t[j] = (ETA - poly.coeffs[8 * i + j]) as u8;
                     }
@@ -1023,7 +1035,8 @@ macro_rules! ml_dsa_impl {
             debug_assert!(buf.len() >= T0_PACKED);
             let half = 1i32 << (D - 1);
             for i in 0..N / 8 {
-                let mut t = [0u32; 8];
+                let mut wiped = $crate::WipedWords([0u32; 8]);
+                let t = &mut wiped.0;
                 for j in 0..8 {
                     t[j] = (half - poly.coeffs[8 * i + j]) as u32;
                 }
@@ -1077,7 +1090,8 @@ macro_rules! ml_dsa_impl {
             debug_assert!(buf.len() >= Z_PACKED);
             if GAMMA1 == (1 << 19) {
                 for i in 0..N / 4 {
-                    let mut t = [0u32; 4];
+                    let mut wiped = $crate::WipedWords([0u32; 4]);
+                    let t = &mut wiped.0;
                     for j in 0..4 {
                         let mut c = poly.coeffs[4 * i + j];
                         if c > (Q - 1) / 2 {
@@ -1099,7 +1113,8 @@ macro_rules! ml_dsa_impl {
             } else {
                 // γ₁ = 2¹⁷ → 18 bits per coefficient, 4 coeffs → 9 bytes
                 for i in 0..N / 4 {
-                    let mut t = [0u32; 4];
+                    let mut wiped = $crate::WipedWords([0u32; 4]);
+                    let t = &mut wiped.0;
                     for j in 0..4 {
                         let mut c = poly.coeffs[4 * i + j];
                         if c > (Q - 1) / 2 {
@@ -1319,22 +1334,31 @@ macro_rules! ml_dsa_impl {
         // ── FIPS 204 §6 internal primitives ────────────────────────────
 
         /// ML-DSA.KeyGen_internal (FIPS 204 §6.1 / Algorithm 6) per parameter set.
-        fn ml_dsa_keygen(xi: &[u8; 32]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
-            let mut h = Shake256::new_internal();
+        ///
+        /// Every intermediate this function owns is wiped when it is dropped,
+        /// on every return path (ISO/IEC 19790:2012 §7.9.7): byte
+        /// buffers through `Wiped`, polynomials through `Poly`'s `Drop`, the
+        /// sponge through its own. What that does not reach: a value moved
+        /// out of a frame can leave a bitwise copy in the dead frame, scalars
+        /// held in registers or spilled are not wiped, and with
+        /// `panic = "abort"` no destructor runs on a panic, which ends the
+        /// process.
+        fn ml_dsa_keygen(xi: &[u8; 32]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+            let mut h = Shake256::new_internal()?;
             h.update(xi);
             h.update(&[K as u8]);
             h.update(&[L as u8]);
             h.finalize();
 
-            let mut rho = [0u8; 32];
-            let mut sigma = [0u8; 64];
-            let mut key = [0u8; 32];
-            h.squeeze(&mut rho);
-            h.squeeze(&mut sigma);
-            h.squeeze(&mut key);
+            let mut rho = $crate::Wiped([0u8; 32]);
+            let mut sigma = $crate::Wiped([0u8; 64]);
+            let mut key = $crate::Wiped([0u8; 32]);
+            h.squeeze(&mut rho.0)?;
+            h.squeeze(&mut sigma.0)?;
+            h.squeeze(&mut key.0)?;
 
-            let a_hat = expand_a(&rho);
-            let (s1, s2) = expand_s(&sigma);
+            let a_hat = expand_a(&rho.0)?;
+            let (s1, s2) = expand_s(&sigma.0)?;
 
             let mut s1_hat = s1.clone();
             s1_hat.ntt();
@@ -1350,63 +1374,64 @@ macro_rules! ml_dsa_impl {
             polyveck_power2round(&t, &mut t1, &mut t0);
 
             let mut pk = [0u8; PK_LEN];
-            pack_pk(&rho, &t1, &mut pk);
+            pack_pk(&rho.0, &t1, &mut pk);
 
-            let mut tr = [0u8; 64];
-            let mut h_pk = Shake256::new_internal();
+            let mut tr = $crate::Wiped([0u8; 64]);
+            let mut h_pk = Shake256::new_internal()?;
             h_pk.update(&pk);
             h_pk.finalize();
-            h_pk.squeeze(&mut tr);
+            h_pk.squeeze(&mut tr.0)?;
 
-            let mut sk = [0u8; SK_LEN];
-            pack_sk(&rho, &key, &tr, &s1, &s2, &t0, &mut sk);
+            // The private key is assembled in a wiped buffer; the returned
+            // array is a copy of it.
+            let mut sk = $crate::Wiped([0u8; SK_LEN]);
+            pack_sk(&rho.0, &key.0, &tr.0, &s1, &s2, &t0, &mut sk.0);
 
-            // Phase 3 zeroize (AS09.32, ISO/IEC 19790:2012 §7.9.7):
-            // wipe the two stack-local secret seeds before the function
-            // exits. `sigma` is the SHAKE-256 output that derives s1, s2;
-            // `key` is the implicit-rejection / signing seed K embedded
-            // in sk. Both are now persisted into sk (copy-discard scratch).
-            oxicrypt_zeroize::zeroize(&mut sigma);
-            oxicrypt_zeroize::zeroize(&mut key);
-
-            (pk, sk)
+            Ok((pk, sk.0))
         }
 
         /// ML-DSA.Sign (FIPS 204 §6.2 / Algorithm 7, deterministic).
+        ///
+        /// Every intermediate this function owns is wiped when it is dropped,
+        /// on every return path, with the limits `ml_dsa_keygen` states: the
+        /// unpacked key (ρ, K, tr, s1, s2, t0 and their NTT forms), μ, ρ″,
+        /// each candidate's y, w, c and their products.
         fn ml_dsa_sign(
             sk: &[u8; SK_LEN],
             m_prefix: &[u8],
             message: &[u8],
-        ) -> Option<[u8; SIG_LEN]> {
-            let mut rho = [0u8; 32];
-            let mut key = [0u8; 32];
-            let mut tr = [0u8; 64];
+        ) -> Result<Option<[u8; SIG_LEN]>, Error> {
+            let mut rho = $crate::Wiped([0u8; 32]);
+            let mut key = $crate::Wiped([0u8; 32]);
+            let mut tr = $crate::Wiped([0u8; 64]);
             let mut s1 = PolyVecL::zero();
             let mut s2 = PolyVecK::zero();
             let mut t0 = PolyVecK::zero();
-            unpack_sk(sk, &mut rho, &mut key, &mut tr, &mut s1, &mut s2, &mut t0);
+            unpack_sk(
+                sk, &mut rho.0, &mut key.0, &mut tr.0, &mut s1, &mut s2, &mut t0,
+            );
 
-            let a_hat = expand_a(&rho);
+            let a_hat = expand_a(&rho.0)?;
 
-            let mut mu = [0u8; 64];
+            let mut mu = $crate::Wiped([0u8; 64]);
             {
-                let mut h = Shake256::new_internal();
-                h.update(&tr);
+                let mut h = Shake256::new_internal()?;
+                h.update(&tr.0);
                 h.update(m_prefix);
                 h.update(message);
                 h.finalize();
-                h.squeeze(&mut mu);
+                h.squeeze(&mut mu.0)?;
             }
 
             let rnd = [0u8; 32];
-            let mut rho_pp = [0u8; 64];
+            let mut rho_pp = $crate::Wiped([0u8; 64]);
             {
-                let mut h = Shake256::new_internal();
-                h.update(&key);
+                let mut h = Shake256::new_internal()?;
+                h.update(&key.0);
                 h.update(&rnd);
-                h.update(&mu);
+                h.update(&mu.0);
                 h.finalize();
-                h.squeeze(&mut rho_pp);
+                h.squeeze(&mut rho_pp.0)?;
             }
 
             let mut s1_hat = s1.clone();
@@ -1421,13 +1446,10 @@ macro_rules! ml_dsa_impl {
 
             loop {
                 if kappa >= max_iters {
-                    // Phase 3 zeroize: wipe the unpacked signing seed K
-                    // before the no-signature exit path.
-                    oxicrypt_zeroize::zeroize(&mut key);
-                    return None;
+                    return Ok(None);
                 }
 
-                let y = expand_mask(&rho_pp, kappa * L as u16);
+                let y = expand_mask(&rho_pp.0, kappa * L as u16)?;
 
                 let mut y_hat = y.clone();
                 y_hat.ntt();
@@ -1440,18 +1462,18 @@ macro_rules! ml_dsa_impl {
                 let mut w0 = PolyVecK::zero();
                 polyveck_decompose(&w, &mut w1, &mut w0);
 
-                let mut ctilde = [0u8; CTILDE_LEN];
+                let mut ctilde = $crate::Wiped([0u8; CTILDE_LEN]);
                 {
-                    let mut w1_packed = [0u8; W1_PACKED_TOTAL];
-                    pack_w1(&w1, &mut w1_packed);
-                    let mut h = Shake256::new_internal();
-                    h.update(&mu);
-                    h.update(&w1_packed);
+                    let mut w1_packed = $crate::Wiped([0u8; W1_PACKED_TOTAL]);
+                    pack_w1(&w1, &mut w1_packed.0);
+                    let mut h = Shake256::new_internal()?;
+                    h.update(&mu.0);
+                    h.update(&w1_packed.0);
                     h.finalize();
-                    h.squeeze(&mut ctilde);
+                    h.squeeze(&mut ctilde.0)?;
                 }
 
-                let c = sample_in_ball(&ctilde);
+                let c = sample_in_ball(&ctilde.0)?;
                 let mut c_hat = c.clone();
                 c_hat.ntt();
 
@@ -1464,6 +1486,8 @@ macro_rules! ml_dsa_impl {
                 z.reduce();
 
                 if z.check_norm(GAMMA1 - BETA) {
+                    #[cfg(test)]
+                    crate::rejection_counts::record(crate::rejection_counts::Z);
                     kappa += 1;
                     continue;
                 }
@@ -1479,6 +1503,8 @@ macro_rules! ml_dsa_impl {
                 reduce_polyveck(&mut r0);
 
                 if r0.check_norm(GAMMA2 - BETA) {
+                    #[cfg(test)]
+                    crate::rejection_counts::record(crate::rejection_counts::R0);
                     kappa += 1;
                     continue;
                 }
@@ -1491,6 +1517,8 @@ macro_rules! ml_dsa_impl {
                 ct0.reduce();
 
                 if ct0.check_norm(GAMMA2) {
+                    #[cfg(test)]
+                    crate::rejection_counts::record(crate::rejection_counts::CT0);
                     kappa += 1;
                     continue;
                 }
@@ -1504,9 +1532,8 @@ macro_rules! ml_dsa_impl {
                 // `HighBits(r) ≠ HighBits(r + z)` aliases this fence
                 // onto `r₁ = 0 = v₁` via the Decompose top-bin wrap
                 // (`r⁺ = q − γ₂ → r₁ = 0, r₀ = −γ₂`), silently flipping
-                // the hint at rare inputs.  See R69 in
-                // `docs/security-policy/security-policy.md` and ACVTS
-                // session 730469 vsId 3859350 tcId 8.
+                // the hint at rare inputs. The ACVP regression in
+                // `tests/acvts_regressions.rs` exercises this case.
                 //
                 // a0 = centered(LowBits(w) − c·s₂ + c·t₀)
                 let mut a0 = r0.clone();
@@ -1525,66 +1552,71 @@ macro_rules! ml_dsa_impl {
                 let hint_count = polyveck_make_hint(&mut h_vec, &a0, &w1);
 
                 if hint_count > OMEGA {
+                    #[cfg(test)]
+                    crate::rejection_counts::record(crate::rejection_counts::HINT);
                     kappa += 1;
                     continue;
                 }
 
                 let mut sig = [0u8; SIG_LEN];
-                if !pack_sig(&ctilde, &z, &h_vec, &mut sig) {
+                if !pack_sig(&ctilde.0, &z, &h_vec, &mut sig) {
                     kappa += 1;
                     continue;
                 }
 
-                // Phase 3 zeroize: wipe the unpacked signing seed K
-                // before the successful-signature exit path.
-                oxicrypt_zeroize::zeroize(&mut key);
-                return Some(sig);
+                return Ok(Some(sig));
             }
         }
 
         /// ML-DSA.Verify (FIPS 204 §6.3 / Algorithm 8).
+        ///
+        /// Every intermediate this function owns (ρ, t1, c̃, z, h, tr, μ, c,
+        /// w′, w1′, c̃′ and the packed w1′) is wiped when it is dropped, on
+        /// every return path, with the limits `ml_dsa_keygen` states: the
+        /// software integrity test runs through here, and
+        /// ISO/IEC 19790:2012 §7.5 requires its temporary values zeroised.
         fn ml_dsa_verify(
             pk: &[u8; PK_LEN],
             m_prefix: &[u8],
             message: &[u8],
             sig: &[u8; SIG_LEN],
-        ) -> bool {
-            let mut rho = [0u8; 32];
+        ) -> Result<bool, Error> {
+            let mut rho = $crate::Wiped([0u8; 32]);
             let mut t1 = PolyVecK::zero();
-            unpack_pk(pk, &mut rho, &mut t1);
+            unpack_pk(pk, &mut rho.0, &mut t1);
 
-            let mut ctilde = [0u8; CTILDE_LEN];
+            let mut ctilde = $crate::Wiped([0u8; CTILDE_LEN]);
             let mut z = PolyVecL::zero();
             let mut h_vec = PolyVecK::zero();
-            if !unpack_sig(sig, &mut ctilde, &mut z, &mut h_vec) {
-                return false;
+            if !unpack_sig(sig, &mut ctilde.0, &mut z, &mut h_vec) {
+                return Ok(false);
             }
 
             if z.check_norm(GAMMA1 - BETA) {
-                return false;
+                return Ok(false);
             }
 
-            let a_hat = expand_a(&rho);
+            let a_hat = expand_a(&rho.0)?;
 
-            let mut tr = [0u8; 64];
+            let mut tr = $crate::Wiped([0u8; 64]);
             {
-                let mut h_pk = Shake256::new_internal();
+                let mut h_pk = Shake256::new_internal()?;
                 h_pk.update(pk);
                 h_pk.finalize();
-                h_pk.squeeze(&mut tr);
+                h_pk.squeeze(&mut tr.0)?;
             }
 
-            let mut mu = [0u8; 64];
+            let mut mu = $crate::Wiped([0u8; 64]);
             {
-                let mut h_mu = Shake256::new_internal();
-                h_mu.update(&tr);
+                let mut h_mu = Shake256::new_internal()?;
+                h_mu.update(&tr.0);
                 h_mu.update(m_prefix);
                 h_mu.update(message);
                 h_mu.finalize();
-                h_mu.squeeze(&mut mu);
+                h_mu.squeeze(&mut mu.0)?;
             }
 
-            let c = sample_in_ball(&ctilde);
+            let c = sample_in_ball(&ctilde.0)?;
             let mut c_hat = c.clone();
             c_hat.ntt();
 
@@ -1614,18 +1646,18 @@ macro_rules! ml_dsa_impl {
             let mut w1_prime = PolyVecK::zero();
             polyveck_use_hint(&mut w1_prime, &w_prime, &h_vec);
 
-            let mut ctilde_prime = [0u8; CTILDE_LEN];
+            let mut ctilde_prime = $crate::Wiped([0u8; CTILDE_LEN]);
             {
-                let mut w1_packed = [0u8; W1_PACKED_TOTAL];
-                pack_w1(&w1_prime, &mut w1_packed);
-                let mut h_final = Shake256::new_internal();
-                h_final.update(&mu);
-                h_final.update(&w1_packed);
+                let mut w1_packed = $crate::Wiped([0u8; W1_PACKED_TOTAL]);
+                pack_w1(&w1_prime, &mut w1_packed.0);
+                let mut h_final = Shake256::new_internal()?;
+                h_final.update(&mu.0);
+                h_final.update(&w1_packed.0);
                 h_final.finalize();
-                h_final.squeeze(&mut ctilde_prime);
+                h_final.squeeze(&mut ctilde_prime.0)?;
             }
 
-            ctilde == ctilde_prime
+            Ok(ctilde.0 == ctilde_prime.0)
         }
 
         // ── Public gated API (FIPS 204 §5.2 external) ───────────────────
@@ -1634,7 +1666,7 @@ macro_rules! ml_dsa_impl {
         pub fn keygen(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
-            Ok(keygen_internal(xi))
+            keygen_internal(xi)
         }
 
         /// Sign a message (FIPS 204 §5.2 Algorithm 2, deterministic).
@@ -1646,7 +1678,7 @@ macro_rules! ml_dsa_impl {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_sign)?;
             let prefix_buf = $crate::build_external_prefix(ctx)?;
-            ml_dsa_sign(sk, prefix_buf.as_slice(), message).ok_or(Error::InvalidInput)
+            ml_dsa_sign(sk, prefix_buf.as_slice(), message)?.ok_or(Error::InvalidInput)
         }
 
         /// Verify a signature (FIPS 204 §5.3 Algorithm 3).
@@ -1659,72 +1691,80 @@ macro_rules! ml_dsa_impl {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_verify)?;
             let prefix_buf = $crate::build_external_prefix(ctx)?;
-            if ml_dsa_verify(pk, prefix_buf.as_slice(), message, sig) {
+            if ml_dsa_verify(pk, prefix_buf.as_slice(), message, sig)? {
                 Ok(())
             } else {
                 Err(Error::InvalidInput)
             }
         }
 
-        // ── Internal API (gate-free, for KATs and ACVP) ─────────────────
+        // ── Internal API (no operational gate; for KATs and ACVP) ─────────────────
 
-        /// Internal keygen — no module gate (FIPS 204 §6.1).
+        /// Internal keygen — no operational gate (FIPS 204 §6.1).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn keygen_internal(xi: &[u8; SEED_LEN]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
+        pub fn keygen_internal(xi: &[u8; SEED_LEN]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+            oxicrypt_module::require_self_test_started()?;
+            keygen_internal_unguarded(xi)
+        }
+
+        /// Body of [`keygen_internal`], run once its guard has passed.
+        fn keygen_internal_unguarded(
+            xi: &[u8; SEED_LEN],
+        ) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             ml_dsa_keygen(xi)
         }
 
-        /// Internal sign — no module gate, no `ctx` framing
+        /// Internal sign — no operational gate, no `ctx` framing
         /// (FIPS 204 §6.2 Algorithm 7).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> Option<[u8; SIG_LEN]> {
+        pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> Result<[u8; SIG_LEN], Error> {
+            oxicrypt_module::require_self_test_started()?;
+            sign_internal_unguarded(sk, message)?.ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`sign_internal`], run once its guard has passed.
+        fn sign_internal_unguarded(
+            sk: &[u8; SK_LEN],
+            message: &[u8],
+        ) -> Result<Option<[u8; SIG_LEN]>, Error> {
             ml_dsa_sign(sk, &[], message)
         }
 
-        /// Internal verify — no module gate, no `ctx` framing
+        /// Internal verify — no operational gate, no `ctx` framing
         /// (FIPS 204 §6.3 Algorithm 8).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
+        pub fn verify_internal(
+            pk: &[u8; PK_LEN],
+            message: &[u8],
+            sig: &[u8; SIG_LEN],
+        ) -> Result<bool, Error> {
+            oxicrypt_module::require_self_test_started()?;
+            verify_internal_unguarded(pk, message, sig)
+        }
+
+        /// Body of [`verify_internal`], run once its guard has passed.
+        fn verify_internal_unguarded(
+            pk: &[u8; PK_LEN],
+            message: &[u8],
+            sig: &[u8; SIG_LEN],
+        ) -> Result<bool, Error> {
             ml_dsa_verify(pk, &[], message, sig)
         }
-
-        // ── Power-up KATs ───────────────────────────────────────────────
-
-        /// Deterministic KAT seed for keygen.
-        const KAT_XI: [u8; 32] = $kat_xi;
-
-        /// Test message for KAT.
-        const KAT_MSG: &[u8] = $kat_msg;
-
-        /// Self-test: deterministic keygen → sign → verify round-trip
-        /// + negative (wrong-message + tampered-signature) tests.
-        pub fn self_test() -> Result<(), SelfTestFailure> {
-            let (pk, sk) = keygen_internal(&KAT_XI);
-            let Some(sig) = sign_internal(&sk, KAT_MSG) else {
-                return Err(SelfTestFailure);
-            };
-            if !verify_internal(&pk, KAT_MSG, &sig) {
-                return Err(SelfTestFailure);
-            }
-            if verify_internal(&pk, b"wrong message", &sig) {
-                return Err(SelfTestFailure);
-            }
-            let mut sig_bad = sig;
-            sig_bad[100] ^= 0x01;
-            if verify_internal(&pk, KAT_MSG, &sig_bad) {
-                return Err(SelfTestFailure);
-            }
-            Ok(())
-        }
-
-        /// Single power-up KAT entry for this parameter set.
-        pub const KAT_ENTRY: KatEntry = KatEntry {
-            name: $kat_name,
-            run: self_test,
-        };
-
-        /// Power-up KATs for this parameter set (one entry).
-        pub const KATS: &[KatEntry] = &[KAT_ENTRY];
 
         // Compile-time sanity: the shared `SEED_LEN` constant from
         // `crate::params` matches the variant-local re-export.
@@ -1736,12 +1776,13 @@ macro_rules! ml_dsa_impl {
         // Oracle choice: `expand_a` is reachable in-crate (the per-variant
         // unit-test module reaches the macro-internal items via
         // `use super::*`), so we add a direct equality oracle rather than
-        // relying only on the keygen-KAT-on/off check. We rebuild the
+        // relying only on keygen known-answer tests. We rebuild the
         // matrix with an always-sequential reference loop (which never
         // touches the rayon path) and assert it equals the feature-gated
-        // `expand_a` cell-for-cell, for a few deterministic ρ values. The
-        // keygen KATs (fixed ξ → fixed ρ → fixed A → fixed pk/sk) remain
-        // the end-to-end oracle; this test pins `expand_a` itself.
+        // `expand_a` cell-for-cell, for a few deterministic ρ values. Only
+        // ML-DSA-87 has an end-to-end keygen known-answer test (the keygen
+        // CAST and `tests/nist_kat.rs`: fixed ξ → fixed pk/sk); this test
+        // pins `expand_a` itself, for every parameter set.
         #[cfg(all(test, feature = "parallel"))]
         mod parallel_determinism {
             use super::*;
@@ -1753,11 +1794,14 @@ macro_rules! ml_dsa_impl {
                     core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
                 for i in 0..K {
                     for j in 0..L {
-                        let mut xof = Shake128::new_internal();
+                        let mut xof = Shake128::new_internal().unwrap();
                         xof.update(rho);
                         xof.update(&[j as u8, i as u8]);
                         xof.finalize();
-                        mat[i][j] = rej_ntt_poly(&mut xof);
+                        mat[i][j] = rej_ntt_poly(
+                            &mut xof,
+                            &oxicrypt_module::require_self_test_started_token().unwrap(),
+                        );
                     }
                 }
                 mat
@@ -1765,12 +1809,13 @@ macro_rules! ml_dsa_impl {
 
             #[test]
             fn parallel_expand_a_matches_sequential_reference() {
+                crate::test_support::start_module();
                 for k in 0u8..4 {
                     let mut rho = [0u8; 32];
                     for (idx, b) in rho.iter_mut().enumerate() {
                         *b = k.wrapping_mul(7).wrapping_add(idx as u8).wrapping_add(0x5a);
                     }
-                    let par = expand_a(&rho);
+                    let par = expand_a(&rho).unwrap();
                     let seq = expand_a_sequential_reference(&rho);
                     for i in 0..K {
                         for j in 0..L {
@@ -1802,11 +1847,14 @@ macro_rules! ml_dsa_impl {
                     core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
                 for i in 0..K {
                     for j in 0..L {
-                        let mut xof = Shake128::new_internal();
+                        let mut xof = Shake128::new_internal().unwrap();
                         xof.update(rho);
                         xof.update(&[j as u8, i as u8]);
                         xof.finalize();
-                        mat[i][j] = rej_ntt_poly(&mut xof);
+                        mat[i][j] = rej_ntt_poly(
+                            &mut xof,
+                            &oxicrypt_module::require_self_test_started_token().unwrap(),
+                        );
                     }
                 }
                 mat
@@ -1814,6 +1862,7 @@ macro_rules! ml_dsa_impl {
 
             #[test]
             fn accel_expand_a_matches_scalar_reference() {
+                crate::test_support::start_module();
                 for seed in 0u8..16 {
                     let mut rho = [0u8; 32];
                     for (idx, b) in rho.iter_mut().enumerate() {
@@ -1822,7 +1871,7 @@ macro_rules! ml_dsa_impl {
                             .wrapping_add(idx as u8)
                             .wrapping_add(0xa5);
                     }
-                    let accel = expand_a(&rho);
+                    let accel = expand_a(&rho).unwrap();
                     let scalar = expand_a_scalar_reference(&rho);
                     for i in 0..K {
                         for j in 0..L {
@@ -1848,6 +1897,7 @@ macro_rules! ml_dsa_impl {
             #[test]
             fn fill_cells_accel_tail_remainders_match_scalar() {
                 const MAX: usize = 7;
+                crate::test_support::start_module();
                 let mut rho = [0u8; 32];
                 for (idx, b) in rho.iter_mut().enumerate() {
                     *b = (idx as u8).wrapping_mul(53).wrapping_add(0x3c);
@@ -1860,14 +1910,22 @@ macro_rules! ml_dsa_impl {
                         *c = (k % K, k % L);
                     }
                     let mut accel: [Poly; MAX] = core::array::from_fn(|_| Poly::zero());
-                    fill_cells_accel(&rho, &cells[..n], &mut accel[..n]);
+                    fill_cells_accel(
+                        &rho,
+                        &cells[..n],
+                        &mut accel[..n],
+                        &oxicrypt_module::require_self_test_started_token().unwrap(),
+                    );
                     for k in 0..n {
                         let (i, j) = cells[k];
-                        let mut xof = Shake128::new_internal();
+                        let mut xof = Shake128::new_internal().unwrap();
                         xof.update(&rho);
                         xof.update(&[j as u8, i as u8]);
                         xof.finalize();
-                        let want = rej_ntt_poly(&mut xof);
+                        let want = rej_ntt_poly(
+                            &mut xof,
+                            &oxicrypt_module::require_self_test_started_token().unwrap(),
+                        );
                         assert_eq!(
                             accel[k].coeffs,
                             want.coeffs,

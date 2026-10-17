@@ -140,7 +140,7 @@ fn run_case(
     let mut h =
         HmacSha256::new(&key).map_err(|_| DispatchError::Crypto("HmacSha256::new returned Err"))?;
     h.update(&msg);
-    let full = h.finalize();
+    let full = h.finalize()?;
     let truncated = full
         .get(..mac_len_bytes)
         .ok_or(DispatchError::Crypto("HMAC-SHA2-256: truncate failed"))?;
@@ -254,6 +254,7 @@ mod tests {
     /// Neither group nor per-test `macLen` → MissingField.
     #[test]
     fn missing_mac_len_errors() {
+        crate::ensure_initialized().unwrap();
         let group = json::parse(
             r#"{
                 "tgId": 1,

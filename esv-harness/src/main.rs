@@ -150,6 +150,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Err(e) = esv_harness::start_module() {
+        eprintln!("esv-harness: {e}");
+        return ExitCode::FAILURE;
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

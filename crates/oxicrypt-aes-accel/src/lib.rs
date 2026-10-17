@@ -2,16 +2,17 @@
 //! `oxicrypt-aes`.
 //!
 //! This is one of the small readily auditable in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
-//! `oxicrypt-sha-accel`, `oxicrypt-keccak-accel` and `oxicrypt-timer`).
-//! It implements the sanctioned **CPU-intrinsic acceleration** category
-//! established by `oxicrypt-sha-accel`: feature-gated, default-off,
-//! runtime-detected, with an equivalence oracle against the portable
-//! implementation in `oxicrypt-aes`'s `accel-aes`-gated tests. All
-//! other in-boundary crates are `#![forbid(unsafe_code)]`; the
-//! authoritative unsafe-code accounting lives in
-//! `docs/security-policy/security-policy.md` §9.2 "Isolation of
-//! `unsafe`".
+//! workspace that use `unsafe`. It implements the sanctioned
+//! **CPU-intrinsic acceleration** category established by
+//! `oxicrypt-sha-accel`: feature-gated, default-off, runtime-detected,
+//! with an equivalence oracle against the portable implementation in
+//! `oxicrypt-aes`'s `accel-aes`-gated tests.
+//! The workspace's `AGENTS.md` names the in-boundary crates that use
+//! `unsafe`, and `tools/doc-guard` checks that list against the crates.
+//! Every in-boundary crate outside that list is
+//! `#![forbid(unsafe_code)]`. The module's Security Policy, withheld
+//! from this repository (see `docs/security-policy/README.md`), holds
+//! the authoritative accounting.
 //!
 //! # Why a separate crate?
 //!
@@ -53,8 +54,7 @@
 //! inverse-cipher round keys per call via `AESIMC` (at most 13 per
 //! block). And the GCM GHASH GF(2^128) multiply over PCLMULQDQ
 //! (SP 800-38D §6.3), exposed as [`ghash_available`] and [`ghash_mul`].
-//! AArch64 AES intrinsics are a follow-up under the same sanctioned
-//! category (`ROADMAP.md`).
+//! There is no AArch64 AES intrinsics path (`ROADMAP.md`).
 //!
 //! # Correctness oracle placement
 //!
@@ -68,9 +68,8 @@
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU intrinsics and CPUID.
-// Every other in-boundary crate except oxicrypt-zeroize,
-// oxicrypt-sha-accel, oxicrypt-keccak-accel and oxicrypt-timer forbids
-// unsafe.
+// The workspace's `AGENTS.md` names the other in-boundary crates that
+// use unsafe; every other in-boundary crate forbids it.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Returns `true` if the running CPU supports the AES-NI accelerated
@@ -129,6 +128,7 @@ pub fn ghash_available() -> bool {
 ///
 /// The kernel is straight-line and branch-free: no data-dependent
 /// control flow, no table lookups.
+#[doc(hidden)]
 pub fn ghash_mul(x: &[u8; 16], y: &[u8; 16], out: &mut [u8; 16]) -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -162,6 +162,7 @@ fn schedule_shape_ok(rk: &[u8], nr: usize) -> bool {
 /// holds the ciphertext), or `false` if AES-NI is unavailable or the
 /// schedule shape is invalid — in which case `block` is **untouched**
 /// and the caller must run its portable path instead.
+#[doc(hidden)]
 pub fn encrypt_block(rk: &[u8], nr: usize, block: &mut [u8; 16]) -> bool {
     if !schedule_shape_ok(rk, nr) {
         return false;
@@ -185,6 +186,7 @@ pub fn encrypt_block(rk: &[u8], nr: usize, block: &mut [u8; 16]) -> bool {
 ///
 /// Returns `true` if the accelerated path ran, else `false` with
 /// `block` untouched (fail-portable).
+#[doc(hidden)]
 pub fn decrypt_block(rk: &[u8], nr: usize, block: &mut [u8; 16]) -> bool {
     if !schedule_shape_ok(rk, nr) {
         return false;

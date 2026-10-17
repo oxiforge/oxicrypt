@@ -30,6 +30,21 @@
     clippy::missing_panics_doc
 )]
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 use std::path::PathBuf;
 
 fn load_bytes(name: &str) -> Vec<u8> {
@@ -44,6 +59,7 @@ macro_rules! sigver_kat {
     ($fn_name:ident, $pair:ident) => {
         #[test]
         fn $fn_name() {
+            start_module();
             let slug = stringify!($pair);
             let pk_bytes = load_bytes(&format!("{slug}_sigver_pk.bin"));
             let msg = load_bytes(&format!("{slug}_sigver_msg.bin"));
@@ -53,7 +69,7 @@ macro_rules! sigver_kat {
             let sig: [u8; oxicrypt_lms::$pair::SIGNATURE_LEN] =
                 sig_bytes.try_into().expect("sig length mismatch");
             assert!(
-                oxicrypt_lms::$pair::verify_internal(&pk, &msg, &sig),
+                oxicrypt_lms::$pair::verify_internal(&pk, &msg, &sig).unwrap(),
                 "ACVP sigVer KAT verify_internal returned false for {slug}"
             );
         }

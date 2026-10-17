@@ -14,6 +14,21 @@ use oxicrypt_ml_kem::{
     {decaps_internal, encaps_internal, keygen_internal},
 };
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 // ── Vector helpers ──────────────────────────────────────────────────────────
 
 fn load(name: &str) -> Vec<u8> {
@@ -35,6 +50,7 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
 /// encapsulation key (ek) and decapsulation key (dk).
 #[test]
 fn nist_keygen_kat() {
+    start_module();
     let d = load_arr::<SEED_LEN>("mlkem1024_nist_keygen_d.bin");
     let z = load_arr::<SEED_LEN>("mlkem1024_nist_keygen_z.bin");
     let expected_ek = load_arr::<EK_LEN>("mlkem1024_nist_keygen_ek.bin");
@@ -62,12 +78,13 @@ fn nist_keygen_kat() {
 /// expected ciphertext c and shared secret K.
 #[test]
 fn nist_encap_kat() {
+    start_module();
     let ek = load_arr::<EK_LEN>("mlkem1024_nist_encap_ek.bin");
     let m = load_arr::<SEED_LEN>("mlkem1024_nist_encap_m.bin");
     let expected_c = load_arr::<CT_LEN>("mlkem1024_nist_encap_c.bin");
     let expected_k = load_arr::<SHARED_SECRET_LEN>("mlkem1024_nist_encap_k.bin");
 
-    let (k, c) = encaps_internal(&ek, &m);
+    let (k, c) = encaps_internal(&ek, &m).unwrap();
 
     assert_eq!(
         c, expected_c,
@@ -85,11 +102,12 @@ fn nist_encap_kat() {
 /// verify the recovered shared secret matches the expected K.
 #[test]
 fn nist_decap_kat() {
+    start_module();
     let dk = load_arr::<DK_LEN>("mlkem1024_nist_encap_dk.bin");
     let c = load_arr::<CT_LEN>("mlkem1024_nist_encap_c.bin");
     let expected_k = load_arr::<SHARED_SECRET_LEN>("mlkem1024_nist_encap_k.bin");
 
-    let k = decaps_internal(&dk, &c);
+    let k = decaps_internal(&dk, &c).unwrap();
 
     assert_eq!(
         k, expected_k,
@@ -105,6 +123,7 @@ fn nist_decap_kat() {
 /// providing additional assurance that keygen is fully correct.
 #[test]
 fn nist_keygen_kat_2() {
+    start_module();
     let d = load_arr::<SEED_LEN>("mlkem1024_nist_keygen2_d.bin");
     let z = load_arr::<SEED_LEN>("mlkem1024_nist_keygen2_z.bin");
     let expected_ek = load_arr::<EK_LEN>("mlkem1024_nist_keygen2_ek.bin");
@@ -128,12 +147,13 @@ fn nist_keygen_kat_2() {
 /// ACVP ML-KEM-1024 encapDecap (encapsulation): tgId=3, tcId=52.
 #[test]
 fn nist_encap_kat_2() {
+    start_module();
     let ek = load_arr::<EK_LEN>("mlkem1024_nist_encap2_ek.bin");
     let m = load_arr::<SEED_LEN>("mlkem1024_nist_encap2_m.bin");
     let expected_c = load_arr::<CT_LEN>("mlkem1024_nist_encap2_c.bin");
     let expected_k = load_arr::<SHARED_SECRET_LEN>("mlkem1024_nist_encap2_k.bin");
 
-    let (k, c) = encaps_internal(&ek, &m);
+    let (k, c) = encaps_internal(&ek, &m).unwrap();
 
     assert_eq!(
         c, expected_c,
@@ -148,11 +168,12 @@ fn nist_encap_kat_2() {
 /// ACVP ML-KEM-1024 encapDecap (decapsulation): tgId=3, tcId=52.
 #[test]
 fn nist_decap_kat_2() {
+    start_module();
     let dk = load_arr::<DK_LEN>("mlkem1024_nist_encap2_dk.bin");
     let c = load_arr::<CT_LEN>("mlkem1024_nist_encap2_c.bin");
     let expected_k = load_arr::<SHARED_SECRET_LEN>("mlkem1024_nist_encap2_k.bin");
 
-    let k = decaps_internal(&dk, &c);
+    let k = decaps_internal(&dk, &c).unwrap();
 
     assert_eq!(
         k, expected_k,

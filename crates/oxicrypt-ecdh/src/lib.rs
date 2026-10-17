@@ -68,8 +68,10 @@
 //!
 //! Public entry points gate on
 //! [`oxicrypt_module::require_operational`]; hidden `*_internal`
-//! primitives bypass the gate so the power-up KATs can run while
-//! the module is still in `SelfTest`.
+//! primitives skip that gate so the power-up KATs can run while
+//! the module is still in `SelfTest`. They call
+//! [`oxicrypt_module::require_self_test_started`] instead, so they refuse
+//! in every state other than `SelfTest` and `Operational`.
 #![no_std]
 #![forbid(unsafe_code)]
 #![allow(
@@ -86,6 +88,7 @@ use oxicrypt_ecdsa::p384_point::Point384;
 use oxicrypt_ecdsa::p384_scalar::Scalar384;
 use oxicrypt_module::{
     Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
 };
 
 /// Length of a P-256 private-key scalar in bytes.
@@ -96,21 +99,33 @@ pub const PUBLIC_KEY_LEN: usize = 65;
 pub const SHARED_SECRET_LEN: usize = 32;
 
 // ------------------------------------------------------------------
-// Core primitive (state-gate-free)
+// Core primitive (no operational gate)
 // ------------------------------------------------------------------
 
 /// Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH primitive for P-256:
 /// `Z = x( d * Q )`.
 ///
-/// Returns `None` when `d` is not a valid non-zero scalar mod `n`,
+/// Returns [`Error::InvalidInput`] when `d` is not a valid non-zero scalar mod `n`,
 /// when `Q` fails SP 800-56Ar3 §5.6.2.3.3 public-key validation, or
 /// when the scalar multiplication yields the point at infinity (the
 /// "`Z` is the identity" shall-fail case in §5.7.1.2). This function
-/// bypasses the FIPS module state gate so it can be called from the
+/// skips the operational and profile gates so it can be called from the
 /// power-up KAT runner; production callers should use
 /// [`compute_shared_secret_p256`] instead.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
 pub fn compute_shared_secret_p256_internal(
+    d_bytes: &[u8; PRIVATE_KEY_LEN],
+    peer_pk: &[u8; PUBLIC_KEY_LEN],
+) -> Result<[u8; SHARED_SECRET_LEN], Error> {
+    require_self_test_started()?;
+    compute_shared_secret_p256_internal_unguarded(d_bytes, peer_pk).ok_or(Error::InvalidInput)
+}
+
+/// Body of [`compute_shared_secret_p256_internal`], run once its guard has passed.
+fn compute_shared_secret_p256_internal_unguarded(
     d_bytes: &[u8; PRIVATE_KEY_LEN],
     peer_pk: &[u8; PUBLIC_KEY_LEN],
 ) -> Option<[u8; SHARED_SECRET_LEN]> {
@@ -159,7 +174,7 @@ pub fn compute_shared_secret_p256(
 ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
     require_operational()?;
     require_allowed(Service::EcdhP256)?;
-    compute_shared_secret_p256_internal(d_bytes, peer_pk).ok_or(Error::InvalidInput)
+    compute_shared_secret_p256_internal(d_bytes, peer_pk)
 }
 
 // ------------------------------------------------------------------
@@ -174,20 +189,32 @@ pub const P384_PUBLIC_KEY_LEN: usize = 97;
 pub const P384_SHARED_SECRET_LEN: usize = 48;
 
 // ------------------------------------------------------------------
-// P-384 core primitive (state-gate-free)
+// P-384 core primitive (no operational gate)
 // ------------------------------------------------------------------
 
 /// Compute the SP 800-56Ar3 §5.7.1.2 ECC CDH primitive for P-384:
 /// `Z = x( d * Q )`.
 ///
-/// Returns `None` when `d` is not a valid non-zero scalar mod `n`,
+/// Returns [`Error::InvalidInput`] when `d` is not a valid non-zero scalar mod `n`,
 /// when `Q` fails SP 800-56Ar3 §5.6.2.3.3 public-key validation, or
 /// when the scalar multiplication yields the point at infinity.
-/// Bypasses the FIPS module state gate for use from the power-up KAT
+/// Skips the operational and profile gates for use from the power-up KAT
 /// runner; production callers should use
 /// [`compute_shared_secret_p384`] instead.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
 pub fn compute_shared_secret_p384_internal(
+    d_bytes: &[u8; P384_PRIVATE_KEY_LEN],
+    peer_pk: &[u8; P384_PUBLIC_KEY_LEN],
+) -> Result<[u8; P384_SHARED_SECRET_LEN], Error> {
+    require_self_test_started()?;
+    compute_shared_secret_p384_internal_unguarded(d_bytes, peer_pk).ok_or(Error::InvalidInput)
+}
+
+/// Body of [`compute_shared_secret_p384_internal`], run once its guard has passed.
+fn compute_shared_secret_p384_internal_unguarded(
     d_bytes: &[u8; P384_PRIVATE_KEY_LEN],
     peer_pk: &[u8; P384_PUBLIC_KEY_LEN],
 ) -> Option<[u8; P384_SHARED_SECRET_LEN]> {
@@ -222,7 +249,7 @@ pub fn compute_shared_secret_p384(
 ) -> Result<[u8; P384_SHARED_SECRET_LEN], Error> {
     require_operational()?;
     require_allowed(Service::EcdhP384)?;
-    compute_shared_secret_p384_internal(d_bytes, peer_pk).ok_or(Error::InvalidInput)
+    compute_shared_secret_p384_internal(d_bytes, peer_pk)
 }
 
 // ------------------------------------------------------------------
@@ -343,13 +370,17 @@ const KAT_P384_Z: [u8; 48] = [
 /// `Z_a = ECDH(d_new, Q_KAT_R)` and `Z_b = ECDH(d_KAT_R, Q_new)`
 /// must agree, otherwise keygen aborts.
 ///
-/// Returns `None` on DRBG failure, scalar-sampling exhaustion, or
-/// PCT mismatch. Bypasses the FIPS module state gate so power-up
+/// Returns [`Error::InvalidInput`] on DRBG failure, scalar-sampling exhaustion, or
+/// PCT mismatch. Skips the operational and profile gates so power-up
 /// callers and the gated public wrapper can both reach it.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
 pub fn generate_keypair_p256_internal(
     drbg: &mut HmacDrbgSha256,
-) -> Option<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN])> {
+) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
+    require_self_test_started()?;
     let (d, q) = oxicrypt_ecdsa::p256_keygen::generate_p256_internal(drbg)?;
     // IG 10.3.A pairwise consistency: a faulted scalar-mul during
     // keygen produces `Q ≠ d · G` and the two-direction ECDH
@@ -370,9 +401,9 @@ pub fn generate_keypair_p256_internal(
     oxicrypt_zeroize::zeroize(&mut z_a);
     oxicrypt_zeroize::zeroize(&mut z_b);
     if !consistent {
-        return None;
+        return Err(Error::InvalidInput);
     }
-    Some((d, q))
+    Ok((d, q))
 }
 
 /// Generate a fresh ECDH P-256 key pair, gated on the FIPS module
@@ -390,7 +421,7 @@ pub fn generate_keypair_p256(
 ) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
     require_operational()?;
     require_allowed(Service::EcdhP256)?;
-    generate_keypair_p256_internal(drbg).ok_or(Error::InvalidInput)
+    generate_keypair_p256_internal(drbg)
 }
 
 /// Generate a fresh ECDH P-384 key pair `(d, Q)` and run the
@@ -400,10 +431,16 @@ pub fn generate_keypair_p256(
 /// 48-byte scalar, 97-byte uncompressed SEC1 public key, RFC 5903
 /// §8.2 responder keypair (`KAT_P384_D_R`, `KAT_P384_Q_R`) drives
 /// the PCT roundtrip.
+///
+/// Returns [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
 #[doc(hidden)]
 pub fn generate_keypair_p384_internal(
     drbg: &mut HmacDrbgSha256,
-) -> Option<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN])> {
+) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
+    require_self_test_started()?;
     let (d, q) = oxicrypt_ecdsa::p384_keygen::generate_p384_internal(drbg)?;
     // See P-256 counterpart for the IG 10.3.A PCT scratch-zeroize
     // rationale; same pattern, 48-byte shared secrets.
@@ -413,9 +450,9 @@ pub fn generate_keypair_p384_internal(
     oxicrypt_zeroize::zeroize(&mut z_a);
     oxicrypt_zeroize::zeroize(&mut z_b);
     if !consistent {
-        return None;
+        return Err(Error::InvalidInput);
     }
-    Some((d, q))
+    Ok((d, q))
 }
 
 /// Generate a fresh ECDH P-384 key pair, gated on the FIPS module
@@ -429,7 +466,7 @@ pub fn generate_keypair_p384(
 ) -> Result<([u8; P384_PRIVATE_KEY_LEN], [u8; P384_PUBLIC_KEY_LEN]), Error> {
     require_operational()?;
     require_allowed(Service::EcdhP384)?;
-    generate_keypair_p384_internal(drbg).ok_or(Error::InvalidInput)
+    generate_keypair_p384_internal(drbg)
 }
 
 /// Power-up known-answer test for ECDH P-384. Runs the RFC 5903
@@ -437,15 +474,15 @@ pub fn generate_keypair_p384(
 /// of the peer key causes rejection.
 pub fn self_test_p384() -> Result<(), SelfTestFailure> {
     // Positive 1: d_i * Q_r == Z.
-    let z1 =
-        compute_shared_secret_p384_internal(&KAT_P384_D_I, &KAT_P384_Q_R).ok_or(SelfTestFailure)?;
+    let z1 = compute_shared_secret_p384_internal(&KAT_P384_D_I, &KAT_P384_Q_R)
+        .map_err(|_| SelfTestFailure)?;
     if z1 != KAT_P384_Z {
         return Err(SelfTestFailure);
     }
 
     // Positive 2: d_r * Q_i == Z (symmetry of ECDH).
-    let z2 =
-        compute_shared_secret_p384_internal(&KAT_P384_D_R, &KAT_P384_Q_I).ok_or(SelfTestFailure)?;
+    let z2 = compute_shared_secret_p384_internal(&KAT_P384_D_R, &KAT_P384_Q_I)
+        .map_err(|_| SelfTestFailure)?;
     if z2 != KAT_P384_Z {
         return Err(SelfTestFailure);
     }
@@ -454,7 +491,10 @@ pub fn self_test_p384() -> Result<(), SelfTestFailure> {
     // validation before any scalar multiplication happens.
     let mut tampered = KAT_P384_Q_R;
     tampered[96] ^= 0x01;
-    if compute_shared_secret_p384_internal(&KAT_P384_D_I, &tampered).is_some() {
+    if !matches!(
+        compute_shared_secret_p384_internal(&KAT_P384_D_I, &tampered),
+        Err(Error::InvalidInput)
+    ) {
         return Err(SelfTestFailure);
     }
 
@@ -470,13 +510,15 @@ pub fn self_test_p384() -> Result<(), SelfTestFailure> {
 /// of the peer key causes rejection.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     // Positive 1: d_i * Q_r == Z.
-    let z1 = compute_shared_secret_p256_internal(&KAT_D_I, &KAT_Q_R).ok_or(SelfTestFailure)?;
+    let z1 =
+        compute_shared_secret_p256_internal(&KAT_D_I, &KAT_Q_R).map_err(|_| SelfTestFailure)?;
     if z1 != KAT_Z {
         return Err(SelfTestFailure);
     }
 
     // Positive 2: d_r * Q_i == Z (symmetry of ECDH).
-    let z2 = compute_shared_secret_p256_internal(&KAT_D_R, &KAT_Q_I).ok_or(SelfTestFailure)?;
+    let z2 =
+        compute_shared_secret_p256_internal(&KAT_D_R, &KAT_Q_I).map_err(|_| SelfTestFailure)?;
     if z2 != KAT_Z {
         return Err(SelfTestFailure);
     }
@@ -485,7 +527,10 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     // validation before any scalar multiplication happens.
     let mut tampered = KAT_Q_R;
     tampered[64] ^= 0x01;
-    if compute_shared_secret_p256_internal(&KAT_D_I, &tampered).is_some() {
+    if !matches!(
+        compute_shared_secret_p256_internal(&KAT_D_I, &tampered),
+        Err(Error::InvalidInput)
+    ) {
         return Err(SelfTestFailure);
     }
 
@@ -530,66 +575,101 @@ mod tests {
         oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
     }
 
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    fn start_module() {
+        let _ = init_with_tests(&[]);
+        assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+    }
+
     #[test]
     fn kat_initiator_to_responder_matches_rfc5903() {
+        start_module();
         let z = compute_shared_secret_p256_internal(&KAT_D_I, &KAT_Q_R).unwrap();
         assert_eq!(z, KAT_Z);
     }
 
     #[test]
     fn kat_responder_to_initiator_matches_rfc5903() {
+        start_module();
         let z = compute_shared_secret_p256_internal(&KAT_D_R, &KAT_Q_I).unwrap();
         assert_eq!(z, KAT_Z);
     }
 
     #[test]
     fn rejects_tampered_peer_key_x() {
+        start_module();
         let mut tampered = KAT_Q_R;
         tampered[1] ^= 0x01;
-        assert!(compute_shared_secret_p256_internal(&KAT_D_I, &tampered).is_none());
+        assert_eq!(
+            compute_shared_secret_p256_internal(&KAT_D_I, &tampered),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_tampered_peer_key_y() {
+        start_module();
         let mut tampered = KAT_Q_R;
         tampered[64] ^= 0x01;
-        assert!(compute_shared_secret_p256_internal(&KAT_D_I, &tampered).is_none());
+        assert_eq!(
+            compute_shared_secret_p256_internal(&KAT_D_I, &tampered),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_peer_key_with_wrong_header() {
+        start_module();
         let mut bad = KAT_Q_R;
         bad[0] = 0x02;
-        assert!(compute_shared_secret_p256_internal(&KAT_D_I, &bad).is_none());
+        assert_eq!(
+            compute_shared_secret_p256_internal(&KAT_D_I, &bad),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_identity_peer_key_encoding() {
+        start_module();
         // 0x04 || 00..00 || 00..00. Rejected by the validated decoder.
         let mut encoding = [0u8; 65];
         encoding[0] = 0x04;
-        assert!(compute_shared_secret_p256_internal(&KAT_D_I, &encoding).is_none());
+        assert_eq!(
+            compute_shared_secret_p256_internal(&KAT_D_I, &encoding),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_zero_private_key() {
+        start_module();
         let zero = [0u8; 32];
-        assert!(compute_shared_secret_p256_internal(&zero, &KAT_Q_R).is_none());
+        assert_eq!(
+            compute_shared_secret_p256_internal(&zero, &KAT_Q_R),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_private_key_equal_to_n() {
+        start_module();
         // n in big-endian — not a canonical scalar (>= n).
         let n_bytes: [u8; 32] = [
             0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
             0xfc, 0x63, 0x25, 0x51,
         ];
-        assert!(compute_shared_secret_p256_internal(&n_bytes, &KAT_Q_R).is_none());
+        assert_eq!(
+            compute_shared_secret_p256_internal(&n_bytes, &KAT_Q_R),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn self_test_passes() {
+        start_module();
         self_test().unwrap();
     }
 
@@ -607,52 +687,75 @@ mod tests {
 
     #[test]
     fn p384_kat_initiator_to_responder_matches_rfc5903() {
+        start_module();
         let z = compute_shared_secret_p384_internal(&KAT_P384_D_I, &KAT_P384_Q_R).unwrap();
         assert_eq!(z, KAT_P384_Z);
     }
 
     #[test]
     fn p384_kat_responder_to_initiator_matches_rfc5903() {
+        start_module();
         let z = compute_shared_secret_p384_internal(&KAT_P384_D_R, &KAT_P384_Q_I).unwrap();
         assert_eq!(z, KAT_P384_Z);
     }
 
     #[test]
     fn p384_rejects_tampered_peer_key_x() {
+        start_module();
         let mut tampered = KAT_P384_Q_R;
         tampered[1] ^= 0x01;
-        assert!(compute_shared_secret_p384_internal(&KAT_P384_D_I, &tampered).is_none());
+        assert_eq!(
+            compute_shared_secret_p384_internal(&KAT_P384_D_I, &tampered),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn p384_rejects_tampered_peer_key_y() {
+        start_module();
         let mut tampered = KAT_P384_Q_R;
         tampered[96] ^= 0x01;
-        assert!(compute_shared_secret_p384_internal(&KAT_P384_D_I, &tampered).is_none());
+        assert_eq!(
+            compute_shared_secret_p384_internal(&KAT_P384_D_I, &tampered),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn p384_rejects_peer_key_with_wrong_header() {
+        start_module();
         let mut bad = KAT_P384_Q_R;
         bad[0] = 0x02;
-        assert!(compute_shared_secret_p384_internal(&KAT_P384_D_I, &bad).is_none());
+        assert_eq!(
+            compute_shared_secret_p384_internal(&KAT_P384_D_I, &bad),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn p384_rejects_identity_peer_key_encoding() {
+        start_module();
         let mut encoding = [0u8; 97];
         encoding[0] = 0x04;
-        assert!(compute_shared_secret_p384_internal(&KAT_P384_D_I, &encoding).is_none());
+        assert_eq!(
+            compute_shared_secret_p384_internal(&KAT_P384_D_I, &encoding),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn p384_rejects_zero_private_key() {
+        start_module();
         let zero = [0u8; 48];
-        assert!(compute_shared_secret_p384_internal(&zero, &KAT_P384_Q_R).is_none());
+        assert_eq!(
+            compute_shared_secret_p384_internal(&zero, &KAT_P384_Q_R),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn p384_self_test_passes() {
+        start_module();
         self_test_p384().unwrap();
     }
 
@@ -713,6 +816,7 @@ mod tests {
 
     #[test]
     fn keygen_p256_pct_roundtrip_against_rfc5903_peer() {
+        start_module();
         // IG 10.3.A pairwise consistency: a freshly generated (d_new,
         // Q_new) is consistent iff ECDH from both directions against
         // a known peer keypair (RFC 5903 §8.1 responder) produces the

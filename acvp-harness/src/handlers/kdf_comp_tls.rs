@@ -139,7 +139,7 @@ fn handle_kdf_comp_tls_group(group: &JsonValue) -> Result<JsonValue, DispatchErr
                     &server_random,
                     &client_random,
                     &mut key_block,
-                )
+                )?
             }
             "SHA2-384" => {
                 oxicrypt_tls_kdf::tls12_master_secret_internal::<oxicrypt_hmac::HmacSha384, 48>(
@@ -149,7 +149,7 @@ fn handle_kdf_comp_tls_group(group: &JsonValue) -> Result<JsonValue, DispatchErr
                     &server_random,
                     &client_random,
                     &mut key_block,
-                )
+                )?
             }
             "SHA2-512" => {
                 oxicrypt_tls_kdf::tls12_master_secret_internal::<oxicrypt_hmac::HmacSha512, 64>(
@@ -159,7 +159,7 @@ fn handle_kdf_comp_tls_group(group: &JsonValue) -> Result<JsonValue, DispatchErr
                     &server_random,
                     &client_random,
                     &mut key_block,
-                )
+                )?
             }
             _ => {
                 return Err(DispatchError::Unsupported(

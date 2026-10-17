@@ -96,7 +96,7 @@ impl AlgorithmHandler for HmacSha1Handler {
             let mut h = HmacSha1::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha1::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -116,7 +116,7 @@ impl AlgorithmHandler for HmacSha2_224Handler {
             let mut h = HmacSha224::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha224::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -136,7 +136,7 @@ impl AlgorithmHandler for HmacSha2_384Handler {
             let mut h = HmacSha384::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha384::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -156,7 +156,7 @@ impl AlgorithmHandler for HmacSha2_512Handler {
             let mut h = HmacSha512::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha512::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -176,7 +176,7 @@ impl AlgorithmHandler for HmacSha2_512_224Handler {
             let mut h = HmacSha512_224::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha512_224::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -196,7 +196,7 @@ impl AlgorithmHandler for HmacSha2_512_256Handler {
             let mut h = HmacSha512_256::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha512_256::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -216,7 +216,7 @@ impl AlgorithmHandler for HmacSha3_224Handler {
             let mut h = HmacSha3_224::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha3_224::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -236,7 +236,7 @@ impl AlgorithmHandler for HmacSha3_256Handler {
             let mut h = HmacSha3_256::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha3_256::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -256,7 +256,7 @@ impl AlgorithmHandler for HmacSha3_384Handler {
             let mut h = HmacSha3_384::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha3_384::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -276,7 +276,7 @@ impl AlgorithmHandler for HmacSha3_512Handler {
             let mut h = HmacSha3_512::new(k)
                 .map_err(|_| DispatchError::Crypto("HmacSha3_512::new returned Err"))?;
             h.update(m);
-            Ok(h.finalize().to_vec())
+            Ok(h.finalize()?.to_vec())
         })
     }
 }
@@ -445,6 +445,7 @@ mod tests {
     /// family handler.
     #[test]
     fn handle_hmac_group_reads_mac_len_from_group() {
+        crate::ensure_initialized().unwrap();
         let group = json::parse(
             r#"{
                 "tgId": 1,
@@ -468,6 +469,7 @@ mod tests {
     /// values.
     #[test]
     fn handle_hmac_group_reads_mac_len_per_test_for_mvt() {
+        crate::ensure_initialized().unwrap();
         let group = json::parse(
             r#"{
                 "tgId": 1,
@@ -492,6 +494,7 @@ mod tests {
     /// `or(group_mac_len_bits)` precedence chain behaves.
     #[test]
     fn handle_hmac_group_per_test_mac_len_overrides_group() {
+        crate::ensure_initialized().unwrap();
         let group = json::parse(
             r#"{
                 "tgId": 1,
@@ -515,6 +518,7 @@ mod tests {
     /// Neither group nor per-test `macLen` present → MissingField.
     #[test]
     fn handle_hmac_group_missing_mac_len_errors() {
+        crate::ensure_initialized().unwrap();
         let group = json::parse(
             r#"{
                 "tgId": 1,

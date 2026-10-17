@@ -273,6 +273,7 @@ mod tests {
 
     #[test]
     fn parse_minimal_two_record_file() {
+        crate::ensure_initialized().unwrap();
         let src = "\
 #  CAVS 11.0
 #  \"SHA-256 ShortMsg\" information
@@ -299,6 +300,7 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
 
     #[test]
     fn tolerates_crlf_line_endings() {
+        crate::ensure_initialized().unwrap();
         let src =
             "[L = 20]\r\nLen = 0\r\nMsg = 00\r\nMD = da39a3ee5e6b4b0d3255bfef95601890afd80709\r\n";
         let doc = parse(src).unwrap();
@@ -309,12 +311,14 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
 
     #[test]
     fn missing_length_header_is_error() {
+        crate::ensure_initialized().unwrap();
         let src = "Len = 0\nMsg = 00\nMD = da39a3ee5e6b4b0d3255bfef95601890afd80709\n";
         assert!(matches!(parse(src), Err(RspError::MissingLengthHeader)));
     }
 
     #[test]
     fn out_of_order_field_is_error() {
+        crate::ensure_initialized().unwrap();
         let src = "[L = 32]\nMsg = 00\nLen = 0\nMD = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n";
         let err = parse(src).unwrap_err();
         assert!(matches!(
@@ -328,12 +332,14 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
 
     #[test]
     fn truncated_record_is_error() {
+        crate::ensure_initialized().unwrap();
         let src = "[L = 32]\nLen = 0\nMsg = 00\n"; // missing MD
         assert!(matches!(parse(src), Err(RspError::TruncatedRecord)));
     }
 
     #[test]
     fn non_integer_len_is_error() {
+        crate::ensure_initialized().unwrap();
         let src = "[L = 32]\nLen = notanumber\nMsg = 00\nMD = 00\n";
         let err = parse(src).unwrap_err();
         assert!(matches!(err, RspError::InvalidInteger { field: "Len", .. }));
@@ -341,6 +347,7 @@ MD = 28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1
 
     #[test]
     fn invalid_hex_is_error() {
+        crate::ensure_initialized().unwrap();
         let src = "[L = 32]\nLen = 8\nMsg = zz\nMD = 00\n";
         let err = parse(src).unwrap_err();
         assert!(matches!(err, RspError::InvalidHex { field: "Msg", .. }));

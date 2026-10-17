@@ -20,15 +20,13 @@
 //! across the heap and a true double-free is undefined behaviour
 //! (matches malloc/free semantics).
 //!
-//! # Reviewer-framing
+//! # Error and handle behaviour
 //!
-//! - F4 — distinct error variants per failure mode: AAD-NULL-with-zero-len
-//!   is `Ok` (AAD is logically defined by length per SP 800-38D);
-//!   tag mismatch returns `OxiResult::TagMismatch = 22`, not a generic
-//!   "operation failed".
-//! - F5 — safe-no-op-after-free: NULL-safe `_free` plus `OxiHandle<T>`
-//!   consumed-sentinel pattern (handle.rs §4.8 in the security policy).
-//! - F9 — NULL-AAD-with-len-0 allowed: SP 800-38D defines AAD logically
+//! - Distinct error variants per failure mode: tag mismatch returns
+//!   `OxiResult::TagMismatch = 22`, not a generic "operation failed".
+//! - Safe no-op after free: NULL-safe `_free` plus `OxiHandle<T>`
+//!   consumed-sentinel pattern (see `handle.rs`).
+//! - NULL AAD with length 0 is allowed: SP 800-38D defines AAD logically
 //!   by length, not by pointer presence. The shim mirrors the Rust
 //!   `slice_from_raw` helper, which returns an empty slice for the
 //!   `(null, 0)` case.
@@ -109,7 +107,7 @@ pub unsafe extern "C" fn oxi_aes256_free(handle: *mut OxiAes256Key) {
 /// Buffer requirements:
 /// - `iv` — exactly 12 readable bytes (96-bit nonce).
 /// - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
-///   when `aad_len == 0` (per F9).
+///   when `aad_len == 0`.
 /// - `plaintext` — `pt_len` readable bytes; may be NULL when
 ///   `pt_len == 0`.
 /// - `ciphertext` — `pt_len` writable bytes.
@@ -140,9 +138,9 @@ pub unsafe extern "C" fn oxi_aes256_gcm_encrypt(
     if let Err(e) = require_allowed(Service::Aes256Gcm) {
         return crate::error::status_module(Err(e));
     }
-    // SAFETY: per the handle lifecycle contract documented in security
-    // policy §4.8, the caller MUST not race `_free` against an in-flight
-    // `_gcm_*` call on the same handle. AES-GCM is one-shot so the
+    // SAFETY: the handle lifecycle contract requires that the caller
+    // not race `_free` against an in-flight `_gcm_*` call on the same
+    // handle. AES-GCM is one-shot so the
     // `&self`-only `as_ref` projection cannot witness a torn `Option`,
     // but a future streaming/finalize-bearing handle will need stronger
     // synchronization between the consumed flag and the inner read.
@@ -364,8 +362,7 @@ pub unsafe extern "C" fn oxi_aes256_ctr(
         Ok(s) => s,
         Err(e) => return e,
     };
-    ctr_xor(key_ref, icb_slice, in_slice, out_slice);
-    R::Ok as c_int
+    status_aes(ctr_xor(key_ref, icb_slice, in_slice, out_slice))
 }
 
 // ── AES-256-CCM ──────────────────────────────────────────────────
@@ -380,7 +377,7 @@ pub unsafe extern "C" fn oxi_aes256_ctr(
 /// Buffer requirements:
 /// - `nonce` — `nonce_len` readable bytes; valid range 7..=13 per SP 800-38C.
 /// - `aad` — `aad_len` readable bytes if `aad_len > 0`; may be NULL
-///   when `aad_len == 0` (per F9, AAD logically defined by length).
+///   when `aad_len == 0` (AAD is defined by its length).
 /// - `plaintext` — `pt_len` readable bytes; may be NULL when `pt_len == 0`.
 /// - `tlen` — tag length in bytes; valid set {4, 6, 8, 10, 12, 14, 16}.
 /// - `out` — exactly `pt_len + tlen` writable bytes; layout `C || T`.
@@ -545,7 +542,10 @@ pub unsafe extern "C" fn oxi_aes256_cmac(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let t = cmac_tag(key_ref, msg_slice);
+    let t = match cmac_tag(key_ref, msg_slice) {
+        Ok(t) => t,
+        Err(e) => return crate::error::status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(t.as_ptr(), tag, 16) };
     R::Ok as c_int
 }
@@ -751,5 +751,97 @@ pub unsafe extern "C" fn oxi_aes256_kwp_unwrap(
             R::Ok as c_int
         }
         Err(e) => crate::error::OxiResult::from(e) as c_int,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod live_handle_tests {
+    use super::{
+        OxiAes256Key, R, oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free, oxi_aes256_gcm_encrypt,
+        oxi_aes256_new,
+    };
+    use core::ffi::c_int;
+    use oxicrypt_module::{KatEntry, State, initialize_with_tests, state};
+
+    /// Set in the child process that runs one test on its own.
+    const CHILD: &str = "OXICRYPT_STATE_GUARD_CHILD";
+
+    /// Runs `body` in a process of its own, because the module state is
+    /// process-global and entering the error state is one-way.
+    fn isolated(name: &str, body: impl FnOnce()) {
+        if std::env::var_os(CHILD).is_some() {
+            body();
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([name, "--exact", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "{name} did not pass in its own process:\n{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// A key handle created while the module is operational produces no
+    /// output through the C interface once the module has entered the
+    /// error state.
+    #[test]
+    fn handle_refuses_output_after_error() {
+        isolated(
+            "aes::live_handle_tests::handle_refuses_output_after_error",
+            || {
+                initialize_with_tests(UNSIGNED_TEST_BINARY, &[]).unwrap_or_else(|e| panic!("{e}"));
+                assert_eq!(state(), State::Operational);
+                let mut handle: *mut OxiAes256Key = core::ptr::null_mut();
+                let key = [0x0b_u8; 32];
+                assert_eq!(
+                    unsafe { oxi_aes256_new(&raw mut handle, key.as_ptr()) },
+                    R::Ok as c_int
+                );
+
+                oxicrypt_module::enter_error_state("live-handle refusal test");
+                let refused = R::NotOperational as c_int;
+
+                let iv = [0u8; 12];
+                let pt = [1u8; 16];
+                let mut ct = [0u8; 16];
+                let mut tag = [0u8; 16];
+                let rc = unsafe {
+                    oxi_aes256_gcm_encrypt(
+                        handle,
+                        iv.as_ptr(),
+                        core::ptr::null(),
+                        0,
+                        pt.as_ptr(),
+                        pt.len(),
+                        ct.as_mut_ptr(),
+                        tag.as_mut_ptr(),
+                    )
+                };
+                assert_eq!(rc, refused);
+                let icb = [0u8; 16];
+                let rc = unsafe {
+                    oxi_aes256_ctr(handle, icb.as_ptr(), pt.as_ptr(), pt.len(), ct.as_mut_ptr())
+                };
+                assert_eq!(rc, refused);
+                let rc =
+                    unsafe { oxi_aes256_cmac(handle, pt.as_ptr(), pt.len(), tag.as_mut_ptr()) };
+                assert_eq!(rc, refused);
+                assert_eq!((ct, tag), ([0u8; 16], [0u8; 16]));
+                unsafe { oxi_aes256_free(handle) };
+            },
+        );
     }
 }

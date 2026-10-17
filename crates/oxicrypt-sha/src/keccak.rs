@@ -17,11 +17,12 @@
 //!
 //! # Public visibility
 //!
-//! The module is `pub` so that `oxicrypt-xof` can depend on `oxicrypt-sha`
-//! and reuse `Sponge` for SHAKE128/SHAKE256 rather than duplicating
-//! the permutation. The types are stable inside the module's
-//! public API but are not guaranteed to be stable across crate
-//! versions.
+//! The module is `pub` so that `oxicrypt-xof` and `oxicrypt-ml-dsa` can
+//! reuse `Sponge` and `Sponge4` rather than duplicate the permutation. It
+//! is `#[doc(hidden)]`: a building block outside the module's service
+//! interface, with no stability guarantee across crate versions. The
+//! sponges are built only through the guarded `new_internal`
+//! constructors.
 //!
 //! See `sha256.rs` for the rationale behind the module-level lint
 //! allows.
@@ -151,9 +152,36 @@ pub struct Sponge<const RATE_BYTES: usize> {
 }
 
 impl<const RATE_BYTES: usize> Sponge<RATE_BYTES> {
-    /// Creates a fresh sponge with an all-zero state.
+    /// Creates a fresh sponge for another algorithm crate that composes it.
+    ///
+    /// A sponge with a domain byte yields SHA-3 and SHAKE output, so it is
+    /// built only once the module's self-tests have started.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`oxicrypt_module::Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    #[doc(hidden)]
+    pub fn new_internal() -> Result<Self, oxicrypt_module::Error> {
+        oxicrypt_module::require_self_test_started()?;
+        Ok(Self::new())
+    }
+
+    /// [`Self::new_internal`] for a caller holding proof that the module's
+    /// self-tests have started, such as a worker thread of a call that
+    /// checked the module state once at its own entry point.
+    #[doc(hidden)]
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new_with(_started: &oxicrypt_module::SelfTestStarted) -> Self {
+        Self::new()
+    }
+
+    /// Creates a fresh sponge with an all-zero state, for this crate's own
+    /// use once a gate or guard has passed.
+    #[must_use]
+    pub(crate) const fn new() -> Self {
         Self {
             state: [0u64; LANES],
             offset: 0,
@@ -242,12 +270,6 @@ impl<const RATE_BYTES: usize> Sponge<RATE_BYTES> {
     }
 }
 
-impl<const RATE_BYTES: usize> Default for Sponge<RATE_BYTES> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<const RATE_BYTES: usize> Drop for Sponge<RATE_BYTES> {
     fn drop(&mut self) {
         oxicrypt_zeroize::zeroize_u64(&mut self.state);
@@ -300,9 +322,34 @@ pub struct Sponge4<const RATE_BYTES: usize> {
 }
 
 impl<const RATE_BYTES: usize> Sponge4<RATE_BYTES> {
-    /// Creates four fresh sponges, each with an all-zero state.
+    /// Creates four fresh sponges for another algorithm crate that batches
+    /// SHAKE through them, once the module's self-tests have started.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`oxicrypt_module::Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    #[doc(hidden)]
+    pub fn new_internal() -> Result<Self, oxicrypt_module::Error> {
+        oxicrypt_module::require_self_test_started()?;
+        Ok(Self::new())
+    }
+
+    /// [`Self::new_internal`] for a caller holding proof that the module's
+    /// self-tests have started, such as a worker thread of a call that
+    /// checked the module state once at its own entry point.
+    #[doc(hidden)]
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new_with(_started: &oxicrypt_module::SelfTestStarted) -> Self {
+        Self::new()
+    }
+
+    /// Creates four fresh sponges, each with an all-zero state, for this
+    /// crate's own use.
+    #[must_use]
+    pub(crate) const fn new() -> Self {
         Self {
             states: [[0u64; LANES]; 4],
             offset: 0,
@@ -436,12 +483,6 @@ impl<const RATE_BYTES: usize> Sponge4<RATE_BYTES> {
         let lane = pos / 8;
         let shift = (pos % 8) * 8;
         ((state[lane] >> shift) & 0xff) as u8
-    }
-}
-
-impl<const RATE_BYTES: usize> Default for Sponge4<RATE_BYTES> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

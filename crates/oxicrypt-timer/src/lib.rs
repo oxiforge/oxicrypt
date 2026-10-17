@@ -2,14 +2,15 @@
 //! oxicrypt entropy source.
 //!
 //! This is one of the small readily auditable in-boundary crates in the oxicrypt
-//! workspace that uses `unsafe` (alongside `oxicrypt-zeroize`,
-//! `oxicrypt-sha-accel`, `oxicrypt-aes-accel` and `oxicrypt-keccak-accel`). It implements the
-//! sanctioned **CPU timer/counter intrinsic** category: every `unsafe`
-//! block is a single side-effect-free read of an architectural
-//! counter/register. All other in-boundary crates remain
-//! `#![forbid(unsafe_code)]`; the authoritative unsafe-code accounting
-//! lives in `docs/security-policy/security-policy.md` §9.2 "Isolation of
-//! `unsafe`".
+//! workspace that use `unsafe`. It implements the sanctioned
+//! **CPU timer/counter intrinsic** category: every `unsafe` block is a
+//! single side-effect-free read of an architectural counter/register.
+//! The workspace's `AGENTS.md` names the in-boundary crates that use
+//! `unsafe`, and `tools/doc-guard` checks that list against the crates.
+//! Every in-boundary crate outside that list is
+//! `#![forbid(unsafe_code)]`. The module's Security Policy, withheld
+//! from this repository (see `docs/security-policy/README.md`), holds
+//! the authoritative accounting.
 //!
 //! # No cryptographic logic, no entropy claims
 //!
@@ -41,9 +42,10 @@
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU timer/counter intrinsics.
-// Every other in-boundary crate except oxicrypt-zeroize, oxicrypt-sha-accel,
-// oxicrypt-aes-accel and oxicrypt-keccak-accel forbids unsafe. The workspace lint set denies
-// unsafe_op_in_unsafe_fn; each read carries its own SAFETY comment.
+// The workspace's `AGENTS.md` names the other in-boundary crates that
+// use unsafe; every other in-boundary crate forbids it.
+// The workspace lint set denies unsafe_op_in_unsafe_fn; each read carries
+// its own SAFETY comment.
 
 // Unsupported-target handling (documented design choice):
 // We cfg-gate `read_raw_counter`'s body to the two supported arches and emit a

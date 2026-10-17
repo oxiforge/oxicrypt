@@ -24,10 +24,14 @@
 //!                                              └─────────┘
 //! ```
 //!
+//! An empty integrity group moves `SelfTest` to the terminal
+//! `IntegrityUnverified` state instead of `Error`: the module was never
+//! checked, rather than checked and found wrong.
+//!
 //! # What this crate ships
 //!
 //! - [`State`] and the transition machine (`PowerOff →
-//!   SelfTest → Operational | Error`).
+//!   SelfTest → Operational | Error | IntegrityUnverified`).
 //! - [`initialize_with_tests`] — the canonical one-shot entry
 //!   point that the top-level caller uses to run the integrity
 //!   test and every approved algorithm's power-up KAT before
@@ -36,6 +40,10 @@
 //!   service in every other crate calls on entry. Returns
 //!   [`Error::NotOperational`] (with the observed state) on any
 //!   pre-`Operational` or post-`Error` call.
+//! - [`require_self_test_started`] — the guard that every public
+//!   `*_internal` function calls on entry. It admits `Operational`, and
+//!   `SelfTest` on the thread running the power-up self-tests, so those
+//!   tests can drive the internals, and refuses everything else.
 //! - [`enter_error_state`] — irreversible transition into the
 //!   terminal error state, called by conditional self-tests
 //!   (pairwise consistency, DRBG health) when they detect a
@@ -127,19 +135,46 @@
 //!
 //! # Thread safety
 //!
-//! State is stored in a single `AtomicU8` and is safe to read
-//! from any thread. [`initialize_with_tests`] uses a
-//! compare-and-swap to guarantee the self-test phase runs
-//! exactly once per process lifetime even under concurrent
-//! first-calls; racing losers spin on the `SelfTest` state byte
-//! so they do not observe the transient phase and then receive
-//! [`Error::AlreadyInitialized`].
+//! State is stored in a single `AtomicU64` and is safe to read
+//! from any thread. Its low byte is the [`State`]; while the state is
+//! `SelfTest`, the bits above it hold the operating system's id for the
+//! thread running the self-tests, published in the same word so that no
+//! reader sees one without the other. The id comes from
+//! `oxicrypt-imageread`: `gettid` on Linux and Android,
+//! `pthread_threadid_np` on Darwin, `GetCurrentThreadId` on Windows. A
+//! target with none of these cannot own `SelfTest` and does not initialise.
+//! A target without 64-bit atomics (`target_has_atomic = "64"`) cannot
+//! hold the word, and the crate refuses to compile for it.
+//!
+//! [`initialize_with_tests`] uses a compare-and-swap to guarantee the
+//! self-test phase runs exactly once per process lifetime even under
+//! concurrent first-calls. Every self-test runs on the thread that won
+//! it, and [`require_self_test_started`] admits `SelfTest` to that thread
+//! alone, so another thread's `*_internal` call made while initialisation
+//! is running, or paused, is refused. Racing losers wait on the state
+//! word, so they do not observe the transient phase, and then receive
+//! [`Error::AlreadyInitialized`] or [`Error::AlreadyFailed`]. A self-test
+//! that unwinds out of initialisation leaves the module in `Error`.
+//!
+//! A service's check in `Operational` is one acquire load of the state
+//! word and one comparison: a plain load on x86_64, `ldar` on AArch64,
+//! and on a 32-bit target the platform's 64-bit atomic load. The thread id
+//! is asked for only by an `*_internal` call that finds `SelfTest`.
 
 #![no_std]
 #![forbid(unsafe_code)]
 
+// The state and the initialising thread's id are published as one 64-bit
+// atomic word, so a reader never sees one without the other. A target with
+// no 64-bit atomics cannot hold that word.
+#[cfg(not(target_has_atomic = "64"))]
+compile_error!(
+    "oxicrypt-module needs 64-bit atomics: the module state and the thread running the \
+     power-up self-tests are published as one AtomicU64"
+);
+
 use core::fmt;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 /// Module lifecycle state per FIPS 140-3 Section 7.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +196,7 @@ pub enum State {
     Error = 3,
     /// The module reached the end of its pre-operational sequence
     /// without the software integrity test having been performed, so it
-    /// was never verified against its reference MAC. **Terminal**, and
+    /// was never verified against its integrity signature. **Terminal**, and
     /// no services are offered.
     ///
     /// Distinct from [`State::Error`] because the two are different
@@ -205,32 +240,190 @@ impl fmt::Display for State {
     }
 }
 
-/// Global module state. Written only by [`initialize_with_tests`] and
-/// [`enter_error_state`]; read by [`state`] and [`require_operational`].
-static STATE: AtomicU8 = AtomicU8::new(State::PowerOff as u8);
+/// Global module state, packed with the owner of the `SelfTest` phase.
+///
+/// Bits 0–7 hold the [`State`] discriminant. Bits 8–63 hold the operating
+/// system's id for the thread running the power-up self-tests while the
+/// state is `SelfTest`, and are zero in every other state. One word, so no
+/// reader can observe a state without its owner or an owner without its
+/// state. Written only by [`initialize`] and [`enter_error_state`]; read
+/// through [`state`] and the guards.
+static STATE: AtomicU64 = AtomicU64::new(POWER_OFF);
+
+/// The width of the state field; the owner occupies the bits above it.
+const STATE_BITS: u32 = 8;
+const POWER_OFF: u64 = State::PowerOff as u64;
+/// The one word in which the approved services run. Its owner field is
+/// zero, so the services' check is a single comparison.
+const OPERATIONAL: u64 = State::Operational as u64;
+const ERROR: u64 = State::Error as u64;
+const INTEGRITY_UNVERIFIED: u64 = State::IntegrityUnverified as u64;
+
+/// The word for `SelfTest` owned by the thread whose id is `owner`.
+///
+/// `owner` is non-zero and below `2^56`, as [`caller_owner_id`] returns it,
+/// so the shift loses nothing.
+const fn self_test_word(owner: u64) -> u64 {
+    owner.wrapping_shl(STATE_BITS) | State::SelfTest as u64
+}
+
+/// The state a word encodes.
+///
+/// A word this module did not write reads as `Error`: an unknown
+/// discriminant, `SelfTest` with no owner, or any other state with an
+/// owner. None of them can therefore be taken for `Operational` or for a
+/// `SelfTest` some thread owns.
+const fn decode(word: u64) -> State {
+    let [discriminant, ..] = word.to_le_bytes();
+    let owned = word.wrapping_shr(STATE_BITS) != 0;
+    match (State::from_u8(discriminant), owned) {
+        (State::SelfTest, true) => State::SelfTest,
+        (State::SelfTest, false) | (_, true) => State::Error,
+        (state, false) => state,
+    }
+}
+
+/// The calling thread's id as the owner field records it.
+fn caller_owner_id() -> Option<u64> {
+    owner_id(os_thread_id())
+}
+
+/// A thread id the owner field can record.
+///
+/// `None` when the platform offers no thread id, or offers zero or a value
+/// of `2^56` or more, none of which the field can record unambiguously.
+fn owner_id(raw: Option<u64>) -> Option<u64> {
+    raw.filter(|&id| id != 0 && id.leading_zeros() >= STATE_BITS)
+}
+
+/// The name [`Error::SelfTestFailed`] carries when initialisation fails
+/// because the platform gives the initialising thread no id the module can
+/// record, so no thread could own `SelfTest`.
+pub const THREAD_ID_CHECK: &str = "initialising thread id: none the module can record";
+
+/// `gettid` on Linux and Android, `pthread_threadid_np` on Darwin,
+/// `GetCurrentThreadId` on Windows.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    windows
+))]
+fn os_thread_id() -> Option<u64> {
+    oxicrypt_imageread::current_thread_id().ok()
+}
+
+/// No thread id on this target, so no thread can own `SelfTest` and the
+/// module cannot be initialised.
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    windows
+)))]
+fn os_thread_id() -> Option<u64> {
+    None
+}
 
 /// Returns the current module state.
 pub fn state() -> State {
-    State::from_u8(STATE.load(Ordering::Acquire))
+    decode(STATE.load(Ordering::Acquire))
 }
 
 /// Returns `true` iff the module has passed its power-up self-tests and is
 /// currently in the `Operational` state.
 pub fn is_operational() -> bool {
-    state() == State::Operational
+    STATE.load(Ordering::Acquire) == OPERATIONAL
 }
 
 /// Guard used at the entry point of every approved service. Returns
 /// `Ok(())` only when the module is `Operational`; otherwise returns a
 /// [`Error::NotOperational`] describing the current state so callers
 /// cannot accidentally ignore it.
+///
+/// The `Operational` case costs one acquire load of the state word and one
+/// comparison.
 pub fn require_operational() -> Result<(), Error> {
-    let current = state();
-    if current == State::Operational {
+    let word = STATE.load(Ordering::Acquire);
+    if word == OPERATIONAL {
         Ok(())
     } else {
-        Err(Error::NotOperational { current })
+        Err(Error::NotOperational {
+            current: decode(word),
+        })
     }
+}
+
+/// Guard used at the entry point of every public `*_internal` function.
+///
+/// The `*_internal` functions perform an approved algorithm without the
+/// [`require_operational`] / [`require_allowed`] gates of the approved
+/// service, so that the power-up self-tests can drive them while the
+/// module is still in [`State::SelfTest`]. They are not approved services.
+/// This guard bounds when they run: it returns `Ok(())` in
+/// [`State::Operational`] to every thread, and in [`State::SelfTest`] only
+/// to the thread running the power-up self-tests. It returns
+/// [`Error::NotOperational`] with the observed state to every other thread
+/// in `SelfTest`, so a call that arrives while initialisation is running,
+/// or paused, is refused, and to every thread in [`State::PowerOff`],
+/// [`State::Error`] and [`State::IntegrityUnverified`].
+///
+/// The `Operational` case is the same comparison [`require_operational`]
+/// makes, one acquire load and one compare, so any condition that gate
+/// imposes on the approved services applies here too. Only a call that
+/// finds `SelfTest` asks the operating system for its thread id.
+pub fn require_self_test_started() -> Result<(), Error> {
+    let word = STATE.load(Ordering::Acquire);
+    if word == OPERATIONAL {
+        return Ok(());
+    }
+    let current = decode(word);
+    if current == State::SelfTest && caller_owner_id().map(self_test_word) == Some(word) {
+        return Ok(());
+    }
+    Err(Error::NotOperational { current })
+}
+
+/// Proof that [`require_self_test_started`] passed for the holder.
+///
+/// Zero-sized, with no public constructor and no `Clone` or `Copy`: the only
+/// way to obtain one is [`require_self_test_started_token`]. A hidden method
+/// that takes `&SelfTestStarted` lets an algorithm crate do the state check
+/// once at its own entry point and then run a per-block or per-squeeze loop,
+/// or a region whose instructions must not change such as the entropy
+/// source's timed workload, without repeating it. Each caller obtains the
+/// token per call and never stores it. Holding a token across a transition
+/// to `Error` does not matter, because the methods that accept one are
+/// hidden and outside the module's defined service interface.
+///
+/// It is `Sync`, so a call that checked the state on its own thread can lend
+/// `&SelfTestStarted` to the worker threads it runs in parallel. A worker
+/// calling the guard itself would be refused during `SelfTest`, which admits
+/// only the thread running the power-up self-tests.
+#[derive(Debug)]
+pub struct SelfTestStarted {
+    _private: (),
+}
+
+/// Lending the proof to worker threads depends on it staying `Sync`.
+const _: () = {
+    const fn assert_sync<T: Sync>() {}
+    assert_sync::<SelfTestStarted>();
+};
+
+/// [`require_self_test_started`], returning a [`SelfTestStarted`] proof.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] in `PowerOff`, `Error` and
+/// `IntegrityUnverified`, and in `SelfTest` on any thread but the one
+/// running the power-up self-tests, exactly as
+/// [`require_self_test_started`] does.
+pub fn require_self_test_started_token() -> Result<SelfTestStarted, Error> {
+    require_self_test_started()?;
+    Ok(SelfTestStarted { _private: () })
 }
 
 /// Errors surfaced by the module boundary.
@@ -240,6 +433,7 @@ pub fn require_operational() -> Result<(), Error> {
 /// failures even from `no_std` contexts and from within the self-test
 /// runner itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// A service was invoked while the module was not in the
     /// `Operational` state.
@@ -249,6 +443,10 @@ pub enum Error {
     },
     /// A power-up self-test failed. The module is now in the `Error`
     /// state.
+    ///
+    /// `test` is [`THREAD_ID_CHECK`] when no self-test could run because
+    /// the platform gave the initialising thread no id the module can
+    /// record.
     SelfTestFailed {
         /// Name of the failing test, supplied by its
         /// [`SelfTest`] implementation.
@@ -268,12 +466,19 @@ pub enum Error {
     /// module: the test inventory handed to [`initialize_with_tests`]
     /// did not include `oxicrypt_integrity::KATS`.
     IntegrityNotAttested,
-    /// [`initialize_with_tests`] was called while the module was already
-    /// past `PowerOff`. This is not itself a FIPS violation — it just means
-    /// a second caller raced with the first. The first call's outcome
-    /// is authoritative; the race loser should read [`state`] to find
-    /// out.
+    /// [`initialize_with_tests`] or [`initialize_with_profile`] was called
+    /// on a module that is already `Operational`, or that becomes
+    /// `Operational` when the initialisation another thread is running
+    /// completes. The module is ready; nothing was re-run.
     AlreadyInitialized,
+    /// [`initialize_with_tests`] or [`initialize_with_profile`] was called
+    /// on a module whose initialisation has already failed, so that it is
+    /// in `Error` or `IntegrityUnverified`, including when the
+    /// initialisation another thread was running fails while this call
+    /// waits. A failed initialisation is terminal: no self-test is
+    /// re-run, nothing resets the state, and only a process restart
+    /// starts the module again.
+    AlreadyFailed,
     /// A cryptographic service was called with input bytes that do not
     /// encode a valid domain element (for example, a scalar that is
     /// zero or not less than the group order, or a point that is not
@@ -318,6 +523,9 @@ impl fmt::Display for Error {
                  damaged: the program that started it skipped the check.",
             ),
             Self::AlreadyInitialized => f.write_str("FIPS module already initialized"),
+            Self::AlreadyFailed => f.write_str(
+                "FIPS module initialization already failed; restart the process to retry",
+            ),
             Self::InvalidInput => f.write_str("invalid input to FIPS service"),
             Self::AlgorithmRestricted { service } => {
                 write!(
@@ -401,9 +609,18 @@ pub struct KatEntry {
 /// [`Error::SelfTestFailed`] carries the name of the failing test.
 ///
 /// Concurrent calls are safe: exactly one caller wins the
-/// `PowerOff -> SelfTest` CAS; losers receive
-/// [`Error::AlreadyInitialized`] and should consult [`state`] to
-/// discover whether the winning call succeeded.
+/// `PowerOff -> SelfTest` CAS and runs the tests on its own thread. A
+/// caller that does not win waits for the winner's outcome and receives
+/// [`Error::AlreadyInitialized`] if it succeeded or [`Error::AlreadyFailed`]
+/// if it failed. A call on a module that has already left `PowerOff` runs
+/// no test and changes nothing: initialisation happens once per process,
+/// and a failed one is terminal until the process restarts. A call made
+/// from inside a self-test, on the thread running them, returns
+/// [`Error::NotOperational`] naming `SelfTest`.
+///
+/// On a platform that gives the calling thread no id the module can
+/// record, the winning call latches `Error` and returns
+/// [`Error::SelfTestFailed`] naming [`THREAD_ID_CHECK`].
 ///
 /// Note: the slice is passed **by reference**, not built up by magic.
 /// This repository deliberately avoids linker-section registration
@@ -411,31 +628,53 @@ pub struct KatEntry {
 /// every call site, which makes it straightforward to audit the
 /// module's test inventory against the Security Policy.
 pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Result<(), Error> {
-    // Try to claim the SelfTest phase. Only the first caller in the
-    // process lifetime succeeds.
-    let cas = STATE.compare_exchange(
-        State::PowerOff as u8,
-        State::SelfTest as u8,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    );
-    if cas.is_err() {
-        // Another thread is running (or has run) the self-tests. If
-        // it is still inside `SelfTest`, spin until it publishes a
-        // terminal state so racing callers don't observe the
-        // transient phase and trip `require_operational`.
-        while STATE.load(Ordering::Acquire) == State::SelfTest as u8 {
-            core::hint::spin_loop();
-        }
-        let current = state();
-        if current == State::Operational {
-            return Err(Error::AlreadyInitialized);
-        }
-        // The module is in a terminal state. Reporting
-        // `AlreadyInitialized` here would read as success to a caller
-        // that treats it as one, so the state is named instead.
-        return Err(Error::NotOperational { current });
+    initialize(integrity, tests, AlgorithmProfile::Unrestricted)
+}
+
+/// The body of [`initialize_with_tests`] and [`initialize_with_profile`].
+///
+/// `profile` is stored only by the caller that wins the
+/// `PowerOff -> SelfTest` CAS, and only once its self-tests pass, so a
+/// later or concurrent call cannot change the profile the winning call
+/// selected, and a failed initialisation leaves the default.
+///
+/// The winning call publishes `SelfTest` and its own thread id in one
+/// word, so [`require_self_test_started`] admits only this thread while
+/// the tests run. Every way out of the tests other than success moves
+/// that word to a failed state, including an unwinding test, through
+/// [`UnwindToError`]; none of them overwrites an `Error` that a
+/// conditional self-test latched meanwhile.
+fn initialize(
+    integrity: &[KatEntry],
+    tests: &[KatEntry],
+    profile: AlgorithmProfile,
+) -> Result<(), Error> {
+    initialize_as(caller_owner_id(), integrity, tests, profile)
+}
+
+/// [`initialize`] for a caller whose owner id is `owner`, as
+/// [`caller_owner_id`] reports it.
+fn initialize_as(
+    owner: Option<u64>,
+    integrity: &[KatEntry],
+    tests: &[KatEntry],
+    profile: AlgorithmProfile,
+) -> Result<(), Error> {
+    // Claim the SelfTest phase. Only the first caller in the process
+    // lifetime succeeds. A caller with no thread id to record cannot own
+    // the phase, so on a platform without one the claim latches `Error`.
+    let claim = owner.map_or(ERROR, self_test_word);
+    if let Err(observed) =
+        STATE.compare_exchange(POWER_OFF, claim, Ordering::AcqRel, Ordering::Acquire)
+    {
+        return Err(already_left_power_off(observed, claim));
     }
+    if owner.is_none() {
+        return Err(Error::SelfTestFailed {
+            test: THREAD_ID_CHECK,
+        });
+    }
+    let _unwind = UnwindToError { claim };
 
     // The integrity group runs first and cannot be OMITTED: it is a
     // separate parameter rather than an entry in `tests`, so a caller
@@ -452,7 +691,7 @@ pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Resu
     // Policy states the obligation: initialise with
     // `oxicrypt_integrity::KATS`.
     if integrity.is_empty() {
-        STATE.store(State::IntegrityUnverified as u8, Ordering::Release);
+        settle(claim, INTEGRITY_UNVERIFIED);
         return Err(Error::IntegrityNotAttested);
     }
 
@@ -461,7 +700,7 @@ pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Resu
             // Latch the module into Error before returning. Any
             // subsequent service call will be rejected by
             // require_operational().
-            STATE.store(State::Error as u8, Ordering::Release);
+            settle(claim, ERROR);
             return Err(Error::SelfTestFailed { test: entry.name });
         }
     }
@@ -471,8 +710,79 @@ pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Resu
     // requirement is enforced once here rather than at the 129
     // `require_operational` call sites, and no service pays for the
     // check on its hot path.
-    STATE.store(State::Operational as u8, Ordering::Release);
+    //
+    // The profile is published here, by the call that won the CAS and
+    // passed every test, before the state that makes it readable by a
+    // service. A module that fails initialisation keeps the default.
+    //
+    // The transition is conditional on this call's own claim, so a
+    // conditional self-test that latched `Error` while the tests ran is
+    // never overwritten.
+    PROFILE.store(profile as u8, Ordering::Release);
+    if STATE
+        .compare_exchange(claim, OPERATIONAL, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        PROFILE.store(AlgorithmProfile::Unrestricted as u8, Ordering::Release);
+        return Err(Error::NotOperational { current: state() });
+    }
     Ok(())
+}
+
+/// Moves `claim`, this call's `SelfTest` word, to the failed state `to`.
+///
+/// Conditional on the claim still standing, so it never overwrites an
+/// `Error` latched by [`enter_error_state`] in the meantime.
+fn settle(claim: u64, to: u64) {
+    // A failed exchange means the word is already `Error`, which is the
+    // outcome this call wants.
+    let _ = STATE.compare_exchange(claim, to, Ordering::AcqRel, Ordering::Acquire);
+}
+
+/// What a call that did not win the `PowerOff` claim reports.
+///
+/// While another thread owns `SelfTest` the call waits for its outcome,
+/// so it never reports the transient phase. A self-test that calls
+/// `initialize` on the owning thread is answered at once, rather than
+/// waiting on itself, with `NotOperational` naming `SelfTest`: the module
+/// is not ready, and the call changes nothing.
+fn already_left_power_off(mut observed: u64, claim: u64) -> Error {
+    #[cfg(test)]
+    if decode(observed) == State::SelfTest && observed != claim {
+        WAITING_LOSERS.fetch_add(1, Ordering::AcqRel);
+    }
+    while decode(observed) == State::SelfTest && observed != claim {
+        core::hint::spin_loop();
+        observed = STATE.load(Ordering::Acquire);
+    }
+    match decode(observed) {
+        State::Operational => Error::AlreadyInitialized,
+        State::SelfTest => Error::NotOperational {
+            current: State::SelfTest,
+        },
+        State::PowerOff | State::Error | State::IntegrityUnverified => Error::AlreadyFailed,
+    }
+}
+
+/// How many calls have entered the wait in [`already_left_power_off`], so a
+/// test can observe a loser waiting rather than infer it from timing.
+#[cfg(test)]
+static WAITING_LOSERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Held by [`initialize`] across the self-tests.
+///
+/// Every return path settles the claim before this drops, so the exchange
+/// below succeeds only when a self-test unwinds out of `initialize`. The
+/// module then lands in `Error` rather than being left in a `SelfTest`
+/// owned by a thread id that a later thread could be given.
+struct UnwindToError {
+    claim: u64,
+}
+
+impl Drop for UnwindToError {
+    fn drop(&mut self) {
+        settle(self.claim, ERROR);
+    }
 }
 
 /// Forces the module into the terminal `Error` state.
@@ -487,7 +797,7 @@ pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Resu
 /// until it is re-initialized, and our "re-initialization" is a
 /// process restart.
 pub fn enter_error_state(_reason: &'static str) {
-    STATE.store(State::Error as u8, Ordering::Release);
+    STATE.store(ERROR, Ordering::Release);
 }
 
 // =========================================================================
@@ -500,9 +810,10 @@ pub fn enter_error_state(_reason: &'static str) {
 /// (`Unrestricted`) and CNSA-restricted deployments (`Cnsa2`,
 /// `Cnsa1`) by choosing the appropriate profile at init time.
 ///
-/// The profile is immutable once set: it is stored alongside the
-/// module `State` before the first KAT runs and cannot be changed
-/// without restarting the process (which resets the state machine).
+/// The profile is immutable once set: it is stored when the module
+/// becomes `Operational` and cannot be changed without restarting the
+/// process (which resets the state machine). A module that fails
+/// initialisation reports the default, `Unrestricted`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AlgorithmProfile {
@@ -574,26 +885,39 @@ pub fn active_profile() -> AlgorithmProfile {
 /// Initializes the module with a specific algorithm profile and runs
 /// every supplied power-up KAT.
 ///
-/// This is the profile-aware entry point. It stores the selected
-/// profile before running KATs, then transitions to `Operational` on
-/// success. KATs always run all algorithms regardless of the profile —
-/// the profile only restricts post-initialization service access via
+/// This is the profile-aware entry point. The call that wins the
+/// `PowerOff -> SelfTest` transition runs the KATs and, on success, stores
+/// the selected profile and transitions to `Operational`. On failure the
+/// module latches a terminal state and the profile stays the default. KATs
+/// always run all algorithms regardless of the profile — the profile
+/// only restricts post-initialization service access via
 /// [`require_allowed`].
+///
+/// A call that does not win that transition, whether it comes later or
+/// races the winner, leaves the active profile unchanged and returns
+/// [`Error::AlreadyInitialized`] when the winner succeeded, or
+/// [`Error::AlreadyFailed`] when it failed, as [`initialize_with_tests`]
+/// describes.
 ///
 /// See [`initialize_with_tests`] for the backward-compatible wrapper
 /// that uses [`AlgorithmProfile::Unrestricted`].
+///
+/// # Calling context
+///
+/// While the self-tests run, [`require_self_test_started`] admits the
+/// calling thread, so code the application runs on that thread during
+/// initialisation must not call the module. Do not call module services
+/// from a global allocator, panic hook or other callback that can run
+/// during initialisation, and do not call this function from a task inside
+/// a shared work-stealing pool, whose worker may run unrelated tasks while
+/// it waits. Initialise from a dedicated thread, then use the module once
+/// this function returns `Ok`.
 pub fn initialize_with_profile(
     integrity: &[KatEntry],
     tests: &[KatEntry],
     profile: AlgorithmProfile,
 ) -> Result<(), Error> {
-    // Store the profile before running KATs. This is safe even if
-    // initialization fails: a failed init latches a terminal state —
-    // State::Error, or State::IntegrityUnverified when the integrity
-    // test was absent — so no service call can reach require_allowed()
-    // anyway.
-    PROFILE.store(profile as u8, Ordering::Release);
-    initialize_with_tests(integrity, tests)
+    initialize(integrity, tests, profile)
 }
 
 /// Enumeration of every approved service in the module, at the
@@ -929,11 +1253,11 @@ pub enum Service {
     LmsShakeM24H25W8Verify = 659,
 
     // ----- oxicrypt-xmss: SP 800-208 (stub) -----
-    // Renumbered 340/341 → 370/371 in Batch 4 to make room for the SLH-DSA block.
+    // Renumbered 340/341 → 370/371 to make room for the SLH-DSA block.
     XmssVerify = 371,
 
     // ----- oxicrypt-dh: RFC 3526 (stub) -----
-    // Renumbered 350 → 380 in Batch 4 to make room for the SLH-DSA block.
+    // Renumbered 350 → 380 to make room for the SLH-DSA block.
     Dh3072 = 380,
 }
 
@@ -1237,8 +1561,8 @@ const fn is_allowed(profile: AlgorithmProfile, service: Service) -> bool {
         AlgorithmProfile::Cnsa2 => is_cnsa2_allowed(service),
         AlgorithmProfile::Cnsa1 => is_cnsa1_allowed(service),
         // Derived from the two suites rather than enumerated a third time:
-        // a hand-written union is a third list to drift, and drift is the
-        // defect this work exists to repair. `is_cnsa2_allowed` already
+        // a hand-written union is a third list that could drift from the
+        // other two. `is_cnsa2_allowed` already
         // covers the LMS block, so naming it again here would be that third
         // rule in miniature.
         AlgorithmProfile::Migration => is_cnsa1_allowed(service) || is_cnsa2_allowed(service),
@@ -1583,7 +1907,7 @@ pub(crate) mod state_lock {
         // `&self` is the point: it is the proof the caller holds the lock.
         #[allow(clippy::unused_self)]
         pub(crate) fn reset(&self) {
-            STATE.store(State::PowerOff as u8, Ordering::Release);
+            STATE.store(State::PowerOff as u64, Ordering::Release);
             PROFILE.store(AlgorithmProfile::Unrestricted as u8, Ordering::Release);
         }
     }
@@ -1629,9 +1953,10 @@ mod tests {
         AlgorithmProfile, Error, KatEntry, LMS_SERVICES, SelfTest, SelfTestFailure, Service, State,
         active_profile, enter_error_state, initialize_with_profile, initialize_with_tests,
         is_allowed, is_lms_service, is_operational, lms_block_contains, require_allowed,
-        require_operational, state,
+        require_operational, require_self_test_started, state,
     };
     use alloc::string::ToString;
+    use core::sync::atomic::Ordering;
 
     /// Stands in for the pre-operational integrity test.
     ///
@@ -1654,6 +1979,17 @@ mod tests {
     }
     fn always_fail() -> Result<(), SelfTestFailure> {
         Err(SelfTestFailure)
+    }
+
+    /// How many times [`count_unreached`] has run.
+    static UNREACHED_RUNS: core::sync::atomic::AtomicUsize =
+        core::sync::atomic::AtomicUsize::new(0);
+
+    /// A self-test that only counts its runs.
+    #[allow(clippy::unnecessary_wraps)]
+    fn count_unreached() -> Result<(), SelfTestFailure> {
+        UNREACHED_RUNS.fetch_add(1, Ordering::AcqRel);
+        Ok(())
     }
 
     // All tests in this module share the single global `STATE`, so they
@@ -1712,6 +2048,244 @@ mod tests {
         }
     }
 
+    /// A power-up test that passes only if the guard admits the state the
+    /// module is in while the self-tests run.
+    fn guard_admits_self_test() -> Result<(), SelfTestFailure> {
+        if state() != State::SelfTest {
+            return Err(SelfTestFailure);
+        }
+        require_self_test_started().map_err(|_| SelfTestFailure)
+    }
+
+    #[test]
+    fn require_self_test_started_rejects_power_off() {
+        let _guard = reset_for_test();
+        assert_eq!(
+            require_self_test_started(),
+            Err(Error::NotOperational {
+                current: State::PowerOff
+            })
+        );
+    }
+
+    #[test]
+    fn require_self_test_started_rejects_error_after_failed_init() {
+        let _guard = reset_for_test();
+        let tests = [KatEntry {
+            name: "dummy-fail",
+            run: always_fail,
+        }];
+        assert!(initialize_with_tests(UNSIGNED_TEST_BINARY, &tests).is_err());
+        assert_eq!(state(), State::Error);
+        assert_eq!(
+            require_self_test_started(),
+            Err(Error::NotOperational {
+                current: State::Error
+            })
+        );
+    }
+
+    #[test]
+    fn require_self_test_started_rejects_integrity_unverified() {
+        let _guard = reset_for_test();
+        assert_eq!(
+            initialize_with_tests(&[], &[]),
+            Err(Error::IntegrityNotAttested)
+        );
+        assert_eq!(state(), State::IntegrityUnverified);
+        assert_eq!(
+            require_self_test_started(),
+            Err(Error::NotOperational {
+                current: State::IntegrityUnverified
+            })
+        );
+    }
+
+    /// Initialising again after `IntegrityUnverified` reports
+    /// `AlreadyFailed`, runs no test, and leaves the state where it was.
+    #[test]
+    fn initialize_after_integrity_unverified_is_already_failed() {
+        let _guard = reset_for_test();
+        assert_eq!(
+            initialize_with_tests(&[], &[]),
+            Err(Error::IntegrityNotAttested)
+        );
+        assert_eq!(state(), State::IntegrityUnverified);
+        let counting = [KatEntry {
+            name: "counts its runs",
+            run: count_unreached,
+        }];
+        UNREACHED_RUNS.store(0, Ordering::Release);
+        assert_eq!(
+            initialize_with_tests(UNSIGNED_TEST_BINARY, &counting),
+            Err(Error::AlreadyFailed)
+        );
+        assert_eq!(UNREACHED_RUNS.load(Ordering::Acquire), 0);
+        assert_eq!(state(), State::IntegrityUnverified);
+    }
+
+    #[test]
+    fn require_self_test_started_admits_self_test_and_operational() {
+        let _guard = reset_for_test();
+        let tests = [KatEntry {
+            name: "guard admits SelfTest",
+            run: guard_admits_self_test,
+        }];
+        initialize_with_tests(UNSIGNED_TEST_BINARY, &tests).unwrap();
+        assert_eq!(state(), State::Operational);
+        assert_eq!(require_self_test_started(), Ok(()));
+    }
+
+    /// Every word this module never writes reads as `Error`, and both guards
+    /// refuse it.
+    #[test]
+    fn a_malformed_state_word_reads_as_error() {
+        let guard = reset_for_test();
+        let owner = 0x1234_u64 << super::STATE_BITS;
+        let malformed = [
+            // `SelfTest` with no owner.
+            State::SelfTest as u64,
+            // `Operational`, `PowerOff` and `IntegrityUnverified` with owner bits.
+            State::Operational as u64 | owner,
+            State::PowerOff as u64 | owner,
+            State::IntegrityUnverified as u64 | owner,
+            // Unknown discriminants, with and without owner bits.
+            5,
+            0xff,
+            0xff | owner,
+        ];
+        assert_eq!(malformed.len(), 7);
+        for word in malformed {
+            guard.reset();
+            super::STATE.store(word, Ordering::Release);
+            assert_eq!(state(), State::Error, "word {word:#x}");
+            assert!(!is_operational(), "word {word:#x}");
+            assert_eq!(
+                require_operational(),
+                Err(Error::NotOperational {
+                    current: State::Error
+                }),
+                "word {word:#x}"
+            );
+            assert_eq!(
+                require_self_test_started(),
+                Err(Error::NotOperational {
+                    current: State::Error
+                }),
+                "word {word:#x}"
+            );
+        }
+        // Control: the well-formed words still decode to themselves.
+        guard.reset();
+        assert_eq!(state(), State::PowerOff);
+        super::STATE.store(State::Operational as u64, Ordering::Release);
+        assert_eq!(state(), State::Operational);
+    }
+
+    /// Released by [`loser_waits_then_gets_already_failed`] once its loser is
+    /// seen waiting.
+    static RELEASE_FAILING_WINNER: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+    /// Set by the failing winner once it holds `SelfTest`.
+    static FAILING_WINNER_PAUSED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    /// Waits for `done`, failing the test after 30 seconds.
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let start = std::time::Instant::now();
+        while !done() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(30),
+                "timed out waiting for {what}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn paused_then_fails() -> Result<(), SelfTestFailure> {
+        FAILING_WINNER_PAUSED.store(true, Ordering::Release);
+        wait_until("the release of the failing winner", || {
+            RELEASE_FAILING_WINNER.load(Ordering::Acquire)
+        });
+        Err(SelfTestFailure)
+    }
+
+    /// A loser of a winner whose self-tests then fail is seen waiting in
+    /// the loser path, and once the winner fails it reports `AlreadyFailed`.
+    #[test]
+    fn loser_waits_then_gets_already_failed() {
+        let _guard = reset_for_test();
+        FAILING_WINNER_PAUSED.store(false, Ordering::Release);
+        RELEASE_FAILING_WINNER.store(false, Ordering::Release);
+        let waiting_before = super::WAITING_LOSERS.load(Ordering::Acquire);
+        let winner = std::thread::spawn(|| {
+            let tests = [KatEntry {
+                name: "pauses, then fails",
+                run: paused_then_fails,
+            }];
+            initialize_with_tests(UNSIGNED_TEST_BINARY, &tests)
+        });
+        wait_until("the winner to pause", || {
+            FAILING_WINNER_PAUSED.load(Ordering::Acquire)
+        });
+        let loser = std::thread::spawn(|| initialize_with_tests(UNSIGNED_TEST_BINARY, &[]));
+        wait_until("the loser to enter its wait", || {
+            super::WAITING_LOSERS.load(Ordering::Acquire) > waiting_before
+        });
+        assert!(!loser.is_finished());
+        RELEASE_FAILING_WINNER.store(true, Ordering::Release);
+        assert_eq!(
+            winner.join().unwrap(),
+            Err(Error::SelfTestFailed {
+                test: "pauses, then fails"
+            })
+        );
+        assert_eq!(loser.join().unwrap(), Err(Error::AlreadyFailed));
+        assert_eq!(state(), State::Error);
+    }
+
+    /// The owner field records only a non-zero id below `2^56`.
+    #[test]
+    fn the_owner_id_filter_admits_only_recordable_ids() {
+        assert_eq!(super::owner_id(None), None);
+        assert_eq!(super::owner_id(Some(0)), None);
+        assert_eq!(super::owner_id(Some(1)), Some(1));
+        assert_eq!(super::owner_id(Some((1 << 56) - 1)), Some((1 << 56) - 1));
+        assert_eq!(super::owner_id(Some(1 << 56)), None);
+        assert_eq!(super::owner_id(Some(u64::MAX)), None);
+    }
+
+    /// A caller with no recordable thread id latches `Error`, names the
+    /// cause, and runs no self-test.
+    #[test]
+    fn no_recordable_thread_id_latches_error_with_its_cause() {
+        let guard = reset_for_test();
+        let tests = [KatEntry {
+            name: "must not run",
+            run: always_fail,
+        }];
+        for raw in [None, Some(0), Some(1 << 56)] {
+            guard.reset();
+            assert_eq!(
+                super::initialize_as(
+                    super::owner_id(raw),
+                    UNSIGNED_TEST_BINARY,
+                    &tests,
+                    AlgorithmProfile::Unrestricted
+                ),
+                Err(Error::SelfTestFailed {
+                    test: super::THREAD_ID_CHECK
+                }),
+                "raw id {raw:?}"
+            );
+            assert_eq!(state(), State::Error);
+            assert_eq!(
+                initialize_with_tests(UNSIGNED_TEST_BINARY, &[]),
+                Err(Error::AlreadyFailed)
+            );
+        }
+    }
+
     #[test]
     fn state_display_is_stable() {
         // The exact strings appear in log output and audit trails,
@@ -1751,16 +2325,18 @@ mod tests {
                 name: "dummy-fail",
                 run: always_fail,
             },
-            // This third entry must never run.
+            // The runner stops at the first failure, so this entry never runs.
             KatEntry {
                 name: "dummy-unreached",
-                run: always_pass,
+                run: count_unreached,
             },
         ];
+        UNREACHED_RUNS.store(0, Ordering::Release);
         match initialize_with_tests(UNSIGNED_TEST_BINARY, &tests) {
             Err(Error::SelfTestFailed { test: "dummy-fail" }) => {}
             other => panic!("expected SelfTestFailed{{dummy-fail}}, got {other:?}"),
         }
+        assert_eq!(UNREACHED_RUNS.load(Ordering::Acquire), 0);
         assert_eq!(state(), State::Error);
         // Operational-only guard must reject calls from here on.
         assert!(matches!(
@@ -1803,6 +2379,92 @@ mod tests {
         initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
         assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
         assert!(is_operational());
+    }
+
+    /// A second call on an initialised module, with a different profile,
+    /// leaves the first call's profile active.
+    #[test]
+    fn a_second_call_does_not_change_the_profile() {
+        let _guard = reset_for_test();
+        initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Cnsa2).unwrap();
+        match initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Unrestricted) {
+            Err(Error::AlreadyInitialized) => {}
+            other => panic!("expected AlreadyInitialized, got {other:?}"),
+        }
+        assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
+        match initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
+            Err(Error::AlreadyInitialized) => {}
+            other => panic!("expected AlreadyInitialized, got {other:?}"),
+        }
+        assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
+    }
+
+    /// Holds the winning call inside its self-tests until the racing call
+    /// has been made.
+    static RACER_CALLED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn wait_for_racer() -> Result<(), SelfTestFailure> {
+        while !RACER_CALLED.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        // The racer sets the flag immediately before it calls in; give that
+        // call time to reach the CAS while this one is still in `SelfTest`.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        Ok(())
+    }
+
+    /// A call made while another is running its self-tests leaves the
+    /// running call's profile active once both return.
+    #[test]
+    fn a_racing_call_does_not_change_the_profile() {
+        let _guard = reset_for_test();
+        RACER_CALLED.store(false, Ordering::Release);
+        let tests = [KatEntry {
+            name: "waits for the racing call",
+            run: wait_for_racer,
+        }];
+        let winner = std::thread::spawn(move || {
+            initialize_with_profile(UNSIGNED_TEST_BINARY, &tests, AlgorithmProfile::Cnsa2)
+        });
+        while state() != State::SelfTest {
+            std::thread::yield_now();
+        }
+        RACER_CALLED.store(true, Ordering::Release);
+        let racer =
+            initialize_with_profile(UNSIGNED_TEST_BINARY, &[], AlgorithmProfile::Unrestricted);
+        let winner = winner.join().unwrap();
+        assert!(winner.is_ok(), "the first call failed: {winner:?}");
+        match racer {
+            Err(Error::AlreadyInitialized) => {}
+            other => panic!("expected AlreadyInitialized, got {other:?}"),
+        }
+        assert_eq!(active_profile(), AlgorithmProfile::Cnsa2);
+    }
+
+    /// A winning call whose self-tests fail leaves the default profile, so
+    /// a module in `Error` does not report the profile it never served.
+    #[test]
+    fn a_failed_initialisation_leaves_the_default_profile() {
+        let guard = reset_for_test();
+        let failing = [KatEntry {
+            name: "always fails",
+            run: always_fail,
+        }];
+        match initialize_with_profile(UNSIGNED_TEST_BINARY, &failing, AlgorithmProfile::Cnsa2) {
+            Err(Error::SelfTestFailed { .. }) => {}
+            other => panic!("expected SelfTestFailed, got {other:?}"),
+        }
+        assert_eq!(state(), State::Error);
+        assert_eq!(active_profile(), AlgorithmProfile::Unrestricted);
+
+        guard.reset();
+        match initialize_with_profile(&[], &[], AlgorithmProfile::Cnsa1) {
+            Err(Error::IntegrityNotAttested) => {}
+            other => panic!("expected IntegrityNotAttested, got {other:?}"),
+        }
+        assert_eq!(active_profile(), AlgorithmProfile::Unrestricted);
     }
 
     #[test]

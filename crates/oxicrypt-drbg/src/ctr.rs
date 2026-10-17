@@ -38,7 +38,10 @@ use core::marker::PhantomData;
 
 use oxicrypt_aes::modes::BlockCipher;
 use oxicrypt_aes::{Aes128Key, Aes192Key, Aes256Key};
-use oxicrypt_module::{Error, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestStarted, Service, require_allowed, require_operational,
+    require_self_test_started_token,
+};
 
 /// AES block size in bytes (`outlen` in SP 800-90A terminology).
 const OUTLEN: usize = 16;
@@ -93,6 +96,16 @@ pub enum DrbgError {
     /// Requested output length exceeds `2^19` bits (SP 800-90A
     /// Table 3 `max_number_of_bits_per_request`).
     RequestTooLong,
+    /// The module refused the call: it is not in a state in which the
+    /// DRBG's underlying primitive may run (wraps
+    /// [`oxicrypt_module::Error`]).
+    Module(Error),
+}
+
+impl From<Error> for DrbgError {
+    fn from(value: Error) -> Self {
+        Self::Module(value)
+    }
 }
 
 impl core::fmt::Display for DrbgError {
@@ -122,6 +135,7 @@ impl core::fmt::Display for DrbgError {
                 "requested output exceeds 2^19 bits (65536 bytes) per call \
                  (SP 800-90A Table 3); split into multiple generate() calls"
             ),
+            Self::Module(e) => write!(f, "{e}"),
         }
     }
 }
@@ -140,12 +154,19 @@ pub trait CipherFactory {
     /// Instantiate a block cipher from exactly `KEY_LEN` bytes of
     /// key material.
     ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests); the cipher is built by the AES crate's
+    /// `*_internal` constructor.
+    ///
     /// # Panics
     ///
     /// Panics (via debug assert) if `key.len() != KEY_LEN`. Callers in
     /// this crate always pass the correct length.
-    #[must_use]
-    fn from_key(key: &[u8]) -> Self::Cipher;
+    fn from_key(key: &[u8]) -> Result<Self::Cipher, Error>;
 }
 
 /// `CipherFactory` implementation for AES-128.
@@ -160,7 +181,7 @@ impl CipherFactory for Aes128Factory {
     const SEED_LEN: usize = 32;
     const DRBG_SERVICE: Service = Service::CtrDrbgAes128;
     type Cipher = Aes128Key;
-    fn from_key(key: &[u8]) -> Self::Cipher {
+    fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = [0u8; 16];
         k.copy_from_slice(&key[..16]);
@@ -173,7 +194,7 @@ impl CipherFactory for Aes192Factory {
     const SEED_LEN: usize = 40;
     const DRBG_SERVICE: Service = Service::CtrDrbgAes192;
     type Cipher = Aes192Key;
-    fn from_key(key: &[u8]) -> Self::Cipher {
+    fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = [0u8; 24];
         k.copy_from_slice(&key[..24]);
@@ -186,7 +207,7 @@ impl CipherFactory for Aes256Factory {
     const SEED_LEN: usize = 48;
     const DRBG_SERVICE: Service = Service::CtrDrbgAes256;
     type Cipher = Aes256Key;
-    fn from_key(key: &[u8]) -> Self::Cipher {
+    fn from_key(key: &[u8]) -> Result<Self::Cipher, Error> {
         debug_assert_eq!(key.len(), Self::KEY_LEN);
         let mut k = [0u8; 32];
         k.copy_from_slice(&key[..32]);
@@ -256,7 +277,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         // (Key, V) = CTR_DRBG_Update(seed_material, Key, V)
         let mut provided = [0u8; MAX_SEED_LEN];
         provided[..F::SEED_LEN].copy_from_slice(seed_material);
-        self.update(&provided[..F::SEED_LEN]);
+        self.update(&provided[..F::SEED_LEN])?;
         self.reseed_counter = 1;
         self.instantiated = true;
         Ok(())
@@ -302,13 +323,16 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
         let mut derived = [0u8; MAX_SEED_LEN];
         self.block_cipher_df(&seed_material[..total], &mut derived[..F::SEED_LEN])
-            .map_err(|_| Error::InvalidInput)?;
+            .map_err(|e| match e {
+                DrbgError::Module(e) => e,
+                _ => Error::InvalidInput,
+            })?;
 
         for b in &mut self.key[..F::KEY_LEN] {
             *b = 0;
         }
         self.v = [0u8; OUTLEN];
-        self.update(&derived[..F::SEED_LEN]);
+        self.update(&derived[..F::SEED_LEN])?;
         self.reseed_counter = 1;
         self.instantiated = true;
         Ok(())
@@ -324,7 +348,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         }
         let mut provided = [0u8; MAX_SEED_LEN];
         provided[..F::SEED_LEN].copy_from_slice(seed_material);
-        self.update(&provided[..F::SEED_LEN]);
+        self.update(&provided[..F::SEED_LEN])?;
         self.reseed_counter = 1;
         Ok(())
     }
@@ -348,7 +372,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
         let mut derived = [0u8; MAX_SEED_LEN];
         self.block_cipher_df(&seed_material[..total], &mut derived[..F::SEED_LEN])?;
-        self.update(&derived[..F::SEED_LEN]);
+        self.update(&derived[..F::SEED_LEN])?;
         self.reseed_counter = 1;
         Ok(())
     }
@@ -358,6 +382,20 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// If `additional_input` is present it must be exactly
     /// `SEED_LEN` bytes.
     pub fn generate_no_df(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = self.generate_no_df_unwiped(additional_input, out);
+        if result.is_err() {
+            // A failed call leaves no generated bytes in the caller's buffer.
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::generate_no_df`]; the caller wipes `out` if it fails.
+    fn generate_no_df_unwiped(
         &mut self,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
@@ -379,13 +417,13 @@ impl<F: CipherFactory> CtrDrbg<F> {
                     return Err(DrbgError::InvalidSeedLength);
                 }
                 addl[..F::SEED_LEN].copy_from_slice(ai);
-                self.update(&addl[..F::SEED_LEN]);
+                self.update(&addl[..F::SEED_LEN])?;
                 true
             }
             None => false,
         };
 
-        self.generate_blocks(out);
+        self.generate_blocks(out)?;
 
         // Final Update with additional_input (or zeros if not provided).
         if !have_addl {
@@ -393,7 +431,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
                 *b = 0;
             }
         }
-        self.update(&addl[..F::SEED_LEN]);
+        self.update(&addl[..F::SEED_LEN])?;
         self.reseed_counter += 1;
         Ok(())
     }
@@ -403,6 +441,20 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// `additional_input` may be any length up to [`MAX_DF_INPUT`]; it
     /// is passed through `Block_Cipher_df` before being mixed in.
     pub fn generate_df(
+        &mut self,
+        additional_input: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<(), DrbgError> {
+        let result = self.generate_df_unwiped(additional_input, out);
+        if result.is_err() {
+            // A failed call leaves no generated bytes in the caller's buffer.
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::generate_df`]; the caller wipes `out` if it fails.
+    fn generate_df_unwiped(
         &mut self,
         additional_input: Option<&[u8]>,
         out: &mut [u8],
@@ -424,20 +476,20 @@ impl<F: CipherFactory> CtrDrbg<F> {
                     return Err(DrbgError::InputTooLong);
                 }
                 self.block_cipher_df(ai, &mut addl[..F::SEED_LEN])?;
-                self.update(&addl[..F::SEED_LEN]);
+                self.update(&addl[..F::SEED_LEN])?;
                 true
             }
             None => false,
         };
 
-        self.generate_blocks(out);
+        self.generate_blocks(out)?;
 
         if !have_addl {
             for b in &mut addl[..F::SEED_LEN] {
                 *b = 0;
             }
         }
-        self.update(&addl[..F::SEED_LEN]);
+        self.update(&addl[..F::SEED_LEN])?;
         self.reseed_counter += 1;
         Ok(())
     }
@@ -498,15 +550,16 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// CTR_DRBG_Update — SP 800-90A §10.2.1.2.
     ///
     /// `provided_data` must be exactly `SEED_LEN` bytes long.
-    fn update(&mut self, provided_data: &[u8]) {
+    fn update(&mut self, provided_data: &[u8]) -> Result<(), Error> {
         debug_assert_eq!(provided_data.len(), F::SEED_LEN);
-        let cipher = F::from_key(&self.key[..F::KEY_LEN]);
+        let started = require_self_test_started_token()?;
+        let cipher = F::from_key(&self.key[..F::KEY_LEN])?;
         let mut temp = [0u8; MAX_SEED_LEN];
         let mut produced = 0usize;
         while produced < F::SEED_LEN {
             increment_counter(&mut self.v);
             let mut block = self.v;
-            cipher.encrypt_block(&mut block);
+            cipher.encrypt_block_with(&started, &mut block);
             let take = core::cmp::min(OUTLEN, F::SEED_LEN - produced);
             temp[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
@@ -520,20 +573,23 @@ impl<F: CipherFactory> CtrDrbg<F> {
         // V = rightmost(temp, outlen)
         self.v
             .copy_from_slice(&temp[F::KEY_LEN..F::KEY_LEN + OUTLEN]);
+        Ok(())
     }
 
     /// Core output-generation loop from §10.2.1.5.
-    fn generate_blocks(&mut self, out: &mut [u8]) {
-        let cipher = F::from_key(&self.key[..F::KEY_LEN]);
+    fn generate_blocks(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        let cipher = F::from_key(&self.key[..F::KEY_LEN])?;
         let mut produced = 0usize;
         while produced < out.len() {
             increment_counter(&mut self.v);
             let mut block = self.v;
-            cipher.encrypt_block(&mut block);
+            cipher.encrypt_block_with(&started, &mut block);
             let take = core::cmp::min(OUTLEN, out.len() - produced);
             out[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
         }
+        Ok(())
     }
 
     /// Block_Cipher_df — SP 800-90A §10.3.2.
@@ -544,6 +600,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         if input.len() > MAX_DF_INPUT {
             return Err(DrbgError::InputTooLong);
         }
+        let started = require_self_test_started_token()?;
         let no_bits_return_bytes = out.len();
         debug_assert!(no_bits_return_bytes <= MAX_SEED_LEN);
 
@@ -578,7 +635,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
         for i in 0..F::KEY_LEN {
             k[i] = i as u8;
         }
-        let k_cipher = F::from_key(&k[..F::KEY_LEN]);
+        let k_cipher = F::from_key(&k[..F::KEY_LEN])?;
 
         // temp = BCC outputs, length = keylen + outlen
         let mut temp = [0u8; MAX_SEED_LEN];
@@ -591,7 +648,7 @@ impl<F: CipherFactory> CtrDrbg<F> {
             for b in &mut s_buf[4..OUTLEN] {
                 *b = 0;
             }
-            let block = bcc(&k_cipher, &s_buf[..total_bcc_in]);
+            let block = bcc(&k_cipher, &started, &s_buf[..total_bcc_in]);
             let take = core::cmp::min(OUTLEN, target - produced);
             temp[produced..produced + take].copy_from_slice(&block[..take]);
             produced += take;
@@ -599,13 +656,13 @@ impl<F: CipherFactory> CtrDrbg<F> {
         }
 
         // K' = leftmost(temp, keylen), X = select(temp, keylen, outlen)
-        let k2_cipher = F::from_key(&temp[..F::KEY_LEN]);
+        let k2_cipher = F::from_key(&temp[..F::KEY_LEN])?;
         let mut x = [0u8; OUTLEN];
         x.copy_from_slice(&temp[F::KEY_LEN..F::KEY_LEN + OUTLEN]);
 
         let mut out_produced = 0usize;
         while out_produced < no_bits_return_bytes {
-            k2_cipher.encrypt_block(&mut x);
+            k2_cipher.encrypt_block_with(&started, &mut x);
             let take = core::cmp::min(OUTLEN, no_bits_return_bytes - out_produced);
             out[out_produced..out_produced + take].copy_from_slice(&x[..take]);
             out_produced += take;
@@ -628,7 +685,7 @@ impl<F: CipherFactory> Drop for CtrDrbg<F> {
 }
 
 /// BCC — SP 800-90A §10.3.3. `data` length must be a multiple of 16.
-fn bcc<B: BlockCipher>(cipher: &B, data: &[u8]) -> [u8; OUTLEN] {
+fn bcc<B: BlockCipher>(cipher: &B, started: &SelfTestStarted, data: &[u8]) -> [u8; OUTLEN] {
     debug_assert_eq!(data.len() % OUTLEN, 0);
     let mut chaining = [0u8; OUTLEN];
     let mut i = 0usize;
@@ -636,7 +693,7 @@ fn bcc<B: BlockCipher>(cipher: &B, data: &[u8]) -> [u8; OUTLEN] {
         for j in 0..OUTLEN {
             chaining[j] ^= data[i + j];
         }
-        cipher.encrypt_block(&mut chaining);
+        cipher.encrypt_block_with(started, &mut chaining);
         i += OUTLEN;
     }
     chaining
@@ -688,6 +745,7 @@ mod tests {
     // ---------------- AES-128 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes128_no_df_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("ce50f33da5d4c1d3d4004eb35244b7f2cd7f2e5076fbf6780a7ff634b249a5fc");
         let expected: [u8; 64] = hex_to_bytes(
@@ -704,6 +762,7 @@ mod tests {
     // ---------------- AES-192 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes192_no_df_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 40] = hex_to_bytes(
             "f1ef7eb311c850e189be229df7e6d68f1795aa8e21d93504e75abe78f041395873540386812a9a2a",
         );
@@ -721,6 +780,7 @@ mod tests {
     // ---------------- AES-256 no df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes256_no_df_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 48] = hex_to_bytes(
             "df5d73faa468649edda33b5cca79b0b05600419ccb7a879ddfec9db32ee494e5531b51de16a30f769262474c73bec010",
         );
@@ -738,6 +798,7 @@ mod tests {
     // ---------------- AES-128 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes128_df_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 16] = hex_to_bytes("890eb067acf7382eff80b0c73bc872c6");
         let nonce: [u8; 8] = hex_to_bytes("aad471ef3ef1d203");
         let expected: [u8; 64] = hex_to_bytes(
@@ -754,6 +815,7 @@ mod tests {
     // ---------------- AES-192 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes192_df_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 24] = hex_to_bytes("c35c2fa2a89d52a11fa32aa96c95b8f1c9a8f9cb245a8b40");
         let nonce: [u8; 16] = hex_to_bytes("f3a6e5a7fbd9d3c68e277ba9ac9bbb00");
         let expected: [u8; 64] = hex_to_bytes(
@@ -770,6 +832,7 @@ mod tests {
     // ---------------- AES-256 use df CAVP Count=0 ----------------
     #[test]
     fn cavp_ctr_drbg_aes256_df_count0() {
+        crate::test_support::start_module();
         let entropy: [u8; 32] =
             hex_to_bytes("36401940fa8b1fba91a1661f211d78a0b9389a74e5bccfece8d766af1a6d3b14");
         let nonce: [u8; 16] = hex_to_bytes("496f25b0f1301b4f501be30380a137eb");
@@ -789,6 +852,7 @@ mod tests {
     // generate_pr(e, ai) == reseed(e, ai) + generate(None).
     #[test]
     fn generate_df_pr_matches_reseed_then_generate() {
+        crate::test_support::start_module();
         let entropy: [u8; 16] = [0x11u8; 16];
         let nonce: [u8; 8] = [0x22u8; 8];
         let reseed_e: [u8; 16] = [0x33u8; 16];
@@ -810,6 +874,7 @@ mod tests {
 
     #[test]
     fn generate_no_df_pr_matches_reseed_then_generate() {
+        crate::test_support::start_module();
         // AES-128 no df: seed_material must be exactly SEED_LEN = 32 bytes.
         let seed_init: [u8; 32] = [0xaau8; 32];
         let seed_reseed: [u8; 32] = [0xbbu8; 32];
@@ -830,6 +895,7 @@ mod tests {
 
     #[test]
     fn counter_increment_wraps_carry() {
+        crate::test_support::start_module();
         let mut v = [0xffu8; OUTLEN];
         increment_counter(&mut v);
         assert_eq!(v, [0u8; OUTLEN]);
@@ -840,6 +906,7 @@ mod tests {
     /// band on all three entry points that reach `block_cipher_df`.
     #[test]
     fn df_accepts_every_length_up_to_max_df_input() {
+        crate::test_support::start_module();
         let material = [0x5au8; MAX_DF_INPUT];
         for len in 0..=MAX_DF_INPUT {
             // instantiate_df: entropy || nonce || personalization
@@ -862,6 +929,7 @@ mod tests {
     /// path, before the derivation function is reached.
     #[test]
     fn df_rejects_one_byte_over_max_df_input() {
+        crate::test_support::start_module();
         let material = [0x5au8; MAX_DF_INPUT + 1];
 
         let mut a = CtrDrbgAes256::new();

@@ -68,7 +68,7 @@ fn generate_rsa_oaep_crt_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -145,7 +145,7 @@ fn generate_rsa_oaep_crt_slice() {
             &ct,
             &mut out,
         )
-        .unwrap_or_else(|| panic!("CRT decrypt failed for test {i}"));
+        .unwrap_or_else(|e| panic!("CRT decrypt failed for test {i}: {e:?}"));
         assert_eq!(
             &out[..mlen],
             msg.as_slice(),

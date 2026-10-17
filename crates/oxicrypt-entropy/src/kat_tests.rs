@@ -34,6 +34,7 @@ fn alpha20() -> Alpha {
 
 #[test]
 fn kat_dead_source_trips_rct_at_cutoff() {
+    crate::test_support::start_module();
     let mut m = HealthMonitor::new(MinEntropy::from_bits(2), false, alpha20()).unwrap();
     let mut tripped_at = None;
     for (i, &b) in RCT_DEAD.iter().enumerate() {
@@ -52,6 +53,7 @@ fn kat_dead_source_trips_rct_at_cutoff() {
 
 #[test]
 fn kat_low_variety_trips_apt_in_first_window() {
+    crate::test_support::start_module();
     let mut m = HealthMonitor::new(MinEntropy::from_bits(8), false, alpha20()).unwrap();
     let mut tripped_at = None;
     for (i, &b) in APT_LOW_VARIETY.iter().enumerate() {
@@ -71,6 +73,7 @@ fn kat_low_variety_trips_apt_in_first_window() {
 
 #[test]
 fn kat_healthy_stream_passes_in_full() {
+    crate::test_support::start_module();
     let mut m = HealthMonitor::new(MinEntropy::from_bits(2), false, alpha20()).unwrap();
     for &b in HEALTHY {
         m.feed(b).unwrap();

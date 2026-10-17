@@ -39,6 +39,7 @@
 #![allow(clippy::indexing_slicing)]
 
 use oxicrypt_drbg::HmacDrbgSha256;
+use oxicrypt_module::{Error, require_self_test_started};
 
 use crate::p256_ecdsa::{PRIVATE_KEY_LEN, PUBLIC_KEY_LEN, derive_public_key_internal};
 use crate::p256_scalar::Scalar;
@@ -51,12 +52,17 @@ const MAX_SAMPLE_ATTEMPTS: usize = 64;
 /// Draw a uniform scalar in `[1, n − 1]` from `drbg` using the
 /// FIPS 186-5 §A.2.2 "Testing Candidates" method.
 ///
-/// Returns `Some(d)` where `d` is a valid non-zero scalar byte
-/// representation, or `None` if the DRBG fails or refuses to produce
-/// an in-range value within `MAX_SAMPLE_ATTEMPTS` tries.
+/// Returns `d`, a valid non-zero scalar byte representation, or
+/// [`Error::InvalidInput`] if the DRBG fails or produces no in-range value
+/// within `MAX_SAMPLE_ATTEMPTS` tries. A refusal by the module, including
+/// one the DRBG reports, is returned as [`Error::NotOperational`].
 ///
-/// This is the `*_internal` primitive — it does not gate on module
-/// state and is safe to call from KATs, PCTs, and from the
+/// This is the `*_internal` primitive — it skips the operational
+/// and profile gates, refuses unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call (in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests),
+/// and is safe to call from KATs, PCTs, and from the
 /// module-state-checked wrappers above.
 ///
 /// Visibility is `pub` rather than `pub(crate)` because
@@ -66,16 +72,30 @@ const MAX_SAMPLE_ATTEMPTS: usize = 64;
 /// Centralising the rejection-sampler here means a CST-lab reviewer
 /// audits one constant-time, range-checked sampler covering both
 /// families.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
-pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_KEY_LEN]> {
+pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Result<[u8; PRIVATE_KEY_LEN], Error> {
+    require_self_test_started()?;
+    sample_scalar_internal_unguarded(drbg)?.ok_or(Error::InvalidInput)
+}
+
+/// Body of [`sample_scalar_internal`], run once its guard has passed.
+fn sample_scalar_internal_unguarded(
+    drbg: &mut HmacDrbgSha256,
+) -> Result<Option<[u8; PRIVATE_KEY_LEN]>, Error> {
     let mut buf = [0u8; PRIVATE_KEY_LEN];
     for _ in 0..MAX_SAMPLE_ATTEMPTS {
-        if drbg.generate(None, &mut buf).is_err() {
+        if let Err(e) = drbg.generate(None, &mut buf) {
             // CSP scrub: clear any partial DRBG output before
             // returning, through `oxicrypt-zeroize`'s volatile store so
             // the write survives optimisation.
             oxicrypt_zeroize::zeroize(&mut buf);
-            return None;
+            return match e {
+                oxicrypt_drbg::DrbgError::Module(e) => Err(e),
+                _ => Ok(None),
+            };
         }
         // `Scalar::from_bytes` returns `None` for bytes ≥ n and
         // also silently accepts the zero encoding; we reject zero
@@ -93,7 +113,7 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
             // though `buf` is dead afterwards.
             let result = buf;
             oxicrypt_zeroize::zeroize(&mut buf);
-            return Some(result);
+            return Ok(Some(result));
         }
         // CSP scrub: rejected candidates linger in `buf` between
         // iterations otherwise. Although a rejected scalar (≥ n or
@@ -102,14 +122,14 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
         // FIPS 140-3 IG §7.9.7 AS09.32 — zeroised when no longer needed.
         oxicrypt_zeroize::zeroize(&mut buf);
     }
-    None
+    Ok(None)
 }
 
 /// Generate a fresh P-256 key pair.
 ///
 /// Returns `(d_bytes, pk_bytes)` where `d_bytes` is a uniform
 /// scalar in `[1, n − 1]` and `pk_bytes` is the uncompressed SEC1
-/// encoding of `d · G`. Returns `None` iff the DRBG fails or fails
+/// encoding of `d · G`. Returns [`Error::InvalidInput`] iff the DRBG fails or fails
 /// to produce an in-range scalar within `MAX_SAMPLE_ATTEMPTS`
 /// attempts — in practice, only a broken DRBG.
 ///
@@ -127,11 +147,15 @@ pub fn sample_scalar_internal(drbg: &mut HmacDrbgSha256) -> Option<[u8; PRIVATE_
 /// drawn from the same approved DRBG; centralising the keygen
 /// primitive here keeps a single FIPS 186-5 §A.2.2 implementation
 /// across both families.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
 pub fn generate_p256_internal(
     drbg: &mut HmacDrbgSha256,
-) -> Option<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN])> {
+) -> Result<([u8; PRIVATE_KEY_LEN], [u8; PUBLIC_KEY_LEN]), Error> {
+    require_self_test_started()?;
     let d = sample_scalar_internal(drbg)?;
     let pk = derive_public_key_internal(&d)?;
-    Some((d, pk))
+    Ok((d, pk))
 }

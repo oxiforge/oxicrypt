@@ -67,6 +67,7 @@ mod aes;
 mod drbg;
 mod error;
 mod handle;
+mod power_up;
 pub use aes::{
     OxiAes256Key, oxi_aes256_cbc_decrypt, oxi_aes256_cbc_encrypt, oxi_aes256_ccm_decrypt,
     oxi_aes256_ccm_encrypt, oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free,
@@ -101,6 +102,10 @@ pub use error::OxiResult;
 use crate::error::{OxiResult as R, status_kdf, status_module};
 use crate::handle::OxiHandle;
 use core::ffi::c_int;
+#[cfg(test)]
+use kat_tests::initialize_with_profile;
+#[cfg(not(test))]
+use oxicrypt_module::initialize_with_profile;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -147,11 +152,15 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8
 
 // ── Module lifecycle ─────────────────────────────────────────────
 
-/// Collect every algorithm KAT entry from every algorithm crate into a
-/// single flat `Vec`.
+/// The integrity self-test and the algorithm self-tests [`oxi_init`] passes
+/// to `initialize_with_profile`, in that order.
 ///
-/// The integrity self-test KAT (`oxicrypt_integrity::KATS`) is not
-/// collected here: [`oxi_init`] passes it separately, as the required
+/// The algorithm self-tests are the `KATS` of every approved algorithm crate
+/// this library links, 18 crates, listed in `power_up.rs`. `kat_tests` reads
+/// the library's resolved dependency graph and fails if a linked algorithm
+/// crate is missing, and checks that `oxi_init` passes exactly this pair.
+///
+/// The integrity self-test (`oxicrypt_integrity::KATS`) is the required
 /// integrity argument to `initialize_with_profile`. `oxicrypt_integrity`
 /// verifies the artifact that contains it — it locates its slot by that
 /// slot's own runtime address, so a cdylib verifies itself rather than
@@ -160,26 +169,11 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut u8, len: usize) -> Result<&'a mut [u8
 /// The integrity slot ships in the cdylib and staticlib (forced via
 /// the `_SLOT_REF` static below) and the shared library is sign-able
 /// with `oxicrypt-integrity-sign --cdylib-target …`.
-fn collect_kats() -> Vec<oxicrypt_module::KatEntry> {
-    let all_kats: &[&[oxicrypt_module::KatEntry]] = &[
-        oxicrypt_sha::KATS,
-        oxicrypt_hmac::KATS,
-        oxicrypt_aes::KATS,
-        oxicrypt_drbg::KATS,
-        oxicrypt_ecdsa::KATS,
-        oxicrypt_eddsa::KATS,
-        oxicrypt_ecdh::KATS,
-        oxicrypt_dh::KATS,
-        oxicrypt_rsa::KATS,
-        oxicrypt_lms::KATS,
-    ];
-    let mut merged = Vec::new();
-    for group in all_kats {
-        for kat in *group {
-            merged.push(*kat);
-        }
-    }
-    merged
+fn power_up_set() -> (
+    &'static [oxicrypt_module::KatEntry],
+    Vec<oxicrypt_module::KatEntry>,
+) {
+    (oxicrypt_integrity::KATS, power_up::algorithm_self_tests())
 }
 
 /// Force the integrity slot into the cdylib/staticlib output.
@@ -237,20 +231,21 @@ pub extern "C" fn lama_manifest() -> *const core::ffi::c_char {
 /// - `3` — Migration (both suites at once; not a CNSA profile)
 ///
 /// Any other value returns [`OxiResult::InvalidInput`] without
-/// performing initialisation. This is per F4 reviewer-framing —
-/// distinct error variants per failure mode rather than silently
-/// defaulting unknown codes to a profile.
+/// performing initialisation, rather than silently defaulting an unknown
+/// code to a profile.
 ///
-/// Idempotent: calling `oxi_init` more than once returns
-/// [`OxiResult::Ok`] on the second call. **The first init's outcome
-/// is authoritative** — both the success/failure state AND the
-/// active profile are determined by the first successful call. A
-/// second call passing a *different* profile selector is silently
-/// accepted and the *original* profile remains active. Callers that
-/// need to verify which profile is in effect must call
-/// [`oxi_active_profile`] after `oxi_init` returns.
+/// Initialisation happens once per process, and **the first init's
+/// outcome is authoritative**. A later call runs no self-test and
+/// returns that outcome: [`OxiResult::Ok`] if the first call succeeded,
+/// and [`OxiResult::NotOperational`] if it failed, because a failed
+/// initialisation is terminal until the process restarts. The active
+/// profile is the one the first successful call selected; a later call
+/// passing a *different* profile selector is accepted and the
+/// *original* profile remains active. Callers that need to verify which
+/// profile is in effect must call [`oxi_active_profile`] after
+/// `oxi_init` returns.
 ///
-/// Must be called exactly once before any other `oxi_*` function.
+/// Must be called before any other `oxi_*` function.
 /// Returns `0` on success or a non-zero `OxiResult` discriminant.
 ///
 /// # Safety
@@ -266,15 +261,15 @@ pub extern "C" fn oxi_init(profile: c_int) -> c_int {
         _ => return R::InvalidInput as c_int,
     };
     // Idempotent fast-path: skip KAT collection on already-operational
-    // re-init. `collect_kats` aggregates the crate KAT slices into a fresh
+    // re-init. `power_up_set` aggregates the crate KAT slices into a fresh
     // `Vec` and `initialize_with_profile` would discard them via
     // `AlreadyInitialized` regardless. One atomic load saves the
     // allocation on every subsequent call.
     if oxicrypt_module::is_operational() {
         return R::Ok as c_int;
     }
-    let kats = collect_kats();
-    match oxicrypt_module::initialize_with_profile(oxicrypt_integrity::KATS, &kats, p) {
+    let (integrity, tests) = power_up_set();
+    match initialize_with_profile(integrity, &tests, p) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => R::Ok as c_int,
         Err(e) => status_module(Err(e)),
     }
@@ -328,20 +323,31 @@ pub extern "C" fn oxi_is_operational() -> c_int {
 /// | Value | Meaning |
 /// |---|---|
 /// | 0 | `NotRun` — the test has not run in this process |
-/// | 1 | `Passed` — the image matched its reference MAC |
-/// | 2 | `Mismatch` — the image does not match its reference MAC |
-/// | 3 | `SlotInvalid` — the slot is absent, malformed, or impossible |
-/// | 4 | `Unreadable` — the test was **not performed** |
-/// | 5 | `CastNotRun` — the test was reached before its CAST |
+/// | 1 | `Passed` — the signature over the image verified |
+/// | 2 | `SignatureInvalid` — the image does not match its signature |
+/// | 3 | `SlotInvalid` — the slot is the unsigned template, as in an unsigned build or a signed one whose slot was overwritten; not on its own a reason to sign (see the remedies below) |
+/// | 4 | `Unreadable` — the test was **not performed**; do not sign, and obtain a fresh copy if it persists |
+/// | 5 | `CastNotRun` — the test was reached before its CASTs passed |
 /// | 6 | `Unknown` — the record held a value this module never writes |
+/// | 7 | `Refused` — the module refused a primitive, so the test was **not performed** |
+/// | 8 | `NoVerifyKey` — the library carries no verifying key, as in a key-less build or a signed one whose key was zeroed; as for 3 |
+/// | 9 | `KeyMismatch` — the slot was signed for a different key than the library embeds |
+/// | 10 | `SlotDamaged` — the slot, the key record or a bound import is damaged; do not re-sign |
+///
+/// Remedies: no value is on its own a reason to sign the library. If you
+/// built it from source yourself and have not signed it yet, sign it with
+/// your own key; if you received it from anyone else, do not sign it and
+/// obtain a fresh copy from its publisher. For 2, 9 and 10, never sign it
+/// again.
 ///
 /// This exists because `oxi_init` cannot carry the distinction: a
 /// failing self-test returns [`OxiResult::SelfTestFailed`] whatever the
-/// cause, so `Mismatch` and `Unreadable` are indistinguishable from its
-/// return value alone. Security Policy §5.2 requires an operator and a
-/// test laboratory to be able to tell those two apart — a corrupt module
-/// from an environment that could not supply the module's own bytes —
-/// and this query is how that is retrieved.
+/// cause, so `SignatureInvalid` and `Unreadable` are indistinguishable from
+/// its return value alone. An operator and a test laboratory must be able
+/// to tell those apart — a corrupt module from
+/// one signed for another key, one built without a key, and an environment
+/// that could not supply the module's own bytes — and this query is how
+/// that is retrieved.
 ///
 /// The value latches on the first run and nothing is re-run here, so a
 /// later call cannot revise it and this is safe to call from the error
@@ -354,6 +360,104 @@ pub extern "C" fn oxi_is_operational() -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn oxi_integrity_status() -> c_int {
     oxicrypt_integrity::status() as c_int
+}
+
+/// Writes the fingerprint of the verifying key this library embeds: the
+/// SHA-256 of the encoded ML-DSA-87 public key, 32 bytes, to `out`.
+///
+/// The fingerprint names the signer this build trusts: a project release
+/// embeds the project key, a source build the builder's own. It is recorded
+/// when the integrity test reads the key, so it is available after
+/// [`oxi_init`] whether or not the test passed, and it equals the
+/// fingerprint `oxicrypt-integrity-sign --show` prints for the file.
+///
+/// Returns:
+/// - [`OxiResult::Ok`] — the fingerprint was written to `out[0..32]`.
+/// - [`OxiResult::NullPointer`] — `out` is null.
+/// - [`OxiResult::BufferTooSmall`] — `out_len` is less than 32. Nothing is
+///   written.
+/// - [`OxiResult::NotOperational`] — no fingerprint is known, and nothing
+///   is written. The integrity test has not read a key: `oxi_init` has not
+///   run it, its CAST failed first, the key record could not be read or
+///   is malformed, or the library embeds no key. `oxi_integrity_status`
+///   tells these apart (`NotRun`, `CastNotRun`, `Unreadable`,
+///   `SlotDamaged`, `NoVerifyKey`).
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `out_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_integrity_key_fingerprint(out: *mut u8, out_len: usize) -> c_int {
+    if out.is_null() {
+        return R::NullPointer as c_int;
+    }
+    if out_len < 32 {
+        return R::BufferTooSmall as c_int;
+    }
+    match oxicrypt_integrity::verify_key_fingerprint() {
+        Some(fp) => {
+            // SAFETY: `out` is non-null and the caller guarantees it is valid
+            // for `out_len` >= 32 bytes; `fp` is a local 32-byte array.
+            unsafe { core::ptr::copy_nonoverlapping(fp.as_ptr(), out, fp.len()) };
+            R::Ok as c_int
+        }
+        None => R::NotOperational as c_int,
+    }
+}
+
+/// Writes the integrity test's failure in words, NUL-terminated UTF-8, to
+/// `out`: the cause the status value cannot carry, such as which slot
+/// defect, which memory route's error, or which lengths disagreed.
+///
+/// `*written` always receives the number of bytes the text needs including
+/// its NUL, or 0 when there is none, so a caller can pass `out_len` 0 to
+/// size the buffer first.
+///
+/// Returns:
+/// - [`OxiResult::Ok`] — the text and its NUL were written.
+/// - [`OxiResult::NullPointer`] — `written` is null, or `out` is null with a
+///   non-zero `out_len`; in the second case `*written` still receives the
+///   size.
+/// - [`OxiResult::BufferTooSmall`] — `out_len` is less than `*written`.
+///   Nothing is written to `out`.
+/// - [`OxiResult::NotOperational`] — the boot sequence's integrity test has
+///   not failed in this process, so there is no text; `*written` is 0.
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `out_len` bytes and `written` for one
+/// `usize`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oxi_integrity_status_detail(
+    out: *mut u8,
+    out_len: usize,
+    written: *mut usize,
+) -> c_int {
+    if written.is_null() {
+        return R::NullPointer as c_int;
+    }
+    let Some(detail) = oxicrypt_integrity::status_detail() else {
+        // SAFETY: `written` is non-null and valid for one `usize`.
+        unsafe { written.write(0) };
+        return R::NotOperational as c_int;
+    };
+    let needed = detail.len().saturating_add(1);
+    // SAFETY: as above. Written before any other refusal, so a caller
+    // always learns the size it needs.
+    unsafe { written.write(needed) };
+    if out.is_null() && out_len != 0 {
+        return R::NullPointer as c_int;
+    }
+    if out_len < needed {
+        return R::BufferTooSmall as c_int;
+    }
+    // SAFETY: `out` is non-null (out_len >= needed > 0) and valid for
+    // `out_len` >= `needed` bytes; the text and its NUL fit.
+    unsafe {
+        core::ptr::copy_nonoverlapping(detail.as_ptr(), out, detail.len());
+        out.add(detail.len()).write(0);
+    }
+    R::Ok as c_int
 }
 
 // ── SHA-256 ──────────────────────────────────────────────────────
@@ -688,7 +792,10 @@ pub unsafe extern "C" fn oxi_hmac_sha256(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
     R::Ok as c_int
 }
@@ -726,7 +833,10 @@ pub unsafe extern "C" fn oxi_hmac_sha384(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 48) };
     R::Ok as c_int
 }
@@ -764,7 +874,10 @@ pub unsafe extern "C" fn oxi_hmac_sha512(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
     R::Ok as c_int
 }
@@ -802,7 +915,10 @@ pub unsafe extern "C" fn oxi_hmac_sha3_224(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 28) };
     R::Ok as c_int
 }
@@ -840,7 +956,10 @@ pub unsafe extern "C" fn oxi_hmac_sha3_256(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 32) };
     R::Ok as c_int
 }
@@ -878,7 +997,10 @@ pub unsafe extern "C" fn oxi_hmac_sha3_384(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 48) };
     R::Ok as c_int
 }
@@ -916,7 +1038,10 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
         Err(e) => return status_module(Err(e)),
     };
     mac.update(data);
-    let tag = mac.finalize();
+    let tag = match mac.finalize() {
+        Ok(t) => t,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(tag.as_ptr(), out, 64) };
     R::Ok as c_int
 }
@@ -926,7 +1051,7 @@ pub unsafe extern "C" fn oxi_hmac_sha3_512(
 // Three pure-functional entry points per curve: derive_public_key,
 // sign_with_k (caller supplies per-message secret `k`), verify. The
 // stateful surface — DRBG-sampled keygen and DRBG-sampled signing —
-// lands in a follow-up PR after the DRBG family C ABI ships.
+// is the private-key handle surface further down this file.
 //
 // Byte layouts (per curve):
 //   P-256: d=32, public_key=65 (SEC1 §2.3.3 uncompressed: 0x04||X||Y),
@@ -1201,9 +1326,8 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_verify(
 // is the entire HKDF state, so we expose it as raw bytes between
 // `extract` and `expand` rather than wrapping it in an opaque
 // handle. Caller decides PRK storage (RAM, KMS, file). Profile
-// gating routes through `P::KDF_SERVICE` per CMVP gem D5 — same
-// KDF mechanism with a different PRF is a different approved
-// service per SP 800-56C Rev. 2.
+// gating routes through `P::KDF_SERVICE`, because each PRF choice is
+// its own approved service in this module.
 
 // ── HKDF-SHA-256 ─────────────────────────────────────────────────
 
@@ -1243,7 +1367,11 @@ pub unsafe extern "C" fn oxi_hkdf_sha256_extract(
         Ok(h) => h,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(hk.prk().as_ptr(), prk_out, 32) };
+    let prk = match hk.prk() {
+        Ok(p) => p,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(prk.as_ptr(), prk_out, 32) };
     R::Ok as c_int
 }
 
@@ -1324,7 +1452,11 @@ pub unsafe extern "C" fn oxi_hkdf_sha384_extract(
         Ok(h) => h,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(hk.prk().as_ptr(), prk_out, 48) };
+    let prk = match hk.prk() {
+        Ok(p) => p,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(prk.as_ptr(), prk_out, 48) };
     R::Ok as c_int
 }
 
@@ -1405,7 +1537,11 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_extract(
         Ok(h) => h,
         Err(e) => return R::from(e) as c_int,
     };
-    unsafe { core::ptr::copy_nonoverlapping(hk.prk().as_ptr(), prk_out, 64) };
+    let prk = match hk.prk() {
+        Ok(p) => p,
+        Err(e) => return R::from(e) as c_int,
+    };
+    unsafe { core::ptr::copy_nonoverlapping(prk.as_ptr(), prk_out, 64) };
     R::Ok as c_int
 }
 
@@ -1466,6 +1602,10 @@ pub unsafe extern "C" fn oxi_hkdf_sha512_expand(
 /// `length || "tls13 " + label || context` and runs HKDF-Expand
 /// (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
 ///
+/// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+/// hash blocks, if the label is empty or longer than 249 bytes, or if the
+/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `out` must be a writable
@@ -1508,6 +1648,10 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha256(
 /// Builds the HkdfLabel wire structure
 /// `length || "tls13 " + label || context` and runs HKDF-Expand
 /// (RFC 5869 §2.3) to fill `out` with `out_len` bytes.
+///
+/// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+/// hash blocks, if the label is empty or longer than 249 bytes, or if the
+/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
 ///
 /// # Safety
 ///
@@ -1554,6 +1698,10 @@ pub unsafe extern "C" fn oxi_tls13_hkdf_expand_label_sha384(
 /// out_len)`. The caller computes `Hash(messages)` (the running
 /// transcript hash) and passes it as `transcript_hash`.
 ///
+/// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+/// hash blocks, if the label is empty or longer than 249 bytes, or if the
+/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `out` must be a writable
@@ -1597,6 +1745,10 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha256(
 /// Equivalent to `HKDF-Expand-Label(secret, label, transcript_hash,
 /// out_len)`. The caller computes `Hash(messages)` (the running
 /// transcript hash) and passes it as `transcript_hash`.
+///
+/// Returns `OxiResult::InvalidInput = 5` if `out_len` exceeds 65535 or 255
+/// hash blocks, if the label is empty or longer than 249 bytes, or if the
+/// context is longer than 255 bytes (RFC 8446 §7.1), with `out` zeroized.
 ///
 /// # Safety
 ///
@@ -1651,8 +1803,8 @@ pub unsafe extern "C" fn oxi_tls13_derive_secret_sha384(
 //     because there is no `k` to supply.
 //   - verify(pk, msg, sig) → bool  per RFC 8032 §5.1.7 — returns
 //     `Ok(false)` for well-formed-but-invalid; we map that to
-//     `OxiResult::TagMismatch = 22` per the cross-family
-//     verify-mismatch generalization (security-policy §4.7).
+//     `OxiResult::TagMismatch = 22`, as every verify family in
+//     this file does.
 //
 // Byte layout: seed = 32 bytes; public_key = 32 bytes (compressed
 // twisted Edwards point per RFC 8032 §5.1.2 — Y-coord plus 1 sign
@@ -1799,8 +1951,7 @@ pub unsafe extern "C" fn oxi_ed25519_verify(
 // big-endian x-coordinate of `d * Q`. `Z` is the **raw** ECDH output
 // per SP 800-56Ar3 — callers MUST run an SP 800-56C Rev. 2 extractor
 // (HKDF, KBKDF) over `Z` before using it as keying material; the FFI
-// intentionally does not bundle a KDF (see paragraph in
-// `docs/security-policy/security-policy.md` §4.8).
+// intentionally does not bundle a KDF.
 //
 // Errors: `InvalidInput = 5` covers BOTH a non-canonical private
 // scalar `d` AND a peer public key that fails SP 800-56Ar3 §5.6.2.3.3
@@ -1936,8 +2087,7 @@ pub unsafe extern "C" fn oxi_ecdh_p384_compute_shared_secret(
 /// pointer (the FFI projects `*mut OxiHmacDrbgSha256` to
 /// `&mut HmacDrbgSha256` for the duration of this call, which
 /// Rust's exclusivity rule enforces internally but cannot enforce
-/// across the C boundary). See the per-call-mutating-handle
-/// paragraph in `docs/security-policy/security-policy.md` §4.8.
+/// across the C boundary).
 ///
 /// Returns `OxiResult::Ok = 0` on success;
 /// `OxiResult::NullPointer = 10` if any pointer is NULL;
@@ -2029,9 +2179,7 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 // **partial** validation: `2 ≤ y ≤ p − 2`), distinct from ECDH's
 // §5.6.2.3.3 (ECC **full** validation). This is upstream-mandated:
 // safe-prime FFC groups have cofactor `h = 2`, so `[2, p − 2]`
-// excludes the only small-subgroup element `p − 1` of order 2 —
-// see security-policy §4.8 paragraph on FFC vs ECC validation
-// differential.
+// excludes the only small-subgroup element `p − 1` of order 2.
 //
 // `Z` is the **raw** FFC-DH output per SP 800-56Ar3 — callers MUST
 // run an SP 800-56C Rev. 2 extractor (HKDF, KBKDF) over `Z` before
@@ -2045,9 +2193,8 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 // subgroup mod the cofactor — `[2, p − 2]` already excludes the
 // trivial case but the upstream check is defence-in-depth).
 //
-// DRBG-driven keygen (`oxicrypt_dh::generate_keypair_3072`)
-// deferred to a post-DRBG follow-up per stabilized arc pattern #1,
-// same as ECDSA's `generate(drbg)` and ECDH's eventual `generate`.
+// DRBG-driven keygen (`oxicrypt_dh::generate_keypair_3072`) is
+// `oxi_dh3072_generate_keypair` below.
 
 /// Compute the SP 800-56Ar3 §5.7.1.1 finite-field DH shared secret
 /// over RFC 3526 Group 15 (3072-bit safe prime): `Z = y^x mod p`.
@@ -2060,8 +2207,7 @@ pub unsafe extern "C" fn oxi_ecdh_p384_generate_keypair(
 ///
 /// The shared secret is the **raw** FFC-DH output; the caller MUST
 /// run an SP 800-56C Rev. 2 extractor over `Z` before using it as
-/// keying material — same discipline as ECDH (see security-policy
-/// §4.8 ECDH raw-Z paragraph).
+/// keying material — same discipline as ECDH.
 ///
 /// Peer public key undergoes SP 800-56Ar3 §5.6.2.3.1 partial
 /// validation (`2 ≤ y ≤ p − 2`) before any modular exponentiation;
@@ -2148,12 +2294,11 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
         return R::NullPointer as c_int;
     }
     // Project to `&mut HmacDrbgSha256` via the `inner_mut` accessor
-    // on `OxiHmacDrbgSha256` (added alongside this round). The
-    // `&mut self` borrow upholds Rust's exclusivity rule for the
-    // duration of this FFI call; C-side concurrent calls on the same
-    // handle pointer are a serialization-contract violation per the
-    // per-call-mutating-handle thread-safety contract documented in
-    // `drbg.rs` and security-policy.md.
+    // on `OxiHmacDrbgSha256`. The `&mut self` borrow upholds Rust's
+    // exclusivity rule for the duration of this FFI call; C-side
+    // concurrent calls on the same handle pointer are a
+    // serialization-contract violation per the per-call-mutating-handle
+    // thread-safety contract documented in `drbg.rs`.
     let Some(drbg_ref) = (unsafe { (*drbg).inner_mut() }) else {
         return R::NotOperational as c_int;
     };
@@ -2181,7 +2326,7 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
 // 32-bit headroom), the message bytes, and the signature as a raw
 // byte array (same length as the modulus).
 //
-// **TagMismatch=22 mapping** (CMVP gem in security-policy §4.8): the
+// **TagMismatch=22 mapping**: the
 // upstream RSA verify fns return `Result<(), Error>` rather than
 // `Result<bool, Error>` — they collapse signature-invalid AND
 // input-decode-fail into a single `Err(Error::InvalidInput)`. The
@@ -2193,8 +2338,8 @@ pub unsafe extern "C" fn oxi_dh3072_generate_keypair(
 // doesn't verify" but gain a uniform reviewer-facing semantic across
 // all verify families.
 //
-// DRBG-driven sign + OAEP encrypt + keygen surfaces are deferred to
-// post-DRBG follow-up rounds per stabilized arc pattern #1.
+// DRBG-driven keygen, sign and OAEP surfaces are the RSA private-key
+// handle surface further down this file.
 
 // ── RSA-2048 PKCS#1 v1.5 verify ──────────────────────────────────
 
@@ -2256,9 +2401,9 @@ pub unsafe extern "C" fn oxi_rsa_pkcs1_v15_verify_2048_sha256(
 /// Reads exactly 256 bytes from `n_ptr`, takes `e` as `uint64_t`,
 /// reads `msg_len` bytes from `msg_ptr`, and reads exactly 256 bytes
 /// from `sig_ptr`. Returns `Ok = 0` on a valid signature,
-/// `TagMismatch = 22` on any verification failure (see TagMismatch
-/// paragraph in security-policy §4.8 for upstream-Err mapping
-/// rationale), or a module error variant.
+/// `TagMismatch = 22` on any verification failure (the upstream
+/// verifier reports a malformed input and a bad signature as the same
+/// error), or a module error variant.
 ///
 /// # Safety
 ///
@@ -2495,9 +2640,8 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
 //   - verify(pk, msg, ctx, sig) → bool  per FIPS 204 §5.2 Algorithm 3.
 //     Upstream returns `Result<(), Error>` collapsing decode-fail and
 //     verify-fail into `Err(Error::InvalidInput)`; the FFI maps that
-//     to `OxiResult::TagMismatch = 22` per the cross-family
-//     verify-mismatch convention (security-policy §4.8). Same shape
-//     as RSA verify (PR #17).
+//     to `OxiResult::TagMismatch = 22`, the mapping every verify
+//     family in this file uses. Same shape as RSA verify.
 //
 // Byte layout: xi = 32 bytes; pk = 2592 bytes; sk = 4896 bytes;
 // sig = 4627 bytes; ctx = 0..=255 bytes (FIPS 204 §5.2 limit,
@@ -2505,11 +2649,10 @@ pub unsafe extern "C" fn oxi_rsa_pss_verify_4096_sha256(
 // for the empty context used by X.509, CMS, and other LAMPS-
 // conformant callers.
 //
-// Per-variant naming: this is `ml_dsa_87` (not `ml_dsa(param: int)`)
-// per stabilized arc pattern #8 — when ML-DSA-44 / ML-DSA-65 ship,
-// they will be added as new fns (`oxi_ml_dsa_44_*`, `oxi_ml_dsa_65_*`)
-// rather than as enum-dispatched parameters on these. Existing C
-// callers do not recompile when new variants ship.
+// Per-variant naming: this is `ml_dsa_87` (not `ml_dsa(param: int)`).
+// ML-DSA-44 and ML-DSA-65 are separate fns (`oxi_ml_dsa_44_*`,
+// `oxi_ml_dsa_65_*`) rather than enum-dispatched parameters on these,
+// so adding a variant never changes an existing signature.
 
 /// Generate an ML-DSA-87 key pair from a 32-byte seed (FIPS 204 §6.1).
 ///
@@ -3026,9 +3169,8 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
 //     ciphertext into a deterministic-but-pseudorandom shared secret
 //     in constant time. Tampered ct does NOT surface as a discrete
 //     error code — it produces a useless-but-uniform shared secret.
-//     This is the deliberate FIPS 203 §6.3 design (see
-//     decapsulate-implicit-rejection paragraph in security-policy
-//     §4.9). Distinct from RSA verify / ML-DSA verify / EdDSA verify
+//     This is the deliberate FIPS 203 §6.3 design. Distinct from
+//     RSA verify / ML-DSA verify / EdDSA verify
 //     — there is NO `OxiResult::TagMismatch = 22` mapping for
 //     ML-KEM decapsulate.
 //
@@ -3037,11 +3179,10 @@ pub unsafe extern "C" fn oxi_ml_dsa_65_verify(
 // ML-KEM-1024 parameter set k=4).
 //
 // Per-variant naming: this is `ml_kem_1024` (not
-// `ml_kem(param: int)`) per stabilized arc pattern #8 — when
-// ML-KEM-512 / ML-KEM-768 ship, they will be added as new fns
-// (`oxi_ml_kem_512_*`, `oxi_ml_kem_768_*`) rather than as
-// enum-dispatched parameters on these. Existing C callers do not
-// recompile when new variants ship.
+// `ml_kem(param: int)`). ML-KEM-512 and ML-KEM-768 are separate fns
+// (`oxi_ml_kem_512_*`, `oxi_ml_kem_768_*`) rather than
+// enum-dispatched parameters on these, so adding a variant never
+// changes an existing signature.
 
 /// Generate an ML-KEM-1024 key pair from two 32-byte caller-supplied
 /// seeds (FIPS 203 §6.1 ML-KEM.KeyGen).
@@ -3154,8 +3295,7 @@ pub unsafe extern "C" fn oxi_ml_kem_1024_encapsulate(
 /// shape, no `TagMismatch = 22` mapping. The FO transform's
 /// implicit-rejection branch absorbs tampered ciphertext into a
 /// deterministic-but-pseudorandom shared secret in constant time;
-/// tamper does NOT surface as a discriminant. See the
-/// decapsulate-implicit-rejection paragraph in security-policy §4.9.
+/// tamper does NOT surface as a discriminant.
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -3326,8 +3466,7 @@ pub unsafe extern "C" fn oxi_ml_kem_512_encapsulate(
 /// shape, no `TagMismatch = 22` mapping. The FO transform's
 /// implicit-rejection branch absorbs tampered ciphertext into a
 /// deterministic-but-pseudorandom shared secret in constant time;
-/// tamper does NOT surface as a discriminant. See the
-/// decapsulate-implicit-rejection paragraph in security-policy §4.9.
+/// tamper does NOT surface as a discriminant.
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -3498,8 +3637,7 @@ pub unsafe extern "C" fn oxi_ml_kem_768_encapsulate(
 /// shape, no `TagMismatch = 22` mapping. The FO transform's
 /// implicit-rejection branch absorbs tampered ciphertext into a
 /// deterministic-but-pseudorandom shared secret in constant time;
-/// tamper does NOT surface as a discriminant. See the
-/// decapsulate-implicit-rejection paragraph in security-policy §4.9.
+/// tamper does NOT surface as a discriminant.
 ///
 /// Returns `OxiResult::Ok = 0` on success, or a module error
 /// variant (`NotOperational`, `AlgorithmRestricted`).
@@ -3571,11 +3709,9 @@ pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
 //     (external `slh_verify`). Upstream returns `Result<(), Error>`
 //     where `Err(InvalidInput)` collapses decode-fail and
 //     verify-fail into a single discriminant. The FFI maps that to
-//     `OxiResult::TagMismatch = 22` per the cross-family
-//     verify-mismatch convention established by RSA verify
-//     (PR #17) and ML-DSA verify (PR #18). Third PQ family with
-//     this mapping; the `Result<()>` upstream shape is the load-
-//     bearing structural property here.
+//     `OxiResult::TagMismatch = 22`, as RSA verify and ML-DSA
+//     verify do; the upstream `Result<()>` shape is what makes the
+//     mapping possible.
 //
 // Byte layout (FIPS 205 §10.1, SHA2-256s parameter set):
 //   xi  = 96 bytes (3 × 32: SK.seed ‖ SK.prf ‖ PK.seed)
@@ -3586,15 +3722,15 @@ pub unsafe extern "C" fn oxi_ml_kem_768_decapsulate(
 //
 // Per-variant naming: this is `slh_dsa_sha2_256s` (not
 // `slh_dsa(param_set: int)` and not `slh_dsa_256s` collapsing the
-// hash family) per stabilized arc pattern #8. The other 11 FIPS 205
+// hash family). The other 11 FIPS 205
 // §11 parameter sets — SHA2-{128s,128f,192s,192f,256f} and
-// SHAKE-{128s,128f,192s,192f,256s,256f} — are exposed as additive
-// per-variant fns below; existing C callers do not recompile when
-// new variants ship. Each fn forwards to its variant-specific
+// SHAKE-{128s,128f,192s,192f,256s,256f} — are exposed as separate
+// per-variant fns below, so adding a variant never changes an
+// existing signature. Each fn forwards to its variant-specific
 // `oxicrypt_slh_dsa::slh_dsa_<family>_<level><sf>::{keygen,sign,
-// verify}` submodule (Batch 3 expansion); the crate-root re-export
-// of `oxicrypt_slh_dsa::keygen` continues to resolve to SHA2-256s
-// for backwards-compat with non-FFI callers.
+// verify}` submodule; the crate-root re-export
+// `oxicrypt_slh_dsa::keygen` resolves to SHA2-256s for non-FFI
+// callers.
 
 /// Generate an SLH-DSA-SHA2-256s key pair from a 96-byte
 /// caller-supplied seed (FIPS 205 §9.1 Algorithm 17).
@@ -3770,7 +3906,7 @@ pub unsafe extern "C" fn oxi_slh_dsa_sha2_256s_verify(
 // profile return `OxiResult::AlgorithmRestricted = 6` via the
 // existing `require_allowed` gate in `oxicrypt_module` against
 // the per-parameter-set `Service::SlhDsa<Family><Level><SF><Op>`
-// discriminants (320-355, contiguous block; Batch 4).
+// discriminants (320-355, contiguous block).
 
 /// Generate an SLH-DSA-SHA2-128s key pair from a 48-byte seed
 /// (FIPS 205 §9.1 Algorithm 17; n=16; xi=48, pk=32, sk=64).
@@ -9244,8 +9380,7 @@ pub unsafe extern "C" fn oxi_xmss_verify(
 // stateless ECDSA family (above, lib.rs §"ECDSA (FIPS 186-5) — stateless
 // surface") with the FIPS 186-5 §A.2.2 rejection-sampler-driven keygen
 // and SHA-{256,384}-based signing. DRBG-handle-as-parameter pattern,
-// extending the seam validated by `oxi_dh3072_generate_keypair`
-// (PR #30).
+// the same seam `oxi_dh3072_generate_keypair` uses.
 //
 // Per-curve set:
 //   - OxiEcdsaP{256,384}PrivateKey — opaque handle that has passed an
@@ -9278,19 +9413,18 @@ pub unsafe extern "C" fn oxi_xmss_verify(
 //     a non-zero `(r, s)` (astronomically improbable; signals a faulted
 //     primitive, not bad input).
 //
-// **PCT-at-construction handle invariant** (CMVP gem in security-policy
-// §4.8): the C ABI surface preserves the upstream IG 10.3.A invariant
+// **PCT-at-construction handle invariant**: the C ABI surface preserves the upstream IG 10.3.A invariant
 // that no `EcdsaP{256,384}PrivateKey` exists without having passed a
 // sign-and-verify PCT against a fixed probe message under a fresh
 // DRBG-sampled `k`. Because the handle wraps the upstream type
 // directly (via `OxiHandle<EcdsaP{256,384}PrivateKey>`) and only the
-// DRBG-driven `_new_generate` constructor exists this round, every
+// DRBG-driven `_new_generate` constructor exists, every
 // reachable `OxiEcdsaP{256,384}PrivateKey` pointer in C land
 // corresponds to a Rust-side handle whose construction succeeded —
 // PCT-fail aborts allocation, never produces a half-initialised
-// pointer. Stateless `from_bytes(d, drbg)` import constructor and
-// `private_scalar(&self)` exfil accessor are deliberately deferred to
-// future additive rounds (no API break to add either later).
+// pointer. The C ABI exposes neither the upstream `from_bytes(d, drbg)`
+// import constructor nor the `private_scalar(&self)` accessor; either
+// could be added without changing an existing signature.
 
 /// Opaque ECDSA P-256 private-key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time.
@@ -9407,6 +9541,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_free(key: *mut OxiEcdsaP256P
 /// `OxiResult::NotOperational = 1` if the handle has been
 /// finalised (today: never — no `_finalize` exists for this handle).
 ///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
+///
 /// # Safety
 ///
 /// `key` must be a live handle from
@@ -9423,7 +9561,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let pk = key_ref.public_key();
+    let pk = match key_ref.public_key() {
+        Ok(v) => v,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 65) };
     R::Ok as c_int
 }
@@ -9453,9 +9594,8 @@ pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_public_key(
 /// [`oxi_ecdsa_p256_private_key_new_generate`]. `drbg` must be a
 /// live, instantiated handle from [`oxi_hmac_drbg_sha256_new`] +
 /// [`oxi_hmac_drbg_sha256_instantiate`]; the caller MUST serialise
-/// concurrent calls on the same `drbg` pointer per the
-/// per-call-mutating-handle thread-safety contract documented in
-/// security-policy §4.8. `msg_ptr` must be valid for `msg_len` bytes.
+/// concurrent calls on the same `drbg` pointer, because every call
+/// mutates the DRBG's state. `msg_ptr` must be valid for `msg_len` bytes.
 /// `sig_out` must be a non-NULL writable pointer to ≥64 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn oxi_ecdsa_p256_private_key_sign_sha256(
@@ -9540,6 +9680,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_free(key: *mut OxiEcdsaP384P
 /// 97 bytes) from an ECDSA P-384 private-key handle into the caller
 /// buffer.
 ///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
+///
 /// # Safety
 ///
 /// `key` must be a live handle from
@@ -9556,7 +9700,10 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_public_key(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let pk = key_ref.public_key();
+    let pk = match key_ref.public_key() {
+        Ok(v) => v,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 97) };
     R::Ok as c_int
 }
@@ -9614,9 +9761,9 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
 
 // ── RSA DRBG-driven (FIPS 186-5 / RFC 8017 §8) — handle surface ──
 //
-// 24 entry points + 3 opaque types completing the RSA family. Verify-
-// only stateless surface shipped earlier (six fns: PKCS#1 v1.5 verify
-// and PSS verify across 2048/3072/4096); this round adds DRBG-driven
+// 24 entry points + 3 opaque types. Alongside the stateless
+// verify-only surface above (six fns: PKCS#1 v1.5 verify and PSS
+// verify across 2048/3072/4096), this surface provides DRBG-driven
 // keygen with PCT-at-construction, deterministic PKCS#1 v1.5 sign,
 // DRBG-driven PSS sign, public-key DRBG-driven OAEP encrypt,
 // handle-mediated OAEP decrypt, plus modulus and public-exponent
@@ -9642,8 +9789,8 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
 // does not surface them and the underlying Rust struct's CRT field is
 // `pub(crate)`-private to `oxicrypt-rsa`.
 //
-// **PCT-at-construction handle invariant** (extends ECDSA gem from
-// security-policy §4.8): `_new_generate` is the sole construction
+// **PCT-at-construction handle invariant** (as for ECDSA above):
+// `_new_generate` is the sole construction
 // path exposed via FFI; it routes through `RsaPrivateKey{N}::generate`,
 // which runs the IG 10.3.A pairwise consistency test on the CRT path
 // (sign a fixed probe with `_crt_internal`, verify with the public
@@ -9655,22 +9802,21 @@ pub unsafe extern "C" fn oxi_ecdsa_p384_private_key_sign_sha384(
 // keygen takes the DRBG by mutable pointer; sign-PSS re-borrows the
 // same DRBG for per-signature salt sampling; OAEP encrypt borrows the
 // DRBG for seed sampling. Three sites per size = nine DRBG re-borrows
-// total for this round — single-threaded callers are unaffected;
-// concurrent C callers must serialize DRBG access per the per-call-
-// mutating-handle thread-safety contract documented in
-// security-policy.md.
+// in all — single-threaded callers are unaffected; concurrent C
+// callers must serialize access to a DRBG handle, because every call
+// mutates its state.
 //
-// **TagMismatch=22 mapping (verify-only)** continues to apply to the
-// previously-shipped verify functions; sign / decrypt / keygen on
-// this surface use the generic `R::from(Error)` mapping (Error
-// coverage already complete; no new `OxiResult` discriminants).
+// **TagMismatch=22 mapping (verify-only)** applies to the stateless
+// verify functions; sign / decrypt / keygen on this surface use the
+// generic `R::from(Error)` mapping and add no `OxiResult`
+// discriminants.
 
 // ── Opaque RSA private-key handles ───────────────────────────────
 
 /// Opaque RSA-2048 private-key handle that has passed an IG 10.3.A
 /// pairwise consistency test at construction time. Mirrors the
-/// `OxiEcdsaP256PrivateKey` pattern and inherits the same PCT-at-
-/// construction structural argument from security-policy §4.8.
+/// `OxiEcdsaP256PrivateKey` pattern: its only constructor runs the
+/// PCT, so no handle exists that has not passed it.
 ///
 /// cbindgen:opaque
 pub struct OxiRsaPrivateKey2048 {
@@ -9792,6 +9938,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_private_key_free(key: *mut OxiRsaPrivateKe
 /// Returns `OxiResult::Ok = 0` on success;
 /// `OxiResult::NullPointer = 10` if either pointer is NULL.
 ///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
+///
 /// # Safety
 ///
 /// `key` must be a live handle. `modulus_out` must be a non-NULL
@@ -9807,7 +9957,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_modulus(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let n = key_ref.modulus_bytes();
+    let n = match key_ref.modulus_bytes() {
+        Ok(v) => v,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 256) };
     R::Ok as c_int
 }
@@ -9817,6 +9970,10 @@ pub unsafe extern "C" fn oxi_rsa_2048_modulus(
 ///
 /// Returns `OxiResult::Ok = 0` on success;
 /// `OxiResult::NullPointer = 10` if either pointer is NULL.
+///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
 ///
 /// # Safety
 ///
@@ -9833,7 +9990,11 @@ pub unsafe extern "C" fn oxi_rsa_2048_public_exponent(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    unsafe { *e_out = key_ref.public_exponent() };
+    let e = match key_ref.public_exponent() {
+        Ok(e) => e,
+        Err(err) => return status_module(Err(err)),
+    };
+    unsafe { *e_out = e };
     R::Ok as c_int
 }
 
@@ -9885,8 +10046,8 @@ pub unsafe extern "C" fn oxi_rsa_2048_sign_pkcs1_v15_sha256(
 ///
 /// `key` must be a live handle. `drbg` must be a live, instantiated
 /// DRBG handle; the caller MUST serialise concurrent calls on the
-/// same `drbg` pointer per the per-call-mutating-handle thread-
-/// safety contract documented in security-policy.md. `msg_ptr` must
+/// same `drbg` pointer, because every call mutates the DRBG's
+/// state. `msg_ptr` must
 /// be valid for `msg_len` bytes. `sig_out` must be a non-NULL
 /// writable pointer to ≥256 bytes.
 #[unsafe(no_mangle)]
@@ -10087,6 +10248,10 @@ pub unsafe extern "C" fn oxi_rsa_3072_private_key_free(key: *mut OxiRsaPrivateKe
 /// Copy the 384-byte big-endian public modulus `n` from an RSA-3072
 /// handle. See [`oxi_rsa_2048_modulus`].
 ///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
+///
 /// # Safety
 ///
 /// `key` must be a live handle. `modulus_out` must be a non-NULL
@@ -10102,13 +10267,20 @@ pub unsafe extern "C" fn oxi_rsa_3072_modulus(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let n = key_ref.modulus_bytes();
+    let n = match key_ref.modulus_bytes() {
+        Ok(v) => v,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 384) };
     R::Ok as c_int
 }
 
 /// Copy the public exponent `e` from an RSA-3072 handle. See
 /// [`oxi_rsa_2048_public_exponent`].
+///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
 ///
 /// # Safety
 ///
@@ -10125,7 +10297,11 @@ pub unsafe extern "C" fn oxi_rsa_3072_public_exponent(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    unsafe { *e_out = key_ref.public_exponent() };
+    let e = match key_ref.public_exponent() {
+        Ok(e) => e,
+        Err(err) => return status_module(Err(err)),
+    };
+    unsafe { *e_out = e };
     R::Ok as c_int
 }
 
@@ -10349,6 +10525,10 @@ pub unsafe extern "C" fn oxi_rsa_4096_private_key_free(key: *mut OxiRsaPrivateKe
 /// Copy the 512-byte big-endian public modulus `n` from an RSA-4096
 /// handle.
 ///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
+///
 /// # Safety
 ///
 /// `key` must be a live handle. `modulus_out` must be a non-NULL
@@ -10364,12 +10544,19 @@ pub unsafe extern "C" fn oxi_rsa_4096_modulus(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    let n = key_ref.modulus_bytes();
+    let n = match key_ref.modulus_bytes() {
+        Ok(v) => v,
+        Err(e) => return status_module(Err(e)),
+    };
     unsafe { core::ptr::copy_nonoverlapping(n.as_ptr(), modulus_out, 512) };
     R::Ok as c_int
 }
 
 /// Copy the public exponent `e` from an RSA-4096 handle.
+///
+/// Returns `OxiResult::NotOperational = 1` outside the `SelfTest` and
+/// `Operational` states, including for a handle created before the module
+/// entered `Error`.
 ///
 /// # Safety
 ///
@@ -10386,7 +10573,11 @@ pub unsafe extern "C" fn oxi_rsa_4096_public_exponent(
     let Some(key_ref) = (unsafe { (*key).inner_ref() }) else {
         return R::NotOperational as c_int;
     };
-    unsafe { *e_out = key_ref.public_exponent() };
+    let e = match key_ref.public_exponent() {
+        Ok(e) => e,
+        Err(err) => return status_module(Err(err)),
+    };
+    unsafe { *e_out = e };
     R::Ok as c_int
 }
 
@@ -10665,26 +10856,300 @@ mod lms_verify_any_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic, clippy::expect_used)]
 mod kat_tests {
-    use super::collect_kats;
+    use super::{oxi_init, power_up_set};
+    use oxicrypt_module::{AlgorithmProfile, Error, KatEntry};
+    use std::collections::BTreeSet;
+    use std::sync::{Mutex, PoisonError};
 
-    /// `oxi_init` runs what `collect_kats` returns, so every LMS CAST must
-    /// be in it. Matched by name and counted, so dropping any one of the
-    /// four fails here.
+    /// Linked `oxicrypt-*` crates that publish no algorithm KATs, each
+    /// with the reason it is not in the power-up set.
+    const NOT_ALGORITHM_CRATES: &[(&str, &str)] = &[
+        (
+            "oxicrypt_module",
+            "the self-test runner and state machine; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_integrity",
+            "its KAT is the separate integrity argument to initialize_with_profile",
+        ),
+        (
+            "oxicrypt_imageread",
+            "reads the module's own image for the integrity test; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_zeroize",
+            "zeroizes secret buffers; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_test_vectors",
+            "vector data that algorithm crates' KATs read; it implements no algorithm",
+        ),
+    ];
+
+    /// Each algorithm crate's own `KATS` slice, keyed by the crate's path
+    /// as written. `stringify!` takes the key from the same path the slice
+    /// is read through, so a key cannot name a different crate's slice.
+    macro_rules! kats_by_crate {
+        ($($krate:ident),* $(,)?) => {
+            &[$((stringify!($krate), $krate::KATS)),*]
+        };
+    }
+
+    const KATS_BY_CRATE: &[(&str, &[KatEntry])] = kats_by_crate![
+        oxicrypt_sha,
+        oxicrypt_xof,
+        oxicrypt_hmac,
+        oxicrypt_kdf,
+        oxicrypt_aes,
+        oxicrypt_cmac,
+        oxicrypt_drbg,
+        oxicrypt_ecdsa,
+        oxicrypt_eddsa,
+        oxicrypt_ecdh,
+        oxicrypt_tls_kdf,
+        oxicrypt_dh,
+        oxicrypt_rsa,
+        oxicrypt_ml_kem,
+        oxicrypt_ml_dsa,
+        oxicrypt_slh_dsa,
+        oxicrypt_lms,
+        oxicrypt_xmss,
+    ];
+
+    /// The names of the integrity and algorithm self-tests the most recent
+    /// `oxi_init` passed to the module.
+    static PASSED: Mutex<Option<(Vec<&'static str>, Vec<&'static str>)>> = Mutex::new(None);
+
+    fn names(kats: &[KatEntry]) -> Vec<&'static str> {
+        kats.iter().map(|k| k.name).collect()
+    }
+
+    /// `oxi_init` calls this in place of
+    /// `oxicrypt_module::initialize_with_profile` in this crate's tests. It
+    /// records what it was given, then forwards the call unchanged.
+    pub(super) fn initialize_with_profile(
+        integrity: &[KatEntry],
+        tests: &[KatEntry],
+        profile: AlgorithmProfile,
+    ) -> Result<(), Error> {
+        *PASSED.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((names(integrity), names(tests)));
+        oxicrypt_module::initialize_with_profile(integrity, tests, profile)
+    }
+
+    /// Every workspace package in this crate's normal-dependency closure with
+    /// default features, on every target platform, except this crate
+    /// itself, with hyphens mapped to underscores so they compare against
+    /// crate paths. A dependency enabled only by a non-default feature is not
+    /// read; the entry points have no features. A package from outside the
+    /// workspace is not an `oxicrypt` crate and is not returned.
+    ///
+    /// Read from Cargo's resolved dependency graph, so a dependency declared
+    /// in a sub-table, under `[target.*]` or under another name, and a crate
+    /// linked only through another dependency, are all included. The `cargo`
+    /// that built this test runs it, offline and against the committed
+    /// `Cargo.lock`.
+    fn linked_packages() -> BTreeSet<String> {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
+        let out = std::process::Command::new(cargo)
+            .args([
+                "tree",
+                "--offline",
+                "--locked",
+                "--manifest-path",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+                "-p",
+                env!("CARGO_PKG_NAME"),
+                "-e",
+                "normal",
+                "--target",
+                "all",
+                "--prefix",
+                "none",
+                "--format",
+                "{p}",
+            ])
+            .output()
+            .expect("cargo tree could not be run");
+        assert!(
+            out.status.success(),
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            .canonicalize()
+            .expect("the workspace root is readable");
+        String::from_utf8(out.stdout)
+            .expect("cargo tree printed non-UTF-8")
+            .lines()
+            .filter(|l| {
+                // `name vX.Y.Z (/path/to/package)`; a registry or git
+                // package prints no path and is not a workspace crate.
+                l.split_once(" (")
+                    .and_then(|(_, rest)| rest.split_once(')'))
+                    .and_then(|(dir, _)| std::path::Path::new(dir).canonicalize().ok())
+                    .is_some_and(|dir| dir.starts_with(&root))
+            })
+            .filter_map(|l| l.split_whitespace().next())
+            .filter(|p| *p != env!("CARGO_PKG_NAME"))
+            .map(|p| p.replace('-', "_"))
+            .collect()
+    }
+
+    /// `oxi_init` runs what `power_up_set` returns. Every approved
+    /// algorithm crate this library links must have all of its KATs in
+    /// that set, each exactly once, and nothing else may be in it.
+    ///
+    /// The linked set is the library's resolved dependency graph, so
+    /// linking an algorithm crate, directly or through another
+    /// dependency, without adding its `KATS` to `power_up.rs` fails here.
+    /// Entries are attributed to a crate by membership in that crate's
+    /// own `KATS` slice, matched by name; names are checked unique across
+    /// all slices first so that one crate's entry cannot stand in for
+    /// another's.
     #[test]
-    fn power_up_set_carries_every_lms_cast() {
-        let kats = collect_kats();
-        assert_eq!(oxicrypt_lms::KATS.len(), 4, "one LMS CAST per hash adapter");
-        for lms in oxicrypt_lms::KATS {
-            let hits = kats.iter().filter(|k| k.name == lms.name).count();
-            assert_eq!(hits, 1, "{} must run exactly once at oxi_init", lms.name);
+    fn power_up_set_covers_every_linked_algorithm_crate() {
+        let linked = linked_packages();
+        assert!(
+            linked.contains("oxicrypt_module") && linked.len() >= 10,
+            "read {linked:?} from cargo tree; the dependency reader is broken"
+        );
+
+        let mut all_names = BTreeSet::new();
+        for (krate, slice) in KATS_BY_CRATE {
+            assert!(!slice.is_empty(), "{krate} publishes an empty KATS slice");
+            for kat in *slice {
+                assert!(
+                    all_names.insert(kat.name),
+                    "KAT name {} is not unique across crates",
+                    kat.name
+                );
+            }
         }
+
+        let (integrity, kats) = power_up_set();
+        assert_eq!(names(integrity), names(oxicrypt_integrity::KATS));
+        let mut run = BTreeSet::new();
+        for kat in &kats {
+            assert!(run.insert(kat.name), "{} runs twice at oxi_init", kat.name);
+        }
+
+        for (krate, reason) in NOT_ALGORITHM_CRATES {
+            assert!(!reason.is_empty());
+            assert!(
+                linked.contains(*krate),
+                "the exemption names {krate}, which this library no longer links; remove it"
+            );
+        }
+
+        let exempt: BTreeSet<&str> = NOT_ALGORITHM_CRATES.iter().map(|(c, _)| *c).collect();
+        let mut expected = 0usize;
+        let mut not_self_tested = Vec::new();
+        for krate in linked.iter().filter(|c| !exempt.contains(c.as_str())) {
+            let Some((_, slice)) = KATS_BY_CRATE.iter().find(|(k, _)| k == krate) else {
+                panic!(
+                    "{krate} is linked but KATS_BY_CRATE has no entry for it; \
+                     add its KATS here and to power_up.rs"
+                );
+            };
+            expected += slice.len();
+            if slice.iter().any(|k| !run.contains(k.name)) {
+                not_self_tested.push(krate.as_str());
+            }
+        }
+        assert!(
+            not_self_tested.is_empty(),
+            "linked but missing from oxi_init's power-up set: {not_self_tested:?}"
+        );
+        assert_eq!(
+            kats.len(),
+            expected,
+            "oxi_init runs KATs from a crate that is not a linked algorithm crate"
+        );
+    }
+
+    /// `oxi_init` hands the module exactly the pair `power_up_set` returns.
+    ///
+    /// The module is process-global, so this relies on the workspace's test
+    /// runner, nextest, running each test in its own process: an `oxi_init`
+    /// that found the module already operational would not call it.
+    #[test]
+    fn oxi_init_passes_its_power_up_set_to_the_module() {
+        // The integrity test fails in an unsigned test binary, so the call
+        // itself fails; what it passed is recorded first.
+        let _ = oxi_init(0);
+        let (integrity, tests) = PASSED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .expect("oxi_init did not call initialize_with_profile");
+        let (want_integrity, want_tests) = power_up_set();
+        assert_eq!(integrity, names(want_integrity));
+        assert_eq!(tests, names(&want_tests));
+        assert!(!tests.is_empty());
     }
 }
 
 #[cfg(test)]
 mod lama_tests {
     use super::LAMA_MANIFEST;
+
+    /// The fingerprint query checks its buffer before anything else, and
+    /// writes nothing when no fingerprint is known. Its value against a real
+    /// key is checked by the C refusal test.
+    #[test]
+    fn the_fingerprint_query_checks_its_buffer() {
+        // SAFETY: a null pointer is refused before any write.
+        assert_eq!(
+            unsafe { crate::oxi_integrity_key_fingerprint(core::ptr::null_mut(), 32) },
+            crate::OxiResult::NullPointer as core::ffi::c_int
+        );
+        let mut short = [0xaau8; 31];
+        // SAFETY: `short` is valid for 31 bytes, the length passed.
+        assert_eq!(
+            unsafe { crate::oxi_integrity_key_fingerprint(short.as_mut_ptr(), short.len()) },
+            crate::OxiResult::BufferTooSmall as core::ffi::c_int
+        );
+        assert_eq!(short, [0xaa; 31], "a short buffer is not written");
+        if oxicrypt_integrity::verify_key_fingerprint().is_none() {
+            let mut exact = [0xaau8; 32];
+            // SAFETY: `exact` is valid for 32 bytes.
+            assert_eq!(
+                unsafe { crate::oxi_integrity_key_fingerprint(exact.as_mut_ptr(), exact.len()) },
+                crate::OxiResult::NotOperational as core::ffi::c_int
+            );
+            assert_eq!(exact, [0xaa; 32]);
+        }
+    }
+
+    /// The detail query sizes its output and refuses a short buffer.
+    #[test]
+    fn the_detail_query_reports_its_size() {
+        let mut written = usize::MAX;
+        // SAFETY: a null `written` is refused before any write.
+        assert_eq!(
+            unsafe {
+                crate::oxi_integrity_status_detail(core::ptr::null_mut(), 0, core::ptr::null_mut())
+            },
+            crate::OxiResult::NullPointer as core::ffi::c_int
+        );
+        // SAFETY: `out` is null with length 0, `written` is a live local.
+        let rc = unsafe {
+            crate::oxi_integrity_status_detail(core::ptr::null_mut(), 0, &raw mut written)
+        };
+        match oxicrypt_integrity::status_detail() {
+            None => {
+                assert_eq!(rc, crate::OxiResult::NotOperational as core::ffi::c_int);
+                assert_eq!(written, 0);
+            }
+            Some(text) => {
+                assert_eq!(rc, crate::OxiResult::BufferTooSmall as core::ffi::c_int);
+                assert_eq!(written, text.len() + 1);
+            }
+        }
+    }
 
     /// The embedded manifest must not contain either integrity-slot magic.
     ///

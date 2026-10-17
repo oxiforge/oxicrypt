@@ -19,6 +19,7 @@ workspace = true
 oxicrypt-module = { workspace = true }
 oxicrypt-kdf = { workspace = true }
 oxicrypt-hmac = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

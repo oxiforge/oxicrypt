@@ -20,7 +20,9 @@
 //! algorithm before the module has finished its power-up KATs
 //! (FIPS 140-3 IG D.G, SP 800-140F). The KATs themselves go through
 //! the `*_internal` helpers, which skip the gate and therefore run
-//! while the module is still in `SelfTest`. SHA-256 is reached via
+//! while the module is still in `SelfTest`; they call
+//! [`oxicrypt_module::require_self_test_started`] instead, so they
+//! refuse in every state other than `SelfTest` and `Operational`. SHA-256 is reached via
 //! [`oxicrypt_sha::sha256::Sha256::new_internal`] for the same reason.
 
 #![allow(
@@ -31,9 +33,13 @@
 )]
 
 use oxicrypt_drbg::HmacDrbgSha256;
-use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
+};
 use oxicrypt_sha::sha256::Sha256;
 
+use crate::p256_field::Fp;
 use crate::p256_keygen::{generate_p256_internal, sample_scalar_internal};
 use crate::p256_point::Point;
 use crate::p256_scalar::Scalar;
@@ -51,15 +57,28 @@ pub const SIGNATURE_LEN: usize = 64;
 // ------------------------------------------------------------------
 
 /// Derive the uncompressed SEC1 public key for a private scalar
-/// `d_bytes`. Returns `None` if `d_bytes` does not encode a valid
+/// `d_bytes`. Returns [`Error::InvalidInput`] if `d_bytes` does not encode a valid
 /// non-zero scalar mod `n`.
 ///
 /// This is the `*_internal` primitive that [`derive_public_key`]
-/// wraps; it bypasses the module state gate so KATs and the
+/// wraps; it skips the operational and profile gates so KATs and the
 /// power-up self test can call it while the module is still in
 /// `SelfTest`.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
-pub fn derive_public_key_internal(d_bytes: &[u8; PRIVATE_KEY_LEN]) -> Option<[u8; PUBLIC_KEY_LEN]> {
+pub fn derive_public_key_internal(
+    d_bytes: &[u8; PRIVATE_KEY_LEN],
+) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
+    require_self_test_started()?;
+    derive_public_key_internal_unguarded(d_bytes).ok_or(Error::InvalidInput)
+}
+
+/// Body of [`derive_public_key_internal`], run once its guard has passed.
+fn derive_public_key_internal_unguarded(
+    d_bytes: &[u8; PRIVATE_KEY_LEN],
+) -> Option<[u8; PUBLIC_KEY_LEN]> {
     let d = Scalar::from_bytes(d_bytes)?;
     if d.is_zero() == 1 {
         return None;
@@ -69,7 +88,7 @@ pub fn derive_public_key_internal(d_bytes: &[u8; PRIVATE_KEY_LEN]) -> Option<[u8
 }
 
 /// Sign `msg` under private key `d_bytes` using the explicitly
-/// provided per-message secret `k_bytes`. Returns `None` if any of
+/// provided per-message secret `k_bytes`. Returns [`Error::InvalidInput`] if any of
 /// the inputs are out of range or if the resulting `r` or `s`
 /// happens to be zero (caller should retry with a fresh `k`, as
 /// FIPS 186-5 §6.4.1 specifies).
@@ -78,31 +97,50 @@ pub fn derive_public_key_internal(d_bytes: &[u8; PRIVATE_KEY_LEN]) -> Option<[u8
 /// leaking `k` leaks `d`. That discipline is the caller's
 /// responsibility in this layer; a DRBG-backed wrapper in a later
 /// commit will own it.
+///
+/// Returns [`Error::NotOperational`] when the module refuses the call,
+/// which it does in every state other than `SelfTest` and `Operational`.
 #[doc(hidden)]
 pub fn sign_with_k_internal(
     d_bytes: &[u8; PRIVATE_KEY_LEN],
     msg: &[u8],
     k_bytes: &[u8; 32],
-) -> Option<[u8; SIGNATURE_LEN]> {
-    let d = Scalar::from_bytes(d_bytes)?;
+) -> Result<[u8; SIGNATURE_LEN], Error> {
+    require_self_test_started()?;
+    sign_with_k_internal_unguarded(d_bytes, msg, k_bytes)?.ok_or(Error::InvalidInput)
+}
+
+/// Body of [`sign_with_k_internal`], run once its guard has passed.
+fn sign_with_k_internal_unguarded(
+    d_bytes: &[u8; PRIVATE_KEY_LEN],
+    msg: &[u8],
+    k_bytes: &[u8; 32],
+) -> Result<Option<[u8; SIGNATURE_LEN]>, Error> {
+    let Some(d) = Scalar::from_bytes(d_bytes) else {
+        return Ok(None);
+    };
     if d.is_zero() == 1 {
-        return None;
+        return Ok(None);
     }
-    let k = Scalar::from_bytes(k_bytes)?;
+    let Some(k) = Scalar::from_bytes(k_bytes) else {
+        return Ok(None);
+    };
     if k.is_zero() == 1 {
-        return None;
+        return Ok(None);
     }
 
     // e = SHA-256(msg), truncated/reduced mod n.
-    let e = hash_message_to_scalar(msg);
+    let e = hash_message_to_scalar(msg)?;
 
     // (x1, y1) = k * G
     let big_r = Point::generator().mul(&k);
-    let (x1, _y1) = big_r.to_affine()?;
+    let Some((x1, _y1)) = big_r.to_affine() else {
+        return Ok(None);
+    };
     let x1_bytes = x1.to_bytes();
     let r = Scalar::from_bytes_reduced(&x1_bytes);
     if r.is_zero() == 1 {
-        return None;
+        return Ok(None);
     }
 
     // s = k^-1 * (e + r*d) mod n
@@ -111,63 +149,156 @@ pub fn sign_with_k_internal(
     let sum = e.add(&rd);
     let s = k_inv.mul(&sum);
     if s.is_zero() == 1 {
-        return None;
+        return Ok(None);
     }
 
     let mut sig = [0u8; SIGNATURE_LEN];
     sig[..32].copy_from_slice(&r.to_bytes());
     sig[32..].copy_from_slice(&s.to_bytes());
-    Some(sig)
+    Ok(Some(sig))
 }
 
 /// Verify an ECDSA signature per FIPS 186-5 §6.4.2. Returns `true`
 /// iff `sig` is a valid signature of `msg` under `pk_bytes`.
+///
+/// Returns [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
 #[doc(hidden)]
 pub fn verify_internal(
     pk_bytes: &[u8; PUBLIC_KEY_LEN],
     msg: &[u8],
     sig: &[u8; SIGNATURE_LEN],
-) -> bool {
+) -> Result<bool, Error> {
+    require_self_test_started()?;
+    verify_internal_unguarded(pk_bytes, msg, sig)
+}
+
+/// Body of [`verify_internal`], run once its guard has passed.
+fn verify_internal_unguarded(
+    pk_bytes: &[u8; PUBLIC_KEY_LEN],
+    msg: &[u8],
+    sig: &[u8; SIGNATURE_LEN],
+) -> Result<bool, Error> {
+    // Every temporary lives in `t`, whose `Drop` zeroizes it on each return
+    // path, so no intermediate of a verification outlives it.
+    let mut t = VerifyTemporaries::new();
+
     // 1. Decode public key.
-    let Some(q) = decode_public_key(pk_bytes) else {
-        return false;
+    t.q = match decode_public_key(pk_bytes) {
+        Some(q) => q,
+        None => return Ok(false),
     };
 
     // 2. Parse (r, s) and enforce r, s in [1, n-1].
-    let mut r_bytes = [0u8; 32];
-    let mut s_bytes = [0u8; 32];
-    r_bytes.copy_from_slice(&sig[..32]);
-    s_bytes.copy_from_slice(&sig[32..]);
-    let Some(r) = Scalar::from_bytes(&r_bytes) else {
-        return false;
+    t.r_bytes.copy_from_slice(&sig[..32]);
+    t.s_bytes.copy_from_slice(&sig[32..]);
+    t.r = match Scalar::from_bytes(&t.r_bytes) {
+        Some(r) => r,
+        None => return Ok(false),
     };
-    let Some(s) = Scalar::from_bytes(&s_bytes) else {
-        return false;
+    t.s = match Scalar::from_bytes(&t.s_bytes) {
+        Some(s) => s,
+        None => return Ok(false),
     };
-    if r.is_zero() == 1 || s.is_zero() == 1 {
-        return false;
+    if t.r.is_zero() == 1 || t.s.is_zero() == 1 {
+        return Ok(false);
     }
 
     // 3. e = SHA-256(msg) mod n.
-    let e = hash_message_to_scalar(msg);
+    t.e = hash_message_to_scalar(msg)?;
 
     // 4. w = s^-1 mod n ; u1 = e*w ; u2 = r*w.
-    let w = s.invert();
-    let u1 = e.mul(&w);
-    let u2 = r.mul(&w);
+    t.w = t.s.invert();
+    t.u1 = t.e.mul(&t.w);
+    t.u2 = t.r.mul(&t.w);
 
     // 5. (x1, y1) = u1*G + u2*Q. Reject if the sum is the identity.
-    let p1 = Point::generator().mul(&u1);
-    let p2 = q.mul(&u2);
-    let sum = point_add(&p1, &p2);
-    let Some((x1, _y1)) = sum.to_affine() else {
-        return false;
+    t.p1 = Point::generator().mul(&t.u1);
+    t.p2 = t.q.mul(&t.u2);
+    t.sum = point_add(&t.p1, &t.p2);
+    let Some(mut affine) = t.sum.to_affine() else {
+        return Ok(false);
     };
+    (t.x1, t.y1) = affine;
+    // The coordinates are `Copy`; the copies in `t` are wiped by its `Drop`,
+    // and this binding's are wiped here.
+    affine.0.wipe();
+    affine.1.wipe();
 
     // 6. Accept iff (x1 mod n) == r.
-    let x1_bytes = x1.to_bytes();
-    let x1_mod_n = Scalar::from_bytes_reduced(&x1_bytes);
-    x1_mod_n.ct_eq(&r) == 1
+    t.x1_bytes = t.x1.to_bytes();
+    t.x1_mod_n = Scalar::from_bytes_reduced(&t.x1_bytes);
+    Ok(t.x1_mod_n.ct_eq(&t.r) == 1)
+}
+
+/// The temporaries of [`verify_internal_unguarded`], zeroized when they go
+/// out of scope so that none outlives the verification on any path.
+struct VerifyTemporaries {
+    r_bytes: [u8; 32],
+    s_bytes: [u8; 32],
+    x1_bytes: [u8; 32],
+    r: Scalar,
+    s: Scalar,
+    e: Scalar,
+    w: Scalar,
+    u1: Scalar,
+    u2: Scalar,
+    x1_mod_n: Scalar,
+    q: Point,
+    p1: Point,
+    p2: Point,
+    sum: Point,
+    x1: Fp,
+    y1: Fp,
+}
+
+impl VerifyTemporaries {
+    const fn new() -> Self {
+        Self {
+            r_bytes: [0; 32],
+            s_bytes: [0; 32],
+            x1_bytes: [0; 32],
+            r: Scalar::ZERO,
+            s: Scalar::ZERO,
+            e: Scalar::ZERO,
+            w: Scalar::ZERO,
+            u1: Scalar::ZERO,
+            u2: Scalar::ZERO,
+            x1_mod_n: Scalar::ZERO,
+            q: Point::identity(),
+            p1: Point::identity(),
+            p2: Point::identity(),
+            sum: Point::identity(),
+            x1: Fp::ZERO,
+            y1: Fp::ZERO,
+        }
+    }
+}
+
+impl Drop for VerifyTemporaries {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.r_bytes);
+        oxicrypt_zeroize::zeroize(&mut self.s_bytes);
+        oxicrypt_zeroize::zeroize(&mut self.x1_bytes);
+        for scalar in [
+            &mut self.r,
+            &mut self.s,
+            &mut self.e,
+            &mut self.w,
+            &mut self.u1,
+            &mut self.u2,
+            &mut self.x1_mod_n,
+        ] {
+            scalar.wipe();
+        }
+        for point in [&mut self.q, &mut self.p1, &mut self.p2, &mut self.sum] {
+            point.wipe();
+        }
+        self.x1.wipe();
+        self.y1.wipe();
+    }
 }
 
 // ------------------------------------------------------------------
@@ -184,7 +315,7 @@ pub fn verify_internal(
 pub fn derive_public_key(d_bytes: &[u8; PRIVATE_KEY_LEN]) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
     require_operational()?;
     require_allowed(Service::EcdsaP256Keygen)?;
-    derive_public_key_internal(d_bytes).ok_or(Error::InvalidInput)
+    derive_public_key_internal(d_bytes)
 }
 
 /// Sign `msg` with private key `d` and per-message secret `k`.
@@ -202,7 +333,7 @@ pub fn sign_with_k(
 ) -> Result<[u8; SIGNATURE_LEN], Error> {
     require_operational()?;
     require_allowed(Service::EcdsaP256Sign)?;
-    sign_with_k_internal(d_bytes, msg, k_bytes).ok_or(Error::InvalidInput)
+    sign_with_k_internal(d_bytes, msg, k_bytes)
 }
 
 /// Verify an ECDSA signature per FIPS 186-5 §6.4.2.
@@ -219,7 +350,7 @@ pub fn verify(
 ) -> Result<bool, Error> {
     require_operational()?;
     require_allowed(Service::EcdsaP256Verify)?;
-    Ok(verify_internal(pk_bytes, msg, sig))
+    verify_internal(pk_bytes, msg, sig)
 }
 
 // ------------------------------------------------------------------
@@ -230,11 +361,13 @@ pub fn verify(
 /// mod `n`. For P-256 the digest width and field width are both 256
 /// bits, so FIPS 186-5 §6.4.1's left-truncation step is a no-op and
 /// only the modular reduction remains.
-fn hash_message_to_scalar(msg: &[u8]) -> Scalar {
-    let mut h = Sha256::new_internal();
+fn hash_message_to_scalar(msg: &[u8]) -> Result<Scalar, Error> {
+    let mut h = Sha256::new_internal()?;
     h.update(msg);
-    let digest = h.finalize();
-    Scalar::from_bytes_reduced(&digest)
+    let mut digest = h.finalize()?;
+    let e = Scalar::from_bytes_reduced(&digest);
+    oxicrypt_zeroize::zeroize(&mut digest);
+    Ok(e)
 }
 
 /// Encode a Jacobian point as the uncompressed SEC1 public-key
@@ -321,7 +454,7 @@ impl EcdsaP256PrivateKey {
     ) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::EcdsaP256Keygen)?;
-        Self::from_bytes_internal(drbg, d_bytes).ok_or(Error::InvalidInput)
+        Self::from_bytes_internal(drbg, d_bytes)
     }
 
     /// Generate a fresh P-256 private key via the FIPS 186-5 §A.2.2
@@ -337,7 +470,7 @@ impl EcdsaP256PrivateKey {
     pub fn generate(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::EcdsaP256Keygen)?;
-        Self::generate_internal(drbg).ok_or(Error::InvalidInput)
+        Self::generate_internal(drbg)
     }
 
     /// Sign `msg` with SHA-256 under this private key, sampling a
@@ -360,13 +493,19 @@ impl EcdsaP256PrivateKey {
         require_operational()?;
         require_allowed(Service::EcdsaP256Sign)?;
         self.sign_sha256_internal(drbg, msg)
-            .ok_or(Error::InvalidInput)
     }
 
     /// Return the uncompressed SEC1 public key this handle commits to.
-    #[must_use]
-    pub fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
-        self.q
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure outputs nothing after it.
+    pub fn public_key(&self) -> Result<[u8; PUBLIC_KEY_LEN], Error> {
+        require_self_test_started()?;
+        Ok(self.q)
     }
 
     /// Return a reference to the private scalar bytes. Intended for
@@ -374,17 +513,25 @@ impl EcdsaP256PrivateKey {
     /// (e.g., ECDH via `fips-ecdh`). Zeroization of the returned
     /// buffer is the caller's responsibility until the crate-wide
     /// hardening pass lands.
-    #[must_use]
-    pub fn private_scalar(&self) -> &[u8; PRIVATE_KEY_LEN] {
-        &self.d
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a CSP is not output in `PowerOff`, `Error` or
+    /// `IntegrityUnverified`.
+    pub fn private_scalar(&self) -> Result<&[u8; PRIVATE_KEY_LEN], Error> {
+        require_self_test_started()?;
+        Ok(&self.d)
     }
 
-    // -- internal, module-state-gate-bypassing helpers --
+    // -- internal helpers, reached after a gate or guard has passed --
 
     fn from_bytes_internal(
         drbg: &mut HmacDrbgSha256,
         d_bytes: &[u8; PRIVATE_KEY_LEN],
-    ) -> Option<Self> {
+    ) -> Result<Self, Error> {
         // Reject obviously-invalid scalars before PCT: rejection
         // happens inside `derive_public_key_internal` too, but
         // surfacing it here is cheaper and keeps the error shape
@@ -392,52 +539,60 @@ impl EcdsaP256PrivateKey {
         let pk = derive_public_key_internal(d_bytes)?;
         let handle = EcdsaP256PrivateKey { d: *d_bytes, q: pk };
         handle.run_pct(drbg)?;
-        Some(handle)
+        Ok(handle)
     }
 
-    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Option<Self> {
+    fn generate_internal(drbg: &mut HmacDrbgSha256) -> Result<Self, Error> {
         let (d, q) = generate_p256_internal(drbg)?;
         let handle = EcdsaP256PrivateKey { d, q };
         handle.run_pct(drbg)?;
-        Some(handle)
+        Ok(handle)
     }
 
     /// Run the IG 10.3.A pairwise consistency test: sign a fixed
     /// probe with a DRBG-sampled `k`, verify under our own public
     /// key, reject the handle on any failure.
-    fn run_pct(&self, drbg: &mut HmacDrbgSha256) -> Option<()> {
+    fn run_pct(&self, drbg: &mut HmacDrbgSha256) -> Result<(), Error> {
         // Cap the retry loop the same way `sign_sha256_internal`
         // does — a fresh DRBG draw on a sign failure, not a loop
         // that depends on secret data.
         for _ in 0..MAX_SIGN_RETRIES {
             let k = sample_scalar_internal(drbg)?;
-            if let Some(sig) = sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k) {
-                if verify_internal(&self.q, PCT_PROBE_MSG, &sig) {
-                    return Some(());
+            match sign_with_k_internal(&self.d, PCT_PROBE_MSG, &k) {
+                Ok(sig) => {
+                    if verify_internal(&self.q, PCT_PROBE_MSG, &sig)? {
+                        return Ok(());
+                    }
+                    // Verify-fail on a freshly-signed probe is the PCT
+                    // failure signal (IG 10.3.A) and is not retriable.
+                    return Err(Error::InvalidInput);
                 }
-                // Verify-fail on a freshly-signed probe is the PCT
-                // failure signal (IG 10.3.A) and is not retriable.
-                return None;
+                // `InvalidInput` from the sign primitive means a zero `r`
+                // or `s`: retry with a fresh `k`.
+                Err(Error::InvalidInput) => {}
+                Err(e) => return Err(e),
             }
         }
-        None
+        Err(Error::InvalidInput)
     }
 
     fn sign_sha256_internal(
         &self,
         drbg: &mut HmacDrbgSha256,
         msg: &[u8],
-    ) -> Option<[u8; SIGNATURE_LEN]> {
+    ) -> Result<[u8; SIGNATURE_LEN], Error> {
         for _ in 0..MAX_SIGN_RETRIES {
             let k = sample_scalar_internal(drbg)?;
-            if let Some(sig) = sign_with_k_internal(&self.d, msg, &k) {
-                return Some(sig);
+            match sign_with_k_internal(&self.d, msg, &k) {
+                Ok(sig) => return Ok(sig),
+                // `sign_with_k_internal` returns `InvalidInput` iff `k` or one
+                // of the derived scalars collides with zero — retry
+                // with a fresh `k`, matching FIPS 186-5 §6.4.1.
+                Err(Error::InvalidInput) => {}
+                Err(e) => return Err(e),
             }
-            // `sign_with_k_internal` returns `None` iff `k` or one
-            // of the derived scalars collides with zero — retry
-            // with a fresh `k`, matching FIPS 186-5 §6.4.1.
         }
-        None
+        Err(Error::InvalidInput)
     }
 }
 
@@ -504,22 +659,22 @@ const KAT_SIGNATURE: [u8; 64] = [
 /// machine via a [`oxicrypt_module::KatEntry`].
 pub fn self_test() -> Result<(), SelfTestFailure> {
     // Positive: d → Q matches, sign(d, msg, k) matches, verify accepts.
-    let pk = derive_public_key_internal(&KAT_D).ok_or(SelfTestFailure)?;
+    let pk = derive_public_key_internal(&KAT_D).map_err(|_| SelfTestFailure)?;
     if pk != KAT_PUBLIC_KEY {
         return Err(SelfTestFailure);
     }
-    let sig = sign_with_k_internal(&KAT_D, KAT_MSG, &KAT_K).ok_or(SelfTestFailure)?;
+    let sig = sign_with_k_internal(&KAT_D, KAT_MSG, &KAT_K).map_err(|_| SelfTestFailure)?;
     if sig != KAT_SIGNATURE {
         return Err(SelfTestFailure);
     }
-    if !verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &KAT_SIGNATURE) {
+    if !verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &KAT_SIGNATURE).map_err(|_| SelfTestFailure)? {
         return Err(SelfTestFailure);
     }
 
     // Negative: a signature with a flipped byte must be rejected.
     let mut tampered = KAT_SIGNATURE;
     tampered[0] ^= 0x01;
-    if verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered) {
+    if verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered).map_err(|_| SelfTestFailure)? {
         return Err(SelfTestFailure);
     }
 
@@ -552,70 +707,83 @@ mod tests {
         oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
     }
 
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    fn start_module() {
+        let _ = init_with_tests(&[]);
+        assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+    }
+
     #[test]
     fn kat_public_key_matches_rfc6979() {
+        start_module();
         let pk = derive_public_key_internal(&KAT_D).unwrap();
         assert_eq!(pk, KAT_PUBLIC_KEY);
     }
 
     #[test]
     fn kat_signature_matches_rfc6979() {
+        start_module();
         let sig = sign_with_k_internal(&KAT_D, KAT_MSG, &KAT_K).unwrap();
         assert_eq!(sig, KAT_SIGNATURE);
     }
 
     #[test]
     fn verify_accepts_valid_kat_signature() {
-        assert!(verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &KAT_SIGNATURE));
+        start_module();
+        assert!(verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &KAT_SIGNATURE).unwrap());
     }
 
     #[test]
     fn verify_rejects_tampered_signature() {
+        start_module();
         let mut tampered = KAT_SIGNATURE;
         tampered[0] ^= 0x01;
-        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered));
+        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered).unwrap());
 
         let mut tampered2 = KAT_SIGNATURE;
         tampered2[63] ^= 0x01;
-        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered2));
+        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &tampered2).unwrap());
     }
 
     #[test]
     fn verify_rejects_wrong_message() {
-        assert!(!verify_internal(
-            &KAT_PUBLIC_KEY,
-            b"not sample",
-            &KAT_SIGNATURE
-        ));
+        start_module();
+        assert!(!verify_internal(&KAT_PUBLIC_KEY, b"not sample", &KAT_SIGNATURE).unwrap());
     }
 
     #[test]
     fn verify_rejects_wrong_public_key() {
+        start_module();
         let mut wrong_pk = KAT_PUBLIC_KEY;
         wrong_pk[1] ^= 0x01;
-        assert!(!verify_internal(&wrong_pk, KAT_MSG, &KAT_SIGNATURE));
+        assert!(!verify_internal(&wrong_pk, KAT_MSG, &KAT_SIGNATURE).unwrap());
     }
 
     #[test]
     fn verify_rejects_zero_r() {
+        start_module();
         let mut sig = KAT_SIGNATURE;
         for b in &mut sig[..32] {
             *b = 0;
         }
-        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &sig));
+        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &sig).unwrap());
     }
 
     #[test]
     fn verify_rejects_zero_s() {
+        start_module();
         let mut sig = KAT_SIGNATURE;
         for b in &mut sig[32..] {
             *b = 0;
         }
-        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &sig));
+        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &sig).unwrap());
     }
 
     #[test]
     fn verify_rejects_r_equal_to_n() {
+        start_module();
         // n in big-endian as the `r` component — must be rejected
         // because the canonical scalar parser rejects r >= n.
         let mut sig = KAT_SIGNATURE;
@@ -625,18 +793,20 @@ mod tests {
             0xfc, 0x63, 0x25, 0x51,
         ];
         sig[..32].copy_from_slice(&n_bytes);
-        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &sig));
+        assert!(!verify_internal(&KAT_PUBLIC_KEY, KAT_MSG, &sig).unwrap());
     }
 
     #[test]
     fn verify_rejects_pk_with_wrong_header_byte() {
+        start_module();
         let mut bad_pk = KAT_PUBLIC_KEY;
         bad_pk[0] = 0x02; // compressed; we only accept 0x04 here
-        assert!(!verify_internal(&bad_pk, KAT_MSG, &KAT_SIGNATURE));
+        assert!(!verify_internal(&bad_pk, KAT_MSG, &KAT_SIGNATURE).unwrap());
     }
 
     #[test]
     fn self_test_passes() {
+        start_module();
         self_test().unwrap();
     }
 
@@ -661,7 +831,7 @@ mod tests {
     }
 
     // --------------------------------------------------------------
-    // R7: DRBG-backed keygen + PCT + random-k sign
+    // DRBG-backed keygen + PCT + random-k sign
     // --------------------------------------------------------------
 
     fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
@@ -709,16 +879,17 @@ mod tests {
         let mut drbg = pct_drbg(b"r7-keygen-pinned");
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
 
-        assert_eq!(*sk.private_scalar(), EXPECTED_D, "keygen d drift");
-        assert_eq!(sk.public_key(), EXPECTED_Q, "keygen Q drift");
+        assert_eq!(*sk.private_scalar().unwrap(), EXPECTED_D, "keygen d drift");
+        assert_eq!(sk.public_key().unwrap(), EXPECTED_Q, "keygen Q drift");
 
         // Re-derive the public key from the private scalar and
         // check the handle agrees — this is what the PCT also
         // verified internally.
-        let pk_rederived = derive_public_key_internal(sk.private_scalar()).expect("rederive ok");
-        assert_eq!(sk.public_key(), pk_rederived);
+        let pk_rederived =
+            derive_public_key_internal(sk.private_scalar().unwrap()).expect("rederive ok");
+        assert_eq!(sk.public_key().unwrap(), pk_rederived);
         // Sanity: the scalar is non-zero and decodable.
-        let d = Scalar::from_bytes(sk.private_scalar()).expect("scalar in range");
+        let d = Scalar::from_bytes(sk.private_scalar().unwrap()).expect("scalar in range");
         assert_eq!(d.is_zero(), 0);
     }
 
@@ -728,11 +899,11 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-roundtrip");
+        let mut drbg = pct_drbg(b"roundtrip");
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
-        let msg = b"oxicrypt R7: random-k sign and verify";
+        let msg = b"oxicrypt: random-k sign and verify";
         let sig = sk.sign_sha256(&mut drbg, msg).expect("sign ok");
-        assert!(verify(&sk.public_key(), msg, &sig).expect("verify ok"));
+        assert!(verify(&sk.public_key().unwrap(), msg, &sig).expect("verify ok"));
     }
 
     #[test]
@@ -744,14 +915,14 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-randomises");
+        let mut drbg = pct_drbg(b"randomises");
         let sk = EcdsaP256PrivateKey::generate(&mut drbg).expect("generate ok");
-        let msg = b"oxicrypt R7: drbg must randomise k per call";
+        let msg = b"oxicrypt: drbg must randomise k per call";
         let sig1 = sk.sign_sha256(&mut drbg, msg).expect("sign #1");
         let sig2 = sk.sign_sha256(&mut drbg, msg).expect("sign #2");
         assert_ne!(sig1, sig2, "DRBG-backed sigs must differ on fresh k");
-        assert!(verify(&sk.public_key(), msg, &sig1).expect("verify #1"));
-        assert!(verify(&sk.public_key(), msg, &sig2).expect("verify #2"));
+        assert!(verify(&sk.public_key().unwrap(), msg, &sig1).expect("verify #1"));
+        assert!(verify(&sk.public_key().unwrap(), msg, &sig2).expect("verify #2"));
     }
 
     #[test]
@@ -764,15 +935,15 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-from-bytes");
+        let mut drbg = pct_drbg(b"from-bytes");
         let sk = EcdsaP256PrivateKey::from_bytes(&mut drbg, &KAT_D).expect("from_bytes + PCT");
-        assert_eq!(sk.public_key(), KAT_PUBLIC_KEY);
+        assert_eq!(sk.public_key().unwrap(), KAT_PUBLIC_KEY);
 
         // Sign something new via the DRBG-backed wrapper and verify.
         let sig = sk
             .sign_sha256(&mut drbg, b"probe-message")
             .expect("sign ok");
-        assert!(verify(&sk.public_key(), b"probe-message", &sig).expect("verify ok"));
+        assert!(verify(&sk.public_key().unwrap(), b"probe-message", &sig).expect("verify ok"));
     }
 
     #[test]
@@ -781,7 +952,7 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-reject-zero");
+        let mut drbg = pct_drbg(b"reject-zero");
         let zero = [0u8; PRIVATE_KEY_LEN];
         match EcdsaP256PrivateKey::from_bytes(&mut drbg, &zero) {
             Err(Error::InvalidInput) => {}
@@ -796,7 +967,7 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-reject-n");
+        let mut drbg = pct_drbg(b"reject-n");
         // P-256 group order `n`, big-endian.
         let n_bytes: [u8; 32] = [
             0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -822,7 +993,7 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-pct-tampered");
+        let mut drbg = pct_drbg(b"pct-tampered");
         let honest = EcdsaP256PrivateKey::generate(&mut drbg).expect("honest generate ok");
 
         // Build a second, independent key pair whose public part
@@ -834,11 +1005,12 @@ mod tests {
         // we bypass the constructor PCT; we then run `run_pct`
         // explicitly and require failure.
         let forged = EcdsaP256PrivateKey {
-            d: *honest.private_scalar(),
-            q: decoy.public_key(),
+            d: *honest.private_scalar().unwrap(),
+            q: decoy.public_key().unwrap(),
         };
-        assert!(
-            forged.run_pct(&mut drbg).is_none(),
+        assert_eq!(
+            forged.run_pct(&mut drbg),
+            Err(Error::InvalidInput),
             "PCT must reject an inconsistent (d, Q) handle"
         );
     }
@@ -853,7 +1025,7 @@ mod tests {
             name: "ecdsa-p256-sha256",
             run: self_test,
         }]);
-        let mut drbg = pct_drbg(b"r7-sampler-range");
+        let mut drbg = pct_drbg(b"sampler-range");
         for _ in 0..32 {
             let bytes = crate::p256_keygen::sample_scalar_internal(&mut drbg)
                 .expect("sampler must succeed");

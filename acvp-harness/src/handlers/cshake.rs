@@ -62,7 +62,7 @@ impl AlgorithmHandler for CShake128Handler {
                 .map_err(|_| DispatchError::Crypto("CShake128::new returned Err"))?;
             x.update(msg);
             x.finalize();
-            x.squeeze(out);
+            x.squeeze(out)?;
             Ok(())
         })
     }
@@ -84,7 +84,7 @@ impl AlgorithmHandler for CShake256Handler {
                 .map_err(|_| DispatchError::Crypto("CShake256::new returned Err"))?;
             x.update(msg);
             x.finalize();
-            x.squeeze(out);
+            x.squeeze(out)?;
             Ok(())
         })
     }

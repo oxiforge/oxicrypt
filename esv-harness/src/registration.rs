@@ -851,7 +851,7 @@ mod tests {
 
     #[test]
     fn wire_body_rejects_an_over_claiming_exact_hmin() {
-        // F3: a caller sets the pub hmin_exact field directly to an over-claim
+        // A caller sets the pub hmin_exact field directly to an over-claim
         // (2.0 bits > bitsPerSample 1) without mirroring the preflight-validated
         // f64. The exact path is what serializes, so to_wire_json must reject it
         // rather than leak a min-entropy over-claim to the NIST wire.

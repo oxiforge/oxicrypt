@@ -22,6 +22,21 @@
     clippy::similar_names
 )]
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 use std::collections::BTreeMap;
 
 /// Workspace-relative path of the vendored ACVP sigVer projection.
@@ -224,7 +239,7 @@ macro_rules! router {
                     ) else {
                         return Some(false);
                     };
-                    Some(p::verify_internal(&pk, msg, &sig))
+                    Some(p::verify_internal(&pk, msg, &sig).unwrap())
                 })*
                 _ => None,
             }
@@ -317,6 +332,7 @@ router! {
 
 #[test]
 fn every_acvp_sigver_case_matches_nist_verdict() {
+    start_module();
     let projection = read_projection();
     let root = parse(&projection);
     assert_eq!(root.get("algorithm").str(), "LMS");
@@ -389,6 +405,7 @@ fn every_acvp_sigver_case_matches_nist_verdict() {
 /// and a public key of the wrong length is a rejection.
 #[test]
 fn router_refuses_unknown_modes() {
+    start_module();
     assert!(verify("LMS_SHA256_M32_H30", "LMOTS_SHA256_N32_W4", &[], &[], &[]).is_none());
     assert!(verify("LMS_SHA256_M32_H5", "LMOTS_SHAKE_N32_W4", &[], &[], &[]).is_none());
     assert_eq!(

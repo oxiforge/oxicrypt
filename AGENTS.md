@@ -16,8 +16,9 @@ disciplined about `unsafe`: **22 of the 28 crates inside the cryptographic bound
 security parameters), the three CPU-intrinsic acceleration crates `oxicrypt-sha-accel` /
 `oxicrypt-aes-accel` / `oxicrypt-keccak-accel` (feature-gated, default-off, runtime-detected,
 equivalence proven by KAT + cross-path oracle), `oxicrypt-timer` (read-only CPU timer/counter
-intrinsics for the entropy source), and `oxicrypt-imageread` (kernel-mediated reads of the module's
-own loaded image on Darwin and Windows, which expose no file-shaped route to it). Separately,
+intrinsics for the entropy source), and `oxicrypt-imageread` (the system calls the integrity test needs:
+kernel-mediated reads of the module's own loaded image, the image path, bound-import resolution and
+the thread id). Separately,
 `oxicrypt-ffi` sits **outside** the boundary to offer a C ABI, where `unsafe extern "C"` is an
 unavoidable requirement of exposing the module to C callers. (See the Security Policy — withheld from this
 repository, see `docs/security-policy/README.md` — for the authoritative unsafe-code accounting;
@@ -123,8 +124,8 @@ The canonical LAMA manifest stays at `docs/llm-api-manifest/llm-api.yaml`. The f
 embed it — `oxicrypt-ffi`, `oxi`, `acvp-harness`, `esv-harness`, each exposing a runtime `--lama`
 surface — reach it through a **symlink in their own package root** and embed
 `include_str!("../llm-api.yaml")`. `cargo package` materialises the symlink's *content* into the
-tarball, so there is one copy in git and a real file for every consumer. The other 31 crates need no
-copy: their discovery is the `[package.metadata.lama]` URL, which is metadata rather than code.
+tarball, so there is one copy in git and a real file for every consumer. The other 30 crates that carry
+`[package.metadata.lama]` need no copy: their discovery is that URL, which is metadata rather than code.
 
 `doc-guard` asserts both halves — no embed escapes its package root (workspace-wide, not scoped to
 the crates.io roster, since a roster-conditional rule changes meaning when a `publish` flag moves),
@@ -152,7 +153,7 @@ Three surfaces, one direction of flow — speculative → designed → actionabl
   work it **is removed** from `ROADMAP.md`, and a change to released work becomes GitHub issue(s).
 - **`docs/design/*.md`** hold the *design-of-record* for design-first epics (RFC-lite: problem →
   constraints / ISC invariants → approach → open questions). An accepted design is built, through issues
-  when it changes released work; the doc **persists** as rationale. (None yet — created when the first design-first epic appears.)
+  when it changes released work; the doc **persists** as rationale.
 
 So: an idea enters `ROADMAP.md`; if it needs design, it gets a `docs/design/` doc; once actionable, its
 roadmap entry is removed and it is built, with GitHub issues when it changes released work (the design
@@ -171,6 +172,17 @@ and re-run after any post-review fix-ups:
    (`oxicrypt-integrity`). A green lint pass does not substitute for green vectors on a crypto change.
 4. **Doc-sync** — the commit is the gate: every commit lands with its documentation already true (see
    **Documentation sync** below). This is the judgment gate alongside the mechanical checks.
+
+### The integrity verifying key in builds and tests
+
+A module verifies its integrity signature with an ML-DSA-87 public key compiled in from
+`OXICRYPT_INTEGRITY_VERIFY_KEY` (a 2,592-byte raw key file) or `OXICRYPT_INTEGRITY_VERIFY_KEY_HEX`. A
+build without either compiles and reports `NoVerifyKey` at power-up. To run a signed artifact
+locally, generate a pair outside the tree with `oxicrypt-integrity-sign --keygen <dir>`, build with
+the public half and sign with `--sign --key <dir>/integrity-signing.key`. The workspace tests need
+no key: each signed-artifact test generates a key pair in the test process, writes its public half
+into the copy it signs with `oxicrypt_integrity_sign::embed_verify_key`, and signs with the private
+half. No private key is committed to this repository.
 
 ### Test iteration — the `quick` nextest profile
 
@@ -232,7 +244,7 @@ than hidden: deleting the clone directory outright silences the gate on the main
 
 Two further guards have no EA analogue. `the_security_policy_is_not_in_the_public_tree` is the
 inverse check — it fails if the document reappears here under any name, because publication is the
-one direction that cannot be undone. Because `nextest` is opt-in in `pre-push` as of 2026-08-10, that
+one direction that cannot be undone. Because `nextest` is opt-in in `pre-push`, that
 check does not run locally on an ordinary push at all, so the same containment scan is duplicated in
 `scripts/git-hooks/pre-push`, ahead of the tag short-circuit and the stamp cache, on the reasoning
 the deny-list scan already uses: a leak check a cache can skip is not a leak check. CI runs
@@ -283,9 +295,10 @@ crate — directly or by reference — do all that apply:
      omission. A crate carrying its own `publish = false` states in its `description:` that it is
      out-of-boundary tooling and carries no members.
    - Every publishable crate's public API surface appears in `llm-api.yaml`, with two standing
-     exclusions: gateless `*_internal` variants, which exist for the harness rather than for callers,
-     and `*_self_test` functions with their `KATS` constants, which are power-up machinery no caller
-     invokes directly.
+     exclusions: `*_internal` variants without the service gates, which exist for the power-up
+     self-tests, intra-workspace composition and the harness rather than for callers,
+     and `*_self_test` functions, which no caller invokes directly. Each crate's `KATS` slice is
+     documented: a binary passes it to `initialize_with_tests` / `initialize_with_profile`.
    - Two crates on the roster carry no members, each for a stated reason in its `description:`.
      `oxicrypt-test-vectors` is test-support data rather than API. `oxi` is a binary with no public
      Rust items at all, so there is nothing a `functions:` entry could describe — its interface is a
@@ -324,9 +337,46 @@ crate — directly or by reference — do all that apply:
    fails the check by design — a linter quietly weakened in-tree reports no findings, which is
    indistinguishable from conformance.
 
-   It checks **prose conformance, not coverage**. A manifest can pass here with every rule clear
-   and still omit an entire crate; that is what the coverage rule above is for, and it is not
-   mechanised. A green run must never be read as "the manifest is complete."
+   It then checks **coverage** with `scripts/check-lama-coverage.ts`: every public fn, struct, enum,
+   union, trait, type alias, const and static of a publishable crate — every workspace member with a
+   library target that is not `publish = false`, wherever it sits in the tree — needs a manifest
+   entry, `#[doc(hidden)]` or not, apart from the exclusions above and the items listed in
+   `docs/llm-api-manifest/coverage-baseline.txt`, which records the surface that was undocumented
+   when the check arrived. An `*_internal` function is excluded when its body calls neither
+   `require_operational` nor `require_allowed`. Such a function is not ungated: it calls
+   `oxicrypt_module::require_self_test_started` first, which admits `Operational`, and `SelfTest`
+   only on the thread running the power-up self-tests, and refuses every other, and every public
+   `*_internal` function carries that guard. Code that runs work on other threads (the `parallel`
+   rayon sweeps) takes the proof with `require_self_test_started_token()` on the calling thread
+   and lends `&SelfTestStarted` to the workers, which use the `new_with` and `*_with` variants and
+   never call the guard or a guarded `*_internal` function themselves: during `SelfTest` a worker's
+   own guard is refused and the self-test fails. Every such sweep runs through its crate's
+   `sweep::run`, which uses a pool reserved for the crate's sweeps until the module is
+   operational, never rayon's global pool, so a worker can never be a thread waiting in
+   `initialize`. The
+   guard is not one of the service gates the check looks for, so it does not bring the function into
+   the manifest. Before the coverage check, the same script runs a guard sweep: it finds the public
+   `*_internal` functions, the functions listed in `GUARDED_EXTRA` (the key accessors, the hash,
+   XOF, MAC, AES and CMAC output points, and the KDF service entry points) and the functions macros
+   in `GUARDED_MACROS` define, requires each body to open with that guard or its token form (only
+   the KDF service entry points may open with the service gate instead), and fails unless the
+   count equals `GUARDED_COUNT` in the script, so adding a guarded function means raising that
+   count. Its positive control, run by `check-lama-manifests.sh` and the CI `lama` job, is
+   `--guard-sweep scripts/fixtures/guard-sweep 12`, which must exit 1 naming the twelve rejected
+   functions and must not count the seven that sit in comments or literals. The sweep reads
+   source through a small lexer that skips comments (nested ones included) and string, byte, C,
+   raw-string and char literals, and finds macro invocations with any of `{}`, `()` and `[]`. It is
+   a source-text check: it models only the macros listed in `GUARDED_MACROS`
+   (`define_keygen!`) and does not evaluate `cfg`, which is acceptable because it guards against an
+   accidental omission, not deliberately hidden code; a new macro that generates `pub` functions
+   must be added to `GUARDED_MACROS`. The `pub const` items of an inherent `impl` are public constants too and are checked, named
+   `Type::NAME`, except in an `impl` whose type a macro argument names. Methods, the items of a
+   trait `impl` and `#[cfg(test)]` code are not checked. The baseline only shrinks: a line whose
+   item gains an entry or stops being public fails the check until it is deleted, a new item is
+   documented rather than added to it, and the check fails when the baseline gains a line relative
+   to its merge base with `origin/main`. The scan reads source text, expanding crate-local
+   `macro_rules!` invocations approximately; an item whose name comes from a macro argument is not
+   seen, so a green run is not proof that the manifest is complete.
 5. **Release history (`changelog-gem`).** `CHANGELOG.md` follows Keep-a-Changelog with a standing
    `## [Unreleased]` section. Every PR that changes user-facing behavior adds its line under
    `[Unreleased]` **in that same PR**, citing its issue/PR number (`… (#N)`) and closing the issue via

@@ -18,6 +18,7 @@
 //!
 //!   cargo test -p acvp-harness --test gen_kas_ecc_ssc_slice -- --ignored --nocapture
 
+use acvp_harness::ensure_initialized;
 use std::io::Write;
 
 fn hex_upper(b: &[u8]) -> String {
@@ -53,6 +54,7 @@ const Q_R: [u8; 65] = [
 #[test]
 #[ignore]
 fn generate_kas_ecc_ssc_slice() {
+    ensure_initialized().expect("FIPS init");
     // Test 1: d_i * Q_r
     let z1 = oxicrypt_ecdh::compute_shared_secret_p256_internal(&D_I, &Q_R).expect("ECDH 1 failed");
 

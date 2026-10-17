@@ -75,6 +75,10 @@ pub enum TimerError {
         /// The measured report that triggered the refusal.
         report: AdequacyReport,
     },
+    /// The module refused the workload's hash computation, because its
+    /// self-tests have not started or it has failed. Says nothing about
+    /// the timer.
+    Module(oxicrypt_module::Error),
 }
 
 /// Why [`AdequacyReport::ensure_adequate`] refused the configuration.

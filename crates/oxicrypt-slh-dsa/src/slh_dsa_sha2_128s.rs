@@ -14,8 +14,8 @@
 //! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
 //! CNSSP 15 lists no SLH-DSA parameter set, so SHA2-128s is permitted
-//! in the FIPS 140-3 Unrestricted profile only. CNSA 2.0 gating is
-//! denied at the Service-enum layer in Batch 4.
+//! in the FIPS 140-3 Unrestricted profile only. Its `Service`
+//! variants are refused under both CNSA profiles.
 //!
 //! # External vs internal API
 //!
@@ -57,9 +57,6 @@ crate::slh_dsa_impl::slh_dsa_impl! {
     svc_keygen = Service::SlhDsaSha2128sKeygen;
     svc_sign = Service::SlhDsaSha2128sSign;
     svc_verify = Service::SlhDsaSha2128sVerify;
-    kat_seed_offset = 1u8;
-    kat_msg = b"SLH-DSA-SHA2-128s self-test message (FIPS 205)";
-    kat_name = "SLH-DSA-SHA2-128s KAT (keygen + sign + verify round-trip, FIPS 205)";
 }
 
 #[cfg(test)]
@@ -69,7 +66,7 @@ mod variant_tests {
 
     #[test]
     fn paramset_dispatch_emits_sha256_long_hash() {
-        // Defends `feedback_macro_rules_literal_hygiene` (CMVP gem).
+        crate::test_support::start_module();
         // At n=16, FIPS 205 §11.2.1 requires SHA-256 (not SHA-512)
         // for H, T, PRF_msg, H_msg. `__sha2_long_setup!(16)` emits
         // `LONG_PAD = 64 - N = 48` and `LONG_BLOCK = 64`. A prior bug
@@ -88,6 +85,7 @@ mod variant_tests {
 
     #[test]
     fn key_sizes_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(PK_LEN, 32);
         assert_eq!(SK_LEN, 64);
         assert_eq!(SIG_LEN, 7_856);
@@ -95,6 +93,7 @@ mod variant_tests {
 
     #[test]
     fn parameter_constants_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(N, 16);
         assert_eq!(H, 63);
         assert_eq!(D, 7);

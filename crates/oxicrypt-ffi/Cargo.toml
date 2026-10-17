@@ -25,6 +25,7 @@ cbindgen = "0.29"
 oxicrypt-module = { workspace = true }
 oxicrypt-integrity = { workspace = true }
 oxicrypt-sha = { workspace = true }
+oxicrypt-xof = { workspace = true }
 oxicrypt-hmac = { workspace = true }
 oxicrypt-aes = { workspace = true }
 oxicrypt-cmac = { workspace = true }
@@ -41,6 +42,7 @@ oxicrypt-lms = { workspace = true }
 oxicrypt-xmss = { workspace = true }
 oxicrypt-kdf = { workspace = true }
 oxicrypt-tls-kdf = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

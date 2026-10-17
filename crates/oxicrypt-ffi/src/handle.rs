@@ -10,9 +10,8 @@
 //! still-present-but-sentinel-tagged inner; if zeroize already ran during
 //! `_finalize`, the second pass is idempotent (zeroizing zeroes is a no-op).
 //!
-//! Per `feedback_cmvp_reviewer_framing` F5: safe-no-op over UB. The CMVP
-//! reviewer expects every handle-bearing API to define behaviour after
-//! finalize/free, not leave it as undefined.
+//! Use after finalize is a safe no-op rather than undefined behaviour:
+//! every handle-bearing API defines its behaviour after finalize or free.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 

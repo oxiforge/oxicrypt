@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Inverts one byte of a file, in place.
 
-Used to make a signed artifact differ from what its recorded MAC covers.
+Used to make a signed artifact differ from what its ML-DSA-87 integrity
+signature covers.
 """
 
 import sys

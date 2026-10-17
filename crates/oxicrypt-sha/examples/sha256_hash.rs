@@ -30,7 +30,7 @@ fn main() {
     let mut hasher = oxicrypt_sha::Sha256::new().expect("sha256 new");
     hasher.update(b"Hello, ");
     hasher.update(b"oxicrypt!");
-    let digest2 = hasher.finalize();
+    let digest2 = hasher.finalize().expect("sha256 finalize");
     println!("SHA-256 (streaming): {}", hex(&digest2));
 
     assert_eq!(digest, digest2, "one-shot and streaming must match");

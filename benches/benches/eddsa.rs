@@ -35,7 +35,7 @@ fn bench_ed25519_verify(c: &mut Criterion) {
 
     let mut drbg = make_drbg();
     let sk = Ed25519PrivateKey::generate(&mut drbg).expect("keygen");
-    let pk = sk.public_key();
+    let pk = sk.public_key().expect("public key");
     let msg = b"benchmark message for Ed25519 signing";
     let sig = sk.sign(msg).expect("sign");
 

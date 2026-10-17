@@ -342,7 +342,7 @@ macro_rules! define_keygen {
         // ---- KeyMaterial ----
 
         $(#[$km_meta])*
-        #[derive(Clone, Debug)]
+        #[derive(Clone)]
         pub struct $km {
             /// RSA modulus `n = p · q`.
             pub n: $full,
@@ -360,6 +360,15 @@ macro_rules! define_keygen {
             pub qinv: $half,
         }
 
+        /// Shows the public modulus only; the private fields are not printed.
+        impl core::fmt::Debug for $km {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_struct(stringify!($km))
+                    .field("n", &self.n)
+                    .finish_non_exhaustive()
+            }
+        }
+
         impl Drop for $km {
             fn drop(&mut self) {
                 oxicrypt_zeroize::zeroize_u64(&mut self.d.limbs);
@@ -375,10 +384,21 @@ macro_rules! define_keygen {
 
         /// Generate fresh RSA key material using `drbg` for all
         /// randomness. `e` must be an odd prime in `[65537, 2^64)`.
+        ///
+        /// Skips the operational and profile gates; the approved service
+        /// is the private-key type's `generate`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`crate::keygen::KeygenError::Module`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         pub fn $gen(
             drbg: &mut HmacDrbgSha256,
             e: u64,
         ) -> Result<$km, crate::keygen::KeygenError> {
+            oxicrypt_module::require_self_test_started()?;
             if e < 65537 || e & 1 == 0 {
                 return Err(crate::keygen::KeygenError::InvalidExponent);
             }

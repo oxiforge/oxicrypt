@@ -57,7 +57,7 @@ crate::keygen_impl::define_keygen! {
     pow_public = pow_public_u2048;
     mr_rounds = 4;
     nlen = 4096;
-    generate = generate_4096;
+    generate = generate_4096_internal;
     reduce = u4096_mod_u2048;
 }
 
@@ -96,6 +96,7 @@ mod tests {
 
     #[test]
     fn small_primes_rejects_obvious_composites_2048() {
+        crate::test_support::start_module();
         let mut limbs = [0u64; LIMBS2048];
         limbs[0] = 15;
         let p = U2048 { limbs };
@@ -104,6 +105,7 @@ mod tests {
 
     #[test]
     fn miller_rabin_does_not_panic_on_synthetic_input_2048() {
+        crate::test_support::start_module();
         let mut limbs = [0u64; LIMBS2048];
         limbs[0] = 7;
         limbs[LIMBS2048 - 1] = 1 << 63;
@@ -114,6 +116,7 @@ mod tests {
 
     #[test]
     fn u4096_mod_u2048_small_case() {
+        crate::test_support::start_module();
         let mut a_limbs = [0u64; LIMBS4096];
         a_limbs[0] = 15;
         let a = U4096 { limbs: a_limbs };
@@ -135,7 +138,7 @@ mod tests {
             run: crate::self_test,
         }]);
         let mut drbg = make_drbg(b"oxicrypt-rsa4096-keygen-smoke-entropy-0001");
-        let km = generate_4096(&mut drbg, 65537).expect("keygen failed");
+        let km = generate_4096_internal(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 4096 bits).
         assert_ne!(km.n.limbs[LIMBS4096 - 1] >> 63, 0, "n is not 4096-bit");
         // d must be less than n.
@@ -147,13 +150,15 @@ mod tests {
 
     #[test]
     fn generate_4096_rejects_even_exponent() {
+        crate::test_support::start_module();
         let mut drbg = make_drbg(b"even-exp-reject-4096");
-        assert!(generate_4096(&mut drbg, 65538).is_err());
+        assert!(generate_4096_internal(&mut drbg, 65538).is_err());
     }
 
     #[test]
     fn generate_4096_rejects_small_exponent() {
+        crate::test_support::start_module();
         let mut drbg = make_drbg(b"small-exp-reject-4096");
-        assert!(generate_4096(&mut drbg, 3).is_err());
+        assert!(generate_4096_internal(&mut drbg, 3).is_err());
     }
 }

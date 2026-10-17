@@ -17,12 +17,18 @@
 //! | Code | Meaning |
 //! |---|---|
 //! | 0 | the module became operational |
-//! | 3 | `Mismatch` — the image does not match its reference MAC |
-//! | 4 | `SlotInvalid` — the slot is absent, unsigned, or malformed |
-//! | 5 | `Unreadable` — the test was not performed |
+//! | 3 | `SignatureInvalid`: the image does not match its signature |
+//! | 4 | `SlotInvalid`: the slot is the unsigned template |
+//! | 5 | `Unreadable`: the test was not performed |
 //! | 6 | the module refused to boot for some other reason |
-//! | 7 | `CastNotRun` — the integrity test was reached before its CAST |
-//! | 9 | `IntegrityUnverified` — the module was initialised with no integrity test at all |
+//! | 7 | `CastNotRun`: the integrity test was reached before its CAST |
+//! | 8 | any other indicator |
+//! | 9 | `IntegrityUnverified`: the module was initialised with no integrity test at all |
+//! | 10 | `NoVerifyKey`: the module was built without a verifying key |
+//! | 11 | `KeyMismatch`: the slot was signed for a different key |
+//! | 12 | `SlotDamaged`: a signed slot, the key record or an import is damaged |
+//!
+//! `integrity-probe-so` numbers the same statuses differently.
 //!
 //! # `--skip-cast`
 //!
@@ -32,17 +38,17 @@
 //! only by the order of a list is indistinguishable, from the outside,
 //! from no guarantee at all. Nothing but a test should ever pass it.
 //!
-//! On failure the module has already latched its error state, so the
-//! second call below re-runs the same test purely to report *why*. It
-//! cannot change the outcome — there is no path from `Error` back to
-//! `Operational` short of a restart.
+//! On failure the module has already latched its error state and refuses
+//! its primitives from then on, so the cause is read from the status
+//! indicator the boot's own run latched rather than by running the test
+//! again.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::process::ExitCode;
 
-use oxicrypt_integrity::{IntegrityError, KATS, verify_loaded_image};
+use oxicrypt_integrity::{IntegrityError, IntegrityStatus, KATS};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -52,10 +58,16 @@ fn main() -> ExitCode {
     // refuse rather than reporting itself operational, which is the
     // control proving the transition guard can fire.
     let no_integrity = args.iter().any(|a| a == "--no-integrity");
+    // `--skip-cast` drops the ML-DSA-87 CAST, found by its name.
+    let without_cast: Vec<_> = KATS
+        .iter()
+        .copied()
+        .filter(|k| k.name != oxicrypt_integrity::ML_DSA_CAST_NAME)
+        .collect();
     let tests = if no_integrity {
         &[][..]
     } else if skip_cast {
-        KATS.get(1..).unwrap_or(KATS)
+        &without_cast[..]
     } else {
         KATS
     };
@@ -65,25 +77,35 @@ fn main() -> ExitCode {
     // stable verdict means nothing unless the image demonstrably moved.
     println!("slot-addr: {:#x}", oxicrypt_integrity::slot_address());
 
-    // Boots with the CAST omitted so the first run records `CastNotRun`,
-    // then runs the CAST and verifies again — a second run that WOULD
-    // succeed. The indicator must still report the first outcome. It is
-    // the only way to observe the latch from outside: every other route
-    // produces the same verdict twice, which proves nothing.
+    // Verifies again after the boot. On an artifact whose boot failed, the
+    // module has latched its error state, so the second run is refused and
+    // reaches a different outcome, `Refused`; the indicator must still
+    // report the first outcome. It is the only way to observe the latch
+    // from outside: every other route produces the same verdict twice,
+    // which proves nothing.
     let relatch = args.iter().any(|a| a == "--relatch-probe");
 
     let boot = oxicrypt_module::initialize_with_tests(tests, &[]);
 
     if relatch {
-        let _ = oxicrypt_integrity::hmac_cast();
         let second = oxicrypt_integrity::verify_loaded_image();
-        println!("second-run-ok: {}", second.is_ok());
+        println!(
+            "second-run-refused: {}",
+            matches!(second, Err(IntegrityError::Module(_)))
+        );
     }
     // The status indicator, printed after the boot attempt so it
-    // reflects a completed run. This is the Security Policy §5.2
-    // observable: it survives where the runner's SelfTestFailure does
-    // not, so a test can pin `Unreadable` apart from `Mismatch`.
+    // reflects a completed run. This is the observable the Security Policy
+    // names (see `docs/security-policy/README.md`): it survives where the
+    // runner's SelfTestFailure does not, so a test can pin `Unreadable` apart
+    // from `SignatureInvalid`.
     println!("status: {}", oxicrypt_integrity::status() as u8);
+    if let Some(fp) = oxicrypt_integrity::verify_key_fingerprint() {
+        println!(
+            "verify-key: {}",
+            oxicrypt_integrity::format_fingerprint(&fp)
+        );
+    }
 
     match boot {
         Ok(()) => {
@@ -96,29 +118,21 @@ fn main() -> ExitCode {
                 eprintln!("integrity: the module never checked itself at startup");
                 return ExitCode::from(9);
             }
-            match verify_loaded_image() {
-                Ok(()) => {
-                    eprintln!(
-                        "integrity: ok — the module refused to boot for another reason entirely"
-                    );
-                    ExitCode::from(6)
-                }
-                Err(e @ IntegrityError::Mismatch) => {
-                    eprintln!("integrity: {e}");
-                    ExitCode::from(3)
-                }
-                Err(e @ IntegrityError::SlotInvalid(_)) => {
-                    eprintln!("integrity: {e}");
-                    ExitCode::from(4)
-                }
-                Err(e @ IntegrityError::Unreadable(_)) => {
-                    eprintln!("integrity: {e}");
-                    ExitCode::from(5)
-                }
-                Err(e @ IntegrityError::CastNotRun) => {
-                    eprintln!("integrity: {e}");
-                    ExitCode::from(7)
-                }
+            // The module has latched its error state and refuses its
+            // primitives from here on, so the test cannot be re-run to report
+            // why; the indicator the boot's own run latched carries the cause.
+            let status = oxicrypt_integrity::status();
+            eprintln!("integrity: {status:?}");
+            match status {
+                IntegrityStatus::Passed => ExitCode::from(6),
+                IntegrityStatus::SignatureInvalid => ExitCode::from(3),
+                IntegrityStatus::SlotInvalid => ExitCode::from(4),
+                IntegrityStatus::Unreadable => ExitCode::from(5),
+                IntegrityStatus::CastNotRun => ExitCode::from(7),
+                IntegrityStatus::NoVerifyKey => ExitCode::from(10),
+                IntegrityStatus::KeyMismatch => ExitCode::from(11),
+                IntegrityStatus::SlotDamaged => ExitCode::from(12),
+                _ => ExitCode::from(8),
             }
         }
     }

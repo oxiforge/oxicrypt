@@ -1,6 +1,6 @@
 [package]
 name = "oxicrypt-integrity"
-description = "Pre-operational software integrity self-test (ISO/IEC 19790:2012 7.10.2.2)"
+description = "Pre-operational software integrity self-test (ISO/IEC 19790:2012 7.10.2.2), an ML-DSA-87 signature over the module's executable image"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,8 +17,11 @@ workspace = true
 
 [dependencies]
 oxicrypt-module = { workspace = true }
+oxicrypt-ml-dsa = { workspace = true }
 oxicrypt-hmac = { workspace = true }
 oxicrypt-imageread = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

@@ -1,14 +1,6 @@
-# Minutes are no longer a constraint. This workflow was paused
-# 2026-05-07 and put on manual dispatch 2026-06-10 because the repo
-# was PRIVATE and burning a capped Free-tier allowance. The repo went
-# public 2026-08-07, and GitHub Actions is free for public
-# repositories on standard GitHub-hosted runners with no minute cap —
-# measured, not assumed: run 31394766907 reports
-# `billable.UBUNTU.total_ms = 0` across all nine jobs.
-#
-# Public repositories also get 4-core/16GB standard runners rather
-# than the 2-core/8GB a private repo gets, so the historical cost
-# notes above are stale in both directions.
+# GitHub Actions is free for a public repository on standard
+# GitHub-hosted runners, with no minute cap, and a public repository's
+# standard runners have 4 cores and 16 GB.
 #
 # Do NOT move any job to a larger runner: larger runners are billed
 # even for public repositories.
@@ -33,7 +25,7 @@ env:
 
 jobs:
   # Which optional gates does this change need? Decided by
-  # `scripts/gate-scope.sh`, which the pre-push hook is to call for the same
+  # `scripts/gate-scope.sh`, which the pre-push hook calls for the same
   # decision — one fail-closed rule, two callers, rather than two copies that
   # drift silently in the dangerous direction.
   #
@@ -42,10 +34,8 @@ jobs:
   # and blocks the pull request indefinitely. A job that always runs and exits 0
   # early is the supported shape.
   #
-  # While the trigger is `workflow_dispatch` there is no base ref, so this emits
-  # `true` for everything and every run is full. That is the intended reading of
-  # a manual dispatch, and it means this job cannot narrow anything until the
-  # triggers are flipped.
+  # A `workflow_dispatch` run has no base ref, so this emits `true` for
+  # everything and the run is full: the intended reading of a manual dispatch.
   scope:
     name: gate scope
     runs-on: ubuntu-latest
@@ -89,26 +79,12 @@ jobs:
       # way to lint those targets is a separate invocation that opts in.
       - run: cargo clippy -p oxicrypt-bench --features entropy-bench --all-targets -- -D warnings
 
-  # Sharded across four runners (2026-08-10). Measured on run 31397044952: the
-  # unsharded job took 42m50s, of which nextest itself was 2495s — and the cost
-  # is NOT concentrated in one test, which is what makes sharding the right
-  # lever. The ten slowest, in seconds:
-  #
-  #   522.8  oxicrypt-maxwell  iid_gate::determinism_bit_exact
-  #   500.8  oxicrypt-slh-dsa  slh_dsa_shake_192s::different_messages
-  #   435.7  oxicrypt-slh-dsa  slh_dsa_shake_256s::different_messages
-  #   419.1  oxicrypt-maxwell  iid_gate::noniid_routed_value_is_suite_minimum
-  #   413.7  oxicrypt-maxwell  iid_gate::periodic_synthetic_routes_to_noniid
-  #   290.2  oxicrypt-slh-dsa  slh_dsa_shake_128s::different_messages
-  #   286.7  oxicrypt-maxwell  parity::tests::parity_table_within_tolerance
-  #   264.2  oxicrypt-slh-dsa  slh_dsa_shake_192s::round_trip
-  #   263.6  oxicrypt-slh-dsa  slh_dsa_shake_192s::kat_passes
-  #   227.3  oxicrypt-slh-dsa  slh_dsa_shake_256s::round_trip
-  #
-  # Note what that list says about oxicrypt-slh-dsa: it is a cost centre of the
-  # same order as oxicrypt-maxwell. The pre-push hook's Tier B is built on the
-  # premise that excluding maxwell removes the expensive tail, which is true on
-  # a 12-core developer machine and false here.
+  # Sharded across four runners. The suite's cost is spread over many slow
+  # tests rather than concentrated in one, which is what makes sharding the
+  # right lever, and oxicrypt-slh-dsa's slow tests cost about as much as
+  # oxicrypt-maxwell's. The pre-push hook's Tier B assumes that excluding
+  # maxwell removes the expensive tail, which holds on a many-core developer
+  # machine and not on these runners.
   #
   # `slice` rather than `hash`, and NOT `count` — which nextest deprecates as
   # "neither the even nature of sliced partitioning nor the stability of hashed
@@ -116,7 +92,7 @@ jobs:
   # tests above about as evenly as anything can without being load-aware; hashed
   # sharding is stable when tests are added but balances worse, and balance is
   # what is being bought here. A shard is floored by the single longest test in
-  # it (~523s), so raising the shard count past four buys progressively less.
+  # it, so raising the shard count past four buys progressively less.
   test:
     name: cargo test (slice ${{ matrix.slice }}/4)
     runs-on: ubuntu-latest
@@ -130,7 +106,7 @@ jobs:
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      # nextest gate (2026-06-12): per-test process isolation makes
+      # nextest: per-test process isolation makes
       # oxicrypt-module's global-state mutation a non-issue — full
       # parallelism workspace-wide. nextest skips doctests, so the
       # separate doctests job below keeps doctest coverage identical.
@@ -141,12 +117,12 @@ jobs:
       # build: no C++ toolchain is involved, because the reference VALUES are
       # baked into `parity.rs` with a per-file SHA-256 that the harness verifies.
       #
-      # Until 2026-08-10 this job set OXICRYPT_EA_DATA_OPTIONAL=1 and every
-      # EA-anchored test in oxicrypt-maxwell skipped, so the parity story ran
-      # against nothing and reported success. The flag is deliberately NOT set
-      # below: `parity::tests::ea_dataset_suite_is_provisioned` now fails the job
-      # if the checkout ever stops landing, which is the whole point — a
-      # provisioning failure must not degrade silently back into a green run.
+      # OXICRYPT_EA_DATA_OPTIONAL is deliberately NOT set: with it, every
+      # EA-anchored test in oxicrypt-maxwell would skip and the job would report
+      # success having compared nothing. Without it,
+      # `parity::tests::ea_dataset_suite_is_provisioned` fails the job if the
+      # checkout stops landing, so a provisioning failure cannot degrade
+      # silently into a green run.
       - name: Provision the SP 800-90B reference datasets
         uses: actions/checkout@v4
         with:
@@ -163,11 +139,9 @@ jobs:
       # matching no tests exits 0, which reads exactly like a pass — so a
       # mis-specified slice would silently retire a quarter of the suite.
       #
-      # The assertion is made against `list`, not against the run's output. The
-      # first version of this guard grepped the run's summary line for a test
-      # count and failed three of four shards on 2026-08-10 while every test in
-      # them passed: `CARGO_TERM_COLOR: always` is set workflow-wide, so nextest
-      # emits `457<ESC>[0m tests run`, and no pattern anchoring digits to
+      # The assertion is made against `list`, not against the run's output.
+      # `CARGO_TERM_COLOR: always` is set workflow-wide, so nextest emits
+      # `457<ESC>[0m tests run`, and no pattern anchoring digits to
       # " tests run" can match coloured output. Asking `list` how many tests the
       # slice selects answers the actual question — is this slice non-empty —
       # without parsing anything the terminal has decorated.
@@ -183,12 +157,17 @@ jobs:
       # No output parsing here: nextest's own exit code is the verdict.
       #
       # oxicrypt-maxwell is excluded and runs in its own job. Its EA-anchored
-      # tests are the long pole of the whole suite —
-      # `iid_gate::assessed_assembly_matches_ea_on_multi_bit_datasets` alone ran
-      # >1300s on run 31401732545, which floored the shard that drew it at 23m12s
-      # while its three siblings finished in 7-11 minutes. Excluding the PACKAGE
+      # tests are the long pole of the whole suite:
+      # `iid_gate::assessed_assembly_matches_ea_on_multi_bit_datasets` alone
+      # floors whichever shard draws it far above the others. Excluding the PACKAGE
       # rather than a list of test names is deliberate: a name list rots the
       # moment someone adds a slow test, and nothing would report that it had.
+      # Some tests build a crate themselves: `integrity-probe`'s
+      # build_time_key tests build the probe into CARGO_TARGET_TMPDIR with a
+      # key of their own, and `integrity-probe-so`'s tests build the cdylib
+      # and write a test key into a copy. They need only the toolchain
+      # installed above. Both expect a build without
+      # OXICRYPT_INTEGRITY_VERIFY_KEY, so this job must not set it.
       - name: cargo nextest run (slice ${{ matrix.slice }}/4, without maxwell)
         run: |
           if [ "${{ needs.scope.outputs.rust }}" != "true" ]; then
@@ -252,13 +231,15 @@ jobs:
       - name: Record the coverage caveat
         if: always()
         run: |
-          echo "### Security Policy assertions: NOT run by CI" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The FIPS 140-3 Security Policy is withheld from this repository, so the five" >> "$GITHUB_STEP_SUMMARY"
-          echo "doc-guard tests that assert its stated numerals against the workspace as built" >> "$GITHUB_STEP_SUMMARY"
-          echo "skipped. Boundary-accounting drift is still caught here by the equivalent" >> "$GITHUB_STEP_SUMMARY"
-          echo "AGENTS.md and README.md assertions, which need no policy and did run." >> "$GITHUB_STEP_SUMMARY"
-          echo "See docs/security-policy/README.md." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Security Policy assertions: NOT run by CI"
+            echo ""
+            echo "The FIPS 140-3 Security Policy is withheld from this repository, so the five"
+            echo "doc-guard tests that assert its stated numerals against the workspace as built"
+            echo "skipped. Boundary-accounting drift is still caught here by the equivalent"
+            echo "AGENTS.md and README.md assertions, which need no policy and did run."
+            echo "See docs/security-policy/README.md."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: cargo build (release)
@@ -268,6 +249,16 @@ jobs:
       - name: Install stable toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+      # A throwaway key pair for this job alone, kept outside the checkout
+      # and never committed. Every artifact the workspace build links embeds
+      # its verifying key, and `xtask sign` signs with its signing key.
+      - name: Integrity key pair (throwaway, CI only)
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-integrity-sign
+          target/release/oxicrypt-integrity-sign --keygen "$RUNNER_TEMP/integrity-key"
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
       - run: cargo build --workspace --release
 
       # Building `oxi` is not the same as producing a runnable `oxi`. An
@@ -275,8 +266,10 @@ jobs:
       # nothing in cargo runs at that point — so a build that succeeds still
       # yields a binary that refuses to start. This exercises the one
       # implementation of build-then-sign, which a developer also calls locally,
-      # so the two cannot drift. The release workflow signs `oxi` the same way
-      # and ships the result, so this exercises the path a release takes.
+      # so the two cannot drift. The release workflow signs with the same
+      # signer through `scripts/release-sign.sh`, in each format's order (ELF
+      # artifacts split and stripped first), then verifies and loads what it
+      # ships.
       - name: Sign oxi, and prove it could not start unsigned
         run: |
           set -euo pipefail
@@ -296,11 +289,49 @@ jobs:
           fi
           echo "control ok: oxi exists, and unsigned it refuses to run"
 
-          cargo xtask sign oxicrypt-cli --release
+          cargo xtask sign oxicrypt-cli --release --key "$INTEGRITY_SIGNING_KEY"
           ./target/release/oxi --integrity
           ./target/release/oxi hash sha256 /dev/null
 
-  # ISC-114's release-build guard, on a second machine (2026-08-10).
+  # The C ABI, exercised from C through the Makefile a contributor runs
+  # locally. Every artifact that links the module must be signed after it is
+  # linked: the signed copy of the cdylib, and each static-linked test
+  # executable. The refusal test then runs against unsigned artifacts, so the
+  # job also checks that an unsigned library refuses to initialise.
+  #
+  # Each make step runs whenever the build succeeded, so one run reports all
+  # three rather than stopping at the first failure.
+  c-integration:
+    name: C integration tests (signed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # A throwaway key pair for this job alone, kept outside the checkout
+      # and never committed. The library is built with its verifying key
+      # embedded and the artifacts are signed with its signing key.
+      - name: Integrity key pair (throwaway, CI only)
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-integrity-sign
+          target/release/oxicrypt-integrity-sign --keygen "$RUNNER_TEMP/integrity-key"
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+      - id: build
+        run: cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
+      - name: C tests against the signed cdylib
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-cdylib
+      - name: C tests as signed static-linked executables
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-staticlib
+      - name: Refusal test against unsigned artifacts
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-unsigned
+
+  # The release-build guard, on a second machine.
   #
   # `release_guard_delta_variance_persists` asserts that the jitter measurement
   # loop survives the optimizer: it builds in RELEASE, reads the live raw
@@ -341,11 +372,10 @@ jobs:
           echo "$guard_out" | grep -Eq "test result: ok\. [1-9][0-9]* passed" \
             || { echo "release_guard matched no passing tests" >&2; exit 1; }
 
-  # LAMA manifest conformance (#175). The cloud mirror of the check the
-  # pre-push hook runs locally. Like every job here it is
-  # workflow_dispatch-only, so the LOCAL HOOK is the gate that actually
-  # runs on every push — this job is the on-demand mirror, not a second
-  # line of defence.
+  # LAMA manifest conformance (#175), with the guard sweep. The pre-push
+  # hook runs the same script locally, but skips it when bun is absent and
+  # no manifest changed, so this job, which runs on every pull request and
+  # every push to main, is the gate of record for the guard sweep.
   #
   # Not a cargo step: it runs a vendored TypeScript linter, so it needs a
   # bun runtime rather than a toolchain. Deliberately NOT a doc-guard
@@ -361,11 +391,44 @@ jobs:
     name: LAMA manifest conformance
     runs-on: ubuntu-latest
     steps:
+      # Full history, so the baseline can be compared with its merge base
+      # with origin/main.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
       - run: ./scripts/check-lama-manifests.sh
+      # The script above also runs this control; repeating it as its own
+      # step names the result in the job log. The sweep must fail on its
+      # fixture, with exit 1, all twelve rejected functions named, and none of
+      # the seven it must ignore (in comments and literals) counted.
+      - name: guard sweep fails on its fixture
+        run: |
+          set +e
+          out="$(bun scripts/check-lama-coverage.ts --guard-sweep scripts/fixtures/guard-sweep 12 2>&1)"
+          status=$?
+          set -e
+          echo "$out"
+          expected='guard sweep found 12 guarded function(s), expected 12; 12 without the guard first.'
+          ok=true
+          [[ $status -eq 1 && "$out" == *"$expected"* ]] || ok=false
+          for name in derive_internal seal_internal expand_internal fixture_keygen_internal \
+                      after_slash_internal paren_form_internal lifetime_internal abi_internal \
+                      after_escaped_quote_internal spaced_bang_internal raw_ident_internal \
+                      raw_gen_internal; do
+            [[ "$out" == *" $name"* ]] || ok=false
+          done
+          for name in commented_keygen_internal nested_phantom_internal string_phantom_internal \
+                      raw_phantom_internal commented_guarded_internal cstring_phantom_internal \
+                      craw_phantom_internal; do
+            [[ "$out" != *"$name"* ]] || ok=false
+          done
+          if [[ "$ok" != "true" ]]; then
+            echo "the guard sweep did not fail on its fixture as expected (exit $status)" >&2
+            exit 1
+          fi
 
   acvp-evidence:
     name: ACVP evidence integrity
@@ -373,6 +436,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/check-acvp-evidence.py
+
+  cast-vectors:
+    name: CAST vector provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-cast-vectors.py
+      - run: python3 tools/acvp-gen/test_merge_manifest.py
 
   # Non-default feature configs — the local pre-push hook tests
   # default features only, so this job is cloud CI's unique
@@ -397,6 +468,22 @@ jobs:
           # collection, covering the whole std-gated surface.
           - crate: oxicrypt-entropy
             flags: --all-features
+          # The `parallel` and `accel-keccak` builds of the post-quantum
+          # crates are off by default, so no other job compiles or runs them.
+          # Each crate's power-up self-test runs here on the parallel path,
+          # whose workers carry the caller's self-test proof. The
+          # `internal_state_guard` tests re-execute themselves one per
+          # process, so plain `cargo test` isolates them as nextest does.
+          - crate: oxicrypt-ml-kem
+            flags: --features parallel
+          - crate: oxicrypt-ml-dsa
+            flags: --features parallel
+          - crate: oxicrypt-ml-dsa
+            flags: --features accel-keccak
+          - crate: oxicrypt-ml-dsa
+            flags: --features accel-keccak,parallel
+          - crate: oxicrypt-slh-dsa
+            flags: --features parallel
     steps:
       - uses: actions/checkout@v4
       - name: Install stable toolchain

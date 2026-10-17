@@ -63,7 +63,7 @@ fn generate_rsa_lifecycle_slices() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -91,11 +91,12 @@ fn generate_rsa_lifecycle_slices() {
         // PKCS#1v1.5 non-CRT sign
         let pkcs1_sig =
             oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(&n_bytes, &d_bytes, msg)
-                .unwrap_or_else(|| panic!("PKCS#1v1.5 sign failed msg {i}"));
+                .unwrap_or_else(|e| panic!("PKCS#1v1.5 sign failed msg {i}: {e:?}"));
 
         // Verify PKCS#1v1.5 signature
         assert!(
-            oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, msg, &pkcs1_sig),
+            oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, msg, &pkcs1_sig)
+                .unwrap(),
             "PKCS#1v1.5 verify failed msg {i}"
         );
         pkcs1_sigs.push(pkcs1_sig.to_vec());
@@ -112,11 +113,11 @@ fn generate_rsa_lifecycle_slices() {
             msg,
             &PSS_SALTS[i],
         )
-        .unwrap_or_else(|| panic!("PSS CRT sign failed msg {i}"));
+        .unwrap_or_else(|e| panic!("PSS CRT sign failed msg {i}: {e:?}"));
 
         // Verify PSS signature
         assert!(
-            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, msg, &pss_sig),
+            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, msg, &pss_sig).unwrap(),
             "PSS verify failed msg {i}"
         );
         pss_sigs.push(pss_sig.to_vec());

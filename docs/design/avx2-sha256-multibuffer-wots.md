@@ -66,7 +66,7 @@ already saturates the chains, the multi-buffer surface does not pay for its unsa
    a WOTS+ instance (and across WOTS+ instances): `wots_pk_chain(.., i)` is documented as "a pure
    function of `(pk_seed, sk_seed, adrs, i)` with no cross-chain state" (:901), and the existing
    `parallel` (rayon) feature already exploits exactly this axis with `par_chunks_mut().enumerate()`
-   (:935). **This is the same finding as tonight's LMS analysis (#108): the parallel axis is the
+   (:935). **This is the same finding as the LMS analysis in #108: the parallel axis is the
    independent siblings, not the internal chain.** A multi-buffer batch would group 8 chains and
    advance them in lockstep — but the chains have *different lengths* (`wots_sign_chain` runs
    `msg_i` steps, `msg_i ∈ 0..w−1`), so a naïve 8-lockstep wastes lanes on chains that finished
@@ -95,9 +95,10 @@ byte-exact equivalence oracle. **A strong one exists:**
   `opt_rand = PK.seed` (`handlers/slh_dsa.rs:14`, advertised `deterministic: [true]`). So for a
   fixed `(sk, msg, ctx)` the entire signature — every WOTS+ chain value in it — is **byte-exact
   reproducible**. Flipping the multi-buffer feature on/off must produce a bit-identical signature.
-- **Per-variant power-up KAT.** Each SHA-2 variant module emits a deterministic
-  keygen → sign → verify KAT (`slh_dsa_impl.rs:1562`, `kat_passes`), pinned to a fixed seed and
-  message. This is a byte-exact ON/OFF oracle *per parameter set*, run by the default test suite.
+- **Power-up CASTs.** `oxicrypt_slh_dsa::KATS` (`cast.rs`) compares key generation and a
+  deterministic signature byte for byte with NIST ACVP vectors on SLH-DSA-SHA2-128f, the one SHA-2
+  parameter set it covers, and the default test suite runs it. This is a byte-exact ON/OFF oracle
+  for that set only; the other SHA-2 sets rely on the ACVP vectors below.
 - **NIST ACVP keyGen/sigGen vectors.** The harness advertises all 12 paramSets for keyGen/sigGen
   with deterministic sigGen; the SHA-2 sets' published ACVP vectors are byte-exact and exercise the
   WOTS+ path a batch would change.
@@ -108,8 +109,8 @@ byte-exact equivalence oracle. **A strong one exists:**
   (a dev-dependency), never a reimplementation.
 
 **Finding, stated explicitly:** the SLH-DSA SHA-2 parameter sets DO have a real, byte-exact ON/OFF
-oracle for the WOTS+ path — deterministic sigGen + per-variant KAT + NIST ACVP vectors. This is
-*stronger* than the LMS situation that bit us tonight: there is no nondeterministic signing mode in
+oracle for the WOTS+ path — deterministic sigGen + the SLH-DSA-SHA2-128f power-up CASTs + NIST ACVP vectors. This is
+*stronger* than the LMS case in #108: there is no nondeterministic signing mode in
 play, and the F-function the batch touches is on the critical path of every KAT. A wrong batch
 cannot pass green.
 

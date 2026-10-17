@@ -7,9 +7,24 @@
 //! (tcId=1 of each tgId). Together with the existing 256s vectors in
 //! `nist_kat.rs`, this gives every FIPS 205 §11 Table 2 parameter set
 //! externally-grounded keygen coverage. Defends against the macro_rules
-//! `:literal` hygiene bug class — see CMVP gem in `security-policy.md`.
+//! `:literal` hygiene bug class.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::similar_names)]
+
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
 
 // ── SLH-DSA-SHA2-128s (tgId=1, tcId=1) ──
 const SLH_DSA_SHA2_128S_SK_SEED: &[u8] = &[
@@ -34,11 +49,12 @@ const SLH_DSA_SHA2_128S_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_sha2_128s_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 48];
     xi[..16].copy_from_slice(SLH_DSA_SHA2_128S_SK_SEED);
     xi[16..32].copy_from_slice(SLH_DSA_SHA2_128S_SK_PRF);
     xi[32..48].copy_from_slice(SLH_DSA_SHA2_128S_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_128s::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_128s::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 32);
     assert_eq!(sk.len(), 64);
     assert_eq!(
@@ -76,11 +92,12 @@ const SLH_DSA_SHAKE_128S_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_shake_128s_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 48];
     xi[..16].copy_from_slice(SLH_DSA_SHAKE_128S_SK_SEED);
     xi[16..32].copy_from_slice(SLH_DSA_SHAKE_128S_SK_PRF);
     xi[32..48].copy_from_slice(SLH_DSA_SHAKE_128S_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_128s::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_128s::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 32);
     assert_eq!(sk.len(), 64);
     assert_eq!(
@@ -118,11 +135,12 @@ const SLH_DSA_SHA2_128F_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_sha2_128f_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 48];
     xi[..16].copy_from_slice(SLH_DSA_SHA2_128F_SK_SEED);
     xi[16..32].copy_from_slice(SLH_DSA_SHA2_128F_SK_PRF);
     xi[32..48].copy_from_slice(SLH_DSA_SHA2_128F_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_128f::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_128f::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 32);
     assert_eq!(sk.len(), 64);
     assert_eq!(
@@ -160,11 +178,12 @@ const SLH_DSA_SHAKE_128F_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_shake_128f_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 48];
     xi[..16].copy_from_slice(SLH_DSA_SHAKE_128F_SK_SEED);
     xi[16..32].copy_from_slice(SLH_DSA_SHAKE_128F_SK_PRF);
     xi[32..48].copy_from_slice(SLH_DSA_SHAKE_128F_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_128f::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_128f::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 32);
     assert_eq!(sk.len(), 64);
     assert_eq!(
@@ -208,11 +227,12 @@ const SLH_DSA_SHA2_192S_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_sha2_192s_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 72];
     xi[..24].copy_from_slice(SLH_DSA_SHA2_192S_SK_SEED);
     xi[24..48].copy_from_slice(SLH_DSA_SHA2_192S_SK_PRF);
     xi[48..72].copy_from_slice(SLH_DSA_SHA2_192S_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_192s::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_192s::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 48);
     assert_eq!(sk.len(), 96);
     assert_eq!(
@@ -256,11 +276,12 @@ const SLH_DSA_SHAKE_192S_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_shake_192s_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 72];
     xi[..24].copy_from_slice(SLH_DSA_SHAKE_192S_SK_SEED);
     xi[24..48].copy_from_slice(SLH_DSA_SHAKE_192S_SK_PRF);
     xi[48..72].copy_from_slice(SLH_DSA_SHAKE_192S_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_192s::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_192s::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 48);
     assert_eq!(sk.len(), 96);
     assert_eq!(
@@ -304,11 +325,12 @@ const SLH_DSA_SHA2_192F_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_sha2_192f_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 72];
     xi[..24].copy_from_slice(SLH_DSA_SHA2_192F_SK_SEED);
     xi[24..48].copy_from_slice(SLH_DSA_SHA2_192F_SK_PRF);
     xi[48..72].copy_from_slice(SLH_DSA_SHA2_192F_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_192f::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_192f::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 48);
     assert_eq!(sk.len(), 96);
     assert_eq!(
@@ -352,11 +374,12 @@ const SLH_DSA_SHAKE_192F_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_shake_192f_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 72];
     xi[..24].copy_from_slice(SLH_DSA_SHAKE_192F_SK_SEED);
     xi[24..48].copy_from_slice(SLH_DSA_SHAKE_192F_SK_PRF);
     xi[48..72].copy_from_slice(SLH_DSA_SHAKE_192F_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_192f::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_192f::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 48);
     assert_eq!(sk.len(), 96);
     assert_eq!(
@@ -403,11 +426,12 @@ const SLH_DSA_SHAKE_256S_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_shake_256s_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 96];
     xi[..32].copy_from_slice(SLH_DSA_SHAKE_256S_SK_SEED);
     xi[32..64].copy_from_slice(SLH_DSA_SHAKE_256S_SK_PRF);
     xi[64..96].copy_from_slice(SLH_DSA_SHAKE_256S_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_256s::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_256s::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 64);
     assert_eq!(sk.len(), 128);
     assert_eq!(
@@ -454,11 +478,12 @@ const SLH_DSA_SHA2_256F_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_sha2_256f_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 96];
     xi[..32].copy_from_slice(SLH_DSA_SHA2_256F_SK_SEED);
     xi[32..64].copy_from_slice(SLH_DSA_SHA2_256F_SK_PRF);
     xi[64..96].copy_from_slice(SLH_DSA_SHA2_256F_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_256f::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_sha2_256f::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 64);
     assert_eq!(sk.len(), 128);
     assert_eq!(
@@ -505,11 +530,12 @@ const SLH_DSA_SHAKE_256F_SK: &[u8] = &[
 
 #[test]
 fn slh_dsa_shake_256f_keygen_kat() {
+    start_module();
     let mut xi = [0u8; 96];
     xi[..32].copy_from_slice(SLH_DSA_SHAKE_256F_SK_SEED);
     xi[32..64].copy_from_slice(SLH_DSA_SHAKE_256F_SK_PRF);
     xi[64..96].copy_from_slice(SLH_DSA_SHAKE_256F_PK_SEED);
-    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_256f::keygen_internal(&xi);
+    let (pk, sk) = oxicrypt_slh_dsa::slh_dsa_shake_256f::keygen_internal(&xi).unwrap();
     assert_eq!(pk.len(), 64);
     assert_eq!(sk.len(), 128);
     assert_eq!(

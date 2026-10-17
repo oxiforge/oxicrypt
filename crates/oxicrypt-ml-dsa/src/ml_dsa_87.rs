@@ -11,13 +11,6 @@
 //! The `Service::MlDsa87Sign` / `Verify` / `Keygen` variants are
 //! permitted under both [`oxicrypt_module::AlgorithmProfile::Unrestricted`]
 //! and `Cnsa2`.
-//!
-//! # KAT seeds
-//!
-//! The deterministic seed `KAT_XI` and message `KAT_MSG` match the
-//! pre-macro ML-DSA-87 implementation byte-for-byte so the
-//! crate-level KAT and any externally-anchored ACVTS replay remain
-//! reproducible across the refactor.
 
 #![allow(
     clippy::indexing_slicing,
@@ -47,13 +40,6 @@ crate::ml_dsa_impl::ml_dsa_impl! {
     svc_keygen = Service::MlDsa87Keygen;
     svc_sign = Service::MlDsa87Sign;
     svc_verify = Service::MlDsa87Verify;
-    kat_xi = [
-        0x7f, 0x9c, 0x2b, 0xa4, 0xe8, 0x8f, 0x82, 0x7d, 0x61, 0x60, 0x45, 0x50, 0x76, 0x05, 0x85,
-        0x3e, 0xd7, 0x3b, 0x80, 0x93, 0xf6, 0xef, 0xbc, 0x88, 0xeb, 0x1a, 0x6e, 0xaf, 0xfa, 0x28,
-        0x4f, 0x01,
-    ];
-    kat_msg = b"ML-DSA-87 self-test message for FIPS 204 compliance";
-    kat_name = "ML-DSA-87 KAT (keygen + sign + verify round-trip, FIPS 204)";
 }
 
 #[cfg(test)]
@@ -67,12 +53,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn self_test_passes() {
-        self_test().unwrap();
-    }
-
-    #[test]
     fn key_sizes_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(PK_LEN, 2592);
         assert_eq!(SK_LEN, 4896);
         assert_eq!(SIG_LEN, 4627);
@@ -81,6 +63,7 @@ mod tests {
 
     #[test]
     fn parameter_constants_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(K, 8);
         assert_eq!(L, 7);
         assert_eq!(ETA, 2);
@@ -91,35 +74,39 @@ mod tests {
 
     #[test]
     fn round_trip_basic() {
+        crate::test_support::start_module();
         let xi = [0x42u8; 32];
-        let (pk, sk) = keygen_internal(&xi);
+        let (pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"hello, ML-DSA-87";
         let sig = sign_internal(&sk, msg).unwrap();
-        assert!(verify_internal(&pk, msg, &sig));
+        assert!(verify_internal(&pk, msg, &sig).unwrap());
     }
 
     #[test]
     fn wrong_message_rejected() {
+        crate::test_support::start_module();
         let xi = [0x01u8; 32];
-        let (pk, sk) = keygen_internal(&xi);
+        let (pk, sk) = keygen_internal(&xi).unwrap();
         let sig = sign_internal(&sk, b"original").unwrap();
-        assert!(!verify_internal(&pk, b"tampered", &sig));
+        assert!(!verify_internal(&pk, b"tampered", &sig).unwrap());
     }
 
     #[test]
     fn tampered_signature_rejected() {
+        crate::test_support::start_module();
         let xi = [0x55u8; 32];
-        let (pk, sk) = keygen_internal(&xi);
+        let (pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"test message";
         let mut sig = sign_internal(&sk, msg).unwrap();
         sig[50] ^= 0xFF;
-        assert!(!verify_internal(&pk, msg, &sig));
+        assert!(!verify_internal(&pk, msg, &sig).unwrap());
     }
 
     #[test]
     fn deterministic_signing() {
+        crate::test_support::start_module();
         let xi = [0xABu8; 32];
-        let (_pk, sk) = keygen_internal(&xi);
+        let (_pk, sk) = keygen_internal(&xi).unwrap();
         let msg = b"deterministic test";
         let s1 = sign_internal(&sk, msg).unwrap();
         let s2 = sign_internal(&sk, msg).unwrap();
@@ -128,19 +115,21 @@ mod tests {
 
     #[test]
     fn different_seeds_different_keys() {
-        let (pk1, _) = keygen_internal(&[0x10u8; 32]);
-        let (pk2, _) = keygen_internal(&[0x20u8; 32]);
+        crate::test_support::start_module();
+        let (pk1, _) = keygen_internal(&[0x10u8; 32]).unwrap();
+        let (pk2, _) = keygen_internal(&[0x20u8; 32]).unwrap();
         assert_ne!(pk1, pk2);
     }
 
     #[test]
     fn wrong_key_rejects() {
+        crate::test_support::start_module();
         let xi1 = [0x01u8; 32];
         let xi2 = [0x02u8; 32];
-        let (pk1, _) = keygen_internal(&xi1);
-        let (_, sk2) = keygen_internal(&xi2);
+        let (pk1, _) = keygen_internal(&xi1).unwrap();
+        let (_, sk2) = keygen_internal(&xi2).unwrap();
         let msg = b"cross-key test";
         let sig = sign_internal(&sk2, msg).unwrap();
-        assert!(!verify_internal(&pk1, msg, &sig));
+        assert!(!verify_internal(&pk1, msg, &sig).unwrap());
     }
 }

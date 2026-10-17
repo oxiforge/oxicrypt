@@ -23,6 +23,7 @@
 //!
 //! The resulting file lands in the vendor tree ready for MANIFEST.toml.
 
+use acvp_harness::ensure_initialized;
 use std::io::Write;
 
 // --- hex helpers (minimal, test-only) ---
@@ -63,6 +64,7 @@ const SALT_HEX: &str = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF01234567
 #[test]
 #[ignore]
 fn generate_rsa_siggen_slice() {
+    ensure_initialized().expect("FIPS init");
     let n = hex_decode(N_HEX);
     let d = hex_decode(D_HEX);
     let e_bytes = hex_decode(E_HEX);
@@ -96,7 +98,8 @@ fn generate_rsa_siggen_slice() {
             .expect("PKCS#1v1.5 sign failed");
         // Verify
         assert!(
-            oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig),
+            oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig)
+                .unwrap(),
             "PKCS#1v1.5 verify failed for test {i}"
         );
         pkcs_tests.push(format!(
@@ -117,7 +120,7 @@ fn generate_rsa_siggen_slice() {
         .expect("PSS CRT sign failed");
         // Verify
         assert!(
-            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig),
+            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_arr, e_val, &msg, &sig).unwrap(),
             "PSS verify failed for test {i}"
         );
         let tc_id = MESSAGES.len() + i + 1;

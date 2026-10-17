@@ -320,8 +320,11 @@ pub const KATS: &[KatEntry] = &[
 /// The reject case is a signature NIST marks invalid for its message, not
 /// a bit flipped here. Without it, a verifier that accepted everything
 /// would pass.
-fn cast_verdict(accept: bool, reject: bool) -> Result<(), SelfTestFailure> {
-    if accept && !reject {
+fn cast_verdict(
+    accept: Result<bool, oxicrypt_module::Error>,
+    reject: Result<bool, oxicrypt_module::Error>,
+) -> Result<(), SelfTestFailure> {
+    if accept == Ok(true) && reject == Ok(false) {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -397,7 +400,7 @@ fn cast_shake_n24() -> Result<(), SelfTestFailure> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing)]
+#[allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use oxicrypt_module::{Error, initialize_with_tests};
@@ -414,8 +417,17 @@ mod tests {
         run: || Ok(()),
     }];
 
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+    }
+
     #[test]
     fn there_is_one_cast_per_hash_adapter() {
+        start_module();
         assert_eq!(KATS.len(), 4);
         for kat in KATS {
             (kat.run)().expect(kat.name);
@@ -427,10 +439,17 @@ mod tests {
     /// fail would pass for a verifier that accepts everything.
     #[test]
     fn cast_verdict_fails_unless_accept_and_reject_both_hold() {
-        assert!(cast_verdict(true, false).is_ok());
-        assert!(cast_verdict(false, false).is_err());
-        assert!(cast_verdict(true, true).is_err());
-        assert!(cast_verdict(false, true).is_err());
+        start_module();
+        assert!(cast_verdict(Ok(true), Ok(false)).is_ok());
+        assert!(cast_verdict(Ok(false), Ok(false)).is_err());
+        assert!(cast_verdict(Ok(true), Ok(true)).is_err());
+        assert!(cast_verdict(Ok(false), Ok(true)).is_err());
+        // A refusal from the verifier is not a verdict either way.
+        let refused = Err(Error::NotOperational {
+            current: oxicrypt_module::State::PowerOff,
+        });
+        assert!(cast_verdict(refused, Ok(false)).is_err());
+        assert!(cast_verdict(Ok(true), refused).is_err());
     }
 
     /// Each CAST's reject vector is refused by the verifier the CAST runs,
@@ -442,19 +461,20 @@ mod tests {
         use lms_sha256_m32_h5_w1 as sha256_n32;
         use lms_shake_m24_h5_w1 as shake_n24;
         use lms_shake_m32_h5_w1 as shake_n32;
+        start_module();
 
         macro_rules! check {
             ($pair:ident, $pk:ident, $am:ident, $asig:ident, $rm:ident, $rsig:ident) => {{
-                assert!($pair::verify_internal(&kat::$pk, &kat::$am, &kat::$asig));
-                assert!(!$pair::verify_internal(&kat::$pk, &kat::$rm, &kat::$rsig));
+                assert!($pair::verify_internal(&kat::$pk, &kat::$am, &kat::$asig).unwrap());
+                assert!(!$pair::verify_internal(&kat::$pk, &kat::$rm, &kat::$rsig).unwrap());
                 // The reject signature is NIST's, valid for some other message.
-                assert!(!$pair::verify_internal(&kat::$pk, &kat::$am, &kat::$rsig));
+                assert!(!$pair::verify_internal(&kat::$pk, &kat::$am, &kat::$rsig).unwrap());
                 let mut sig = kat::$asig;
                 sig[64] ^= 0x01;
-                assert!(!$pair::verify_internal(&kat::$pk, &kat::$am, &sig));
+                assert!(!$pair::verify_internal(&kat::$pk, &kat::$am, &sig).unwrap());
                 let mut pk = kat::$pk;
                 pk[30] ^= 0x01;
-                assert!(!$pair::verify_internal(&pk, &kat::$am, &kat::$asig));
+                assert!(!$pair::verify_internal(&pk, &kat::$am, &kat::$asig).unwrap());
             }};
         }
         check!(
@@ -496,13 +516,17 @@ mod tests {
     /// verifier.
     #[test]
     fn verifier_refuses_a_foreign_typecode() {
+        start_module();
         let mut pk = kat::SHA256_N32_PUBLIC_KEY;
         pk[3] = 0x06; // LMS_SHA256_M32_H10, not H5
-        assert!(!lms_sha256_m32_h5_w1::verify_internal(
-            &pk,
-            &kat::SHA256_N32_ACCEPT_MSG,
-            &kat::SHA256_N32_ACCEPT_SIG
-        ));
+        assert!(
+            !lms_sha256_m32_h5_w1::verify_internal(
+                &pk,
+                &kat::SHA256_N32_ACCEPT_MSG,
+                &kat::SHA256_N32_ACCEPT_SIG
+            )
+            .unwrap()
+        );
     }
 
     // ── Malformed fields, one at a time ──────────────────────────────
@@ -527,7 +551,7 @@ mod tests {
         let mut pk = kat::SHA256_N32_PUBLIC_KEY;
         let mut sig = kat::SHA256_N32_ACCEPT_SIG;
         edit(&mut pk, &mut sig);
-        lms_sha256_m32_h5_w1::verify_internal(&pk, &kat::SHA256_N32_ACCEPT_MSG, &sig)
+        lms_sha256_m32_h5_w1::verify_internal(&pk, &kat::SHA256_N32_ACCEPT_MSG, &sig).unwrap()
     }
 
     /// Byte offset of the LMS typecode inside the signature: after `q` and
@@ -536,11 +560,13 @@ mod tests {
 
     #[test]
     fn unedited_vector_verifies() {
+        start_module();
         assert!(sha256_n32_edited(|_, _| {}));
     }
 
     #[test]
     fn rejects_public_key_with_another_lmots_typecode() {
+        start_module();
         // LMOTS_SHA256_N32_W4, not this pair's W1.
         assert!(!sha256_n32_edited(|pk, _| {
             pk[4..8].copy_from_slice(&0x0000_0003u32.to_be_bytes());
@@ -549,6 +575,7 @@ mod tests {
 
     #[test]
     fn rejects_signature_with_another_lms_typecode() {
+        start_module();
         // LMS_SHA256_M32_H10, not this pair's H5.
         assert!(!sha256_n32_edited(|_, sig| {
             sig[SIG_LMS_TYPE_AT..SIG_LMS_TYPE_AT + 4]
@@ -558,6 +585,7 @@ mod tests {
 
     #[test]
     fn rejects_signature_with_another_lmots_typecode() {
+        start_module();
         // LMOTS_SHA256_N32_W4, not this pair's W1.
         assert!(!sha256_n32_edited(|_, sig| {
             sig[4..8].copy_from_slice(&0x0000_0003u32.to_be_bytes());
@@ -566,6 +594,7 @@ mod tests {
 
     #[test]
     fn rejects_leaf_index_one_past_the_tree() {
+        start_module();
         assert!(!sha256_n32_edited(|_, sig| {
             sig[..4].copy_from_slice(&lms_sha256_m32_h5_w1::MAX_SIGNATURES.to_be_bytes());
         }));
@@ -573,6 +602,7 @@ mod tests {
 
     #[test]
     fn rejects_leaf_index_u32_max() {
+        start_module();
         assert!(!sha256_n32_edited(|_, sig| {
             sig[..4].copy_from_slice(&u32::MAX.to_be_bytes());
         }));
@@ -598,5 +628,25 @@ mod tests {
             ),
             Err(Error::InvalidInput)
         ));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
     }
 }

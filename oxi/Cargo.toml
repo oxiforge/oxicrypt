@@ -10,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
 publish.workspace = true
-description = "Command-line interface for oxicrypt — hash, HMAC, random byte generation, and the module's on-demand self-tests."
+description = "Command-line interface and test driver for oxicrypt — hash, HMAC, random byte generation, and a report of the module's power-up self-tests."
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a
@@ -31,6 +31,8 @@ oxicrypt-sha = { workspace = true }
 oxicrypt-hmac = { workspace = true }
 oxicrypt-aes = { workspace = true }
 oxicrypt-drbg = { workspace = true }
+oxicrypt-xof = { workspace = true }
+oxicrypt-ml-dsa = { workspace = true }
 
 [dev-dependencies]
 # Tests need to PRODUCE a signed binary in order to exercise the signed path.

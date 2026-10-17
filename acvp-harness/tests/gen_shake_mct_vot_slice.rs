@@ -53,14 +53,14 @@ fn shake128(msg: &[u8], out: &mut [u8]) {
     let mut x = Shake128::new().expect("Shake128::new");
     x.update(msg);
     x.finalize();
-    x.squeeze(out);
+    x.squeeze(out).unwrap();
 }
 
 fn shake256(msg: &[u8], out: &mut [u8]) {
     let mut x = Shake256::new().expect("Shake256::new");
     x.update(msg);
     x.finalize();
-    x.squeeze(out);
+    x.squeeze(out).unwrap();
 }
 
 // ---- Local MCT engine used to produce the expected outputs ----

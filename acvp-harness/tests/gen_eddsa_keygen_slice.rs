@@ -16,6 +16,7 @@
 //!
 //!   cargo test -p acvp-harness --test gen_eddsa_keygen_slice -- --ignored --nocapture
 
+use acvp_harness::ensure_initialized;
 use std::io::Write;
 
 fn hex_upper(b: &[u8]) -> String {
@@ -50,9 +51,10 @@ const SEEDS: [&[u8; 32]; 10] = [
 #[test]
 #[ignore]
 fn generate_eddsa_keygen_slice() {
+    ensure_initialized().expect("FIPS init");
     let mut tests_json = Vec::new();
     for (i, seed) in SEEDS.iter().enumerate() {
-        let q = oxicrypt_eddsa::ed25519::keygen_internal(seed);
+        let q = oxicrypt_eddsa::ed25519::keygen_internal(seed).unwrap();
         tests_json.push(format!(
             r#"        {{"tcId": {}, "d": "{}", "q": "{}"}}"#,
             i + 1,

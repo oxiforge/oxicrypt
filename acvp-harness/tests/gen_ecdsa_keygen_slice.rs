@@ -17,6 +17,7 @@
 //!
 //!   cargo test -p acvp-harness --test gen_ecdsa_keygen_slice -- --ignored --nocapture
 
+use acvp_harness::ensure_initialized;
 use std::io::Write;
 
 fn hex_upper(b: &[u8]) -> String {
@@ -82,10 +83,11 @@ const SCALARS: [[u8; 32]; 10] = [
 #[test]
 #[ignore]
 fn generate_ecdsa_keygen_slice() {
+    ensure_initialized().expect("FIPS init");
     let mut tests_json = Vec::new();
     for (i, d) in SCALARS.iter().enumerate() {
         let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(d)
-            .unwrap_or_else(|| panic!("derive_public_key_internal failed for test {i}"));
+            .unwrap_or_else(|e| panic!("derive_public_key_internal failed for test {i}: {e:?}"));
         // pk is 65 bytes: 0x04 || X(32) || Y(32)
         assert_eq!(pk[0], 0x04, "not uncompressed SEC1");
         let qx = &pk[1..33];

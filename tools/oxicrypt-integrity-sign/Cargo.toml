@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
 readme = "README.md"
-description = "Signs an oxicrypt build so its pre-operational integrity self-test can verify itself at startup. A build tool: not part of the cryptographic module."
+description = "Signs an oxicrypt build with ML-DSA-87 so the build's pre-operational integrity test can verify it at startup, and generates the signing key pair. A build tool: not part of the cryptographic module."
 # Deliberately not inheriting `keywords`/`categories` from the workspace. Every
 # other member is a `no-std` cryptographic library and inherits both; this is a
 # `std` build tool that produces no cryptographic service, so the inherited
@@ -20,7 +20,14 @@ categories = ["development-tools::build-utils", "command-line-utilities"]
 workspace = true
 
 [dependencies]
+oxicrypt-drbg = { workspace = true }
+oxicrypt-hmac = { workspace = true }
 oxicrypt-integrity = { workspace = true }
+oxicrypt-ml-dsa = { workspace = true }
+oxicrypt-module = { workspace = true }
+oxicrypt-sha = { workspace = true }
+oxicrypt-xof = { workspace = true }
+oxicrypt-zeroize = { workspace = true }
 
 [package.metadata.lama]
 # Registry discovery (LAMA SPEC.md, "Package registry discovery"). Must be a

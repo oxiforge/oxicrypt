@@ -18,6 +18,7 @@
 //!
 //!   cargo test -p acvp-harness --test gen_rsa_oaep_slice -- --ignored --nocapture
 
+use acvp_harness::ensure_initialized;
 use std::io::Write;
 
 fn hex_decode(s: &str) -> Vec<u8> {
@@ -55,6 +56,7 @@ const SEEDS: [&str; 5] = [
 #[test]
 #[ignore]
 fn generate_rsa_oaep_slice() {
+    ensure_initialized().expect("FIPS init");
     let n = hex_decode(N_HEX);
     let d = hex_decode(D_HEX);
     let e_bytes = hex_decode(E_HEX);

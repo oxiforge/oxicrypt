@@ -48,6 +48,10 @@ pub enum EntropyError {
     /// variant (carries no `std::io::Error`) so [`EntropyError`] stays
     /// `Copy` and the `no_std` core is unaffected.
     Io,
+    /// The module refused the hash computation the pipeline needs, because
+    /// its self-tests have not started or it has failed. The pipeline is not
+    /// poisoned: the refusal reflects the module's state, not the pipeline's.
+    Module(oxicrypt_module::Error),
 }
 
 impl core::fmt::Display for EntropyError {
@@ -66,7 +70,14 @@ impl core::fmt::Display for EntropyError {
             }
             Self::ConditionerKat => f.write_str("conditioning known-answer test failed"),
             Self::Io => f.write_str("raw-data collection I/O failure"),
+            Self::Module(e) => write!(f, "the module refused the operation: {e}"),
         }
+    }
+}
+
+impl From<oxicrypt_module::Error> for EntropyError {
+    fn from(e: oxicrypt_module::Error) -> Self {
+        Self::Module(e)
     }
 }
 

@@ -2,14 +2,16 @@
 //! `oxicrypt-sha`.
 //!
 //! This is one of the small readily auditable in-boundary crates in the oxicrypt
-//! workspace that use `unsafe` (alongside `oxicrypt-zeroize`,
-//! `oxicrypt-sha-accel`, `oxicrypt-aes-accel`, and `oxicrypt-timer`). It
-//! implements the sanctioned **CPU-intrinsic acceleration** category:
-//! feature-gated, default-off, runtime-detected,
-//! with equivalence to the portable permutation proven by a cross-path
-//! oracle. All other in-boundary crates remain `#![forbid(unsafe_code)]`;
-//! the authoritative unsafe-code accounting lives in
-//! `docs/security-policy/security-policy.md` §9.2 "Isolation of `unsafe`".
+//! workspace that use `unsafe`. It implements the sanctioned
+//! **CPU-intrinsic acceleration** category: feature-gated, default-off,
+//! runtime-detected, with equivalence to the portable permutation proven
+//! by a cross-path oracle.
+//! The workspace's `AGENTS.md` names the in-boundary crates that use
+//! `unsafe`, and `tools/doc-guard` checks that list against the crates.
+//! Every in-boundary crate outside that list is
+//! `#![forbid(unsafe_code)]`. The module's Security Policy, withheld
+//! from this repository (see `docs/security-policy/README.md`), holds
+//! the authoritative accounting.
 //!
 //! # Why a separate crate?
 //!
@@ -41,15 +43,13 @@
 //!
 //! # Scope
 //!
-//! The AVX2 4-way `KeccakP1600times4` permutation only. AVX-512 8-way
-//! batching is a documented follow-up under the same sanctioned category
-//! (`docs/design/avx2-keccak.md`, issue #110).
+//! The AVX2 4-way `KeccakP1600times4` permutation only. There is no
+//! AVX-512 8-way batching (`docs/design/avx2-keccak.md`, issue #110).
 
 #![no_std]
 // This crate deliberately uses unsafe for CPU intrinsics and CPUID.
-// The other in-boundary crates that use unsafe are oxicrypt-zeroize,
-// oxicrypt-sha-accel, oxicrypt-aes-accel and oxicrypt-timer; every other
-// in-boundary crate forbids it.
+// The workspace's `AGENTS.md` names the other in-boundary crates that
+// use unsafe; every other in-boundary crate forbids it.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 /// Returns `true` if the running CPU supports the AVX2 4-way batched
@@ -86,6 +86,7 @@ pub fn keccak_f1600_x4_available() -> bool {
 /// permutation four times instead. This fail-portable contract makes a
 /// silently wrong state unreachable: there is no code path that partially
 /// applies the permutation.
+#[doc(hidden)]
 pub fn keccak_f1600_x4(states: &mut [[u64; 25]; 4]) -> bool {
     #[cfg(target_arch = "x86_64")]
     {

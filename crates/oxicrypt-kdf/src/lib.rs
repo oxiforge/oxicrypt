@@ -43,15 +43,19 @@
 //!
 //! # Power-up self-tests
 //!
-//! Each KDF instantiation carries its own power-up KAT; KDF families
-//! do not share. IG 10.3.A requires only one CAST per KBKDF, covering a
-//! single mode-and-PRF option, so this exceeds the requirement. [`KATS`] exposes
-//! 46 entries total — 11 HKDF extract+expand round-trips plus
+//! Every HKDF and SP 800-108 KBKDF instantiation carries its own power-up
+//! KAT; PBKDF2 has one CAST, on HMAC-SHA2-224, for its eleven PRF
+//! instantiations. IG 10.3.A requires only one CAST per KBKDF, covering a
+//! single mode-and-PRF option, so the KBKDF set exceeds the requirement. [`KATS`] exposes
+//! 45 entries total — 11 HKDF extract+expand round-trips plus
 //! 11 SP 800-108 Counter Mode derivations plus 11 SP 800-108
 //! Feedback Mode derivations plus 11 SP 800-108 Double-Pipeline
-//! Iteration Mode derivations plus 2 PBKDF2 derivations (SHA-1,
-//! SHA-256), all driven by fixed compile-time inputs for
-//! auditability.
+//! Iteration Mode derivations plus 1 PBKDF2 master-key derivation,
+//! all driven by fixed compile-time inputs for auditability. The
+//! PBKDF2 CAST meets IG 10.3.A item 8: it uses PBKDF2-HMAC-SHA2-224
+//! with a NIST ACVP-Server vector whose iteration count is 398 and
+//! whose password, salt and master-key lengths are ones this module
+//! supports in the approved mode.
 //!
 //! # Sensitive security parameters
 //!
@@ -89,11 +93,37 @@
     non_camel_case_types
 )]
 
+mod pbkdf2_cast_vector;
+
 use core::marker::PhantomData;
 
 use oxicrypt_module::{
     Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
 };
+
+/// A key-derived block, zeroized when it goes out of scope on success and
+/// on an early return alike.
+struct Wiped<const N: usize>([u8; N]);
+
+impl<const N: usize> core::ops::Deref for Wiped<N> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<const N: usize> core::ops::DerefMut for Wiped<N> {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl<const N: usize> Drop for Wiped<N> {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.0);
+    }
+}
 
 // ----------------------------------------------------------------------
 // PrfHmac adapter trait
@@ -114,14 +144,28 @@ use oxicrypt_module::{
 pub trait PrfHmac<const L: usize>: Sized {
     /// The KDF service gating this HMAC variant for profile checks.
     const KDF_SERVICE: Service;
-    /// Construct an HMAC keyed with `key`, bypassing the module
-    /// state machine (used by both the public API's already-gated
+    /// Construct an HMAC keyed with `key`, without the operational and
+    /// profile gates (used by both the public API's already-gated
     /// callers and by boot-time KATs).
-    fn prf_new(key: &[u8]) -> Self;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests); the HMAC is built by its `new_internal` constructor.
+    fn prf_new(key: &[u8]) -> Result<Self, Error>;
     /// Absorb more input.
     fn prf_update(&mut self, data: &[u8]);
     /// Finalise and return the `L`-byte MAC.
-    fn prf_finalize(&mut self) -> [u8; L];
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    fn prf_finalize(&mut self) -> Result<[u8; L], Error>;
 }
 
 // Macro to implement PrfHmac for each HMAC type with its corresponding
@@ -131,13 +175,13 @@ macro_rules! impl_prf_hmac {
         impl PrfHmac<$L> for $hmac_type {
             const KDF_SERVICE: Service = $kdf_service;
 
-            fn prf_new(key: &[u8]) -> Self {
+            fn prf_new(key: &[u8]) -> Result<Self, Error> {
                 <$hmac_type>::new_internal(key)
             }
             fn prf_update(&mut self, data: &[u8]) {
                 <$hmac_type>::update(self, data);
             }
-            fn prf_finalize(&mut self) -> [u8; $L] {
+            fn prf_finalize(&mut self) -> Result<[u8; $L], Error> {
                 <$hmac_type>::finalize(self)
             }
         }
@@ -213,29 +257,30 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
     /// A `None` salt is interpreted as `L` zero bytes, per RFC 5869
     /// §2.2. Enforces [`require_operational`] and algorithm-profile
     /// gating via [`require_allowed`]. For boot-time KATs,
-    /// use `Hkdf::extract_internal` (gate-free counterpart, hidden
+    /// use `Hkdf::extract_internal` (counterpart without the gates, hidden
     /// from public docs).
     pub fn extract(salt: Option<&[u8]>, ikm: &[u8]) -> Result<Self, KdfError> {
         require_operational()?;
         require_allowed(P::KDF_SERVICE)?;
-        Ok(Self::extract_internal(salt, ikm))
+        Self::extract_internal(salt, ikm)
     }
 
-    /// Gateless HKDF-Extract used by power-up KATs.
+    /// HKDF-Extract without the operational and profile gates, used by
+    /// power-up KATs.
     #[doc(hidden)]
-    pub(crate) fn extract_internal(salt: Option<&[u8]>, ikm: &[u8]) -> Self {
+    pub(crate) fn extract_internal(salt: Option<&[u8]>, ikm: &[u8]) -> Result<Self, KdfError> {
         let zero_salt = [0u8; L];
         let salt_bytes: &[u8] = match salt {
             Some(s) => s,
             None => &zero_salt,
         };
-        let mut mac = P::prf_new(salt_bytes);
+        let mut mac = P::prf_new(salt_bytes)?;
         mac.prf_update(ikm);
-        let prk = mac.prf_finalize();
-        Self {
+        let prk = mac.prf_finalize()?;
+        Ok(Self {
             prk,
             _m: PhantomData,
-        }
+        })
     }
 
     /// Constructs an HKDF instance from an already-derived PRK.
@@ -262,8 +307,17 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
     }
 
     /// Returns the derived PRK as a byte slice.
-    pub fn prk(&self) -> &[u8; L] {
-        &self.prk
+    ///
+    /// # Errors
+    ///
+    /// Returns `KdfError::Module(Error::NotOperational)` unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a CSP is not output in `PowerOff`, `Error` or
+    /// `IntegrityUnverified`.
+    pub fn prk(&self) -> Result<&[u8; L], KdfError> {
+        require_self_test_started()?;
+        Ok(&self.prk)
     }
 
     /// Runs HKDF-Expand, filling `okm` with derived key material.
@@ -277,9 +331,18 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
         self.expand_internal(info, okm)
     }
 
-    /// Gateless HKDF-Expand used by power-up KATs.
+    /// HKDF-Expand without the gates, used by power-up KATs.
     #[doc(hidden)]
     pub(crate) fn expand_internal(&self, info: &[u8], okm: &mut [u8]) -> Result<(), KdfError> {
+        let result = self.expand_internal_unwiped(info, okm);
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(okm);
+        }
+        result
+    }
+
+    /// Body of [`Self::expand_internal`]. That function wipes `okm` when this one returns `Err`.
+    fn expand_internal_unwiped(&self, info: &[u8], okm: &mut [u8]) -> Result<(), KdfError> {
         if okm.is_empty() {
             return Ok(());
         }
@@ -289,33 +352,30 @@ impl<P: PrfHmac<L>, const L: usize> Hkdf<P, L> {
             return Err(KdfError::OutputTooLong);
         }
 
-        let mut t_prev = [0u8; L];
+        let mut t_prev = Wiped([0u8; L]);
         let mut have_prev = false;
         let mut written = 0usize;
 
-        // n fits in u8 here because the check above rejects n > 255,
-        // but we use `try_from` to satisfy clippy without a cast.
-        let n_u8: u8 = match u8::try_from(n) {
-            Ok(v) => v,
-            Err(_) => return Err(KdfError::OutputTooLong),
-        };
-        let mut i: u8 = 1;
-        while i <= n_u8 {
-            let mut mac = P::prf_new(&self.prk);
+        // The loop index is a `usize` and the counter byte is derived from
+        // it, so the final block (i = 255) needs no increment past the
+        // byte's range. The check above bounds n by 255, so each `i` fits.
+        for i in 1..=n {
+            let Ok(counter) = u8::try_from(i) else {
+                return Err(KdfError::OutputTooLong);
+            };
+            let mut mac = P::prf_new(&self.prk)?;
             if have_prev {
                 mac.prf_update(&t_prev);
             }
             mac.prf_update(info);
-            mac.prf_update(&[i]);
-            t_prev = mac.prf_finalize();
+            mac.prf_update(&[counter]);
+            t_prev.0 = mac.prf_finalize()?;
             have_prev = true;
 
             let remaining = okm.len() - written;
             let take = if remaining < L { remaining } else { L };
             okm[written..written + take].copy_from_slice(&t_prev[..take]);
             written += take;
-
-            i += 1;
         }
         Ok(())
     }
@@ -397,8 +457,9 @@ const KAT_SHA1_OKM: [u8; 42] = [
 /// vector. SHA-1 is out of scope for SP 800-56C Rev 2 so the KDA-HKDF
 /// ACVP family does not cover it.
 pub fn hkdf_self_test_sha1() -> Result<(), SelfTestFailure> {
-    let hk = HkdfSha1::extract_internal(Some(&KAT_SHA1_SALT), &KAT_SHA1_IKM);
-    if hk.prk() != &KAT_SHA1_PRK {
+    let hk = HkdfSha1::extract_internal(Some(&KAT_SHA1_SALT), &KAT_SHA1_IKM)
+        .map_err(|_| SelfTestFailure)?;
+    if hk.prk != KAT_SHA1_PRK {
         return Err(SelfTestFailure);
     }
     let mut okm = [0u8; 42];
@@ -433,7 +494,8 @@ macro_rules! kda_hkdf_kat_fn {
             let Some(slice) = out.get_mut(..expected.len()) else {
                 return Err(SelfTestFailure);
             };
-            let hk = <$alias>::extract_internal(Some(&$salt), &$ikm);
+            let hk =
+                <$alias>::extract_internal(Some(&$salt), &$ikm).map_err(|_| SelfTestFailure)?;
             if hk.expand_internal(&$fixed_info, slice).is_err() {
                 return Err(SelfTestFailure);
             }
@@ -580,7 +642,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
         Self::derive_internal(key, label, context, out)
     }
 
-    /// Gateless variant used by the boot-time KATs.
+    /// Variant without the operational and profile gates, used by the boot-time KATs.
     ///
     /// Assembles the SP 800-108 §4.1 fixed-input blob
     /// `Label || 0x00 || Context || [L]_32` and runs the counter-mode
@@ -612,7 +674,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
         Self::derive_with_fixed_data_pieces(key, &[label, &[0x00], context, &l_bytes], out)
     }
 
-    /// Gateless variant used by the boot-time KATs to exercise a
+    /// Variant without the operational and profile gates, used by the boot-time KATs to exercise a
     /// pre-built `fixed_data` blob exactly as NIST ACVP-Server
     /// `KDF-1.0` Counter Mode vectors provide it (counter before
     /// fixed data, counter length 32 bits).
@@ -622,12 +684,18 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
     /// to supply the already-encoded blob verbatim from the test
     /// vector. Consumers should prefer [`derive`] or [`derive_internal`]
     /// for real use so the SP 800-108 §4.1 structure is preserved.
+    ///
+    /// Returns `KdfError::Module(Error::NotOperational)` unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
     #[doc(hidden)]
     pub fn derive_with_fixed_data_internal(
         key: &[u8],
         fixed_data: &[u8],
         out: &mut [u8],
     ) -> Result<(), KdfError> {
+        require_self_test_started()?;
         Self::derive_with_fixed_data_pieces(key, &[fixed_data], out)
     }
 
@@ -636,6 +704,19 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
     /// fixed-input blob that follows the 32-bit counter in each PRF
     /// invocation.
     fn derive_with_fixed_data_pieces(
+        key: &[u8],
+        fixed_data_pieces: &[&[u8]],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        let result = Self::derive_with_fixed_data_pieces_unwiped(key, fixed_data_pieces, out);
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::derive_with_fixed_data_pieces`]. That function wipes `out` when this one returns `Err`.
+    fn derive_with_fixed_data_pieces_unwiped(
         key: &[u8],
         fixed_data_pieces: &[&[u8]],
         out: &mut [u8],
@@ -654,26 +735,23 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Counter<P, L> {
         };
 
         let mut written = 0usize;
-        let mut i: u32 = 1;
-        while i <= n_u32 {
+        // `for` over the inclusive range: the index is never incremented
+        // past `n_u32`, which may be `u32::MAX`.
+        for i in 1..=n_u32 {
             let i_bytes = i.to_be_bytes();
 
             // PRF(K_IN, [i]_32 || fixed_data)
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&i_bytes);
             for piece in fixed_data_pieces {
                 mac.prf_update(piece);
             }
-            let block = mac.prf_finalize();
+            let block = Wiped(mac.prf_finalize()?);
 
             let remaining = out.len() - written;
             let take = if remaining < L { remaining } else { L };
             out[written..written + take].copy_from_slice(&block[..take]);
             written += take;
-
-            // i < n_u32 <= u32::MAX, so i + 1 cannot overflow
-            // because the loop exits as soon as i == n_u32.
-            i += 1;
         }
         Ok(())
     }
@@ -898,7 +976,7 @@ fn validate_counter_params_and_offset<const L: usize>(
 // SP 800-108 §4.2 embeds this recurrence inside a larger fixed-input
 // string `Label || 0x00 || Context || [L]_32` which is passed
 // verbatim as `FixedData`. The public [`Sp800_108Feedback::derive`]
-// API builds that §5 blob for callers; the gateless KAT path
+// API builds that §5 blob for callers; the KAT path without the gates
 // [`derive_with_fixed_data_internal`] accepts a pre-built FixedData
 // blob as supplied by NIST ACVP-Server KDF-1.0 vectors.
 
@@ -934,7 +1012,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         Self::derive_internal(key, iv, label, context, out)
     }
 
-    /// Gateless variant used by the boot-time KATs.
+    /// Variant without the operational and profile gates, used by the boot-time KATs.
     ///
     /// Assembles the SP 800-108 §4.2 fixed-input blob
     /// `Label || 0x00 || Context || [L]_32` and runs the feedback
@@ -960,10 +1038,15 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         Self::derive_with_fixed_data_pieces(key, iv, &[label, &[0x00], context, &l_bytes], out)
     }
 
-    /// Gateless variant used by the boot-time KATs to exercise a
+    /// Variant without the operational and profile gates, used by the boot-time KATs to exercise a
     /// pre-built `fixed_data` blob exactly as NIST ACVP-Server
     /// `KDF-1.0` Feedback Mode vectors provide it (counterLocation=
     /// "none", zeroLengthIv=false).
+    ///
+    /// Returns `KdfError::Module(Error::NotOperational)` unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
     #[doc(hidden)]
     pub fn derive_with_fixed_data_internal(
         key: &[u8],
@@ -971,10 +1054,11 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         fixed_data: &[u8],
         out: &mut [u8],
     ) -> Result<(), KdfError> {
+        require_self_test_started()?;
         Self::derive_with_fixed_data_pieces(key, iv, &[fixed_data], out)
     }
 
-    /// Gateless feedback-mode variant with an explicit per-iteration
+    /// Feedback-mode variant without the gates, with an explicit per-iteration
     /// counter, exactly as SP 800-108r1 §4.2 specifies for
     /// `counterLocation = "before fixed data"`. The recurrence is
     ///
@@ -998,8 +1082,35 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
     /// `2^h - 1` so that no counter value exceeds its declared field
     /// width; otherwise `KdfError::OutputTooLong` is returned, matching
     /// the bound the counter-mode primitive enforces.
+    ///
+    /// Returns `KdfError::Module(Error::NotOperational)` unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
     #[doc(hidden)]
     pub fn derive_with_counter_internal(
+        key: &[u8],
+        iv: &[u8],
+        fixed_data: &[u8],
+        counter_length_bits: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        require_self_test_started()?;
+        let result = Self::derive_with_counter_internal_unwiped(
+            key,
+            iv,
+            fixed_data,
+            counter_length_bits,
+            out,
+        );
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::derive_with_counter_internal`]. That function wipes `out` when this one returns `Err`.
+    fn derive_with_counter_internal_unwiped(
         key: &[u8],
         iv: &[u8],
         fixed_data: &[u8],
@@ -1014,14 +1125,14 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
 
         // First iteration: K(1) = PRF(K, IV || [1]_h || FixedData).
         let mut i: u32 = 1;
-        let mut prev: [u8; L] = {
-            let mut mac = P::prf_new(key);
+        let mut prev = Wiped({
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(iv);
             let counter_be = i.to_be_bytes();
             mac.prf_update(&counter_be[counter_offset..]);
             mac.prf_update(fixed_data);
-            mac.prf_finalize()
-        };
+            mac.prf_finalize()?
+        });
 
         let mut written = 0usize;
         let take = if out.len() < L { out.len() } else { L };
@@ -1033,12 +1144,12 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         // exceed the counter's representable range.
         while written < out.len() {
             i += 1;
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&prev);
             let counter_be = i.to_be_bytes();
             mac.prf_update(&counter_be[counter_offset..]);
             mac.prf_update(fixed_data);
-            prev = mac.prf_finalize();
+            prev.0 = mac.prf_finalize()?;
 
             let remaining = out.len() - written;
             let take = if remaining < L { remaining } else { L };
@@ -1061,6 +1172,20 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         fixed_data_pieces: &[&[u8]],
         out: &mut [u8],
     ) -> Result<(), KdfError> {
+        let result = Self::derive_with_fixed_data_pieces_unwiped(key, iv, fixed_data_pieces, out);
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::derive_with_fixed_data_pieces`]. That function wipes `out` when this one returns `Err`.
+    fn derive_with_fixed_data_pieces_unwiped(
+        key: &[u8],
+        iv: &[u8],
+        fixed_data_pieces: &[&[u8]],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
         if out.is_empty() {
             return Ok(());
         }
@@ -1074,12 +1199,12 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
         }
 
         // First block: PRF(K, IV || FixedData).
-        let mut mac = P::prf_new(key);
+        let mut mac = P::prf_new(key)?;
         mac.prf_update(iv);
         for piece in fixed_data_pieces {
             mac.prf_update(piece);
         }
-        let mut prev: [u8; L] = mac.prf_finalize();
+        let mut prev = Wiped(mac.prf_finalize()?);
 
         let mut written = 0usize;
         let take = if out.len() < L { out.len() } else { L };
@@ -1088,12 +1213,12 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108Feedback<P, L> {
 
         // Remaining blocks: K(i) = PRF(K, K(i-1) || FixedData).
         while written < out.len() {
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&prev);
             for piece in fixed_data_pieces {
                 mac.prf_update(piece);
             }
-            prev = mac.prf_finalize();
+            prev.0 = mac.prf_finalize()?;
 
             let remaining = out.len() - written;
             let take = if remaining < L { remaining } else { L };
@@ -1311,7 +1436,7 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
         Self::derive_internal(key, label, context, out)
     }
 
-    /// Gateless variant used by the boot-time KATs.
+    /// Variant without the operational and profile gates, used by the boot-time KATs.
     ///
     /// Assembles the SP 800-108 §4.3 fixed-input blob
     /// `Label || 0x00 || Context || [L]_32` and runs the double-
@@ -1336,20 +1461,26 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
         Self::derive_with_fixed_data_pieces(key, &[label, &[0x00], context, &l_bytes], out)
     }
 
-    /// Gateless variant used by the boot-time KATs to exercise a
+    /// Variant without the operational and profile gates, used by the boot-time KATs to exercise a
     /// pre-built `fixed_data` blob exactly as NIST ACVP-Server
     /// `KDF-1.0` Double-Pipeline Iteration Mode vectors provide it
     /// (counterLocation="none").
+    ///
+    /// Returns `KdfError::Module(Error::NotOperational)` unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
     #[doc(hidden)]
     pub fn derive_with_fixed_data_internal(
         key: &[u8],
         fixed_data: &[u8],
         out: &mut [u8],
     ) -> Result<(), KdfError> {
+        require_self_test_started()?;
         Self::derive_with_fixed_data_pieces(key, &[fixed_data], out)
     }
 
-    /// Gateless double-pipeline-iteration variant with an explicit
+    /// Double-pipeline-iteration variant without the gates, with an explicit
     /// per-iteration counter, exactly as SP 800-108r1 §4.3 specifies
     /// for `counterLocation = "before fixed data"`. The recurrence is
     ///
@@ -1375,8 +1506,29 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
     /// iterations `n = ceil(out.len() / L)` must additionally fit in
     /// `2^h - 1` so that no counter value exceeds its declared field
     /// width; otherwise `KdfError::OutputTooLong` is returned.
+    ///
+    /// Returns `KdfError::Module(Error::NotOperational)` unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
     #[doc(hidden)]
     pub fn derive_with_counter_internal(
+        key: &[u8],
+        fixed_data: &[u8],
+        counter_length_bits: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        require_self_test_started()?;
+        let result =
+            Self::derive_with_counter_internal_unwiped(key, fixed_data, counter_length_bits, out);
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::derive_with_counter_internal`]. That function wipes `out` when this one returns `Err`.
+    fn derive_with_counter_internal_unwiped(
         key: &[u8],
         fixed_data: &[u8],
         counter_length_bits: u32,
@@ -1389,22 +1541,22 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
             validate_counter_params_and_offset::<L>(counter_length_bits, out.len())?;
 
         // A(1) = PRF(K, FixedData).
-        let mut a: [u8; L] = {
-            let mut mac = P::prf_new(key);
+        let mut a = Wiped({
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(fixed_data);
-            mac.prf_finalize()
-        };
+            mac.prf_finalize()?
+        });
 
         // K(1) = PRF(K, A(1) || [1]_h || FixedData).
         let mut i: u32 = 1;
-        let mut k: [u8; L] = {
-            let mut mac = P::prf_new(key);
+        let mut k = Wiped({
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&a);
             let counter_be = i.to_be_bytes();
             mac.prf_update(&counter_be[counter_offset..]);
             mac.prf_update(fixed_data);
-            mac.prf_finalize()
-        };
+            mac.prf_finalize()?
+        });
 
         let mut written = 0usize;
         let take = if out.len() < L { out.len() } else { L };
@@ -1419,18 +1571,18 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
         // would recover the feedback recurrence by mistake.
         while written < out.len() {
             // A(i) = PRF(K, A(i-1)) — counter NOT involved.
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&a);
-            a = mac.prf_finalize();
+            a.0 = mac.prf_finalize()?;
 
             // K(i) = PRF(K, A(i) || [i]_h || FixedData).
             i += 1;
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&a);
             let counter_be = i.to_be_bytes();
             mac.prf_update(&counter_be[counter_offset..]);
             mac.prf_update(fixed_data);
-            k = mac.prf_finalize();
+            k.0 = mac.prf_finalize()?;
 
             let remaining = out.len() - written;
             let take = if remaining < L { remaining } else { L };
@@ -1449,6 +1601,19 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
         fixed_data_pieces: &[&[u8]],
         out: &mut [u8],
     ) -> Result<(), KdfError> {
+        let result = Self::derive_with_fixed_data_pieces_unwiped(key, fixed_data_pieces, out);
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::derive_with_fixed_data_pieces`]. That function wipes `out` when this one returns `Err`.
+    fn derive_with_fixed_data_pieces_unwiped(
+        key: &[u8],
+        fixed_data_pieces: &[&[u8]],
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
         if out.is_empty() {
             return Ok(());
         }
@@ -1463,19 +1628,19 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
 
         // First iteration of the inner pipeline:
         //   A(1) = PRF(K, A(0)) = PRF(K, FixedData).
-        let mut mac = P::prf_new(key);
+        let mut mac = P::prf_new(key)?;
         for piece in fixed_data_pieces {
             mac.prf_update(piece);
         }
-        let mut a: [u8; L] = mac.prf_finalize();
+        let mut a = Wiped(mac.prf_finalize()?);
 
         // First output block: K(1) = PRF(K, A(1) || FixedData).
-        let mut mac = P::prf_new(key);
+        let mut mac = P::prf_new(key)?;
         mac.prf_update(&a);
         for piece in fixed_data_pieces {
             mac.prf_update(piece);
         }
-        let mut k: [u8; L] = mac.prf_finalize();
+        let mut k = Wiped(mac.prf_finalize()?);
 
         let mut written = 0usize;
         let take = if out.len() < L { out.len() } else { L };
@@ -1484,17 +1649,17 @@ impl<P: PrfHmac<L>, const L: usize> Sp800_108DoublePipeline<P, L> {
 
         while written < out.len() {
             // A(i) = PRF(K, A(i-1)).
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&a);
-            a = mac.prf_finalize();
+            a.0 = mac.prf_finalize()?;
 
             // K(i) = PRF(K, A(i) || FixedData).
-            let mut mac = P::prf_new(key);
+            let mut mac = P::prf_new(key)?;
             mac.prf_update(&a);
             for piece in fixed_data_pieces {
                 mac.prf_update(piece);
             }
-            k = mac.prf_finalize();
+            k.0 = mac.prf_finalize()?;
 
             let remaining = out.len() - written;
             let take = if remaining < L { remaining } else { L };
@@ -1696,10 +1861,24 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
         Self::derive_internal(password, salt, c, out)
     }
 
-    /// Gateless variant used by the boot-time KATs.
+    /// Variant without the operational and profile gates, used by the boot-time KATs.
     #[doc(hidden)]
     #[allow(clippy::many_single_char_names)]
     pub(crate) fn derive_internal(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        out: &mut [u8],
+    ) -> Result<(), KdfError> {
+        let result = Self::derive_internal_unwiped(password, salt, iterations, out);
+        if result.is_err() {
+            oxicrypt_zeroize::zeroize(out);
+        }
+        result
+    }
+
+    /// Body of [`Self::derive_internal`]. That function wipes `out` when this one returns `Err`.
+    fn derive_internal_unwiped(
         password: &[u8],
         salt: &[u8],
         iterations: u32,
@@ -1709,31 +1888,32 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
         if out.is_empty() {
             return Ok(());
         }
-        // SP 800-132 / RFC 8018 §5.2: dkLen ≤ (2^32 − 1) × hLen
-        let max_blocks = u64::from(u32::MAX);
+        // SP 800-132 / RFC 8018 §5.2: dkLen ≤ (2^32 − 1) × hLen, which is
+        // exactly the block count fitting in a `u32`.
         let blocks_needed = (out.len() as u64).div_ceil(L as u64);
-        if blocks_needed > max_blocks {
+        let Ok(n_blocks) = u32::try_from(blocks_needed) else {
             return Err(KdfError::OutputTooLong);
-        }
+        };
 
         let mut offset = 0;
-        let mut block_idx: u32 = 1;
-        while offset < out.len() {
+        // `for` over the inclusive range: the block index is never
+        // incremented past the last block, which may be `u32::MAX`.
+        for block_idx in 1..=n_blocks {
             // U1 = PRF(Password, Salt || INT(i))
-            let mut mac = P::prf_new(password);
+            let mut mac = P::prf_new(password)?;
             mac.prf_update(salt);
             mac.prf_update(&block_idx.to_be_bytes());
-            let mut u_prev = mac.prf_finalize();
+            let mut u_prev = Wiped(mac.prf_finalize()?);
 
             // T = U1
-            let mut xor_fold = u_prev;
+            let mut xor_fold = Wiped(u_prev.0);
 
             // U2..Uc
             let mut iter: u32 = 1;
             while iter < iterations {
-                let mut mac_inner = P::prf_new(password);
+                let mut mac_inner = P::prf_new(password)?;
                 mac_inner.prf_update(&u_prev);
-                u_prev = mac_inner.prf_finalize();
+                u_prev.0 = mac_inner.prf_finalize()?;
                 // T ^= Uj
                 let mut idx = 0;
                 while idx < L {
@@ -1747,7 +1927,6 @@ impl<P: PrfHmac<L>, const L: usize> Pbkdf2<P, L> {
             let to_copy = if remaining < L { remaining } else { L };
             out[offset..offset + to_copy].copy_from_slice(&xor_fold[..to_copy]);
             offset += to_copy;
-            block_idx += 1;
         }
         Ok(())
     }
@@ -1784,38 +1963,23 @@ pub type Pbkdf2HmacSha3_512 = Pbkdf2<oxicrypt_hmac::HmacSha3_512, 64>;
 // PBKDF2 power-up KATs
 // ----------------------------------------------------------------------
 
-/// PBKDF2-HMAC-SHA-1 KAT: RFC 6070 Test Case 1.
-/// P="password", S="salt", c=1, dkLen=20.
-const KAT_PBKDF2_SHA1_EXPECTED: [u8; 20] = [
-    0x0c, 0x60, 0xc8, 0x0f, 0x96, 0x1f, 0x0e, 0x71, 0xf3, 0xa9, 0xb5, 0x24, 0xaf, 0x60, 0x12, 0x06,
-    0x2f, 0xe0, 0x37, 0xa6,
-];
-
-/// Power-up KAT for PBKDF2-HMAC-SHA-1.
-pub fn pbkdf2_self_test_sha1() -> Result<(), SelfTestFailure> {
-    let mut dk = [0u8; 20];
-    Pbkdf2HmacSha1::derive_internal(b"password", b"salt", 1, &mut dk)
+/// Power-up CAST for PBKDF2 (SP 800-132), on PBKDF2-HMAC-SHA2-224.
+///
+/// Derives a master key from a fixed password, salt and iteration count
+/// with SP 800-132 §5.3 and compares it byte for byte to the expected
+/// value from NIST ACVP-Server `PBKDF-1.0` (see `pbkdf2_cast_vector`).
+/// The inputs meet FIPS 140-3 IG 10.3.A item 8: the iteration count is
+/// 398, at least two, and the 53-byte password, 224-bit salt and
+/// 240-bit master key are lengths this module supports in the approved
+/// mode. The salt also meets the SP 800-132 §5.1 minimum of 128 bits,
+/// and the master key the §5 minimum of 112 bits. HMAC-SHA2-224, the
+/// PRF, has its own power-up CAST in `oxicrypt-hmac`.
+pub fn pbkdf2_self_test_sha224() -> Result<(), SelfTestFailure> {
+    use pbkdf2_cast_vector::pbkdf2_hmac_sha2_224 as v;
+    let mut mk = [0u8; v::DERIVED_KEY.len()];
+    Pbkdf2HmacSha224::derive_internal(&v::PASSWORD, &v::SALT, v::ITERATIONS, &mut mk)
         .map_err(|_| SelfTestFailure)?;
-    if dk == KAT_PBKDF2_SHA1_EXPECTED {
-        Ok(())
-    } else {
-        Err(SelfTestFailure)
-    }
-}
-
-/// PBKDF2-HMAC-SHA-256 KAT: P="password", S="salt", c=1, dkLen=32.
-/// Cross-checked against Python hashlib.pbkdf2_hmac.
-const KAT_PBKDF2_SHA256_EXPECTED: [u8; 32] = [
-    0x12, 0x0f, 0xb6, 0xcf, 0xfc, 0xf8, 0xb3, 0x2c, 0x43, 0xe7, 0x22, 0x52, 0x56, 0xc4, 0xf8, 0x37,
-    0xa8, 0x65, 0x48, 0xc9, 0x2c, 0xcc, 0x35, 0x48, 0x08, 0x05, 0x98, 0x7c, 0xb7, 0x0b, 0xe1, 0x7b,
-];
-
-/// Power-up KAT for PBKDF2-HMAC-SHA-256.
-pub fn pbkdf2_self_test_sha256() -> Result<(), SelfTestFailure> {
-    let mut dk = [0u8; 32];
-    Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk)
-        .map_err(|_| SelfTestFailure)?;
-    if dk == KAT_PBKDF2_SHA256_EXPECTED {
+    if mk == v::DERIVED_KEY {
         Ok(())
     } else {
         Err(SelfTestFailure)
@@ -2021,12 +2185,8 @@ pub const KATS: &[KatEntry] = &[
     },
     // --- PBKDF2 (SP 800-132) -----------------------------------------------
     KatEntry {
-        name: "PBKDF2-HMAC-SHA-1 KAT (RFC 6070 Test Case 1, SP 800-132)",
-        run: pbkdf2_self_test_sha1,
-    },
-    KatEntry {
-        name: "PBKDF2-HMAC-SHA-256 KAT (SP 800-132, pycryptodome cross-check)",
-        run: pbkdf2_self_test_sha256,
+        name: "PBKDF2-HMAC-SHA2-224 CAST (SP 800-132 master key, NIST ACVP-Server PBKDF-1.0)",
+        run: pbkdf2_self_test_sha224,
     },
 ];
 
@@ -2059,7 +2219,7 @@ mod tests {
         kbkdf_feedback_self_test_sha3_512, kbkdf_feedback_self_test_sha224,
         kbkdf_feedback_self_test_sha256, kbkdf_feedback_self_test_sha384,
         kbkdf_feedback_self_test_sha512, kbkdf_feedback_self_test_sha512_224,
-        kbkdf_feedback_self_test_sha512_256, pbkdf2_self_test_sha1, pbkdf2_self_test_sha256,
+        kbkdf_feedback_self_test_sha512_256, pbkdf2_self_test_sha224,
     };
 
     // Local fixed inputs for the RFC 5869 §A.1 Test Case 1 cross-check
@@ -2114,6 +2274,7 @@ mod tests {
 
     #[test]
     fn boot_self_tests_all_pass() {
+        ensure_initialized();
         assert!(hkdf_self_test_sha1().is_ok());
         assert!(hkdf_self_test_sha224().is_ok());
         assert!(hkdf_self_test_sha256().is_ok());
@@ -2132,7 +2293,7 @@ mod tests {
         ensure_initialized();
         let ikm = RFC5869_IKM;
         let hk = HkdfSha256::extract(Some(&RFC5869_SALT), &ikm).unwrap();
-        assert_eq!(hk.prk(), &RFC5869_SHA256_PRK);
+        assert_eq!(hk.prk().unwrap(), &RFC5869_SHA256_PRK);
         let mut okm = [0u8; 42];
         hk.expand(&RFC5869_INFO, &mut okm).unwrap();
         assert_eq!(okm, RFC5869_SHA256_OKM);
@@ -2140,6 +2301,7 @@ mod tests {
 
     #[test]
     fn hkdf_empty_salt_is_none_equivalent_to_zero_salt() {
+        ensure_initialized();
         // RFC 5869 §2.2: a `None` salt MUST be treated as `HashLen`
         // zero bytes. Verify that explicit zeros and None produce
         // identical PRKs for SHA-1.
@@ -2148,7 +2310,7 @@ mod tests {
         let zero = [0u8; 20];
         let a = HkdfSha1::extract(None, &ikm).unwrap();
         let b = HkdfSha1::extract(Some(&zero), &ikm).unwrap();
-        assert_eq!(a.prk(), b.prk());
+        assert_eq!(a.prk().unwrap(), b.prk().unwrap());
     }
 
     #[test]
@@ -2192,7 +2354,7 @@ mod tests {
         // Produce a PRK via extract, round-trip via from_prk, and
         // verify expand still matches the RFC 5869 vector.
         let first = HkdfSha256::extract(Some(&RFC5869_SALT), &ikm).unwrap();
-        let prk = *first.prk();
+        let prk = *first.prk().unwrap();
         let second = HkdfSha256::from_prk(&prk).unwrap();
         let mut okm = [0u8; 42];
         second.expand(&RFC5869_INFO, &mut okm).unwrap();
@@ -2201,6 +2363,7 @@ mod tests {
 
     #[test]
     fn hkdf_sha3_256_short_expand_deterministic() {
+        ensure_initialized();
         // Exercise the SHA-3 PRF path with a short (< L) expand.
         ensure_initialized();
         let ikm = RFC5869_IKM;
@@ -2214,6 +2377,7 @@ mod tests {
 
     #[test]
     fn hkdf_sha512_streaming_matches_one_shot_expand() {
+        ensure_initialized();
         // HKDF-Expand has no streaming API, but back-to-back calls
         // against the same Hkdf instance must be deterministic.
         ensure_initialized();
@@ -2228,6 +2392,7 @@ mod tests {
 
     #[test]
     fn kdferror_wraps_module_errors() {
+        ensure_initialized();
         // Confirm the From impl plumbs a module error through.
         let e: KdfError = Error::NotOperational {
             current: State::PowerOff,
@@ -2240,6 +2405,7 @@ mod tests {
 
     #[test]
     fn kbkdf_counter_boot_self_tests_all_pass() {
+        ensure_initialized();
         assert!(kbkdf_counter_self_test_sha1().is_ok());
         assert!(kbkdf_counter_self_test_sha224().is_ok());
         assert!(kbkdf_counter_self_test_sha256().is_ok());
@@ -2255,6 +2421,7 @@ mod tests {
 
     #[test]
     fn kbkdf_counter_public_api_is_deterministic() {
+        ensure_initialized();
         // The previous test compared against a hand-rolled expected
         // output; the power-up KAT now covers correctness via NIST
         // ACVP-Server vectors. Here we just confirm the public API
@@ -2283,6 +2450,7 @@ mod tests {
 
     #[test]
     fn kbkdf_counter_short_output_truncates_last_block() {
+        ensure_initialized();
         // A 17-byte request against HMAC-SHA-256 (L=32) should
         // produce the first 17 bytes of the first PRF block.
         ensure_initialized();
@@ -2326,6 +2494,7 @@ mod tests {
 
     #[test]
     fn kbkdf_counter_sha3_multi_block() {
+        ensure_initialized();
         // SHA3-256 has L=32, so 42 bytes requires n=2 blocks —
         // exercises the counter increment path under a sponge PRF.
         ensure_initialized();
@@ -2350,6 +2519,7 @@ mod tests {
 
     #[test]
     fn kbkdf_counter_distinct_contexts_diverge() {
+        ensure_initialized();
         // Domain separation: changing Context must produce different
         // output for the same (K, Label, L).
         ensure_initialized();
@@ -2368,6 +2538,7 @@ mod tests {
 
     #[test]
     fn kbkdf_feedback_boot_self_tests_all_pass() {
+        ensure_initialized();
         assert!(kbkdf_feedback_self_test_sha1().is_ok());
         assert!(kbkdf_feedback_self_test_sha224().is_ok());
         assert!(kbkdf_feedback_self_test_sha256().is_ok());
@@ -2408,6 +2579,7 @@ mod tests {
 
     #[test]
     fn kbkdf_feedback_distinct_ivs_diverge() {
+        ensure_initialized();
         // Per SP 800-108 §4.2, the IV seeds K(0), so different IVs
         // must produce different outputs for the same (K, fixed data).
         ensure_initialized();
@@ -2462,6 +2634,7 @@ mod tests {
 
     #[test]
     fn kbkdf_dp_boot_self_tests_all_pass() {
+        ensure_initialized();
         assert!(kbkdf_dp_self_test_sha1().is_ok());
         assert!(kbkdf_dp_self_test_sha224().is_ok());
         assert!(kbkdf_dp_self_test_sha256().is_ok());
@@ -2544,6 +2717,7 @@ mod tests {
 
     #[test]
     fn kbkdf_three_modes_yield_distinct_output() {
+        ensure_initialized();
         // The three SP 800-108 modes must yield distinct output for
         // the same (K, Label, Context, L) because their recurrences
         // differ. Guards against accidental mode crosswiring.
@@ -2583,17 +2757,14 @@ mod tests {
     // ==================================================================
 
     #[test]
-    fn pbkdf2_sha1_self_test_passes() {
-        pbkdf2_self_test_sha1().unwrap();
-    }
-
-    #[test]
-    fn pbkdf2_sha256_self_test_passes() {
-        pbkdf2_self_test_sha256().unwrap();
+    fn pbkdf2_self_test_passes() {
+        ensure_initialized();
+        pbkdf2_self_test_sha224().unwrap();
     }
 
     #[test]
     fn pbkdf2_sha1_rfc6070_c2() {
+        ensure_initialized();
         // RFC 6070 Test Case 2: P="password", S="salt", c=2, dkLen=20
         let expected: [u8; 20] = [
             0xea, 0x6c, 0x01, 0x4d, 0xc7, 0x2d, 0x6f, 0x8c, 0xcd, 0x1e, 0xd9, 0x2a, 0xce, 0x1d,
@@ -2606,6 +2777,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_sha256_c4096() {
+        ensure_initialized();
         // P="password", S="salt", c=4096, dkLen=32 (SHA-256)
         let expected: [u8; 32] = [
             0xc5, 0xe4, 0x78, 0xd5, 0x92, 0x88, 0xc8, 0x41, 0xaa, 0x53, 0x0d, 0xb6, 0x84, 0x5c,
@@ -2619,6 +2791,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_sha512_c1() {
+        ensure_initialized();
         // P="password", S="salt", c=1, dkLen=64 (SHA-512)
         let expected: [u8; 64] = [
             0x86, 0x7f, 0x70, 0xcf, 0x1a, 0xde, 0x02, 0xcf, 0xf3, 0x75, 0x25, 0x99, 0xa3, 0xa5,
@@ -2634,6 +2807,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_multi_block_output() {
+        ensure_initialized();
         // Output longer than one HMAC block requires multiple blocks.
         // SHA-256 output is 32 bytes; request 48 bytes → 2 PBKDF2 blocks.
         let mut dk = [0u8; 48];
@@ -2644,6 +2818,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_deterministic() {
+        ensure_initialized();
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
         Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 2, &mut dk1).unwrap();
@@ -2653,6 +2828,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_different_passwords_differ() {
+        ensure_initialized();
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
         Pbkdf2HmacSha256::derive_internal(b"pass-a", b"salt", 1, &mut dk1).unwrap();
@@ -2662,6 +2838,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_different_salts_differ() {
+        ensure_initialized();
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
         Pbkdf2HmacSha256::derive_internal(b"password", b"salt-a", 1, &mut dk1).unwrap();
@@ -2671,6 +2848,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_different_iterations_differ() {
+        ensure_initialized();
         let mut dk1 = [0u8; 32];
         let mut dk2 = [0u8; 32];
         Pbkdf2HmacSha256::derive_internal(b"password", b"salt", 1, &mut dk1).unwrap();
@@ -2689,6 +2867,7 @@ mod tests {
 
     #[test]
     fn kbkdf_feedback_counter_internal_smoke_h32() {
+        ensure_initialized();
         let key = [0x42u8; 32];
         let iv = [0x11u8; 32];
         // Arbitrary fixed-data blob; smoke test exercises the call
@@ -2704,6 +2883,7 @@ mod tests {
 
     #[test]
     fn kbkdf_dp_counter_internal_smoke_h32() {
+        ensure_initialized();
         let key = [0x42u8; 32];
         let fixed_data = b"label\x00context\x00\x00\x01\x00";
         let mut out = [0u8; 32];
@@ -2716,6 +2896,7 @@ mod tests {
 
     #[test]
     fn kbkdf_feedback_counter_rejects_invalid_h() {
+        ensure_initialized();
         let key = [0x42u8; 32];
         let iv = [0x11u8; 32];
         let fixed_data: &[u8] = b"x";
@@ -2731,6 +2912,7 @@ mod tests {
 
     #[test]
     fn kbkdf_dp_counter_rejects_invalid_h() {
+        ensure_initialized();
         let key = [0x42u8; 32];
         let fixed_data: &[u8] = b"x";
         let mut out = [0u8; 16];
@@ -2741,5 +2923,194 @@ mod tests {
             .unwrap_err();
             assert!(matches!(err, KdfError::Module(Error::InvalidInput)));
         }
+    }
+}
+
+/// Each KDF that wipes its output on an error does so: a PRF stand-in
+/// fails part-way, after a block of output has been written, and the
+/// output is all zero afterwards. The `_unwiped` body is run on the same
+/// inputs as the control: it leaves the written block in place, so the
+/// zero output comes from the wipe.
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod wipe_on_error_tests {
+    extern crate std;
+    use super::{
+        Hkdf, KdfError, Pbkdf2, PrfHmac, Sp800_108Counter, Sp800_108DoublePipeline,
+        Sp800_108Feedback,
+    };
+    use oxicrypt_module::{Error, KatEntry, Service, initialize_with_tests};
+
+    /// Output length of the stand-in PRF.
+    const L: usize = 16;
+
+    std::thread_local! {
+        static CALLS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    }
+
+    /// A PRF whose third and later instantiations fail, and whose every
+    /// output is `0x5a` bytes.
+    struct FailingPrf;
+
+    impl PrfHmac<L> for FailingPrf {
+        const KDF_SERVICE: Service = Service::HkdfSha256;
+        fn prf_new(_key: &[u8]) -> Result<Self, Error> {
+            let n = CALLS.with(|c| {
+                c.set(c.get().saturating_add(1));
+                c.get()
+            });
+            if n >= 3 {
+                Err(Error::InvalidInput)
+            } else {
+                Ok(Self)
+            }
+        }
+        fn prf_update(&mut self, _data: &[u8]) {}
+        fn prf_finalize(&mut self) -> Result<[u8; L], Error> {
+            Ok([0x5a; L])
+        }
+    }
+
+    fn start() {
+        const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+            name: "integrity not verifiable in an unsigned test binary",
+            run: || Ok(()),
+        }];
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    }
+
+    /// Runs `wiped` and `unwiped` from a fresh call count on a zeroed
+    /// output of four blocks: both must fail, `unwiped` must leave output
+    /// behind, and `wiped` must leave none.
+    fn check(
+        what: &str,
+        wiped: impl Fn(&mut [u8]) -> Result<(), KdfError>,
+        unwiped: impl Fn(&mut [u8]) -> Result<(), KdfError>,
+    ) {
+        start();
+        let mut out = [0u8; 4 * L];
+        CALLS.with(|c| c.set(0));
+        assert!(
+            unwiped(&mut out).is_err(),
+            "{what}: the stand-in did not fail"
+        );
+        assert!(
+            out.iter().any(|&b| b != 0),
+            "{what}: control wrote nothing before failing"
+        );
+        let mut out = [0u8; 4 * L];
+        CALLS.with(|c| c.set(0));
+        assert!(wiped(&mut out).is_err(), "{what}: did not fail");
+        assert!(
+            out.iter().all(|&b| b == 0),
+            "{what}: output left after an error"
+        );
+    }
+
+    #[test]
+    fn hkdf_expand_wipes_its_output_on_error() {
+        start();
+        let prk = Hkdf::<FailingPrf, L>::from_prk(&[1; L]).unwrap();
+        check(
+            "HKDF-Expand",
+            |out| prk.expand_internal(b"info", out),
+            |out| prk.expand_internal_unwiped(b"info", out),
+        );
+    }
+
+    #[test]
+    fn kbkdf_counter_wipes_its_output_on_error() {
+        check(
+            "KBKDF counter",
+            |out| {
+                Sp800_108Counter::<FailingPrf, L>::derive_with_fixed_data_pieces(b"k", &[b"x"], out)
+            },
+            |out| {
+                Sp800_108Counter::<FailingPrf, L>::derive_with_fixed_data_pieces_unwiped(
+                    b"k",
+                    &[b"x"],
+                    out,
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn kbkdf_feedback_wipes_its_output_on_error() {
+        check(
+            "KBKDF feedback",
+            |out| {
+                Sp800_108Feedback::<FailingPrf, L>::derive_with_fixed_data_pieces(
+                    b"k",
+                    b"",
+                    &[b"x"],
+                    out,
+                )
+            },
+            |out| {
+                Sp800_108Feedback::<FailingPrf, L>::derive_with_fixed_data_pieces_unwiped(
+                    b"k",
+                    b"",
+                    &[b"x"],
+                    out,
+                )
+            },
+        );
+        check(
+            "KBKDF feedback, counter form",
+            |out| {
+                Sp800_108Feedback::<FailingPrf, L>::derive_with_counter_internal(
+                    b"k", b"", b"x", 32, out,
+                )
+            },
+            |out| {
+                Sp800_108Feedback::<FailingPrf, L>::derive_with_counter_internal_unwiped(
+                    b"k", b"", b"x", 32, out,
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn kbkdf_double_pipeline_wipes_its_output_on_error() {
+        check(
+            "KBKDF double pipeline",
+            |out| {
+                Sp800_108DoublePipeline::<FailingPrf, L>::derive_with_fixed_data_pieces(
+                    b"k",
+                    &[b"x"],
+                    out,
+                )
+            },
+            |out| {
+                Sp800_108DoublePipeline::<FailingPrf, L>::derive_with_fixed_data_pieces_unwiped(
+                    b"k",
+                    &[b"x"],
+                    out,
+                )
+            },
+        );
+        check(
+            "KBKDF double pipeline, counter form",
+            |out| {
+                Sp800_108DoublePipeline::<FailingPrf, L>::derive_with_counter_internal(
+                    b"k", b"x", 32, out,
+                )
+            },
+            |out| {
+                Sp800_108DoublePipeline::<FailingPrf, L>::derive_with_counter_internal_unwiped(
+                    b"k", b"x", 32, out,
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn pbkdf2_wipes_its_output_on_error() {
+        check(
+            "PBKDF2",
+            |out| Pbkdf2::<FailingPrf, L>::derive_internal(b"password", b"salt", 1, out),
+            |out| Pbkdf2::<FailingPrf, L>::derive_internal_unwiped(b"password", b"salt", 1, out),
+        );
     }
 }

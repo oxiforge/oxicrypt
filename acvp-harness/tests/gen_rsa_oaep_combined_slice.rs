@@ -75,7 +75,7 @@ fn generate_rsa_oaep_combined_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -106,7 +106,7 @@ fn generate_rsa_oaep_combined_slice() {
         let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_bytes, e, label, &msg, &seed_arr,
         )
-        .unwrap_or_else(|| panic!("encrypt failed test {i}"));
+        .unwrap_or_else(|e| panic!("encrypt failed test {i}: {e:?}"));
 
         // CRT decrypt
         let mut out_crt = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
@@ -122,7 +122,7 @@ fn generate_rsa_oaep_combined_slice() {
             &ct,
             &mut out_crt,
         )
-        .unwrap_or_else(|| panic!("CRT decrypt failed test {i}"));
+        .unwrap_or_else(|e| panic!("CRT decrypt failed test {i}: {e:?}"));
 
         // Non-CRT decrypt
         let mut out_std = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
@@ -133,7 +133,7 @@ fn generate_rsa_oaep_combined_slice() {
             &ct,
             &mut out_std,
         )
-        .unwrap_or_else(|| panic!("non-CRT decrypt failed test {i}"));
+        .unwrap_or_else(|e| panic!("non-CRT decrypt failed test {i}: {e:?}"));
 
         // Path equivalence: both must produce the same plaintext.
         assert_eq!(

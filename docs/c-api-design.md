@@ -415,11 +415,14 @@ const char *oxi_version(void);
    and `make test-staticlib` independent targets. Tests cover the
    McGrew/Viega Case 15 vector (AES-256, no AAD), decrypt round-trip,
    tag tamper rejection (`OxiResult::TagMismatch=22`), and handle
-   lifecycle (NULL-free safe no-op, NULL-arg rejection).
+   lifecycle (NULL-free safe no-op, NULL-arg rejection). The harness
+   also has a `make test-unsigned` target, which checks that
+   `oxi_init` refuses unsigned artifacts; every target signs its own
+   copies of the release artifacts and runs on Linux only.
 5. ✅ **Complete** (PR #6) — The FFI crate sits outside the FIPS
    boundary and translates for the in-boundary algorithm crates. Both
    the cdylib and staticlib outputs embed the integrity slot per F8.
-   `oxicrypt-integrity-sign --cdylib-target …` signs the shared library; a
+   `oxicrypt-integrity-sign --sign --key …` signs the shared library; a
    consumer linking the static archive signs the binary they produce,
    since an archive is a build input with no loadable image to verify.
 
@@ -429,11 +432,6 @@ const char *oxi_version(void);
 - SHA-3 / KMAC / SLH-DSA / ML-DSA / ML-KEM / ECDSA / ECDH / EdDSA / RSA
   / DRBG / KDF C ABI exposures (per-algorithm chunks, each adding
   `oxi_<alg>_*` symbols + handle types as needed).
-- Runtime integrity verification of the cdylib slot under host-process
-  loading. The current `integrity_self_test` resolves
-  `env::current_exe()` which for a cdylib returns the host's path,
-  not the .so's. A `dladdr`-based "find this .so's own path" helper
-  is the proper fix; tracked in security policy §4.7.1.
 - Language bindings (Python, Go, Java, Node, .NET) — separate
   adoption-accessories chunks, each consuming the C ABI.
 

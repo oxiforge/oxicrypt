@@ -65,6 +65,7 @@
 
 use oxicrypt_module::KatEntry;
 
+#[doc(hidden)]
 pub mod keccak;
 pub mod sha1;
 pub mod sha224;

@@ -98,6 +98,12 @@ pub struct Fp {
 }
 
 impl Fp {
+    /// Overwrites the limbs with zeros, for a temporary that must not
+    /// outlive its use.
+    pub(crate) fn wipe(&mut self) {
+        oxicrypt_zeroize::zeroize_u64(&mut self.limbs);
+    }
+
     /// The additive identity (`0`).
     pub const ZERO: Fp = Fp { limbs: [0; 4] };
 

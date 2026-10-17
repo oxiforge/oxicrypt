@@ -318,7 +318,11 @@ impl SessionStore {
 /// Content hash of one boundary dataset's full spec. Identical spec ⇒
 /// identical hash ⇒ skipped on resume; any spec change ⇒ different hash ⇒
 /// re-collect. (sha256 of a canonical descriptor string.)
-fn dataset_content_hash(plan: &Plan, timer_slug: &str, boundary: Boundary) -> String {
+fn dataset_content_hash(
+    plan: &Plan,
+    timer_slug: &str,
+    boundary: Boundary,
+) -> Result<String, CollectionError> {
     // Mode segment: the production (raw + restart) descriptor is byte-identical
     // to the pre-characterization format, so existing certification datasets
     // hash unchanged and are not forced to re-collect. Characterization uses a
@@ -402,16 +406,17 @@ fn serialize_done_hashes(done: &[String]) -> String {
 // ── sha256 manifest ────────────────────────────────────────────────────────
 
 /// Lowercase-hex sha256 of `data`, via the in-workspace `oxicrypt-sha`.
-fn sha256_hex(data: &[u8]) -> String {
+///
+/// The digest is an integrity checksum, not a security operation. The
+/// hasher refuses unless `oxicrypt_module::require_self_test_started`
+/// admits the call (in `Operational`, or in `SelfTest` on the thread
+/// running the power-up self-tests), so the collection tool starts the
+/// module before collecting.
+fn sha256_hex(data: &[u8]) -> Result<String, CollectionError> {
     use oxicrypt_sha::Sha256;
-    // The collection tool is off-boundary; this digest is an integrity
-    // checksum, not a security operation. Use the ungated internal hasher
-    // (same path as `sha256_file_hex`) — the gated one-shot `sha256()`
-    // refuses unless the module's operational self-test has run, which it
-    // has not in this off-boundary tool.
-    let mut hasher = Sha256::new_internal();
+    let mut hasher = Sha256::new_internal().map_err(refused)?;
     hasher.update(data);
-    let digest = hasher.finalize();
+    let digest = hasher.finalize().map_err(refused)?;
     let mut s = String::with_capacity(64);
     for byte in digest {
         // Two lowercase hex nibbles per byte; no float, no panic.
@@ -423,7 +428,12 @@ fn sha256_hex(data: &[u8]) -> String {
             s.push(char::from(l));
         }
     }
-    s
+    Ok(s)
+}
+
+/// The error a collection step reports when the module refuses SHA-256.
+fn refused(e: oxicrypt_module::Error) -> CollectionError {
+    CollectionError(format!("the module refused SHA-256: {e}"))
 }
 
 /// sha256 of a file's bytes, streamed so a 1M file is never fully buffered.
@@ -432,7 +442,7 @@ fn sha256_file_hex(path: &Path) -> Result<String, CollectionError> {
     use std::io::Read;
     let mut file =
         File::open(path).map_err(|e| CollectionError::io("open file for manifest", &e))?;
-    let mut hasher = Sha256::new_internal();
+    let mut hasher = Sha256::new_internal().map_err(refused)?;
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         let read = file
@@ -445,7 +455,7 @@ fn sha256_file_hex(path: &Path) -> Result<String, CollectionError> {
             hasher.update(chunk);
         }
     }
-    let digest = hasher.finalize();
+    let digest = hasher.finalize().map_err(refused)?;
     let mut s = String::with_capacity(64);
     for byte in digest {
         const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -700,7 +710,7 @@ fn collect_one_boundary<F: SourceFactory>(
     measured_freq: Option<u64>,
 ) -> Result<DatasetOutcome, CollectionError> {
     let timer_slug = factory.timer_slug();
-    let hash = dataset_content_hash(plan, timer_slug, boundary);
+    let hash = dataset_content_hash(plan, timer_slug, boundary)?;
     let dir = boundary_dir(plan, timer_slug, boundary);
 
     // Characterization mode: one contiguous capture + its sidecar, no restart.
@@ -1380,6 +1390,7 @@ mod tests {
 
     #[test]
     fn restart_allocates_a_fresh_source_per_round() {
+        crate::test_support::start_module();
         let dir = temp_dir("fresh-per-round");
         let plan = small_plan(dir.clone());
         let (mut factory, built) = CountingFactory::new();
@@ -1397,6 +1408,7 @@ mod tests {
 
     #[test]
     fn raw_file_size_matches_metadata_sample_count() {
+        crate::test_support::start_module();
         let dir = temp_dir("count-consistency");
         let plan = small_plan(dir.clone());
         let (mut factory, _) = CountingFactory::new();
@@ -1422,6 +1434,7 @@ mod tests {
 
     #[test]
     fn restart_total_equals_rounds_times_per_round() {
+        crate::test_support::start_module();
         // Production counts: 1000 * 1000 = 1_000_000 (no real collection).
         let c = Counts::production();
         assert_eq!(c.restart_rounds, 1000);
@@ -1439,6 +1452,7 @@ mod tests {
     /// and content-hash segment (#156). The former name claimed boundary
     /// coverage while proving directory coverage.
     fn both_boundary_directories_are_emitted() {
+        crate::test_support::start_module();
         let dir = temp_dir("dual-boundary");
         let plan = small_plan(dir.clone());
         let (mut factory, _) = CountingFactory::new();
@@ -1460,6 +1474,7 @@ mod tests {
 
     #[test]
     fn layout_is_versioned_and_manifest_checksums_verify() {
+        crate::test_support::start_module();
         let dir = temp_dir("layout-manifest");
         let plan = small_plan(dir.clone());
         let (mut factory, _) = CountingFactory::new();
@@ -1490,8 +1505,9 @@ mod tests {
 
     #[test]
     fn sha256_hex_matches_known_answer() {
+        crate::test_support::start_module();
         // FIPS 180-4 / NIST KAT: sha256("abc").
-        let hex = sha256_hex(b"abc");
+        let hex = sha256_hex(b"abc").unwrap();
         assert_eq!(
             hex,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -1502,6 +1518,7 @@ mod tests {
 
     #[test]
     fn second_run_skips_completed_datasets() {
+        crate::test_support::start_module();
         let dir = temp_dir("resume-skip");
         let plan = small_plan(dir.clone());
 
@@ -1522,6 +1539,7 @@ mod tests {
 
     #[test]
     fn changed_spec_forces_recollect() {
+        crate::test_support::start_module();
         let dir = temp_dir("resume-changed");
         let mut plan = small_plan(dir.clone());
         let (mut f1, _) = CountingFactory::new();
@@ -1538,16 +1556,17 @@ mod tests {
 
     #[test]
     fn content_hash_is_stable_and_spec_sensitive() {
+        crate::test_support::start_module();
         let dir = temp_dir("hash");
         let plan = small_plan(dir.clone());
-        let h1 = dataset_content_hash(&plan, "mock-timer", Boundary::Lower);
-        let h1b = dataset_content_hash(&plan, "mock-timer", Boundary::Lower);
+        let h1 = dataset_content_hash(&plan, "mock-timer", Boundary::Lower).unwrap();
+        let h1b = dataset_content_hash(&plan, "mock-timer", Boundary::Lower).unwrap();
         assert_eq!(h1, h1b, "same spec hashes identically");
-        let h_upper = dataset_content_hash(&plan, "mock-timer", Boundary::Upper);
+        let h_upper = dataset_content_hash(&plan, "mock-timer", Boundary::Upper).unwrap();
         assert_ne!(h1, h_upper, "boundary changes the hash");
         let mut plan2 = plan.clone();
         plan2.counts.raw_samples += 1;
-        let h2 = dataset_content_hash(&plan2, "mock-timer", Boundary::Lower);
+        let h2 = dataset_content_hash(&plan2, "mock-timer", Boundary::Lower).unwrap();
         assert_ne!(h1, h2, "count change changes the hash");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1574,6 +1593,7 @@ mod tests {
         }
         // Drive the crate-private collector's streaming path directly with a
         // sample count far larger than the chunk size.
+        crate::test_support::start_module();
         let mut collector =
             RawCollector::new(PrngMock::new(7), MinEntropy::from_bits(2), alpha20()).unwrap();
         collector.run_startup().unwrap();
@@ -1602,6 +1622,7 @@ mod tests {
 
     #[test]
     fn runbook_documents_one_command_per_dataset_type() {
+        crate::test_support::start_module();
         let runbook = include_str!("../docs/collection-runbook.md");
         assert!(runbook.contains("collect --oe-id"));
         assert!(runbook.contains("raw.bin"));
@@ -1614,6 +1635,7 @@ mod tests {
 
     #[test]
     fn cli_requires_oe_and_dir() {
+        crate::test_support::start_module();
         assert!(CliArgs::parse(&[]).is_err());
         assert!(CliArgs::parse(&[String::from("--oe-id"), String::from("x")]).is_err());
         let ok = CliArgs::parse(&[
@@ -1629,6 +1651,7 @@ mod tests {
 
     #[test]
     fn cli_rejects_unknown_arg() {
+        crate::test_support::start_module();
         let err = CliArgs::parse(&[String::from("--bogus")]).unwrap_err();
         assert!(err.0.contains("unknown argument"));
     }
@@ -1637,6 +1660,7 @@ mod tests {
 
     #[test]
     fn cli_parses_characterization_count() {
+        crate::test_support::start_module();
         let ok = CliArgs::parse(&[
             String::from("--oe-id"),
             String::from("x"),
@@ -1660,6 +1684,7 @@ mod tests {
 
     #[test]
     fn cli_rejects_zero_and_nonnumeric_characterization() {
+        crate::test_support::start_module();
         let base = [
             String::from("--oe-id"),
             String::from("x"),
@@ -1696,6 +1721,7 @@ mod tests {
 
     #[test]
     fn characterization_mode_writes_bin_and_marked_sidecar() {
+        crate::test_support::start_module();
         let dir = temp_dir("characterization");
         let mut plan = small_plan(dir.clone());
         let count = crate::raw::STREAM_CHUNK_SAMPLES + 321; // spans multiple chunks
@@ -1736,12 +1762,13 @@ mod tests {
 
     #[test]
     fn characterization_content_hash_distinct_from_production() {
+        crate::test_support::start_module();
         let dir = temp_dir("char-hash");
         let prod = small_plan(dir.clone());
         let mut charz = small_plan(dir.clone());
         charz.characterization = Some(prod.counts.raw_samples);
-        let h_prod = dataset_content_hash(&prod, "mock-timer", Boundary::Lower);
-        let h_char = dataset_content_hash(&charz, "mock-timer", Boundary::Lower);
+        let h_prod = dataset_content_hash(&prod, "mock-timer", Boundary::Lower).unwrap();
+        let h_char = dataset_content_hash(&charz, "mock-timer", Boundary::Lower).unwrap();
         assert_ne!(
             h_prod, h_char,
             "characterization and production must never collide on resume"
@@ -1749,13 +1776,14 @@ mod tests {
         // N is spec-sensitive.
         let mut charz2 = charz.clone();
         charz2.characterization = Some(charz.characterization.unwrap() + 1);
-        let h_char2 = dataset_content_hash(&charz2, "mock-timer", Boundary::Lower);
+        let h_char2 = dataset_content_hash(&charz2, "mock-timer", Boundary::Lower).unwrap();
         assert_ne!(h_char, h_char2, "characterization N changes the hash");
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn characterization_refuses_to_clobber_a_certification_dir() {
+        crate::test_support::start_module();
         let dir = temp_dir("char-guard");
         // A production certification capture (raw + restart) lands first.
         let (mut f1, _) = CountingFactory::new();
@@ -1773,6 +1801,7 @@ mod tests {
 
     #[test]
     fn certification_refuses_to_clobber_a_characterization_dir() {
+        crate::test_support::start_module();
         let dir = temp_dir("cert-guard");
         let mut charz = small_plan(dir.clone());
         charz.characterization = Some(2048);
@@ -1787,6 +1816,7 @@ mod tests {
 
     #[test]
     fn characterization_resumes_only_on_a_length_matching_capture() {
+        crate::test_support::start_module();
         let dir = temp_dir("char-resume");
         let a = crate::raw::STREAM_CHUNK_SAMPLES + 100;
         let b = crate::raw::STREAM_CHUNK_SAMPLES + 900;
@@ -1843,6 +1873,7 @@ mod tests {
 
     #[test]
     fn tripped_characterization_is_not_marked_done_and_recollects() {
+        crate::test_support::start_module();
         let dir = temp_dir("char-trip");
         let mut plan = small_plan(dir.clone());
         plan.characterization = Some(crate::sp800_90b::STARTUP_MIN_SAMPLES + 1000);
@@ -1878,6 +1909,7 @@ mod tests {
 
     #[test]
     fn claim_flag_accepts_nonbinary_grid_rows() {
+        crate::test_support::start_module();
         // {0.5, 1, 2, 4, 8} bits → {128, 256, 512, 1024, 2048} steps.
         let cases = [
             ("0.5", 128u32),
@@ -1899,6 +1931,7 @@ mod tests {
 
     #[test]
     fn claim_flag_accepts_equivalent_decimal_forms() {
+        crate::test_support::start_module();
         // Rational reduction (not string-match): trailing zeros and a leading
         // dot map to the same grid row. 0.50 == 0.5 → 128; 1.0 == 1 → 256;
         // 2.0 == 2 → 512; .5 == 0.5 → 128.
@@ -1915,6 +1948,7 @@ mod tests {
 
     #[test]
     fn claim_flag_rejects_off_grid_and_garbage() {
+        crate::test_support::start_module();
         // ISC-26: an off-grid value is refused, NEVER rounded to a neighbour.
         for tok in [
             "0.6", "0.7", "3", "1.5", "0", "0.55", "5", "9", "abc", "-1", "1.0.0", ".",
@@ -1929,12 +1963,14 @@ mod tests {
 
     #[test]
     fn claim_flag_missing_value_errs() {
+        crate::test_support::start_module();
         let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim"]);
         assert!(CliArgs::parse(&v).is_err());
     }
 
     #[test]
     fn off_grid_error_names_the_grid() {
+        crate::test_support::start_module();
         let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x", "--claim", "0.6"]);
         let msg = CliArgs::parse(&v).unwrap_err().0;
         for tok in ["0.5", "1", "2", "4", "8"] {
@@ -1944,6 +1980,7 @@ mod tests {
 
     #[test]
     fn absent_claim_uses_default_h1() {
+        crate::test_support::start_module();
         // ISC-26 / ISC-25: no --claim → default_claim() unchanged (H=1, α DEFAULT).
         let v = argv(&["--oe-id", "x", "--datasets-dir", "/tmp/x"]);
         assert_eq!(CliArgs::parse(&v).unwrap().claim, None);
@@ -1954,6 +1991,7 @@ mod tests {
 
     #[test]
     fn accepted_claim_never_changes_alpha() {
+        crate::test_support::start_module();
         // ISC-25: every accepted grid claim keeps α at DEFAULT (2^-30).
         for tok in ["0.5", "1", "2", "4", "8"] {
             let h = parse_grid_claim(tok).unwrap();
@@ -1967,6 +2005,7 @@ mod tests {
 
     #[test]
     fn claim_recorded_in_metadata_steps() {
+        crate::test_support::start_module();
         // ISC-26 / ISC-14: a collection built with the ratified 0.5 claim records
         // claimed_h_steps=128 in every boundary's metadata.json.
         let dir = temp_dir("claim-meta");

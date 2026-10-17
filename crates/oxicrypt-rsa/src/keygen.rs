@@ -47,6 +47,7 @@ use crate::bigint1024::{self, BYTES as BYTES1024, LIMBS as LIMBS1024, U1024};
 use crate::bigint2048::{LIMBS as LIMBS2048, U2048};
 use crate::mont1024::MontCtx1024;
 use oxicrypt_drbg::{DrbgError, HmacDrbgSha256};
+use oxicrypt_module::require_self_test_started;
 
 /// Errors that can arise during key generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,9 @@ pub enum KeygenError {
     /// RSA with 5 × (1024 bits) expected-cost MR; the bound exists
     /// purely to give the no_std control flow a hard stop.
     TooManyAttempts,
+    /// The module refused key generation because its self-tests have not
+    /// started or it has failed.
+    Module(oxicrypt_module::Error),
 }
 
 impl core::fmt::Display for KeygenError {
@@ -78,7 +82,14 @@ impl core::fmt::Display for KeygenError {
                 "exceeded 20000 prime-candidate draws without finding a valid pair; \
                  this should never happen in practice — check your DRBG entropy source"
             ),
+            Self::Module(e) => write!(f, "the module refused key generation: {e}"),
         }
+    }
+}
+
+impl From<oxicrypt_module::Error> for KeygenError {
+    fn from(e: oxicrypt_module::Error) -> KeygenError {
+        KeygenError::Module(e)
     }
 }
 
@@ -304,7 +315,7 @@ pub(crate) fn u2048_mod_u1024(a: &U2048, m: &U1024) -> U1024 {
 /// into [`crate::RsaPrivateKey2048::from_components`] (or the CRT
 /// variant) along with `e`, which runs the IG 10.3.A pairwise
 /// consistency test before the key is considered usable.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KeyMaterial {
     /// RSA-2048 modulus `n = p · q`.
     pub n: U2048,
@@ -322,6 +333,15 @@ pub struct KeyMaterial {
     pub qinv: U1024,
 }
 
+/// Shows the public modulus only; the private fields are not printed.
+impl core::fmt::Debug for KeyMaterial {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("KeyMaterial")
+            .field("n", &self.n)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for KeyMaterial {
     fn drop(&mut self) {
         oxicrypt_zeroize::zeroize_u64(&mut self.d.limbs);
@@ -336,7 +356,21 @@ impl Drop for KeyMaterial {
 /// Generate fresh RSA-2048 key material using `drbg` for all
 /// randomness. `e` must be an odd prime in `[65537, 2^64)` — in
 /// practice this crate is only ever called with `e = 65537`.
-pub fn generate_2048(drbg: &mut HmacDrbgSha256, e: u64) -> Result<KeyMaterial, KeygenError> {
+///
+/// Skips the operational and profile gates; the approved service is
+/// [`crate::RsaPrivateKey2048::generate`].
+///
+/// # Errors
+///
+/// Returns [`KeygenError::Module`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
+pub fn generate_2048_internal(
+    drbg: &mut HmacDrbgSha256,
+    e: u64,
+) -> Result<KeyMaterial, KeygenError> {
+    require_self_test_started()?;
     if e < 65537 || e & 1 == 0 {
         return Err(KeygenError::InvalidExponent);
     }
@@ -667,6 +701,7 @@ mod tests {
 
     #[test]
     fn small_primes_rejects_obvious_composites() {
+        crate::test_support::start_module();
         // 15 = 3·5; rem by 3 is 0 ⇒ small-factor reject.
         let mut limbs = [0u64; LIMBS1024];
         limbs[0] = 15;
@@ -676,6 +711,7 @@ mod tests {
 
     #[test]
     fn small_primes_does_not_panic_on_large_candidate() {
+        crate::test_support::start_module();
         // Run `has_small_factor` on a large odd 1024-bit number to
         // make sure we don't panic on the full operand width. The
         // specific number is 2^1024 − 105.
@@ -688,6 +724,7 @@ mod tests {
 
     #[test]
     fn miller_rabin_does_not_panic_on_synthetic_input() {
+        crate::test_support::start_module();
         // Exercise the MR control flow on a synthetic 1024-bit odd
         // value that we know is composite. We don't care about the
         // accept/reject result — the real end-to-end correctness
@@ -715,7 +752,7 @@ mod tests {
             run: crate::self_test,
         }]);
         let mut drbg = make_drbg(b"oxicrypt-rsa-keygen-smoke-entropy-0001");
-        let km = generate_2048(&mut drbg, 65537).expect("keygen failed");
+        let km = generate_2048_internal(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 2048 bits).
         assert_ne!(km.n.limbs[LIMBS2048 - 1] >> 63, 0, "n is not 2048-bit");
         // d must be less than n.
@@ -756,7 +793,7 @@ mod tests {
             b"",
         )
         .unwrap();
-        let km = generate_2048(&mut drbg, 65537).expect("keygen failed");
+        let km = generate_2048_internal(&mut drbg, 65537).expect("keygen failed");
 
         const EXPECTED_N: [u8; 256] = [
             0xca, 0x87, 0x4f, 0xb2, 0xe5, 0x6a, 0x08, 0xd0, 0xbb, 0x59, 0x23, 0xe1, 0xa0, 0xf5,

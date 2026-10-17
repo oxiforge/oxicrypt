@@ -14,7 +14,7 @@
 //! - `domainParameterGenerationMode = "P-256"` — 32-byte coordinates
 //! - `domainParameterGenerationMode = "P-384"` — 48-byte coordinates
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -127,9 +127,8 @@ fn handle_aft_p256(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
     if tc.get("peerPublicKeyX").is_some() {
         let d = decode_scalar_p256(tc, "d")?;
         let peer_pk = decode_uncompressed_p256(tc, "peerPublicKeyX", "peerPublicKeyY")?;
-        let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk).ok_or(
-            DispatchError::Crypto("KAS-ECC-SSC P-256: ECDH computation failed"),
-        )?;
+        let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk)
+            .map_err(primitive_err("KAS-ECC-SSC P-256: ECDH computation failed"))?;
         Ok(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
@@ -140,11 +139,10 @@ fn handle_aft_p256(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
         let mut drbg = super::os_entropy::build_seeded_drbg()?;
         let sk = oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::generate(&mut drbg)
             .map_err(|_| DispatchError::Crypto("KAS-ECC-SSC P-256: ephemeral keygen failed"))?;
-        let d = *sk.private_scalar();
-        let pk = sk.public_key();
-        let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk).ok_or(
-            DispatchError::Crypto("KAS-ECC-SSC P-256: ECDH computation failed"),
-        )?;
+        let d = *sk.private_scalar()?;
+        let pk = sk.public_key()?;
+        let z = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk)
+            .map_err(primitive_err("KAS-ECC-SSC P-256: ECDH computation failed"))?;
         Ok(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             (
@@ -171,9 +169,8 @@ fn handle_aft_p384(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
     if tc.get("peerPublicKeyX").is_some() {
         let d = decode_scalar_p384(tc, "d")?;
         let peer_pk = decode_uncompressed_p384(tc, "peerPublicKeyX", "peerPublicKeyY")?;
-        let z = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk).ok_or(
-            DispatchError::Crypto("KAS-ECC-SSC P-384: ECDH computation failed"),
-        )?;
+        let z = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk)
+            .map_err(primitive_err("KAS-ECC-SSC P-384: ECDH computation failed"))?;
         Ok(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             ("z".to_string(), JsonValue::String(hex::encode_upper(&z))),
@@ -184,11 +181,10 @@ fn handle_aft_p384(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
         let mut drbg = super::os_entropy::build_seeded_drbg()?;
         let sk = oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::generate(&mut drbg)
             .map_err(|_| DispatchError::Crypto("KAS-ECC-SSC P-384: ephemeral keygen failed"))?;
-        let d = *sk.private_scalar();
-        let pk = sk.public_key();
-        let z = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk).ok_or(
-            DispatchError::Crypto("KAS-ECC-SSC P-384: ECDH computation failed"),
-        )?;
+        let d = *sk.private_scalar()?;
+        let pk = sk.public_key()?;
+        let z = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk)
+            .map_err(primitive_err("KAS-ECC-SSC P-384: ECDH computation failed"))?;
         Ok(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             (
@@ -213,8 +209,8 @@ fn handle_val_p256(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
         .ok_or(DispatchError::MissingField("tcId"))?;
     let d = decode_scalar_p256(tc, "ephemeralPrivateIut")?;
     let peer_pk = decode_uncompressed_p256(tc, "ephemeralPublicServerX", "ephemeralPublicServerY")?;
-    let computed = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk).ok_or(
-        DispatchError::Crypto("KAS-ECC-SSC P-256: VAL ECDH computation failed"),
+    let computed = oxicrypt_ecdh::compute_shared_secret_p256_internal(&d, &peer_pk).map_err(
+        primitive_err("KAS-ECC-SSC P-256: VAL ECDH computation failed"),
     )?;
     let candidate = hex::decode(
         tc.get("z")
@@ -237,8 +233,8 @@ fn handle_val_p384(tc: &JsonValue) -> Result<JsonValue, DispatchError> {
         .ok_or(DispatchError::MissingField("tcId"))?;
     let d = decode_scalar_p384(tc, "ephemeralPrivateIut")?;
     let peer_pk = decode_uncompressed_p384(tc, "ephemeralPublicServerX", "ephemeralPublicServerY")?;
-    let computed = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk).ok_or(
-        DispatchError::Crypto("KAS-ECC-SSC P-384: VAL ECDH computation failed"),
+    let computed = oxicrypt_ecdh::compute_shared_secret_p384_internal(&d, &peer_pk).map_err(
+        primitive_err("KAS-ECC-SSC P-384: VAL ECDH computation failed"),
     )?;
     let candidate = hex::decode(
         tc.get("z")

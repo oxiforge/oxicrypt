@@ -14,7 +14,7 @@
 //! All four combinations of (sigType × keyMode) are supported at each
 //! modulus size. The CRT path uses Bellcore verify-after-sign.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -204,9 +204,7 @@ fn handle_siggen_2048(
                 let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: PKCS#1v1.5 CRT sign failed",
-                ))?;
+                .map_err(primitive_err("RSA SigGen: PKCS#1v1.5 CRT sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -221,7 +219,7 @@ fn handle_siggen_2048(
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
                 let sig = oxicrypt_rsa::rsa_pkcs1_v15_sign_2048_sha256_internal(&n, &d, &message)
-                    .ok_or(DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 sign failed"))?;
+                    .map_err(primitive_err("RSA SigGen: PKCS#1v1.5 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -245,7 +243,7 @@ fn handle_siggen_2048(
                 let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
-                .ok_or(DispatchError::Crypto("RSA SigGen: PSS CRT sign failed"))?;
+                .map_err(primitive_err("RSA SigGen: PSS CRT sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -261,7 +259,7 @@ fn handle_siggen_2048(
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
                 let sig = oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(&n, &d, &message, &salt)
-                    .ok_or(DispatchError::Crypto("RSA SigGen: PSS sign failed"))?;
+                    .map_err(primitive_err("RSA SigGen: PSS sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -298,7 +296,7 @@ fn live_siggen_2048(
 ) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     const N: usize = oxicrypt_rsa::RSA_2048_MODULUS_BYTES;
     let mut drbg = super::os_entropy::build_seeded_drbg()?;
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, 65537)
         .map_err(|_| DispatchError::Crypto("RSA SigGen: 2048 key generation failed"))?;
     let n_bytes: [u8; N] = km.n.to_be_bytes();
     let p_bytes = km.p.to_be_bytes();
@@ -325,7 +323,7 @@ fn live_siggen_2048(
                 &qinv_bytes,
                 &message,
             )
-            .ok_or(DispatchError::Crypto(
+            .map_err(primitive_err(
                 "RSA SigGen: live PKCS#1v1.5 2048 sign failed",
             ))?,
             "pss" => {
@@ -342,9 +340,7 @@ fn live_siggen_2048(
                     &message,
                     &salt,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: live PSS 2048 sign failed",
-                ))?
+                .map_err(primitive_err("RSA SigGen: live PSS 2048 sign failed"))?
             }
             _ => {
                 return Err(DispatchError::Unsupported(
@@ -393,9 +389,7 @@ fn handle_siggen_3072(
                 let sig = oxicrypt_rsa::rsa3072::pkcs1_v15_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: PKCS#1v1.5 CRT 3072 sign failed",
-                ))?;
+                .map_err(primitive_err("RSA SigGen: PKCS#1v1.5 CRT 3072 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -409,9 +403,8 @@ fn handle_siggen_3072(
                     .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
-                let sig = oxicrypt_rsa::rsa3072::pkcs1_v15_sign_internal(&n, &d, &message).ok_or(
-                    DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 3072 sign failed"),
-                )?;
+                let sig = oxicrypt_rsa::rsa3072::pkcs1_v15_sign_internal(&n, &d, &message)
+                    .map_err(primitive_err("RSA SigGen: PKCS#1v1.5 3072 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -435,9 +428,7 @@ fn handle_siggen_3072(
                 let sig = oxicrypt_rsa::rsa3072::pss_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: PSS CRT 3072 sign failed",
-                ))?;
+                .map_err(primitive_err("RSA SigGen: PSS CRT 3072 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -453,7 +444,7 @@ fn handle_siggen_3072(
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
                 let sig = oxicrypt_rsa::rsa3072::pss_sign_internal(&n, &d, &message, &salt)
-                    .ok_or(DispatchError::Crypto("RSA SigGen: PSS 3072 sign failed"))?;
+                    .map_err(primitive_err("RSA SigGen: PSS 3072 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -481,7 +472,7 @@ fn live_siggen_3072(
 ) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     const N: usize = 384;
     let mut drbg = super::os_entropy::build_seeded_drbg()?;
-    let km = oxicrypt_rsa::keygen3072::generate_3072(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen3072::generate_3072_internal(&mut drbg, 65537)
         .map_err(|_| DispatchError::Crypto("RSA SigGen: 3072 key generation failed"))?;
     let n_bytes: [u8; N] = km.n.to_be_bytes();
     let p_bytes = km.p.to_be_bytes();
@@ -508,7 +499,7 @@ fn live_siggen_3072(
                 &qinv_bytes,
                 &message,
             )
-            .ok_or(DispatchError::Crypto(
+            .map_err(primitive_err(
                 "RSA SigGen: live PKCS#1v1.5 3072 sign failed",
             ))?,
             "pss" => {
@@ -525,9 +516,7 @@ fn live_siggen_3072(
                     &message,
                     &salt,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: live PSS 3072 sign failed",
-                ))?
+                .map_err(primitive_err("RSA SigGen: live PSS 3072 sign failed"))?
             }
             _ => {
                 return Err(DispatchError::Unsupported(
@@ -576,9 +565,7 @@ fn handle_siggen_4096(
                 let sig = oxicrypt_rsa::rsa4096::pkcs1_v15_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: PKCS#1v1.5 CRT 4096 sign failed",
-                ))?;
+                .map_err(primitive_err("RSA SigGen: PKCS#1v1.5 CRT 4096 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -592,9 +579,8 @@ fn handle_siggen_4096(
                     .and_then(JsonValue::as_i64)
                     .ok_or(DispatchError::MissingField("tcId"))?;
                 let message = decode_hex_field(tc, "message")?;
-                let sig = oxicrypt_rsa::rsa4096::pkcs1_v15_sign_internal(&n, &d, &message).ok_or(
-                    DispatchError::Crypto("RSA SigGen: PKCS#1v1.5 4096 sign failed"),
-                )?;
+                let sig = oxicrypt_rsa::rsa4096::pkcs1_v15_sign_internal(&n, &d, &message)
+                    .map_err(primitive_err("RSA SigGen: PKCS#1v1.5 4096 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -618,9 +604,7 @@ fn handle_siggen_4096(
                 let sig = oxicrypt_rsa::rsa4096::pss_sign_crt_internal(
                     &n, e, &p, &q, &dp, &dq, &qinv, &message, &salt,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: PSS CRT 4096 sign failed",
-                ))?;
+                .map_err(primitive_err("RSA SigGen: PSS CRT 4096 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -636,7 +620,7 @@ fn handle_siggen_4096(
                 let message = decode_hex_field(tc, "message")?;
                 let salt: [u8; 32] = decode_fixed(tc, "salt")?;
                 let sig = oxicrypt_rsa::rsa4096::pss_sign_internal(&n, &d, &message, &salt)
-                    .ok_or(DispatchError::Crypto("RSA SigGen: PSS 4096 sign failed"))?;
+                    .map_err(primitive_err("RSA SigGen: PSS 4096 sign failed"))?;
                 results.push(sig_result(tc_id, &sig));
             }
         }
@@ -664,7 +648,7 @@ fn live_siggen_4096(
 ) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     const N: usize = 512;
     let mut drbg = super::os_entropy::build_seeded_drbg()?;
-    let km = oxicrypt_rsa::keygen4096::generate_4096(&mut drbg, 65537)
+    let km = oxicrypt_rsa::keygen4096::generate_4096_internal(&mut drbg, 65537)
         .map_err(|_| DispatchError::Crypto("RSA SigGen: 4096 key generation failed"))?;
     let n_bytes: [u8; N] = km.n.to_be_bytes();
     let p_bytes = km.p.to_be_bytes();
@@ -691,7 +675,7 @@ fn live_siggen_4096(
                 &qinv_bytes,
                 &message,
             )
-            .ok_or(DispatchError::Crypto(
+            .map_err(primitive_err(
                 "RSA SigGen: live PKCS#1v1.5 4096 sign failed",
             ))?,
             "pss" => {
@@ -708,9 +692,7 @@ fn live_siggen_4096(
                     &message,
                     &salt,
                 )
-                .ok_or(DispatchError::Crypto(
-                    "RSA SigGen: live PSS 4096 sign failed",
-                ))?
+                .map_err(primitive_err("RSA SigGen: live PSS 4096 sign failed"))?
             }
             _ => {
                 return Err(DispatchError::Unsupported(

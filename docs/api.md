@@ -8,7 +8,7 @@ build the rustdoc with `cargo doc --workspace --no-deps`.
 
 | Crate | Purpose | `no_std` |
 |-------|---------|----------|
-| `oxicrypt-module` | Module state machine, self-test runner | No (`std`) |
+| `oxicrypt-module` | Module state machine, self-test runner | Yes |
 | `oxicrypt-integrity` | Pre-operational software integrity check (§7.10.2.2) | No (`std`) |
 | `oxicrypt-sha` | SHA-1, SHA-2, SHA-3 hash families | Yes |
 | `oxicrypt-xof` | SHAKE, cSHAKE, KMAC, TupleHash, ParallelHash | Yes |
@@ -33,19 +33,27 @@ build the rustdoc with `cargo doc --workspace --no-deps`.
 ¹ `oxicrypt-slh-dsa` is `no_std` by default; the optional `parallel`
 feature pulls in `rayon` (hence `std`).
 
-### Out-of-boundary / tooling crates
+`no_std` means the crate compiles without `std`, for any target with 64-bit
+atomics. A module becomes operational on Linux, Android, macOS and Windows,
+where it can record the initialising thread's id. The iOS code paths are
+neither built nor tested, and iOS is not supported. On any other target
+initialisation fails with `SelfTestFailed` naming `oxicrypt_module::THREAD_ID_CHECK`.
+
+### Internal and out-of-boundary crates
 
 These crates are not part of the module's public cryptographic
-API. They are internal infrastructure or out-of-boundary tooling and are
-documented here only for completeness:
+API. They are in-boundary internal infrastructure, or out-of-boundary
+tooling, and are documented here only for completeness:
 
 | Crate | Purpose |
 |-------|---------|
-| `oxicrypt-zeroize` | Out-of-boundary tooling / internal — volatile memory zeroization primitive |
-| `oxicrypt-sha-accel` | Out-of-boundary tooling / internal — SHA hardware-acceleration backend |
-| `oxicrypt-aes-accel` | Out-of-boundary tooling / internal — AES hardware-acceleration backend |
-| `oxicrypt-timer` | Out-of-boundary tooling / internal — jitter-source timing primitive |
-| `oxicrypt-entropy` | Out-of-boundary tooling / internal — entropy-source assessment support |
+| `oxicrypt-zeroize` | In-boundary / internal — volatile memory zeroization primitive |
+| `oxicrypt-sha-accel` | In-boundary / internal — SHA hardware-acceleration backend |
+| `oxicrypt-aes-accel` | In-boundary / internal — AES hardware-acceleration backend |
+| `oxicrypt-keccak-accel` | In-boundary / internal — AVX2 4-way batched Keccak-f[1600] backend |
+| `oxicrypt-timer` | In-boundary / internal — jitter-source timing primitive |
+| `oxicrypt-entropy` | In-boundary / internal — entropy-source assessment support |
+| `oxicrypt-imageread` | In-boundary / internal — reads of the module's own loaded image for the integrity test |
 | `oxicrypt-maxwell` | Out-of-boundary tooling / internal — SP 800-90B entropy-estimation tooling |
 | `oxicrypt-ffi` | Out-of-boundary tooling / internal — C ABI foreign-function interface |
 

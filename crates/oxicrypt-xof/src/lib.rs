@@ -90,6 +90,7 @@
 
 use oxicrypt_module::{
     Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
 };
 use oxicrypt_sha::keccak::Sponge;
 
@@ -110,9 +111,16 @@ struct ShakeCore<const RATE: usize> {
 }
 
 impl<const RATE: usize> ShakeCore<RATE> {
-    const fn new_internal() -> Self {
+    fn new_internal() -> Result<Self, Error> {
+        Ok(Self {
+            sponge: Sponge::new_internal()?,
+            finalized: false,
+        })
+    }
+
+    const fn new_with(started: &oxicrypt_module::SelfTestStarted) -> Self {
         Self {
-            sponge: Sponge::new(),
+            sponge: Sponge::new_with(started),
             finalized: false,
         }
     }
@@ -149,19 +157,38 @@ impl Shake128 {
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Shake128)?;
-        Ok(Self::new_internal())
+        Self::new_unguarded()
     }
 
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
     ///
-    /// Used by downstream crates (e.g. `oxicrypt-ml-kem`) that need
-    /// SHAKE-128 during the `SelfTest` phase. Public callers must use
-    /// [`Shake128::new`] instead.
+    /// Used by other algorithm crates that compose this XOF. Returns
+    /// [`Error::NotOperational`] unless [`require_self_test_started`] admits
+    /// the call: in `Operational`, or in `SelfTest` on the thread running the
+    /// power-up self-tests. Public callers use the gated constructor instead.
     #[doc(hidden)]
-    pub const fn new_internal() -> Self {
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Self::new_unguarded()
+    }
+
+    /// [`Self::new_internal`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof, such
+    /// as a worker thread of that call.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new_with(started: &oxicrypt_module::SelfTestStarted) -> Self {
         Self {
-            core: ShakeCore::new_internal(),
+            core: ShakeCore::new_with(started),
         }
+    }
+
+    /// The initial state, for this crate's own use once a gate or guard
+    /// has passed.
+    pub(crate) fn new_unguarded() -> Result<Self, Error> {
+        Ok(Self {
+            core: ShakeCore::new_internal()?,
+        })
     }
 
     /// Feeds `data` into the XOF. Legal only before `finalize`.
@@ -178,7 +205,23 @@ impl Shake128 {
 
     /// Squeezes `out.len()` bytes of output. May be called repeatedly
     /// after `finalize`.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -190,7 +233,7 @@ pub fn shake128<const OUT_LEN: usize>(data: &[u8]) -> Result<[u8; OUT_LEN], Erro
     x.update(data);
     x.finalize();
     let mut out = [0u8; OUT_LEN];
-    x.squeeze(&mut out);
+    x.squeeze(&mut out)?;
     Ok(out)
 }
 
@@ -209,19 +252,38 @@ impl Shake256 {
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Shake256)?;
-        Ok(Self::new_internal())
+        Self::new_unguarded()
     }
 
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
     ///
-    /// Used by downstream crates (e.g. `oxicrypt-ml-kem`) that need
-    /// SHAKE-256 during the `SelfTest` phase. Public callers must use
-    /// [`Shake256::new`] instead.
+    /// Used by other algorithm crates that compose this XOF. Returns
+    /// [`Error::NotOperational`] unless [`require_self_test_started`] admits
+    /// the call: in `Operational`, or in `SelfTest` on the thread running the
+    /// power-up self-tests. Public callers use the gated constructor instead.
     #[doc(hidden)]
-    pub const fn new_internal() -> Self {
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Self::new_unguarded()
+    }
+
+    /// [`Self::new_internal`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof, such
+    /// as a worker thread of that call.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new_with(started: &oxicrypt_module::SelfTestStarted) -> Self {
         Self {
-            core: ShakeCore::new_internal(),
+            core: ShakeCore::new_with(started),
         }
+    }
+
+    /// The initial state, for this crate's own use once a gate or guard
+    /// has passed.
+    pub(crate) fn new_unguarded() -> Result<Self, Error> {
+        Ok(Self {
+            core: ShakeCore::new_internal()?,
+        })
     }
 
     /// Feeds `data` into the XOF. Legal only before `finalize`.
@@ -235,7 +297,23 @@ impl Shake256 {
     }
 
     /// Squeezes `out.len()` bytes of output.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -246,7 +324,7 @@ pub fn shake256<const OUT_LEN: usize>(data: &[u8]) -> Result<[u8; OUT_LEN], Erro
     x.update(data);
     x.finalize();
     let mut out = [0u8; OUT_LEN];
-    x.squeeze(&mut out);
+    x.squeeze(&mut out)?;
     Ok(out)
 }
 
@@ -298,10 +376,10 @@ struct CShakeCore<const RATE: usize> {
 impl<const RATE: usize> CShakeCore<RATE> {
     /// Create a new cSHAKE core with function name `N` and
     /// customization string `S`.
-    fn new_internal(n: &[u8], s: &[u8]) -> Self {
+    fn new_internal(n: &[u8], s: &[u8]) -> Result<Self, Error> {
         let is_plain_shake = n.is_empty() && s.is_empty();
         let mut core = Self {
-            sponge: Sponge::new(),
+            sponge: Sponge::new_internal()?,
             finalized: false,
             is_plain_shake,
         };
@@ -342,7 +420,7 @@ impl<const RATE: usize> CShakeCore<RATE> {
                 core.sponge.absorb(&zeros[..pad]);
             }
         }
-        core
+        Ok(core)
     }
 
     fn update(&mut self, data: &[u8]) {
@@ -383,14 +461,14 @@ impl CShake128 {
     pub fn new(n: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::CShake128)?;
-        Ok(Self::new_internal(n, s))
+        Self::new_internal(n, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(n: &[u8], s: &[u8]) -> Self {
-        Self {
-            core: CShakeCore::new_internal(n, s),
-        }
+    fn new_internal(n: &[u8], s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: CShakeCore::new_internal(n, s)?,
+        })
     }
 
     /// Feeds `data` into the XOF. Legal only before `finalize`.
@@ -404,7 +482,23 @@ impl CShake128 {
     }
 
     /// Squeezes `out.len()` bytes of output.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -419,7 +513,7 @@ pub fn cshake128<const OUT_LEN: usize>(
     x.update(data);
     x.finalize();
     let mut out = [0u8; OUT_LEN];
-    x.squeeze(&mut out);
+    x.squeeze(&mut out)?;
     Ok(out)
 }
 
@@ -439,14 +533,14 @@ impl CShake256 {
     pub fn new(n: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::CShake256)?;
-        Ok(Self::new_internal(n, s))
+        Self::new_internal(n, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(n: &[u8], s: &[u8]) -> Self {
-        Self {
-            core: CShakeCore::new_internal(n, s),
-        }
+    fn new_internal(n: &[u8], s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: CShakeCore::new_internal(n, s)?,
+        })
     }
 
     /// Feeds `data` into the XOF. Legal only before `finalize`.
@@ -460,7 +554,23 @@ impl CShake256 {
     }
 
     /// Squeezes `out.len()` bytes of output.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -475,7 +585,7 @@ pub fn cshake256<const OUT_LEN: usize>(
     x.update(data);
     x.finalize();
     let mut out = [0u8; OUT_LEN];
-    x.squeeze(&mut out);
+    x.squeeze(&mut out)?;
     Ok(out)
 }
 
@@ -533,8 +643,8 @@ impl<const RATE: usize> KmacCore<RATE> {
     /// bounded by 9, the longest `left_encode` output this function
     /// produces, not by `RATE`.
     #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
-    fn new_internal(key: &[u8], s: &[u8]) -> Self {
-        let mut cshake = CShakeCore::<RATE>::new_internal(b"KMAC", s);
+    fn new_internal(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        let mut cshake = CShakeCore::<RATE>::new_internal(b"KMAC", s)?;
 
         // Absorb bytepad(encode_string(K), RATE):
         // = left_encode(RATE) || encode_string(K) || zero-pad to RATE
@@ -562,7 +672,7 @@ impl<const RATE: usize> KmacCore<RATE> {
             cshake.update(&zeros[..pad]);
         }
 
-        Self { cshake }
+        Ok(Self { cshake })
     }
 
     /// Feed more message data (`X`).
@@ -609,14 +719,14 @@ impl Kmac128 {
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Kmac128)?;
-        Ok(Self::new_internal(key, s))
+        Self::new_internal(key, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(key: &[u8], s: &[u8]) -> Self {
-        Self {
-            core: KmacCore::new_internal(key, s),
-        }
+    fn new_internal(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: KmacCore::new_internal(key, s)?,
+        })
     }
 
     /// Feeds `data` into the message.
@@ -625,7 +735,27 @@ impl Kmac128 {
     }
 
     /// Finalizes and writes the tag into `tag`.
-    pub fn finalize_into(&mut self, tag: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn finalize_into(&mut self, tag: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.finalize_into(tag);
+        Ok(())
+    }
+
+    /// [`Self::finalize_into`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_into_with(
+        &mut self,
+        _started: &oxicrypt_module::SelfTestStarted,
+        tag: &mut [u8],
+    ) {
         self.core.finalize_into(tag);
     }
 }
@@ -639,7 +769,7 @@ pub fn kmac128<const TAG_LEN: usize>(
     let mut m = Kmac128::new(key, s)?;
     m.update(data);
     let mut tag = [0u8; TAG_LEN];
-    m.finalize_into(&mut tag);
+    m.finalize_into(&mut tag)?;
     Ok(tag)
 }
 
@@ -656,14 +786,14 @@ impl Kmac256 {
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Kmac256)?;
-        Ok(Self::new_internal(key, s))
+        Self::new_internal(key, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(key: &[u8], s: &[u8]) -> Self {
-        Self {
-            core: KmacCore::new_internal(key, s),
-        }
+    fn new_internal(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: KmacCore::new_internal(key, s)?,
+        })
     }
 
     /// Feeds `data` into the message.
@@ -672,7 +802,27 @@ impl Kmac256 {
     }
 
     /// Finalizes and writes the tag into `tag`.
-    pub fn finalize_into(&mut self, tag: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn finalize_into(&mut self, tag: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.finalize_into(tag);
+        Ok(())
+    }
+
+    /// [`Self::finalize_into`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_into_with(
+        &mut self,
+        _started: &oxicrypt_module::SelfTestStarted,
+        tag: &mut [u8],
+    ) {
         self.core.finalize_into(tag);
     }
 }
@@ -686,7 +836,7 @@ pub fn kmac256<const TAG_LEN: usize>(
     let mut m = Kmac256::new(key, s)?;
     m.update(data);
     let mut tag = [0u8; TAG_LEN];
-    m.finalize_into(&mut tag);
+    m.finalize_into(&mut tag)?;
     Ok(tag)
 }
 
@@ -709,14 +859,14 @@ impl KmacXof128 {
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::KmacXof128)?;
-        Ok(Self::new_internal(key, s))
+        Self::new_internal(key, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(key: &[u8], s: &[u8]) -> Self {
-        Self {
-            core: KmacCore::new_internal(key, s),
-        }
+    fn new_internal(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: KmacCore::new_internal(key, s)?,
+        })
     }
 
     /// Feeds `data` into the message.
@@ -732,7 +882,23 @@ impl KmacXof128 {
 
     /// Squeezes `out.len()` bytes from the XOF. May be called
     /// repeatedly for streaming output.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -747,7 +913,7 @@ pub fn kmacxof128<const OUT_LEN: usize>(
     m.update(data);
     m.finalize();
     let mut out = [0u8; OUT_LEN];
-    m.squeeze(&mut out);
+    m.squeeze(&mut out)?;
     Ok(out)
 }
 
@@ -766,14 +932,14 @@ impl KmacXof256 {
     pub fn new(key: &[u8], s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::KmacXof256)?;
-        Ok(Self::new_internal(key, s))
+        Self::new_internal(key, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(key: &[u8], s: &[u8]) -> Self {
-        Self {
-            core: KmacCore::new_internal(key, s),
-        }
+    fn new_internal(key: &[u8], s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: KmacCore::new_internal(key, s)?,
+        })
     }
 
     /// Feeds `data` into the message.
@@ -789,7 +955,23 @@ impl KmacXof256 {
 
     /// Squeezes `out.len()` bytes from the XOF. May be called
     /// repeatedly for streaming output.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -804,7 +986,7 @@ pub fn kmacxof256<const OUT_LEN: usize>(
     m.update(data);
     m.finalize();
     let mut out = [0u8; OUT_LEN];
-    m.squeeze(&mut out);
+    m.squeeze(&mut out)?;
     Ok(out)
 }
 
@@ -829,10 +1011,10 @@ struct TupleHashCore<const RATE: usize> {
 
 impl<const RATE: usize> TupleHashCore<RATE> {
     /// Create a new TupleHash core with customization string `s`.
-    fn new_internal(s: &[u8]) -> Self {
-        Self {
-            cshake: CShakeCore::<RATE>::new_internal(b"TupleHash", s),
-        }
+    fn new_internal(s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            cshake: CShakeCore::<RATE>::new_internal(b"TupleHash", s)?,
+        })
     }
 
     /// Add one tuple element. Wraps `element` with `encode_string`.
@@ -888,14 +1070,14 @@ impl TupleHash128 {
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::TupleHash128)?;
-        Ok(Self::new_internal(s))
+        Self::new_internal(s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(s: &[u8]) -> Self {
-        Self {
-            core: TupleHashCore::new_internal(s),
-        }
+    fn new_internal(s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: TupleHashCore::new_internal(s)?,
+        })
     }
 
     /// Adds one tuple element.
@@ -904,7 +1086,27 @@ impl TupleHash128 {
     }
 
     /// Finalizes and writes the hash into `out`.
-    pub fn finalize_into(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn finalize_into(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.finalize_into(out);
+        Ok(())
+    }
+
+    /// [`Self::finalize_into`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_into_with(
+        &mut self,
+        _started: &oxicrypt_module::SelfTestStarted,
+        out: &mut [u8],
+    ) {
         self.core.finalize_into(out);
     }
 }
@@ -922,14 +1124,14 @@ impl TupleHash256 {
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::TupleHash256)?;
-        Ok(Self::new_internal(s))
+        Self::new_internal(s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(s: &[u8]) -> Self {
-        Self {
-            core: TupleHashCore::new_internal(s),
-        }
+    fn new_internal(s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: TupleHashCore::new_internal(s)?,
+        })
     }
 
     /// Adds one tuple element.
@@ -938,7 +1140,27 @@ impl TupleHash256 {
     }
 
     /// Finalizes and writes the hash into `out`.
-    pub fn finalize_into(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn finalize_into(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.finalize_into(out);
+        Ok(())
+    }
+
+    /// [`Self::finalize_into`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_into_with(
+        &mut self,
+        _started: &oxicrypt_module::SelfTestStarted,
+        out: &mut [u8],
+    ) {
         self.core.finalize_into(out);
     }
 }
@@ -957,14 +1179,14 @@ impl TupleHashXof128 {
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::TupleHashXof128)?;
-        Ok(Self::new_internal(s))
+        Self::new_internal(s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(s: &[u8]) -> Self {
-        Self {
-            core: TupleHashCore::new_internal(s),
-        }
+    fn new_internal(s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: TupleHashCore::new_internal(s)?,
+        })
     }
 
     /// Adds one tuple element.
@@ -979,7 +1201,23 @@ impl TupleHashXof128 {
     }
 
     /// Squeezes `out.len()` bytes. May be called repeatedly.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -997,14 +1235,14 @@ impl TupleHashXof256 {
     pub fn new(s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::TupleHashXof256)?;
-        Ok(Self::new_internal(s))
+        Self::new_internal(s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(s: &[u8]) -> Self {
-        Self {
-            core: TupleHashCore::new_internal(s),
-        }
+    fn new_internal(s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: TupleHashCore::new_internal(s)?,
+        })
     }
 
     /// Adds one tuple element.
@@ -1019,7 +1257,23 @@ impl TupleHashXof256 {
     }
 
     /// Squeezes `out.len()` bytes. May be called repeatedly.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -1053,6 +1307,9 @@ impl TupleHashXof256 {
 struct ParallelHashCore<const RATE: usize, const INNER_LEN: usize> {
     /// Outer cSHAKE accumulates `left_encode(B)` + inner-hash outputs.
     outer: CShakeCore<RATE>,
+    /// An empty inner SHAKE, built at construction and copied for each
+    /// block, so absorbing data constructs no sponge of its own.
+    inner: ShakeCore<RATE>,
     /// Per-block buffer. Blocks are flushed when `buf_pos == block_size`.
     buf: [u8; 8192],
     /// Current write position in `buf`.
@@ -1069,24 +1326,25 @@ impl<const RATE: usize, const INNER_LEN: usize> ParallelHashCore<RATE, INNER_LEN
     /// # Panics
     ///
     /// Panics if `block_size == 0` or `block_size > 8192`.
-    fn new_internal(block_size: usize, s: &[u8]) -> Self {
+    fn new_internal(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         assert!(block_size > 0, "ParallelHash block_size must be > 0");
         assert!(
             block_size <= 8192,
             "ParallelHash block_size must be <= 8192"
         );
-        let mut outer = CShakeCore::<RATE>::new_internal(b"ParallelHash", s);
+        let mut outer = CShakeCore::<RATE>::new_internal(b"ParallelHash", s)?;
         // Absorb left_encode(B)
         let mut buf = [0u8; 9];
         let len = left_encode(block_size, &mut buf);
         outer.update(&buf[..len]);
-        Self {
+        Ok(Self {
             outer,
+            inner: ShakeCore::<RATE>::new_internal()?,
             buf: [0u8; 8192],
             buf_pos: 0,
             block_size,
             block_count: 0,
-        }
+        })
     }
 
     /// Feed data into the hasher. Full B-byte blocks are immediately
@@ -1114,7 +1372,7 @@ impl<const RATE: usize, const INNER_LEN: usize> ParallelHashCore<RATE, INNER_LEN
     /// Hash the current block buffer through inner SHAKE and absorb
     /// the INNER_LEN-byte result into the outer cSHAKE.
     fn flush_block(&mut self) {
-        let mut inner = ShakeCore::<RATE>::new_internal();
+        let mut inner = self.inner.clone();
         inner.update(&self.buf[..self.buf_pos]);
         inner.finalize();
         let mut h = [0u8; 64]; // max INNER_LEN is 64
@@ -1182,14 +1440,14 @@ impl ParallelHash128 {
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::ParallelHash128)?;
-        Ok(Self::new_internal(block_size, s))
+        Self::new_internal(block_size, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(block_size: usize, s: &[u8]) -> Self {
-        Self {
-            core: ParallelHashCore::new_internal(block_size, s),
-        }
+    fn new_internal(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: ParallelHashCore::new_internal(block_size, s)?,
+        })
     }
 
     /// Feeds `data` into the hasher.
@@ -1198,7 +1456,27 @@ impl ParallelHash128 {
     }
 
     /// Finalizes and writes the hash to `out`.
-    pub fn finalize_into(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn finalize_into(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.finalize_into(out);
+        Ok(())
+    }
+
+    /// [`Self::finalize_into`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_into_with(
+        &mut self,
+        _started: &oxicrypt_module::SelfTestStarted,
+        out: &mut [u8],
+    ) {
         self.core.finalize_into(out);
     }
 }
@@ -1218,14 +1496,14 @@ impl ParallelHash256 {
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::ParallelHash256)?;
-        Ok(Self::new_internal(block_size, s))
+        Self::new_internal(block_size, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(block_size: usize, s: &[u8]) -> Self {
-        Self {
-            core: ParallelHashCore::new_internal(block_size, s),
-        }
+    fn new_internal(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: ParallelHashCore::new_internal(block_size, s)?,
+        })
     }
 
     /// Feeds `data` into the hasher.
@@ -1234,7 +1512,27 @@ impl ParallelHash256 {
     }
 
     /// Finalizes and writes the hash to `out`.
-    pub fn finalize_into(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn finalize_into(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.finalize_into(out);
+        Ok(())
+    }
+
+    /// [`Self::finalize_into`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_into_with(
+        &mut self,
+        _started: &oxicrypt_module::SelfTestStarted,
+        out: &mut [u8],
+    ) {
         self.core.finalize_into(out);
     }
 }
@@ -1254,14 +1552,14 @@ impl ParallelHashXof128 {
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::ParallelHashXof128)?;
-        Ok(Self::new_internal(block_size, s))
+        Self::new_internal(block_size, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(block_size: usize, s: &[u8]) -> Self {
-        Self {
-            core: ParallelHashCore::new_internal(block_size, s),
-        }
+    fn new_internal(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: ParallelHashCore::new_internal(block_size, s)?,
+        })
     }
 
     /// Feeds `data` into the hasher.
@@ -1276,7 +1574,23 @@ impl ParallelHashXof128 {
     }
 
     /// Squeezes `out.len()` bytes. May be called repeatedly.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -1293,14 +1607,14 @@ impl ParallelHashXof256 {
     pub fn new(block_size: usize, s: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::ParallelHashXof256)?;
-        Ok(Self::new_internal(block_size, s))
+        Self::new_internal(block_size, s)
     }
 
     /// Internal constructor (no module-state gate).
-    fn new_internal(block_size: usize, s: &[u8]) -> Self {
-        Self {
-            core: ParallelHashCore::new_internal(block_size, s),
-        }
+    fn new_internal(block_size: usize, s: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            core: ParallelHashCore::new_internal(block_size, s)?,
+        })
     }
 
     /// Feeds `data` into the hasher.
@@ -1315,7 +1629,23 @@ impl ParallelHashXof256 {
     }
 
     /// Squeezes `out.len()` bytes. May be called repeatedly.
-    pub fn squeeze(&mut self, out: &mut [u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no output after it.
+    pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error> {
+        require_self_test_started()?;
+        self.core.squeeze(out);
+        Ok(())
+    }
+
+    /// [`Self::squeeze`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn squeeze_with(&mut self, _started: &oxicrypt_module::SelfTestStarted, out: &mut [u8]) {
         self.core.squeeze(out);
     }
 }
@@ -1356,11 +1686,11 @@ const KAT_SHAKE256_EMPTY_64: [u8; 64] = [
 /// via `oxicrypt-test-vectors`; the selected tgId/tcId and the vendored
 /// slice file's SHA-256 are recorded in `vendor/nist/MANIFEST.toml`.
 pub fn self_test_128() -> Result<(), SelfTestFailure> {
-    let mut x = Shake128::new_internal();
+    let mut x = Shake128::new_unguarded().map_err(|_| SelfTestFailure)?;
     x.update(&oxicrypt_test_vectors::SHAKE128_MSG);
     x.finalize();
     let mut out = [0u8; oxicrypt_test_vectors::SHAKE128_OUT.len()];
-    x.squeeze(&mut out);
+    x.core.squeeze(&mut out);
     if out == oxicrypt_test_vectors::SHAKE128_OUT {
         Ok(())
     } else {
@@ -1373,11 +1703,11 @@ pub fn self_test_128() -> Result<(), SelfTestFailure> {
 /// Sourced from NIST ACVP-Server `SHAKE-256-FIPS202/internalProjection.json`
 /// via `oxicrypt-test-vectors`.
 pub fn self_test_256() -> Result<(), SelfTestFailure> {
-    let mut x = Shake256::new_internal();
+    let mut x = Shake256::new_unguarded().map_err(|_| SelfTestFailure)?;
     x.update(&oxicrypt_test_vectors::SHAKE256_MSG);
     x.finalize();
     let mut out = [0u8; oxicrypt_test_vectors::SHAKE256_OUT.len()];
-    x.squeeze(&mut out);
+    x.core.squeeze(&mut out);
     if out == oxicrypt_test_vectors::SHAKE256_OUT {
         Ok(())
     } else {
@@ -1400,11 +1730,11 @@ const KAT_CSHAKE128_EXPECTED: [u8; 32] = [
 
 /// Power-up known-answer test for cSHAKE128 (SP 800-185 §3).
 pub fn self_test_cshake128() -> Result<(), SelfTestFailure> {
-    let mut x = CShake128::new_internal(b"", KAT_CSHAKE128_S);
+    let mut x = CShake128::new_internal(b"", KAT_CSHAKE128_S).map_err(|_| SelfTestFailure)?;
     x.update(&KAT_CSHAKE128_INPUT);
     x.finalize();
     let mut out = [0u8; 32];
-    x.squeeze(&mut out);
+    x.core.squeeze(&mut out);
     if out == KAT_CSHAKE128_EXPECTED {
         Ok(())
     } else {
@@ -1428,11 +1758,11 @@ const KAT_CSHAKE256_EXPECTED: [u8; 64] = [
 
 /// Power-up known-answer test for cSHAKE256 (SP 800-185 §3).
 pub fn self_test_cshake256() -> Result<(), SelfTestFailure> {
-    let mut x = CShake256::new_internal(b"", KAT_CSHAKE256_S);
+    let mut x = CShake256::new_internal(b"", KAT_CSHAKE256_S).map_err(|_| SelfTestFailure)?;
     x.update(&KAT_CSHAKE256_INPUT);
     x.finalize();
     let mut out = [0u8; 64];
-    x.squeeze(&mut out);
+    x.core.squeeze(&mut out);
     if out == KAT_CSHAKE256_EXPECTED {
         Ok(())
     } else {
@@ -1458,10 +1788,10 @@ const KAT_KMAC128_EXPECTED: [u8; 32] = [
 
 /// Power-up known-answer test for KMAC128 (NIST Sample #1).
 pub fn self_test_kmac128() -> Result<(), SelfTestFailure> {
-    let mut m = Kmac128::new_internal(&KAT_KMAC128_KEY, b"");
+    let mut m = Kmac128::new_internal(&KAT_KMAC128_KEY, b"").map_err(|_| SelfTestFailure)?;
     m.update(&KAT_KMAC128_INPUT);
     let mut tag = [0u8; 32];
-    m.finalize_into(&mut tag);
+    m.core.finalize_into(&mut tag);
     if tag == KAT_KMAC128_EXPECTED {
         Ok(())
     } else {
@@ -1488,10 +1818,10 @@ pub fn self_test_kmac256() -> Result<(), SelfTestFailure> {
             i as u8
         }
     });
-    let mut m = Kmac256::new_internal(&KAT_KMAC128_KEY, b"");
+    let mut m = Kmac256::new_internal(&KAT_KMAC128_KEY, b"").map_err(|_| SelfTestFailure)?;
     m.update(&x);
     let mut tag = [0u8; 64];
-    m.finalize_into(&mut tag);
+    m.core.finalize_into(&mut tag);
     if tag == KAT_KMAC256_EXPECTED {
         Ok(())
     } else {
@@ -1516,11 +1846,11 @@ const KAT_KMACXOF128_EXPECTED: [u8; 32] = [
 /// independently via pycryptodome cSHAKE_XOF with N="KMAC" and
 /// `right_encode(0)`.
 pub fn self_test_kmacxof128() -> Result<(), SelfTestFailure> {
-    let mut m = KmacXof128::new_internal(&KAT_KMAC128_KEY, b"");
+    let mut m = KmacXof128::new_internal(&KAT_KMAC128_KEY, b"").map_err(|_| SelfTestFailure)?;
     m.update(&KAT_KMAC128_INPUT);
     m.finalize();
     let mut out = [0u8; 32];
-    m.squeeze(&mut out);
+    m.core.squeeze(&mut out);
     if out == KAT_KMACXOF128_EXPECTED {
         Ok(())
     } else {
@@ -1549,11 +1879,11 @@ pub fn self_test_kmacxof256() -> Result<(), SelfTestFailure> {
             i as u8
         }
     });
-    let mut m = KmacXof256::new_internal(&KAT_KMAC128_KEY, b"");
+    let mut m = KmacXof256::new_internal(&KAT_KMAC128_KEY, b"").map_err(|_| SelfTestFailure)?;
     m.update(&x);
     m.finalize();
     let mut out = [0u8; 64];
-    m.squeeze(&mut out);
+    m.core.squeeze(&mut out);
     if out == KAT_KMACXOF256_EXPECTED {
         Ok(())
     } else {
@@ -1573,11 +1903,11 @@ const KAT_TUPLEHASH128_EXPECTED: [u8; 32] = [
 
 /// Power-up known-answer test for TupleHash128.
 pub fn self_test_tuplehash128() -> Result<(), SelfTestFailure> {
-    let mut h = TupleHash128::new_internal(b"");
+    let mut h = TupleHash128::new_internal(b"").map_err(|_| SelfTestFailure)?;
     h.update(&[0x00, 0x01, 0x02]);
     h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
     let mut out = [0u8; 32];
-    h.finalize_into(&mut out);
+    h.core.finalize_into(&mut out);
     if out == KAT_TUPLEHASH128_EXPECTED {
         Ok(())
     } else {
@@ -1597,11 +1927,11 @@ const KAT_TUPLEHASH256_EXPECTED: [u8; 64] = [
 
 /// Power-up known-answer test for TupleHash256.
 pub fn self_test_tuplehash256() -> Result<(), SelfTestFailure> {
-    let mut h = TupleHash256::new_internal(b"");
+    let mut h = TupleHash256::new_internal(b"").map_err(|_| SelfTestFailure)?;
     h.update(&[0x00, 0x01, 0x02]);
     h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
     let mut out = [0u8; 64];
-    h.finalize_into(&mut out);
+    h.core.finalize_into(&mut out);
     if out == KAT_TUPLEHASH256_EXPECTED {
         Ok(())
     } else {
@@ -1630,10 +1960,10 @@ const KAT_PH128_EXPECTED: [u8; 32] = [
 /// NIST `ParallelHash_samples.pdf` Sample #1:
 /// `ParallelHash128(data, B=8, "", 256)`.
 pub fn self_test_parallelhash128() -> Result<(), SelfTestFailure> {
-    let mut h = ParallelHash128::new_internal(8, b"");
+    let mut h = ParallelHash128::new_internal(8, b"").map_err(|_| SelfTestFailure)?;
     h.update(&KAT_PH128_DATA);
     let mut out = [0u8; 32];
-    h.finalize_into(&mut out);
+    h.core.finalize_into(&mut out);
     if out == KAT_PH128_EXPECTED {
         Ok(())
     } else {
@@ -1658,10 +1988,10 @@ const KAT_PH256_EXPECTED: [u8; 64] = [
 ///
 /// `ParallelHash256(KAT_PH128_DATA, B=8, "", 512)`.
 pub fn self_test_parallelhash256() -> Result<(), SelfTestFailure> {
-    let mut h = ParallelHash256::new_internal(8, b"");
+    let mut h = ParallelHash256::new_internal(8, b"").map_err(|_| SelfTestFailure)?;
     h.update(&KAT_PH128_DATA);
     let mut out = [0u8; 64];
-    h.finalize_into(&mut out);
+    h.core.finalize_into(&mut out);
     if out == KAT_PH256_EXPECTED {
         Ok(())
     } else {
@@ -1828,36 +2158,41 @@ mod tests {
 
     #[test]
     fn shake128_self_test_passes() {
+        crate::test_support::start_module();
         self_test_128().unwrap();
     }
 
     #[test]
     fn shake256_self_test_passes() {
+        crate::test_support::start_module();
         self_test_256().unwrap();
     }
 
     #[test]
     fn shake128_empty_32_matches_fips202() {
-        let mut x = Shake128::new_internal();
+        crate::test_support::start_module();
+        let mut x = Shake128::new_unguarded().unwrap();
         x.update(b"");
         x.finalize();
         let mut out = [0u8; 32];
-        x.squeeze(&mut out);
+        x.squeeze(&mut out).unwrap();
         assert_eq!(out, KAT_SHAKE128_EMPTY_32);
     }
 
     #[test]
     fn shake256_empty_64_matches_fips202() {
-        let mut x = Shake256::new_internal();
+        crate::test_support::start_module();
+        let mut x = Shake256::new_unguarded().unwrap();
         x.update(b"");
         x.finalize();
         let mut out = [0u8; 64];
-        x.squeeze(&mut out);
+        x.squeeze(&mut out).unwrap();
         assert_eq!(out, KAT_SHAKE256_EMPTY_64);
     }
 
     #[test]
     fn shake128_abc_32() {
+        crate::test_support::start_module();
         // SHAKE128("abc") truncated to 32 bytes — NIST CAVP
         let expected: [u8; 32] =
             hex("5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8");
@@ -1868,6 +2203,7 @@ mod tests {
 
     #[test]
     fn shake256_abc_64() {
+        crate::test_support::start_module();
         // SHAKE256("abc") truncated to 64 bytes — NIST CAVP
         let expected: [u8; 64] = hex(
             "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739\
@@ -1880,6 +2216,7 @@ mod tests {
 
     #[test]
     fn shake128_incremental_squeeze_matches_oneshot() {
+        crate::test_support::start_module();
         // Squeezing in multiple calls must yield the same bytes as
         // a single squeeze call of the total length.
         ensure_initialized();
@@ -1887,23 +2224,24 @@ mod tests {
         a.update(b"incremental squeeze test");
         a.finalize();
         let mut full = [0u8; 400];
-        a.squeeze(&mut full);
+        a.squeeze(&mut full).unwrap();
 
         let mut b = Shake128::new().unwrap();
         b.update(b"incremental squeeze test");
         b.finalize();
         let mut piecewise = [0u8; 400];
         // Squeezes across rate boundaries: SHAKE128 rate is 168.
-        b.squeeze(&mut piecewise[..50]);
-        b.squeeze(&mut piecewise[50..168]);
-        b.squeeze(&mut piecewise[168..200]);
-        b.squeeze(&mut piecewise[200..400]);
+        b.squeeze(&mut piecewise[..50]).unwrap();
+        b.squeeze(&mut piecewise[50..168]).unwrap();
+        b.squeeze(&mut piecewise[168..200]).unwrap();
+        b.squeeze(&mut piecewise[200..400]).unwrap();
 
         assert_eq!(full, piecewise);
     }
 
     #[test]
     fn shake256_streaming_absorb_matches_oneshot() {
+        crate::test_support::start_module();
         ensure_initialized();
         let msg: [u8; 300] = core::array::from_fn(|i| (i as u8).wrapping_mul(11));
 
@@ -1911,7 +2249,7 @@ mod tests {
         a.update(&msg);
         a.finalize();
         let mut one_shot = [0u8; 128];
-        a.squeeze(&mut one_shot);
+        a.squeeze(&mut one_shot).unwrap();
 
         let mut b = Shake256::new().unwrap();
         b.update(&msg[..7]);
@@ -1919,7 +2257,7 @@ mod tests {
         b.update(&msg[136..]);
         b.finalize();
         let mut streamed = [0u8; 128];
-        b.squeeze(&mut streamed);
+        b.squeeze(&mut streamed).unwrap();
 
         assert_eq!(one_shot, streamed);
     }
@@ -1928,94 +2266,101 @@ mod tests {
 
     #[test]
     fn cshake128_self_test_passes() {
+        crate::test_support::start_module();
         self_test_cshake128().unwrap();
     }
 
     #[test]
     fn cshake256_self_test_passes() {
+        crate::test_support::start_module();
         self_test_cshake256().unwrap();
     }
 
     #[test]
     fn cshake128_empty_n_s_equals_shake128() {
+        crate::test_support::start_module();
         // SP 800-185 §3: cSHAKE with N="" and S="" must reduce to SHAKE.
         let msg = b"cshake empty N S test";
-        let mut cs = CShake128::new_internal(b"", b"");
+        let mut cs = CShake128::new_internal(b"", b"").unwrap();
         cs.update(msg);
         cs.finalize();
         let mut cs_out = [0u8; 64];
-        cs.squeeze(&mut cs_out);
+        cs.squeeze(&mut cs_out).unwrap();
 
-        let mut sh = Shake128::new_internal();
+        let mut sh = Shake128::new_unguarded().unwrap();
         sh.update(msg);
         sh.finalize();
         let mut sh_out = [0u8; 64];
-        sh.squeeze(&mut sh_out);
+        sh.squeeze(&mut sh_out).unwrap();
 
         assert_eq!(cs_out, sh_out);
     }
 
     #[test]
     fn cshake256_empty_n_s_equals_shake256() {
+        crate::test_support::start_module();
         let msg = b"cshake empty N S test";
-        let mut cs = CShake256::new_internal(b"", b"");
+        let mut cs = CShake256::new_internal(b"", b"").unwrap();
         cs.update(msg);
         cs.finalize();
         let mut cs_out = [0u8; 64];
-        cs.squeeze(&mut cs_out);
+        cs.squeeze(&mut cs_out).unwrap();
 
-        let mut sh = Shake256::new_internal();
+        let mut sh = Shake256::new_unguarded().unwrap();
         sh.update(msg);
         sh.finalize();
         let mut sh_out = [0u8; 64];
-        sh.squeeze(&mut sh_out);
+        sh.squeeze(&mut sh_out).unwrap();
 
         assert_eq!(cs_out, sh_out);
     }
 
     #[test]
     fn cshake128_sp800_185_sample3() {
+        crate::test_support::start_module();
         // cSHAKE128: X = 00 01 02 03, N = "", S = "Email Signature", L = 256
         let expected: [u8; 32] =
             hex("c1c36925b6409a04f1b504fcbca9d82b4017277cb5ed2b2065fc1d3814d5aaf5");
-        let mut x = CShake128::new_internal(b"", b"Email Signature");
+        let mut x = CShake128::new_internal(b"", b"Email Signature").unwrap();
         x.update(&[0x00, 0x01, 0x02, 0x03]);
         x.finalize();
         let mut out = [0u8; 32];
-        x.squeeze(&mut out);
+        x.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn cshake256_sp800_185_sample3() {
+        crate::test_support::start_module();
         // cSHAKE256: X = 00 01 02 03, N = "", S = "Email Signature", L = 512
         let expected: [u8; 64] = hex("d008828e2b80ac9d2218ffee1d070c48\
              b8e4c87bff32c9699d5b6896eee0edd1\
              64020e2be0560858d9c00c037e34a969\
              37c561a74c412bb4c746469527281c8c");
-        let mut x = CShake256::new_internal(b"", b"Email Signature");
+        let mut x = CShake256::new_internal(b"", b"Email Signature").unwrap();
         x.update(&[0x00, 0x01, 0x02, 0x03]);
         x.finalize();
         let mut out = [0u8; 64];
-        x.squeeze(&mut out);
+        x.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn cshake128_incremental_squeeze() {
-        let mut a = CShake128::new_internal(b"", b"test");
+        crate::test_support::start_module();
+        let mut a = CShake128::new_internal(b"", b"test").unwrap();
         a.update(b"hello");
         a.finalize();
         let mut full = [0u8; 256];
-        a.squeeze(&mut full);
+        a.squeeze(&mut full).unwrap();
 
-        let mut b = CShake128::new_internal(b"", b"test");
+        let mut b = CShake128::new_internal(b"", b"test").unwrap();
         b.update(b"hello");
         b.finalize();
         let mut piecewise = [0u8; 256];
-        b.squeeze(&mut piecewise[..50]);
-        b.squeeze(&mut piecewise[50..168]);
-        b.squeeze(&mut piecewise[168..]);
+        b.squeeze(&mut piecewise[..50]).unwrap();
+        b.squeeze(&mut piecewise[50..168]).unwrap();
+        b.squeeze(&mut piecewise[168..]).unwrap();
 
         assert_eq!(full, piecewise);
     }
@@ -2024,46 +2369,51 @@ mod tests {
 
     #[test]
     fn kmac128_self_test_passes() {
+        crate::test_support::start_module();
         self_test_kmac128().unwrap();
     }
 
     #[test]
     fn kmac256_self_test_passes() {
+        crate::test_support::start_module();
         self_test_kmac256().unwrap();
     }
 
     #[test]
     fn kmac128_nist_sample2() {
+        crate::test_support::start_module();
         // NIST KMAC_samples.pdf Sample #2: K=40..5F, X=00 01 02 03,
         // S="My Tagged Application", L=256
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
         let x = [0x00u8, 0x01, 0x02, 0x03];
         let expected: [u8; 32] = hex("3b1fba963cd8b0b59e8c1a6d71888b714365\
              1af8ba0a7070c0979e2811324aa5");
-        let mut m = Kmac128::new_internal(&key, b"My Tagged Application");
+        let mut m = Kmac128::new_internal(&key, b"My Tagged Application").unwrap();
         m.update(&x);
         let mut tag = [0u8; 32];
-        m.finalize_into(&mut tag);
+        m.finalize_into(&mut tag).unwrap();
         assert_eq!(tag, expected);
     }
 
     #[test]
     fn kmac128_nist_sample3() {
+        crate::test_support::start_module();
         // NIST KMAC_samples.pdf Sample #3: K=40..5F, X=00..C7 (200 bytes),
         // S="My Tagged Application", L=256
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
         let x: [u8; 200] = core::array::from_fn(|i| i as u8);
         let expected: [u8; 32] = hex("1f5b4e6cca02209e0dcb5ca635b89a15e271\
              ecc760071dfd805faa38f9729230");
-        let mut m = Kmac128::new_internal(&key, b"My Tagged Application");
+        let mut m = Kmac128::new_internal(&key, b"My Tagged Application").unwrap();
         m.update(&x);
         let mut tag = [0u8; 32];
-        m.finalize_into(&mut tag);
+        m.finalize_into(&mut tag).unwrap();
         assert_eq!(tag, expected);
     }
 
     #[test]
     fn kmac256_nist_sample4() {
+        crate::test_support::start_module();
         // NIST KMAC_samples.pdf Sample #4: K=40..5F, X=00 01 02 03,
         // S="My Tagged Application", L=512
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
@@ -2072,15 +2422,16 @@ mod tests {
              c3970d0cfc787e9b79599d273a68d2f7\
              f69d4cc3de9d104a351689f27cf6f595\
              1f0103f33f4f24871024d9c27773a8dd");
-        let mut m = Kmac256::new_internal(&key, b"My Tagged Application");
+        let mut m = Kmac256::new_internal(&key, b"My Tagged Application").unwrap();
         m.update(&x);
         let mut tag = [0u8; 64];
-        m.finalize_into(&mut tag);
+        m.finalize_into(&mut tag).unwrap();
         assert_eq!(tag, expected);
     }
 
     #[test]
     fn kmac256_nist_sample6() {
+        crate::test_support::start_module();
         // NIST KMAC_samples.pdf Sample #6: K=40..5F, X=00..C7,
         // S="My Tagged Application", L=512
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
@@ -2089,46 +2440,48 @@ mod tests {
              8b97b4ca4d99831eb2699a837da2e4d9\
              70fbacfde50033aea585f1a2708510c3\
              2d07880801bd182898fe476876fc8965");
-        let mut m = Kmac256::new_internal(&key, b"My Tagged Application");
+        let mut m = Kmac256::new_internal(&key, b"My Tagged Application").unwrap();
         m.update(&x);
         let mut tag = [0u8; 64];
-        m.finalize_into(&mut tag);
+        m.finalize_into(&mut tag).unwrap();
         assert_eq!(tag, expected);
     }
 
     #[test]
     fn kmac128_streaming_matches_oneshot() {
+        crate::test_support::start_module();
         // Feeding data in pieces must match feeding it all at once.
         let key = b"streaming-test-key-128";
         let msg: [u8; 300] = core::array::from_fn(|i| (i as u8).wrapping_mul(7));
 
-        let mut one = Kmac128::new_internal(key, b"stream");
+        let mut one = Kmac128::new_internal(key, b"stream").unwrap();
         one.update(&msg);
         let mut tag1 = [0u8; 32];
-        one.finalize_into(&mut tag1);
+        one.finalize_into(&mut tag1).unwrap();
 
-        let mut two = Kmac128::new_internal(key, b"stream");
+        let mut two = Kmac128::new_internal(key, b"stream").unwrap();
         two.update(&msg[..50]);
         two.update(&msg[50..200]);
         two.update(&msg[200..]);
         let mut tag2 = [0u8; 32];
-        two.finalize_into(&mut tag2);
+        two.finalize_into(&mut tag2).unwrap();
 
         assert_eq!(tag1, tag2);
     }
 
     #[test]
     fn kmac128_different_keys_produce_different_tags() {
+        crate::test_support::start_module();
         let msg = b"same message";
-        let mut m1 = Kmac128::new_internal(b"key-a", b"");
+        let mut m1 = Kmac128::new_internal(b"key-a", b"").unwrap();
         m1.update(msg);
         let mut tag1 = [0u8; 32];
-        m1.finalize_into(&mut tag1);
+        m1.finalize_into(&mut tag1).unwrap();
 
-        let mut m2 = Kmac128::new_internal(b"key-b", b"");
+        let mut m2 = Kmac128::new_internal(b"key-b", b"").unwrap();
         m2.update(msg);
         let mut tag2 = [0u8; 32];
-        m2.finalize_into(&mut tag2);
+        m2.finalize_into(&mut tag2).unwrap();
 
         assert_ne!(tag1, tag2);
     }
@@ -2137,52 +2490,57 @@ mod tests {
 
     #[test]
     fn kmacxof128_self_test_passes() {
+        crate::test_support::start_module();
         self_test_kmacxof128().unwrap();
     }
 
     #[test]
     fn kmacxof256_self_test_passes() {
+        crate::test_support::start_module();
         self_test_kmacxof256().unwrap();
     }
 
     #[test]
     fn kmacxof128_differs_from_kmac128() {
+        crate::test_support::start_module();
         // KMACXOF and KMAC with the same inputs must produce different output
         // because right_encode(0) ≠ right_encode(256).
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
         let x = [0x00u8, 0x01, 0x02, 0x03];
 
-        let mut kmac = Kmac128::new_internal(&key, b"");
+        let mut kmac = Kmac128::new_internal(&key, b"").unwrap();
         kmac.update(&x);
         let mut tag = [0u8; 32];
-        kmac.finalize_into(&mut tag);
+        kmac.finalize_into(&mut tag).unwrap();
 
-        let mut xof = KmacXof128::new_internal(&key, b"");
+        let mut xof = KmacXof128::new_internal(&key, b"").unwrap();
         xof.update(&x);
         xof.finalize();
         let mut out = [0u8; 32];
-        xof.squeeze(&mut out);
+        xof.squeeze(&mut out).unwrap();
 
         assert_ne!(tag, out, "KMAC and KMACXOF must differ");
     }
 
     #[test]
     fn kmacxof128_with_custom_string() {
+        crate::test_support::start_module();
         // KMACXOF128: K=40..5F, X=00 01 02 03, S="My Tagged Application", out=32
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
         let x = [0x00u8, 0x01, 0x02, 0x03];
         let expected: [u8; 32] =
             hex("31a44527b4ed9f5c6101d11de6d26f0620aa5c341def41299657fe9df1a3b16c");
-        let mut m = KmacXof128::new_internal(&key, b"My Tagged Application");
+        let mut m = KmacXof128::new_internal(&key, b"My Tagged Application").unwrap();
         m.update(&x);
         m.finalize();
         let mut out = [0u8; 32];
-        m.squeeze(&mut out);
+        m.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn kmacxof256_with_custom_string() {
+        crate::test_support::start_module();
         // KMACXOF256: K=40..5F, X=00 01 02 03, S="My Tagged Application", out=64
         let key: [u8; 32] = core::array::from_fn(|i| (0x40 + i) as u8);
         let x = [0x00u8, 0x01, 0x02, 0x03];
@@ -2190,54 +2548,56 @@ mod tests {
             "1755133f1534752aad0748f2c706fb5c784512cab835cd15676b16c0c6647fa9\
              6faa7af634a0bf8ff6df39374fa00fad9a39e322a7c92065a64eb1fb0801eb2b",
         );
-        let mut m = KmacXof256::new_internal(&key, b"My Tagged Application");
+        let mut m = KmacXof256::new_internal(&key, b"My Tagged Application").unwrap();
         m.update(&x);
         m.finalize();
         let mut out = [0u8; 64];
-        m.squeeze(&mut out);
+        m.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn kmacxof128_incremental_squeeze() {
+        crate::test_support::start_module();
         // Squeezing in pieces must match squeezing all at once.
         let key = b"xof-squeeze-test";
         let msg = b"test data for incremental squeeze";
 
-        let mut a = KmacXof128::new_internal(key, b"");
+        let mut a = KmacXof128::new_internal(key, b"").unwrap();
         a.update(msg);
         a.finalize();
         let mut full = [0u8; 256];
-        a.squeeze(&mut full);
+        a.squeeze(&mut full).unwrap();
 
-        let mut b = KmacXof128::new_internal(key, b"");
+        let mut b = KmacXof128::new_internal(key, b"").unwrap();
         b.update(msg);
         b.finalize();
         let mut piecewise = [0u8; 256];
-        b.squeeze(&mut piecewise[..50]);
-        b.squeeze(&mut piecewise[50..168]);
-        b.squeeze(&mut piecewise[168..]);
+        b.squeeze(&mut piecewise[..50]).unwrap();
+        b.squeeze(&mut piecewise[50..168]).unwrap();
+        b.squeeze(&mut piecewise[168..]).unwrap();
 
         assert_eq!(full, piecewise);
     }
 
     #[test]
     fn kmacxof128_streaming_matches_oneshot() {
+        crate::test_support::start_module();
         let key = b"streaming-xof-key";
         let msg: [u8; 300] = core::array::from_fn(|i| (i as u8).wrapping_mul(13));
 
-        let mut one = KmacXof128::new_internal(key, b"s");
+        let mut one = KmacXof128::new_internal(key, b"s").unwrap();
         one.update(&msg);
         one.finalize();
         let mut out1 = [0u8; 64];
-        one.squeeze(&mut out1);
+        one.squeeze(&mut out1).unwrap();
 
-        let mut two = KmacXof128::new_internal(key, b"s");
+        let mut two = KmacXof128::new_internal(key, b"s").unwrap();
         two.update(&msg[..100]);
         two.update(&msg[100..]);
         two.finalize();
         let mut out2 = [0u8; 64];
-        two.squeeze(&mut out2);
+        two.squeeze(&mut out2).unwrap();
 
         assert_eq!(out1, out2);
     }
@@ -2246,164 +2606,176 @@ mod tests {
 
     #[test]
     fn tuplehash128_self_test_passes() {
+        crate::test_support::start_module();
         self_test_tuplehash128().unwrap();
     }
 
     #[test]
     fn tuplehash256_self_test_passes() {
+        crate::test_support::start_module();
         self_test_tuplehash256().unwrap();
     }
 
     #[test]
     fn tuplehash128_sample2() {
+        crate::test_support::start_module();
         // TupleHash128: X = ("000102", "101112131415"),
         // S = "My Tuple App", L = 256
         let expected: [u8; 32] =
             hex("75cdb20ff4db1154e841d758e24160c54bae86eb8c13e7f5f40eb35588e96dfb");
-        let mut h = TupleHash128::new_internal(b"My Tuple App");
+        let mut h = TupleHash128::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         let mut out = [0u8; 32];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehash128_sample3() {
+        crate::test_support::start_module();
         // TupleHash128: X = ("000102", "101112131415",
         // "202122232425262728"), S = "My Tuple App", L = 256
         let expected: [u8; 32] =
             hex("e60f202c89a2631eda8d4c588ca5fd07f39e5151998deccf973adb3804bb6e84");
-        let mut h = TupleHash128::new_internal(b"My Tuple App");
+        let mut h = TupleHash128::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.update(&[0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28]);
         let mut out = [0u8; 32];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehash256_sample2() {
+        crate::test_support::start_module();
         // TupleHash256: S = "My Tuple App"
         let expected: [u8; 64] = hex(
             "147c2191d5ed7efd98dbd96d7ab5a11692576f5fe2a5065f3e33de6bba9f3aa1\
              c4e9a068a289c61c95aab30aee1e410b0b607de3620e24a4e3bf9852a1d4367e",
         );
-        let mut h = TupleHash256::new_internal(b"My Tuple App");
+        let mut h = TupleHash256::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         let mut out = [0u8; 64];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehash256_sample3() {
+        crate::test_support::start_module();
         // TupleHash256: three elements, S = "My Tuple App"
         let expected: [u8; 64] = hex(
             "45000be63f9b6bfd89f54717670f69a9bc763591a4f05c50d68891a744bcc6e7\
              d6d5b5e82c018da999ed35b0bb49c9678e526abd8e85c13ed254021db9e790ce",
         );
-        let mut h = TupleHash256::new_internal(b"My Tuple App");
+        let mut h = TupleHash256::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.update(&[0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28]);
         let mut out = [0u8; 64];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehashxof128_sample1() {
+        crate::test_support::start_module();
         // TupleHashXOF128: X = ("000102", "101112131415"), S = "", out = 32
         let expected: [u8; 32] =
             hex("2f103cd7c32320353495c68de1a8129245c6325f6f2a3d608d92179c96e68488");
-        let mut h = TupleHashXof128::new_internal(b"");
+        let mut h = TupleHashXof128::new_internal(b"").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.finalize();
         let mut out = [0u8; 32];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehashxof128_sample2() {
+        crate::test_support::start_module();
         // TupleHashXOF128: S = "My Tuple App"
         let expected: [u8; 32] =
             hex("3fc8ad69453128292859a18b6c67d7ad85f01b32815e22ce839c49ec374e9b9a");
-        let mut h = TupleHashXof128::new_internal(b"My Tuple App");
+        let mut h = TupleHashXof128::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.finalize();
         let mut out = [0u8; 32];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehashxof128_sample3() {
+        crate::test_support::start_module();
         // TupleHashXOF128: three elements, S = "My Tuple App"
         let expected: [u8; 32] =
             hex("900fe16cad098d28e74d632ed852f99daab7f7df4d99e775657885b4bf76d6f8");
-        let mut h = TupleHashXof128::new_internal(b"My Tuple App");
+        let mut h = TupleHashXof128::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.update(&[0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28]);
         h.finalize();
         let mut out = [0u8; 32];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehashxof256_sample1() {
+        crate::test_support::start_module();
         // TupleHashXOF256: X = ("000102", "101112131415"), S = "", out = 64
         let expected: [u8; 64] = hex(
             "03ded4610ed6450a1e3f8bc44951d14fbc384ab0efe57b000df6b6df5aae7cd5\
              68e77377daf13f37ec75cf5fc598b6841d51dd207c991cd45d210ba60ac52eb9",
         );
-        let mut h = TupleHashXof256::new_internal(b"");
+        let mut h = TupleHashXof256::new_internal(b"").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.finalize();
         let mut out = [0u8; 64];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehashxof256_sample2() {
+        crate::test_support::start_module();
         // TupleHashXOF256: S = "My Tuple App"
         let expected: [u8; 64] = hex(
             "6483cb3c9952eb20e830af4785851fc597ee3bf93bb7602c0ef6a65d741aeca7\
              e63c3b128981aa05c6d27438c79d2754bb1b7191f125d6620fca12ce658b2442",
         );
-        let mut h = TupleHashXof256::new_internal(b"My Tuple App");
+        let mut h = TupleHashXof256::new_internal(b"My Tuple App").unwrap();
         h.update(&[0x00, 0x01, 0x02]);
         h.update(&[0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
         h.finalize();
         let mut out = [0u8; 64];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn tuplehash128_differs_from_raw_concat() {
+        crate::test_support::start_module();
         // TupleHash("AB", "C") must differ from TupleHash("A", "BC")
         // due to encode_string framing.
-        let mut h1 = TupleHash128::new_internal(b"");
+        let mut h1 = TupleHash128::new_internal(b"").unwrap();
         h1.update(b"AB");
         h1.update(b"C");
         let mut out1 = [0u8; 32];
-        h1.finalize_into(&mut out1);
+        h1.finalize_into(&mut out1).unwrap();
 
-        let mut h2 = TupleHash128::new_internal(b"");
+        let mut h2 = TupleHash128::new_internal(b"").unwrap();
         h2.update(b"A");
         h2.update(b"BC");
         let mut out2 = [0u8; 32];
-        h2.finalize_into(&mut out2);
+        h2.finalize_into(&mut out2).unwrap();
 
         assert_ne!(out1, out2, "different tuples must produce different hashes");
     }
@@ -2412,16 +2784,19 @@ mod tests {
 
     #[test]
     fn parallelhash128_self_test_passes() {
+        crate::test_support::start_module();
         self_test_parallelhash128().unwrap();
     }
 
     #[test]
     fn parallelhash256_self_test_passes() {
+        crate::test_support::start_module();
         self_test_parallelhash256().unwrap();
     }
 
     #[test]
     fn parallelhash128_sample2() {
+        crate::test_support::start_module();
         // NIST ParallelHash_samples Sample #2: B=8, S="Parallel Data"
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -2429,15 +2804,16 @@ mod tests {
         ];
         let expected: [u8; 32] =
             hex("fc484dcb3f84dceedc353438151bee58157d6efed0445a81f165e495795b7206");
-        let mut h = ParallelHash128::new_internal(8, b"Parallel Data");
+        let mut h = ParallelHash128::new_internal(8, b"Parallel Data").unwrap();
         h.update(&data);
         let mut out = [0u8; 32];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhash128_sample3() {
+        crate::test_support::start_module();
         // NIST ParallelHash_samples Sample #3: B=12, S="Parallel Data", 72-byte data
         let data: [u8; 72] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x10, 0x11,
@@ -2449,37 +2825,39 @@ mod tests {
         ];
         let expected: [u8; 32] =
             hex("f7fd5312896c6685c828af7e2adb97e393e7f8d54e3c2ea4b95e5aca3796e8fc");
-        let mut h = ParallelHash128::new_internal(12, b"Parallel Data");
+        let mut h = ParallelHash128::new_internal(12, b"Parallel Data").unwrap();
         h.update(&data);
         let mut out = [0u8; 32];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhash128_streaming_matches_oneshot() {
+        crate::test_support::start_module();
         // Feed data in small chunks; must match single-call result.
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
             0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
         ];
-        let mut h1 = ParallelHash128::new_internal(8, b"");
+        let mut h1 = ParallelHash128::new_internal(8, b"").unwrap();
         h1.update(&data);
         let mut out1 = [0u8; 32];
-        h1.finalize_into(&mut out1);
+        h1.finalize_into(&mut out1).unwrap();
 
-        let mut h2 = ParallelHash128::new_internal(8, b"");
+        let mut h2 = ParallelHash128::new_internal(8, b"").unwrap();
         for byte in &data {
             h2.update(core::slice::from_ref(byte));
         }
         let mut out2 = [0u8; 32];
-        h2.finalize_into(&mut out2);
+        h2.finalize_into(&mut out2).unwrap();
 
         assert_eq!(out1, out2);
     }
 
     #[test]
     fn parallelhash256_sample2() {
+        crate::test_support::start_module();
         // ParallelHash256: B=8, S="Parallel Data", same 24-byte data
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -2489,28 +2867,29 @@ mod tests {
             "cdf15289b54f6212b4bc270528b49526006dd9b54e2b6add1ef6900dda3963bb\
              33a72491f236969ca8afaea29c682d47a393c065b38e29fae651a2091c833110",
         );
-        let mut h = ParallelHash256::new_internal(8, b"Parallel Data");
+        let mut h = ParallelHash256::new_internal(8, b"Parallel Data").unwrap();
         h.update(&data);
         let mut out = [0u8; 64];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhash128_different_block_sizes_differ() {
+        crate::test_support::start_module();
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
             0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
         ];
-        let mut h1 = ParallelHash128::new_internal(8, b"");
+        let mut h1 = ParallelHash128::new_internal(8, b"").unwrap();
         h1.update(&data);
         let mut out1 = [0u8; 32];
-        h1.finalize_into(&mut out1);
+        h1.finalize_into(&mut out1).unwrap();
 
-        let mut h2 = ParallelHash128::new_internal(12, b"");
+        let mut h2 = ParallelHash128::new_internal(12, b"").unwrap();
         h2.update(&data);
         let mut out2 = [0u8; 32];
-        h2.finalize_into(&mut out2);
+        h2.finalize_into(&mut out2).unwrap();
 
         assert_ne!(
             out1, out2,
@@ -2522,6 +2901,7 @@ mod tests {
 
     #[test]
     fn parallelhashxof128_sample1() {
+        crate::test_support::start_module();
         // ParallelHashXOF128: B=8, S="", data=24 bytes, squeeze 32
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -2529,16 +2909,17 @@ mod tests {
         ];
         let expected: [u8; 32] =
             hex("fe47d661e49ffe5b7d999922c062356750caf552985b8e8ce6667f2727c3c8d3");
-        let mut h = ParallelHashXof128::new_internal(8, b"");
+        let mut h = ParallelHashXof128::new_internal(8, b"").unwrap();
         h.update(&data);
         h.finalize();
         let mut out = [0u8; 32];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhashxof128_sample2() {
+        crate::test_support::start_module();
         // ParallelHashXOF128: B=8, S="Parallel Data", 32-byte squeeze
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -2546,16 +2927,17 @@ mod tests {
         ];
         let expected: [u8; 32] =
             hex("ea2a793140820f7a128b8eb70a9439f93257c6e6e79b4a540d291d6dae7098d7");
-        let mut h = ParallelHashXof128::new_internal(8, b"Parallel Data");
+        let mut h = ParallelHashXof128::new_internal(8, b"Parallel Data").unwrap();
         h.update(&data);
         h.finalize();
         let mut out = [0u8; 32];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhashxof256_sample1() {
+        crate::test_support::start_module();
         // ParallelHashXOF256: B=8, S="", data=24 bytes, squeeze 64
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -2565,16 +2947,17 @@ mod tests {
             "c10a052722614684144d28474850b410757e3cba87651ba167a5cbddff7f4666\
              75fbf84bcae7378ac444be681d729499afca667fb879348bfdda427863c82f1c",
         );
-        let mut h = ParallelHashXof256::new_internal(8, b"");
+        let mut h = ParallelHashXof256::new_internal(8, b"").unwrap();
         h.update(&data);
         h.finalize();
         let mut out = [0u8; 64];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhashxof256_sample2() {
+        crate::test_support::start_module();
         // ParallelHashXOF256: B=8, S="Parallel Data", squeeze 64
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -2584,31 +2967,32 @@ mod tests {
             "538e105f1a22f44ed2f5cc1674fbd40be803d9c99bf5f8d90a2c8193f3fe6ea7\
              68e5c1a20987e2c9c65febed03887a51d35624ed12377594b5585541dc377efc",
         );
-        let mut h = ParallelHashXof256::new_internal(8, b"Parallel Data");
+        let mut h = ParallelHashXof256::new_internal(8, b"Parallel Data").unwrap();
         h.update(&data);
         h.finalize();
         let mut out = [0u8; 64];
-        h.squeeze(&mut out);
+        h.squeeze(&mut out).unwrap();
         assert_eq!(out, expected);
     }
 
     #[test]
     fn parallelhashxof128_differs_from_parallelhash128() {
+        crate::test_support::start_module();
         // XOF variant must differ from fixed-output due to right_encode(0) ≠ right_encode(L).
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
             0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
         ];
-        let mut fixed = ParallelHash128::new_internal(8, b"");
+        let mut fixed = ParallelHash128::new_internal(8, b"").unwrap();
         fixed.update(&data);
         let mut out_fixed = [0u8; 32];
-        fixed.finalize_into(&mut out_fixed);
+        fixed.finalize_into(&mut out_fixed).unwrap();
 
-        let mut xof = ParallelHashXof128::new_internal(8, b"");
+        let mut xof = ParallelHashXof128::new_internal(8, b"").unwrap();
         xof.update(&data);
         xof.finalize();
         let mut out_xof = [0u8; 32];
-        xof.squeeze(&mut out_xof);
+        xof.squeeze(&mut out_xof).unwrap();
 
         assert_ne!(
             out_fixed, out_xof,
@@ -2618,28 +3002,49 @@ mod tests {
 
     #[test]
     fn parallelhashxof128_incremental_squeeze() {
+        crate::test_support::start_module();
         // Two 16-byte squeezes must equal one 32-byte squeeze.
         let data: [u8; 24] = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
             0x16, 0x17, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
         ];
-        let mut h1 = ParallelHashXof128::new_internal(8, b"");
+        let mut h1 = ParallelHashXof128::new_internal(8, b"").unwrap();
         h1.update(&data);
         h1.finalize();
         let mut full = [0u8; 32];
-        h1.squeeze(&mut full);
+        h1.squeeze(&mut full).unwrap();
 
-        let mut h2 = ParallelHashXof128::new_internal(8, b"");
+        let mut h2 = ParallelHashXof128::new_internal(8, b"").unwrap();
         h2.update(&data);
         h2.finalize();
         let mut part_a = [0u8; 16];
         let mut part_b = [0u8; 16];
-        h2.squeeze(&mut part_a);
-        h2.squeeze(&mut part_b);
+        h2.squeeze(&mut part_a).unwrap();
+        h2.squeeze(&mut part_b).unwrap();
 
         let mut combined = [0u8; 32];
         combined[..16].copy_from_slice(&part_a);
         combined[16..].copy_from_slice(&part_b);
         assert_eq!(full, combined);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
     }
 }

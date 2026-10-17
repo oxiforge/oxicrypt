@@ -57,7 +57,7 @@ crate::keygen_impl::define_keygen! {
     pow_public = pow_public_u1536;
     mr_rounds = 4;
     nlen = 3072;
-    generate = generate_3072;
+    generate = generate_3072_internal;
     reduce = u3072_mod_u1536;
 }
 
@@ -96,6 +96,7 @@ mod tests {
 
     #[test]
     fn small_primes_rejects_obvious_composites_1536() {
+        crate::test_support::start_module();
         let mut limbs = [0u64; LIMBS1536];
         limbs[0] = 15;
         let p = U1536 { limbs };
@@ -104,6 +105,7 @@ mod tests {
 
     #[test]
     fn miller_rabin_does_not_panic_on_synthetic_input_1536() {
+        crate::test_support::start_module();
         let mut limbs = [0u64; LIMBS1536];
         limbs[0] = 7;
         limbs[LIMBS1536 - 1] = 1 << 63;
@@ -114,6 +116,7 @@ mod tests {
 
     #[test]
     fn u3072_mod_u1536_small_case() {
+        crate::test_support::start_module();
         // 15 mod 7 = 1
         let mut a_limbs = [0u64; LIMBS3072];
         a_limbs[0] = 15;
@@ -137,7 +140,7 @@ mod tests {
             run: crate::self_test,
         }]);
         let mut drbg = make_drbg(b"oxicrypt-rsa3072-keygen-smoke-entropy-0001");
-        let km = generate_3072(&mut drbg, 65537).expect("keygen failed");
+        let km = generate_3072_internal(&mut drbg, 65537).expect("keygen failed");
         // n must have its top bit set (full 3072 bits).
         assert_ne!(km.n.limbs[LIMBS3072 - 1] >> 63, 0, "n is not 3072-bit");
         // d must be less than n.
@@ -149,13 +152,15 @@ mod tests {
 
     #[test]
     fn generate_3072_rejects_even_exponent() {
+        crate::test_support::start_module();
         let mut drbg = make_drbg(b"even-exp-reject-3072");
-        assert!(generate_3072(&mut drbg, 65538).is_err());
+        assert!(generate_3072_internal(&mut drbg, 65538).is_err());
     }
 
     #[test]
     fn generate_3072_rejects_small_exponent() {
+        crate::test_support::start_module();
         let mut drbg = make_drbg(b"small-exp-reject-3072");
-        assert!(generate_3072(&mut drbg, 3).is_err());
+        assert!(generate_3072_internal(&mut drbg, 3).is_err());
     }
 }

@@ -75,12 +75,14 @@
 //!
 //! # Pre-operational hash construction
 //!
-//! The hash instance is obtained via `Sha256::new_internal`, the
-//! documented pre-operational bypass: this conditioner feeds the seeding
-//! path that the module's operational state itself depends on, so it
-//! cannot gate on that state (same bootstrap argument as the jitter
-//! source's workload hash). Integrity assurance comes from the startup KAT
-//! above, which exercises exactly the construction used for conditioning.
+//! The hash instance is obtained via `Sha256::new_internal`, which skips
+//! the operational gate but refuses unless
+//! [`oxicrypt_module::require_self_test_started`] admits the call (in
+//! `Operational`, or in `SelfTest` on the thread running the power-up
+//! self-tests); a pipeline whose module refuses reports `EntropyError::Module`
+//! and is not poisoned.
+//! Integrity assurance comes from the startup KAT above, which exercises
+//! exactly the construction used for conditioning.
 
 use crate::h::{H_STEPS_PER_BIT, MinEntropy};
 use crate::sp800_90b::{
@@ -144,25 +146,39 @@ impl Conditioner {
     }
 
     /// Runs the startup known-answer test against the shipped FIPS 180-4
-    /// vector. `false` means the conditioning function is broken and the
-    /// pipeline must refuse to operate.
-    #[must_use]
-    pub fn startup_kat() -> bool {
+    /// vector. `Ok(false)` means the conditioning function is broken and
+    /// the pipeline must refuse to operate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`oxicrypt_module::Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests. The test did not run, so this says nothing about the
+    /// conditioning function.
+    pub fn startup_kat() -> Result<bool, oxicrypt_module::Error> {
         Self::kat_against(&KAT_EXPECTED)
     }
 
     /// KAT core, parameterized on the expected digest so tests can prove
     /// that a corrupted vector causes refusal.
-    fn kat_against(expected: &[u8; CONDITIONED_BLOCK_LEN]) -> bool {
-        let mut hasher = Sha256::new_internal();
+    fn kat_against(expected: &[u8; CONDITIONED_BLOCK_LEN]) -> Result<bool, oxicrypt_module::Error> {
+        let mut hasher = Sha256::new_internal()?;
         hasher.update(KAT_MESSAGE);
-        hasher.finalize() == *expected
+        Ok(hasher.finalize()? == *expected)
     }
 
     /// Begins one output block: a **fresh** hash instance, used for this
     /// block only and dropped (state zeroized) when the block completes or
     /// aborts. This is the statelessness mechanism.
-    pub(crate) fn begin_block() -> Sha256 {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`oxicrypt_module::Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    pub(crate) fn begin_block() -> Result<Sha256, oxicrypt_module::Error> {
         Sha256::new_internal()
     }
 }
@@ -181,6 +197,7 @@ mod tests {
 
     #[test]
     fn samples_per_block_varies_with_claim() {
+        crate::test_support::start_module();
         // H = 1 bit/sample → 320 samples per 256-bit block.
         let c = Conditioner::for_claim(MinEntropy::from_bits(1)).unwrap();
         assert_eq!(c.samples_per_block(), 320);
@@ -197,6 +214,7 @@ mod tests {
 
     #[test]
     fn samples_per_block_rounds_up_never_down() {
+        crate::test_support::start_module();
         // 3 steps: 81920 / 3 = 27306.67 → 27307.
         let c = Conditioner::for_claim(MinEntropy::from_steps(3)).unwrap();
         assert_eq!(c.samples_per_block(), 27307);
@@ -204,6 +222,7 @@ mod tests {
 
     #[test]
     fn zero_claim_has_no_conditioner() {
+        crate::test_support::start_module();
         assert!(Conditioner::for_claim(MinEntropy::ZERO).is_none());
     }
 
@@ -215,6 +234,7 @@ mod tests {
     /// approached from below.
     #[test]
     fn margin_holds_and_is_minimal_across_claims() {
+        crate::test_support::start_module();
         let required =
             u64::from((VETTED_SHA256_NOUT_BITS + FULL_ENTROPY_INPUT_MARGIN_BITS) * H_STEPS_PER_BIT);
         // 1 step (1/256 bit) through 8 bits, plus odd off-grid values.
@@ -236,14 +256,16 @@ mod tests {
 
     #[test]
     fn startup_kat_passes_on_shipped_vector() {
-        assert!(Conditioner::startup_kat());
+        crate::test_support::start_module();
+        assert!(Conditioner::startup_kat().unwrap());
     }
 
     #[test]
     fn corrupted_vector_causes_refusal() {
+        crate::test_support::start_module();
         let mut corrupted = KAT_EXPECTED;
         corrupted[0] ^= 0x01;
-        assert!(!Conditioner::kat_against(&corrupted));
+        assert!(!Conditioner::kat_against(&corrupted).unwrap());
     }
 
     // ── Statelessness (ISC-126) ──────────────────────────────────────
@@ -253,8 +275,9 @@ mod tests {
     /// across blocks.
     #[test]
     fn blocks_are_independent_of_prior_blocks() {
+        crate::test_support::start_module();
         let digest = |data: &[u8]| {
-            let mut h = Conditioner::begin_block();
+            let mut h = Conditioner::begin_block().unwrap();
             h.update(data);
             h.finalize()
         };

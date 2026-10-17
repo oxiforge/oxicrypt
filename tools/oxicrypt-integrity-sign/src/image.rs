@@ -1,28 +1,216 @@
 //! Format-independent pieces of classification.
 //!
-//! Three executable formats share one output — a table of
-//! `(rva, file_off, len)` triples with the integrity slot removed — and
+//! Three executable formats share one output — a table of typed
+//! `(rva, file_off, len)` entries with the integrity slot removed — and
 //! the parts of that shared shape live here so no format module depends
 //! on another. What differs between formats is only *which* regions are
-//! candidates; everything downstream of that choice is common.
+//! candidates and how they are typed; everything downstream is common.
 
-use oxicrypt_integrity::{SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC, SLOT_SIZE, slot::Range};
+use oxicrypt_integrity::{
+    SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC, SLOT_SIZE,
+    slot::{BindRecord, Entry, EntryKind, Range},
+};
 
 /// What the signer needs to know about an artifact.
 #[derive(Debug)]
 pub struct Layout {
-    /// The loader-invariant extent, slot already subtracted, ascending.
+    /// The `Plain` entries of the extent, slot already subtracted,
+    /// ascending: the bytes hashed exactly as the file holds them.
     pub ranges: Vec<Range>,
+    /// The whole typed extent the slot records, slot already subtracted,
+    /// ascending and merged.
+    pub entries: Vec<Entry>,
+    /// The slot's flags: the loader an ELF image is typed for.
+    pub flags: u32,
     /// File offset of the integrity slot.
     pub slot_file_off: usize,
     /// Offset of the integrity slot from the image base.
     pub slot_rva: u32,
-    /// Total file-backed bytes across all non-writable load segments,
-    /// before the slot was subtracted. Reported so an operator can see
-    /// what fraction of the mapped image the extent covers.
+    /// Total file-backed bytes the extent types, of every kind, before the
+    /// slot was subtracted. Reported so an operator can see what fraction
+    /// of the mapped image the extent covers.
     pub invariant_len: u64,
     /// Total file-backed bytes across every load segment.
     pub mapped_len: u64,
+    /// The image base the file was linked at, which a `Relative` word's
+    /// unslid value is relative to. Zero where the classifier emits no
+    /// `Relative` entry and does not read it.
+    pub link_base: u64,
+    /// Length of the file image the slot describes. It stops before the
+    /// operating system's code-signature envelope: at a Mach-O
+    /// `LC_CODE_SIGNATURE`'s `dataoff`, or a PE certificate table's file
+    /// offset. Beyond it, `codesign` and `signtool` may grow or rewrite
+    /// anything; before it they rewrite only the header and load-command
+    /// fields `--reserved-against` measures.
+    pub file_len: u32,
+    /// How the file holds a `Relative` word, which decides the unslid value
+    /// the signature covers.
+    pub relative: RelativeEncoding,
+    /// The imports the `Bind` entries name, in order of first use; a
+    /// `Bind` entry's `meta` indexes this list.
+    pub records: Vec<BindRecord>,
+}
+
+/// A run of file-backed bytes of one segment, with its base kind.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Region {
+    /// Address of the run's first byte, as linked.
+    pub(crate) va: u64,
+    /// Length of the run.
+    pub(crate) len: u64,
+    /// File offset of the run's first byte.
+    pub(crate) file_off: u64,
+    /// `Plain` or `FileOnly`: the kind of every byte no word overrides.
+    pub(crate) kind: EntryKind,
+    /// The run lies in a segment the loader maps writable.
+    pub(crate) writable: bool,
+}
+
+impl Region {
+    /// One past the run's last address.
+    pub(crate) fn end(&self) -> u64 {
+        self.va.saturating_add(self.len)
+    }
+}
+
+/// A word the loader writes, placed in a `Plain` region and typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Placed {
+    /// Address of the word, as linked.
+    pub(crate) va: u64,
+    /// Length of the word.
+    pub(crate) len: u64,
+    /// `Relative`, `Bind` or `Hole`.
+    pub(crate) kind: EntryKind,
+    /// A `Bind` word's record index; zero otherwise.
+    pub(crate) meta: u16,
+}
+
+/// Turns regions, ascending, and the words placed in their `Plain` runs,
+/// ascending and disjoint, into ascending entries. A `FileOnly` region is
+/// one entry, and no word is emitted inside it.
+pub(crate) fn entries_of(
+    regions: &[Region],
+    words: &[Placed],
+    image_base: u64,
+) -> Result<Vec<Entry>, String> {
+    let entry = |va: u64, len: u64, r: &Region, kind: EntryKind, meta: u16| {
+        let rva = va
+            .checked_sub(image_base)
+            .ok_or("address below the image base")?;
+        let file_off = r.file_off.saturating_add(va.saturating_sub(r.va));
+        Ok::<Entry, String>(Entry {
+            rva: u32::try_from(rva).map_err(|_| "an RVA exceeds 32 bits")?,
+            file_off: u32::try_from(file_off).map_err(|_| "a file offset exceeds 32 bits")?,
+            len: u32::try_from(len).map_err(|_| "an entry exceeds 32 bits")?,
+            kind,
+            meta,
+        })
+    };
+    let mut out = Vec::new();
+    let mut words = words.iter().peekable();
+    for r in regions {
+        if r.kind == EntryKind::FileOnly {
+            out.push(entry(r.va, r.len, r, EntryKind::FileOnly, 0)?);
+            continue;
+        }
+        let mut cursor = r.va;
+        while let Some(w) = words.next_if(|w| w.va < r.end()) {
+            if w.va > cursor {
+                out.push(entry(
+                    cursor,
+                    w.va.saturating_sub(cursor),
+                    r,
+                    EntryKind::Plain,
+                    0,
+                )?);
+            }
+            out.push(entry(w.va, w.len, r, w.kind, w.meta)?);
+            cursor = w.va.saturating_add(w.len);
+        }
+        if r.end() > cursor {
+            out.push(entry(
+                cursor,
+                r.end().saturating_sub(cursor),
+                r,
+                EntryKind::Plain,
+                0,
+            )?);
+        }
+    }
+    Ok(out)
+}
+
+/// Removes the slot from the entries. The slot must lie in `Plain` bytes.
+pub(crate) fn subtract_slot(entries: &[Entry], slot_rva: u32) -> Result<Vec<Entry>, String> {
+    let slot_len = u32::try_from(SLOT_SIZE).map_err(|_| "slot size exceeds 32 bits")?;
+    let slot_end = slot_rva.checked_add(slot_len).ok_or("slot RVA overflows")?;
+    let mut out = Vec::with_capacity(entries.len().saturating_add(1));
+    for e in entries {
+        let end = e.rva_end().ok_or("entry overflows")?;
+        if end <= slot_rva || e.rva >= slot_end {
+            out.push(*e);
+            continue;
+        }
+        if e.kind != EntryKind::Plain {
+            return Err(format!(
+                "the integrity slot overlaps a {:?} entry at RVA {:#x}",
+                e.kind, e.rva
+            ));
+        }
+        let parts = subtract(
+            &[Range {
+                rva: e.rva,
+                file_off: e.file_off,
+                len: e.len,
+            }],
+            slot_rva,
+            slot_len,
+        )?;
+        out.extend(parts.into_iter().map(Entry::plain));
+    }
+    Ok(out)
+}
+
+/// How a format stores a word the loader rebases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelativeEncoding {
+    /// The file word is the unslid address (ELF `RELR`, PE `DIR64`).
+    FileWord,
+    /// A Mach-O `DYLD_CHAINED_PTR_64` rebase: `target` in bits 0..36 is the
+    /// unslid address, `high8` in bits 36..44 its top byte.
+    ChainedPtr64,
+    /// A Mach-O `DYLD_CHAINED_PTR_64_OFFSET` rebase: `target` is an offset
+    /// from the image's link base.
+    ChainedPtr64Offset,
+}
+
+impl RelativeEncoding {
+    /// The unslid value a rebased word contributes to the signature input:
+    /// the value the loader writes, less the slide. `None` for a chained
+    /// word that is a bind rather than a rebase.
+    #[must_use]
+    pub fn unslid(self, raw: u64, link_base: u64) -> Option<u64> {
+        const TARGET: u64 = 0xf_ffff_ffff;
+        let chained = |base: u64| {
+            if raw >> 63 != 0 {
+                return None;
+            }
+            let high8 = (raw >> 36) & 0xff;
+            Some(base.wrapping_add(raw & TARGET) | (high8 << 56))
+        };
+        match self {
+            Self::FileWord => Some(raw),
+            Self::ChainedPtr64 => chained(0),
+            Self::ChainedPtr64Offset => chained(link_base),
+        }
+    }
+}
+
+/// The length a slot records for `bytes`, refused past the format's 32 bits.
+pub(crate) fn file_len_of(bytes: &[u8]) -> Result<u32, String> {
+    u32::try_from(bytes.len())
+        .map_err(|_| "the file is larger than the slot format's 4 GiB".to_owned())
 }
 
 pub(crate) fn u16_at(bytes: &[u8], off: usize) -> Option<u16> {
@@ -132,8 +320,9 @@ pub(crate) fn subtract(ranges: &[Range], cut_rva: u32, cut_len: u32) -> Result<V
 
 /// Rejects an extent that covers nothing.
 ///
-/// A MAC over zero bytes verifies against any file, so an artifact signed with
-/// an empty extent passes its own integrity test while proving nothing. The
+/// A signature over no image bytes says nothing about the image, so an
+/// artifact signed with an empty extent passes its own integrity test while
+/// proving nothing. The
 /// classifiers already refuse an image with no candidate region; this is the
 /// other way in — a candidate that the slot subtraction consumes entirely.
 ///
@@ -143,7 +332,8 @@ pub(crate) fn subtract(ranges: &[Range], cut_rva: u32, cut_len: u32) -> Result<V
 pub(crate) fn ensure_non_empty(ranges: &[Range]) -> Result<(), String> {
     if ranges.is_empty() {
         return Err(
-            "the extent is empty once the integrity slot is removed; a MAC over no bytes              would verify against any file"
+            "the extent is empty once the integrity slot is removed; a signature over no \
+             image bytes proves nothing about the image"
                 .to_owned(),
         );
     }
@@ -195,7 +385,24 @@ pub(crate) fn slot_fits(slot_file_off: usize, start: usize, end: usize) -> bool 
     clippy::indexing_slicing
 )]
 mod tests {
-    use super::{Range, ensure_disjoint, ensure_non_empty, slot_fits, subtract};
+    use super::{Range, RelativeEncoding, ensure_disjoint, ensure_non_empty, slot_fits, subtract};
+
+    /// A chained rebase decodes to its target with `high8` restored, and
+    /// the offset form adds the link base; a bind is not a rebase.
+    #[test]
+    fn chained_rebases_decode_to_the_address_the_loader_writes() {
+        let raw = 0x1234 | (0x5au64 << 36) | (3u64 << 51);
+        assert_eq!(
+            RelativeEncoding::ChainedPtr64.unslid(raw, 0x1_0000_0000),
+            Some(0x5a00_0000_0000_1234)
+        );
+        assert_eq!(
+            RelativeEncoding::ChainedPtr64Offset.unslid(0x1234 | (3u64 << 51), 0x1_0000_0000),
+            Some(0x1_0000_1234)
+        );
+        assert_eq!(RelativeEncoding::ChainedPtr64.unslid(1u64 << 63, 0), None);
+        assert_eq!(RelativeEncoding::FileWord.unslid(raw, 0), Some(raw));
+    }
 
     fn r(rva: u32, file_off: u32, len: u32) -> Range {
         Range { rva, file_off, len }
@@ -239,7 +446,7 @@ mod tests {
         assert_eq!(subtract(&input, 0x0, 0x1000).unwrap(), input);
     }
 
-    /// A MAC over nothing verifies against anything, so an extent the slot
+    /// A signature over no image bytes proves nothing, so an extent the slot
     /// subtraction has emptied must be refused rather than signed.
     #[test]
     fn an_emptied_extent_is_refused() {
@@ -273,7 +480,7 @@ mod tests {
             slot_fits(0x1000, 0x1000, 0x1000 + size),
             "an exact fit must be accepted"
         );
-        assert!(slot_fits(0x1000, 0, 0x9000));
+        assert!(slot_fits(0x1000, 0, 0x1000 + size));
         assert!(
             !slot_fits(0x1000, 0x1000, 0x1000 + size - 1),
             "a slot one byte too long for its region must be refused"

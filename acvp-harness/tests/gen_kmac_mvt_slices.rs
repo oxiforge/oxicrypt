@@ -197,27 +197,27 @@ fn gen_mvt_slice(algorithm: &str, compute: KmacComputeFn, default_mac_bytes: usi
 fn kmac128_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = Kmac128::new(key, s).expect("Kmac128::new");
     m.update(msg);
-    m.finalize_into(out);
+    m.finalize_into(out).unwrap();
 }
 
 fn kmac256_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = Kmac256::new(key, s).expect("Kmac256::new");
     m.update(msg);
-    m.finalize_into(out);
+    m.finalize_into(out).unwrap();
 }
 
 fn kmacxof128_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = KmacXof128::new(key, s).expect("KmacXof128::new");
     m.update(msg);
     m.finalize();
-    m.squeeze(out);
+    m.squeeze(out).unwrap();
 }
 
 fn kmacxof256_compute(key: &[u8], msg: &[u8], s: &[u8], out: &mut [u8]) {
     let mut m = KmacXof256::new(key, s).expect("KmacXof256::new");
     m.update(msg);
     m.finalize();
-    m.squeeze(out);
+    m.squeeze(out).unwrap();
 }
 
 // ── Generator tests (run with --ignored) ─────────────────────────

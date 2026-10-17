@@ -518,8 +518,8 @@ pub fn kda_hkdf_capability() -> JsonValue {
 /// counter). `counterLength` is intentionally narrowed to `[32]`
 /// even though the primitives accept SP 800-108r1 §5.1's full
 /// `{8, 16, 24, 32}` set — advertising 8/16/24 prompts the server
-/// to emit groups the handler doesn't currently dispatch, per
-/// `feedback_caps_match_handler_subset`.
+/// to emit groups the handler doesn't currently dispatch, and a
+/// capability advertises only what its handler serves.
 pub fn kbkdf_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("KDF")),
@@ -789,8 +789,8 @@ fn rsa_siggen_sigtype(sig_type: &str) -> JsonValue {
 ///   `crates/oxicrypt-rsa/src/keygen.rs` `gen_probable_prime_1024`
 ///   plus the keypair driver. The other randPQ modes (provable,
 ///   *WithProvableAux, *WithProbableAux) are not implemented; we
-///   advertise `"probable"` only per the
-///   `feedback_caps_match_handler_subset` rule.
+///   advertise `"probable"` only, because a capability advertises only
+///   what its handler serves.
 /// - **`primeTest`** valid values per Table 6 are
 ///   `{"2pow100", "2powSecStr"}` (the FIPS186-4 legacy
 ///   `"tblC2"`/`"tblC3"` naming is NOT valid for FIPS186-5 and the
@@ -878,8 +878,8 @@ pub fn rsa_oaep_capability() -> JsonValue {
 /// failure mode the `signaturePrimitive` 2.0 cap had).
 /// `oxicrypt-rsa` implements only the 2048-bit primitive
 /// (`rsa_decryption_primitive_2048_internal` + CRT variant), so we
-/// advertise `[2048]` alone per the `feedback_caps_match_handler_subset`
-/// rule.
+/// advertise `[2048]` alone, because a capability advertises only what
+/// its handler serves.
 pub fn rsa_decprim_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -900,7 +900,8 @@ pub fn rsa_decprim_capability() -> JsonValue {
 /// rejected registration with HTTP 400 `No modulo supplied`.
 /// `oxicrypt-rsa` implements only the 2048-bit primitive
 /// (`rsa_signature_primitive_2048_internal` + CRT), so we advertise
-/// `[2048]` alone per the `feedback_caps_match_handler_subset` rule.
+/// `[2048]` alone, because a capability advertises only what its handler
+/// serves.
 pub fn rsa_sigprim_capability() -> JsonValue {
     obj(vec![
         ("algorithm", str_val("RSA")),
@@ -1381,13 +1382,11 @@ pub fn is_slh_dsa_paramset(name: &str) -> bool {
 /// `filter` semantics:
 /// - `None` → all 12 names (used by tests and the unfiltered
 ///   `acvp_capabilities()` trait fallback; back-compat with the
-///   bundled-cap shape that shipped for ML-DSA before
-///   `feedback_single_algo_per_acvts_session` retired that pattern
-///   for new multi-variant PQ families).
+///   bundled-cap shape that shipped for ML-DSA; new multi-variant PQ
+///   families request one parameter set per session instead).
 /// - `Some(name)` where `name` is in [`SLH_DSA_PARAMSETS`] → a
-///   single-element array containing just that name. This is the
-///   one-vector-set-per-session shape required by the retired-
-///   pattern memory.
+///   single-element array containing just that name: the
+///   one-vector-set-per-session shape.
 /// - `Some(name)` where `name` is unknown → panics. Callers must
 ///   validate via [`is_slh_dsa_paramset`] before reaching here;
 ///   panicking is the correct response to a programmer error.
@@ -1410,9 +1409,8 @@ fn slh_dsa_paramsets_array(filter: Option<&str>) -> JsonValue {
 /// `paramset_filter`:
 /// - `None` → bundled 12-paramSet advertisement (back-compat).
 /// - `Some(name)` → single-paramSet advertisement, the one-vector-
-///   set-per-session shape per
-///   `feedback_single_algo_per_acvts_session` (must be validated
-///   via [`is_slh_dsa_paramset`] at the CLI layer first).
+///   set-per-session shape (must be validated via
+///   [`is_slh_dsa_paramset`] at the CLI layer first).
 ///
 /// The handler in `super::super::slh_dsa::SlhDsaKeyGenHandler`
 /// dispatches each test group to the corresponding
@@ -1510,7 +1508,7 @@ pub fn slh_dsa_sigver_capability(paramset_filter: Option<&str>) -> JsonValue {
 /// `lmOtsModes` plural, both arrays) is preferred when the IUT
 /// supports a wide cartesian product; for a single registered
 /// pair, `specificCapabilities` is more explicit-intent and
-/// matches `feedback_caps_match_handler_subset` exactly. The two
+/// advertises exactly what the handler serves. The two
 /// forms cannot be advertised together (spec note above Table 4).
 #[allow(clippy::too_many_lines)]
 fn lms_specific_capabilities() -> JsonValue {

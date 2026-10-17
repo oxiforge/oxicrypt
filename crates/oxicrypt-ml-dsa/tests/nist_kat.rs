@@ -19,6 +19,21 @@ use oxicrypt_ml_dsa::{
     PK_LEN, SIG_LEN, SK_LEN, {keygen_internal, sign_internal, verify_internal},
 };
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 // ── Vector helpers ──────────────────────────────────────────────────────────
 
 fn load(name: &str) -> Vec<u8> {
@@ -40,11 +55,12 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
 /// secret key.
 #[test]
 fn nist_keygen_kat() {
+    start_module();
     let xi = load_arr::<32>("mldsa87_nist_keygen_seed.bin");
     let expected_pk = load_arr::<PK_LEN>("mldsa87_nist_keygen_pk.bin");
     let expected_sk = load_arr::<SK_LEN>("mldsa87_nist_keygen_sk.bin");
 
-    let (pk, sk) = keygen_internal(&xi);
+    let (pk, sk) = keygen_internal(&xi).unwrap();
 
     assert_eq!(
         pk, expected_pk,
@@ -65,6 +81,7 @@ fn nist_keygen_kat() {
 /// is SignInternal and receives M' directly.
 #[test]
 fn nist_siggen_kat() {
+    start_module();
     let sk = load_arr::<SK_LEN>("mldsa87_nist_siggen_sk.bin");
     let raw_message = load("mldsa87_nist_siggen_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_nist_siggen_signature.bin");
@@ -91,11 +108,12 @@ fn nist_siggen_kat() {
 /// Second independent test case from the NIST ACVP Server projection.
 #[test]
 fn nist_keygen_kat_2() {
+    start_module();
     let xi = load_arr::<32>("mldsa87_nist_keygen2_seed.bin");
     let expected_pk = load_arr::<PK_LEN>("mldsa87_nist_keygen2_pk.bin");
     let expected_sk = load_arr::<SK_LEN>("mldsa87_nist_keygen2_sk.bin");
 
-    let (pk, sk) = keygen_internal(&xi);
+    let (pk, sk) = keygen_internal(&xi).unwrap();
 
     assert_eq!(
         pk, expected_pk,
@@ -117,6 +135,7 @@ fn nist_keygen_kat_2() {
 /// additional assurance that the signing path is fully correct.
 #[test]
 fn nist_siggen_kat_2() {
+    start_module();
     let sk = load_arr::<SK_LEN>("mldsa87_nist_siggen2_sk.bin");
     let m_prime = load("mldsa87_nist_siggen2_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("mldsa87_nist_siggen2_signature.bin");
@@ -136,8 +155,9 @@ fn nist_siggen_kat_2() {
 /// through verify_internal.
 #[test]
 fn nist_keygen_roundtrip() {
+    start_module();
     let xi = load_arr::<32>("mldsa87_nist_keygen_seed.bin");
-    let (pk, sk) = keygen_internal(&xi);
+    let (pk, sk) = keygen_internal(&xi).unwrap();
 
     // Message is arbitrary — this test exercises the keygen output path
     // not an ACVP sigGen vector.
@@ -150,7 +170,7 @@ fn nist_keygen_roundtrip() {
     let sig = sign_internal(&sk, &m_prime).expect("sign_internal failed on NIST-keygen key");
 
     assert!(
-        verify_internal(&pk, &m_prime, &sig),
+        verify_internal(&pk, &m_prime, &sig).unwrap(),
         "ML-DSA-87: verify_internal rejected valid signature from NIST-keygen key"
     );
 }

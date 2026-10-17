@@ -54,10 +54,9 @@
 //! | `fors_sign`, `fors_pk_from_sig` | `pub(crate)` | FORS (FIPS 205 §8) |
 //! | `xmss_node` | `pub(crate)` | XMSS subtree (FIPS 205 §6.1) |
 //! | `keygen`, `sign`, `verify` | `pub` | Module-gated: `sign`/`verify` per FIPS 205 §10.2/§10.3, `keygen` per §9.1 |
-//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | Gate-free §9.1–§9.3 mirrors for CAVP/ACVP |
-//! | `KATS`, `self_test` | `pub`, private | Power-up self-test |
+//! | `keygen_internal`, `sign_internal`, `verify_internal` | `pub` (hidden) | §9.1–§9.3 mirrors without the operational gate, for CAVP/ACVP |
 //!
-//! # Architectural note (CMVP gem candidate)
+//! # Architectural note
 //!
 //! The macro is the **single source of truth for every parameter-set
 //! divergence** in SLH-DSA. There is no parallel hand-written
@@ -65,7 +64,7 @@
 //! the WOTS+ chain, the FORS leaf/auth-path tree-hash, the XMSS
 //! tree-hash, and the hyper-tree layered signing is generated from
 //! one macro body. The optional `parallel` feature (default OFF, see
-//! the crate-root header and security policy R77) also lives entirely
+//! the crate-root header) also lives entirely
 //! in this macro body: the WOTS+ chain sweep (`wots_pkgen` /
 //! `wots_sign`) and the per-FORS-tree sweep (`fors_sign`) carry a
 //! `#[cfg(not(feature = "parallel"))]` sequential form and a
@@ -79,12 +78,11 @@
 //! instantiating variant in lock-step, and the only way to introduce
 //! a per-variant divergence is to add a conditional branch on a macro
 //! parameter inside the macro body — visible at the single audit
-//! site. The intra-macro branches that emerge later (hash family
-//! `sha2` vs `shake` in Batch 3; `n = 16` vs `n ∈ {24, 32}` SHA-2
-//! sub-variants in Batch 2) are evaluated at instantiation time so
-//! each variant monomorphises to one path.
+//! site. The intra-macro branches (hash family `sha2` vs `shake`;
+//! `n = 16` vs `n ∈ {24, 32}` SHA-2 sub-variants) are evaluated at
+//! instantiation time so each variant monomorphises to one path.
 //!
-//! # Current scope (Batch 3 of 8)
+//! # Hash families
 //!
 //! The macro body emits both FIPS 205 hash families: SHA-2 (across all
 //! `n ∈ {16, 24, 32}`) and SHAKE (across the same `n` set).
@@ -218,31 +216,41 @@ pub(crate) use __emit_adrs_compress;
 macro_rules! __emit_f {
     (sha2) => {
         /// `F(PK.seed, ADRS, M₁)` — FIPS 205 §11.2 (SHA-2 instantiation).
-        pub(crate) fn f(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N]) -> [u8; N] {
+        pub(crate) fn f(
+            pk_seed: &[u8; N],
+            adrs: &Adrs,
+            m1: &[u8; N],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut hasher = Sha256::new_internal();
+            let mut hasher = Sha256::new_with(started);
             hasher.update(pk_seed);
             hasher.update(&[0u8; PAD256]);
             hasher.update(&adrsc);
             hasher.update(m1);
-            let full = hasher.finalize();
+            let full = hasher.finalize_with(started);
             let mut out = [0u8; N];
             out.copy_from_slice(&full[..N]);
-            out
+            Ok(out)
         }
     };
     (shake) => {
         /// `F(PK.seed, ADRS, M₁)` — FIPS 205 §11.1 (SHAKE-256 instantiation).
-        pub(crate) fn f(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N]) -> [u8; N] {
+        pub(crate) fn f(
+            pk_seed: &[u8; N],
+            adrs: &Adrs,
+            m1: &[u8; N],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut x = Shake256::new_internal();
+            let mut x = Shake256::new_with(started);
             x.update(pk_seed);
             x.update(&adrsc);
             x.update(m1);
             x.finalize();
             let mut out = [0u8; N];
-            x.squeeze(&mut out);
-            out
+            x.squeeze_with(started, &mut out);
+            Ok(out)
         }
     };
 }
@@ -256,33 +264,45 @@ macro_rules! __emit_h {
     (sha2) => {
         /// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §11.2
         /// (SHA-256 at n=16, SHA-512 truncated at n∈{24,32}).
-        pub(crate) fn h(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N], m2: &[u8; N]) -> [u8; N] {
+        pub(crate) fn h(
+            pk_seed: &[u8; N],
+            adrs: &Adrs,
+            m1: &[u8; N],
+            m2: &[u8; N],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut hasher = ShaLong::new_internal();
+            let mut hasher = ShaLong::new_with(started);
             hasher.update(pk_seed);
             hasher.update(&[0u8; LONG_PAD]);
             hasher.update(&adrsc);
             hasher.update(m1);
             hasher.update(m2);
-            let full = hasher.finalize();
+            let full = hasher.finalize_with(started);
             let mut out = [0u8; N];
             out.copy_from_slice(&full[..N]);
-            out
+            Ok(out)
         }
     };
     (shake) => {
         /// `H(PK.seed, ADRS, M₁, M₂)` — FIPS 205 §11.1 (SHAKE-256 instantiation).
-        pub(crate) fn h(pk_seed: &[u8; N], adrs: &Adrs, m1: &[u8; N], m2: &[u8; N]) -> [u8; N] {
+        pub(crate) fn h(
+            pk_seed: &[u8; N],
+            adrs: &Adrs,
+            m1: &[u8; N],
+            m2: &[u8; N],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut x = Shake256::new_internal();
+            let mut x = Shake256::new_with(started);
             x.update(pk_seed);
             x.update(&adrsc);
             x.update(m1);
             x.update(m2);
             x.finalize();
             let mut out = [0u8; N];
-            x.squeeze(&mut out);
-            out
+            x.squeeze_with(started, &mut out);
+            Ok(out)
         }
     };
 }
@@ -298,31 +318,41 @@ macro_rules! __emit_t {
     (sha2) => {
         /// `T_l(PK.seed, ADRS, M)` — FIPS 205 §11.2
         /// (SHA-256 at n=16, SHA-512 truncated at n∈{24,32}).
-        pub(crate) fn t(pk_seed: &[u8; N], adrs: &Adrs, m: &[u8]) -> [u8; N] {
+        pub(crate) fn t(
+            pk_seed: &[u8; N],
+            adrs: &Adrs,
+            m: &[u8],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut hasher = ShaLong::new_internal();
+            let mut hasher = ShaLong::new_with(started);
             hasher.update(pk_seed);
             hasher.update(&[0u8; LONG_PAD]);
             hasher.update(&adrsc);
             hasher.update(m);
-            let full = hasher.finalize();
+            let full = hasher.finalize_with(started);
             let mut out = [0u8; N];
             out.copy_from_slice(&full[..N]);
-            out
+            Ok(out)
         }
     };
     (shake) => {
         /// `T_l(PK.seed, ADRS, M)` — FIPS 205 §11.1 (SHAKE-256 instantiation).
-        pub(crate) fn t(pk_seed: &[u8; N], adrs: &Adrs, m: &[u8]) -> [u8; N] {
+        pub(crate) fn t(
+            pk_seed: &[u8; N],
+            adrs: &Adrs,
+            m: &[u8],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut x = Shake256::new_internal();
+            let mut x = Shake256::new_with(started);
             x.update(pk_seed);
             x.update(&adrsc);
             x.update(m);
             x.finalize();
             let mut out = [0u8; N];
-            x.squeeze(&mut out);
-            out
+            x.squeeze_with(started, &mut out);
+            Ok(out)
         }
     };
 }
@@ -335,32 +365,42 @@ pub(crate) use __emit_t;
 macro_rules! __emit_prf {
     (sha2) => {
         /// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §11.2.
-        pub(crate) fn prf(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
+        pub(crate) fn prf(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut hasher = Sha256::new_internal();
+            let mut hasher = Sha256::new_with(started);
             hasher.update(pk_seed);
             hasher.update(&[0u8; PAD256]);
             hasher.update(&adrsc);
             hasher.update(sk_seed);
-            let full = hasher.finalize();
+            let full = hasher.finalize_with(started);
             let mut out = [0u8; N];
             out.copy_from_slice(&full[..N]);
-            out
+            Ok(out)
         }
     };
     (shake) => {
         /// `PRF(PK.seed, SK.seed, ADRS)` — FIPS 205 §11.1
         /// (SHAKE-256 instantiation; input order `PK.seed ‖ ADRS ‖ SK.seed`).
-        pub(crate) fn prf(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
+        pub(crate) fn prf(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let adrsc = adrs.compress();
-            let mut x = Shake256::new_internal();
+            let mut x = Shake256::new_with(started);
             x.update(pk_seed);
             x.update(&adrsc);
             x.update(sk_seed);
             x.finalize();
             let mut out = [0u8; N];
-            x.squeeze(&mut out);
-            out
+            x.squeeze_with(started, &mut out);
+            Ok(out)
         }
     };
 }
@@ -383,7 +423,7 @@ macro_rules! __emit_prf_msg {
             opt_rand: &[u8; N],
             m_prefix: &[u8],
             msg: &[u8],
-        ) -> [u8; N] {
+        ) -> Result<[u8; N], Error> {
             const IPAD: u8 = 0x36;
             const OPAD: u8 = 0x5c;
 
@@ -398,21 +438,21 @@ macro_rules! __emit_prf_msg {
                 opad_key[i] = OPAD;
             }
 
-            let mut inner = ShaLong::new_internal();
+            let mut inner = ShaLong::new_internal()?;
             inner.update(&ipad_key);
             inner.update(opt_rand);
             inner.update(m_prefix);
             inner.update(msg);
-            let inner_hash = inner.finalize();
+            let inner_hash = inner.finalize()?;
 
-            let mut outer = ShaLong::new_internal();
+            let mut outer = ShaLong::new_internal()?;
             outer.update(&opad_key);
             outer.update(&inner_hash);
-            let full = outer.finalize();
+            let full = outer.finalize()?;
 
             let mut out = [0u8; N];
             out.copy_from_slice(&full[..N]);
-            out
+            Ok(out)
         }
     };
     (shake) => {
@@ -423,16 +463,16 @@ macro_rules! __emit_prf_msg {
             opt_rand: &[u8; N],
             m_prefix: &[u8],
             msg: &[u8],
-        ) -> [u8; N] {
-            let mut x = Shake256::new_internal();
+        ) -> Result<[u8; N], Error> {
+            let mut x = Shake256::new_internal()?;
             x.update(sk_prf);
             x.update(opt_rand);
             x.update(m_prefix);
             x.update(msg);
             x.finalize();
             let mut out = [0u8; N];
-            x.squeeze(&mut out);
-            out
+            x.squeeze(&mut out)?;
+            Ok(out)
         }
     };
 }
@@ -470,7 +510,7 @@ macro_rules! __emit_h_msg {
             pk_root: &[u8; N],
             m_prefix: &[u8],
             msg: &[u8],
-        ) -> HMsgOutput {
+        ) -> Result<HMsgOutput, Error> {
             const FORS_DIGEST_BYTES: usize = (K * A + 7) / 8;
             const TREE_BYTES: usize = (H - H_PRIME + 7) / 8;
             // FIPS 205 §11.2: m = ⌈k·a/8⌉ + ⌈(h-h')/8⌉ + ⌈h'/8⌉.
@@ -479,19 +519,17 @@ macro_rules! __emit_h_msg {
             // 256s) this is 1 byte; for H_PRIME = 9 (128s and 192s) this
             // is 2 bytes. A prior hardcoded `+ 1` produced wrong leaf-idx
             // for 128s/192s because the high bit of `leaf_idx` was
-            // truncated before masking. Surfaced 2026-05-16 in B7 ACVTS
-            // session 730838 (SLH-DSA-SHA2-128s sigGen graded `Incorrect
-            // signature`); see CMVP gem in security-policy.md.
+            // truncated before masking.
             const LEAF_BYTES: usize = (H_PRIME + 7) / 8;
             const REQUIRED_BYTES: usize = FORS_DIGEST_BYTES + TREE_BYTES + LEAF_BYTES;
 
-            let mut h_inner = ShaLong::new_internal();
+            let mut h_inner = ShaLong::new_internal()?;
             h_inner.update(r);
             h_inner.update(pk_seed);
             h_inner.update(pk_root);
             h_inner.update(m_prefix);
             h_inner.update(msg);
-            let seed_inner = h_inner.finalize();
+            let seed_inner = h_inner.finalize()?;
 
             // Buffer dimensioned for any FIPS 205 parameter set: max
             // REQUIRED_BYTES across all variants is well under 64.
@@ -499,12 +537,12 @@ macro_rules! __emit_h_msg {
             let mut counter: u32 = 0;
             let mut offset: usize = 0;
             while offset < REQUIRED_BYTES {
-                let mut mgf = ShaLong::new_internal();
+                let mut mgf = ShaLong::new_internal()?;
                 mgf.update(r);
                 mgf.update(pk_seed);
                 mgf.update(&seed_inner);
                 mgf.update(&counter.to_be_bytes());
-                let block = mgf.finalize();
+                let block = mgf.finalize()?;
                 let remaining = REQUIRED_BYTES - offset;
                 let take = if remaining < LONG_OUT {
                     remaining
@@ -543,11 +581,11 @@ macro_rules! __emit_h_msg {
             let leaf_mask = (1u32 << H_PRIME) - 1;
             let leaf_idx = leaf_raw & leaf_mask;
 
-            HMsgOutput {
+            Ok(HMsgOutput {
                 md,
                 tree_idx,
                 leaf_idx,
-            }
+            })
         }
     };
     (shake) => {
@@ -571,7 +609,7 @@ macro_rules! __emit_h_msg {
             pk_root: &[u8; N],
             m_prefix: &[u8],
             msg: &[u8],
-        ) -> HMsgOutput {
+        ) -> Result<HMsgOutput, Error> {
             const FORS_DIGEST_BYTES: usize = (K * A + 7) / 8;
             const TREE_BYTES: usize = (H - H_PRIME + 7) / 8;
             // FIPS 205 §11.1: m = ⌈k·a/8⌉ + ⌈(h-h')/8⌉ + ⌈h'/8⌉.
@@ -579,7 +617,7 @@ macro_rules! __emit_h_msg {
             const LEAF_BYTES: usize = (H_PRIME + 7) / 8;
             const REQUIRED_BYTES: usize = FORS_DIGEST_BYTES + TREE_BYTES + LEAF_BYTES;
 
-            let mut x = Shake256::new_internal();
+            let mut x = Shake256::new_internal()?;
             x.update(r);
             x.update(pk_seed);
             x.update(pk_root);
@@ -590,7 +628,7 @@ macro_rules! __emit_h_msg {
             // Buffer dimensioned for any FIPS 205 parameter set: max
             // REQUIRED_BYTES across all variants is well under 64.
             let mut expanded = [0u8; 64];
-            x.squeeze(&mut expanded[..REQUIRED_BYTES]);
+            x.squeeze(&mut expanded[..REQUIRED_BYTES])?;
 
             let mut md = [0u8; 64];
             md[64 - FORS_DIGEST_BYTES..].copy_from_slice(&expanded[..FORS_DIGEST_BYTES]);
@@ -616,11 +654,11 @@ macro_rules! __emit_h_msg {
             let leaf_mask = (1u32 << H_PRIME) - 1;
             let leaf_idx = leaf_raw & leaf_mask;
 
-            HMsgOutput {
+            Ok(HMsgOutput {
                 md,
                 tree_idx,
                 leaf_idx,
-            }
+            })
         }
     };
 }
@@ -638,11 +676,8 @@ macro_rules! slh_dsa_impl {
         svc_keygen = $svc_keygen:expr;
         svc_sign = $svc_sign:expr;
         svc_verify = $svc_verify:expr;
-        kat_seed_offset = $kat_seed_offset:expr;
-        kat_msg = $kat_msg:expr;
-        kat_name = $kat_name:expr;
     ) => {
-        use oxicrypt_module::{Error, KatEntry, Service};
+        use oxicrypt_module::{Error, SelfTestStarted, Service};
         crate::slh_dsa_impl::__hash_family_setup!($hash_family, $n);
 
         // ── Parameter constants (FIPS 205 §11 Table 2) ──────────────────
@@ -678,7 +713,7 @@ macro_rules! slh_dsa_impl {
 
         /// WOTS+ chain count for checksum digits. For `LG_W = 4` (the
         /// only value used by FIPS 205 variants) this is 3 across all
-        /// parameter sets. Generalises in Batch 2+ if `lg_w` ever varies.
+        /// parameter sets.
         pub const LEN2: usize = 3;
 
         /// Total WOTS+ chain count.
@@ -861,15 +896,15 @@ macro_rules! slh_dsa_impl {
             adrs: &mut Adrs,
             x: &[u8; N],
             start: u32,
-            steps: u32,
-        ) -> [u8; N] {
+            steps: u32, started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             debug_assert!(start + steps <= W as u32);
             let mut tmp = *x;
             for j in start..start + steps {
                 adrs.set_hash_address(j);
-                tmp = f(pk_seed, adrs, &tmp);
+                tmp = f(pk_seed, adrs, &tmp, started)?;
             }
-            tmp
+            Ok(tmp)
         }
 
         fn base_w_with_checksum(m: &[u8; N]) -> [u8; LEN] {
@@ -902,43 +937,61 @@ macro_rules! slh_dsa_impl {
         /// function of `(pk_seed, sk_seed, adrs, i)` with no cross-chain
         /// state. The two `wots_pkgen` loop forms below (sequential and
         /// `parallel`) both call this, so they are byte-identical by
-        /// construction (R77): `i` selects the chain address, the chain
+        /// construction: `i` selects the chain address, the chain
         /// value depends only on `i` and the immutable inputs, and each
         /// result is written to the disjoint `tmp[i·N..(i+1)·N]` slot.
-        fn wots_pk_chain(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs, i: usize) -> [u8; N] {
+        fn wots_pk_chain(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            i: usize,
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let mut sk_adrs = *adrs;
             sk_adrs.set_type(AdrsType::WotsPrf);
             sk_adrs.set_keypair_address(adrs.keypair_address());
             sk_adrs.set_chain_address(i as u32);
-            let sk_i = prf(pk_seed, sk_seed, &sk_adrs);
+            let sk_i = prf(pk_seed, sk_seed, &sk_adrs, started)?;
             let mut chain_adrs = *adrs;
             chain_adrs.set_type(AdrsType::WotsHash);
             chain_adrs.set_keypair_address(adrs.keypair_address());
             chain_adrs.set_chain_address(i as u32);
-            chain(pk_seed, &mut chain_adrs, &sk_i, 0, (W - 1) as u32)
+            chain(pk_seed, &mut chain_adrs, &sk_i, 0, (W - 1) as u32, started)
         }
 
-        pub(crate) fn wots_pkgen(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
+        pub(crate) fn wots_pkgen(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let mut tmp = [0u8; LEN * N];
             // Chain sweep: each chain `i` is `wots_pk_chain(.., i)`, a
             // pure function of `i` and the immutable `(pk_seed, sk_seed,
             // adrs)`, written to its own disjoint `N`-byte slot. The two
-            // builds are byte-identical by construction (R77): the
+            // builds are byte-identical by construction: the
             // parallel form is an indexed disjoint-slice
             // `par_chunks_mut().enumerate()`, recombined by index, never
             // by completion order or thread count.
             #[cfg(not(feature = "parallel"))]
             for i in 0..LEN {
-                let pk_i = wots_pk_chain(pk_seed, sk_seed, adrs, i);
+                let pk_i = wots_pk_chain(pk_seed, sk_seed, adrs, i, started)?;
                 tmp[i * N..(i + 1) * N].copy_from_slice(&pk_i);
             }
             #[cfg(feature = "parallel")]
             {
                 use ::rayon::iter::{IndexedParallelIterator, ParallelIterator};
                 use ::rayon::slice::ParallelSliceMut;
-                tmp.par_chunks_mut(N).enumerate().for_each(|(i, slot)| {
-                    slot.copy_from_slice(&wots_pk_chain(pk_seed, sk_seed, adrs, i));
-                });
+                crate::sweep::run(|| {
+                    tmp.par_chunks_mut(N).enumerate().try_for_each(
+                        |(i, slot)| -> Result<(), Error> {
+                            slot.copy_from_slice(&wots_pk_chain(
+                                pk_seed, sk_seed, adrs, i, started,
+                            )?);
+                            Ok(())
+                        },
+                    )
+                })??;
             }
             // Compression `t(..)` reads the fully-assembled `tmp` after
             // the sweep — intentionally sequential, out of scope for
@@ -946,7 +999,7 @@ macro_rules! slh_dsa_impl {
             let mut pk_adrs = *adrs;
             pk_adrs.set_type(AdrsType::WotsPk);
             pk_adrs.set_keypair_address(adrs.keypair_address());
-            t(pk_seed, &pk_adrs, &tmp)
+            t(pk_seed, &pk_adrs, &tmp, started)
         }
 
         /// Compute the `i`-th WOTS+ signature chain value — a pure
@@ -954,62 +1007,68 @@ macro_rules! slh_dsa_impl {
         /// cross-chain state. `msg` is the per-message base-`w` digit
         /// vector (a function of `m` alone), so `msg[i]` is an immutable
         /// per-index input. The two `wots_sign` loop forms below both
-        /// call this and are therefore byte-identical by construction
-        /// (R77).
+        /// call this and are therefore byte-identical by construction.
         fn wots_sign_chain(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
             adrs: &Adrs,
             msg_i: u8,
-            i: usize,
-        ) -> [u8; N] {
+            i: usize, started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let mut sk_adrs = *adrs;
             sk_adrs.set_type(AdrsType::WotsPrf);
             sk_adrs.set_keypair_address(adrs.keypair_address());
             sk_adrs.set_chain_address(i as u32);
-            let sk_i = prf(pk_seed, sk_seed, &sk_adrs);
+            let sk_i = prf(pk_seed, sk_seed, &sk_adrs, started)?;
             let mut chain_adrs = *adrs;
             chain_adrs.set_type(AdrsType::WotsHash);
             chain_adrs.set_keypair_address(adrs.keypair_address());
             chain_adrs.set_chain_address(i as u32);
-            chain(pk_seed, &mut chain_adrs, &sk_i, 0, u32::from(msg_i))
+            chain(pk_seed, &mut chain_adrs, &sk_i, 0, u32::from(msg_i), started)
         }
 
         pub(crate) fn wots_sign(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
             adrs: &Adrs,
-            m: &[u8; N],
-        ) -> [u8; WOTS_SIG_LEN] {
+            m: &[u8; N], started: &SelfTestStarted,
+        ) -> Result<[u8; WOTS_SIG_LEN], Error> {
             let msg = base_w_with_checksum(m);
             let mut sig = [0u8; WOTS_SIG_LEN];
             // Chain sweep: each chain `i` is `wots_sign_chain(.., msg[i],
             // i)`, a pure function of `i`, `msg[i]`, and the immutable
             // `(pk_seed, sk_seed, adrs)`, written to its own disjoint
             // `N`-byte slot. Byte-identical across both builds by
-            // construction (R77).
+            // construction.
             #[cfg(not(feature = "parallel"))]
             for i in 0..LEN {
-                let sig_i = wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i);
+                let sig_i = wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i, started)?;
                 sig[i * N..(i + 1) * N].copy_from_slice(&sig_i);
             }
             #[cfg(feature = "parallel")]
             {
                 use ::rayon::iter::{IndexedParallelIterator, ParallelIterator};
                 use ::rayon::slice::ParallelSliceMut;
-                sig.par_chunks_mut(N).enumerate().for_each(|(i, slot)| {
-                    slot.copy_from_slice(&wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i));
-                });
+                crate::sweep::run(|| {
+                    sig.par_chunks_mut(N).enumerate().try_for_each(
+                        |(i, slot)| -> Result<(), Error> {
+                            slot.copy_from_slice(&wots_sign_chain(
+                                pk_seed, sk_seed, adrs, msg[i], i, started,
+                            )?);
+                            Ok(())
+                        },
+                    )
+                })??;
             }
-            sig
+            Ok(sig)
         }
 
         pub(crate) fn wots_pk_from_sig(
             pk_seed: &[u8; N],
             adrs: &Adrs,
             sig: &[u8],
-            m: &[u8; N],
-        ) -> [u8; N] {
+            m: &[u8; N], started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let msg = base_w_with_checksum(m);
             let mut tmp = [0u8; LEN * N];
             let mut chain_adrs = *adrs;
@@ -1020,23 +1079,36 @@ macro_rules! slh_dsa_impl {
                 let mut sig_i = [0u8; N];
                 sig_i.copy_from_slice(&sig[i * N..(i + 1) * N]);
                 let steps = (W as u32) - 1 - u32::from(msg[i]);
-                let pk_i = chain(pk_seed, &mut chain_adrs, &sig_i, u32::from(msg[i]), steps);
+                let pk_i = chain(
+                    pk_seed,
+                    &mut chain_adrs,
+                    &sig_i,
+                    u32::from(msg[i]),
+                    steps,
+                    started,
+                )?;
                 tmp[i * N..(i + 1) * N].copy_from_slice(&pk_i);
             }
             let mut pk_adrs = *adrs;
             pk_adrs.set_type(AdrsType::WotsPk);
             pk_adrs.set_keypair_address(adrs.keypair_address());
-            t(pk_seed, &pk_adrs, &tmp)
+            t(pk_seed, &pk_adrs, &tmp, started)
         }
 
         // ── FORS (FIPS 205 §8) ──────────────────────────────────────────
 
-        fn fors_sk_gen(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs, idx: u32) -> [u8; N] {
+        fn fors_sk_gen(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            idx: u32,
+            started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let mut sk_adrs = *adrs;
             sk_adrs.set_type(AdrsType::ForsPrf);
             sk_adrs.set_keypair_address(adrs.keypair_address());
             sk_adrs.set_tree_index(idx);
-            prf(pk_seed, sk_seed, &sk_adrs)
+            prf(pk_seed, sk_seed, &sk_adrs, started)
         }
 
         fn fors_node(
@@ -1045,16 +1117,16 @@ macro_rules! slh_dsa_impl {
             node_idx: u32,
             node_height: u32,
             adrs: &Adrs,
-            tree_base: u32,
-        ) -> [u8; N] {
+            tree_base: u32, started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             if node_height == 0 {
-                let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + node_idx);
+                let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + node_idx, started)?;
                 let mut leaf_adrs = *adrs;
                 leaf_adrs.set_type(AdrsType::ForsTree);
                 leaf_adrs.set_keypair_address(adrs.keypair_address());
                 leaf_adrs.set_tree_height(0);
                 leaf_adrs.set_tree_index(tree_base + node_idx);
-                return f(pk_seed, &leaf_adrs, &sk);
+                return f(pk_seed, &leaf_adrs, &sk, started);
             }
             let left = fors_node(
                 pk_seed,
@@ -1062,22 +1134,22 @@ macro_rules! slh_dsa_impl {
                 2 * node_idx,
                 node_height - 1,
                 adrs,
-                tree_base,
-            );
+                tree_base, started,
+            )?;
             let right = fors_node(
                 pk_seed,
                 sk_seed,
                 2 * node_idx + 1,
                 node_height - 1,
                 adrs,
-                tree_base,
-            );
+                tree_base, started,
+            )?;
             let mut node_adrs = *adrs;
             node_adrs.set_type(AdrsType::ForsTree);
             node_adrs.set_keypair_address(adrs.keypair_address());
             node_adrs.set_tree_height(node_height);
             node_adrs.set_tree_index(tree_base / (1 << node_height) + node_idx);
-            h(pk_seed, &node_adrs, &left, &right)
+            h(pk_seed, &node_adrs, &left, &right, started)
         }
 
         /// Fill the `(1 + A)·N`-byte FORS signature entry for tree `i`
@@ -1087,33 +1159,42 @@ macro_rules! slh_dsa_impl {
         /// index (`fors_index(md, i)`) and its own `tree_base = i·2^A`,
         /// never another tree's slot or state. The two `fors_sign` loop
         /// forms below both call this, so they are byte-identical by
-        /// construction (R77). `entry.len()` is always `(1 + A)·N`.
+        /// construction. `entry.len()` is always `(1 + A)·N`.
         fn fors_entry(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
             md: &[u8; 64],
             adrs: &Adrs,
             i: usize,
-            entry: &mut [u8],
-        ) {
+            entry: &mut [u8], started: &SelfTestStarted,
+        ) -> Result<(), Error> {
             let idx = fors_index(md, i);
             let tree_base = (i as u32) * (1 << A);
-            let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + idx);
+            let sk = fors_sk_gen(pk_seed, sk_seed, adrs, tree_base + idx, started)?;
             entry[..N].copy_from_slice(&sk);
             for j in 0..A {
                 let sibling = (idx >> j) ^ 1;
-                let node = fors_node(pk_seed, sk_seed, sibling, j as u32, adrs, tree_base);
+                let node = fors_node(
+                    pk_seed,
+                    sk_seed,
+                    sibling,
+                    j as u32,
+                    adrs,
+                    tree_base,
+                    started,
+                )?;
                 let auth_offset = N + j * N;
                 entry[auth_offset..auth_offset + N].copy_from_slice(&node);
             }
+            Ok(())
         }
 
         pub(crate) fn fors_sign(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
             md: &[u8; 64],
-            adrs: &Adrs,
-        ) -> [u8; FORS_SIG_LEN] {
+            adrs: &Adrs, started: &SelfTestStarted,
+        ) -> Result<[u8; FORS_SIG_LEN], Error> {
             let mut sig = [0u8; FORS_SIG_LEN];
             let entry_size = (1 + A) * N;
             // Per-tree sweep: each FORS tree `i` fills its own disjoint
@@ -1123,7 +1204,7 @@ macro_rules! slh_dsa_impl {
             // genuine child→parent dependency and stays sequential
             // within the tree; only the K independent trees are
             // parallelized. Byte-identical across both builds by
-            // construction (R77).
+            // construction.
             #[cfg(not(feature = "parallel"))]
             for i in 0..K {
                 let sig_offset = i * entry_size;
@@ -1133,28 +1214,30 @@ macro_rules! slh_dsa_impl {
                     md,
                     adrs,
                     i,
-                    &mut sig[sig_offset..sig_offset + entry_size],
-                );
+                    &mut sig[sig_offset..sig_offset + entry_size], started,
+                )?;
             }
             #[cfg(feature = "parallel")]
             {
                 use ::rayon::iter::{IndexedParallelIterator, ParallelIterator};
                 use ::rayon::slice::ParallelSliceMut;
-                sig.par_chunks_mut(entry_size)
-                    .enumerate()
-                    .for_each(|(i, entry)| {
-                        fors_entry(pk_seed, sk_seed, md, adrs, i, entry);
-                    });
+                crate::sweep::run(|| {
+                    sig.par_chunks_mut(entry_size)
+                        .enumerate()
+                        .try_for_each(|(i, entry)| {
+                            fors_entry(pk_seed, sk_seed, md, adrs, i, entry, started)
+                        })
+                })??;
             }
-            sig
+            Ok(sig)
         }
 
         pub(crate) fn fors_pk_from_sig(
             pk_seed: &[u8; N],
             md: &[u8; 64],
             sig: &[u8],
-            adrs: &Adrs,
-        ) -> [u8; N] {
+            adrs: &Adrs, started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let entry_size = (1 + A) * N;
             let mut roots = [0u8; K * N];
             for i in 0..K {
@@ -1168,7 +1251,7 @@ macro_rules! slh_dsa_impl {
                 leaf_adrs.set_keypair_address(adrs.keypair_address());
                 leaf_adrs.set_tree_height(0);
                 leaf_adrs.set_tree_index(tree_base + idx);
-                let mut node = f(pk_seed, &leaf_adrs, &sk);
+                let mut node = f(pk_seed, &leaf_adrs, &sk, started)?;
                 for j in 0..A {
                     let auth_offset = sig_offset + N + j * N;
                     let mut auth = [0u8; N];
@@ -1179,10 +1262,10 @@ macro_rules! slh_dsa_impl {
                     tree_adrs.set_tree_height((j + 1) as u32);
                     if (idx >> j) & 1 == 0 {
                         tree_adrs.set_tree_index(tree_base / (1 << (j + 1)) + (idx >> (j + 1)));
-                        node = h(pk_seed, &tree_adrs, &node, &auth);
+                        node = h(pk_seed, &tree_adrs, &node, &auth, started)?;
                     } else {
                         tree_adrs.set_tree_index(tree_base / (1 << (j + 1)) + (idx >> (j + 1)));
-                        node = h(pk_seed, &tree_adrs, &auth, &node);
+                        node = h(pk_seed, &tree_adrs, &auth, &node, started)?;
                     }
                 }
                 roots[i * N..(i + 1) * N].copy_from_slice(&node);
@@ -1190,7 +1273,7 @@ macro_rules! slh_dsa_impl {
             let mut pk_adrs = *adrs;
             pk_adrs.set_type(AdrsType::ForsRoots);
             pk_adrs.set_keypair_address(adrs.keypair_address());
-            t(pk_seed, &pk_adrs, &roots)
+            t(pk_seed, &pk_adrs, &roots, started)
         }
 
         // ── XMSS (FIPS 205 §6.1) ────────────────────────────────────────
@@ -1200,28 +1283,35 @@ macro_rules! slh_dsa_impl {
             sk_seed: &[u8; N],
             target_idx: u32,
             target_height: u32,
-            adrs: &Adrs,
-        ) -> [u8; N] {
+            adrs: &Adrs, started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             debug_assert!(target_height <= H_PRIME as u32);
             if target_height == 0 {
                 let mut leaf_adrs = *adrs;
                 leaf_adrs.set_type(AdrsType::WotsHash);
                 leaf_adrs.set_keypair_address(target_idx);
-                return wots_pkgen(pk_seed, sk_seed, &leaf_adrs);
+                return wots_pkgen(pk_seed, sk_seed, &leaf_adrs, started);
             }
-            let left = xmss_node(pk_seed, sk_seed, 2 * target_idx, target_height - 1, adrs);
+            let left = xmss_node(
+                pk_seed,
+                sk_seed,
+                2 * target_idx,
+                target_height - 1,
+                adrs,
+                started,
+            )?;
             let right = xmss_node(
                 pk_seed,
                 sk_seed,
                 2 * target_idx + 1,
                 target_height - 1,
-                adrs,
-            );
+                adrs, started,
+            )?;
             let mut node_adrs = *adrs;
             node_adrs.set_type(AdrsType::Tree);
             node_adrs.set_tree_height(target_height);
             node_adrs.set_tree_index(target_idx);
-            h(pk_seed, &node_adrs, &left, &right)
+            h(pk_seed, &node_adrs, &left, &right, started)
         }
 
         fn xmss_sign(
@@ -1229,21 +1319,21 @@ macro_rules! slh_dsa_impl {
             sk_seed: &[u8; N],
             idx: u32,
             m: &[u8; N],
-            adrs: &Adrs,
-        ) -> [u8; XMSS_SIG_LEN] {
+            adrs: &Adrs, started: &SelfTestStarted,
+        ) -> Result<[u8; XMSS_SIG_LEN], Error> {
             let mut sig = [0u8; XMSS_SIG_LEN];
             let mut wots_adrs = *adrs;
             wots_adrs.set_type(AdrsType::WotsHash);
             wots_adrs.set_keypair_address(idx);
-            let wots_sig = wots_sign(pk_seed, sk_seed, &wots_adrs, m);
+            let wots_sig = wots_sign(pk_seed, sk_seed, &wots_adrs, m, started)?;
             sig[..WOTS_SIG_LEN].copy_from_slice(&wots_sig);
             for j in 0..H_PRIME {
                 let sibling_idx = (idx >> j) ^ 1;
-                let node = xmss_node(pk_seed, sk_seed, sibling_idx, j as u32, adrs);
+                let node = xmss_node(pk_seed, sk_seed, sibling_idx, j as u32, adrs, started)?;
                 let offset = WOTS_SIG_LEN + j * N;
                 sig[offset..offset + N].copy_from_slice(&node);
             }
-            sig
+            Ok(sig)
         }
 
         fn xmss_pk_from_sig(
@@ -1251,13 +1341,13 @@ macro_rules! slh_dsa_impl {
             idx: u32,
             sig: &[u8],
             m: &[u8; N],
-            adrs: &Adrs,
-        ) -> [u8; N] {
+            adrs: &Adrs, started: &SelfTestStarted,
+        ) -> Result<[u8; N], Error> {
             let wots_sig = &sig[..WOTS_SIG_LEN];
             let mut wots_adrs = *adrs;
             wots_adrs.set_type(AdrsType::WotsHash);
             wots_adrs.set_keypair_address(idx);
-            let mut node = wots_pk_from_sig(pk_seed, &wots_adrs, wots_sig, m);
+            let mut node = wots_pk_from_sig(pk_seed, &wots_adrs, wots_sig, m, started)?;
             let mut tree_adrs = *adrs;
             tree_adrs.set_type(AdrsType::Tree);
             tree_adrs.set_tree_index(idx);
@@ -1268,13 +1358,13 @@ macro_rules! slh_dsa_impl {
                 tree_adrs.set_tree_height((j + 1) as u32);
                 if (idx >> j) & 1 == 0 {
                     tree_adrs.set_tree_index((idx >> (j + 1)) as u32);
-                    node = h(pk_seed, &tree_adrs, &node, &auth_node);
+                    node = h(pk_seed, &tree_adrs, &node, &auth_node, started)?;
                 } else {
                     tree_adrs.set_tree_index((idx >> (j + 1)) as u32);
-                    node = h(pk_seed, &tree_adrs, &auth_node, &node);
+                    node = h(pk_seed, &tree_adrs, &auth_node, &node, started)?;
                 }
             }
-            node
+            Ok(node)
         }
 
         // ── Hyper-tree (FIPS 205 §6.2) ──────────────────────────────────
@@ -1284,27 +1374,27 @@ macro_rules! slh_dsa_impl {
             sk_seed: &[u8; N],
             m: &[u8; N],
             tree_idx: u64,
-            leaf_idx: u32,
-        ) -> [u8; HT_SIG_LEN] {
+            leaf_idx: u32, started: &SelfTestStarted,
+        ) -> Result<[u8; HT_SIG_LEN], Error> {
             let mut sig = [0u8; HT_SIG_LEN];
             let mut adrs = Adrs::zero();
             adrs.set_layer_address(0);
             adrs.set_tree_address(tree_idx);
-            let sig_0 = xmss_sign(pk_seed, sk_seed, leaf_idx, m, &adrs);
+            let sig_0 = xmss_sign(pk_seed, sk_seed, leaf_idx, m, &adrs, started)?;
             sig[..XMSS_SIG_LEN].copy_from_slice(&sig_0);
-            let mut root = xmss_pk_from_sig(pk_seed, leaf_idx, &sig_0, m, &adrs);
+            let mut root = xmss_pk_from_sig(pk_seed, leaf_idx, &sig_0, m, &adrs, started)?;
             let mut current_tree = tree_idx;
             for layer in 1..D as u32 {
                 let idx = (current_tree & ((1u64 << H_PRIME) - 1)) as u32;
                 current_tree >>= H_PRIME;
                 adrs.set_layer_address(layer);
                 adrs.set_tree_address(current_tree);
-                let sig_layer = xmss_sign(pk_seed, sk_seed, idx, &root, &adrs);
+                let sig_layer = xmss_sign(pk_seed, sk_seed, idx, &root, &adrs, started)?;
                 let offset = layer as usize * XMSS_SIG_LEN;
                 sig[offset..offset + XMSS_SIG_LEN].copy_from_slice(&sig_layer);
-                root = xmss_pk_from_sig(pk_seed, idx, &sig_layer, &root, &adrs);
+                root = xmss_pk_from_sig(pk_seed, idx, &sig_layer, &root, &adrs, started)?;
             }
-            sig
+            Ok(sig)
         }
 
         fn ht_verify(
@@ -1313,13 +1403,13 @@ macro_rules! slh_dsa_impl {
             m: &[u8; N],
             sig: &[u8],
             tree_idx: u64,
-            leaf_idx: u32,
-        ) -> bool {
+            leaf_idx: u32, started: &SelfTestStarted,
+        ) -> Result<bool, Error> {
             let mut adrs = Adrs::zero();
             adrs.set_layer_address(0);
             adrs.set_tree_address(tree_idx);
             let sig_0 = &sig[..XMSS_SIG_LEN];
-            let mut root = xmss_pk_from_sig(pk_seed, leaf_idx, sig_0, m, &adrs);
+            let mut root = xmss_pk_from_sig(pk_seed, leaf_idx, sig_0, m, &adrs, started)?;
             let mut current_tree = tree_idx;
             for layer in 1..D as u32 {
                 let idx = (current_tree & ((1u64 << H_PRIME) - 1)) as u32;
@@ -1328,9 +1418,9 @@ macro_rules! slh_dsa_impl {
                 adrs.set_tree_address(current_tree);
                 let offset = layer as usize * XMSS_SIG_LEN;
                 let sig_layer = &sig[offset..offset + XMSS_SIG_LEN];
-                root = xmss_pk_from_sig(pk_seed, idx, sig_layer, &root, &adrs);
+                root = xmss_pk_from_sig(pk_seed, idx, sig_layer, &root, &adrs, started)?;
             }
-            root == *pk_root
+            Ok(root == *pk_root)
         }
 
         // ── External API (FIPS 205 §9) ──────────────────────────────────
@@ -1374,25 +1464,40 @@ macro_rules! slh_dsa_impl {
         pub fn keygen(xi: &[u8]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
+            let started = &oxicrypt_module::require_self_test_started_token()?;
             if xi.len() != 3 * N {
                 return Err(Error::InvalidInput);
             }
             let mut seed = [0u8; 3 * N];
             seed.copy_from_slice(xi);
-            let (pk, sk) = keygen_internal(&seed);
+            let (pk, sk) = keygen_internal_unguarded(&seed, started)?;
             Ok((pk, sk))
         }
 
-        /// Gate-free keygen for CAVP/ACVP harnesses (FIPS 205 §9.1 Algorithm 18).
+        /// Keygen without the operational gate, for CAVP/ACVP harnesses (FIPS 205 §9.1 Algorithm 18).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn keygen_internal(xi: &[u8; 3 * N]) -> ([u8; PK_LEN], [u8; SK_LEN]) {
+        pub fn keygen_internal(xi: &[u8; 3 * N]) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
+            let started = &oxicrypt_module::require_self_test_started_token()?;
+            keygen_internal_unguarded(xi, started)
+        }
+
+        /// Body of [`keygen_internal`], run once its guard has passed.
+        fn keygen_internal_unguarded(
+            xi: &[u8; 3 * N],
+            started: &SelfTestStarted,
+        ) -> Result<([u8; PK_LEN], [u8; SK_LEN]), Error> {
             let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
             let sk_prf: &[u8; N] = xi[N..2 * N].try_into().unwrap();
             let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
             let adrs = Adrs::zero();
             let mut top_adrs = adrs;
             top_adrs.set_layer_address((D - 1) as u32);
-            let pk_root = xmss_node(pk_seed, sk_seed, 0, H_PRIME as u32, &top_adrs);
+            let pk_root = xmss_node(pk_seed, sk_seed, 0, H_PRIME as u32, &top_adrs, started)?;
             let mut pk = [0u8; PK_LEN];
             pk[..N].copy_from_slice(pk_seed);
             pk[N..].copy_from_slice(&pk_root);
@@ -1401,45 +1506,73 @@ macro_rules! slh_dsa_impl {
             sk[N..2 * N].copy_from_slice(sk_prf);
             sk[2 * N..3 * N].copy_from_slice(pk_seed);
             sk[3 * N..].copy_from_slice(&pk_root);
-            (pk, sk)
+            Ok((pk, sk))
         }
 
         /// Sign a message (FIPS 205 §10.2 Algorithm 22), deterministic mode.
         pub fn sign(sk: &[u8], message: &[u8], ctx: &[u8]) -> Result<[u8; SIG_LEN], Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_sign)?;
+            let started = &oxicrypt_module::require_self_test_started_token()?;
             let sk_arr: &[u8; SK_LEN] = sk.try_into().map_err(|_| Error::InvalidInput)?;
             let prefix = build_external_prefix(ctx)?;
-            Ok(sign_with_prefix(sk_arr, prefix.as_slice(), message))
+            sign_with_prefix(sk_arr, prefix.as_slice(), message, started)
         }
 
-        /// Gate-free signing for CAVP/ACVP harnesses (FIPS 205 §9.2 Algorithm 19).
+        /// Signing without the operational gate, for CAVP/ACVP harnesses (FIPS 205 §9.2 Algorithm 19).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> [u8; SIG_LEN] {
-            sign_with_prefix(sk, &[], message)
+        pub fn sign_internal(sk: &[u8; SK_LEN], message: &[u8]) -> Result<[u8; SIG_LEN], Error> {
+            let started = &oxicrypt_module::require_self_test_started_token()?;
+            sign_internal_unguarded(sk, message, started)
         }
 
-        fn sign_with_prefix(sk: &[u8; SK_LEN], m_prefix: &[u8], message: &[u8]) -> [u8; SIG_LEN] {
+        /// Body of [`sign_internal`], run once its guard has passed.
+        fn sign_internal_unguarded(
+            sk: &[u8; SK_LEN],
+            message: &[u8],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; SIG_LEN], Error> {
+            sign_with_prefix(sk, &[], message, started)
+        }
+
+        fn sign_with_prefix(
+            sk: &[u8; SK_LEN],
+            m_prefix: &[u8],
+            message: &[u8],
+            started: &SelfTestStarted,
+        ) -> Result<[u8; SIG_LEN], Error> {
             let sk_seed: &[u8; N] = sk[..N].try_into().unwrap();
             let sk_prf: &[u8; N] = sk[N..2 * N].try_into().unwrap();
             let pk_seed: &[u8; N] = sk[2 * N..3 * N].try_into().unwrap();
             let pk_root: &[u8; N] = sk[3 * N..4 * N].try_into().unwrap();
             let mut sig = [0u8; SIG_LEN];
             let opt_rand = pk_seed;
-            let r = prf_msg(sk_prf, opt_rand, m_prefix, message);
+            let r = prf_msg(sk_prf, opt_rand, m_prefix, message)?;
             sig[..N].copy_from_slice(&r);
-            let h_out = h_msg(&r, pk_seed, pk_root, m_prefix, message);
+            let h_out = h_msg(&r, pk_seed, pk_root, m_prefix, message)?;
             let mut fors_adrs = Adrs::zero();
             fors_adrs.set_layer_address(0);
             fors_adrs.set_tree_address(h_out.tree_idx);
             fors_adrs.set_type(AdrsType::ForsTree);
             fors_adrs.set_keypair_address(h_out.leaf_idx);
-            let fors_sig = fors_sign(pk_seed, sk_seed, &h_out.md, &fors_adrs);
+            let fors_sig = fors_sign(pk_seed, sk_seed, &h_out.md, &fors_adrs, started)?;
             sig[N..N + FORS_SIG_LEN].copy_from_slice(&fors_sig);
-            let fors_pk = fors_pk_from_sig(pk_seed, &h_out.md, &fors_sig, &fors_adrs);
-            let ht_sig = ht_sign(pk_seed, sk_seed, &fors_pk, h_out.tree_idx, h_out.leaf_idx);
+            let fors_pk = fors_pk_from_sig(pk_seed, &h_out.md, &fors_sig, &fors_adrs, started)?;
+            let ht_sig = ht_sign(
+                pk_seed,
+                sk_seed,
+                &fors_pk,
+                h_out.tree_idx,
+                h_out.leaf_idx,
+                started,
+            )?;
             sig[N + FORS_SIG_LEN..].copy_from_slice(&ht_sig);
-            sig
+            Ok(sig)
         }
 
         /// Verify a signature (FIPS 205 §10.3 Algorithm 24).
@@ -1451,39 +1584,56 @@ macro_rules! slh_dsa_impl {
         ) -> Result<(), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_verify)?;
+            let started = &oxicrypt_module::require_self_test_started_token()?;
             let pk_arr: &[u8; PK_LEN] = pk.try_into().map_err(|_| Error::InvalidInput)?;
             let sig_arr: &[u8; SIG_LEN] = signature.try_into().map_err(|_| Error::InvalidInput)?;
             let prefix = build_external_prefix(ctx)?;
-            if verify_with_prefix(pk_arr, prefix.as_slice(), message, sig_arr) {
+            if verify_with_prefix(pk_arr, prefix.as_slice(), message, sig_arr, started)? {
                 Ok(())
             } else {
                 Err(Error::InvalidInput)
             }
         }
 
-        /// Gate-free verification for CAVP/ACVP harnesses (FIPS 205 §9.3 Algorithm 20).
+        /// Verification without the operational gate, for CAVP/ACVP harnesses (FIPS 205 §9.3 Algorithm 20).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> bool {
-            verify_with_prefix(pk, &[], message, sig)
+        pub fn verify_internal(pk: &[u8; PK_LEN], message: &[u8], sig: &[u8; SIG_LEN]) -> Result<bool, Error> {
+            let started = &oxicrypt_module::require_self_test_started_token()?;
+            verify_internal_unguarded(pk, message, sig, started)
+        }
+
+        /// Body of [`verify_internal`], run once its guard has passed.
+        fn verify_internal_unguarded(
+            pk: &[u8; PK_LEN],
+            message: &[u8],
+            sig: &[u8; SIG_LEN],
+            started: &SelfTestStarted,
+        ) -> Result<bool, Error> {
+            verify_with_prefix(pk, &[], message, sig, started)
         }
 
         fn verify_with_prefix(
             pk: &[u8; PK_LEN],
             m_prefix: &[u8],
             message: &[u8],
-            sig: &[u8; SIG_LEN],
-        ) -> bool {
+            sig: &[u8; SIG_LEN], started: &SelfTestStarted,
+        ) -> Result<bool, Error> {
             let pk_seed: &[u8; N] = pk[..N].try_into().unwrap();
             let pk_root: &[u8; N] = pk[N..2 * N].try_into().unwrap();
             let r: &[u8; N] = sig[..N].try_into().unwrap();
-            let h_out = h_msg(r, pk_seed, pk_root, m_prefix, message);
+            let h_out = h_msg(r, pk_seed, pk_root, m_prefix, message)?;
             let mut fors_adrs = Adrs::zero();
             fors_adrs.set_layer_address(0);
             fors_adrs.set_tree_address(h_out.tree_idx);
             fors_adrs.set_type(AdrsType::ForsTree);
             fors_adrs.set_keypair_address(h_out.leaf_idx);
             let fors_sig = &sig[N..N + FORS_SIG_LEN];
-            let fors_pk = fors_pk_from_sig(pk_seed, &h_out.md, fors_sig, &fors_adrs);
+            let fors_pk = fors_pk_from_sig(pk_seed, &h_out.md, fors_sig, &fors_adrs, started)?;
             let ht_sig = &sig[N + FORS_SIG_LEN..];
             ht_verify(
                 pk_seed,
@@ -1491,57 +1641,62 @@ macro_rules! slh_dsa_impl {
                 &fors_pk,
                 ht_sig,
                 h_out.tree_idx,
-                h_out.leaf_idx,
+                h_out.leaf_idx, started,
             )
         }
 
-        // ── Determinism-oracle sequential references (R77) ──────────────
+        // ── Determinism-oracle sequential references ──────────────
         //
         // Always-single-threaded reference forms of the three
         // parallelized sweeps, compiled only for the `parallel`-feature
         // determinism tests. They exist so the oracle can assert the
         // feature-on public functions are byte-identical to a sequential
         // build for the same inputs — never on the production path.
-        // Mirrors `oxicrypt-lms`'s `build_node_table_sequential` (R75).
+        // Mirrors `oxicrypt-lms`'s `build_node_table_sequential`.
 
-        /// Sequential reference for [`wots_pkgen`] (R77 oracle only).
+        /// Sequential reference for [`wots_pkgen`] (determinism oracle only).
         #[cfg(all(test, feature = "parallel"))]
-        fn wots_pkgen_sequential(pk_seed: &[u8; N], sk_seed: &[u8; N], adrs: &Adrs) -> [u8; N] {
+        fn wots_pkgen_sequential(
+            pk_seed: &[u8; N],
+            sk_seed: &[u8; N],
+            adrs: &Adrs,
+            started: &SelfTestStarted,
+        ) -> [u8; N] {
             let mut tmp = [0u8; LEN * N];
             for i in 0..LEN {
-                let pk_i = wots_pk_chain(pk_seed, sk_seed, adrs, i);
+                let pk_i = wots_pk_chain(pk_seed, sk_seed, adrs, i, started).unwrap();
                 tmp[i * N..(i + 1) * N].copy_from_slice(&pk_i);
             }
             let mut pk_adrs = *adrs;
             pk_adrs.set_type(AdrsType::WotsPk);
             pk_adrs.set_keypair_address(adrs.keypair_address());
-            t(pk_seed, &pk_adrs, &tmp)
+            t(pk_seed, &pk_adrs, &tmp, started).unwrap()
         }
 
-        /// Sequential reference for [`wots_sign`] (R77 oracle only).
+        /// Sequential reference for [`wots_sign`] (determinism oracle only).
         #[cfg(all(test, feature = "parallel"))]
         fn wots_sign_sequential(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
             adrs: &Adrs,
-            m: &[u8; N],
+            m: &[u8; N], started: &SelfTestStarted,
         ) -> [u8; WOTS_SIG_LEN] {
             let msg = base_w_with_checksum(m);
             let mut sig = [0u8; WOTS_SIG_LEN];
             for i in 0..LEN {
-                let sig_i = wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i);
+                let sig_i = wots_sign_chain(pk_seed, sk_seed, adrs, msg[i], i, started).unwrap();
                 sig[i * N..(i + 1) * N].copy_from_slice(&sig_i);
             }
             sig
         }
 
-        /// Sequential reference for [`fors_sign`] (R77 oracle only).
+        /// Sequential reference for [`fors_sign`] (determinism oracle only).
         #[cfg(all(test, feature = "parallel"))]
         fn fors_sign_sequential(
             pk_seed: &[u8; N],
             sk_seed: &[u8; N],
             md: &[u8; 64],
-            adrs: &Adrs,
+            adrs: &Adrs, started: &SelfTestStarted,
         ) -> [u8; FORS_SIG_LEN] {
             let mut sig = [0u8; FORS_SIG_LEN];
             let entry_size = (1 + A) * N;
@@ -1553,40 +1708,10 @@ macro_rules! slh_dsa_impl {
                     md,
                     adrs,
                     i,
-                    &mut sig[sig_offset..sig_offset + entry_size],
-                );
+                    &mut sig[sig_offset..sig_offset + entry_size], started,
+                ).unwrap();
             }
             sig
-        }
-
-        // ── Power-up self-test (KAT) ────────────────────────────────────
-
-        /// Power-up KAT entries.
-        pub const KATS: &[KatEntry] = &[KatEntry {
-            name: $kat_name,
-            run: self_test,
-        }];
-
-        fn self_test() -> Result<(), oxicrypt_module::SelfTestFailure> {
-            let offset: u8 = $kat_seed_offset;
-            let mut xi = [0u8; 3 * N];
-            for (i, b) in xi.iter_mut().enumerate() {
-                *b = ((i & 0xFF) as u8)
-                    .wrapping_mul(37)
-                    .wrapping_add(7)
-                    .wrapping_add(offset);
-            }
-            let (pk, sk) = keygen_internal(&xi);
-            let msg = $kat_msg;
-            let sig = sign_internal(&sk, msg);
-            if !verify_internal(&pk, msg, &sig) {
-                return Err(oxicrypt_module::SelfTestFailure);
-            }
-            let bad_msg = b"tampered message";
-            if verify_internal(&pk, bad_msg, &sig) {
-                return Err(oxicrypt_module::SelfTestFailure);
-            }
-            Ok(())
         }
 
         #[cfg(test)]
@@ -1595,51 +1720,44 @@ macro_rules! slh_dsa_impl {
             use super::*;
 
             fn deterministic_seed() -> [u8; 3 * N] {
-                let offset: u8 = $kat_seed_offset;
                 let mut xi = [0u8; 3 * N];
                 for (i, b) in xi.iter_mut().enumerate() {
-                    *b = ((i & 0xFF) as u8)
-                        .wrapping_mul(37)
-                        .wrapping_add(7)
-                        .wrapping_add(offset);
+                    *b = ((i & 0xFF) as u8).wrapping_mul(37).wrapping_add(7);
                 }
                 xi
             }
 
             #[test]
             fn round_trip() {
+                crate::test_support::start_module();
                 let xi = deterministic_seed();
-                let (pk, sk) = keygen_internal(&xi);
+                let (pk, sk) = keygen_internal(&xi).unwrap();
                 assert_eq!(pk.len(), PK_LEN);
                 assert_eq!(sk.len(), SK_LEN);
                 let msg = b"variant round-trip test";
-                let sig = sign_internal(&sk, msg);
+                let sig = sign_internal(&sk, msg).unwrap();
                 assert_eq!(sig.len(), SIG_LEN);
-                assert!(verify_internal(&pk, msg, &sig));
-                assert!(!verify_internal(&pk, b"wrong", &sig));
+                assert!(verify_internal(&pk, msg, &sig).unwrap());
+                assert!(!verify_internal(&pk, b"wrong", &sig).unwrap());
             }
 
             #[test]
             fn different_messages() {
+                crate::test_support::start_module();
                 let xi = deterministic_seed();
-                let (_pk, sk) = keygen_internal(&xi);
-                let sig1 = sign_internal(&sk, b"message A");
-                let sig2 = sign_internal(&sk, b"message B");
+                let (_pk, sk) = keygen_internal(&xi).unwrap();
+                let sig1 = sign_internal(&sk, b"message A").unwrap();
+                let sig2 = sign_internal(&sk, b"message B").unwrap();
                 assert_ne!(sig1[..N], sig2[..N]);
             }
 
-            #[test]
-            fn kat_passes() {
-                self_test().expect("KAT failed");
-            }
-
-            // ── R77 determinism oracle (parallel feature only) ──────────
+            // ── Determinism oracle (parallel feature only) ──────────
             //
             // Asserts the feature-on parallel sweeps are byte-identical
             // to the always-sequential reference forms for the same
             // inputs, and that the full public keygen/sign surface is
             // byte-identical to the default (sequential) answer pinned by
-            // the deterministic seed. Mirrors the R75 LMS oracle shape.
+            // the deterministic seed. Mirrors the LMS determinism oracle.
 
             /// A representative WOTS+ address: layer 0, a non-zero tree
             /// and keypair address so the ADRS-dependent paths are
@@ -1657,13 +1775,15 @@ macro_rules! slh_dsa_impl {
             #[cfg(feature = "parallel")]
             #[test]
             fn parallel_wots_pkgen_matches_sequential() {
+                crate::test_support::start_module();
+                let started = oxicrypt_module::require_self_test_started_token().unwrap();
                 let xi = deterministic_seed();
                 let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
                 let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
                 let adrs = oracle_adrs();
                 assert_eq!(
-                    wots_pkgen(pk_seed, sk_seed, &adrs),
-                    wots_pkgen_sequential(pk_seed, sk_seed, &adrs),
+                    wots_pkgen(pk_seed, sk_seed, &adrs, &started).unwrap(),
+                    wots_pkgen_sequential(pk_seed, sk_seed, &adrs, &started),
                     "parallel wots_pkgen diverged from sequential reference"
                 );
             }
@@ -1671,6 +1791,8 @@ macro_rules! slh_dsa_impl {
             #[cfg(feature = "parallel")]
             #[test]
             fn parallel_wots_sign_matches_sequential() {
+                crate::test_support::start_module();
+                let started = oxicrypt_module::require_self_test_started_token().unwrap();
                 let xi = deterministic_seed();
                 let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
                 let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
@@ -1680,8 +1802,8 @@ macro_rules! slh_dsa_impl {
                     *b = (i as u8).wrapping_mul(101).wrapping_add(3);
                 }
                 assert_eq!(
-                    wots_sign(pk_seed, sk_seed, &adrs, &m)[..],
-                    wots_sign_sequential(pk_seed, sk_seed, &adrs, &m)[..],
+                    wots_sign(pk_seed, sk_seed, &adrs, &m, &started).unwrap()[..],
+                    wots_sign_sequential(pk_seed, sk_seed, &adrs, &m, &started)[..],
                     "parallel wots_sign diverged from sequential reference"
                 );
             }
@@ -1689,6 +1811,8 @@ macro_rules! slh_dsa_impl {
             #[cfg(feature = "parallel")]
             #[test]
             fn parallel_fors_sign_matches_sequential() {
+                crate::test_support::start_module();
+                let started = oxicrypt_module::require_self_test_started_token().unwrap();
                 let xi = deterministic_seed();
                 let pk_seed: &[u8; N] = xi[2 * N..3 * N].try_into().unwrap();
                 let sk_seed: &[u8; N] = xi[..N].try_into().unwrap();
@@ -1700,33 +1824,34 @@ macro_rules! slh_dsa_impl {
                 adrs.set_type(AdrsType::ForsTree);
                 adrs.set_keypair_address(5);
                 assert_eq!(
-                    fors_sign(pk_seed, sk_seed, &md, &adrs)[..],
-                    fors_sign_sequential(pk_seed, sk_seed, &md, &adrs)[..],
+                    fors_sign(pk_seed, sk_seed, &md, &adrs, &started).unwrap()[..],
+                    fors_sign_sequential(pk_seed, sk_seed, &md, &adrs, &started)[..],
                     "parallel fors_sign diverged from sequential reference"
                 );
             }
 
-            /// Keygen public-key equality: the feature-on `keygen_internal`
-            /// (whose `xmss_node` leaf computation drives `wots_pkgen`
-            /// under the parallel sweep) must yield exactly the bytes the
-            /// default build produces for the same seed. The expected PK
-            /// is the value verified green by the default-feature KAT
-            /// (`kat_passes` / the NIST keygen vectors), so this asserts
-            /// the parallel build did not perturb the public key.
+            /// Keygen under the parallel build: the feature-on
+            /// `keygen_internal` (whose `xmss_node` leaf computation drives
+            /// `wots_pkgen` under the parallel sweep) must yield a consistent
+            /// key pair. The public key's root must equal the copy in the
+            /// private key, and the pair must sign and verify. This is a
+            /// self-consistency check; it compares no expected public key
+            /// from the default build or from an external source.
             #[cfg(feature = "parallel")]
             #[test]
             fn parallel_keygen_public_key_roundtrips() {
+                crate::test_support::start_module();
                 let xi = deterministic_seed();
-                let (pk, sk) = keygen_internal(&xi);
+                let (pk, sk) = keygen_internal(&xi).unwrap();
                 // sk carries pk_root in its last N bytes (FIPS 205 §9.1);
                 // it must equal the standalone pk's root half.
                 assert_eq!(&pk[N..], &sk[3 * N..], "pk_root mismatch in sk");
                 // A full sign/verify round-trip under the parallel build
                 // closes the loop end-to-end at this parameter set.
-                let msg = b"R77 parallel keygen oracle";
-                let sig = sign_internal(&sk, msg);
+                let msg = b"parallel keygen oracle";
+                let sig = sign_internal(&sk, msg).unwrap();
                 assert!(
-                    verify_internal(&pk, msg, &sig),
+                    verify_internal(&pk, msg, &sig).unwrap(),
                     "parallel keygen/sign/verify round-trip failed"
                 );
             }

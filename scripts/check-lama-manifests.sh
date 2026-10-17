@@ -19,10 +19,16 @@
 # that its content conforms. A manifest can be dutifully updated into prose that
 # defeats the point of having one. This closes that gap mechanically.
 #
-# What it does NOT check is coverage. A manifest can pass here with every rule
-# clear and still omit an entire crate of the library it describes; that is a
-# different question, answered by the roster invariant in AGENTS.md. A green
-# result here must never be read as "the manifest is complete".
+# It then checks coverage with scripts/check-lama-coverage.ts: every public
+# fn, struct, enum, union, trait, type alias, const and static of a publishable
+# crate must have an entry in the full manifest, apart from the exclusions in
+# the coverage rule in AGENTS.md and the items listed in
+# docs/llm-api-manifest/coverage-baseline.txt. The baseline only shrinks: a
+# line that no longer names an undocumented item fails the check, and so does
+# a line the baseline at its merge base with origin/main (or $LAMA_BASE_REF)
+# does not have. The scan reads source text and does not see items whose
+# names come from macro arguments, so a green result is not proof that the
+# manifest is complete.
 #
 # ---------------------------------------------------------------------------
 # Three positive controls, because a linter that silently checks nothing
@@ -225,4 +231,137 @@ if [[ $status -ne 0 ]]; then
     exit 1
 fi
 
-echo "check-lama-manifests: passed (${#targets[@]} manifest(s)${rev:+ at ${rev:0:12}}, strict)."
+# --- coverage ------------------------------------------------------------------
+# Read from the same tree as the manifests: the working tree, or the revision
+# being pushed, extracted with the coverage script and baseline it carries.
+coverage='scripts/check-lama-coverage.ts'
+if [[ -n "$rev" ]]; then
+    if ! git cat-file -e "$rev:$coverage" 2>/dev/null; then
+        # Absent at the revision: either it predates the script, or the
+        # revision deletes it. Only the first may pass. A revision whose
+        # history contains the script once had it.
+        if [[ -n "$(git log -1 --format=%H "$rev" -- "$coverage" 2>/dev/null)" ]]; then
+            echo "check-lama-manifests: FAILED — ${rev:0:12} deletes $coverage, which its history contains." >&2
+            exit 1
+        fi
+        echo "check-lama-manifests: coverage SKIPPED for ${rev:0:12} — the revision predates $coverage."
+        echo "check-lama-manifests: passed (${#targets[@]} manifest(s) at ${rev:0:12}, strict)."
+        exit 0
+    fi
+    tree="$workdir/tree"
+    mkdir -p "$tree"
+    # The coverage roster is every workspace member, so extract the root
+    # manifest and each member it lists at that revision.
+    mapfile -t members < <(git show "$rev:Cargo.toml" \
+        | awk '/^members = \[/{f=1;next} f&&/^\]/{exit} f' | grep -o '"[^"]*"' | tr -d '"')
+    if [[ ${#members[@]} -eq 0 ]]; then
+        echo "check-lama-manifests: FAILED — read no workspace members from ${rev:0:12}:Cargo.toml." >&2
+        exit 1
+    fi
+    fixture_paths=()
+    if git cat-file -e "$rev:scripts/fixtures/guard-sweep" 2>/dev/null; then
+        fixture_paths=(scripts/fixtures/guard-sweep)
+    fi
+    if ! git archive "$rev" Cargo.toml "${members[@]}" docs/llm-api-manifest "$coverage" "${fixture_paths[@]}" | tar -x -C "$tree"; then
+        echo "check-lama-manifests: FAILED — could not extract ${rev:0:12} for the coverage check." >&2
+        exit 1
+    fi
+    cov_output="$(bun "$tree/$coverage" "$tree" 2>&1)"
+    cov_status=$?
+    cov_output="${cov_output//$tree\//}"
+else
+    if [[ ! -f "$coverage" ]]; then
+        echo "check-lama-manifests: FAILED — $coverage is missing." >&2
+        exit 1
+    fi
+    cov_output="$(bun "$coverage" . 2>&1)"
+    cov_status=$?
+fi
+echo "$cov_output"
+# The script prints "passed (N crates, M public items" only after scanning;
+# a run that printed nothing, or crashed, must not read as coverage.
+if [[ $cov_status -ne 0 || "$cov_output" != *"check-lama-coverage: passed ("* ]]; then
+    echo "check-lama-manifests: FAILED — public items are missing from the manifest, or the coverage check did not complete." >&2
+    echo "  Add an entry for each item named above, or for a stale baseline line" >&2
+    echo "  delete it from docs/llm-api-manifest/coverage-baseline.txt." >&2
+    exit 1
+fi
+
+# --- control 4: the guard sweep fails on its fixture ----------------------------
+# The sweep above passes when every function it finds opens with the guard, and
+# it would also pass if it found nothing it should. The fixture holds twelve
+# functions the sweep must reject and seven it must not count; the rejected
+# names must all appear and the ignored names must not. See
+# scripts/fixtures/guard-sweep for what each one exercises.
+fixture_root="${tree:-.}"
+fixture="$fixture_root/scripts/fixtures/guard-sweep"
+if [[ -d "$fixture" ]]; then
+    fx_output="$(bun "$fixture_root/$coverage" --guard-sweep "$fixture" 12 2>&1)"
+    fx_status=$?
+    fx_expected='guard sweep found 12 guarded function(s), expected 12; 12 without the guard first.'
+    fx_ok=true
+    [[ $fx_status -eq 1 && "$fx_output" == *"$fx_expected"* ]] || fx_ok=false
+    for name in derive_internal seal_internal expand_internal fixture_keygen_internal \
+                after_slash_internal paren_form_internal lifetime_internal abi_internal \
+                after_escaped_quote_internal spaced_bang_internal raw_ident_internal \
+                raw_gen_internal; do
+        [[ "$fx_output" == *" $name"* ]] || fx_ok=false
+    done
+    for name in commented_keygen_internal nested_phantom_internal string_phantom_internal \
+                raw_phantom_internal commented_guarded_internal cstring_phantom_internal \
+                craw_phantom_internal; do
+        [[ "$fx_output" != *"$name"* ]] || fx_ok=false
+    done
+    if [[ "$fx_ok" != "true" ]]; then
+        echo "$fx_output"
+        echo "check-lama-manifests: FAILED — the guard sweep did not fail on its fixture as expected." >&2
+        echo "  expected exit 1 and: $fx_expected" >&2
+        echo "  A sweep that passes its fixture checks nothing." >&2
+        exit 1
+    fi
+    echo "check-lama-manifests: the guard sweep fails on its fixture, as it must."
+elif [[ -n "$rev" ]]; then
+    # Absent at the revision: either it predates the fixture, or it deletes
+    # it. Only the first may pass. A revision whose history contains the
+    # fixture once had it.
+    if [[ -n "$(git log -1 --format=%H "$rev" -- scripts/fixtures/guard-sweep 2>/dev/null)" ]]; then
+        echo "check-lama-manifests: FAILED — ${rev:0:12} deletes scripts/fixtures/guard-sweep, which its history contains." >&2
+        exit 1
+    fi
+    echo "check-lama-manifests: guard-sweep control SKIPPED for ${rev:0:12} — the revision predates its fixture."
+else
+    echo "check-lama-manifests: FAILED — $fixture is missing." >&2
+    exit 1
+fi
+
+# --- the baseline only shrinks ---------------------------------------------------
+# Every line of the baseline being checked must already be in the baseline at
+# its merge base with the integration branch. Before the baseline exists there,
+# there is nothing to compare against and the check says so.
+baseline='docs/llm-api-manifest/coverage-baseline.txt'
+base_ref="${LAMA_BASE_REF:-origin/main}"
+if ! mb="$(git merge-base "${rev:-HEAD}" "$base_ref" 2>/dev/null)"; then
+    echo "check-lama-manifests: FAILED — no merge base between ${rev:-HEAD} and $base_ref, so baseline growth" >&2
+    echo "  cannot be checked. Fetch it (git fetch origin main) or set LAMA_BASE_REF." >&2
+    exit 1
+fi
+if git cat-file -e "$mb:$baseline" 2>/dev/null; then
+    if [[ -n "$rev" ]]; then
+        now="$(git show "$rev:$baseline")"
+    else
+        now="$(cat "$baseline")"
+    fi
+    grown="$(comm -13 <(git show "$mb:$baseline" | grep -v '^#' | grep -v '^$' | LC_ALL=C sort -u) \
+                      <(printf '%s\n' "$now" | grep -v '^#' | grep -v '^$' | LC_ALL=C sort -u))"
+    if [[ -n "$grown" ]]; then
+        echo "check-lama-manifests: FAILED — $baseline gained lines relative to ${mb:0:12} ($base_ref):" >&2
+        printf '  %s\n' "$grown" >&2
+        echo "  Document these items in the manifest instead." >&2
+        exit 1
+    fi
+    echo "check-lama-manifests: the baseline has no line its merge base with $base_ref lacks."
+else
+    echo "check-lama-manifests: baseline growth not checked — $baseline is absent at the merge base ${mb:0:12} with $base_ref."
+fi
+
+echo "check-lama-manifests: passed (${#targets[@]} manifest(s)${rev:+ at ${rev:0:12}}, strict, coverage)."

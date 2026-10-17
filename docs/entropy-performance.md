@@ -1,14 +1,16 @@
 # Entropy pipeline and assessment performance
 
-Measured figures for the two entropy-side throughput questions: how fast the
-pipeline produces vetted conditioned output, and how long a full SP 800-90B
-assessment of one capture takes.
+Measured figures for three entropy-side questions: how long the pipeline's
+SP 800-90B start-up health tests take, how fast it then produces vetted
+conditioned output, and how long a full SP 800-90B assessment of one capture
+takes.
 
 Read the qualifiers, not just the numbers. Both measurements have conditions
 that change them by more than the difference anyone would care about, and each
 is stated beside its figure rather than in a footnote.
 
 ```sh
+cargo bench -p oxicrypt-bench --features entropy-bench --bench entropy_startup
 cargo bench -p oxicrypt-bench --features entropy-bench --bench conditioned_output
 cargo bench -p oxicrypt-bench --features entropy-bench --bench maxwell
 ```
@@ -41,6 +43,42 @@ unifies features across an invocation, so a plain dependency here would enable
 > The `maxwell` assessment figures are ordinary compute and less sensitive to
 > virtualization — tens of percent rather than orders of magnitude — though the
 > unrecorded frequency behaviour applies to them too.
+
+## Start-up health-test time
+
+`EntropyPipeline::run_startup`, the SP 800-90B §4.3 start-up path: the
+conditioning known-answer test, then the continuous health tests over 1024
+consecutive samples (`STARTUP_MIN_SAMPLES`), which are discarded. A pipeline
+runs it once and refuses a second call, so every iteration builds a fresh
+source and pipeline.
+
+| Claim | Measured region | Time per start-up |
+|---|---|---|
+| H = 0.5 bits/sample (pilot OE claim) | `run_startup` alone | **2.5709 ms** (95% CI 2.5545–2.5868) |
+| H = 0.5 bits/sample (pilot OE claim) | `JitterSource::new` + `EntropyPipeline::new` + `run_startup` | **3.2858 ms** (95% CI 3.2700–3.2991) |
+
+**These rows were measured on the same CPU and hypervisor as the table above, but
+not the same guest configuration:** 8 vCPU exposed rather than 12, kernel
+7.0.0-38-generic, Ubuntu 26.04.1 LTS and rustc 1.97.1. Every qualifier in the
+table's note applies to it unchanged.
+
+**Read it as a noise-source measurement.** The conditioning KAT is one SHA-256
+over a short message. The rest is 1024 timed jitter samples and their health
+tests, about 2.5 µs per sample, in line with the conditioned-output figure
+below. The second row adds the source's construction, which measures the
+timer's adequacy over a run of bare reads and a run of noise-workload rounds
+before it admits the source. That is the time from nothing to an operational
+pipeline on this platform.
+
+**This is a cold start, unlike the conditioned-output figure.** Each iteration
+is a new source with fresh health state, so the `steer` feedback and the
+persistent health state that make the hot loop fast are not carried between
+iterations. The process stays warm between iterations, so a first start in a
+new process may be slower.
+
+Unlike the conditioned-output row, the sample count does not follow the claim:
+it is fixed at 1024 by SP 800-90B rather than derived from H. Criterion flagged
+1 outlier in 10 samples on the second row.
 
 ## Conditioned-output throughput
 
@@ -166,7 +204,8 @@ hours.
 ## What these figures do not cover
 
 - **The pilot operational environment.** Every number here is from a KVM guest;
-  the per-OE conditioned-output figure requires a run on the bare-metal host.
+  the per-OE start-up and conditioned-output figures require a run on the
+  bare-metal host.
 - **The module's own 4-bit symbol width** for the IID figure and the criterion
   bench; only the non-IID CLI rows cover it.
 - **The IID branch's worst case**, which the early exit hides.

@@ -26,7 +26,7 @@ Download the CLI for your platform from the
 tar -xzf oxicrypt-cli-<version>-<platform>.tar.gz
 cd oxicrypt-cli-<version>-<platform>
 ./oxi --integrity     # the module verifies its own image, and reports what it covered
-./oxi selftest        # every self-test, named with the NIST vector it checks (currently 71)
+./oxi selftest        # every self-test, named with the NIST vector it checks (currently 89)
 ```
 
 Signed per platform, with a provenance record inside the tarball. `oxi` also
@@ -41,21 +41,32 @@ cargo add oxicrypt-module oxicrypt-integrity oxicrypt-ml-kem   # whichever you w
 ```
 
 `oxicrypt-integrity` is not optional. The module runs a pre-operational
-integrity test before any algorithm will produce output, and **a freshly
-compiled binary carries an empty slot, so it must be signed or it will not
-start**:
+integrity test before any algorithm will produce output: it verifies an ML-DSA-87
+signature over its own image with a public key built into it. **A freshly
+compiled binary carries no signature, so it must be signed or it will not
+start.** Generate a key pair once, outside your source tree, build with its
+public half, and sign with its private half:
 
 ```bash
 cargo install oxicrypt-integrity-sign
-oxicrypt-integrity-sign --sign target/release/my-app
+oxicrypt-integrity-sign --keygen ~/oxicrypt-keys        # once; prints the key's fingerprint
+OXICRYPT_INTEGRITY_VERIFY_KEY=~/oxicrypt-keys/integrity-verify.pub cargo build --release
+oxicrypt-integrity-sign --sign --key ~/oxicrypt-keys/integrity-signing.key target/release/my-app
+codesign --force --sign - target/release/my-app   # Apple platforms only, after the line above
 ```
 
-Building oxicrypt yourself and signing the result is a fully supported path.
-The artifact is your module, and its self-test protects it exactly as it would
-one signed by anyone else.
+Building oxicrypt yourself and signing the result with your own key pair is a
+fully supported path. The artifact is your module, and its self-test protects
+it exactly as it would one signed by anyone else. The key's fingerprint,
+printed by the signer and by `oxi --integrity`, tells you which key a binary
+trusts. Keep the private key out of version control: anyone holding it can sign
+a binary your builds accept.
 
 Full recipe, from an empty directory to a running module:
 [Building and signing your own module](docs/integrity-signing.md).
+
+What the test covers on each executable format, and why:
+[the integrity extent design record](docs/design/integrity-extent-v2.md).
 
 ### Building from source
 
@@ -67,7 +78,7 @@ harness, and enabling the versioned git hooks are in
 
 - **Rust 1.95+** (MSRV enforced in `Cargo.toml`; toolchain pinned via `rust-toolchain.toml`; workspace targets edition 2024)
 - No third-party dependencies — all cryptography is pure Rust, written in-tree
-- Builds on Linux, macOS, and Windows; `no_std` core crates work on any target
+- Builds on Linux, macOS, and Windows; the `no_std` core crates compile for any target with 64-bit atomics, and a module becomes operational on Linux, Android, macOS and Windows; the iOS code paths are neither built nor tested, and iOS is not supported
 
 ## Validation status
 
@@ -126,17 +137,17 @@ sequencing.
 | LMS | LMS signature verification across all 80 SP 800-208 parameter pairs (4 hash families × 5 tree heights × 4 Winternitz parameters), permitted in full under CNSA 2.0, Migration and Unrestricted and refused under CNSA 1.0 | SP 800-208 §4.1–§4.4, §8.2 (RFC 8554) |
 | XMSS | XMSS signature verification (XMSS-SHA2_10_256) | SP 800-208 §8.2 (RFC 8391) |
 | DH | DH-3072 key agreement and keygen (RFC 3526 Group 15) | SP 800-56Ar3, RFC 3526 |
-| Integrity | HMAC-SHA-256 over the loader-invariant module image | ISO/IEC 19790:2012 §7.10.2.2 (technique CAST: IG 10.2.A) |
+| Integrity | ML-DSA-87 signature (FIPS 204) over the module's typed extent, every file-backed byte the loader maps, verified with a public key embedded at build time | ISO/IEC 19790:2012 §7.10.2.2 (technique CAST: IG 10.2.A) |
 
 The self-test harness (`acvp-harness`) runs a known-answer test for every
-algorithm at power-up. Its power-up self-tests (currently 156) include CAVP-sourced vectors (with 9 SP 800-90A §9.3
+algorithm at power-up. Its power-up self-tests (currently 164) include CAVP-sourced vectors (with 9 SP 800-90A §9.3
 prediction-resistance DRBG KATs), plus 3 SP 800-90A §11.3 DRBG health
 tests, each traceable to its published source.
 
 ## Architecture
 
 oxicrypt is organized as a Cargo workspace with 30 crates — 18 algorithm
-crates, a module crate, an entropy-source scaffolding crate, and 9 supporting
+crates, a module crate, an entropy-source scaffolding crate, and 10 supporting
 crates — plus tools:
 
 ```
@@ -165,7 +176,7 @@ crates/
   oxicrypt-xmss          XMSS signature verification (SP 800-208 §8.2)
   oxicrypt-dh            Finite-field DH-3072 key agreement and keygen (RFC 3526 Group 15)
   oxicrypt-entropy       SP 800-90B entropy source in progress (jitter noise source, RCT/APT health tests, timer adequacy, cited spec constants; pre-validation — no entropy claims)
-  oxicrypt-imageread     Kernel-mediated self-image reads on Darwin and Windows for the integrity test
+  oxicrypt-imageread     The module's system calls: self-image reads, image path, page size, loaded-image lookup, range checks and import resolution for the integrity test; the thread id for the module's state gate
   oxicrypt-timer         Read-only CPU counter reads (serialized TSC / CNTVCT) for the entropy source
   oxicrypt-ffi           C ABI wrappers (cdylib + staticlib) with profile selection
   oxicrypt-test-vectors  Generated KAT constants from vendored NIST vectors
@@ -177,7 +188,7 @@ benches/                Criterion benchmarks for hot paths (SHA, AES-GCM, HMAC, 
 tools/ct-validation/    dudect-style constant-time timing validation
 tools/acvp-gen/         KAT constant generator from vendored vectors (Python)
 tools/doc-guard/        Test-gate drift guard: doc-stated boundary/unsafe accounting vs the workspace as built
-tools/oxicrypt-integrity-sign/  Writes a module artifact's reference MAC into its integrity slot; published, installable with cargo install
+tools/oxicrypt-integrity-sign/  Generates the integrity key pair and signs a module artifact's integrity slot; published, installable with cargo install
 tools/integrity-probe/  Out-of-boundary front end reporting the pre-operational integrity test's status indicator
 tools/integrity-probe-so/  The same probe as a shared object, so a library verifies its own image rather than the host that loaded it
 tools/quickstarts/      Compiles the quickstart examples carried in the LAMA manifest
@@ -186,8 +197,10 @@ oxi/                    Command-line interface (crate `oxicrypt-cli`) — hash, 
 xtask/                  Build automation: the one implementation of build-then-sign
 ```
 
-The cryptographic boundary encompasses the `oxicrypt-*` crates compiled into a
-single module binary. The ACVP harness and tools are outside the boundary.
+`AGENTS.md` states which crates are inside the cryptographic boundary, and
+`tools/doc-guard` checks that statement against the workspace: every crate
+under `crates/` except `oxicrypt-ffi`, the C ABI, and `oxicrypt-maxwell`, the
+entropy-assessment tool. The ACVP harness and tools are outside the boundary.
 
 ### Design principles
 
@@ -203,8 +216,11 @@ the Security Policy (the `parallel` rules R75/R77/R83/R84/R85 and the `accel-*`
 auditable-unsafe rules). See **Performance features** below.
 
 **`no_std` by default.** The core algorithm crates use `#![no_std]` with
-`alloc` where necessary, making them suitable for embedded and `wasm32` targets.
-The integrity crate uses `std` for file I/O and self-test
+`alloc` where necessary, so they compile for embedded and `wasm32` targets with
+64-bit atomics. A module becomes operational on Linux, Android, macOS and
+Windows, where it can record the initialising thread's id; the iOS code
+paths are neither built nor tested, iOS is not supported, and on any other
+target initialisation fails. The integrity crate uses `std` for file I/O and self-test
 orchestration; the module crate is `#![no_std]`. The parallel-capable crates
 (`oxicrypt-slh-dsa`, `oxicrypt-ml-kem`, `oxicrypt-ml-dsa`) become `std` only
 under their optional default-off `parallel` feature (rayon requires `std`); the default build stays `no_std`.
@@ -272,8 +288,13 @@ all test types the demo server is expected to send:
 | LDT | SHA-3 family, SHAKE family |
 | GDT | RSA SigVer, RSA SigGen |
 
-121 ACVP round-trip tests plus 7 CAVP SHS tests verify every handler
-reproduces the vendored answer fields byte-for-byte.
+120 ACVP round-trip tests plus 7 CAVP SHS round-trip tests check that the
+handlers they cover reproduce the vendored answer fields byte-for-byte, and
+1 further test in `acvp-harness/tests/round_trip.rs` checks that a response
+carries the request's `algorithm` and `revision` fields. The figures are the `#[test]` functions in
+`acvp-harness/tests/round_trip.rs` and `acvp-harness/tests/shs_round_trip.rs`,
+split by whether the name ends in `_round_trip`; `tools/doc-guard` recounts
+them on every test run.
 
 ### Dispatching vectors
 
@@ -407,7 +428,7 @@ DH-3072 (RFC 3526 Group 15), ML-KEM-512/-768/-1024 (FIPS 203),
 ML-DSA-44/-65/-87 (FIPS 204), SLH-DSA full family — SHA2 + SHAKE — (FIPS 205), LMS — verification across the SP 800-208 §4.1–§4.4 grid (80 pairs) — and XMSS
 (SP 800-208). CNSA 2.0 / CNSA 1.0 / Migration algorithm-profile gating enforced
 across all algorithm crates and the C ABI (`oxicrypt-ffi`). 83 ACVP
-handlers, 156 power-up self-tests and 128 ACVP/CAVP round-trip tests, all
+handlers, 164 power-up self-tests and 127 ACVP/CAVP round-trip tests, all
 green at this release.
 
 **Phase 3 (current)** — ACVP demo-server grading, gap resolution, and
@@ -452,30 +473,50 @@ crate reaches the LAMA manifest through one. See
 [CONTRIBUTING.md § One-time setup](CONTRIBUTING.md#one-time-setup). This does not
 apply to the crate as published on crates.io, where the file is a normal file.
 
-Sign the shared library with `oxicrypt-integrity-sign` before use in a
-FIPS-validated context (the embedded HMAC-SHA-256 slot is populated in
-place):
+Build the shared library with your public key embedded and sign it with
+`oxicrypt-integrity-sign` before use in a FIPS-validated context (the embedded
+integrity slot is written in place):
 
 ```bash
 cargo build --release -p oxicrypt-integrity-sign
-./target/release/oxicrypt-integrity-sign --sign \
+./target/release/oxicrypt-integrity-sign --keygen ~/oxicrypt-keys   # once
+OXICRYPT_INTEGRITY_VERIFY_KEY=~/oxicrypt-keys/integrity-verify.pub cargo build --release -p oxicrypt-ffi
+./target/release/oxicrypt-integrity-sign --sign --key ~/oxicrypt-keys/integrity-signing.key \
     --cdylib-target target/release/liboxicrypt_ffi.so
 ```
 
+On Apple platforms, renew the code signature of the library (or of any binary
+you integrity-sign) after the integrity signer, with
+`codesign --force --sign - target/release/liboxicrypt_ffi.dylib`. See
+[`docs/integrity-signing.md`](docs/integrity-signing.md#apple-platforms-integrity-sign-then-code-sign).
+
 The static archive is not signed. An archive is a build input rather
 than a loadable image: the linker copies the slot into the consumer's
-final binary, so a MAC computed over the archive could never be
-verified at runtime. A consumer linking `liboxicrypt_ffi.a` signs the
-binary they produce.
+final binary, so a signature computed over the archive could never be
+verified at runtime. A consumer linking `liboxicrypt_ffi.a` builds with
+`OXICRYPT_INTEGRITY_VERIFY_KEY` set and signs the binary they produce.
 
 C integration tests live at
-`crates/oxicrypt-ffi/tests/c-integration/`. Run them after building +
-signing:
+`crates/oxicrypt-ffi/tests/c-integration/`. They run on Linux: the
+Makefile links the shared library as a `.so`. It signs its own copies of
+the release artifacts, so build the library with a key pair's public half and
+the signer first, then pass the private half as `SIGNING_KEY`. The Makefile also
+reads the public half, to check the fingerprint the library reports; it looks
+for `integrity-verify.pub` beside `SIGNING_KEY`, where `--keygen` writes it, or
+takes `VERIFY_KEY=<path>`:
 
 ```bash
-make -C crates/oxicrypt-ffi/tests/c-integration test-cdylib
-make -C crates/oxicrypt-ffi/tests/c-integration test-staticlib
+cargo build --release -p oxicrypt-integrity-sign
+./target/release/oxicrypt-integrity-sign --keygen ~/oxicrypt-keys   # once
+OXICRYPT_INTEGRITY_VERIFY_KEY=~/oxicrypt-keys/integrity-verify.pub cargo build --release -p oxicrypt-ffi
+make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY=~/oxicrypt-keys/integrity-signing.key test-cdylib
+make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY=~/oxicrypt-keys/integrity-signing.key test-staticlib
+make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY=~/oxicrypt-keys/integrity-signing.key test-unsigned
 ```
+
+`test-unsigned` checks that `oxi_init` refuses an unsigned library and an
+unsigned static executable, with a control that it succeeds against the
+signed library.
 
 The harness exercises the McGrew/Viega "GCM" reference Case 15
 (AES-256) — the same vector the underlying primitive's power-up KAT
@@ -573,6 +614,15 @@ cargo bench --bench ecdsa
 ```
 
 HTML reports are generated in `target/criterion/`.
+
+Measured figures, with the reference platform and the command that reproduces
+each, are recorded in two pages:
+[`docs/power-up-performance.md`](docs/power-up-performance.md) for the time
+each entry point spends on its power-up self-tests, including the integrity
+test measured on a signed `oxi`, and
+[`docs/entropy-performance.md`](docs/entropy-performance.md) for the entropy
+source's start-up tests, conditioned-output throughput and SP 800-90B
+assessment cost.
 
 ## LAMA — AI agent discovery
 

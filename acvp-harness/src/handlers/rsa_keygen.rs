@@ -137,7 +137,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
         match modulo {
             2048 => {
-                let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, e)
+                let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, e)
                     .map_err(|_| DispatchError::Crypto("RSA keyGen: 2048 key generation failed"))?;
 
                 let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -161,7 +161,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 ));
             }
             3072 => {
-                let km = oxicrypt_rsa::keygen3072::generate_3072(&mut drbg, e)
+                let km = oxicrypt_rsa::keygen3072::generate_3072_internal(&mut drbg, e)
                     .map_err(|_| DispatchError::Crypto("RSA keyGen: 3072 key generation failed"))?;
 
                 let n_bytes: [u8; 384] = km.n.to_be_bytes();
@@ -185,7 +185,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 ));
             }
             4096 => {
-                let km = oxicrypt_rsa::keygen4096::generate_4096(&mut drbg, e)
+                let km = oxicrypt_rsa::keygen4096::generate_4096_internal(&mut drbg, e)
                     .map_err(|_| DispatchError::Crypto("RSA keyGen: 4096 key generation failed"))?;
 
                 let n_bytes: [u8; 512] = km.n.to_be_bytes();

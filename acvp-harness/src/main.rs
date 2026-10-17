@@ -50,87 +50,31 @@
     clippy::unnecessary_wraps
 )]
 
-use oxicrypt_module::{Error, KatEntry, initialize_with_tests, state};
+#[cfg(not(test))]
+use oxicrypt_module::initialize_with_tests;
+use oxicrypt_module::{Error, KatEntry, state};
+#[cfg(test)]
+use power_up_tests::initialize_with_tests;
 
-/// The full power-up KAT set for this binary.
+mod power_up;
+
+use power_up::POWER_UP_KATS;
+
+/// The integrity self-test and the algorithm self-tests the harness passes to
+/// `initialize_with_tests`, in that order.
 ///
-/// Built at compile time by concatenating the `KATS` slice exported
-/// by each algorithm crate. Keeping this list in source (rather than
-/// assembling it via linker-section magic) means the module's test
-/// inventory is trivially auditable from a single location, which is
-/// exactly what a CST lab will want to see during the Security
-/// Policy review.
-const POWER_UP_KATS: &[KatEntry] = &concat_kats::<
-    {
-        oxicrypt_sha::KATS.len()
-            + oxicrypt_xof::KATS.len()
-            + oxicrypt_hmac::KATS.len()
-            + oxicrypt_kdf::KATS.len()
-            + oxicrypt_aes::KATS.len()
-            + oxicrypt_cmac::KATS.len()
-            + oxicrypt_drbg::KATS.len()
-            + oxicrypt_ecdsa::KATS.len()
-            + oxicrypt_eddsa::KATS.len()
-            + oxicrypt_rsa::KATS.len()
-            + oxicrypt_ecdh::KATS.len()
-            + oxicrypt_tls_kdf::KATS.len()
-            + oxicrypt_dh::KATS.len()
-            + oxicrypt_ml_kem::KATS.len()
-            + oxicrypt_ml_dsa::KATS.len()
-            + oxicrypt_slh_dsa::KATS.len()
-            + oxicrypt_lms::KATS.len()
-            + oxicrypt_xmss::KATS.len()
-    },
->(&[
-    oxicrypt_sha::KATS,
-    oxicrypt_xof::KATS,
-    oxicrypt_hmac::KATS,
-    oxicrypt_kdf::KATS,
-    oxicrypt_aes::KATS,
-    oxicrypt_cmac::KATS,
-    oxicrypt_drbg::KATS,
-    oxicrypt_ecdsa::KATS,
-    oxicrypt_eddsa::KATS,
-    oxicrypt_rsa::KATS,
-    oxicrypt_ecdh::KATS,
-    oxicrypt_tls_kdf::KATS,
-    oxicrypt_dh::KATS,
-    oxicrypt_ml_kem::KATS,
-    oxicrypt_ml_dsa::KATS,
-    oxicrypt_slh_dsa::KATS,
-    oxicrypt_lms::KATS,
-    oxicrypt_xmss::KATS,
-]);
-
-/// Concatenate several `KatEntry` slices into a single fixed-size
-/// array at compile time. `N` must equal the sum of the lengths of
-/// the input slices; a mismatch triggers a `const` panic.
-const fn concat_kats<const N: usize>(parts: &[&[KatEntry]]) -> [KatEntry; N] {
-    let mut out: [KatEntry; N] = [KatEntry {
-        name: "",
-        run: noop_kat,
-    }; N];
-    let mut out_idx = 0usize;
-    let mut part_idx = 0usize;
-    while part_idx < parts.len() {
-        let part = parts[part_idx];
-        let mut i = 0usize;
-        while i < part.len() {
-            out[out_idx] = part[i];
-            out_idx += 1;
-            i += 1;
-        }
-        part_idx += 1;
-    }
-    assert!(out_idx == N, "concat_kats: length mismatch");
-    out
+/// The algorithm self-tests are the `KATS` of every approved algorithm crate
+/// the harness links, listed in `power_up.rs`. `power_up_tests` reads the
+/// harness's resolved dependency graph and fails if a linked algorithm crate
+/// is missing, and checks that [`initialize`] passes exactly this pair.
+fn power_up_set() -> (&'static [KatEntry], &'static [KatEntry]) {
+    (oxicrypt_integrity::KATS, POWER_UP_KATS)
 }
 
-/// Placeholder used only to initialize the const array before the
-/// real entries are copied in. Never actually invoked because every
-/// slot is overwritten in `concat_kats`.
-fn noop_kat() -> Result<(), oxicrypt_module::SelfTestFailure> {
-    Ok(())
+/// Initialises the module with [`power_up_set`].
+fn initialize() -> Result<(), Error> {
+    let (integrity, tests) = power_up_set();
+    initialize_with_tests(integrity, tests)
 }
 
 /// Process exit codes used by this binary.
@@ -175,7 +119,7 @@ fn main() -> std::process::ExitCode {
     // how `oxi --self-sign` works. It is not done here because the harness is
     // built and signed by a pipeline that already has a separate process to
     // hand, where `oxi` is installed by `cargo install`, which has none.
-    match initialize_with_tests(oxicrypt_integrity::KATS, POWER_UP_KATS) {
+    match initialize() {
         Ok(()) | Err(Error::AlreadyInitialized) => {}
         Err(e) => {
             eprintln!("oxicrypt acvp-harness: initialization failed: {e}");
@@ -833,11 +777,12 @@ fn print_resubmit_usage() {
 
 fn print_self_test_banner() {
     println!("oxicrypt acvp-harness: module state = {}", state());
+    let (integrity, tests) = power_up_set();
     println!(
         "Power-up self-tests passed: {} KAT(s).",
-        oxicrypt_integrity::KATS.len() + POWER_UP_KATS.len()
+        integrity.len() + tests.len()
     );
-    for kat in oxicrypt_integrity::KATS.iter().chain(POWER_UP_KATS) {
+    for kat in integrity.iter().chain(tests) {
         println!("  - {}", kat.name);
     }
     let registry = acvp_harness::dispatch::with_default_handlers();
@@ -930,4 +875,235 @@ fn run_dispatch_shs(algorithm: &str, prompt_path: &str, response_path: &str) -> 
             .map_or(0, <[_]>::len)
     );
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::panic, clippy::expect_used)]
+mod power_up_tests {
+    use super::{initialize, power_up_set};
+    use oxicrypt_module::{Error, KatEntry};
+    use std::collections::BTreeSet;
+    use std::sync::{Mutex, PoisonError};
+
+    /// Linked `oxicrypt-*` crates that publish no algorithm KATs, each
+    /// with the reason it is not in the power-up set.
+    const NOT_ALGORITHM_CRATES: &[(&str, &str)] = &[
+        (
+            "oxicrypt_module",
+            "the self-test runner and state machine; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_integrity",
+            "its KAT is the separate integrity argument to initialize_with_tests",
+        ),
+        (
+            "oxicrypt_imageread",
+            "reads the module's own image for the integrity test; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_zeroize",
+            "zeroizes secret buffers; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_test_vectors",
+            "vector data that algorithm crates' KATs read; it implements no algorithm",
+        ),
+    ];
+
+    /// Each algorithm crate's own `KATS` slice, keyed by the crate's path
+    /// as written. `stringify!` takes the key from the same path the slice
+    /// is read through, so a key cannot name a different crate's slice.
+    macro_rules! kats_by_crate {
+        ($($krate:ident),* $(,)?) => {
+            &[$((stringify!($krate), $krate::KATS)),*]
+        };
+    }
+
+    const KATS_BY_CRATE: &[(&str, &[KatEntry])] = kats_by_crate![
+        oxicrypt_sha,
+        oxicrypt_xof,
+        oxicrypt_hmac,
+        oxicrypt_kdf,
+        oxicrypt_aes,
+        oxicrypt_cmac,
+        oxicrypt_drbg,
+        oxicrypt_ecdsa,
+        oxicrypt_eddsa,
+        oxicrypt_rsa,
+        oxicrypt_ecdh,
+        oxicrypt_tls_kdf,
+        oxicrypt_dh,
+        oxicrypt_ml_kem,
+        oxicrypt_ml_dsa,
+        oxicrypt_slh_dsa,
+        oxicrypt_lms,
+        oxicrypt_xmss,
+    ];
+
+    /// The names of the integrity and algorithm self-tests the most recent
+    /// [`initialize`] passed to the module.
+    static PASSED: Mutex<Option<(Vec<&'static str>, Vec<&'static str>)>> = Mutex::new(None);
+
+    fn names(kats: &[KatEntry]) -> Vec<&'static str> {
+        kats.iter().map(|k| k.name).collect()
+    }
+
+    /// [`initialize`] calls this in place of
+    /// `oxicrypt_module::initialize_with_tests` in this binary's tests. It
+    /// records what it was given, then forwards the call unchanged.
+    pub(super) fn initialize_with_tests(
+        integrity: &[KatEntry],
+        tests: &[KatEntry],
+    ) -> Result<(), Error> {
+        *PASSED.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((names(integrity), names(tests)));
+        oxicrypt_module::initialize_with_tests(integrity, tests)
+    }
+
+    /// Every workspace package in this crate's normal-dependency closure with
+    /// default features, on every target platform, except this crate
+    /// itself, with hyphens mapped to underscores so they compare against
+    /// crate paths. A dependency enabled only by a non-default feature is not
+    /// read; the entry points have no features. A package from outside the
+    /// workspace is not an `oxicrypt` crate and is not returned.
+    ///
+    /// Read from Cargo's resolved dependency graph, so a dependency declared
+    /// in a sub-table, under `[target.*]` or under another name, and a crate
+    /// linked only through another dependency, are all included. The `cargo`
+    /// that built this test runs it, offline and against the committed
+    /// `Cargo.lock`.
+    fn linked_packages() -> BTreeSet<String> {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
+        let out = std::process::Command::new(cargo)
+            .args([
+                "tree",
+                "--offline",
+                "--locked",
+                "--manifest-path",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+                "-p",
+                env!("CARGO_PKG_NAME"),
+                "-e",
+                "normal",
+                "--target",
+                "all",
+                "--prefix",
+                "none",
+                "--format",
+                "{p}",
+            ])
+            .output()
+            .expect("cargo tree could not be run");
+        assert!(
+            out.status.success(),
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+            .canonicalize()
+            .expect("the workspace root is readable");
+        String::from_utf8(out.stdout)
+            .expect("cargo tree printed non-UTF-8")
+            .lines()
+            .filter(|l| {
+                // `name vX.Y.Z (/path/to/package)`; a registry or git
+                // package prints no path and is not a workspace crate.
+                l.split_once(" (")
+                    .and_then(|(_, rest)| rest.split_once(')'))
+                    .and_then(|(dir, _)| std::path::Path::new(dir).canonicalize().ok())
+                    .is_some_and(|dir| dir.starts_with(&root))
+            })
+            .filter_map(|l| l.split_whitespace().next())
+            .filter(|p| *p != env!("CARGO_PKG_NAME"))
+            .map(|p| p.replace('-', "_"))
+            .collect()
+    }
+
+    /// The harness self-tests with what `power_up_set` returns. Every
+    /// approved algorithm crate it links must have all of its KATs in that
+    /// set, each exactly once, and nothing else may be in it.
+    ///
+    /// The linked set is the harness's resolved dependency graph, so
+    /// linking an algorithm crate, directly or through another dependency,
+    /// without adding its `KATS` to `power_up.rs` fails here. Entries are
+    /// attributed to a crate by membership in that crate's own `KATS`
+    /// slice, matched by name; names are checked unique across all slices
+    /// first so that one crate's entry cannot stand in for another's.
+    #[test]
+    fn power_up_set_covers_every_linked_algorithm_crate() {
+        let linked = linked_packages();
+        assert!(
+            linked.contains("oxicrypt_module") && linked.len() >= 10,
+            "read {linked:?} from cargo tree; the dependency reader is broken"
+        );
+
+        let mut all_names = BTreeSet::new();
+        for (krate, slice) in KATS_BY_CRATE {
+            assert!(!slice.is_empty(), "{krate} publishes an empty KATS slice");
+            for kat in *slice {
+                assert!(
+                    all_names.insert(kat.name),
+                    "KAT name {} is not unique across crates",
+                    kat.name
+                );
+            }
+        }
+
+        let (integrity, kats) = power_up_set();
+        assert_eq!(names(integrity), names(oxicrypt_integrity::KATS));
+        let mut run = BTreeSet::new();
+        for kat in kats {
+            assert!(run.insert(kat.name), "{} runs twice at power-up", kat.name);
+        }
+
+        for (krate, reason) in NOT_ALGORITHM_CRATES {
+            assert!(!reason.is_empty());
+            assert!(
+                linked.contains(*krate),
+                "the exemption names {krate}, which the harness does not link; remove it"
+            );
+        }
+
+        let exempt: BTreeSet<&str> = NOT_ALGORITHM_CRATES.iter().map(|(c, _)| *c).collect();
+        let mut expected = 0usize;
+        let mut not_self_tested = Vec::new();
+        for krate in linked.iter().filter(|c| !exempt.contains(c.as_str())) {
+            let Some((_, slice)) = KATS_BY_CRATE.iter().find(|(k, _)| k == krate) else {
+                panic!(
+                    "{krate} is linked but KATS_BY_CRATE has no entry for it; \
+                     add its KATS here and to power_up.rs"
+                );
+            };
+            expected += slice.len();
+            if slice.iter().any(|k| !run.contains(k.name)) {
+                not_self_tested.push(krate.as_str());
+            }
+        }
+        assert!(
+            not_self_tested.is_empty(),
+            "linked but missing from the harness's power-up set: {not_self_tested:?}"
+        );
+        assert_eq!(
+            kats.len(),
+            expected,
+            "the harness runs KATs from a crate that is not a linked algorithm crate"
+        );
+    }
+
+    /// [`initialize`] hands the module exactly the pair `power_up_set`
+    /// returns. The integrity test fails in an unsigned test binary, so the
+    /// call itself fails; what it passed is recorded first.
+    #[test]
+    fn initialize_passes_its_power_up_set_to_the_module() {
+        let _ = initialize();
+        let (integrity, tests) = PASSED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .expect("initialize did not call initialize_with_tests");
+        let (want_integrity, want_tests) = power_up_set();
+        assert_eq!(integrity, names(want_integrity));
+        assert_eq!(tests, names(want_tests));
+        assert!(!tests.is_empty());
+    }
 }

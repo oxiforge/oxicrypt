@@ -118,15 +118,15 @@ wave that follows it.
 
 ## Principles
 
-- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice — 22 of 27 in-boundary crates
-  carry it. It is a build-time control that enters the conformance argument. Three sanctioned
-  `unsafe` categories exist, isolated in five small, readily auditable crates: (1) **volatile CSP
-  zeroization** — `oxicrypt-zeroize`, one isolated `unsafe` mechanism for `write_volatile`;
-  (2) **CPU-intrinsic acceleration** — `oxicrypt-sha-accel` (x86_64 SHA-NI), `oxicrypt-aes-accel`
-  (x86_64 AES-NI + PCLMULQDQ GHASH), and `oxicrypt-keccak-accel` (x86_64 AVX2 4-way batched
-  Keccak-f[1600]): feature-gated, default-off, runtime-detected, equivalence to the portable path
-  proven by KAT + cross-path oracle; and (3) **CPU timer/counter intrinsics** — `oxicrypt-timer`:
-  read-only, side-effect-free counter reads, no cryptographic logic. The default build graph contains
+- **`forbid(unsafe_code)` is the in-boundary default**, not a style choice. It is a build-time
+  control that enters the conformance argument. The sanctioned `unsafe` categories are each isolated
+  in small, readily auditable crates: **volatile CSP zeroization** (one isolated `write_volatile`
+  mechanism); **CPU-intrinsic acceleration** (feature-gated, default-off, runtime-detected,
+  equivalence to the portable path proven by KAT + cross-path oracle); **CPU timer/counter
+  intrinsics** (read-only, side-effect-free counter reads, no cryptographic logic); and the
+  **system calls the integrity test needs** to read the module's own loaded image. Which crates carry
+  them, and how many in-boundary crates carry `forbid`, is stated in `AGENTS.md`, which `doc-guard`
+  checks against the workspace, and in Security Policy §9.2. The default build graph contains
   no acceleration crate; the portable baseline is the shipping default. The C-ABI crate
   (`oxicrypt-ffi`) sits outside the boundary and necessarily carries unsafe.
 - **One home per security claim** — the CMVP claims live in the Security Policy (withheld from this
@@ -289,7 +289,7 @@ commit-is-the-gate doc-sync discipline.
 - [ ] ISC-85: Feature graph documented; std-only surfaces behind named features. Probe(bash): for every feature declared in `crates/*/Cargo.toml`, `git grep -lE '`<feature>`' -- README.md AGENTS.md docs/` must match; `collection`, `rand-core` and `raw-counter` do not; control: the same search for `alloc` matches 3 files
 - [x] ISC-86: lama.yaml gains the oxicrypt-entropy API entry. Probe(bash): `grep -n 'Entropy source' lama.yaml`; lama.yaml:67-69; judgment: capability-level entry, oxicrypt-entropy never named; remainder tracked as ISC-86.1
 - [ ] ISC-86.1: `lama.yaml` names the `oxicrypt-entropy` crate in its entropy API entry. Probe(bash): `grep -c 'oxicrypt-entropy' lama.yaml` returns 0; control: `grep -c oxicrypt lama.yaml` is non-zero — the entry is a capability string that never names the crate
-- [ ] ISC-87: Startup self-test time benchmarked and documented — measured, not asserted [DEFERRED — see Decisions]. Probe(bash): `git grep -lE 'initialize_with_tests' -- benches/benches | wc -l` returns 0 — no startup self-test benchmark exists; control: `git grep -lE 'criterion|bench_function|black_box' -- benches/benches | wc -l` returns 13 real bench targets
+- [x] ISC-87: Startup self-test time benchmarked and documented — measured, not asserted. Probe(bash): `cargo bench -p oxicrypt-bench --features entropy-bench --bench entropy_startup`; `docs/entropy-performance.md` § Start-up health-test time records `EntropyPipeline::run_startup` alone and with source and pipeline construction, each on a fresh real `raw-counter` source per iteration, qualified as a KVM-guest platform characterisation rather than a module property; judgment: the real source is characterised as ISC-88 does, and no deterministic source is exposed for benchmarking
 - [x] ISC-88: Conditioned-output throughput benchmarked and documented per reference platform. Probe(bash): `cargo bench -p oxicrypt-bench --features entropy-bench --bench conditioned_output`; the figure and its reference platform are recorded in `docs/entropy-performance.md` § Conditioned-output throughput, qualified as a hot-loop steady state on a KVM guest rather than the pilot operational environment's figure
 - [x] ISC-89: maxwell 1M-sample processing benchmarked and documented. Probe(bash): `cargo bench -p oxicrypt-bench --features entropy-bench --bench maxwell`; `docs/entropy-performance.md` § `maxwell` assessment cost records both branches at 1 M samples with the symbol width stated per row, and the bench asserts each synthetic input routes as intended before measuring, so two figures from the same branch cannot pass as a result
 - [ ] ISC-90: ARM collection burst scripts auto-terminate instances — cost guard. Probe(bash): `git grep -linE 'terminate-instances|aws ec2|shutdown-behavior|self-destruct' -- scripts/ xtask/ .github/ | wc -l` returns 0; control: `ls scripts/*.sh | wc -l` is non-zero, so the tree searched is populated
@@ -346,8 +346,8 @@ commit-is-the-gate doc-sync discipline.
 - [x] ISC-132: A certification-grade collection run that trips RCT/APT mid-run is invalidated and re-collected — the dataset submitted for a min-entropy estimate is a clean, contiguous, trip-free run; the unfiltered-annotated capture is retained only as characterization evidence, never window-stitched into a submission. Probe(bash): `cargo test -p oxicrypt-entropy --lib certification_trip_invalidates_and_signals_recollect`; raw.rs:1842-1848
 - [x] ISC-133: The minimal pilot runs a lightweight FFT + autocorrelation periodicity screen on the 1M raw dataset (distinct from the deferred ≥10M independence analysis); a dominant periodic component fails pilot acceptance. Probe(bash): `cargo test -p oxicrypt-maxwell --lib pure_periodic_sawtooth_is_flagged`; periodicity.rs:583; synthetic sources only
 - [x] ISC-134: Anti: maxwell's permutation shuffle never seeds from a non-deterministic source (no /dev/urandom, no system entropy) — unlike EA, which seeds xoshiro256 from /dev/urandom (`utils.h:580`); maxwell's seed is a fixed documented constant so every run is bit-reproducible. Probe(bash): `cargo test -p oxicrypt-maxwell --lib determinism_test_bit_exact`; permutation.rs:1231, fixed SHUFFLE_SEED
-- [x] ISC-135: `forbid(unsafe_code)` accounting is recomputed from disk and matches the security policy — 22 of 27 in-boundary crates carry it, with five unsafe exception crates named, not merely counted. Probe(bash): `cargo test -p doc-guard policy_states_the_as_built_accounting`; doc-guard/src/lib.rs:153 recomputes from disk and fails by crate NAME, not count
-- [x] ISC-136: README.md and AGENTS.md state the same as-built unsafe accounting as the security policy. Probe(bash): `cargo test -p doc-guard readme_states_the_count_and_lists_every_crate agents_md_states_the_as_built_accounting`; the same accounting asserted in README.md and AGENTS.md
+- [x] ISC-135: `forbid(unsafe_code)` accounting is recomputed from disk and matches the security policy — every in-boundary crate carries it except the sanctioned `unsafe` exception crates (volatile zeroization, CPU-intrinsic acceleration, CPU timer/counter intrinsics, and the system calls the integrity test needs), which are named, not merely counted; `AGENTS.md` and Security Policy §9.2 state the accounting. Probe(bash): `cargo test -p doc-guard policy_states_the_as_built_accounting`; `accounting()` in `tools/doc-guard` recomputes from disk and fails by crate NAME, not count
+- [x] ISC-136: AGENTS.md states the as-built unsafe accounting (the workspace crate count, the in-boundary `forbid` count and the named unsafe-exception set), and README.md states the workspace crate count and has a row for every crate. Probe(bash): `cargo test -p doc-guard readme_states_the_count_and_lists_every_crate agents_md_states_the_as_built_accounting`; README.md is checked for the count and the crate rows only
 - [ ] ISC-137: Every approved algorithm has known-answer / ACVP vectors that pass. Probe(bash): `python3 -c "import json;print(json.load(open('docs/validation/acvp-demo-evidence.json'))['summary']['vector_sets_failed'])"` returns 13 failed vector sets; control: `python3 scripts/check-acvp-evidence.py` exits 0 with its own planted-string controls firing. Second falsifier: XMSS is implemented and has never been graded
 - [x] ISC-138: Power-up self-tests run and gate operation — no approved service is reachable before they pass. Probe(bash): `cargo test -p integrity-probe --test signed_artifact`; twelve tests sign a real artifact, run it, and read the module's status indicator off its exit code, so the test exercises `oxicrypt_module::initialize_with_tests` rather than a helper. Control: an unsigned artifact must refuse to become operational, and a byte changed in a loader-written region must not affect the verdict — the second is what distinguishes this from a whole-file hash. The previous probe, `cargo test -p oxicrypt-integrity integrity_self_test`, selected **0 tests of 18** and could not fail.
 - [x] ISC-139: The cryptographic module boundary is formally defined, and its membership is derivable rather than asserted. Probe(bash): `cargo test -p doc-guard --lib agents_md_states_the_as_built_accounting` passes — `accounting()` reads `crates/` off disk, asserts every named out-of-boundary crate exists, and asserts the `forbid(unsafe_code)` exception set equals the disk-derived one, so membership is recomputed rather than read back; control: `cargo test -p doc-guard --lib readme_states_the_count_and_lists_every_crate` also passes. Residual: `OUT_OF_BOUNDARY` is a hand-written const, so the derivation is partial
@@ -431,6 +431,7 @@ Coverage of the workspace by articulated criteria. Crates with no criteria are n
 | `oxicrypt-entropy` | in | 74 |  |
 | `oxicrypt-ffi` | out | — | no articulated criteria |
 | `oxicrypt-hmac` | in | — | no articulated criteria |
+| `oxicrypt-imageread` | in | — | `unsafe` exception |
 | `oxicrypt-integrity` | in | — | no articulated criteria |
 | `oxicrypt-kdf` | in | — | no articulated criteria |
 | `oxicrypt-keccak-accel` | in | — | `unsafe` exception |
@@ -460,20 +461,19 @@ Coverage of the workspace by articulated criteria. Crates with no criteria are n
 Decisions in force, with the reasoning that makes each hard to vary. Superseded amendments and the
 route taken to reach a decision are not recorded here — the git history and `CHANGELOG.md` hold those.
 
-- **Three sanctioned `unsafe` categories, five readily auditable crates.** In-boundary code is
+- **Sanctioned `unsafe` categories, each in a readily auditable crate.** In-boundary code is
   `#![forbid(unsafe_code)]` by default because it is a build-time control that enters the conformance
-  argument, not a style preference. Three categories are sanctioned, each isolated in a small, readily auditable
-  crate: **volatile CSP zeroization** (`oxicrypt-zeroize`, one `write_volatile` mechanism);
-  **CPU-intrinsic acceleration** (`oxicrypt-sha-accel`, `oxicrypt-aes-accel`, `oxicrypt-keccak-accel`
-  — feature-gated, default-off, runtime-detected, equivalence to the portable path proven by KAT plus
-  a cross-path oracle); and **CPU timer/counter intrinsics** (`oxicrypt-timer` — read-only,
-  side-effect-free, no cryptographic logic). Acceleration is admitted only where an oracle can prove
+  argument, not a style preference. The sanctioned categories are each isolated in a small, readily
+  auditable crate: **volatile CSP zeroization** (one `write_volatile` mechanism); **CPU-intrinsic
+  acceleration** (feature-gated, default-off, runtime-detected, equivalence to the portable path
+  proven by KAT plus a cross-path oracle); **CPU timer/counter intrinsics** (read-only,
+  side-effect-free, no cryptographic logic); and the **system calls the integrity test needs** to
+  read the module's own loaded image. Acceleration is admitted only where an oracle can prove
   byte-identical output, which is why the category is safe to widen and why each new member ships with
   its differential test. The default build graph contains no acceleration crate: the portable
   baseline is the shipping default. `oxicrypt-ffi` sits outside the boundary and necessarily carries
-  `unsafe`. Current accounting — 22 of 27 in-boundary crates carrying `forbid`, five readily auditable
-  exceptions — is recomputed from disk by `doc-guard` rather than restated, so it cannot drift
-  (ISC-135). Security policy §9.2.
+  `unsafe`. The accounting (which crates carry `forbid` and which are the exceptions) is stated in
+  `AGENTS.md` and Security Policy §9.2, and `doc-guard` recomputes it from disk (ISC-135).
 
 - **The entropy pipeline is three stages, and the claim is injected, never embedded.** Noise source →
   health tests → conditioner. Sources are dumb emitters declaring only a design-anchored

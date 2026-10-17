@@ -1,27 +1,29 @@
-# Design measurements for the pre-operational integrity test.
+# Measurements and gates for the pre-operational integrity test, kept in CI
+# because they need macOS and Windows runners.
 #
-# NOT a gate. Measurements, kept in CI because the platforms they need are
-# unavailable on the development machine: Mach-O and PE cannot be run there.
-#
-# Two jobs, answering two different questions. `probe` asks what the *loader*
-# does to an image — which parts survive ASLR unchanged and still equal the file
-# on disk. `codesign-extent` asks what the *signing tool* does to it, which
-# matters because a Mach-O carries its header and load commands at the start of
-# `__TEXT`, and `codesign` rewrites them. That question has been answered: it
-# does, so the extent now begins at `__TEXT`'s first section and that job has
-# become the regression gate proving a signed artifact still verifies.
-# `authenticode-extent` asks the same of signtool on PE, and `android-extent`
-# asks whether the technique holds on the platform the workstream exists for.
+# `probe` is a measurement, not a gate, and runs only on request. It asks what
+# the *loader* does to an image — which parts survive ASLR unchanged and still
+# equal the file on disk. `codesign-extent`, `authenticode-extent`,
+# `android-extent`, `integrity-runtime` and `probe-selftest` are gates and run
+# on every push and pull request that touches the integrity code; the
+# `extent-v2-*` jobs run on request. `codesign-extent` asks what the
+# *signing tool* does to a Mach-O: it carries its header and load commands at
+# the start of `__TEXT`, and `codesign` rewrites them, so the extent begins at
+# `__TEXT`'s first section and this job proves a code-signed artifact still
+# verifies. `authenticode-extent` asks the same of signtool on PE.
+# `android-extent` asks whether the technique holds on Android. And
+# `integrity-runtime` runs signed binaries and the C library on every
+# platform, with controls showing that an unsigned or tampered one is refused.
 # Each job documents itself where it is defined.
 #
-# What it establishes per platform: which parts of the loaded module are
+# What `probe` establishes per platform: which parts of the loaded module are
 # identical across runs despite ASLR, and whether those parts equal the file
 # bytes on disk. A region satisfying both can be hashed from the file at build
 # time and re-hashed from memory at runtime — which is how the integrity test
 # survives a platform that rewrites or encrypts the file after signing.
 #
 # The linux-x86_64 leg is the harness control: it must reproduce the figure
-# already measured locally (99.03% stable, all of it matching the file). If it
+# recorded for that platform (99.03% stable, all of it matching the file). If it
 # does not, the numbers from the same harness on other platforms are not to be
 # trusted.
 #
@@ -33,17 +35,56 @@
 # directly, so the Windows probe reports which sections the fixups land in and
 # answers that outright instead of inferring it from hash stability.
 #
-# Runner labels age out. `macos-13` was retired mid-life in this repo and a job
-# using it queued for over two hours rather than failing, so every job here
-# carries an explicit timeout — a retired label must surface as a timeout, not
-# as apparent scarcity. Check https://github.com/actions/runner-images before
-# assuming a queued macOS job is merely waiting.
+# Terms used by the `extent-v2-*` jobs. The integrity test hashes an
+# *extent*: the list of file ranges of the module's own image that it covers.
+# The extent the signer writes ("extent v2", after which the jobs are named)
+# covers every byte the loader maps from the file. The list lives in the
+# *slot*, a fixed-size table inside the module that the signer fills in. Each
+# entry has a kind: *Plain* bytes load exactly as the file holds them;
+# *Relative* words load as the file value plus the load address; *Bind* words
+# load as the address of an imported symbol; a *Hole* is a word the loader
+# overwrites without reading it; *FileOnly* bytes are writable data, checked
+# against the file rather than memory. The platform's own code signature
+# (Apple's, Authenticode) sits after the module's bytes as an *envelope*; the
+# *envelope locator fields* are the few header fields that say where it is and
+# that the platform signer rewrites each time it signs.
+#
+# The `extent-v2-*` jobs measure the inputs the extent depends on: what each
+# signing step writes (the reservation diffs), whether two independent parses
+# agree on every loader fixup, the typed loaded-image probes with a mutation
+# test per result bit, the Mach-O chained-fixup build and whether its extent
+# fits the slot, the file-backed module statics row on every artifact, and
+# the Android build linked for 16 KiB pages. They change nothing that
+# ships. They run on request (`extent-v2` or `all`); `probe-selftest`, which
+# tests the instruments themselves against fixtures, also runs with the gates.
+#
+# Every tool here exits 0 for a pass, 1 for a measured verdict that failed, 2
+# for a control that failed or could not run, and 3 for an input it could not
+# read or a crash. A step that measures prints `measurement:` and fails the job
+# only on 2 or 3; a gate step fails on anything but 0. A control that does not
+# fire always fails the job, because a measurement whose control is dead says
+# nothing either way.
+#
+# Toolchains: Windows images are named explicitly where a job compares loader
+# versions (`authenticode-extent`, `extent-v2-windows`); the other Windows legs
+# float with `windows-latest`. The Android NDK
+# (`ANDROID_NDK_LATEST_HOME`) and Xcode float with the runner image, because a
+# pinned path that the image no longer ships fails the job for a reason that
+# says nothing about the module; instead every record these jobs upload
+# begins with the NDK's Pkg.Revision, `xcodebuild -version` and the bash
+# version, or the MSVC linker's banner, so a changed result can be attributed.
+#
+# Runner labels age out, and a job on a retired label queues rather than
+# failing, so every job here carries an explicit timeout: a retired label must
+# surface as a timeout, not as apparent scarcity. Check
+# https://github.com/actions/runner-images before assuming a queued macOS job
+# is merely waiting.
 name: integrity image probe
 
-# A push runs the gate alone. The stability probe re-measures ground that is
-# already settled, on runners billed at ten times the Linux rate, and it took
-# every push to this branch with it — so it is now opt-in and the gate, which
-# has to run on every change to the extent, is what a push triggers.
+# A push runs the gates alone. The stability probe and the `extent-v2-*`
+# measurements answer questions that do not change with each push, so they
+# run on request; the gates, which have to run on every change to the extent,
+# are what a push triggers.
 on:
   workflow_dispatch:
     inputs:
@@ -54,6 +95,7 @@ on:
         options:
           - gate
           - probe
+          - extent-v2
           - all
   push:
     branches:
@@ -70,7 +112,7 @@ on:
   # anything the moment that branch merges. These jobs are the only place the
   # Darwin and Windows claims can be tested at all — neither platform exists
   # where the ordinary gates run — so they follow the code onto main and onto
-  # any pull request that touches it. The path filter keeps 10x-billed macOS
+  # any pull request that touches it. The path filter keeps the macOS
   # runners off changes that cannot affect the answer.
   pull_request:
     paths: *guarded
@@ -78,10 +120,31 @@ on:
 permissions:
   contents: read
 
+# How a Mach-O the integrity signer will sign is built: no AArch64 global
+# merging, which would fold the module's statics into one unnamed local
+# symbol the signer cannot check; chained fixups; and the zero-fill sections
+# in a segment of their own so that no module state is a byte of the file.
+# Every macOS step that signs uses it with MACOSX_DEPLOYMENT_TARGET 12.0
+# (arm64) or 13.0 (x86_64).
+#
+# How a PE the integrity signer will sign is built: zero-initialised data in
+# a section of its own, which has no file bytes, rather than merged into
+# `.data`, whose raw data is rounded up to the file alignment and so holds
+# the first zero-initialised statics. Every Windows step that signs uses it
+# with CARGO_PROFILE_RELEASE_DEBUG=full, whose program database names the
+# module's statics, kept beside the artifact.
+env:
+  MACHO_SIGNED_RUSTFLAGS: >-
+    -C llvm-args=-aarch64-enable-global-merge=false
+    -C link-arg=-Wl,-fixup_chains
+    -C link-arg=-Wl,-rename_section,__DATA,__bss,__ZEROFILL,__bss
+    -C link-arg=-Wl,-rename_section,__DATA,__common,__ZEROFILL,__common
+  PE_SIGNED_RUSTFLAGS: -C link-arg=/MERGE:.bss=.zbss
+
 jobs:
   probe:
     name: ${{ matrix.name }}
-    # Opt-in: this measured the loaded image once and the answer has not moved.
+    # On request: a measurement of the loader, not of this change.
     if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'probe' || inputs.jobs == 'all')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -121,10 +184,10 @@ jobs:
           set -euo pipefail
           rustup show active-toolchain || rustup toolchain install
 
-      # No rust-cache here deliberately: `Swatinem/rust-cache` failed to download
-      # with HTTP 429 on two separate runs of this workflow, taking otherwise
-      # healthy legs with it. A one-off measurement does not need the cache, and a
-      # non-load-bearing action must not be able to fail the job.
+      # No rust-cache here deliberately: `Swatinem/rust-cache` can fail to
+      # download with HTTP 429 and take an otherwise healthy leg with it. A
+      # one-off measurement does not need the cache, and an optional action
+      # must not be able to fail the job.
 
       - name: Build the cdylib
         shell: bash
@@ -233,6 +296,13 @@ jobs:
   # measurement observes.
   codesign-extent:
     name: codesign-extent-${{ matrix.name }}
+    # Debug info and a packed dSYM: the signer reads the module's statics
+    # from the dSYM matched by LC_UUID when the image's own symbol table
+    # does not name them.
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG: full
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+      CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
     # The regression gate on the Darwin extent, so a push must run it.
     if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'all'
     runs-on: ${{ matrix.runner }}
@@ -243,8 +313,10 @@ jobs:
         include:
           - name: macos-aarch64
             runner: macos-15
+            minos: '12.0'
           - name: macos-x86_64
             runner: macos-15-intel
+            minos: '13.0'
 
     steps:
       - uses: actions/checkout@v4
@@ -255,131 +327,52 @@ jobs:
           set -euo pipefail
           rustup show active-toolchain || rustup toolchain install
 
-      - name: Build the cdylib and the signer
+      - name: Integrity key pair (throwaway, this job only)
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
-          cp target/release/liboxicrypt_ffi.dylib subject.dylib
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
+      - name: Build the signer, and the dylib as a signed Mach-O is linked
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.minos }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-integrity-sign
+          # Chained fixups and the zero-fill sections in a segment of their
+          # own: the signer refuses any other Mach-O. Its own target dir, so
+          # the signer is not rebuilt with these flags.
+          RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" CARGO_TARGET_DIR=target-signed \
+            cargo build --release -p oxicrypt-ffi
+          cp target-signed/release/liboxicrypt_ffi.dylib subject.dylib
+          cp -R target-signed/release/liboxicrypt_ffi.dylib.dSYM subject.dylib.dSYM
           ls -l subject.dylib
+          otool -l subject.dylib > subject.otool
 
-      - name: Record the extent, then sign — CONTROL, must verify
+      - name: THE GATE — A, B, C (--reserved-against A), D, each step's bytes, and the controls
         shell: bash
         run: |
           set -euo pipefail
-          SIGN=target/release/oxicrypt-integrity-sign
-          "$SIGN" --show subject.dylib | tee before-show.txt
-          "$SIGN" --sign subject.dylib | tee sign.txt
-          # If this does not pass, nothing below distinguishes "codesign broke
-          # the extent" from "the extent was never right on this platform".
-          "$SIGN" --verify subject.dylib
-          echo "control ok: the artifact verifies before codesign runs"
-          shasum -a 256 subject.dylib | tee before-sha.txt
-          otool -l subject.dylib > before-otool.txt
-          grep -c LC_CODE_SIGNATURE before-otool.txt || true
-
-      - name: Ad-hoc sign — CONTROL, codesign must actually change the file
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Kept so the answer step can say *which* bytes moved, not merely that
-          # the verdict changed. "codesign broke it" and "codesign rewrote the
-          # load commands and nothing else" call for different remedies.
-          cp subject.dylib before.dylib
-          codesign --force --sign - --timestamp=none subject.dylib
-          codesign -dv subject.dylib 2>&1 | tee codesign-dv.txt
-          shasum -a 256 subject.dylib | tee after-sha.txt
-          # A codesign that no-opped would leave the artifact verifying and the
-          # measurement would read as "codesign is harmless" without codesign
-          # having done anything.
-          if cmp -s <(cut -d' ' -f1 before-sha.txt) <(cut -d' ' -f1 after-sha.txt); then
-            echo "control FAILED: codesign left the file byte-identical" >&2
-            exit 1
-          fi
-          echo "control ok: codesign changed the file"
-
-      - name: THE GATE — a signed artifact must still verify
-        shell: bash
-        run: |
-          set -euo pipefail
-          SIGN=target/release/oxicrypt-integrity-sign
-          otool -l subject.dylib > after-otool.txt
+          # macho-signing-order.sh exits 1 when a comparison fails or a
+          # control does not fire, and prints every measurement.
           set +e
-          "$SIGN" --verify subject.dylib > verify-after.txt 2>&1
-          VERIFY_EXIT=$?
-          "$SIGN" --show subject.dylib > after-show.txt 2>&1
+          bash .github/probes/macho-signing-order.sh "$PWD/subject.dylib" \
+            "$PWD/target/release/oxicrypt-integrity-sign" order - > order.txt 2>&1
+          RC=$?
           set -e
-          echo "verify_after_codesign_exit=$VERIFY_EXIT" | tee answer.txt
-          # Read from the file rather than from $? after the pipeline above:
-          # `tee` succeeds regardless of what the signer decided.
-          cat verify-after.txt
-
-          echo "--- what codesign changed ---" | tee -a answer.txt
-          echo "LC_CODE_SIGNATURE before: $(grep -c LC_CODE_SIGNATURE before-otool.txt || true)" | tee -a answer.txt
-          echo "LC_CODE_SIGNATURE after:  $(grep -c LC_CODE_SIGNATURE after-otool.txt || true)" | tee -a answer.txt
-          echo "--- __TEXT segment, before ---" | tee -a answer.txt
-          grep -A 6 'segname __TEXT' before-otool.txt | head -12 | tee -a answer.txt
-          echo "--- __TEXT segment, after ---" | tee -a answer.txt
-          grep -A 6 'segname __TEXT' after-otool.txt | head -12 | tee -a answer.txt
-          echo "--- extent, before vs after ---" | tee -a answer.txt
-          diff before-show.txt after-show.txt || true
-
-          echo "--- which bytes codesign rewrote ---" | tee -a answer.txt
-          # The remedy depends on where the changes land. The Mach-O header and
-          # load-command table sit at the start of __TEXT, ahead of the first
-          # section, and they record __LINKEDIT's size — which every signature
-          # changes. If every rewritten byte lies before the first section's
-          # offset, an extent starting there instead of at the segment start
-          # would survive codesign, and the design has a fix rather than a wall.
-          FIRST_SECTION=$(awk '/segname __TEXT/{f=1} f&&/^ *offset /{print $2; exit}' after-otool.txt)
-          TEXT_FILESIZE=$(awk '/segname __TEXT/{f=1} f&&/^ *filesize /{print $2; exit}' after-otool.txt)
-          echo "first __TEXT section begins at file offset ${FIRST_SECTION}" | tee -a answer.txt
-          echo "__TEXT spans file bytes 0..${TEXT_FILESIZE}" | tee -a answer.txt
-          python3 - "$FIRST_SECTION" "$TEXT_FILESIZE" <<'PY' | tee -a answer.txt
-          import sys
-          first = int(sys.argv[1])
-          text_end = int(sys.argv[2])
-          a = open("before.dylib", "rb").read()
-          b = open("subject.dylib", "rb").read()
-          # Bounded to __TEXT deliberately. Comparing whole files answers a
-          # different question: __LINKEDIT follows __TEXT and grows by the
-          # signature, so every byte from its start onward differs for reasons
-          # that have nothing to do with the extent. Only __TEXT is hashed, so
-          # only __TEXT decides whether a narrower extent would survive.
-          n = min(len(a), len(b), text_end)
-          diffs = [i for i in range(n) if a[i] != b[i]]
-          print(f"file length: {len(a)} -> {len(b)}; compared __TEXT bytes 0..{n}")
-          if not diffs:
-              print("no byte inside __TEXT changed")
-          else:
-              before_first = [i for i in diffs if i < first]
-              after_first = [i for i in diffs if i >= first]
-              print(f"changed bytes inside __TEXT: {len(diffs)}")
-              print(f"  before the first section (header + load commands): {len(before_first)}")
-              print(f"  at or after the first section:                     {len(after_first)}")
-              print(f"  first changed offset: {diffs[0]}, last: {diffs[-1]}")
-              if not after_first:
-                  print("VERDICT: every rewritten byte is header or load-command data.")
-                  print("An extent beginning at the first section would survive codesign.")
-              else:
-                  print("VERDICT: codesign rewrote bytes inside the sections themselves;")
-                  print(f"  the first such offset is {after_first[0]}.")
-          PY
-
-          if [ "$VERIFY_EXIT" -eq 0 ]; then
-            echo "RESULT: codesign does NOT disturb the recorded extent on ${{ matrix.name }}" | tee -a answer.txt
-          else
-            # This was a report while the question was open. It is a failure now:
-            # the extent excludes the header and load commands precisely so that
-            # this passes, and nothing else in the suite can see a regression —
-            # neither macOS nor codesign exists on the machines that run the
-            # gates, so this job is the only place the claim can be tested.
-            echo "RESULT: codesign DISTURBS the recorded extent on ${{ matrix.name }}." | tee -a answer.txt
-            echo "The Darwin extent begins at __TEXT's first section so that it does not." | tee -a answer.txt
-            echo "Either the exclusion regressed, or codesign now rewrites bytes inside the" | tee -a answer.txt
-            echo "sections themselves — the byte report above says which." | tee -a answer.txt
-            exit 1
-          fi
+          cat order.txt
+          "$PWD/target/release/oxicrypt-integrity-sign" --show order/D.dylib > show-D.txt 2>&1 || true
+          grep -E 'slot table|entries|statics|bound imports' show-D.txt || true
+          exit "$RC"
 
       - name: Upload the measurement
         if: always()
@@ -387,29 +380,41 @@ jobs:
         with:
           name: codesign-extent-${{ matrix.name }}
           path: |
-            before-show.txt
-            after-show.txt
-            sign.txt
-            verify-after.txt
-            answer.txt
-            codesign-dv.txt
-            before-otool.txt
-            after-otool.txt
+            order.txt
+            order/*.txt
+            show-D.txt
+            subject.otool
           if-no-files-found: error
 
   authenticode-extent:
-    name: authenticode-extent-windows-x86_64
-    # The PE counterpart of codesign-extent, and open where that one is settled.
-    # Structurally PE is not the Mach-O problem: its headers are not part of any
-    # section, so `.text` — the only section in the extent — sits above them, and
-    # Authenticode writes the certificate-table directory entry and the checksum
-    # inside the optional header, both below where `.text` begins. That is an
-    # argument from layout, not a measurement, and this class has already been
-    # reasoned about wrongly twice. So it reports rather than gates until a run
-    # says what actually happens.
+    name: authenticode-extent-${{ matrix.runner }}
+    # The PE gate, the counterpart of codesign-extent and the integrity-runtime
+    # library steps. The DLL is built the way a signed PE must be (full debug
+    # information, whose program database names the module's statics, and
+    # zero-initialised data in a section of its own), then:
+    #   P1  the file-backed statics row is empty, and a default link is
+    #       refused (FileBackedStatic), a build without debug information too
+    #       (StaticsUnchecked);
+    #   P2  the release and debug DLL and EXE fit the slot and sign;
+    #   P3  the signing order: signtool (A), signtool (B), the integrity
+    #       signer against the DLL as linked (C), the final signtool (D), each
+    #       comparison with its controls (pe-signing-order.sh);
+    #   P4  D, Authenticode-signed, loads and becomes operational; the unsigned
+    #       DLL is refused as unsigned;
+    #   P4b the storage the loader may write, measured with and without
+    #       control-flow guard, and refused when edited on disk;
+    #   P5  every bound thunk equals GetProcAddress of its record, API-set
+    #       names included, with a swapped record as the control;
+    #   P6  the PE rows of the tamper matrix, each against its allowed
+    #       outcomes.
+    # Two Windows images, so two loader versions answer each question.
     if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'all'
-    runs-on: windows-latest
-    timeout-minutes: 30
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
 
     steps:
       - uses: actions/checkout@v4
@@ -420,28 +425,187 @@ jobs:
           set -euo pipefail
           rustup show active-toolchain || rustup toolchain install
 
-      - name: Build the cdylib and the signer
+      - name: Integrity key pair (throwaway, this job only)
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
-          cp target/release/oxicrypt_ffi.dll subject.dll
-          ls -l subject.dll
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
 
-      - name: Record the extent, then sign — CONTROL, must verify
+      - name: Record the toolchain versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $link = & $vswhere -latest -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\link.exe' | Select-Object -First 1
+          if (-not $link) { throw 'no MSVC link.exe found' }
+          $banner = (& $link 2>&1 | Select-Object -First 1)
+          "link: $banner" | Tee-Object -FilePath versions.txt
+          (rustc --version) | Tee-Object -FilePath versions.txt -Append
+
+      - name: Build the signed-form DLL and EXE, release and debug, and the control builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for P in release dev; do
+            RUSTFLAGS="$PE_SIGNED_RUSTFLAGS" CARGO_PROFILE_RELEASE_DEBUG=full \
+              CARGO_PROFILE_DEV_DEBUG=full CARGO_TARGET_DIR=target-signed \
+              cargo build --profile "$P" -p oxicrypt-ffi -p oxicrypt-cli
+          done
+          # Controls: the default link, with .bss merged into .data; and a
+          # build without debug information, whose PDB names no static.
+          CARGO_PROFILE_RELEASE_DEBUG=full CARGO_TARGET_DIR=target-default \
+            cargo build --release -p oxicrypt-ffi
+          cargo build --release -p oxicrypt-ffi
+          cp target-signed/release/oxicrypt_ffi.dll subject.dll
+          cp target-signed/release/oxicrypt_ffi.pdb oxicrypt_ffi.pdb
+          cp subject.dll unsigned.dll
+          ls -l subject.dll oxicrypt_ffi.pdb
+
+      # P1. THE GATE: no module static is a byte of the file.
+      - name: P1 — the file-backed statics row is empty, and its controls refuse
         shell: bash
         run: |
           set -euo pipefail
           SIGN=target/release/oxicrypt-integrity-sign.exe
-          "$SIGN" --show subject.dll | tee before-show.txt
-          "$SIGN" --sign subject.dll | tee sign.txt
-          # Without this, a later failure cannot be told apart from an extent
-          # that was never right on this platform.
-          "$SIGN" --verify subject.dll
-          echo "control ok: the artifact verifies before signtool runs"
-          cp subject.dll before.dll
+          PYBIN="$(command -v python3 || command -v python)"
+          # The section table: zero-initialised data in a section of its own,
+          # with no file bytes.
+          "$PYBIN" - subject.dll <<'PY'
+          import struct, sys
+          d = open(sys.argv[1], "rb").read()
+          pe, = struct.unpack_from("<I", d, 0x3C)
+          n, = struct.unpack_from("<H", d, pe + 6)
+          o, = struct.unpack_from("<H", d, pe + 20)
+          for i in range(n):
+              e = pe + 24 + o + 40 * i
+              vs, va, rs, rp = struct.unpack_from("<IIII", d, e + 8)
+              ch, = struct.unpack_from("<I", d, e + 36)
+              name = d[e:e + 8].rstrip(b"\0").decode("ascii", "replace")
+              print(f"section {name} va {va:#x} vsize {vs:#x} raw {rp:#x}+{rs:#x} chars {ch:#x}")
+          PY
+          if ! "$PYBIN" - subject.dll <<'PY'
+          import struct, sys
+          d = open(sys.argv[1], "rb").read()
+          pe, = struct.unpack_from("<I", d, 0x3C)
+          n, = struct.unpack_from("<H", d, pe + 6)
+          o, = struct.unpack_from("<H", d, pe + 20)
+          zbss = [struct.unpack_from("<II", d, pe + 24 + o + 40 * i + 16)
+                  for i in range(n) if d[pe + 24 + o + 40 * i:pe + 24 + o + 40 * i + 8].rstrip(b"\0") == b".zbss"]
+          sys.exit(0 if len(zbss) == 1 and zbss[0] == (0, 0) else 1)
+          PY
+          then
+            echo "FAILED: subject.dll has no .zbss section with raw size 0" >&2
+            exit 1
+          fi
+          # The section table is the gate on the merge: rustc does not pass
+          # the linker's warnings on, so a merge that did not take shows here,
+          # not in the build log.
+          echo "ok: one .zbss section, raw size 0"
+          "$SIGN" --show subject.dll > show-subject.txt
+          grep -E 'program database|module statics|STATIC' show-subject.txt
+          if ! grep -q '^  file-backed module statics: none$' show-subject.txt; then
+            echo "FAILED: the signed-form DLL has file-backed module statics, or they were not checked" >&2
+            exit 1
+          fi
+          N="$(sed -n 's/^  module statics in writable memory: \([0-9]*\);.*/\1/p' show-subject.txt)"
+          if [ "${N:-0}" -lt 3 ]; then
+            echo "FAILED: the PDB places ${N:-no} module statics in writable memory, fewer than the three pinned" >&2
+            exit 1
+          fi
+          mkdir -p ctl-default ctl-nodebug ctl-filebacked
+          cp target-default/release/oxicrypt_ffi.dll target-default/release/oxicrypt_ffi.pdb ctl-default/
+          cp target/release/oxicrypt_ffi.dll ctl-nodebug/
+          if [ -f target/release/oxicrypt_ffi.pdb ]; then cp target/release/oxicrypt_ffi.pdb ctl-nodebug/; fi
+          # The default link, a measurement: where the linker put the
+          # statics when .bss is merged into .data.
+          "$SIGN" --show ctl-default/oxicrypt_ffi.dll > show-default.txt
+          sed -n -E '/module statics|STATIC/p' show-default.txt
+          set +e
+          "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" ctl-default/oxicrypt_ffi.dll > ctl.txt 2>&1
+          echo "measurement: the default link signs with exit $? ($(sed -n 's/.*\(FileBackedStatic\).*/\1/p' ctl.txt | head -1))"
+          set -e
+          # CONTROL, wherever the linker puts the statics: subject.dll with
+          # .zbss given file bytes (the start of .text) must be refused,
+          # since the statics in it are then bytes of the file.
+          # Under the name the image's CodeView record and the PDB beside it
+          # expect.
+          cp subject.dll ctl-filebacked/oxicrypt_ffi.dll
+          cp oxicrypt_ffi.pdb ctl-filebacked/oxicrypt_ffi.pdb
+          for F in ctl-filebacked/oxicrypt_ffi.dll ctl-filebacked/oxicrypt_ffi.pdb; do
+            [ -f "$F" ] || { echo "control NOT RUN: $F is missing" >&2; exit 1; }
+          done
+          "$PYBIN" - ctl-filebacked/oxicrypt_ffi.dll <<'PY'
+          import struct, sys
+          p = sys.argv[1]
+          d = bytearray(open(p, "rb").read())
+          pe, = struct.unpack_from("<I", d, 0x3C)
+          n, = struct.unpack_from("<H", d, pe + 6)
+          o, = struct.unpack_from("<H", d, pe + 20)
+          secs = [pe + 24 + o + 40 * i for i in range(n)]
+          # The last file-alignment block of the section before .zbss becomes
+          # .zbss's raw data, so the raw extents stay ordered and disjoint
+          # and only where the statics' bytes come from changes.
+          zi = next(i for i, e in enumerate(secs) if bytes(d[e:e + 8]).rstrip(b"\0") == b".zbss")
+          z, prev = secs[zi], secs[zi - 1]
+          falign, = struct.unpack_from("<I", d, pe + 24 + 36)
+          raw, ptr = struct.unpack_from("<II", d, prev + 16)
+          assert zi > 0 and raw > falign, "no section before .zbss to take raw data from"
+          struct.pack_into("<I", d, prev + 16, raw - falign)
+          struct.pack_into("<II", d, z + 16, falign, ptr + raw - falign)
+          open(p, "wb").write(d)
+          print(f"control: .zbss now has {falign:#x} raw bytes at {ptr + raw - falign:#x}")
+          PY
+          for CASE in filebacked:FileBackedStatic nodebug:StaticsUnchecked; do
+            set +e
+            "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" "ctl-${CASE%%:*}/oxicrypt_ffi.dll" > ctl.txt 2>&1
+            RC=$?
+            set -e
+            cat ctl.txt
+            if [ "$RC" -eq 2 ] && grep -q "${CASE#*:}" ctl.txt; then
+              echo "control ok: the ${CASE%%:*} build is refused (${CASE#*:})"
+            else
+              echo "control FAILED: the ${CASE%%:*} build was not refused with ${CASE#*:} (exit $RC)" >&2
+              exit 1
+            fi
+          done
 
-      - name: Locate signtool — CONTROL, it must exist
+      # P2. THE GATE: each signed-form artifact fits the slot and signs.
+      - name: P2 — capacity, the release and debug DLL and EXE
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN="$PWD/target/release/oxicrypt-integrity-sign.exe"
+          FAILED=0
+          : > capacity.txt
+          for P in release debug; do
+            for A in oxicrypt_ffi.dll oxi.exe; do
+              D="cap-$P"
+              mkdir -p "$D"
+              cp "target-signed/$P/$A" "target-signed/$P/${A%.*}.pdb" "$D/"
+              "$SIGN" --show "$D/$A" > "$D/$A.show.txt"
+              set +e
+              "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" "$D/$A" > "$D/$A.sign.txt" 2>&1
+              RC=$?
+              set -e
+              {
+                echo "== $P $A: sign exit $RC"
+                sed -n -E '/module statics|extent after|slot table|bound imports|^[A-Za-z]+:/p' "$D/$A.show.txt"
+                sed -n -E '/table holds|Static|refus/p' "$D/$A.sign.txt"
+              } | tee -a capacity.txt
+              [ "$RC" -eq 0 ] || FAILED=1
+            done
+          done
+          [ "$FAILED" -eq 0 ] || { echo "FAILED: a signed-form artifact did not sign" >&2; exit 1; }
+
+      - name: Locate signtool and create two signing certificates — CONTROL
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -454,116 +618,255 @@ jobs:
           $signtool = Join-Path $sdk.FullName 'x64\signtool.exe'
           Write-Output "signtool: $signtool"
           "SIGNTOOL=$signtool" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $a = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=oxicrypt authenticode A' -CertStoreLocation Cert:\CurrentUser\My
+          $b = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=oxicrypt authenticode B' -CertStoreLocation Cert:\CurrentUser\My
+          "CERT_A=$($a.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CERT_B=$($b.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Authenticode sign — CONTROL, signtool must change the file
-        shell: pwsh
+      # P3. THE GATE: A vs B and linked vs A only in CheckSum and the Security
+      # directory entry; B vs C only the slot; C vs D only the derived holes
+      # before the certificate table; --verify D; each control fires.
+      - name: P3 — the signing order, A, B, C against the linked DLL, D
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
-            -Subject 'CN=oxicrypt extent measurement' `
-            -CertStoreLocation Cert:\CurrentUser\My
-          & $env:SIGNTOOL sign /fd SHA256 /sha1 $cert.Thumbprint subject.dll
-          if ($LASTEXITCODE -ne 0) { throw "control FAILED: signtool exited $LASTEXITCODE" }
-          $before = (Get-FileHash before.dll -Algorithm SHA256).Hash
-          $after  = (Get-FileHash subject.dll -Algorithm SHA256).Hash
-          Write-Output "before: $before"
-          Write-Output "after:  $after"
-          # A signtool that no-opped would leave the artifact verifying and the
-          # measurement would read as "Authenticode is harmless" without
-          # Authenticode having done anything.
-          if ($before -eq $after) { throw 'control FAILED: signtool left the file byte-identical' }
-          Write-Output 'control ok: signtool changed the file'
+          set -euo pipefail
+          bash .github/probes/pe-signing-order.sh "$PWD/subject.dll" \
+            "$PWD/target/release/oxicrypt-integrity-sign.exe" order "$SIGNTOOL" "$CERT_A" "$CERT_B" \
+            "$PWD/oxicrypt_ffi.pdb" | tee order.txt
+          exit "${PIPESTATUS[0]}"
 
-      - name: THE ANSWER — does the recorded extent still verify?
+      # P4. THE TEST: the final, Authenticode-signed DLL loads and becomes
+      # operational; the unsigned one is refused as unsigned. The harness is
+      # built with control-flow guard, so the process enforces it, and the
+      # loader writes the CFG pointer storage, which the signer types FileOnly.
+      - name: P4 — the signed DLL becomes operational, the unsigned one is refused
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc -O -C control-flow-guard -o pe-ffi-operational.exe .github/probes/pe-ffi-operational.rs
+          set +e
+          OUT="$(./pe-ffi-operational.exe "$(cygpath -w "$PWD/unsigned.dll")")"
+          RC=$?
+          set -e
+          echo "$OUT"
+          if [ "$RC" -ne 1 ] || ! grep -q 'oxi_integrity_status=3' <<<"$OUT"; then
+            echo "control FAILED: the unsigned library was not refused as unsigned (status $RC)" >&2
+            exit 1
+          fi
+          echo "control ok: unsigned, the library refuses to become operational"
+          set +e
+          ./pe-ffi-operational.exe "$(cygpath -w "$PWD/order/D.dll")"
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "FAILED: the signed library did not reach operational (status $RC)" >&2
+            exit 1
+          fi
+          echo "ok: the signed and Authenticode-signed library reaches operational"
+
+      # P4b. The loader-written storage the load configuration names (CFG,
+      # XFG, CastGuard, GuardMemcpy), which the signer types FileOnly. A
+      # MEASUREMENT: each storage word as loaded, in the guarded harness and
+      # in one built without control-flow guard, against its file value moved
+      # by the load delta: `unchanged` means it holds the file's value moved
+      # by the delta, `unchanged-unrelocated` the file's value itself (a word
+      # with no relocation, such as zero), `written` neither, the loader
+      # having replaced it. THE GATES: the load
+      # configuration's own pointer to the CFG storage, a Relative word,
+      # reads `unchanged` in both, the loader moving it by exactly the load
+      # delta the module subtracts; and the storage edited on disk is
+      # refused (1:2) in the unguarded process too.
+      - name: P4b — the loader-written storage, with and without control-flow guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYBIN="$(command -v python3 || command -v python)"
+          SIGN=target/release/oxicrypt-integrity-sign.exe
+          for F in order/D.dll pe-ffi-operational.exe; do
+            [ -f "$F" ] || { echo "NOT RUN: $F is missing; P3 and P4 must have run" >&2; exit 1; }
+          done
+          rustc -O -o pe-ffi-plain.exe .github/probes/pe-ffi-operational.rs
+          DLL="$(cygpath -w "$PWD/order/D.dll")"
+          "$SIGN" --show order/D.dll > show-d.txt
+          "$PYBIN" .github/probes/pe-tamper.py cfg order/D.dll | tr -d '\r' > cfg-words.txt
+          cat cfg-words.txt
+          LC="$("$PYBIN" - order/D.dll <<'PY'
+          import struct, sys
+          d = open(sys.argv[1], "rb").read()
+          pe, = struct.unpack_from("<I", d, 0x3C)
+          opt = pe + 24
+          rva, _ = struct.unpack_from("<II", d, opt + 112 + 8 * 10)
+          base, = struct.unpack_from("<Q", d, opt + 24)
+          o, = struct.unpack_from("<H", d, pe + 20)
+          for i in range(struct.unpack_from("<H", d, pe + 6)[0]):
+              vs, va, rs, rp = struct.unpack_from("<IIII", d, opt + o + 40 * i + 8)
+              if va <= rva + 0x70 < va + vs:
+                  value, = struct.unpack_from("<Q", d, rp + rva + 0x70 - va)
+                  print(f"lc-pointer {rva + 0x70:#x} {value:#x} {base:#x}")
+          PY
+          )"
+          LC="${LC%$'\r'}"
+          echo "$LC"
+          [ "$(wc -l < cfg-words.txt)" -ge 1 ] || { echo "FAILED: the DLL names no CFG storage" >&2; exit 1; }
+          FAILED=0
+          : > cfg-storage.txt
+          while read -r NAME RVA FILE IB; do
+            for H in pe-ffi-operational pe-ffi-plain; do
+              OUT="$(./$H.exe --word "$DLL" "$RVA")"
+              BASE="$(sed -n 's/^WORD base=\(0x[0-9a-f]*\) .*/\1/p' <<<"$OUT")"
+              LOADED="$(sed -n 's/.* loaded=\(0x[0-9a-f]*\)$/\1/p' <<<"$OUT")"
+              # `unchanged`: the file value moved by the load delta, as a
+              # relocated word loads; `unchanged-unrelocated`: the file value
+              # itself, as a word without a relocation loads (a zero);
+              # `written`: neither, so the loader wrote it.
+              read -r EXPECTED VERDICT < <("$PYBIN" -c "import sys; f,ib,b,l=(int(x,16) for x in sys.argv[1:]); e=(f + b - ib) % 2**64; print(hex(e), 'unchanged' if l == e else 'unchanged-unrelocated' if l == f else 'written')" "$FILE" "$IB" "$BASE" "$LOADED" | tr -d '\r')
+              echo "measurement: $NAME rva=$RVA harness=$H file=$FILE base=$BASE loaded=$LOADED relocated=$EXPECTED $VERDICT" | tee -a cfg-storage.txt
+              if [ "$NAME" = lc-pointer ] && [ "$VERDICT" != unchanged ]; then
+                echo "FAILED: the load configuration's pointer, a Relative word, does not read as its file value moved by the load delta" >&2
+                FAILED=1
+              fi
+            done
+          done < <(cat cfg-words.txt; echo "$LC")
+          [ "$FAILED" -eq 0 ] || exit 1
+          echo "ok: the Relative word reads unchanged in both harnesses"
+          # The storage edited on disk, in the unguarded process: refused.
+          "$PYBIN" .github/probes/pe-tamper.py rows order/D.dll show-d.txt | tr -d '\r' \
+            | sed -n -E '/^(cfg|xfg)-check-storage /p' > storage-rows.txt
+          [ "$(wc -l < storage-rows.txt)" -eq 2 ] || { echo "FAILED: the storage rows did not both resolve" >&2; exit 1; }
+          while read -r NAME OFF MASK ALLOWED; do
+            cp order/D.dll storage-row.dll
+            "$PYBIN" .github/probes/pe-tamper.py apply storage-row.dll "$OFF" "$MASK"
+            set +e
+            OUT="$(./pe-ffi-plain.exe "$(cygpath -w "$PWD/storage-row.dll")" 2>&1)"
+            RC=$?
+            set -e
+            STATUS="$(sed -n 's/.*oxi_integrity_status=\([0-9]*\).*/\1/p' <<<"$OUT")"
+            GOT="$RC:${STATUS:--}"
+            if [ "$GOT" = "$ALLOWED" ]; then VERDICT=ok; else VERDICT=MISMATCH; FAILED=1; fi
+            echo "row $NAME (unguarded process) offset $OFF mask $MASK: got $GOT, allowed $ALLOWED: $VERDICT" | tee -a cfg-storage.txt
+          done < storage-rows.txt
+          [ "$FAILED" -eq 0 ] || { echo "FAILED: an edited storage word was not refused in an unguarded process" >&2; exit 1; }
+
+      # P5. THE GATE: every bound thunk is its record's GetProcAddress, through
+      # the module the record's DLL name gives (an API-set name included).
+      - name: P5 — bound thunks against GetModuleHandleExW and GetProcAddress
         shell: bash
         run: |
           set -euo pipefail
           SIGN=target/release/oxicrypt-integrity-sign.exe
-          set +e
-          "$SIGN" --verify subject.dll > verify-after.txt 2>&1
-          VERIFY_EXIT=$?
-          "$SIGN" --show subject.dll > after-show.txt 2>&1
-          set -e
-          echo "verify_after_signtool_exit=$VERIFY_EXIT" | tee answer.txt
-          cat verify-after.txt
-
-          echo "--- extent, before vs after ---" | tee -a answer.txt
-          diff before-show.txt after-show.txt || true
-
-          echo "--- which bytes signtool rewrote ---" | tee -a answer.txt
-          # Bounded to `.text`, for the reason the Mach-O leg learned the hard
-          # way: everything outside the hashed region differs for reasons that
-          # say nothing about the extent, and counting those bytes produced a
-          # false platform finding once already.
-          # The runner image spells Python either way depending on the release;
-          # resolving it here beats a step that fails on a name.
           PYBIN="$(command -v python3 || command -v python)"
-          "$PYBIN" - <<'PY' | tee -a answer.txt
-          import struct
-
-          a = open("before.dll", "rb").read()
-          b = open("subject.dll", "rb").read()
-
-          def text_section(img):
-              pe = struct.unpack_from("<I", img, 0x3c)[0]
-              assert img[pe:pe + 4] == b"PE\0\0", "not a PE image"
-              nsec = struct.unpack_from("<H", img, pe + 6)[0]
-              optsize = struct.unpack_from("<H", img, pe + 20)[0]
-              table = pe + 24 + optsize
-              for i in range(nsec):
-                  e = table + i * 40
-                  name = img[e:e + 8].rstrip(b"\0").decode("ascii", "replace")
-                  vsize, _rva, rawsize, rawptr = struct.unpack_from("<IIII", img, e + 8)
-                  if name == ".text":
-                      return rawptr, min(vsize, rawsize)
-              raise AssertionError(".text not found")
-
-          off, size = text_section(a)
-          off_b, size_b = text_section(b)
-          print(f"file length: {len(a)} -> {len(b)}")
-          print(f".text file bytes {off}..{off + size} before, {off_b}..{off_b + size_b} after")
-          if (off, size) != (off_b, size_b):
-              print("VERDICT: signtool MOVED or RESIZED .text; the extent's file offsets are stale.")
-          diffs = [i for i in range(off, off + size) if a[i] != b[i]]
-          if not diffs:
-              print("no byte inside .text changed")
-              print("VERDICT: Authenticode leaves the hashed region untouched.")
-          else:
-              print(f"changed bytes inside .text: {len(diffs)}")
-              print(f"  first changed offset: {diffs[0]}, last: {diffs[-1]}")
-              print("VERDICT: Authenticode rewrote bytes inside the extent.")
-          # Where the changes do land, for the record.
-          n = min(len(a), len(b))
-          outside = [i for i in range(n) if a[i] != b[i] and not (off <= i < off + size)]
-          print(f"changed bytes elsewhere in the common prefix: {len(outside)}"
-                + (f", first at {outside[0]}" if outside else ""))
-          PY
-
-          if [ "$VERIFY_EXIT" -eq 0 ]; then
-            echo "RESULT: Authenticode does NOT disturb the recorded extent on windows-x86_64" | tee -a answer.txt
-          else
-            echo "RESULT: Authenticode DOES disturb the recorded extent on windows-x86_64." | tee -a answer.txt
-            echo "This is a finding about the design, not a build failure. The byte report above" | tee -a answer.txt
-            echo "says whether a narrower extent would survive, as it did on Darwin." | tee -a answer.txt
+          for F in order/D.dll pe-ffi-operational.exe; do
+            [ -f "$F" ] || { echo "NOT RUN: $F is missing; P3 and P4 must have run" >&2; exit 1; }
+          done
+          "$SIGN" --show order/D.dll > show-d.txt
+          set +e
+          ./pe-ffi-operational.exe --binds show-d.txt "$(cygpath -w "$PWD/order/D.dll")" > bind-report.txt
+          RC=$?
+          set -e
+          cat bind-report.txt
+          echo "== API-set records"
+          sed -n '/ apiset=/p' bind-report.txt
+          if [ "$RC" -ne 0 ] || ! grep -Eq '^RESULT binds=[1-9][0-9]* other=0 unresolved=0 ' bind-report.txt; then
+            echo "FAILED: a bound thunk is not its record's resolution (exit $RC)" >&2
+            exit 1
           fi
+          # CONTROL: the same listing with one record naming another
+          # symbol of the same DLL, which resolves, to a different address.
+          "$PYBIN" - show-d.txt show-swapped.txt <<'PY'
+          import re, sys
+          text = open(sys.argv[1]).read()
+          recs = re.findall(r"^    record \[(\d+)\] (\S+) (\S+) ", text, re.M)
+          pair = next(((a, b) for a in recs for b in recs
+                       if a[1] == b[1] and a[2] != b[2] and not a[2].startswith("#") and not b[2].startswith("#")), None)
+          assert pair, "no DLL with two named records"
+          (index, dll, old), (_, _, new) = pair
+          text = re.sub(rf"^(    record \[{index}\] \S+ )\S+ ", lambda m: m.group(1) + new + " ", text, count=1, flags=re.M)
+          open(sys.argv[2], "w").write(text)
+          print(f"control: record {index} ({dll}) now names {new} instead of {old}")
+          PY
+          set +e
+          ./pe-ffi-operational.exe --binds show-swapped.txt "$(cygpath -w "$PWD/order/D.dll")" > bind-control.txt
+          RC=$?
+          set -e
+          sed -n '/^RESULT/p' bind-control.txt
+          if [ "$RC" -eq 1 ] && grep -Eq '^RESULT binds=[1-9][0-9]* other=[1-9]' bind-control.txt; then
+            echo "control ok: a record naming another symbol is reported OTHER"
+          else
+            echo "control FAILED: the swapped record was not reported (exit $RC)" >&2
+            exit 1
+          fi
+
+      # P6. The PE rows of the tamper matrix, each edit on a copy of D, each
+      # against the outcomes allowed as `exit:status`; any other outcome, or a
+      # row that cannot run, fails the step.
+      - name: P6 — tamper matrix, the PE rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYBIN="$(command -v python3 || command -v python)"
+          for F in order/D.dll show-d.txt pe-ffi-operational.exe; do
+            [ -f "$F" ] || { echo "NOT RUN: $F is missing; P3 to P5 must have run" >&2; exit 1; }
+          done
+          "$PYBIN" .github/probes/pe-tamper.py rows order/D.dll show-d.txt > rows.txt
+          "$PYBIN" .github/probes/pe-tamper.py envelope order/D.dll >> rows.txt
+          FAILED=0
+          : > tamper.txt
+          RAN=0
+          while read -r NAME OFF MASK ALLOWED; do
+            ALLOWED="${ALLOWED%$'\r'}"
+            if [ "$OFF" = "-" ]; then
+              echo "row $NAME: NOT RUN (the DLL has no such structure)" | tee -a tamper.txt
+              FAILED=1
+              continue
+            fi
+            cp order/D.dll row.dll
+            "$PYBIN" .github/probes/pe-tamper.py apply row.dll "$OFF" "$MASK"
+            set +e
+            OUT="$(./pe-ffi-operational.exe "$(cygpath -w "$PWD/row.dll")" 2>&1)"
+            RC=$?
+            set -e
+            STATUS="$(sed -n 's/.*oxi_integrity_status=\([0-9]*\).*/\1/p' <<<"$OUT")"
+            GOT="$RC:${STATUS:--}"
+            if [[ ",$ALLOWED," == *",$GOT,"* ]]; then
+              VERDICT=ok
+            else
+              VERDICT=MISMATCH
+              FAILED=1
+            fi
+            echo "row $NAME offset $OFF mask $MASK: got $GOT, allowed $ALLOWED: $VERDICT" | tee -a tamper.txt
+            RAN=$((RAN + 1))
+          done < rows.txt
+          if [ "$RAN" -ne 16 ]; then
+            echo "FAILED: $RAN tamper rows ran, not the 16 the PE column lists" >&2
+            exit 1
+          fi
+          [ "$FAILED" -eq 0 ] || { echo "FAILED: a tamper row did not run or ended outside its allowed outcomes" >&2; exit 1; }
 
       - name: Upload the measurement
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: authenticode-extent-windows-x86_64
+          name: authenticode-extent-${{ matrix.runner }}
           path: |
-            before-show.txt
-            after-show.txt
-            verify-after.txt
-            answer.txt
+            versions.txt
+            show-subject.txt
+            show-default.txt
+            capacity.txt
+            order.txt
+            order/*.txt
+            show-d.txt
+            cfg-words.txt
+            cfg-storage.txt
+            bind-report.txt
+            bind-control.txt
+            rows.txt
+            tamper.txt
           if-no-files-found: warn
 
   android-extent:
     name: android-extent-${{ matrix.abi }}
-    # Android is the platform this whole workstream exists because of: a CMVP
-    # resubmission elsewhere is gated on not being able to integrity-test there.
-    # So it is measured rather than argued from ELF being ELF.
+    # Android is measured rather than argued from ELF being ELF: bionic is a
+    # different loader from glibc, with relocation formats of its own.
     #
     # What this leg establishes: an Android ELF classifies, signs and verifies
     # with the shipping signer, and the regions the extent covers are identical
@@ -621,6 +924,20 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup target add ${{ matrix.target }}
 
+      - name: Integrity key pair (throwaway, this job only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
       - name: Locate the NDK — CONTROL, it must exist
         shell: bash
         run: |
@@ -649,7 +966,7 @@ jobs:
           CLANG="$BIN/${{ matrix.clang }}"
           if [ ! -x "$CLANG" ]; then
             echo "control FAILED: no ${{ matrix.clang }} at $CLANG" >&2
-            ls "$BIN" | head -40 >&2
+            find "$BIN" -maxdepth 1 | head -40 >&2
             exit 1
           fi
           echo "NDK_CLANG=$CLANG" >> "$GITHUB_ENV"
@@ -684,7 +1001,7 @@ jobs:
           # The first question is whether the shipping classifier handles an
           # Android ELF at all. If it does not, nothing measured below matters.
           "$SIGN" --show subject.so | tee android-show.txt
-          "$SIGN" --sign subject.so | tee android-sign.txt
+          "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" subject.so | tee android-sign.txt
           "$SIGN" --verify subject.so
           echo "control ok: an Android ELF classifies, signs and verifies offline"
 
@@ -739,7 +1056,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "== the extent the signer recorded ==" | tee -a android-analysis.txt
-          cat android-show.txt | tee -a android-analysis.txt
+          tee -a android-analysis.txt < android-show.txt
           if [ "${{ matrix.emulator }}" != "true" ]; then
             echo "== NOT MEASURED on this ABI ==" | tee -a android-analysis.txt
             echo "loaded-image stability requires an arm64 host or a device." \
@@ -762,10 +1079,10 @@ jobs:
 
   integrity-runtime:
     name: integrity-runtime-${{ matrix.name }}
-    # ISC-8 of the platform workstream: no unsafe code enters the cryptographic
-    # boundary without a CI job that EXECUTES it on the target platform. This is
-    # that job. Neither macOS nor Windows can be run on the development host, so
-    # compiling is not evidence and nothing here is claimed on the strength of it.
+    # No unsafe code enters the cryptographic boundary without a CI job that
+    # EXECUTES it on the target platform. This is that job. Compiling for a
+    # platform is not evidence, and nothing here is claimed on the strength of
+    # it.
     #
     # The test is run in both directions on purpose. "The signed binary starts"
     # passes just as well when the integrity test has been silently skipped, so
@@ -784,22 +1101,21 @@ jobs:
           - name: linux-x86_64
             runner: ubuntu-latest
             exe: ''
-          # The release workflow cross-compiles a linux-aarch64 `oxi` on an
-          # x86_64 runner and ships it. Nothing there can execute it, so without
-          # this leg an arm64 Linux binary would reach users having never been
-          # started anywhere — and its provenance file says it starts as
-          # shipped. This is the leg that makes that sentence true. Note the
-          # android leg is NOT a substitute: it targets bionic and signs a
-          # cdylib, not this binary.
+          # Runs the signed module on an arm64 Linux host, the same kind of
+          # runner the release builds and loads its linux-aarch64 artifacts
+          # on. The android leg is not a substitute: it targets bionic and
+          # signs a cdylib, not this binary.
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
             exe: ''
           - name: macos-aarch64
             runner: macos-15
             exe: ''
+            minos: '12.0'
           - name: macos-x86_64
             runner: macos-15-intel
             exe: ''
+            minos: '13.0'
           - name: windows-x86_64
             runner: windows-latest
             exe: '.exe'
@@ -813,12 +1129,45 @@ jobs:
           set -euo pipefail
           rustup show active-toolchain || rustup toolchain install
 
+      - name: Integrity key pair (throwaway, this job only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
       - name: Build oxi and the signer
         shell: bash
         run: |
           set -euo pipefail
           cargo build --release -p oxicrypt-cli -p oxicrypt-integrity-sign
-          cp "target/release/oxi${{ matrix.exe }}" "subject${{ matrix.exe }}"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # The signer refuses a Mach-O linked any other way.
+            # Debug info and a packed dSYM, where the signer reads the
+            # module's statics from (matched by LC_UUID).
+            MACOSX_DEPLOYMENT_TARGET='${{ matrix.minos }}' RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" \
+              CARGO_PROFILE_RELEASE_DEBUG=full CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed \
+              CARGO_TARGET_DIR=target-signed cargo build --release -p oxicrypt-cli
+            cp target-signed/release/oxi subject
+            cp -R target-signed/release/oxi.dSYM subject.dSYM
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            # The signer refuses a PE whose statics are file bytes, or whose
+            # program database does not name them; the PDB, beside the
+            # binary under the name its CodeView record gives, is read.
+            RUSTFLAGS="$PE_SIGNED_RUSTFLAGS" CARGO_PROFILE_RELEASE_DEBUG=full \
+              CARGO_TARGET_DIR=target-signed cargo build --release -p oxicrypt-cli
+            cp target-signed/release/oxi.exe subject.exe
+            cp target-signed/release/oxi.pdb oxi.pdb
+          else
+            cp "target/release/oxi${{ matrix.exe }}" "subject${{ matrix.exe }}"
+          fi
           ls -l "subject${{ matrix.exe }}"
 
       - name: CONTROL — an unsigned binary must refuse to become operational
@@ -829,18 +1178,54 @@ jobs:
           # among them, before dispatching a subcommand. Unsigned, its slot
           # holds no MAC, so initialisation must fail — and if it does not,
           # every assertion below would pass on a module that never tested
-          # itself.
+          # itself. The refusal must be the module's own (a non-zero exit with
+          # its message): a process the operating system killed would also fail
+          # to start, and would say nothing about whether the test ran. It must
+          # also be the unsigned diagnosis, not some other power-up failure.
           set +e
-          OUT="$(./subject${{ matrix.exe }} hash 2>&1)"
+          bash .github/probes/oxi-startup.sh "./subject${{ matrix.exe }}" \
+            "oxicrypt-integrity-sign --sign --key <signing key> <this binary>"
+          RC=$?
           set -e
-          echo "$OUT"
-          case "$OUT" in
-            *"module initialization failed"*)
-              echo "control ok: unsigned, the module refuses to start" ;;
-            *)
-              echo "control FAILED: an unsigned binary started; the test did not run" >&2
-              exit 1 ;;
-          esac
+          if [ "$RC" -eq 1 ]; then
+            echo "control ok: unsigned, the module refuses to start"
+          else
+            echo "control FAILED: an unsigned binary was not refused by the module (probe status $RC)" >&2
+            exit 1
+          fi
+
+      - name: CONTROL — writing the slot invalidates a macOS arm64 code signature
+        if: matrix.name == 'macos-aarch64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # On arm64 the linker signs every binary ad hoc, and writing the
+          # integrity slot leaves that signature stale. On a Mac that enforces
+          # code signatures the kernel kills such a binary before it prints
+          # anything, which is why THE TEST renews the signature. The gate here
+          # is the code-signature check itself: the slot write must invalidate
+          # it, and THE TEST must find it valid again after codesign. Whether
+          # this runner also kills the stale binary is reported, not asserted,
+          # because hosted runners do not all enforce signatures at launch.
+          # Limited to arm64 because the linker signs only arm64 binaries.
+          SIGN="target/release/oxicrypt-integrity-sign"
+          cp subject uncodesigned
+          cp -R subject.dSYM uncodesigned.dSYM
+          "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" uncodesigned
+          if codesign --verify uncodesigned; then
+            echo "control FAILED: the code signature still verifies after the slot was written" >&2
+            exit 1
+          fi
+          echo "control ok: the slot write invalidates the code signature"
+          set +e
+          bash .github/probes/oxi-startup.sh ./uncodesigned
+          RC=$?
+          set -e
+          if [ "$RC" -eq 2 ]; then
+            echo "measurement: this runner kills a binary whose code signature is stale"
+          else
+            echo "measurement: this runner launches a binary whose code signature is stale (probe status $RC)"
+          fi
 
       - name: THE TEST — a signed binary becomes operational
         shell: bash
@@ -848,44 +1233,1167 @@ jobs:
           set -euo pipefail
           SIGN="target/release/oxicrypt-integrity-sign${{ matrix.exe }}"
           "$SIGN" --show "subject${{ matrix.exe }}" | tee show.txt
-          "$SIGN" --sign "subject${{ matrix.exe }}"
+          # On macOS: codesign twice, the integrity signer with the first as
+          # --reserved-against, then the final codesign, each verified.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            bash .github/probes/macho-sign.sh "$PWD/$SIGN" "$PWD/subject"
+          else
+            "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" "subject${{ matrix.exe }}"
+          fi
           "$SIGN" --verify "subject${{ matrix.exe }}"
+          # Operational means the process exited 0 and printed the right
+          # digest. Merely not printing the refusal is not enough: a binary the
+          # OS kills at launch prints nothing at all.
           set +e
-          OUT="$(./subject${{ matrix.exe }} hash 2>&1)"
+          bash .github/probes/oxi-startup.sh "./subject${{ matrix.exe }}"
+          RC=$?
           set -e
-          echo "$OUT"
-          case "$OUT" in
-            *"module initialization failed"*)
-              echo "FAILED: a signed binary still refuses to start on ${{ matrix.name }}" >&2
-              exit 1 ;;
-            *)
-              echo "ok: signed, the module reaches operational on ${{ matrix.name }}" ;;
-          esac
+          if [ "$RC" -eq 0 ]; then
+            echo "ok: signed, the module reaches operational on ${{ matrix.name }}"
+          else
+            echo "FAILED: a signed binary did not reach operational on ${{ matrix.name }} (probe status $RC)" >&2
+            exit 1
+          fi
 
       - name: CONTROL — a byte changed inside the extent must be detected
         shell: bash
         run: |
           set -euo pipefail
           # Without this, the step above is satisfied by a verifier that finds a
-          # slot and never compares anything. The offset comes from the signer's
-          # own report rather than a guess, so the byte is provably inside a
-          # hashed range — and from the MIDDLE of the largest range, because on
-          # ELF the extent begins at file offset zero and includes the program
-          # header table. A byte flipped there kills the process in the loader
-          # before the module runs, which reads as "undetected" while meaning
-          # "never tested". Measured, not theorised: it segfaulted.
+          # slot and never compares anything. The byte must be inside a range
+          # the signer hashed (asserted against the signer's own report), must
+          # not be a header the loader parses, and must not be code or data
+          # that runs or is read before the integrity test: either crash reads
+          # as "undetected" while meaning "never tested". The script picks
+          # alignment padding between sections, or else int3 padding between
+          # functions, and fails if neither exists; its rule is printed.
           PYBIN="$(command -v python3 || command -v python)"
-          OFF="$("$PYBIN" .github/probes/extent-tamper-offset.py show.txt)"
+          OFF="$("$PYBIN" .github/probes/extent-tamper-offset.py show.txt "subject${{ matrix.exe }}")"
           echo "flipping the byte at file offset ${OFF}"
           "$PYBIN" .github/probes/flip-byte.py "subject${{ matrix.exe }}" "$OFF"
+          # The flipped byte also breaks the macOS code signature, and on Apple
+          # silicon the OS would kill the binary before the module looked at
+          # it. Renewing the signature leaves the module's own check as the only
+          # thing that can refuse the tampered byte, and the refusal must be the
+          # mismatch diagnosis rather than any power-up failure.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            codesign --force --sign - "subject${{ matrix.exe }}"
+          fi
           set +e
-          OUT="$(./subject${{ matrix.exe }} hash 2>&1)"
+          bash .github/probes/oxi-startup.sh "./subject${{ matrix.exe }}" "Do NOT re-sign it."
+          RC=$?
+          set -e
+          if [ "$RC" -eq 1 ]; then
+            echo "control ok: a tampered byte inside the extent is detected"
+          else
+            echo "control FAILED: the module did not refuse a tampered byte inside the extent (probe status $RC)" >&2
+            exit 1
+          fi
+
+      # The release ships the C library as well as oxi, and a dylib with a stale
+      # code signature fails to load on Apple silicon just as a binary fails to
+      # launch. This loads the library the way a C consumer does and requires
+      # the module inside it to reach operational after integrity signing and
+      # code signing, with the unsigned library as the control that shows the
+      # integrity test runs in the library form at all.
+      - name: THE TEST, library — a signed and code-signed dylib becomes operational
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.minos }}
+        run: |
+          set -euo pipefail
+          SIGN="$PWD/target/release/oxicrypt-integrity-sign"
+          RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" CARGO_PROFILE_RELEASE_DEBUG=full \
+            CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed CARGO_TARGET_DIR=target-signed \
+            cargo build --release -p oxicrypt-ffi
+          cc -O1 -Wall -Wextra -o ffi-operational .github/probes/ffi-operational.c
+          cp target-signed/release/liboxicrypt_ffi.dylib unsigned.dylib
+          cp target-signed/release/liboxicrypt_ffi.dylib signed.dylib
+          cp -R target-signed/release/liboxicrypt_ffi.dylib.dSYM signed.dylib.dSYM
+
+          set +e
+          OUT="$(./ffi-operational "$PWD/unsigned.dylib")"
+          RC=$?
           set -e
           echo "$OUT"
-          case "$OUT" in
-            *"module initialization failed"*)
-              echo "control ok: a tampered byte inside the extent is detected" ;;
-            *)
-              echo "control FAILED: tampering inside the extent went undetected" >&2
-              exit 1 ;;
-          esac
+          if [ "$RC" -ne 1 ] || ! grep -q 'oxi_integrity_status=3' <<<"$OUT"; then
+            echo "control FAILED: the unsigned library was not refused as unsigned (status $RC)" >&2
+            exit 1
+          fi
+          echo "control ok: unsigned, the library refuses to become operational"
+
+          bash .github/probes/macho-sign.sh "$SIGN" "$PWD/signed.dylib"
+          # What the module verified at initialisation: the typed table,
+          # every Bind resolved (on x86_64 the resolver-stub binds among them)
+          # and initialised data read through the file route.
+          "$SIGN" --show signed.dylib | tee signed-show.txt | grep -v '^    \['
+          # On x86_64 the dylib binds libSystem's resolver functions, whose
+          # words are `jmp *disp32(%rip)` stubs. The module accepts such a
+          # word only where libSystem's export trie, followed by name through
+          # its re-exports, leads to that stub. Reaching operational below
+          # runs those checks; a build without these binds would test nothing.
+          if [ "$(uname -m)" != arm64 ]; then
+            STUBS="$(grep -E '^    record \[[0-9]+\] [^ ]+ (__bzero|memcmp|memcpy|memmove|memset) ' signed-show.txt || true)"
+            echo "$STUBS"
+            if [ -z "$STUBS" ]; then
+              echo "FAILED: the x86_64 dylib binds none of the resolver functions the stub rule is for" >&2
+              exit 1
+            fi
+          fi
+          set +e
+          ./ffi-operational "$PWD/signed.dylib"
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "ok: the signed library reaches operational on ${{ matrix.name }}"
+          else
+            echo "FAILED: the signed library did not reach operational on ${{ matrix.name }} (status $RC)" >&2
+            exit 1
+          fi
+
+      # Runs whatever failed before it. What the resolver check sees for
+      # every bound word of the dylib (loaded, never initialised), and where
+      # the module statics are named. THE GATE: every word EQUAL or STUB,
+      # and on x86_64 at least one STUB with its bytes and pointer printed.
+      - name: Bound words against dlsym and dladdr — THE GATE, and the statics' names
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.minos }}
+        run: |
+          set -uo pipefail
+          SIGN="$PWD/target/release/oxicrypt-integrity-sign"
+          RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" CARGO_PROFILE_RELEASE_DEBUG=full \
+            CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed CARGO_TARGET_DIR=target-signed \
+            cargo build --release -p oxicrypt-ffi
+          LIB=target-signed/release/liboxicrypt_ffi.dylib
+          "$SIGN" --show "$LIB" > diag-show.txt 2>&1
+          grep -E 'module statics|STATIC|bound imports' diag-show.txt
+          cc -O1 -Wall -Wextra -o macho-bind-report .github/probes/macho-bind-report.c
+          python3 .github/probes/macho-bind-list.py diag-show.txt > binds.txt
+          set +e
+          ./macho-bind-report "$PWD/$LIB" < binds.txt > bind-report.txt
+          REPORT_RC=$?
+          set -e
+          cat bind-report.txt
+          echo "measurement: bind report exit $REPORT_RC (0 every word EQUAL or STUB)"
+          echo "== UUIDs"
+          dwarfdump --uuid "$LIB" "$LIB.dSYM" || true
+          DW="$(find "$LIB.dSYM/Contents/Resources/DWARF" -type f | head -1)"
+          echo "== nm -a of the image, the module statics"
+          nm -a "$LIB" | grep -E '5STATE|LAST_STATUS|CAST_PASSED|MergedGlobals' || echo "none"
+          echo "== nm -a of the dSYM ($DW)"
+          nm -a "$DW" | grep -E '5STATE|LAST_STATUS|CAST_PASSED|MergedGlobals' || echo "none"
+          echo "== dsymutil -s of the image (debug map)"
+          dsymutil -s "$LIB" | grep -E '5STATE|LAST_STATUS|CAST_PASSED|MergedGlobals' || echo "none"
+          # The gate, after everything above has printed.
+          if ! grep -Eq '^RESULT binds=[1-9][0-9]* other=0$' bind-report.txt || [ "$REPORT_RC" -ne 0 ]; then
+            echo "FAILED: a bound word is neither the resolution nor an accepted stub" >&2
+            exit 1
+          fi
+          if [ "$(uname -m)" != arm64 ] \
+              && ! grep -Eq ' bytes=ff25[0-9a-f]{8} .*:stub=0x[0-9a-f]+:resolver=0x[0-9a-f]+ chain_stub_is_word=1 .* STUB$' bind-report.txt; then
+            echo "FAILED: the x86_64 dylib shows no accepted stub with its bytes and its export-trie chain" >&2
+            exit 1
+          fi
+          echo "ok: every bound word is the resolution or an accepted stub"
+
+      # A universal file of two signed thin dylibs: the module finds its
+      # own slice. Both architectures are built on each runner.
+      - name: THE TEST, universal — a lipo of two signed thin dylibs becomes operational
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN="$PWD/target/release/oxicrypt-integrity-sign"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          for T in aarch64-apple-darwin x86_64-apple-darwin; do
+            MINOS=12.0; [ "$T" = x86_64-apple-darwin ] && MINOS=13.0
+            MACOSX_DEPLOYMENT_TARGET="$MINOS" RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" \
+              CARGO_PROFILE_RELEASE_DEBUG=full CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed \
+              CARGO_TARGET_DIR=target-signed cargo build --release -p oxicrypt-ffi --target "$T"
+            cp "target-signed/$T/release/liboxicrypt_ffi.dylib" "thin-$T.dylib"
+            cp -R "target-signed/$T/release/liboxicrypt_ffi.dylib.dSYM" "thin-$T.dylib.dSYM"
+            bash .github/probes/macho-sign.sh "$SIGN" "$PWD/thin-$T.dylib"
+          done
+          lipo -create thin-aarch64-apple-darwin.dylib thin-x86_64-apple-darwin.dylib -output fat.dylib
+          lipo -detailed_info fat.dylib | tee lipo.txt
+          codesign --verify fat.dylib
+          set +e
+          ./ffi-operational "$PWD/fat.dylib"
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "FAILED: the universal library did not reach operational on ${{ matrix.name }} (status $RC)" >&2
+            exit 1
+          fi
+          echo "ok: the universal library reaches operational on ${{ matrix.name }}"
+
+          # CONTROL: one byte of this runner's own slice's FileOnly data,
+          # flipped in the thin dylib, which is code-signed again before
+          # lipo joins it with the other, untouched, slice: must be refused.
+          case "$(uname -m)" in arm64) T=aarch64-apple-darwin; U=x86_64-apple-darwin ;; *) T=x86_64-apple-darwin; U=aarch64-apple-darwin ;; esac
+          "$SIGN" --show "thin-$T.dylib" > "thin-$T-show.txt"
+          FO="$(sed -n 's/^ *\[[0-9]*\] FileOnly rva 0x[0-9a-f]* file \(0x[0-9a-f]*\) len \([0-9]*\).*/\1 \2/p' "thin-$T-show.txt" | head -1)"
+          if [ -z "$FO" ]; then
+            echo "control NOT RUN: the thin dylib lists no FileOnly entry" >&2
+            exit 1
+          fi
+          OFF=$(( ${FO% *} + ${FO#* } / 2 ))
+          cp "thin-$T.dylib" tampered-thin.dylib
+          python3 .github/probes/macho-tamper.py apply tampered-thin.dylib "$OFF" 1
+          codesign --force --sign - --timestamp=none tampered-thin.dylib
+          lipo -create tampered-thin.dylib "thin-$U.dylib" -output fat-tampered.dylib
+          codesign --verify fat-tampered.dylib
+          set +e
+          OUT="$(./ffi-operational "$PWD/fat-tampered.dylib")"
+          RC=$?
+          set -e
+          echo "$OUT"
+          if [ "$RC" -eq 1 ] && grep -q 'oxi_integrity_status=2' <<<"$OUT"; then
+            echo "control ok: a FileOnly byte of the loaded slice is refused (slice offset $OFF)"
+          else
+            echo "control FAILED: the tampered slice was not refused as SignatureInvalid (status $RC)" >&2
+            exit 1
+          fi
+
+      # The Mach-O rows of the tamper matrix. Each row edits a copy of the
+      # signed dylib, renews the code signature unless the row says not to,
+      # and records the module's verdict. A renewed row that reaches
+      # operational fails the step.
+      - name: Tamper matrix — the Mach-O rows
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          ./ffi-operational "$PWD/signed.dylib" > /dev/null
+          RC=$?
+          set -e
+          [ "$RC" -eq 0 ] || { echo "control FAILED: the untampered dylib is not operational (status $RC)" >&2; exit 1; }
+          echo "control ok: the untampered dylib is operational"
+          python3 .github/probes/macho-tamper.py rows signed.dylib signed-show.txt > rows.txt
+          # Each row names the outcomes allowed on each architecture, as
+          # `exit:status`; any other outcome, or a row that cannot run,
+          # fails the step.
+          case "$(uname -m)" in arm64) COL=arm64 ;; *) COL=x86_64 ;; esac
+          cc -O1 -Wall -Wextra -o macho-bind-report .github/probes/macho-bind-report.c
+          python3 .github/probes/macho-bind-list.py signed-show.txt > row-binds.txt
+          FAILED=0
+          MEASURED=0
+          : > tamper.txt
+          while read -r NAME OFF MASK RENEW ARM64 X86_64; do
+            if [ "$OFF" = "-" ]; then
+              echo "row $NAME: NOT RUN (the dylib has no such structure)" | tee -a tamper.txt
+              FAILED=1
+              continue
+            fi
+            ALLOWED="$ARM64"
+            [ "$COL" = x86_64 ] && ALLOWED="$X86_64"
+            cp signed.dylib row.dylib
+            python3 .github/probes/macho-tamper.py apply row.dylib "$OFF" "$MASK"
+            if [ "$RENEW" = 1 ]; then
+              codesign --force --sign - --timestamp=none row.dylib
+            fi
+            set +e
+            OUT="$(./ffi-operational "$PWD/row.dylib" 2>&1)"
+            RC=$?
+            set -e
+            STATUS="$(sed -n 's/.*oxi_integrity_status=\([0-9]*\).*/\1/p' <<<"$OUT")"
+            GOT="$RC:${STATUS:--}"
+            if [[ ",$ALLOWED," == *",$GOT,"* ]]; then
+              VERDICT=ok
+            else
+              VERDICT=MISMATCH
+              FAILED=1
+            fi
+            echo "row $NAME offset $OFF renewed $RENEW: got $GOT, allowed $ALLOWED: $VERDICT" | tee -a tamper.txt
+            # The retargeted word, measured in the loaded image: dyld bound
+            # memset's stub where the signed record names memcmp, and the
+            # export-trie chain from `_memcmp` does not end at that word.
+            if [ "$NAME" = bind-ordinal-memcmp-to-memset ]; then
+              MEASURED=1
+              set +e
+              ./macho-bind-report "$PWD/row.dylib" < row-binds.txt > row-bind-report.txt
+              set -e
+              cat row-bind-report.txt
+              if ! grep -Eq ' memcmp word=.* chain_stub_is_word=0( .*)? OTHER$' row-bind-report.txt \
+                  || ! grep -Eq '^RESULT binds=[1-9][0-9]* other=1$' row-bind-report.txt; then
+                echo "row $NAME: MISMATCH (the bind report does not show memcmp's word refused)" | tee -a tamper.txt
+                FAILED=1
+              fi
+            fi
+          done < rows.txt
+          if [ "$COL" = x86_64 ] && [ "$MEASURED" -eq 0 ]; then
+            echo "row bind-ordinal-memcmp-to-memset: NOT RUN on x86_64" | tee -a tamper.txt
+            FAILED=1
+          fi
+          [ "$FAILED" -eq 0 ] || { echo "FAILED: a tamper row did not run or ended outside its allowed outcomes" >&2; exit 1; }
+
+      # The Darwin export check, run where it has a mechanism.
+      - name: oxicrypt-imageread's Darwin tests
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p oxicrypt-imageread --lib 2>&1 | tee imageread-tests.txt
+          grep -q 'a_loaded_library_is_found_by_its_path ... ok' imageread-tests.txt
+
+      # The steps above sign by hand. This one runs the path a developer runs,
+      # so a regression in xtask's ordering (code signing before the integrity
+      # slot, or no code signing at all) fails here.
+      - name: THE TEST, xtask — cargo xtask sign produces a binary that starts
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.minos }}
+          RUSTFLAGS: ${{ env.MACHO_SIGNED_RUSTFLAGS }}
+          CARGO_PROFILE_RELEASE_DEBUG: full
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+        run: |
+          set -euo pipefail
+          cargo xtask sign oxicrypt-cli --key "$INTEGRITY_SIGNING_KEY" --release
+          set +e
+          bash .github/probes/oxi-startup.sh ./target/release/oxi
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "ok: cargo xtask sign produces an operational oxi on ${{ matrix.name }}"
+          else
+            echo "FAILED: cargo xtask sign did not produce an operational oxi on ${{ matrix.name }} (probe status $RC)" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'macOS'
+        with:
+          name: integrity-runtime-${{ matrix.name }}
+          path: |
+            signed-show.txt
+            lipo.txt
+            thin-*-show.txt
+            rows.txt
+            tamper.txt
+            bind-report.txt
+            diag-show.txt
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Integrity extent v2: instruments. Nothing here changes what ships.
+
+  probe-selftest:
+    name: probe-selftest
+    # The instruments below are only as good as their ability to fail. This
+    # runs each of them against fixtures, mutations and malformed inputs on
+    # every change to them; every case must give its stated result.
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'gate' || inputs.jobs == 'extent-v2' || inputs.jobs == 'all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain and the Windows target for the PE probe check
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add x86_64-pc-windows-gnu
+
+      - name: Locate the NDK's clang for the Mach-O and PE fixtures — CONTROL
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLANG="${ANDROID_NDK_LATEST_HOME:-}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          if [ ! -x "$CLANG" ]; then
+            echo "control FAILED: no NDK clang at $CLANG" >&2
+            exit 1
+          fi
+          echo "CROSS_CLANG=$CLANG" >> "$GITHUB_ENV"
+          grep Pkg.Revision "$ANDROID_NDK_LATEST_HOME/source.properties" | tee versions.txt
+          bash --version | head -1 | tee -a versions.txt
+
+      - name: Self-tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/selftest.sh selftest-work 2>&1 | tee selftest.txt
+          exit "${PIPESTATUS[0]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-selftest
+          path: |
+            versions.txt
+            selftest.txt
+          if-no-files-found: warn
+
+  extent-v2-linux:
+    name: extent-v2-linux-x86_64
+    # The ELF signing order (strip, debuglink, sign), the typed probe over
+    # twenty loads, a mutation test per result bit with the route controls,
+    # and the fixup cross-check against readelf. The typed verdict and the
+    # cross-check are gates here: glibc is where both are settled.
+    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'extent-v2' || inputs.jobs == 'all')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          { bash --version | head -1; cc --version | head -1; readelf --version | head -1; } | tee versions.txt
+
+      - name: Integrity key pair (throwaway, this job only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
+      - name: Build the cdylib and the signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
+          ls -l target/release/liboxicrypt_ffi.so
+
+      - name: Signing order — strip, debuglink, sign; only the slot changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/elf-signing-order.sh target/release/liboxicrypt_ffi.so \
+            target/release/oxicrypt-integrity-sign elf-order | tee elf-order.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: THE GATE — typed probe over 20 loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O1 -Wall -Wextra -Werror -o extent-v2-probe .github/probes/extent-v2-probe.c -ldl
+          : > typed-runs.txt
+          for i in $(seq 1 20); do
+            ./extent-v2-probe --loader glibc "$PWD/elf-order/signed.so" | sed "s/^/run$i /" >> typed-runs.txt || true
+          done
+          python3 .github/probes/analyse.py --typed 20 < typed-runs.txt | tee typed-analysis.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: CONTROLS — every bit's mutation and the route controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No byte follows DT_NULL in this library; probe-selftest proves
+          # that comparison on a fixture with no exemption.
+          bash .github/probes/extent-v2-mutations.sh --require-all --na-ok dyn-postnull \
+            ./extent-v2-probe "$PWD/elf-order/signed.so" --loader glibc | tee typed-mutations.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: THE GATE — fixup cross-check against readelf
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf -rW elf-order/signed.so > readelf-r.txt
+          readelf -dW elf-order/signed.so > readelf-d.txt
+          python3 .github/probes/fixup-crosscheck.py elf elf-order/signed.so \
+            --readelf-r readelf-r.txt --readelf-d readelf-d.txt | tee crosscheck.txt
+          exit "${PIPESTATUS[0]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extent-v2-linux-x86_64
+          path: |
+            versions.txt
+            elf-order.txt
+            elf-order/statics.txt
+            typed-runs.txt
+            typed-analysis.txt
+            typed-mutations.txt
+            crosscheck.txt
+          if-no-files-found: warn
+
+  extent-v2-macos:
+    name: extent-v2-${{ matrix.name }}
+    # Debug info and a packed dSYM: the signer reads the module's statics
+    # from the dSYM matched by LC_UUID when the image's own symbol table
+    # does not name them.
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG: full
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+      CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
+    # The dylib from a default `cargo build --release` (`shipped.dylib`), and
+    # as built with chained fixups at the deployment target the extent
+    # requires. On the chained build the assertion, the typed probe and the
+    # cross-check are gates; on the default build, which uses opcode-encoded
+    # fixups at the toolchain's default deployment target, they are
+    # measurements. Also the entry
+    # count, the file-backed statics row and the codesign reservation diffs.
+    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'extent-v2' || inputs.jobs == 'all')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-aarch64
+            runner: macos-15
+            minos: '12.0'
+          - name: macos-x86_64
+            runner: macos-15-intel
+            minos: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record the shell and toolchain versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The probe scripts run under the system bash, 3.2 on macOS.
+          { bash --version | head -1; xcodebuild -version; } | tee versions.txt
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Integrity key pair (throwaway, this job only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
+      - name: Build the default dylib, the signer, and the chained-fixup dylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
+          cp target/release/liboxicrypt_ffi.dylib shipped.dylib
+          # The build a signed Mach-O needs: chained fixups and the zero-fill
+          # sections in a segment of their own, release and debug.
+          for P in release dev; do
+            MACOSX_DEPLOYMENT_TARGET='${{ matrix.minos }}' \
+              RUSTFLAGS="$MACHO_SIGNED_RUSTFLAGS" \
+              CARGO_TARGET_DIR=target-chained \
+              cargo build --profile "$P" -p oxicrypt-ffi
+          done
+          cp target-chained/release/liboxicrypt_ffi.dylib chained.dylib
+          cp target-chained/debug/liboxicrypt_ffi.dylib chained-debug.dylib
+          cp -R target-chained/release/liboxicrypt_ffi.dylib.dSYM chained.dylib.dSYM
+          cp -R target-chained/debug/liboxicrypt_ffi.dylib.dSYM chained-debug.dylib.dSYM
+          # The zero-fill segment's control: chained fixups without it.
+          MACOSX_DEPLOYMENT_TARGET='${{ matrix.minos }}' \
+            RUSTFLAGS='-C llvm-args=-aarch64-enable-global-merge=false -C link-arg=-Wl,-fixup_chains' \
+            CARGO_TARGET_DIR=target-norename \
+            cargo build --release -p oxicrypt-ffi
+          cp target-norename/release/liboxicrypt_ffi.dylib norename.dylib
+          cp -R target-norename/release/liboxicrypt_ffi.dylib.dSYM norename.dylib.dSYM
+          ls -l shipped.dylib chained.dylib chained-debug.dylib norename.dylib
+
+      - name: Chained-fixup assertion — CONTROLS, then the gate on the chained build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Both sides of the assertion are exercised on fixtures first, at
+          # the same deployment target: an opcode-encoded dylib must fail on
+          # LC_DYLD_INFO, and a chained one must pass.
+          cc -shared -O1 -mmacosx-version-min='${{ matrix.minos }}' -Wl,-no_fixup_chains -o opcodes.dylib .github/probes/elf-fixture.c
+          cc -shared -O1 -mmacosx-version-min='${{ matrix.minos }}' -Wl,-fixup_chains -o chained-fixture.dylib .github/probes/elf-fixture.c
+          otool -l opcodes.dylib > opcodes.otool
+          otool -l chained-fixture.dylib > chained-fixture.otool
+          set +e
+          python3 .github/probes/macho-chained.py assert opcodes.otool --minos '${{ matrix.minos }}' > opcodes.assert
+          RC=$?
+          set -e
+          cat opcodes.assert
+          if [ "$RC" -ne 1 ] || ! grep -q 'FAILED: LC_DYLD_INFO' opcodes.assert || grep -q 'FAILED: minos' opcodes.assert; then
+            echo "control FAILED: the assertion did not reject the opcode-encoded fixture on LC_DYLD_INFO alone (exit $RC)" >&2
+            exit 1
+          fi
+          python3 .github/probes/macho-chained.py assert chained-fixture.otool --minos '${{ matrix.minos }}' \
+            || { echo "control FAILED: the assertion rejected a chained fixture" >&2; exit 1; }
+          echo "control ok: the assertion separates the two encodings at minos ${{ matrix.minos }}"
+          otool -l shipped.dylib > shipped.otool
+          otool -l chained.dylib > chained.otool
+          set +e
+          python3 .github/probes/macho-chained.py assert shipped.otool --minos '${{ matrix.minos }}' | tee chained-assert.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "measurement: chained-fixup assertion on the shipped dylib exit $RC" | tee -a chained-assert.txt
+          [ "$RC" -lt 2 ] || exit 1
+          python3 .github/probes/macho-chained.py assert chained.otool --minos '${{ matrix.minos }}' | tee -a chained-assert.txt
+          exit "${PIPESTATUS[0]}"
+
+      # The fixups of both dylibs must cross-check. The slot fit, as the signer
+      # encodes it (`--show`'s slot budget), is a gate on the chained dylib,
+      # the one the signer accepts: if it does not fit, the step fails. The
+      # shipped dylib's fixups are opcode-encoded and the signer refuses it, so
+      # its count is recorded as a measurement and never gates.
+      - name: Fixup cross-check against dyld_info, and the slot fit
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYLD_INFO="$(command -v dyld_info || xcrun --find dyld_info)"
+          SIGNER=target/release/oxicrypt-integrity-sign
+          : > crosscheck.txt
+          for a in shipped chained; do
+            "$DYLD_INFO" -fixups "$a.dylib" > "$a.fixups"
+            python3 .github/probes/fixup-crosscheck.py macho "$a.dylib" --tool "$a.fixups" | tee -a crosscheck.txt
+            RC=${PIPESTATUS[0]}
+            [ "$RC" -eq 0 ] || { echo "FAILED: fixup cross-check on the $a dylib exit $RC" | tee -a crosscheck.txt; exit 1; }
+            set +e
+            python3 .github/probes/macho-chained.py count "$a.dylib" --signer "$SIGNER" \
+              | sed "s/^/$a: /" | tee -a crosscheck.txt
+            RC=${PIPESTATUS[0]}
+            set -e
+            if [ "$a" = chained ]; then
+              [ "$RC" -eq 0 ] || { echo "FAILED: the chained dylib's extent does not fit its slot, or was unreadable (exit $RC)" | tee -a crosscheck.txt; exit 1; }
+            else
+              echo "measurement: the $a dylib's slot count exited $RC; not a gate (the signer refuses opcode-encoded fixups)" | tee -a crosscheck.txt
+              # 0, 1 and 2 are outcomes the count reports; anything else is the count itself failing.
+              [ "$RC" -le 2 ] || { echo "FAILED: the slot count on the $a dylib crashed (exit $RC)" | tee -a crosscheck.txt; exit 1; }
+            fi
+          done
+
+      - name: Typed probe — THE GATE on the chained dylib, a measurement on the shipped one
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O1 -Wall -Wextra -Werror -o macho-typed-probe .github/probes/macho-typed-probe.c
+          set +e
+          ./macho-typed-probe "$PWD/shipped.dylib" > typed-shipped.txt 2>&1
+          RC=$?
+          set -e
+          cat typed-shipped.txt
+          STATUS="$(sed -n 's/^RESULT status=\([0-9]*\).*/\1/p' typed-shipped.txt | tail -1)"
+          echo "measurement: typed probe on the shipped dylib exit $RC, RESULT ${STATUS:-none} (bit 2: opcode-encoded fixups are refused)"
+          # A measurement only if the run set up (bit 64) and its control
+          # fired (bit 32); otherwise it measured nothing.
+          if [ -z "$STATUS" ] || [ "$STATUS" -ne "$RC" ] || [ $((STATUS & 96)) -ne 0 ]; then
+            echo "control FAILED: the shipped run's setup or control failed, or its RESULT does not match its exit" >&2
+            exit 1
+          fi
+          : > typed-runs.txt
+          for i in $(seq 1 20); do
+            ./macho-typed-probe "$PWD/chained.dylib" | sed "s/^/run$i /" >> typed-runs.txt || true
+          done
+          RC=0
+          python3 .github/probes/analyse.py --typed 20 < typed-runs.txt | tee typed-analysis.txt || RC=${PIPESTATUS[0]}
+          # sed -E: macOS ships BSD sed, which has no `\|` in basic regexes
+          echo "== distinct RESULT, FAIL, BIND_ROUTE and BIND_BAD lines over the 20 runs"
+          sed -E -n 's/^run[0-9]+ ((RESULT|FAIL|BIND_ROUTE|BIND_BAD|BIND_RESOLVER_STUB).*)$/\1/p' typed-runs.txt \
+            | sed -E 's/ (mem|want)=0x[0-9a-f]+//g' | sort | uniq -c
+          exit "$RC"
+
+      - name: CONTROLS — every bit of the Mach-O typed probe, on the chained dylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/extent-v2-mutations.sh --require-all --generic \
+            ./macho-typed-probe "$PWD/chained.dylib" | tee typed-mutations.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: File-backed module statics — CONTROL on fixtures, then the artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/build-fixtures.sh fixtures
+          # The file-backed twin's static must be named, by name, or an empty
+          # row on an artifact cannot be trusted.
+          set +e
+          python3 .github/probes/file-backed-statics.py fixtures/fixture-filebacked.dylib > control-statics.txt
+          RC=$?
+          set -e
+          cat control-statics.txt
+          if [ "$RC" -ne 1 ] || ! grep -q 'name=_oxicrypt_fixture_state' control-statics.txt; then
+            echo "control FAILED: a file-backed zero-initialised static was not named (status $RC)" >&2
+            exit 1
+          fi
+          echo "control ok: a file-backed zero-initialised static is named"
+          : > statics.txt
+          for a in fixtures/fixture.dylib shipped.dylib chained.dylib; do
+            set +e
+            python3 .github/probes/file-backed-statics.py "$a" | tee -a statics.txt
+            RC=${PIPESTATUS[0]}
+            set -e
+            echo "measurement: file-backed module statics row for $a status $RC (0 empty, 1 non-empty)" | tee -a statics.txt
+            [ "$RC" -lt 2 ] || exit 1
+          done
+
+      - name: Stability over 20 loads, with the segments that are Plain throughout required
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O1 -Wall -Wextra -o stability-probe .github/probes/image-stability-probe.c
+          : > runs.txt
+          for i in $(seq 1 20); do
+            ./stability-probe "$PWD/shipped.dylib" | sed "s/^/run$i /" >> runs.txt
+          done
+          set +e
+          python3 .github/probes/analyse.py --require __TEXT --require __LINKEDIT < runs.txt | tee stability.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "measurement: __TEXT and __LINKEDIT stable and equal to the file, exit $RC" | tee -a stability.txt
+          [ "$RC" -lt 2 ] || exit 1
+
+      - name: The zero-fill segment holds the module state, CONTROL without it
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN="$PWD/target/release/oxicrypt-integrity-sign"
+          : > e1.txt
+          otool -l chained.dylib > chained.otool
+          # __ZEROFILL must be a segment with no file bytes holding __bss and
+          # __common, and no file-backed segment may hold either.
+          python3 - chained.otool <<'PY' | tee -a e1.txt
+          import re, sys
+          segs, cur = {}, None
+          for line in open(sys.argv[1]):
+              m = re.match(r"\s*segname (\S+)", line)
+              if re.match(r"\s*cmd LC_SEGMENT_64", line):
+                  cur = {"sects": []}
+              elif cur is not None and "name" not in cur and m:
+                  cur["name"] = m.group(1); segs[m.group(1)] = cur
+              elif cur is not None and re.match(r"\s*filesize ", line):
+                  cur["filesize"] = int(line.split()[1], 0)
+              elif cur is not None and re.match(r"\s*sectname ", line):
+                  cur["sects"].append(line.split()[1])
+          z = segs.get("__ZEROFILL")
+          zero_fill = {"__bss", "__common"}
+          # Both sections in __ZEROFILL, which has no file bytes, and
+          # neither in any segment that has.
+          backed = sorted(n for n, seg in segs.items()
+                          if seg.get("filesize", 0) > 0 and zero_fill & set(seg["sects"]))
+          ok = (z is not None and z.get("filesize") == 0
+                and zero_fill <= set(z["sects"]) and not backed)
+          print(f"__ZEROFILL: {z}; file-backed segments holding __bss or __common: {backed}")
+          print("ok: the zero-fill sections are a segment with no file bytes" if ok
+                else "FAILED: the zero-fill sections are not a segment of their own with no file bytes")
+          sys.exit(0 if ok else 1)
+          PY
+          "$SIGN" --show chained.dylib > e1-show.txt
+          grep -E 'module statics' e1-show.txt | tee -a e1.txt
+          N="$(sed -n 's/^  module statics in writable memory: \([0-9]*\);.*/\1/p' e1-show.txt)"
+          if ! grep -qx '  file-backed module statics: none' e1-show.txt || [ "${N:-0}" -lt 3 ]; then
+            echo "FAILED: the statics row is not empty, or fewer than three module statics were found" | tee -a e1.txt
+            exit 1
+          fi
+          echo "ok: the statics row is empty with $N module statics found" | tee -a e1.txt
+          # CONTROL: without the zero-fill segment the row names a static
+          # and signing is refused.
+          "$SIGN" --show norename.dylib | grep -E 'module statics|STATIC' | tee -a e1.txt
+          cp norename.dylib norename-sign.dylib
+          cp -R norename.dylib.dSYM norename-sign.dylib.dSYM
+          set +e
+          "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" norename-sign.dylib > e1-control.txt 2>&1
+          RC=$?
+          set -e
+          tee -a e1.txt < e1-control.txt
+          if [ "$RC" -eq 2 ] && grep -q FileBackedStatic e1-control.txt; then
+            echo "control ok: without the zero-fill segment signing is refused (FileBackedStatic)" | tee -a e1.txt
+          else
+            echo "control FAILED: the build without the zero-fill segment was not refused as FileBackedStatic (exit $RC)" | tee -a e1.txt
+            exit 1
+          fi
+
+      - name: Entry counts and capacity, release and debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN="$PWD/target/release/oxicrypt-integrity-sign"
+          : > e2.txt
+          for a in chained chained-debug; do
+            "$SIGN" --show "$a.dylib" > "$a-show.txt"
+            echo "== $a" | tee -a e2.txt
+            grep -E 'extent after subtracting|slot table|bound imports' "$a-show.txt" | tee -a e2.txt
+            cp "$a.dylib" "$a-sign.dylib"
+            cp -R "$a.dylib.dSYM" "$a-sign.dylib.dSYM"
+            set +e
+            "$SIGN" --sign --key "$INTEGRITY_SIGNING_KEY" "$a-sign.dylib" > "$a-sign.txt" 2>&1
+            RC=$?
+            set -e
+            echo "measurement: --sign of $a exit $RC" | tee -a e2.txt
+            grep -E 'slot table|entries' "$a-sign.txt" | tee -a e2.txt || true
+            [ "$RC" -eq 0 ] || { cat "$a-sign.txt"; exit 1; }
+          done
+
+      - name: The signer's Relative and Bind words against dyld_info, CONTROL a dropped word
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYLD_INFO="$(command -v dyld_info || xcrun --find dyld_info)"
+          "$DYLD_INFO" -fixups chained.dylib > chained.fixups
+          python3 .github/probes/macho-entry-crosscheck.py chained-show.txt chained.fixups | tee e4.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Codesign reservation diffs, A, B, C (--reserved-against A), D
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/macho-signing-order.sh "$PWD/chained.dylib" \
+            "$PWD/target/release/oxicrypt-integrity-sign" order-chained - | tee order-chained.txt
+          RC=${PIPESTATUS[0]}
+          [ "$RC" -eq 0 ] || exit "$RC"
+          # The default build uses opcode fixups, which the signer refuses by
+          # name.
+          cp shipped.dylib shipped-sign.dylib
+          set +e
+          "$PWD/target/release/oxicrypt-integrity-sign" --sign --key "$INTEGRITY_SIGNING_KEY" \
+            shipped-sign.dylib > shipped-refusal.txt 2>&1
+          RC=$?
+          set -e
+          tee -a order-chained.txt < shipped-refusal.txt
+          if [ "$RC" -eq 2 ] && grep -q OpcodeFixups shipped-refusal.txt; then
+            echo "control ok: the opcode-fixup build is refused as OpcodeFixups" | tee -a order-chained.txt
+          else
+            echo "control FAILED: the opcode-fixup build was not refused as OpcodeFixups (exit $RC)" | tee -a order-chained.txt
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extent-v2-${{ matrix.name }}
+          path: |
+            versions.txt
+            chained-assert.txt
+            crosscheck.txt
+            typed-shipped.txt
+            typed-runs.txt
+            typed-analysis.txt
+            typed-mutations.txt
+            statics.txt
+            stability.txt
+            order-*.txt
+            order-chained/*.txt
+            e1.txt
+            e1-show.txt
+            e2.txt
+            e4.txt
+            chained-show.txt
+            chained-debug-show.txt
+            *.otool
+            *.fixups
+          if-no-files-found: warn
+
+  extent-v2-windows:
+    name: extent-v2-windows-x86_64
+    # The typed PE probe over twenty loads with a mutation test per bit, the
+    # DLL's base relocations walked by the stability probe against an
+    # independent parse, the file-backed statics row from the linker map, and
+    # the Authenticode reservation diffs.
+    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'extent-v2' || inputs.jobs == 'all')
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Integrity key pair (throwaway, this job only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
+      - name: Record the toolchain versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $link = & $vswhere -latest -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\link.exe' | Select-Object -First 1
+          if (-not $link) { throw 'no MSVC link.exe found' }
+          $banner = (& $link 2>&1 | Select-Object -First 1)
+          "link: $banner" | Tee-Object -FilePath versions.txt
+          (rustc --version) | Tee-Object -FilePath versions.txt -Append
+
+      - name: Build the DLL, the signer, and the DLL again with a linker map
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p oxicrypt-ffi -p oxicrypt-integrity-sign
+          cp target/release/oxicrypt_ffi.dll shipped.dll
+          # The map names the statics; a PE image carries no symbol table.
+          # Only the final link differs, and the layout check below says
+          # whether the map describes the shipped image.
+          MSYS_NO_PATHCONV=1 CARGO_TARGET_DIR=target-map \
+            cargo rustc --release -p oxicrypt-ffi --crate-type cdylib -- \
+            -C "link-arg=/MAP:$(cygpath -w "$PWD/oxicrypt_ffi.map")"
+          cp target-map/release/oxicrypt_ffi.dll mapped.dll
+          ls -l shipped.dll mapped.dll oxicrypt_ffi.map
+          # The signed form, which the signing order signs.
+          RUSTFLAGS="$PE_SIGNED_RUSTFLAGS" CARGO_PROFILE_RELEASE_DEBUG=full \
+            CARGO_TARGET_DIR=target-signed cargo build --release -p oxicrypt-ffi
+
+      - name: Typed probe — THE GATE over 20 loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYBIN="$(command -v python3 || command -v python)"
+          rustc -O -o pe-typed-probe.exe .github/probes/pe-typed-probe.rs
+          LIB="$(cygpath -w "$PWD/shipped.dll")"
+          : > typed-runs.txt
+          for i in $(seq 1 20); do
+            ./pe-typed-probe.exe "$LIB" | sed "s/^/run$i /" >> typed-runs.txt || true
+          done
+          # Windows chooses a DLL's base once per boot, so the bias repeats;
+          # the probe's own bit 5 (a non-zero delta moved a relocated word)
+          # is the control in each run instead.
+          RC=0
+          "$PYBIN" .github/probes/analyse.py --typed 20 --bias-may-repeat < typed-runs.txt | tee typed-analysis.txt || RC=${PIPESTATUS[0]}
+          # The distinct verdict lines across the runs, in the log itself.
+          echo "== distinct RESULT, FAIL, IMAGEBASE_FIELD and XFG lines over the 20 runs"
+          sed -E -n 's/^run[0-9]+ ((RESULT|FAIL|IMAGEBASE_FIELD|XFG).*)$/\1/p' typed-runs.txt | sort | uniq -c
+          exit "$RC"
+
+      - name: CONTROLS — every bit of the PE typed probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/extent-v2-mutations.sh --require-all --generic \
+            ./pe-typed-probe.exe "$(cygpath -w "$PWD/shipped.dll")" | tee typed-mutations.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: File-backed module statics, from the linker map
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYBIN="$(command -v python3 || command -v python)"
+          "$PYBIN" - <<'PY' | tee statics.txt
+          import struct
+          def table(p):
+              d = open(p, "rb").read()
+              pe, = struct.unpack_from("<I", d, 0x3C)
+              n, = struct.unpack_from("<H", d, pe + 6)
+              opt, = struct.unpack_from("<H", d, pe + 20)
+              return [d[pe + 24 + opt + i * 40:pe + 24 + opt + i * 40 + 24] + d[pe + 24 + opt + i * 40 + 36:pe + 24 + opt + i * 40 + 40] for i in range(n)]
+          same = table("shipped.dll") == table("mapped.dll")
+          print(f"measurement: the mapped build's section table {'equals' if same else 'DIFFERS FROM'} the shipped one")
+          PY
+          set +e
+          "$PYBIN" .github/probes/file-backed-statics.py --map oxicrypt_ffi.map mapped.dll | tee -a statics.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "measurement: file-backed module statics row status $RC (0 empty, 1 non-empty)" | tee -a statics.txt
+          [ "$RC" -lt 2 ] || exit 1
+
+      - name: THE GATE — base relocations, the stability probe's walk against the file parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYBIN="$(command -v python3 || command -v python)"
+          rustc -O -o probe.exe .github/probes/win-image-stability-probe.rs
+          ./probe.exe --relocs "$(cygpath -w "$PWD/shipped.dll")" > relocs.txt
+          "$PYBIN" .github/probes/fixup-crosscheck.py pe shipped.dll --tool relocs.txt | tee crosscheck.txt
+          [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+          if command -v llvm-readobj >/dev/null; then
+            llvm-readobj --coff-basereloc shipped.dll > readobj.txt
+            "$PYBIN" .github/probes/fixup-crosscheck.py pe shipped.dll --tool readobj.txt | tee -a crosscheck.txt
+            [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+          else
+            echo "measurement: llvm-readobj not on this runner; the probe walk is the one independent parse" | tee -a crosscheck.txt
+          fi
+
+      - name: Stability over 20 loads, with the sections that are Plain throughout required
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYBIN="$(command -v python3 || command -v python)"
+          LIB="$(cygpath -w "$PWD/shipped.dll")"
+          : > runs.txt
+          for i in $(seq 1 20); do
+            ./probe.exe "$LIB" | sed "s/^/run$i /" >> runs.txt
+          done
+          set +e
+          "$PYBIN" .github/probes/analyse.py --require .text --require .pdata < runs.txt | tee stability.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "measurement: .text and .pdata stable and equal to the file, exit $RC" | tee -a stability.txt
+          [ "$RC" -lt 2 ] || exit 1
+
+      - name: Locate signtool and create two signing certificates — CONTROL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'x64\signtool.exe') } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $sdk) { throw 'control FAILED: no signtool.exe under the Windows 10 SDK' }
+          "SIGNTOOL=$(Join-Path $sdk.FullName 'x64\signtool.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $a = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=oxicrypt reservation A' -CertStoreLocation Cert:\CurrentUser\My
+          $b = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=oxicrypt reservation B' -CertStoreLocation Cert:\CurrentUser\My
+          "CERT_A=$($a.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CERT_B=$($b.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Authenticode reservation diffs — A, B, C, D
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/pe-signing-order.sh "$PWD/target-signed/release/oxicrypt_ffi.dll" \
+            "$PWD/target/release/oxicrypt-integrity-sign.exe" order "$SIGNTOOL" "$CERT_A" "$CERT_B" \
+            "$PWD/target-signed/release/oxicrypt_ffi.pdb" | tee order.txt
+          exit "${PIPESTATUS[0]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extent-v2-windows-x86_64
+          path: |
+            versions.txt
+            typed-runs.txt
+            typed-analysis.txt
+            typed-mutations.txt
+            statics.txt
+            crosscheck.txt
+            relocs.txt
+            stability.txt
+            order.txt
+          if-no-files-found: warn
+
+  extent-v2-android:
+    name: extent-v2-android-${{ matrix.abi }}
+    # The library linked for 16 KiB pages, its signing order (strip,
+    # debuglink, sign), and its fixup cross-check; on the x86_64 emulator the
+    # typed probe, its mutations and the library-inside-an-APK measurement,
+    # all on the order-checked library. arm64 is built and checked here and
+    # measured on a device with android-device-measure.sh.
+    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'extent-v2' || inputs.jobs == 'all')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: x86_64
+            target: x86_64-linux-android
+            emulator: true
+          - abi: arm64-v8a
+            target: aarch64-linux-android
+            emulator: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Integrity key pair (throwaway, this job only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signer refuses an artifact built without a verifying key, and
+          # signs only with --key. A pair generated per job and never stored
+          # serves the probes; it is not a release key.
+          cargo build --release -p oxicrypt-integrity-sign
+          SIGNER=target/release/oxicrypt-integrity-sign
+          [ -x "$SIGNER" ] || SIGNER="$SIGNER.exe"
+          "$SIGNER" --keygen "$RUNNER_TEMP/integrity-key" | tee integrity-key.txt
+          echo "OXICRYPT_INTEGRITY_VERIFY_KEY=$RUNNER_TEMP/integrity-key/integrity-verify.pub" >> "$GITHUB_ENV"
+          echo "INTEGRITY_SIGNING_KEY=$RUNNER_TEMP/integrity-key/integrity-signing.key" >> "$GITHUB_ENV"
+
+      - name: Build for 16 KiB pages, sign, and check the alignment — CONTROL
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            echo "control FAILED: no Android NDK on this runner" >&2
+            exit 1
+          fi
+          { grep Pkg.Revision "$NDK/source.properties"; bash --version | head -1; } | tee versions.txt
+          echo "NDK_BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
+          bash .github/probes/android-build.sh '${{ matrix.target }}' "$NDK" android-artifacts | tee android-build.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Signing order — strip, debuglink, sign; only the slot changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/probes/elf-signing-order.sh android-artifacts/subject-unsigned.so \
+            target/release/oxicrypt-integrity-sign elf-order "$NDK_BIN/llvm-objcopy" "$NDK_BIN/llvm-strip" \
+            | tee elf-order.txt
+          [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+          # Everything below measures the order-checked library, as shipped.
+          cp elf-order/signed.so android-artifacts/subject.so
+
+      - name: THE GATE — fixup cross-check against readelf
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf -rW android-artifacts/subject.so > readelf-r.txt
+          readelf -dW android-artifacts/subject.so > readelf-d.txt
+          python3 .github/probes/fixup-crosscheck.py elf android-artifacts/subject.so \
+            --readelf-r readelf-r.txt --readelf-d readelf-d.txt | tee crosscheck.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Enable KVM
+        if: matrix.emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Measure on the emulator — typed probe, mutations, APK; controls gate
+        if: matrix.emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: ${{ matrix.abi }}
+          target: google_apis
+          disable-animations: true
+          script: bash .github/probes/android-emulator-extent-v2.sh x86_64 android-artifacts 20 > emulator.txt 2>&1; rc=$?; cat emulator.txt; exit $rc
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extent-v2-android-${{ matrix.abi }}
+          path: |
+            versions.txt
+            android-build.txt
+            android-artifacts/statics.txt
+            elf-order.txt
+            crosscheck.txt
+            emulator.txt
+            device-facts.txt
+            controls.txt
+            typed-*.txt
+            apk-*.txt
+            android-artifacts/subject.so
+            android-artifacts/extent-v2-probe
+            android-artifacts/probe
+            android-artifacts/decoy.so
+          if-no-files-found: warn

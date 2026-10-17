@@ -15,9 +15,9 @@
 //! [`Sha256::new`] calls `oxicrypt_module::require_operational()` and
 //! `require_allowed(Service::Sha256)` before returning a hasher. The
 //! self-test entry point
-//! [`self_test`] uses a private constructor that bypasses this check —
-//! it is invoked *during* the `SelfTest` state and would otherwise
-//! deadlock the state machine.
+//! [`self_test`] uses a crate-private constructor without this check,
+//! because it runs *during* the `SelfTest` state, where the gated
+//! constructor refuses.
 //!
 //! Lints: array indexing with compile-time-bounded loops is the
 //! natural way to express SHA-256 (state[0..8], w[0..64]), and the
@@ -34,7 +34,10 @@
     clippy::needless_range_loop
 )]
 
-use oxicrypt_module::{Error, SelfTestFailure, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
+};
 
 /// Output length of SHA-256 in bytes.
 pub const DIGEST_SIZE: usize = 32;
@@ -137,17 +140,37 @@ impl Sha256 {
     pub fn new() -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Sha256)?;
-        Ok(Self::new_internal())
+        Ok(Self::new_unguarded())
     }
 
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
     ///
-    /// Used by this crate's power-up KAT and by downstream crates
-    /// (oxicrypt-hmac, oxicrypt-kdf) that need to instantiate a hash while
-    /// the module is still in `SelfTest`. Public callers must use
-    /// [`Sha256::new`] instead.
+    /// Used by power-up KATs and by other algorithm crates that compose
+    /// this hash. Returns [`Error::NotOperational`] unless
+    /// [`require_self_test_started`] admits the call: in `Operational`, or in
+    /// `SelfTest` on the thread running the power-up self-tests. Public
+    /// callers use the gated constructor instead.
     #[doc(hidden)]
-    pub const fn new_internal() -> Self {
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Ok(Self::new_unguarded())
+    }
+
+    /// The initial state, for a caller holding proof that the module's
+    /// self-tests have started.
+    ///
+    /// The same constant initialiser as [`Sha256::new_internal`], without
+    /// the state load, for a loop whose instructions must not change: the
+    /// caller obtains the proof once, outside the loop.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new_with(_started: &oxicrypt_module::SelfTestStarted) -> Self {
+        Self::new_unguarded()
+    }
+
+    /// The initial state, for this crate's own use once a gate or guard
+    /// has passed.
+    pub(crate) const fn new_unguarded() -> Self {
         Self {
             state: H0,
             buffer: [0; BLOCK_SIZE],
@@ -201,7 +224,33 @@ impl Sha256 {
     /// Consumes `self` because SHA-256 is not restartable after
     /// finalization; the contract matches RustCrypto's `Digest` even
     /// though we do not depend on that trait.
-    pub fn finalize(mut self) -> [u8; DIGEST_SIZE] {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a hasher built before a failure produces no digest after it.
+    pub fn finalize(self) -> Result<[u8; DIGEST_SIZE], Error> {
+        require_self_test_started()?;
+        Ok(self.finalize_unchecked())
+    }
+
+    /// [`Self::finalize`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    #[must_use]
+    // Inlined so a caller's timed region runs the finalization body
+    // itself, with no call into this wrapper.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn finalize_with(self, _started: &oxicrypt_module::SelfTestStarted) -> [u8; DIGEST_SIZE] {
+        self.finalize_unchecked()
+    }
+
+    /// The finalization step, for this crate's own use once a gate or
+    /// guard has passed.
+    pub(crate) fn finalize_unchecked(mut self) -> [u8; DIGEST_SIZE] {
         // Padding per FIPS 180-4 §5.1.1:
         //   append 0x80, then zero bytes until (length mod 64) == 56,
         //   then 8 bytes of big-endian bit length.
@@ -338,7 +387,7 @@ fn compress256_portable(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE]) {
 pub fn sha256(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
     let mut h = Sha256::new()?;
     h.update(data);
-    Ok(h.finalize())
+    Ok(h.finalize_unchecked())
 }
 
 // ------------------------------------------------------------------------
@@ -348,8 +397,8 @@ pub fn sha256(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 /// Power-up KAT for SHA-256.
 ///
 /// Called by `oxicrypt_module::initialize_with_tests` during the
-/// `SelfTest` state. Uses [`Sha256::new_internal`] to bypass the
-/// operational-mode gate, since the whole point of the KAT is to run
+/// `SelfTest` state. Uses the crate-private initial state rather than
+/// the operational-mode gate, since the whole point of the KAT is to run
 /// *before* the module is operational.
 ///
 /// The message/digest pair is sourced from the NIST CAVP Secure Hash
@@ -358,9 +407,9 @@ pub fn sha256(data: &[u8]) -> Result<[u8; DIGEST_SIZE], Error> {
 /// the `oxicrypt-test-vectors` crate which pins the vendored file's
 /// SHA-256 in `vendor/nist/MANIFEST.toml`.
 pub fn self_test() -> Result<(), SelfTestFailure> {
-    let mut h = Sha256::new_internal();
+    let mut h = Sha256::new_unguarded();
     h.update(&oxicrypt_test_vectors::SHA_256_MSG);
-    let digest = h.finalize();
+    let digest = h.finalize_unchecked();
     if digest == oxicrypt_test_vectors::SHA_256_MD {
         Ok(())
     } else {
@@ -444,18 +493,18 @@ mod tests {
     #[test]
     fn kat_abc_matches_fips_180_4_appendix_b1() {
         // "abc" — NIST SHA-256 one-block example
-        let mut h = Sha256::new_internal();
+        let mut h = Sha256::new_unguarded();
         h.update(b"abc");
-        assert_eq!(h.finalize(), KAT_ABC_DIGEST);
+        assert_eq!(h.finalize_unchecked(), KAT_ABC_DIGEST);
     }
 
     #[test]
     fn kat_empty_string() {
         // SHA-256("") — widely published NIST example vector
         let expected = hex32("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        let mut h = Sha256::new_internal();
+        let mut h = Sha256::new_unguarded();
         h.update(b"");
-        assert_eq!(h.finalize(), expected);
+        assert_eq!(h.finalize_unchecked(), expected);
     }
 
     #[test]
@@ -465,9 +514,9 @@ mod tests {
         // so this verifies the block-boundary code path.
         let msg: &[u8] = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
         let expected = hex32("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
-        let mut h = Sha256::new_internal();
+        let mut h = Sha256::new_unguarded();
         h.update(msg);
-        assert_eq!(h.finalize(), expected);
+        assert_eq!(h.finalize_unchecked(), expected);
     }
 
     #[test]
@@ -476,12 +525,12 @@ mod tests {
         // Exercises both the block-loop and the 2^20-byte length
         // field in the padding.
         let expected = hex32("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
-        let mut h = Sha256::new_internal();
+        let mut h = Sha256::new_unguarded();
         let chunk = [b'a'; 1000];
         for _ in 0..1000 {
             h.update(&chunk);
         }
-        assert_eq!(h.finalize(), expected);
+        assert_eq!(h.finalize_unchecked(), expected);
     }
 
     #[test]
@@ -504,7 +553,7 @@ mod tests {
             offset = end;
         }
         h.update(&msg[offset..]);
-        let streamed = h.finalize();
+        let streamed = h.finalize_unchecked();
 
         assert_eq!(streamed, one_shot);
     }
@@ -633,11 +682,11 @@ mod accel_oracle_tests {
         fill_pattern(&mut buf);
         for &len in &LENGTHS {
             let msg = &buf[..len];
-            let mut one_shot = Sha256::new_internal();
+            let mut one_shot = Sha256::new_unguarded();
             one_shot.update(msg);
-            let expected = one_shot.finalize();
+            let expected = one_shot.finalize_unchecked();
 
-            let mut streamed = Sha256::new_internal();
+            let mut streamed = Sha256::new_unguarded();
             let mut offset = 0usize;
             for chunk_len in [1usize, 7, 13, 64, 65, 128].iter().cycle() {
                 if offset >= msg.len() {
@@ -648,7 +697,7 @@ mod accel_oracle_tests {
                 offset = end;
             }
             assert_eq!(
-                streamed.finalize(),
+                streamed.finalize_unchecked(),
                 expected,
                 "streaming divergence at len={len}"
             );

@@ -35,7 +35,7 @@
 //! Unsupported curves or hash algorithms produce
 //! `DispatchError::Unsupported`.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -217,8 +217,8 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         )?;
 
         let passed = match curve {
-            "P-256" => ecdsa_p256_verify(&message, &qx, &qy, &r_bytes, &s_bytes),
-            "P-384" => ecdsa_p384_verify(&message, &qx, &qy, &r_bytes, &s_bytes),
+            "P-256" => ecdsa_p256_verify(&message, &qx, &qy, &r_bytes, &s_bytes)?,
+            "P-384" => ecdsa_p384_verify(&message, &qx, &qy, &r_bytes, &s_bytes)?,
             _ => false,
         };
 
@@ -403,7 +403,7 @@ fn sign_group_p256(
 ) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     let sk = oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::generate(drbg)
         .map_err(|_| DispatchError::Crypto("ECDSA SigGen P-256: generate failed"))?;
-    let pk = sk.public_key();
+    let pk = sk.public_key()?;
     let qx_hex = hex::encode_upper(&pk[1..33]);
     let qy_hex = hex::encode_upper(&pk[33..65]);
 
@@ -443,7 +443,7 @@ fn sign_group_p384(
 ) -> Result<(String, String, Vec<JsonValue>), DispatchError> {
     let sk = oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::generate(drbg)
         .map_err(|_| DispatchError::Crypto("ECDSA SigGen P-384: generate failed"))?;
-    let pk = sk.public_key();
+    let pk = sk.public_key()?;
     let qx_hex = hex::encode_upper(&pk[1..49]);
     let qy_hex = hex::encode_upper(&pk[49..97]);
 
@@ -495,9 +495,9 @@ fn sign_group_p256_deterministic(
         .as_slice()
         .try_into()
         .map_err(|_| DispatchError::Crypto("ECDSA SigGen P-256: d is not 32 bytes"))?;
-    let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d).ok_or(
-        DispatchError::Crypto("ECDSA SigGen P-256: derive_public_key_internal failed"),
-    )?;
+    let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d).map_err(primitive_err(
+        "ECDSA SigGen P-256: derive_public_key_internal failed",
+    ))?;
     let qx_hex = hex::encode_upper(&pk[1..33]);
     let qy_hex = hex::encode_upper(&pk[33..65]);
 
@@ -553,9 +553,9 @@ fn sign_group_p384_deterministic(
         .as_slice()
         .try_into()
         .map_err(|_| DispatchError::Crypto("ECDSA SigGen P-384: d is not 48 bytes"))?;
-    let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d).ok_or(
-        DispatchError::Crypto("ECDSA SigGen P-384: derive_public_key_internal failed"),
-    )?;
+    let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d).map_err(primitive_err(
+        "ECDSA SigGen P-384: derive_public_key_internal failed",
+    ))?;
     let qx_hex = hex::encode_upper(&pk[1..49]);
     let qy_hex = hex::encode_upper(&pk[49..97]);
 
@@ -579,8 +579,8 @@ fn sign_group_p384_deterministic(
             .as_slice()
             .try_into()
             .map_err(|_| DispatchError::Crypto("ECDSA SigGen P-384: k is not 48 bytes"))?;
-        let sig = oxicrypt_ecdsa::p384_ecdsa::sign_with_k_internal(&d, &message, &k).ok_or(
-            DispatchError::Crypto("ECDSA SigGen P-384: sign_with_k_internal failed"),
+        let sig = oxicrypt_ecdsa::p384_ecdsa::sign_with_k_internal(&d, &message, &k).map_err(
+            primitive_err("ECDSA SigGen P-384: sign_with_k_internal failed"),
         )?;
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -702,8 +702,8 @@ fn derive_keygen_p256(
             .as_slice()
             .try_into()
             .map_err(|_| DispatchError::Crypto("ECDSA KeyGen P-256: d is not 32 bytes"))?;
-        let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d).ok_or(
-            DispatchError::Crypto("ECDSA KeyGen P-256: derive_public_key_internal failed"),
+        let pk = oxicrypt_ecdsa::p256_ecdsa::derive_public_key_internal(&d).map_err(
+            primitive_err("ECDSA KeyGen P-256: derive_public_key_internal failed"),
         )?;
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -739,8 +739,8 @@ fn derive_keygen_p384(
             .as_slice()
             .try_into()
             .map_err(|_| DispatchError::Crypto("ECDSA KeyGen P-384: d is not 48 bytes"))?;
-        let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d).ok_or(
-            DispatchError::Crypto("ECDSA KeyGen P-384: derive_public_key_internal failed"),
+        let pk = oxicrypt_ecdsa::p384_ecdsa::derive_public_key_internal(&d).map_err(
+            primitive_err("ECDSA KeyGen P-384: derive_public_key_internal failed"),
         )?;
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
@@ -770,8 +770,8 @@ fn generate_keygen_p256(
             .ok_or(DispatchError::MissingField("tcId"))?;
         let sk = oxicrypt_ecdsa::p256_ecdsa::EcdsaP256PrivateKey::generate(drbg)
             .map_err(|_| DispatchError::Crypto("ECDSA KeyGen P-256: generate failed"))?;
-        let d_hex = hex::encode_upper(sk.private_scalar());
-        let pk = sk.public_key();
+        let d_hex = hex::encode_upper(sk.private_scalar()?);
+        let pk = sk.public_key()?;
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             ("d".to_string(), JsonValue::String(d_hex)),
@@ -801,8 +801,8 @@ fn generate_keygen_p384(
             .ok_or(DispatchError::MissingField("tcId"))?;
         let sk = oxicrypt_ecdsa::p384_ecdsa::EcdsaP384PrivateKey::generate(drbg)
             .map_err(|_| DispatchError::Crypto("ECDSA KeyGen P-384: generate failed"))?;
-        let d_hex = hex::encode_upper(sk.private_scalar());
-        let pk = sk.public_key();
+        let d_hex = hex::encode_upper(sk.private_scalar()?);
+        let pk = sk.public_key()?;
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(tc_id)),
             ("d".to_string(), JsonValue::String(d_hex)),
@@ -828,10 +828,16 @@ fn generate_keygen_p384(
 /// Build the 65-byte uncompressed SEC1 public key (0x04 || qx || qy)
 /// and the 64-byte signature (r || s), then call
 /// `oxicrypt_ecdsa::p256_ecdsa::verify`.
-fn ecdsa_p256_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bool {
+fn ecdsa_p256_verify(
+    msg: &[u8],
+    qx: &[u8],
+    qy: &[u8],
+    r: &[u8],
+    s: &[u8],
+) -> Result<bool, DispatchError> {
     // qx and qy must each be exactly 32 bytes for P-256.
     if qx.len() != 32 || qy.len() != 32 || r.len() != 32 || s.len() != 32 {
-        return false;
+        return Ok(false);
     }
     let mut pk = [0u8; 65];
     pk[0] = 0x04;
@@ -842,7 +848,8 @@ fn ecdsa_p256_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bo
     sig[..32].copy_from_slice(r);
     sig[32..].copy_from_slice(s);
 
-    oxicrypt_ecdsa::p256_ecdsa::verify(&pk, msg, &sig).unwrap_or_default()
+    oxicrypt_ecdsa::p256_ecdsa::verify(&pk, msg, &sig)
+        .map_err(primitive_err("ECDSA SigVer P-256: verify failed"))
 }
 
 /// Build the 65-byte uncompressed SEC1 public key and validate it via
@@ -870,10 +877,19 @@ fn ecdsa_p256_key_validate(qx: &[u8], qy: &[u8]) -> bool {
 
 /// Build the 97-byte uncompressed SEC1 public key (0x04 || qx || qy) and the
 /// 96-byte signature (r || s), then call `oxicrypt_ecdsa::p384_ecdsa::verify_internal`.
-fn ecdsa_p384_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bool {
+///
+/// Malformed lengths are a failed verification; a refusal from the
+/// module is an error, not a verdict.
+fn ecdsa_p384_verify(
+    msg: &[u8],
+    qx: &[u8],
+    qy: &[u8],
+    r: &[u8],
+    s: &[u8],
+) -> Result<bool, DispatchError> {
     // qx, qy, r, s must each be exactly 48 bytes for P-384.
     if qx.len() != 48 || qy.len() != 48 || r.len() != 48 || s.len() != 48 {
-        return false;
+        return Ok(false);
     }
     let mut pk = [0u8; 97];
     pk[0] = 0x04;
@@ -884,7 +900,7 @@ fn ecdsa_p384_verify(msg: &[u8], qx: &[u8], qy: &[u8], r: &[u8], s: &[u8]) -> bo
     sig[..48].copy_from_slice(r);
     sig[48..].copy_from_slice(s);
 
-    oxicrypt_ecdsa::p384_ecdsa::verify_internal(&pk, msg, &sig)
+    Ok(oxicrypt_ecdsa::p384_ecdsa::verify_internal(&pk, msg, &sig)?)
 }
 
 /// Build the 97-byte uncompressed SEC1 public key and validate it via

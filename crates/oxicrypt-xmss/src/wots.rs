@@ -19,6 +19,7 @@
     clippy::many_single_char_names
 )]
 
+use oxicrypt_module::Error;
 use oxicrypt_sha::sha256::Sha256;
 
 use crate::adrs::Adrs;
@@ -54,8 +55,8 @@ const PAD_F: [u8; N] = to_byte_32(0);
 const PAD_PRF: [u8; N] = to_byte_32(3);
 
 /// PRF(KEY, M) = SHA-256(toByte(3,32) || KEY || M)
-fn prf(key: &[u8; N], m: &[u8]) -> [u8; N] {
-    let mut h = Sha256::new_internal();
+fn prf(key: &[u8; N], m: &[u8]) -> Result<[u8; N], Error> {
+    let mut h = Sha256::new_internal()?;
     h.update(&PAD_PRF);
     h.update(key);
     h.update(m);
@@ -63,8 +64,8 @@ fn prf(key: &[u8; N], m: &[u8]) -> [u8; N] {
 }
 
 /// F(KEY, M) = SHA-256(toByte(0,32) || KEY || M)
-fn f_hash(key: &[u8; N], m: &[u8; N]) -> [u8; N] {
-    let mut h = Sha256::new_internal();
+fn f_hash(key: &[u8; N], m: &[u8; N]) -> Result<[u8; N], Error> {
+    let mut h = Sha256::new_internal()?;
     h.update(&PAD_F);
     h.update(key);
     h.update(m);
@@ -114,16 +115,21 @@ fn msg_digit(msg: &[u8; N], i: usize) -> u8 {
 /// Generates KEY and BM from pub_seed via PRF, then computes
 /// F(KEY, tmp XOR BM). The ADRS is updated with the hash address
 /// and key-and-mask flag per RFC 8391 §3.1.
-fn chain_step(tmp: &[u8; N], j: u32, pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8; N] {
+fn chain_step(
+    tmp: &[u8; N],
+    j: u32,
+    pub_seed: &[u8; N],
+    adrs: &mut Adrs,
+) -> Result<[u8; N], Error> {
     adrs.set_hash_address(j);
 
     // KEY = PRF(pub_seed, ADRS with keyAndMask=0)
     adrs.set_key_and_mask(0);
-    let key = prf(pub_seed, &adrs.bytes());
+    let key = prf(pub_seed, &adrs.bytes())?;
 
     // BM = PRF(pub_seed, ADRS with keyAndMask=1)
     adrs.set_key_and_mask(1);
-    let bm = prf(pub_seed, &adrs.bytes());
+    let bm = prf(pub_seed, &adrs.bytes())?;
 
     // F(KEY, tmp XOR BM)
     let mut xored = [0u8; N];
@@ -134,12 +140,18 @@ fn chain_step(tmp: &[u8; N], j: u32, pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8
 }
 
 /// Apply the WOTS+ chain from step `start` for `steps` iterations.
-fn chain(x: &[u8; N], start: u32, steps: u32, pub_seed: &[u8; N], adrs: &mut Adrs) -> [u8; N] {
+fn chain(
+    x: &[u8; N],
+    start: u32,
+    steps: u32,
+    pub_seed: &[u8; N],
+    adrs: &mut Adrs,
+) -> Result<[u8; N], Error> {
     let mut tmp = *x;
     for j in start..start + steps {
-        tmp = chain_step(&tmp, j, pub_seed, adrs);
+        tmp = chain_step(&tmp, j, pub_seed, adrs)?;
     }
-    tmp
+    Ok(tmp)
 }
 
 // ── WOTS+ verification (pk from sig) ────────────────────────────
@@ -152,7 +164,7 @@ pub(crate) fn wots_pk_from_sig(
     sig: &[[u8; N]; LEN],
     pub_seed: &[u8; N],
     ots_addr: u32,
-) -> [[u8; N]; LEN] {
+) -> Result<[[u8; N]; LEN], Error> {
     let mut pk = [[0u8; N]; LEN];
     for i in 0..LEN {
         let a = u32::from(msg_digit(msg_hash, i));
@@ -161,7 +173,7 @@ pub(crate) fn wots_pk_from_sig(
         adrs.set_type(Adrs::OTS_HASH);
         adrs.set_ots_address(ots_addr);
         adrs.set_chain_address(i as u32);
-        pk[i] = chain(&sig[i], a, remaining, pub_seed, &mut adrs);
+        pk[i] = chain(&sig[i], a, remaining, pub_seed, &mut adrs)?;
     }
-    pk
+    Ok(pk)
 }

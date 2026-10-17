@@ -56,7 +56,7 @@ const D1_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes128_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..16]);
+    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
     if got == D1_EX2_TAG {
         Ok(())
     } else {
@@ -65,7 +65,7 @@ fn kat_aes128_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes128_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..40]);
+    let got = cmac_aes128_internal(&D1_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
     if got == D1_EX3_TAG {
         Ok(())
     } else {
@@ -93,7 +93,7 @@ const D2_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes192_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..16]);
+    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
     if got == D2_EX2_TAG {
         Ok(())
     } else {
@@ -102,7 +102,7 @@ fn kat_aes192_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes192_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..40]);
+    let got = cmac_aes192_internal(&D2_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
     if got == D2_EX3_TAG {
         Ok(())
     } else {
@@ -130,7 +130,7 @@ const D3_EX3_TAG: [u8; 16] = [
 ];
 
 fn kat_aes256_example2() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..16]);
+    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..16]).map_err(|_| SelfTestFailure)?;
     if got == D3_EX2_TAG {
         Ok(())
     } else {
@@ -139,7 +139,7 @@ fn kat_aes256_example2() -> Result<(), SelfTestFailure> {
 }
 
 fn kat_aes256_example3() -> Result<(), SelfTestFailure> {
-    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..40]);
+    let got = cmac_aes256_internal(&D3_KEY, &D_MSG[..40]).map_err(|_| SelfTestFailure)?;
     if got == D3_EX3_TAG {
         Ok(())
     } else {
@@ -184,10 +184,14 @@ pub const KATS: &[KatEntry] = &[
 mod tests {
     use super::KATS;
 
+    use crate::test_support::UNSIGNED_TEST_BINARY;
+    use oxicrypt_module::{State, initialize_with_tests, state};
+
+    /// The KATs run as the power-up self-tests do: in `SelfTest`, where the
+    /// `*_internal` functions they use admit the call.
     #[test]
     fn all_kats_pass() {
-        for kat in KATS {
-            (kat.run)().unwrap_or_else(|_| panic!("KAT failed: {}", kat.name));
-        }
+        initialize_with_tests(UNSIGNED_TEST_BINARY, KATS).unwrap();
+        assert_eq!(state(), State::Operational);
     }
 }

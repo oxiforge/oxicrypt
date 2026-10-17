@@ -68,6 +68,14 @@ pub struct Point {
 }
 
 impl Point {
+    /// Overwrites all three coordinates with zeros, for a temporary that
+    /// must not outlive its use.
+    pub(crate) fn wipe(&mut self) {
+        self.x.wipe();
+        self.y.wipe();
+        self.z.wipe();
+    }
+
     /// The point at infinity. `Z = 0` is the standard Jacobian
     /// encoding; we set `X = Y = 1` so that `is_identity` doesn't
     /// accidentally depend on the value of `X` / `Y`.

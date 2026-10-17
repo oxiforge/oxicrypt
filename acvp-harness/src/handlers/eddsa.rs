@@ -35,7 +35,7 @@
 //! Only the `ED-25519` curve is supported. `ED-448` groups produce
 //! `DispatchError::Unsupported`.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -213,7 +213,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .ok_or(DispatchError::MissingField("signature"))?,
         )?;
 
-        let passed = ed25519_verify(&q_bytes, &message, &sig_bytes);
+        let passed = ed25519_verify(&q_bytes, &message, &sig_bytes)?;
 
         results.push(JsonValue::Object(vec![
             ("tcId".to_string(), JsonValue::Number(test_case_id)),
@@ -371,8 +371,8 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         let mut drbg = super::os_entropy::build_seeded_drbg()?;
         let sk = oxicrypt_eddsa::ed25519::Ed25519PrivateKey::generate(&mut drbg)
             .map_err(|_| DispatchError::Crypto("EdDSA SigGen: generate failed"))?;
-        let seed_ref: &[u8; 32] = sk.seed();
-        let q = sk.public_key();
+        let seed_ref: &[u8; 32] = sk.seed()?;
+        let q = sk.public_key()?;
         (*seed_ref, Some(hex::encode_upper(&q)))
     };
 
@@ -465,7 +465,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 .as_slice()
                 .try_into()
                 .map_err(|_| DispatchError::Crypto("EdDSA KeyGen: d is not 32 bytes"))?;
-            let q = oxicrypt_eddsa::ed25519::keygen_internal(&seed);
+            let q = oxicrypt_eddsa::ed25519::keygen_internal(&seed)?;
             results.push(JsonValue::Object(vec![
                 ("tcId".to_string(), JsonValue::Number(test_case_id)),
                 ("q".to_string(), JsonValue::String(hex::encode_upper(&q))),
@@ -484,11 +484,11 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 ("tcId".to_string(), JsonValue::Number(test_case_id)),
                 (
                     "d".to_string(),
-                    JsonValue::String(hex::encode_upper(sk.seed())),
+                    JsonValue::String(hex::encode_upper(sk.seed()?)),
                 ),
                 (
                     "q".to_string(),
-                    JsonValue::String(hex::encode_upper(&sk.public_key())),
+                    JsonValue::String(hex::encode_upper(&sk.public_key()?)),
                 ),
             ]));
         }
@@ -504,13 +504,18 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
 
 /// Verify an Ed25519 signature. Public key is 32 bytes (compressed
 /// Edwards point), signature is 64 bytes (R || S).
-fn ed25519_verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+fn ed25519_verify(
+    public_key: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<bool, DispatchError> {
     if public_key.len() != 32 || signature.len() != 64 {
-        return false;
+        return Ok(false);
     }
     let pk: &[u8; 32] = public_key.try_into().unwrap_or(&[0u8; 32]);
     let sig: &[u8; 64] = signature.try_into().unwrap_or(&[0u8; 64]);
-    oxicrypt_eddsa::ed25519::verify(pk, message, sig).unwrap_or_default()
+    oxicrypt_eddsa::ed25519::verify(pk, message, sig)
+        .map_err(primitive_err("EdDSA SigVer Ed25519: verify failed"))
 }
 
 /// Validate an Ed25519 public key by attempting to decompress it.

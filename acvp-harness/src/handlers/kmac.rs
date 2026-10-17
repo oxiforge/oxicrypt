@@ -81,12 +81,12 @@ impl AlgorithmHandler for Kmac128Handler {
                     .map_err(|_| DispatchError::Crypto("KmacXof128::new returned Err"))?;
                 m.update(msg);
                 m.finalize();
-                m.squeeze(out);
+                m.squeeze(out)?;
             } else {
                 let mut m = Kmac128::new(key, s)
                     .map_err(|_| DispatchError::Crypto("Kmac128::new returned Err"))?;
                 m.update(msg);
-                m.finalize_into(out);
+                m.finalize_into(out)?;
             }
             Ok(())
         })
@@ -111,12 +111,12 @@ impl AlgorithmHandler for Kmac256Handler {
                     .map_err(|_| DispatchError::Crypto("KmacXof256::new returned Err"))?;
                 m.update(msg);
                 m.finalize();
-                m.squeeze(out);
+                m.squeeze(out)?;
             } else {
                 let mut m = Kmac256::new(key, s)
                     .map_err(|_| DispatchError::Crypto("Kmac256::new returned Err"))?;
                 m.update(msg);
-                m.finalize_into(out);
+                m.finalize_into(out)?;
             }
             Ok(())
         })
@@ -151,7 +151,7 @@ impl AlgorithmHandler for KmacXof128Handler {
                 .map_err(|_| DispatchError::Crypto("KmacXof128::new returned Err"))?;
             m.update(msg);
             m.finalize();
-            m.squeeze(out);
+            m.squeeze(out)?;
             Ok(())
         })
     }
@@ -173,7 +173,7 @@ impl AlgorithmHandler for KmacXof256Handler {
                 .map_err(|_| DispatchError::Crypto("KmacXof256::new returned Err"))?;
             m.update(msg);
             m.finalize();
-            m.squeeze(out);
+            m.squeeze(out)?;
             Ok(())
         })
     }

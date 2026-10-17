@@ -2,9 +2,13 @@
 //!
 //! Every test here copies the `oxi` cargo just built — which is unsigned,
 //! because nothing signs a cargo build — runs it, and reads the outcome off
-//! the exit code and the output. That is the only honest way to exercise this:
-//! the property under test is that a binary can write its own integrity slot
-//! and then start, and neither half exists until something loads it.
+//! the exit code and the output. Cargo builds it without
+//! `OXICRYPT_INTEGRITY_VERIFY_KEY`, so each copy has a test key's public half
+//! written into its key record first, which is what a build with the variable
+//! set produces; the tests then sign with the matching private half. That is
+//! the only honest way to exercise this: the property under test is that a
+//! signed binary starts and an unsigned or altered one refuses, and neither
+//! can be seen until the binary is run.
 //!
 //! **Each test asserts its own premise.** A test that flips a byte "in the
 //! code" proves nothing if the offset it picked was elsewhere, and the failure
@@ -18,13 +22,15 @@
     clippy::panic,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::integer_division
+    clippy::integer_division,
+    clippy::print_stderr
 )]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use oxicrypt_integrity::slot::Range;
+use oxicrypt_integrity_sign::SigningKey;
 
 /// The `oxi` cargo built for this test run. Unsigned: a cargo build has no
 /// step after linking, which is why an installed `oxi` must be signed.
@@ -35,7 +41,42 @@ const OXI: &str = env!("CARGO_BIN_EXE_oxi");
 /// of a command leaves the reader with nothing to do.
 const REMEDY: &str = "oxicrypt-integrity-sign --sign";
 
-fn scratch(tag: &str) -> PathBuf {
+/// The key pair these tests sign with, derived once per test process from a
+/// fixed seed.
+fn test_key() -> &'static SigningKey {
+    static KEY: std::sync::OnceLock<SigningKey> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| SigningKey::from_seed(&[0x42; 32]).expect("derive the test key pair"))
+}
+
+/// A copy of `oxi` in a scratch directory of its own, removed with the
+/// directory when the test ends, whether it passed or failed.
+struct Scratch(PathBuf);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for Scratch {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if let Some(dir) = self.0.parent()
+            && let Err(e) = std::fs::remove_dir_all(dir)
+        {
+            eprintln!("could not remove {}: {e}", dir.display());
+        }
+    }
+}
+
+fn scratch(tag: &str) -> Scratch {
     let mut p = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -43,13 +84,16 @@ fn scratch(tag: &str) -> PathBuf {
     p.push(format!("oxi-cli-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&p).expect("create scratch dir");
     p.push(if cfg!(windows) { "oxi.exe" } else { "oxi" });
-    std::fs::copy(OXI, &p).expect("copy oxi");
+    let mut bytes = std::fs::read(OXI).expect("read oxi");
+    oxicrypt_integrity_sign::embed_verify_key(&mut bytes, test_key().public_key())
+        .expect("embed the test key");
+    std::fs::write(&p, &bytes).expect("copy oxi");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     }
-    p
+    Scratch(p)
 }
 
 /// Runs the artifact and returns `(exit code, stdout, stderr)`.
@@ -104,7 +148,7 @@ fn read(path: &Path) -> Vec<u8> {
 /// the test must do for it.
 fn sign(path: &Path) {
     let mut bytes = read(path);
-    oxicrypt_integrity_sign::sign_image(&mut bytes).expect("sign");
+    oxicrypt_integrity_sign::sign_image(&mut bytes, test_key()).expect("sign");
     std::fs::write(path, &bytes).expect("write artifact");
     oxicrypt_integrity_sign::verify_image(&read(path)).expect("the signed artifact verifies");
 }
@@ -189,6 +233,29 @@ fn an_unsigned_binary_names_the_command_that_fixes_it() {
     );
 }
 
+/// The unsigned remedy names the Apple code-signing order, after the
+/// integrity signer's own line. On Apple platforms the integrity signer alone
+/// leaves a binary whose code signature is stale, and the final code signature
+/// is correct only in the `--reserved-against` order, so a remedy without
+/// this line is incomplete there.
+#[test]
+fn the_unsigned_remedy_renews_the_apple_code_signature_after_signing() {
+    let oxi = scratch("remedy-apple");
+
+    let (code, _, stderr) = run(&oxi, &["hash", "sha256", OXI]);
+    assert_ne!(code, 0, "an unsigned binary must refuse to run a service");
+    let sign_at = stderr
+        .find(REMEDY)
+        .unwrap_or_else(|| panic!("the remedy must name `{REMEDY}`, got:\n{stderr}"));
+    let apple_at = stderr
+        .find("--reserved-against, in the order the Apple section of")
+        .unwrap_or_else(|| panic!("the remedy must name the Apple order, got:\n{stderr}"));
+    assert!(
+        sign_at < apple_at,
+        "the Apple order must come after the integrity signer, got:\n{stderr}"
+    );
+}
+
 /// The claim itself: an unsigned binary refuses, a signed one is operational.
 #[test]
 fn signing_makes_the_next_invocation_operational() {
@@ -205,9 +272,37 @@ fn signing_makes_the_next_invocation_operational() {
     let (code, stdout, _) = run(&oxi, &["--integrity"]);
     assert_eq!(code, 0, "integrity must pass once signed: {stdout}");
     assert!(stdout.contains("passed"), "got: {stdout}");
+    let fingerprint =
+        oxicrypt_integrity::format_fingerprint(&test_key().fingerprint().expect("fingerprint"));
+    assert!(
+        stdout.contains(&format!("verify key: {fingerprint}")),
+        "--integrity must report the key the binary trusts, got: {stdout}"
+    );
 
     let (code, _, stderr) = run(&oxi, &["hash", "sha256", OXI]);
     assert_eq!(code, 0, "a service must run once signed: {stderr}");
+}
+
+/// A binary built without a verifying key says so, and says how to build one
+/// that has one, rather than reporting a missing signature.
+#[test]
+fn a_binary_without_a_verifying_key_names_the_build_variable() {
+    let oxi = scratch("no-key");
+    let mut bytes = read(&oxi);
+    oxicrypt_integrity_sign::embed_verify_key(
+        &mut bytes,
+        &[0u8; oxicrypt_integrity::key::VERIFY_KEY_LEN],
+    )
+    .expect("clear the key");
+    std::fs::write(&oxi, &bytes).expect("write artifact");
+
+    let (code, stdout, _) = run(&oxi, &["--integrity"]);
+    assert_eq!(code, 3, "the test was not performed: {stdout}");
+    assert!(
+        stdout.contains("without a verifying key")
+            && stdout.contains("OXICRYPT_INTEGRITY_VERIFY_KEY"),
+        "got: {stdout}"
+    );
 }
 
 /// Signing has not disabled the test it exists to satisfy.
@@ -329,8 +424,8 @@ fn entries(dir: &Path) -> Vec<String> {
 ///
 /// This is an ANTI-REGRESSION guard, not a description of behaviour. A
 /// self-signing subcommand was built and then deliberately removed: a binary
-/// able to rewrite its own image gains nothing cryptographically — the
-/// integrity key is a published constant — and costs two real things. It would
+/// able to rewrite its own image gains nothing cryptographically — signing
+/// needs a private key no shipped binary carries — and costs two real things. It would
 /// link an executable-format parser into the very extent the integrity test
 /// protects, and it would let a binary that has just FAILED the check re-sign
 /// itself into passing.
@@ -410,7 +505,7 @@ fn selftest_runs_the_whole_inventory_and_indicates_pass() {
         .count();
     assert_eq!(n, ok_lines, "the summary must count the lines it printed");
 
-    // The indicator required of a service providing on-demand self-tests.
+    // The verdict line, whose wording scripts match.
     assert!(
         stdout.contains("self-test indicator: PASS"),
         "the indicator line is required, got:\n{stdout}"
@@ -499,10 +594,8 @@ fn every_self_tested_hmac_variant_is_reachable() {
 
     let (code, report, _) = run(&oxi, &["selftest"]);
     assert_eq!(code, 0);
-    // Counted inside the `hmac` group only. A bare "HMAC-" match also catches
-    // the integrity group's HMAC-SHA-256 CAST — the technique the integrity
-    // test uses, not a variant `oxi hmac` offers. It reported 12 where there
-    // are 11: the scanner over-matching, not a real gap.
+    // Counted inside the `hmac` group only, so an HMAC entry in any other
+    // group is not mistaken for a variant `oxi hmac` offers.
     let self_tested = report
         .lines()
         .skip_while(|l| !l.starts_with("hmac ("))
@@ -567,7 +660,7 @@ fn integrity_reports_the_extent_only_when_something_was_compared() {
 
     let (_, unsigned, _) = run(&oxi, &["--integrity"]);
     assert!(
-        unsigned.contains("not signed"),
+        unsigned.contains("unsigned template"),
         "premise failed: expected an unsigned binary, got: {unsigned}"
     );
     assert!(
@@ -579,7 +672,7 @@ fn integrity_reports_the_extent_only_when_something_was_compared() {
     let (code, signed, _) = run(&oxi, &["--integrity"]);
     assert_eq!(code, 0);
     assert!(
-        signed.contains("extent:") && signed.contains("range(s)"),
+        signed.contains("extent:") && signed.contains("entries"),
         "a passing check must say what it covered: {signed}"
     );
 
@@ -597,5 +690,123 @@ fn integrity_reports_the_extent_only_when_something_was_compared() {
     assert!(
         bytes < std::fs::metadata(&oxi).expect("stat").len(),
         "the extent is a strict subset of the file by construction"
+    );
+}
+
+/// A failed integrity CAST stops the module before the image is examined,
+/// so the image's state is unknown: every command exits 3, never 1.
+///
+/// The failure is injected by changing the CAST's expected signature, a
+/// constant in this binary's read-only data, in the copy under test.
+#[test]
+fn a_failed_integrity_cast_exits_3_everywhere() {
+    // The first 16 bytes of the ML-DSA-87 verification CAST's valid
+    // signature, part of its commitment hash c̃.
+    const KAT_SIG: [u8; 16] = [
+        0x5e, 0xe7, 0x63, 0x83, 0xf8, 0xed, 0x3e, 0xcf, 0xb1, 0xe9, 0x32, 0x8f, 0x99, 0xfb, 0xc9,
+        0x02,
+    ];
+    let oxi = scratch("cast-fails");
+    let mut bytes = read(&oxi);
+    let hits: Vec<usize> = bytes
+        .windows(KAT_SIG.len())
+        .enumerate()
+        .filter(|(_, w)| *w == KAT_SIG)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        !hits.is_empty(),
+        "premise failed: the CAST vector is not in this binary"
+    );
+    for at in hits {
+        bytes[at + 4] ^= 0x01;
+    }
+    std::fs::write(&oxi, &bytes).expect("write artifact");
+
+    let (code, _, stderr) = run(&oxi, &["hash", "sha256", OXI]);
+    assert_eq!(
+        code, 3,
+        "a command must exit 3 when the CAST fails: {stderr}"
+    );
+    let (code, stdout, _) = run(&oxi, &["--integrity"]);
+    assert_eq!(
+        code, 3,
+        "--integrity must exit 3 when the CAST fails: {stdout}"
+    );
+    assert!(stdout.contains("unavailable"), "{stdout}");
+    assert!(
+        stdout.contains(oxicrypt_integrity::ML_DSA_CAST_NAME),
+        "the failing CAST is named: {stdout}"
+    );
+}
+
+/// Flips one bit of every copy of `pattern` in the artifact at `path`, and
+/// returns how many copies there were.
+fn corrupt_every(path: &Path, pattern: &[u8]) -> usize {
+    let mut bytes = read(path);
+    let hits: Vec<usize> = bytes
+        .windows(pattern.len())
+        .enumerate()
+        .filter(|(_, w)| *w == pattern)
+        .map(|(i, _)| i)
+        .collect();
+    for &at in &hits {
+        bytes[at + 4] ^= 0x01;
+    }
+    std::fs::write(path, &bytes).expect("write artifact");
+    hits.len()
+}
+
+/// A failed SHA-256 CAST, the second test of the integrity group, stops the
+/// module before the image is examined, and `--integrity` names that CAST
+/// rather than the ML-DSA-87 one.
+#[test]
+fn a_failed_sha256_cast_is_named() {
+    // The first 16 bytes of the SHA-256 KAT's expected digest.
+    const SHA256_MD: [u8; 16] = [
+        0x28, 0x96, 0x9c, 0xdf, 0xa7, 0x4a, 0x12, 0xc8, 0x2f, 0x3b, 0xad, 0x96, 0x0b, 0x0b, 0x00,
+        0x0a,
+    ];
+    let oxi = scratch("sha256-cast-fails");
+    assert!(
+        corrupt_every(&oxi, &SHA256_MD) > 0,
+        "premise failed: the SHA-256 KAT digest is not in this binary"
+    );
+    let (code, stdout, _) = run(&oxi, &["--integrity"]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains(oxicrypt_integrity::SHA256_CAST_NAME),
+        "the SHA-256 CAST is named: {stdout}"
+    );
+    assert!(
+        !stdout.contains("ML-DSA"),
+        "the ML-DSA-87 CAST is not blamed: {stdout}"
+    );
+}
+
+/// When the image check passes and a later algorithm self-test fails, the
+/// module latches its error state, and `--integrity` exits 4 naming the
+/// test rather than reporting success.
+#[test]
+fn a_later_self_test_failure_after_a_passing_image_exits_4() {
+    // The first 16 bytes of the SHA-384 KAT's expected digest, a test of
+    // the algorithm inventory that runs after the integrity group.
+    const SHA384_MD: [u8; 16] = [
+        0xb5, 0x2b, 0x72, 0xda, 0x75, 0xd0, 0x66, 0x63, 0x79, 0xe2, 0x0f, 0x9b, 0x4a, 0x79, 0xc3,
+        0x3a,
+    ];
+    let oxi = scratch("later-kat-fails");
+    assert!(
+        corrupt_every(&oxi, &SHA384_MD) > 0,
+        "premise failed: the SHA-384 KAT digest is not in this binary"
+    );
+    // Signed after the change, so the image check passes.
+    sign(&oxi);
+    let (code, stdout, _) = run(&oxi, &["--integrity"]);
+    assert!(stdout.contains("integrity: passed"), "{stdout}");
+    assert_eq!(code, 4, "{stdout}");
+    assert!(
+        stdout.contains("SHA-384 KAT"),
+        "the failing test is named: {stdout}"
     );
 }

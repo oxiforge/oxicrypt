@@ -14,15 +14,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking: the pre-operational integrity test verifies an ML-DSA-87 signature** (FIPS 204)
+  over the module's loaded image in place of the HMAC-SHA-256 of 0.24.0, one of the two approved
+  integrity techniques ISO/IEC 19790 §7.5 permits at Security Level 2, with the module's own
+  self-tested `ML-DSA.Verify_internal`. The signature is made under the context string
+  `oxicrypt-integrity`. Its CASTs, ML-DSA-87 signature verification and SHA-256, run first in
+  `oxicrypt_integrity::KATS`, and the test reports `CastNotRun` unless both have passed. The slot
+  is format version 4, 64 KiB, and slots of earlier versions are refused: a binary you built and
+  signed with an earlier version is signed again with this one, and one you received is replaced
+  with a fresh copy from its publisher. Removed `oxicrypt_integrity::FIPS_INTEGRITY_KEY`,
+  `mac_over_file_ranges`, `encode_hmac_hex` and `constant_time_eq`, and from
+  `oxicrypt_integrity::slot` the constants `OFF_MAC`, `RANGE_ENTRY_SIZE` and `MAX_RANGES`.
+  `slot::encode` takes the slot's fields and signature, and `slot::extent_len` takes entries.
+  `SlotImage` loses `flags`, `slot_rva`, `mac` and `ranges` and gains `fields` and `signature`:
+  `flags` and `slot_rva` move into `fields`, the extent is `fields.entries`, and the ML-DSA-87
+  signature replaces the MAC.
+- **Breaking:** `oxicrypt_integrity::SlotDefect` describes the version-4 slot: its range variants
+  are renamed for entries (`NoEntries`, `TooManyEntries`, `EmptyEntry`, `EntryOverflow`,
+  `EntryOutOfBounds`), new variants name the other defects, and it is `#[non_exhaustive]`.
+  `oxicrypt_integrity::Unreadable` is `#[non_exhaustive]`, `Unreadable::AllMechanismsFailed` is
+  removed, and new variants name the read that failed. A read of mapped memory that the environment
+  refuses (on Linux and Android, readable or execute-only memory in the process) reports
+  `Unreadable`, the test not performed, not slot damage. On Darwin and Windows,
+  where the signature input is bounded by the image file's size, a file shorter than the slot's
+  signed length reports `Unreadable::FileLength`. `oxicrypt_imageread::ReadError` gains
+  `InvalidName` and `NoImage` and is `#[non_exhaustive]`.
+- **The verifying key is a build-time input.** Set `OXICRYPT_INTEGRITY_VERIFY_KEY` (a 2,592-byte
+  ML-DSA-87 public key file) or `OXICRYPT_INTEGRITY_VERIFY_KEY_HEX` (its 5,184 hex digits) when
+  building. A key of any other length, an all-zero key and a hex value that is not UTF-8 stop the
+  build. A build without either compiles, but the module reports `NoVerifyKey` and never becomes
+  operational.
+- **Breaking:** `oxicrypt-integrity-sign` signs with a key you generate. `--keygen <dir>` writes
+  a key pair, atomically, outside any git work tree: the private key is the 32-byte ML-DSA-87
+  key-generation seed, and reading it runs a pairwise consistency test. `--sign` requires
+  `--key <signing key>`, signs deterministically, refuses with `SigningKeyAbsent` when the key is
+  missing, unreadable or not the key the artifact embeds and with `NoVerifyKey` for an artifact
+  built without one, and replaces an artifact only after the signed copy is synced and verified;
+  signing through a symbolic link signs the file it names. It exits 3 when `--sign` is refused
+  for its key and 4 when `--keygen` fails, and refuses `--key` outside `--sign` or given twice.
+  `--show` and `--verify` print the verifying key's fingerprint, `--sign` and `--show` name the
+  signature by its SHA-256, and `--show` names a slot defect, whether the slot's key matches the
+  embedded key and whether the entries fit the slot. The library's `sign_image` and
+  `write_extent` take the key, an `oxicrypt_integrity_sign::SigningKey`. The signer runs on
+  Windows too, drawing from `BCryptGenRandom`. `--sign` reminds you to sign a PE image that
+  carries a certificate table again with `signtool`, and `--loader` is refused for a Mach-O or
+  PE image.
+- **Breaking:** `IntegrityStatus::Mismatch` and `IntegrityError::Mismatch` are renamed
+  `SignatureInvalid` (status 2). The status adds `NoVerifyKey` (8), `KeyMismatch` (9) for a slot
+  signed for a different key, `SlotDamaged` (10) for a damaged slot, key record or bound import,
+  whose remedy is replacing the artifact, and `Refused` (7) when the module refuses a primitive
+  the test uses, which the status records rather than leaving `NotRun`. `SlotInvalid` (3) means
+  only that the slot is the unsigned template the build emits, and `Unreadable` (4) that the
+  test was not performed. No status prescribes signing: a never-signed build and a signed one
+  whose slot was erased read the same, so `oxi`, the C ABI documentation and the guides advise
+  signing only a binary you built yourself and otherwise obtaining a fresh copy.
+  `oxicrypt_integrity::status_detail()` and the C function `oxi_integrity_status_detail()` give
+  the failure in words, and
+  `oxicrypt_integrity::verify_key_fingerprint()` and `oxi_integrity_key_fingerprint()`, which
+  takes the buffer's length and returns `BufferTooSmall` for one under 32 bytes, give the
+  fingerprint of the key the module trusts.
+- `oxi --integrity` prints the key fingerprint, a `detail:` line and any start error. It starts
+  the module with the same self-tests as every other command, exits 3 when the test was not
+  performed or could not decide, naming the CAST when an integrity CAST failed, and exits 4
+  naming the test when the image matches but a later self-test fails.
+- **The integrity extent covers every file-backed byte the loader maps**: ELF on Linux (glibc)
+  and Android (bionic) for x86-64 and AArch64, Mach-O dylibs on macOS for arm64 and x86_64, and
+  PE32+ DLLs and EXEs on Windows for x86_64. The signer types each byte from the image's own
+  relocation, fixup and import tables, records the loader for an ELF image (`--loader
+  glibc|bionic` overrides it for `--sign`, `--verify` and `--show`), and `--show` reports the
+  bytes and entries of each kind. The signed image ends where a Mach-O code signature or a PE
+  certificate table begins, so a platform signature can be added after integrity signing.
+  `docs/design/integrity-extent-v2.md` states the typing for each format.
+- The integrity test no longer reads the backing file in place of the loaded image. On Linux
+  and Android it reads through `/proc/self/mem` and then `process_vm_readv`, so a non-dumpable
+  process still verifies itself, and a process without `/proc/self/maps` reports `Unreadable`.
+  Initialised writable data is read from the image file the loader reports, including a library
+  mapped from inside an APK and the image's own slice of a universal Mach-O file; thin dylibs are
+  signed before `lipo` joins them. A second load of the same library, as by `dlmopen`, does not
+  disturb the first one's test. `oxicrypt-imageread` reads the thread id through the `gettid`
+  system call, so it links against glibc older than 2.30.
+- `oxicrypt-integrity-sign` refuses, by name, an image whose layout it cannot type, and
+  `docs/design/integrity-extent-v2.md` describes the refusals for each format. Among them are an
+  ELF segment both writable and executable (`WritableExecutable`), the x86-64 PLT-rewrite tags
+  (`PltRewrite`), and a PE TLS index or delay-load module handle in constant bytes (`TlsIndex`,
+  `DelayLoadHandle`). It refuses an image in which a module static the module must start from
+  zero-fill is file-backed (`FileBackedStatic`), and one whose module statics it cannot name
+  (`StaticsUnchecked`). It reads them from the
+  image's symbol table or, where that does not name them, from the debug file beside the
+  artifact: the file an ELF `.gnu_debuglink` names, there or in `.debug/`, the dSYM whose
+  `LC_UUID` is the image's, or the program database a PE CodeView record names, with its GUID
+  and age; keep that file beside the artifact when signing. `--verify` verifies the signature
+  before it classifies the image, names a slot typed for a different loader than the artifact
+  declares (`LoaderMismatch`), and decodes every Mach-O chain word and PE import record against
+  the signed table (`FixupMismatch`, `ImportMismatch`).
+- `cargo xtask sign` builds, signs and verifies an artifact, and refuses, before building, an
+  environment that lacks a link setting the format needs, naming each one missing: for Apple
+  targets chained fixups, the zero-fill segment, unmerged globals on arm64
+  (`-C llvm-args=-aarch64-enable-global-merge=false`), full debug information, a packed dSYM and
+  a `MACOSX_DEPLOYMENT_TARGET` of at least 12.0 on arm64 and 13.0 on x86_64; for Windows `.bss`
+  in a section of its own (`-C link-arg=/MERGE:.bss=.zbss`) and full debug information; for
+  Android 16 KiB pages.
+- **Release artifacts cover Android, and each is loaded before it ships.** The release workflow
+  builds the C library for Android arm64 and x86_64 beside Linux, macOS and Windows, and signs
+  every artifact in its format's order. Each library is loaded through `oxi_init` and each `oxi`
+  run before release, on the runner that built it or, for Android x86_64, an emulator; Android
+  arm64 is verified offline only. A release is signed with the project's release key, whose
+  public half is `keys/release-integrity-verify.pub`, only for a `vX.Y.Z` tag whose commit is on
+  `main`, and each provenance file records the key source, the key's fingerprint and the
+  artifact's signature.
+- The integrity check wipes the buffers it owns when they are dropped, and ML-DSA-87
+  verification, key generation and signing wipe every intermediate they own, on every return
+  path.
+- While the power-up self-tests run, the guarded `*_internal` functions and output points are open
+  only to the thread running them. A call from any other thread made while initialisation is
+  running, or paused, returns `NotOperational` naming `SelfTest`; once the module is
+  `Operational`, every thread is admitted. A service's check in `Operational` is one atomic load.
+  A self-test that unwinds out of initialisation leaves the module in `Error`. The `parallel`
+  builds of ML-KEM, ML-DSA and SLH-DSA check the module state once on the calling thread and pass
+  the proof to their worker threads, which until the module is operational come from a pool each
+  crate keeps for its own sweeps, so an application whose rayon workers all wait in `initialize`
+  cannot starve the self-tests.
+- **Breaking:** `oxicrypt_module::Error` is `#[non_exhaustive]`. Initialising a module whose
+  initialisation failed returns the new `Error::AlreadyFailed` (formerly `NotOperational`), and
+  runs no test: a failed initialisation is
+  terminal until the process restarts. The C function `oxi_init` still returns `NotOperational`
+  for it. A module that fails initialisation because a conditional self-test latched `Error`
+  while the power-up tests ran stays in `Error`. `initialize` called from inside a self-test
+  returns `NotOperational` naming `SelfTest`. A platform that gives the initialising thread no id
+  the module can record fails initialisation with `SelfTestFailed` naming
+  `oxicrypt_module::THREAD_ID_CHECK`, and `oxicrypt-module` does not compile for a target without
+  64-bit atomics.
+- **Breaking:** the module tests itself on demand by restarting.
+  `oxicrypt_integrity::verify_loaded_image()` runs only inside the power-up self-tests; at any
+  other time it runs nothing, changes no state and returns `IntegrityError::Module`, carrying
+  `AlreadyInitialized` once the module is operational (a call before initialisation no longer
+  latches `Error`). A failing `oxicrypt_integrity::ml_dsa_cast()` latches `Error` on every path,
+  including a direct call on an operational module; a call the module refuses, before
+  initialisation or from another thread during the self-tests, runs nothing and changes nothing.
+  `oxi selftest` shows the integrity test's verdict from the process's start instead of running
+  it again, and runs the algorithm self-tests again.
+
 - Added LMS signature verification for all 80 (LMS, LM-OTS) parameter pairs of SP 800-208
   §4.1 (SHA-256), §4.2 (SHA-256/192), §4.3 (SHAKE256/256) and §4.4 (SHAKE256/192), each its own
   approved `Lms…Verify` service, with the service discriminants unchanged. (#281)
 - Added four LMS known-answer self-tests to the power-up set, one per hash adapter (SHA-256 and
   SHAKE256 at N = 32 and N = 24). Each verifies a NIST ACVP sigVer vector marked valid and
   rejects one marked invalid, on the pair's H = 5, W = 1 instance. (#281)
-- Added a test running all 320 NIST ACVP `LMS-sigVer-1.0` vectors, four per parameter pair, and
-  asserting each one's expected outcome. The vectors are vendored from ACVP-Server at the commit
-  pinned in `vendor/nist/MANIFEST.toml`. (#281)
 - Added `oxicrypt_lms::verify_any` and the C function `oxi_lms_verify_any`, which verify an LMS
   signature under whichever of the 80 parameter pairs the public key's typecodes name. Input
   naming no pair is refused as `VerifyAnyError::Unroutable` (`InvalidInput = 5` in C), distinct
@@ -43,6 +180,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `oxi_lms_<pair>_verify` functions remain.
   - `acvp-harness`: the LMS `keyGen` and `sigGen` handlers, leaving 83 registered handlers. LMS
     `sigVer` is served under revisions `1.0` and `SP800-208`. (#281)
+- Fixed `oxi_init` in the C library skipping the power-up self-tests of eight algorithm crates it
+  links. It now also runs the known-answer tests for the XOFs (SHAKE, cSHAKE, KMAC, TupleHash and
+  ParallelHash), CMAC, the KDFs, the TLS KDFs, ML-KEM, ML-DSA, SLH-DSA and XMSS, so the C library
+  self-tests every approved algorithm crate it links, directly or through another dependency,
+  before it becomes operational. (#284)
+- Fixed `oxicrypt_module::initialize_with_profile` changing the active algorithm profile when
+  called after the module was initialised, or while another call was running the power-up
+  self-tests. Only the call that initialises the module sets the profile; every other call
+  leaves it unchanged, as the `oxi_init` documentation states.
+- Fixed the SLH-DSA power-up self-tests to the form FIPS 140-3 IG 10.3.A item 16 requires.
+  `oxicrypt_slh_dsa::KATS` now holds six CASTs: key
+  generation compared to a precomputed private key, deterministic signature generation compared
+  to a precomputed signature, and verification, which must accept a fixed signature and reject it
+  with one bit flipped, each on SLH-DSA-SHA2-128f and SLH-DSA-SHAKE-128f. The expected values are NIST ACVP-Server vectors, vendored under
+  `vendor/nist/` and extracted by `scripts/slh_dsa_cast_extract.py`. **Removed** the
+  per-parameter-set `KATS` constants (`slh_dsa_sha2_128f::KATS` and the eleven like it);
+  `oxicrypt_slh_dsa::KATS` is the only SLH-DSA self-test slice. (#284)
+- Fixed the ML-KEM power-up self-tests to compare against precomputed values, as FIPS 140-3
+  IG 10.3.A item 14 requires. `oxicrypt_ml_kem::KATS` now holds four CASTs on ML-KEM-1024: key
+  generation from fixed d and z compared to the expected decapsulation key and the encapsulation
+  key it contains, encapsulation from a
+  fixed encapsulation key and m compared to the expected ciphertext and shared secret, and
+  decapsulation of a valid and of a modified ciphertext compared to the expected shared secret,
+  which covers the implicit-rejection path. The expected values are NIST ACVP-Server vectors,
+  vendored under `vendor/nist/` and extracted by `scripts/ml_kem_ml_dsa_pbkdf_cast_extract.py`.
+  **Removed** the per-parameter-set `self_test`, `KAT_ENTRY` and `KATS` items of `ml_kem_512`,
+  `ml_kem_768` and `ml_kem_1024`; `oxicrypt_ml_kem::KATS` is the only ML-KEM self-test slice.
+  (#284)
+- Fixed the ML-DSA power-up self-tests to compare against precomputed values, as FIPS 140-3
+  IG 10.3.A item 15 requires. `oxicrypt_ml_dsa::KATS` now holds five CASTs. Three meet item 15 on
+  ML-DSA-87 with NIST ACVP-Server vectors: key generation from a fixed ξ compared to the
+  expected private key, deterministic signature generation compared byte for byte to the
+  expected signature, and verification, which must accept a fixed valid signature and reject it
+  with one bit of c̃ flipped. Two more follow the Note 23
+  recommendation that signing CASTs cover the rejection-sampling paths, using NIST's list of
+  rejection test cases: one on ML-DSA-87 that rejects on the z bound, the r0 bound and the
+  number of hints, and one on ML-DSA-44 that also rejects on the ct0 bound. NIST publishes those
+  cases as SHA-256 digests of the key pair and the signature, so these two compare digests.
+  All vectors are vendored under `vendor/nist/`, with the ACVP ML-DSA specification
+  draft-celi-acvp-ml-dsa-01 the rejection cases come from. **Removed** the per-parameter-set
+  `self_test`, `KAT_ENTRY` and `KATS` items of `ml_dsa_44`, `ml_dsa_65` and `ml_dsa_87`;
+  `oxicrypt_ml_dsa::KATS` is the only ML-DSA self-test slice. (#284)
+- Fixed the PBKDF2 power-up self-test to use an iteration count of at least two, as FIPS 140-3
+  IG 10.3.A item 8 requires. `oxicrypt_kdf::KATS` now holds one PBKDF2 CAST, a SP 800-132 master
+  key derived with PBKDF2-HMAC-SHA2-224 from a NIST ACVP-Server vector with an iteration count of
+  398, a 224-bit salt and a 240-bit key, in place of the two iteration-count-1 tests.
+  **Removed** `pbkdf2_self_test_sha1` and `pbkdf2_self_test_sha256`, a breaking change for a caller
+  of either; `pbkdf2_self_test_sha224`, documented in the API manifest, replaces them. (#284)
+- Fixed integrity-signed binaries that macOS on Apple silicon refused to launch. Writing the
+  integrity slot leaves the binary's code signature stale, so an Apple artifact is signed in this
+  order: code sign, code sign again with the same identity and options, integrity sign with
+  `--reserved-against` naming the first result, then code sign a final time with the same
+  identity and options. `--reserved-against` measures which of the four load-command fields
+  `codesign` rewrites and leaves those out of the extent, so the final code signature disturbs
+  nothing the integrity signature covers; any other difference is refused (`ReservationDiff`).
+  For a PE image that will be Authenticode-signed, the reference is the image as linked and the
+  artifact the image after one `signtool` run. `--reserved-against` applies to `--sign` and
+  `--show` of one Mach-O or PE artifact. `cargo xtask sign` follows that order for every Apple
+  target,
+  `oxicrypt-integrity-sign --sign` reminds you to code sign a Mach-O artifact, `oxi` names the step
+  when it refuses to start, and the macOS release artifacts are code signed after integrity
+  signing. (#280, reported by @seanok)
+- Fixed the `acvp-harness` LMS `sigVer` handler failing a whole test group when one test case
+  carried a signature of the wrong length for the group's parameter pair. That test case is now
+  graded `testPassed: false`, as the XMSS and ML-DSA handlers grade a malformed signature, and a
+  signature whose embedded typecodes are not the group's pair is likewise graded failed. A public
+  key of the wrong length still fails the group. (#284)
+- **Breaking: the module now refuses to produce output outside `SelfTest` and `Operational`, for
+  objects built earlier as well as new ones.** Each output entry point checks the module state
+  once per call and returns `Error::NotOperational` in `PowerOff`, `Error` and
+  `IntegrityUnverified`, so an object built while the module was operational produces nothing
+  after the module enters its error state. Changed signatures:
+  - Every public `*_internal` function checks the new
+    `oxicrypt_module::require_self_test_started` first and returns `Result`. The sampling and
+    arithmetic helpers behind ECDSA, RSA and DH return the refusal as `NotOperational` rather
+    than as `InvalidInput` or a failed verification.
+  - `finalize` on the SHA-1, SHA-2 and SHA-3 hashers, `finalize` on `Hmac`, `squeeze` and
+    `finalize_into` on the SHAKE, cSHAKE, KMAC, TupleHash and ParallelHash types, and `finalize`
+    on the LMS hash adapters return `Result`. `update` and `absorb` stay infallible.
+  - `encrypt_block` and `decrypt_block` on `Aes128Key`, `Aes192Key` and `Aes256Key`, and
+    `oxicrypt_aes::ctr_xor` and `oxicrypt_cmac::cmac_tag`, return `Result`. The `BlockCipher`
+    trait's methods are now `encrypt_block_with` and `decrypt_block_with`, which take a
+    proof of the new type `SelfTestStarted`.
+  - `oxicrypt_rsa::pss` and `oxicrypt_rsa::oaep` encode, decode and verify functions return
+    `Result<Option<_>, Error>` or `Result<bool, Error>`.
+  - `Conditioner::startup_kat` returns `Result<bool, Error>`.
+  - The hidden traits `oxicrypt_hmac::BlockHash` and `oxicrypt_kdf::PrfHmac`, and the public
+    traits `oxicrypt_drbg::HashAlg` and `oxicrypt_drbg::HmacAlg`, changed signatures.
+  - The key accessors return `Result` and refuse outside `SelfTest` and `Operational`: the CSP
+    accessors `private_scalar` (ECDSA P-256 and P-384), `seed` (Ed25519) and `prk` (HKDF), and
+    the public-key accessors `public_key` (ECDSA P-256 and P-384, Ed25519) and `modulus_bytes`
+    and `public_exponent` (RSA-2048, RSA-3072 and RSA-4096). The C functions that return a
+    public key, modulus or exponent from a handle return `NotOperational = 1` in the same
+    states.
+  - The HKDF, SP 800-108, PBKDF2, TLS 1.2 PRF and TLS 1.3 HKDF-Expand-Label output functions
+    zeroize the output buffer when they return an error, so a refusal partway through never
+    leaves derived bytes behind.
+  - `oxicrypt_rsa::keygen::generate_2048`, `keygen3072::generate_3072` and
+    `keygen4096::generate_4096` are renamed `generate_2048_internal`, `generate_3072_internal`
+    and `generate_4096_internal`, refuse outside `SelfTest` and `Operational`, and their modules
+    are hidden; `KeygenError` gains a `Module` variant. The approved services are
+    `RsaPrivateKey2048::generate` and its 3072-bit and 4096-bit counterparts.
+- **Breaking:** new enum variants. `ModeError::Module`, `IntegrityError::Module`,
+  `DrbgError::Module`, `EntropyError::Module`, `TimerError::Module` and `SourceError::Module` carry
+  the module's refusal. `IntegrityError` is now `#[non_exhaustive]`. An entropy
+  pipeline that meets a refusal reports `EntropyError::Module` and is not poisoned, where it
+  previously reported `NotReady` or `ConditionerKat`; `JitterSource::new` reports
+  `TimerError::Module` where it reported `TimerError::Unavailable`.
+- **Breaking:** the public arithmetic modules `oxicrypt_ecdsa::{p256_point, p256_scalar,
+  p384_point, p384_scalar}`, `oxicrypt_eddsa::{edwards, scalar}`, `oxicrypt_rsa::{mont*, bigint*,
+  pkcs1_v15, pss, oaep}` and `oxicrypt_sha::keccak`, and the accelerator functions
+  `oxicrypt_aes_accel::{encrypt_block, decrypt_block, ghash_mul}` and
+  `oxicrypt_sha_accel::sha256_compress`, and the `oxicrypt_aes::modes::BlockCipher` trait, are
+  hidden from the documentation. They are building
+  blocks outside the module's service interface.
+- **Breaking (C):** the AES functions of the C library, and the HMAC-DRBG `reseed` and
+  `generate` functions, return `NotOperational = 1` once the module has left `Operational`, for
+  handles created earlier. `oxi_integrity_status` can return `Refused = 7`.
+- Fixed HKDF-Expand never returning in a release build when asked for exactly 255 blocks, the
+  RFC 5869 maximum: its one-byte block counter wrapped to 0 after the last block, and the loop
+  compared it with 255 again. (A debug build panicked on the overflow instead.) The SP 800-108
+  counter-mode loop had the same shape at `u32::MAX` blocks. TLS 1.3 HKDF-Expand-Label and the
+  Hash_DRBG derivation function now refuse more than 255 blocks with `InvalidInput`, where they
+  previously wrapped their counter and returned output RFC 5869 and SP 800-90A do not define.
+- `tls13_hkdf_expand_label` and `tls13_derive_secret` (and their C functions) refuse an output
+  longer than 65535 bytes with `InvalidInput`; HkdfLabel previously stated a saturated length.
+- `tls13_hkdf_expand_label` and `tls13_derive_secret` (and their C functions) refuse a label that
+  is empty or longer than 249 bytes, or a context longer than 255 bytes, with `InvalidInput`; they
+  previously truncated it silently into a different `HkdfLabel`. RFC 8446 §7.1 bounds the
+  prefixed label to 7–255 bytes and the context to 0–255.
+- Hash_DRBG zeroizes its working buffers (the seed material holding the entropy input, copies of
+  `V`, and the derivation and generation blocks) on every return path, and PBKDF2 no longer
+  increments its block counter past the last block.
+- `EntropyRng` no longer prints its buffered conditioned output in its `Debug` output, and
+  zeroizes that buffer as soon as it is drained, and when it is dropped or unwrapped.
+- Fixed `maxwell independence` exiting successfully, with no input hash in its sidecar, when the
+  module did not start; it now exits with a failure. The signer, `collect` and `maxwell` also
+  run the XOF self-tests.
+- Corrected `docs/api.md`, which listed `oxicrypt-zeroize`, `oxicrypt-sha-accel`,
+  `oxicrypt-aes-accel`, `oxicrypt-timer` and `oxicrypt-entropy` as outside the cryptographic
+  boundary. They are inside it. It now lists `oxicrypt-keccak-accel` and `oxicrypt-imageread`,
+  and marks `oxicrypt-module` as `no_std` (#233).
+- Corrected `SECURITY.md`, which listed the C ABI among the things inside the cryptographic
+  boundary. It sits outside the boundary and remains in scope for reports (#233).
+- The crate documentation of each in-boundary crate that uses `unsafe` points to the accounting in
+  `AGENTS.md` and the Security Policy. Four of those crates listed the others and omitted
+  `oxicrypt-imageread`, and `oxicrypt-imageread` had no pointer (#194).
 
 ## [0.24.0] - 2026-08-19
 

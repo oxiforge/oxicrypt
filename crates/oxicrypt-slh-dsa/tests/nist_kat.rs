@@ -19,6 +19,21 @@ use oxicrypt_slh_dsa::{
     PK_LEN, SIG_LEN, SK_LEN, {keygen_internal, sign_internal, verify_internal},
 };
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 // ── Vector helpers ──────────────────────────────────────────────────────────
 
 fn load(name: &str) -> Vec<u8> {
@@ -40,6 +55,7 @@ fn load_arr<const N: usize>(name: &str) -> [u8; N] {
 /// reproduce the exact (pk, sk) values.
 #[test]
 fn nist_keygen_kat() {
+    start_module();
     let sk_seed = load("slhdsa256s_nist_keygen_sk_seed.bin");
     let sk_prf = load("slhdsa256s_nist_keygen_sk_prf.bin");
     let pk_seed = load("slhdsa256s_nist_keygen_pk_seed.bin");
@@ -52,7 +68,7 @@ fn nist_keygen_kat() {
     xi[32..64].copy_from_slice(&sk_prf);
     xi[64..96].copy_from_slice(&pk_seed);
 
-    let (pk, sk) = keygen_internal(&xi);
+    let (pk, sk) = keygen_internal(&xi).unwrap();
 
     assert_eq!(
         pk, expected_pk,
@@ -71,6 +87,7 @@ fn nist_keygen_kat() {
 /// Second independent test case from the NIST ACVP Server projection.
 #[test]
 fn nist_keygen_kat_2() {
+    start_module();
     let sk_seed = load("slhdsa256s_nist_keygen2_sk_seed.bin");
     let sk_prf = load("slhdsa256s_nist_keygen2_sk_prf.bin");
     let pk_seed = load("slhdsa256s_nist_keygen2_pk_seed.bin");
@@ -82,7 +99,7 @@ fn nist_keygen_kat_2() {
     xi[32..64].copy_from_slice(&sk_prf);
     xi[64..96].copy_from_slice(&pk_seed);
 
-    let (pk, sk) = keygen_internal(&xi);
+    let (pk, sk) = keygen_internal(&xi).unwrap();
 
     assert_eq!(
         pk, expected_pk,
@@ -103,6 +120,7 @@ fn nist_keygen_kat_2() {
 /// is SignInternal and receives M' directly.
 #[test]
 fn nist_siggen_kat() {
+    start_module();
     let sk = load_arr::<SK_LEN>("slhdsa256s_nist_siggen_sk.bin");
     let raw_message = load("slhdsa256s_nist_siggen_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("slhdsa256s_nist_siggen_signature.bin");
@@ -113,7 +131,7 @@ fn nist_siggen_kat() {
     m_prime.push(0x00); // |ctx| = 0
     m_prime.extend_from_slice(&raw_message);
 
-    let sig = sign_internal(&sk, &m_prime);
+    let sig = sign_internal(&sk, &m_prime).unwrap();
 
     assert_eq!(
         sig, expected_sig,
@@ -130,12 +148,13 @@ fn nist_siggen_kat() {
 /// is added.
 #[test]
 fn nist_siggen_kat_2() {
+    start_module();
     let sk = load_arr::<SK_LEN>("slhdsa256s_nist_siggen2_sk.bin");
     let m_prime = load("slhdsa256s_nist_siggen2_message.bin");
     let expected_sig = load_arr::<SIG_LEN>("slhdsa256s_nist_siggen2_signature.bin");
 
     // signatureInterface = "internal": the message IS M', no wrapping needed.
-    let sig = sign_internal(&sk, &m_prime);
+    let sig = sign_internal(&sk, &m_prime).unwrap();
 
     assert_eq!(
         sig, expected_sig,
@@ -149,6 +168,7 @@ fn nist_siggen_kat_2() {
 /// [64..96] and [96..128], so pk can be reconstructed as PK.seed ‖ PK.root.
 #[test]
 fn nist_siggen_verify() {
+    start_module();
     let sk = load_arr::<SK_LEN>("slhdsa256s_nist_siggen_sk.bin");
     let raw_message = load("slhdsa256s_nist_siggen_message.bin");
     let sig = load_arr::<SIG_LEN>("slhdsa256s_nist_siggen_signature.bin");
@@ -164,7 +184,7 @@ fn nist_siggen_verify() {
     m_prime.extend_from_slice(&raw_message);
 
     assert!(
-        verify_internal(&pk, &m_prime, &sig),
+        verify_internal(&pk, &m_prime, &sig).unwrap(),
         "SLH-DSA-SHA2-256s: verify_internal rejected valid NIST signature (tgId=23, tcId=199)"
     );
 }

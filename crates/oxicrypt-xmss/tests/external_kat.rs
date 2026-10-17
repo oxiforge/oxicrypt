@@ -11,6 +11,21 @@
 
 use oxicrypt_xmss::{PUBLIC_KEY_LEN, SIGNATURE_LEN, verify_internal};
 
+/// Stands in for the pre-operational integrity test, which cannot pass in an
+/// unsigned test binary.
+const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "integrity not verifiable in an unsigned test binary",
+    run: || Ok(()),
+}];
+
+/// Brings the module out of `PowerOff` so that a test can call the
+/// `*_internal` functions, which refuse until the self-tests have started.
+/// A second call in the same process is a no-op.
+fn start_module() {
+    let _ = oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+    assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+}
+
 struct Vector {
     valid: bool,
     msg: Vec<u8>,
@@ -99,6 +114,7 @@ fn sized(v: &Vector) -> Option<[u8; SIGNATURE_LEN]> {
 /// below can pass vacuously by iterating nothing.
 #[test]
 fn vector_file_carries_both_classes() {
+    start_module();
     let vectors = load();
     let valid = vectors.iter().filter(|v| v.valid).count();
     assert_eq!(valid, 3, "expected 3 valid vectors, found {valid}");
@@ -107,12 +123,13 @@ fn vector_file_carries_both_classes() {
 
 #[test]
 fn accepts_externally_produced_signatures() {
+    start_module();
     let vectors = load();
     let mut checked = 0;
     for v in vectors.iter().filter(|v| v.valid) {
         let sig = sized(v).expect("a valid vector must be SIGNATURE_LEN bytes");
         assert!(
-            verify_internal(&v.public_key, &v.msg, &sig),
+            verify_internal(&v.public_key, &v.msg, &sig).unwrap(),
             "rejected a valid external signature over a {}-byte message",
             v.msg.len()
         );
@@ -123,6 +140,7 @@ fn accepts_externally_produced_signatures() {
 
 #[test]
 fn rejects_externally_produced_invalid_signatures() {
+    start_module();
     let vectors = load();
     let mut checked = 0;
     for (i, v) in vectors.iter().filter(|v| !v.valid).enumerate() {
@@ -130,7 +148,7 @@ fn rejects_externally_produced_invalid_signatures() {
         // are counted by the test below rather than passed to the verifier.
         let Some(sig) = sized(v) else { continue };
         assert!(
-            !verify_internal(&v.public_key, &v.msg, &sig),
+            !verify_internal(&v.public_key, &v.msg, &sig).unwrap(),
             "accepted invalid external vector {i}"
         );
         checked += 1;
@@ -145,6 +163,7 @@ fn rejects_externally_produced_invalid_signatures() {
 /// refresh cannot quietly move cases from one bucket to the other.
 #[test]
 fn wrong_length_signatures_are_unrepresentable() {
+    start_module();
     let vectors = load();
     let malformed: Vec<usize> = vectors
         .iter()
@@ -173,16 +192,18 @@ fn wrong_length_signatures_are_unrepresentable() {
 /// nothing.
 #[test]
 fn rejects_a_bit_flipped_valid_signature() {
+    start_module();
     let vectors = load();
     let v = vectors.iter().find(|v| v.valid).expect("no valid vector");
     let mut tampered = sized(v).expect("valid vector length");
     tampered[64] ^= 0x01;
-    assert!(!verify_internal(&v.public_key, &v.msg, &tampered));
+    assert!(!verify_internal(&v.public_key, &v.msg, &tampered).unwrap());
 }
 
 /// A valid signature checked against a different public key must fail.
 #[test]
 fn rejects_a_signature_under_the_wrong_public_key() {
+    start_module();
     let vectors = load();
     let valid: Vec<&Vector> = vectors.iter().filter(|v| v.valid).collect();
     let a = valid.first().expect("the file carries a valid vector");
@@ -191,7 +212,7 @@ fn rejects_a_signature_under_the_wrong_public_key() {
         .find(|v| v.public_key != a.public_key)
         .expect("all valid vectors share one public key");
     let sig = sized(a).expect("valid vector length");
-    assert!(!verify_internal(&other.public_key, &a.msg, &sig));
+    assert!(!verify_internal(&other.public_key, &a.msg, &sig).unwrap());
 }
 
 // ── Multi-leaf corpus ───────────────────────────────────────────────────────
@@ -204,6 +225,7 @@ fn rejects_a_signature_under_the_wrong_public_key() {
 /// yielded nothing would let all of them pass having verified no signature.
 #[test]
 fn multi_leaf_corpus_spans_the_tree() {
+    start_module();
     let vectors = load_multi_leaf();
     let valid: Vec<&Vector> = vectors.iter().filter(|v| v.valid).collect();
     assert_eq!(valid.len(), 30, "expected 30 valid vectors");
@@ -235,12 +257,13 @@ fn multi_leaf_corpus_spans_the_tree() {
 /// for odd leaves, still verifies leaf 0 and fails here.
 #[test]
 fn verifies_signatures_across_the_tree() {
+    start_module();
     let vectors = load_multi_leaf();
     let mut checked = 0;
     for v in vectors.iter().filter(|v| v.valid) {
         let sig = sized(v).expect("valid vector length");
         assert!(
-            verify_internal(&v.public_key, &v.msg, &sig),
+            verify_internal(&v.public_key, &v.msg, &sig).unwrap(),
             "rejected a valid signature at leaf {}",
             leaf_index(v)
         );
@@ -254,12 +277,13 @@ fn verifies_signatures_across_the_tree() {
 /// authority on which signatures are bad, not merely on which are good.
 #[test]
 fn rejects_the_corpus_negatives() {
+    start_module();
     let vectors = load_multi_leaf();
     let mut checked = 0;
     for v in vectors.iter().filter(|v| !v.valid) {
         if let Some(sig) = sized(v) {
             assert!(
-                !verify_internal(&v.public_key, &v.msg, &sig),
+                !verify_internal(&v.public_key, &v.msg, &sig).unwrap(),
                 "accepted an invalid signature at leaf {}",
                 leaf_index(v)
             );

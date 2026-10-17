@@ -57,9 +57,6 @@ crate::slh_dsa_impl::slh_dsa_impl! {
     svc_keygen = Service::SlhDsaSha2256sKeygen;
     svc_sign = Service::SlhDsaSha2256sSign;
     svc_verify = Service::SlhDsaSha2256sVerify;
-    kat_seed_offset = 0u8;
-    kat_msg = b"SLH-DSA-SHA2-256s self-test message (FIPS 205)";
-    kat_name = "SLH-DSA-SHA2-256s KAT (keygen + sign + verify round-trip, FIPS 205)";
 }
 
 #[cfg(test)]
@@ -69,10 +66,11 @@ mod variant_tests {
 
     #[test]
     fn paramset_dispatch_emits_sha512_long_hash() {
+        crate::test_support::start_module();
         // FIPS 205 §11.2.2: at n=24/32, H/T/PRF_msg/H_msg use
         // SHA-512 truncated. `__sha2_long_setup!($n)` must hit the
-        // catch-all arm. See CMVP gem in security-policy.md for the
-        // macro_rules :literal-hygiene incident that motivated this assert.
+        // catch-all arm. A `macro_rules` `:literal`-hygiene bug once
+        // selected the wrong arm, which this assert catches.
         assert_eq!(LONG_PAD, 96, "long-hash pad must be 128-N (SHA-512)");
         assert_eq!(LONG_BLOCK, 128, "long-hash block must be 128 (SHA-512)");
         assert_eq!(LONG_OUT, 64, "long-hash out must be 64 (SHA-512)");
@@ -80,6 +78,7 @@ mod variant_tests {
 
     #[test]
     fn key_sizes_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(PK_LEN, 64);
         assert_eq!(SK_LEN, 128);
         assert_eq!(SIG_LEN, 29_792);
@@ -87,6 +86,7 @@ mod variant_tests {
 
     #[test]
     fn parameter_constants_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(N, 32);
         assert_eq!(H, 64);
         assert_eq!(D, 8);
@@ -118,12 +118,13 @@ mod variant_tests {
     #[ignore = "timing benchmark, run explicitly with --ignored --nocapture"]
     #[allow(clippy::print_stdout)] // intentional: human-read timing output
     fn keygen_timing() {
+        crate::test_support::start_module();
         let mut xi = [0u8; 3 * N];
         for (i, b) in xi.iter_mut().enumerate() {
             *b = ((i & 0xFF) as u8).wrapping_mul(37).wrapping_add(7);
         }
         let start = std::time::Instant::now();
-        let (pk, _sk) = keygen_internal(&xi);
+        let (pk, _sk) = keygen_internal(&xi).unwrap();
         let elapsed = start.elapsed();
         // Touch the output so the keygen is not optimized away.
         assert_eq!(pk.len(), PK_LEN);

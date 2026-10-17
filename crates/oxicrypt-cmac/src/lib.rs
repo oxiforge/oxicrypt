@@ -48,7 +48,9 @@
 //! Public CMAC entry points call [`oxicrypt_module::require_operational`]
 //! and [`oxicrypt_module::require_allowed`]; the `*_internal` variants are
 //! used by the KAT runners so self-test can execute during the `SelfTest`
-//! state before the module transitions to `Operational`.
+//! state before the module transitions to `Operational`. They call
+//! [`oxicrypt_module::require_self_test_started`] instead, so they refuse
+//! in every state other than `SelfTest` and `Operational`.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -61,3 +63,23 @@ pub use cmac::{
     cmac_aes256_internal, cmac_tag,
 };
 pub use kat::KATS;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    pub(crate) const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
+    }
+}

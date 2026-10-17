@@ -14,8 +14,8 @@
 //! | SLH-DSA verify | FIPS 205 | Unrestricted |
 //!
 //! CNSSP 15 lists no SLH-DSA parameter set, so SHA2-192f is permitted
-//! in the FIPS 140-3 Unrestricted profile only. CNSA 2.0 gating is
-//! denied at the Service-enum layer in Batch 4.
+//! in the FIPS 140-3 Unrestricted profile only. Its `Service`
+//! variants are refused under both CNSA profiles.
 //!
 //! # External vs internal API
 //!
@@ -57,9 +57,6 @@ crate::slh_dsa_impl::slh_dsa_impl! {
     svc_keygen = Service::SlhDsaSha2192fKeygen;
     svc_sign = Service::SlhDsaSha2192fSign;
     svc_verify = Service::SlhDsaSha2192fVerify;
-    kat_seed_offset = 4u8;
-    kat_msg = b"SLH-DSA-SHA2-192f self-test message (FIPS 205)";
-    kat_name = "SLH-DSA-SHA2-192f KAT (keygen + sign + verify round-trip, FIPS 205)";
 }
 
 #[cfg(test)]
@@ -69,10 +66,11 @@ mod variant_tests {
 
     #[test]
     fn paramset_dispatch_emits_sha512_long_hash() {
+        crate::test_support::start_module();
         // FIPS 205 §11.2.2: at n=24/32, H/T/PRF_msg/H_msg use
         // SHA-512 truncated. `__sha2_long_setup!($n)` must hit the
-        // catch-all arm. See CMVP gem in security-policy.md for the
-        // macro_rules :literal-hygiene incident that motivated this assert.
+        // catch-all arm. A `macro_rules` `:literal`-hygiene bug once
+        // selected the wrong arm, which this assert catches.
         assert_eq!(LONG_PAD, 104, "long-hash pad must be 128-N (SHA-512)");
         assert_eq!(LONG_BLOCK, 128, "long-hash block must be 128 (SHA-512)");
         assert_eq!(LONG_OUT, 64, "long-hash out must be 64 (SHA-512)");
@@ -80,6 +78,7 @@ mod variant_tests {
 
     #[test]
     fn key_sizes_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(PK_LEN, 48);
         assert_eq!(SK_LEN, 96);
         assert_eq!(SIG_LEN, 35_664);
@@ -87,6 +86,7 @@ mod variant_tests {
 
     #[test]
     fn parameter_constants_match_spec() {
+        crate::test_support::start_module();
         assert_eq!(N, 24);
         assert_eq!(H, 66);
         assert_eq!(D, 22);

@@ -38,7 +38,7 @@ cd oxicrypt
 cargo build --workspace
 ```
 
-This builds all 15 algorithm crates, the ACVP harness, and the
+This builds all 18 algorithm crates, the ACVP harness, and the
 constant-time validation tool in debug mode.
 
 ### Release builds
@@ -48,10 +48,10 @@ cargo build --workspace --release
 ```
 
 The release profile uses `opt-level = 3`, `codegen-units = 1` (for
-deterministic output), and `lto = false`. These settings are chosen to
-balance performance with build reproducibility — the software integrity
-self-test depends on the binary hash being stable across builds with the
-same toolchain.
+deterministic output), and `lto = false`. The software integrity self-test
+does not depend on reproducible output: each artifact is signed after it is
+linked and verified against its own signature, so two builds that differ in
+their bytes each verify against their own signature.
 
 ### Building individual crates
 
@@ -70,8 +70,12 @@ cargo build -p acvp-harness
 
 oxicrypt is a software-only module. The core algorithm crates
 (`oxicrypt-sha`, `oxicrypt-aes`, `oxicrypt-hmac`, etc.) are `no_std` and
-build on any Rust target. The module crate and integrity crate use `std`
-for file I/O and self-test orchestration.
+build on any Rust target, and so does the module crate (`oxicrypt-module`).
+The module compiles there but cannot become operational: on a target that
+gives it no operating-system thread id (anything but Linux, Android, Darwin and
+Windows), initialisation fails with `SelfTestFailed` naming
+`oxicrypt_module::THREAD_ID_CHECK` and the module latches `Error`. The
+integrity crate uses `std` for reading the module's own image.
 
 ### Tested configurations
 
@@ -99,8 +103,8 @@ rustup target add wasm32-unknown-unknown
 cargo build -p oxicrypt-sha --target wasm32-unknown-unknown
 ```
 
-The module crate (`oxicrypt-module`) and integrity crate require `std`
-and are not available on `no_std`-only targets.
+The integrity crate requires `std` and is not available on `no_std`-only
+targets.
 
 ## Running tests
 
@@ -122,7 +126,8 @@ cargo test -p oxicrypt-sha
 ```
 
 The workspace test suite includes 120 ACVP round-trip tests, 7 CAVP SHS
-tests, and unit tests across all algorithm crates.
+round-trip tests, an ACVP envelope test, and unit tests across all algorithm
+crates.
 
 ## Linting
 
@@ -149,12 +154,29 @@ must be signed before it can become operational. The whole procedure — what to
 assemble, when to sign, and what to do in test binaries that cannot be signed —
 is in [`integrity-signing.md`](integrity-signing.md).
 
-In short: build the artifact that will ship, then sign it last.
+In short: generate a key pair once, outside the source tree, build the
+artifact that will ship with the public half embedded, then sign it with the
+private half after any stripping or compression.
 
 ```bash
 cargo build --release -p oxicrypt-integrity-sign
-./target/release/oxicrypt-integrity-sign --sign target/release/acvp-harness
+./target/release/oxicrypt-integrity-sign --keygen ~/oxicrypt-keys
+OXICRYPT_INTEGRITY_VERIFY_KEY=~/oxicrypt-keys/integrity-verify.pub cargo build --release -p acvp-harness
+./target/release/oxicrypt-integrity-sign --sign --key ~/oxicrypt-keys/integrity-signing.key target/release/acvp-harness
 ```
+
+On Apple platforms the artifact needs its own link settings and is code
+signed both before and after the integrity signer, with `--reserved-against`
+naming a reference code signed with the final identity and options. On Apple
+silicon the operating system refuses a binary whose code signature is stale.
+The section linked below gives the order and the link settings.
+
+`cargo xtask sign <package> --key <signing key> --release` builds and signs in
+one step, and code signs as well on an Apple target, with
+`OXICRYPT_INTEGRITY_VERIFY_KEY` naming the public half; run it without
+arguments to see the link settings each format needs. The full rule, including
+iOS, is in
+[`integrity-signing.md`](integrity-signing.md#apple-platforms-integrity-sign-then-code-sign).
 
 ## Generating rustdoc
 
@@ -177,7 +199,9 @@ cargo run -p ct-validation --release
 cargo run -p ct-validation --release -- --samples 500000 ecdsa_p256_scalar_invert
 ```
 
-See the security policy §12.1 for the full methodology and verdict table.
+The Security Policy holds the full methodology and verdict table;
+[`security-policy/README.md`](security-policy/README.md) explains how to
+request it.
 
 ## Directory structure
 

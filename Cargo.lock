@@ -328,6 +328,11 @@ version = "0.24.0"
 dependencies = [
  "acvp-harness",
  "oxicrypt-entropy",
+ "oxicrypt-hmac",
+ "oxicrypt-integrity",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-xof",
 ]
 
 [[package]]
@@ -426,6 +431,7 @@ version = "0.24.0"
 dependencies = [
  "oxicrypt-integrity",
  "oxicrypt-integrity-sign",
+ "oxicrypt-module",
 ]
 
 [[package]]
@@ -552,6 +558,8 @@ version = "0.24.0"
 dependencies = [
  "criterion",
  "oxicrypt-aes",
+ "oxicrypt-cmac",
+ "oxicrypt-dh",
  "oxicrypt-drbg",
  "oxicrypt-ecdh",
  "oxicrypt-ecdsa",
@@ -567,6 +575,9 @@ dependencies = [
  "oxicrypt-rsa",
  "oxicrypt-sha",
  "oxicrypt-slh-dsa",
+ "oxicrypt-tls-kdf",
+ "oxicrypt-xmss",
+ "oxicrypt-xof",
 ]
 
 [[package]]
@@ -578,8 +589,10 @@ dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-integrity",
  "oxicrypt-integrity-sign",
+ "oxicrypt-ml-dsa",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-xof",
 ]
 
 [[package]]
@@ -646,9 +659,12 @@ name = "oxicrypt-entropy"
 version = "0.24.0"
 dependencies = [
  "oxicrypt-drbg",
+ "oxicrypt-hmac",
+ "oxicrypt-integrity",
  "oxicrypt-module",
  "oxicrypt-sha",
  "oxicrypt-timer",
+ "oxicrypt-xof",
  "oxicrypt-zeroize",
  "rand_core",
 ]
@@ -677,6 +693,8 @@ dependencies = [
  "oxicrypt-slh-dsa",
  "oxicrypt-tls-kdf",
  "oxicrypt-xmss",
+ "oxicrypt-xof",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -699,14 +717,24 @@ version = "0.24.0"
 dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-imageread",
+ "oxicrypt-ml-dsa",
  "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
 name = "oxicrypt-integrity-sign"
 version = "0.24.0"
 dependencies = [
+ "oxicrypt-drbg",
+ "oxicrypt-hmac",
  "oxicrypt-integrity",
+ "oxicrypt-ml-dsa",
+ "oxicrypt-module",
+ "oxicrypt-sha",
+ "oxicrypt-xof",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]
@@ -741,8 +769,11 @@ name = "oxicrypt-maxwell"
 version = "0.24.0"
 dependencies = [
  "bzip2",
+ "oxicrypt-hmac",
+ "oxicrypt-integrity",
  "oxicrypt-module",
  "oxicrypt-sha",
+ "oxicrypt-xof",
 ]
 
 [[package]]
@@ -770,6 +801,10 @@ dependencies = [
 [[package]]
 name = "oxicrypt-module"
 version = "0.24.0"
+dependencies = [
+ "oxicrypt-imageread",
+ "oxicrypt-sha",
+]
 
 [[package]]
 name = "oxicrypt-rsa"
@@ -821,6 +856,7 @@ dependencies = [
  "oxicrypt-hmac",
  "oxicrypt-kdf",
  "oxicrypt-module",
+ "oxicrypt-zeroize",
 ]
 
 [[package]]

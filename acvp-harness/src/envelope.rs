@@ -138,6 +138,7 @@ mod tests {
 
     #[test]
     fn peel_minimal_envelope() {
+        crate::ensure_initialized().unwrap();
         let src = r#"{"algorithm":"SHA3-256","revision":"2.0","testGroups":[]}"#;
         let v = json::parse(src).unwrap();
         let vs = VectorSet::new(&v).unwrap();
@@ -148,12 +149,14 @@ mod tests {
 
     #[test]
     fn reject_non_object_root() {
+        crate::ensure_initialized().unwrap();
         let v = json::parse("[]").unwrap();
         assert!(matches!(VectorSet::new(&v), Err(EnvelopeError::NotObject)));
     }
 
     #[test]
     fn missing_field_detected() {
+        crate::ensure_initialized().unwrap();
         let v = json::parse(r#"{"algorithm":"x"}"#).unwrap();
         let vs = VectorSet::new(&v).unwrap();
         assert!(matches!(
@@ -164,6 +167,7 @@ mod tests {
 
     #[test]
     fn wrong_type_detected() {
+        crate::ensure_initialized().unwrap();
         let v = json::parse(r#"{"algorithm":"x","revision":"1","testGroups":"oops"}"#).unwrap();
         let vs = VectorSet::new(&v).unwrap();
         assert!(matches!(

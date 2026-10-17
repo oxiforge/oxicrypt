@@ -1,0 +1,63 @@
+{
+  "_source": {
+    "repo": "usnistgov/ACVP-Server",
+    "commit": "3611942ea10c070dd8bc6afec5682d56c307de8a",
+    "path": "gen-val/json-files/KDF-1.0/internalProjection.json",
+    "internalProjection_sha256": "9900da42897bc6ec6a42cd6844c37f05ff0b6ae830723cb61d53b6d560572090"
+  },
+  "algorithm": "KDF",
+  "revision": "1.0",
+  "testGroups": [
+    {
+      "tgId": 642,
+      "kdfMode": "counter",
+      "counterLocation": "before fixed data",
+      "counterLength": 32,
+      "macMode": "HMAC-SHA2-256",
+      "keyOutLength": 1024,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 1283,
+          "keyIn": "40DED4EB53E4D65178644B03C80D0805C06DBF8D609342FD5958FFD0B64E0CD3",
+          "fixedData": "A9A20A1A0BCBE3D144AF117018EE5364",
+          "keyOut": "138E6019530F122A8B2833CD553FFD4A4A36A1CE544CA990D0131F2B015351806958CFA42AB5E4EC3D32151F4A69A7B490562CEA046923E4ACB68120C078E1BCF5DF7BE0322CF317BA1D02CC16B56AD050310EA20BDDE0EF7C60B615F139DE68DD743BBA15BFBC1ED2540C58C4DEDFEC594403E7B3757A7BAB1EFF4C2CBD6D23"
+        }
+      ]
+    },
+    {
+      "tgId": 644,
+      "kdfMode": "counter",
+      "counterLocation": "before fixed data",
+      "counterLength": 32,
+      "macMode": "HMAC-SHA2-256",
+      "keyOutLength": 480,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 1287,
+          "keyIn": "99C9C73EB1487556338C9A6D5A20AB86AAF56EF6729C4A3CCD54FBAA03001713",
+          "fixedData": "A5453D7205066D523C7B7E524EAC0281",
+          "keyOut": "BB6B56F50A0126310837EE6DEC39CC41BDA11BE08FCD822D349E39331CC9CA3B02B88E0BCD12C75668F15448A80CD40D49CA5E80900935E797133F5B"
+        }
+      ]
+    },
+    {
+      "tgId": 823,
+      "kdfMode": "counter",
+      "counterLocation": "before fixed data",
+      "counterLength": 32,
+      "macMode": "HMAC-SHA2-512",
+      "keyOutLength": 1024,
+      "testType": "AFT",
+      "tests": [
+        {
+          "tcId": 1645,
+          "keyIn": "F91150F95A5B766E0A49F3D99A6949561B7BE4532B5678986D017658E01F7631C21AEF20C2495D802F15F7331E85A49EBFF075942F5296E8311343B8DBA58301",
+          "fixedData": "A0D0288844F2256884B4193A44543EA4",
+          "keyOut": "DE6684835FD59A759416125F0EBC6F8DE1DC5C13E41F239BE9FE96A44C11C2F4804442B973529538AAB1A8E089272CD51E644FEAA558D6B745740285BA1BB4C2FEE408D5D270B1FEF51FF2C88EB2919990B77EBBC9A13767B8BA1DFB1A666DBAAC13682069AE8E8BADF3491574DAAA0B2FE4D59BC8DF616ABC7BCD4A645D00B5"
+        }
+      ]
+    }
+  ]
+}

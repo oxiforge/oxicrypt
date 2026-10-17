@@ -86,12 +86,12 @@ impl AlgorithmHandler for ParallelHash128Handler {
                     .map_err(|_| DispatchError::Crypto("ParallelHashXof128::new returned Err"))?;
                 h.update(msg);
                 h.finalize();
-                h.squeeze(out);
+                h.squeeze(out)?;
             } else {
                 let mut h = ParallelHash128::new(block_size, s)
                     .map_err(|_| DispatchError::Crypto("ParallelHash128::new returned Err"))?;
                 h.update(msg);
-                h.finalize_into(out);
+                h.finalize_into(out)?;
             }
             Ok(())
         })
@@ -116,12 +116,12 @@ impl AlgorithmHandler for ParallelHash256Handler {
                     .map_err(|_| DispatchError::Crypto("ParallelHashXof256::new returned Err"))?;
                 h.update(msg);
                 h.finalize();
-                h.squeeze(out);
+                h.squeeze(out)?;
             } else {
                 let mut h = ParallelHash256::new(block_size, s)
                     .map_err(|_| DispatchError::Crypto("ParallelHash256::new returned Err"))?;
                 h.update(msg);
-                h.finalize_into(out);
+                h.finalize_into(out)?;
             }
             Ok(())
         })
@@ -154,7 +154,7 @@ impl AlgorithmHandler for ParallelHashXof128Handler {
                 .map_err(|_| DispatchError::Crypto("ParallelHashXof128::new returned Err"))?;
             h.update(msg);
             h.finalize();
-            h.squeeze(out);
+            h.squeeze(out)?;
             Ok(())
         })
     }
@@ -176,7 +176,7 @@ impl AlgorithmHandler for ParallelHashXof256Handler {
                 .map_err(|_| DispatchError::Crypto("ParallelHashXof256::new returned Err"))?;
             h.update(msg);
             h.finalize();
-            h.squeeze(out);
+            h.squeeze(out)?;
             Ok(())
         })
     }

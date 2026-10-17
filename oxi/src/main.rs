@@ -11,7 +11,7 @@
 //! | `oxi hash <alg> [FILE]` | Hash a file (or stdin) with an approved algorithm |
 //! | `oxi hmac <alg> <key-hex> [FILE]` | HMAC a file (or stdin) |
 //! | `oxi rand <nbytes>` | Generate random bytes from HMAC_DRBG-SHA-256 |
-//! | `oxi selftest` | Run the module's self-tests on demand and report each one |
+//! | `oxi selftest` | Report the power-up self-tests by name: the integrity test's verdict from this start, and the algorithm self-tests run again |
 //! | `oxi --lama` | Dump the LAMA manifest |
 //! | `oxi --integrity` | Report the pre-operational integrity test's outcome |
 //!
@@ -25,9 +25,16 @@
     clippy::expect_used,
 )]
 
+mod power_up;
+
+#[cfg(not(test))]
+use oxicrypt_module::initialize_with_tests;
+use power_up::inventory;
 use std::fmt::Write as _;
 use std::io::{self, Read};
 use std::process::ExitCode;
+#[cfg(test)]
+use tests::initialize_with_tests;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -73,6 +80,9 @@ fn main() -> ExitCode {
     // is checked — see `power_up_tests`.
     if let Err(e) = init_module() {
         eprintln!("fatal: module initialization failed: {e}");
+        if let Some(detail) = oxicrypt_integrity::status_detail() {
+            eprintln!("  integrity: {detail}");
+        }
         // The integrity test is the failure a person holding a fresh
         // `cargo install` actually hits, and it has a one-command remedy.
         // Naming the test that failed and stopping there leaves them reading
@@ -82,7 +92,7 @@ fn main() -> ExitCode {
         for line in integrity_diagnosis().remedy {
             eprintln!("  {line}");
         }
-        return ExitCode::FAILURE;
+        return failure_exit();
     }
 
     let rest = args.get(2..).unwrap_or(&[]);
@@ -106,7 +116,7 @@ fn usage() -> ExitCode {
     eprintln!("  hash <alg> [FILE]            Hash a file or stdin");
     eprintln!("  hmac <alg> <key-hex> [FILE]  HMAC a file or stdin");
     eprintln!("  rand <nbytes>                Generate random bytes (hex)");
-    eprintln!("  selftest [--quiet]           Run the module's self-tests and report each one");
+    eprintln!("  selftest [--quiet]           Report the power-up self-tests by name");
     eprintln!("  --lama                       Dump LAMA manifest (YAML)");
     eprintln!("  --integrity                  Report the integrity test's outcome");
     eprintln!();
@@ -114,7 +124,33 @@ fn usage() -> ExitCode {
     eprintln!("  sha1, sha224, sha256, sha384, sha512");
     eprintln!("  sha512-224, sha512-256");
     eprintln!("  sha3-224, sha3-256, sha3-384, sha3-512");
+    eprintln!();
+    eprintln!("Exit codes:");
+    eprintln!("  0  success");
+    eprintln!("  1  a test ran and failed: the image does not match, its slot is unsigned or");
+    eprintln!("     damaged, or it names another key; for a command other than --integrity,");
+    eprintln!("     also an algorithm self-test that failed after the image check passed");
+    eprintln!("  2  usage error");
+    eprintln!("  3  the integrity test was not performed or could not decide: a CAST it");
+    eprintln!("     depends on failed, the image could not be read, or the binary carries no");
+    eprintln!("     verifying key; the image's state is unknown");
+    eprintln!("  4  --integrity only: the image matches, but a later algorithm self-test");
+    eprintln!("     failed, so the module is in its error state");
     ExitCode::from(2)
+}
+
+/// The exit code for a module that did not become operational, as
+/// [`usage`] lists the codes: `1` when a test ran and failed, `3` when the
+/// integrity test was not performed, which a script must not read as "the
+/// image is wrong".
+fn failure_exit() -> ExitCode {
+    use oxicrypt_integrity::IntegrityStatus as S;
+    match oxicrypt_integrity::status() {
+        S::Passed | S::SignatureInvalid | S::SlotInvalid | S::SlotDamaged | S::KeyMismatch => {
+            ExitCode::FAILURE
+        }
+        _ => ExitCode::from(3),
+    }
 }
 
 /// One sentence naming the state of the pre-operational integrity test, and
@@ -134,113 +170,237 @@ struct Diagnosis {
 /// already run the test — the startup path — without running it a second time.
 /// `report_integrity` performs the test first, because in that path nothing
 /// has.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table: each status beside its advice"
+)]
 fn integrity_diagnosis() -> Diagnosis {
+    // No status here prescribes signing. Whether a binary was never signed
+    // or was signed and then altered cannot be told from bytes an attacker
+    // can rewrite: a signed slot overwritten with the unsigned template, or
+    // a zeroed key record, reads exactly like an unsigned build. So signing
+    // is offered only on the condition the module cannot check and the
+    // reader can: that they built the binary themselves.
     let (line, remedy): (&str, &[&str]) = match oxicrypt_integrity::status() {
         oxicrypt_integrity::IntegrityStatus::Passed => (
-            "passed — this binary matches the reference recorded inside it",
+            "passed — this binary matches the signature recorded inside it",
             &[],
         ),
+        oxicrypt_integrity::IntegrityStatus::NoVerifyKey => (
+            "not passed — this binary carries no verifying key",
+            &[
+                "The integrity test cannot tell a binary built without a verifying key",
+                "from one whose key was erased after it was signed.",
+                "If you built this binary from source yourself: generate a key pair",
+                "outside the source tree, rebuild with OXICRYPT_INTEGRITY_VERIFY_KEY",
+                "set to its public half, and sign with its private half:",
+                "          oxicrypt-integrity-sign --keygen <dir>",
+                "          OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub cargo build ...",
+                "          oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key <this binary>",
+                "If you received this binary from anyone else, do NOT sign it: obtain",
+                "a fresh copy from its publisher. See docs/integrity-signing.md.",
+            ],
+        ),
+        oxicrypt_integrity::IntegrityStatus::KeyMismatch => (
+            "FAILED — the slot names a different key than the one this binary embeds",
+            &[
+                "Do NOT re-sign it. A slot whose key id changed after signing reads",
+                "exactly like this, and signing again would bless whatever else",
+                "changed with it. Compare the two fingerprints: `verify key` below is",
+                "the key this build embeds, and `oxicrypt-integrity-sign --show`",
+                "prints the slot's key id. If neither is the key you build and",
+                "release with, replace the binary from a published release or",
+                "rebuild from source.",
+            ],
+        ),
         oxicrypt_integrity::IntegrityStatus::SlotInvalid => (
-            "not signed — this binary carries no valid integrity slot",
+            "not passed — this binary's integrity slot is the unsigned template",
             // The signer is a separate tool on purpose. A module binary able to
             // rewrite its own image is a capability nobody needs and a reviewer
             // would rightly ask about, and it buys nothing: anyone who can
             // install this crate can install that one.
             &[
-                "Sign it:  cargo install oxicrypt-integrity-sign",
-                "          oxicrypt-integrity-sign --sign <this binary>",
-                "`cargo install` cannot do it for you — it has no step after",
-                "linking in which to write the slot. See docs/integrity-signing.md.",
+                "The integrity test cannot tell a binary that was never signed from a",
+                "signed one whose slot was overwritten with the template.",
+                "If you built this binary from source yourself and have not signed it",
+                "yet, sign it with your own key:",
+                "          cargo install oxicrypt-integrity-sign",
+                "          oxicrypt-integrity-sign --sign --key <signing key> <this binary>",
+                "On Apple platforms, code sign before and after it instead, with",
+                "--reserved-against, in the order the Apple section of",
+                "docs/integrity-signing.md gives.",
+                "If you received this binary from anyone else, do NOT sign it: obtain",
+                "a fresh copy from its publisher. See docs/integrity-signing.md.",
             ],
         ),
-        oxicrypt_integrity::IntegrityStatus::Mismatch => (
-            "FAILED — this binary does not match the reference recorded inside it",
+        oxicrypt_integrity::IntegrityStatus::SignatureInvalid => (
+            "FAILED — this binary does not match the signature recorded inside it",
             // Deliberately NOT "sign it again". Signing writes a new reference
             // over whatever the file now contains, so re-signing a modified
             // binary makes the check pass on the modification — the module
             // would be instructing someone to bless exactly what it just
             // caught.
             &[
-                "Do NOT re-sign it. Signing records a new reference over whatever",
+                "Do NOT re-sign it. Signing records a new signature over whatever",
                 "this file now contains, so it would make the check pass on the",
                 "change rather than undo it.",
                 "Replace the binary: re-download the release artifact and check it",
                 "against the SHA-256 published with it, or rebuild from source.",
-                "Something rewrote it after it was signed — a platform signing tool",
-                "or a stripping or compression step, if not an attacker.",
+                "Something rewrote it after it was signed, such as a stripping or",
+                "compression step, if not an attacker. Apple's codesign is not a",
+                "cause: the integrity check excludes everything it writes.",
             ],
         ),
         oxicrypt_integrity::IntegrityStatus::Unreadable => (
-            "not performed — the module could not read its own loaded image",
+            "not performed — the module could not read its own image",
             &[
-                "This platform has no supported mechanism for the module to read",
-                "itself. The result says nothing about whether the image is intact.",
+                "The environment refused a read the test needs: no memory route",
+                "worked (on Linux, /proc/self/mem and process_vm_readv, which a",
+                "seccomp filter can deny), the operating system refused a read of",
+                "mapped memory or of the image file, or the image could not be",
+                "measured. The detail above names which.",
+                "Do NOT sign it. If this persists in an ordinary environment, obtain",
+                "a fresh copy of the binary from its publisher.",
+            ],
+        ),
+        oxicrypt_integrity::IntegrityStatus::SlotDamaged => (
+            "FAILED — the integrity slot or what it describes is damaged",
+            &[
+                "Do NOT re-sign it. The slot has changed since it was signed, or",
+                "names memory, file bytes or imports this image does not have;",
+                "signing again would record the damage as the reference.",
+                "Replace the binary: re-download the release artifact and check it",
+                "against the SHA-256 published with it, or rebuild from source.",
             ],
         ),
         oxicrypt_integrity::IntegrityStatus::CastNotRun => (
             "not performed — reached before the self-test it depends on",
-            &[],
+            NOT_PERFORMED,
+        ),
+        oxicrypt_integrity::IntegrityStatus::Refused => (
+            "not performed — the module refused a primitive the test uses",
+            NOT_PERFORMED,
         ),
         oxicrypt_integrity::IntegrityStatus::NotRun => {
-            ("not performed — the test did not run", &[])
+            ("not performed — the test did not run", NOT_PERFORMED)
         }
         oxicrypt_integrity::IntegrityStatus::Unknown => (
             "unknown — the recorded indicator is not a value this module writes",
-            &[],
+            NOT_PERFORMED,
         ),
         // The enum is non-exhaustive. A variant this build has never heard of is
         // reported as such rather than folded into one of the above, which would
         // put a confident wrong label on an unrecognised state.
         _ => (
             "unrecognised — this build of `oxi` does not know that indicator",
-            &[],
+            NOT_PERFORMED,
         ),
     };
     Diagnosis { line, remedy }
 }
 
+/// The advice for a test that was not performed for a reason that is not
+/// the image's.
+const NOT_PERFORMED: &[&str] = &[
+    "Do NOT sign it on the strength of this result. If you received this",
+    "binary from anyone else and the problem persists, obtain a fresh copy",
+    "from its publisher.",
+];
+
 /// Reports the pre-operational integrity test's outcome, and what to do about
 /// it.
 ///
-/// Exit codes: `0` the image matched, `1` it did not or the slot is unusable,
-/// `3` the test was not performed and the image's state is unknown.
+/// Exit codes as [`usage`] lists them: `0`, `1` for an image that did not
+/// match, `3` for a test not performed, and `4` for a matching image whose
+/// module then failed a later algorithm self-test.
 ///
 /// Runs the test rather than reading a stale indicator: `status()` latches on
 /// the first run and reads `NotRun` before one, so calling it alone here would
-/// report nothing at all. The technique's own CAST runs first because the
-/// integrity test depends on it, and skipping it would turn every answer into
-/// "the test was reached before the CAST it depends on".
+/// report nothing at all. It starts the module exactly as every other command
+/// does, with the power-up set [`init_module`] passes: the integrity group (the
+/// CASTs it depends on, then the image check, in `SelfTest` state where the
+/// primitives it uses are admitted) and then every algorithm self-test, so the
+/// module becomes operational only on the same terms.
+///
+/// Prints the fingerprint of the verifying key the binary embeds whenever the
+/// test read one, so an operator can see which signer this build trusts.
 fn report_integrity() -> ExitCode {
-    if let Err(e) = oxicrypt_integrity::hmac_cast() {
-        println!("integrity: unavailable — the technique's own self-test failed: {e}");
-        println!("  This is the HMAC-SHA-256 implementation the test uses, not your binary.");
-        return ExitCode::FAILURE;
+    let (integrity, tests) = power_up_set();
+    let started = initialize_with_tests(integrity, &tests);
+    if oxicrypt_integrity::status() == oxicrypt_integrity::IntegrityStatus::NotRun {
+        match started {
+            Err(oxicrypt_module::Error::SelfTestFailed { test }) => {
+                println!("integrity: unavailable — a self-test it depends on failed: {test}");
+                println!(
+                    "  The image was not examined. The failure is in the module's \
+                     implementation of that algorithm, not in your binary."
+                );
+            }
+            Err(e) => {
+                println!("integrity: unavailable — the module did not start: {e}");
+            }
+            Ok(()) => {
+                println!("integrity: unavailable — the integrity test did not record an outcome");
+            }
+        }
+        // The image was not examined, so this is "not performed", never
+        // "the image is wrong".
+        return ExitCode::from(3);
     }
 
-    let _ = oxicrypt_integrity::verify_loaded_image();
     let diagnosis = integrity_diagnosis();
     println!("integrity: {}", diagnosis.line);
+    if let Some(detail) = oxicrypt_integrity::status_detail() {
+        println!("  detail: {detail}");
+    }
+    match oxicrypt_integrity::verify_key_fingerprint() {
+        Some(fp) => println!(
+            "  verify key: {}",
+            oxicrypt_integrity::format_fingerprint(&fp)
+        ),
+        None if oxicrypt_integrity::status()
+            == oxicrypt_integrity::IntegrityStatus::NoVerifyKey =>
+        {
+            println!("  verify key: none");
+        }
+        None => println!("  verify key: not read"),
+    }
     // Only where a comparison actually happened. On an unsigned binary nothing
     // was compared, and printing what the extent WOULD cover reads as though
     // something had been — the opposite of what this line is for.
     if matches!(
         oxicrypt_integrity::status(),
-        oxicrypt_integrity::IntegrityStatus::Passed | oxicrypt_integrity::IntegrityStatus::Mismatch
+        oxicrypt_integrity::IntegrityStatus::Passed
+            | oxicrypt_integrity::IntegrityStatus::SignatureInvalid
     ) {
         print_extent();
     }
     for note in diagnosis.remedy {
         println!("  {note}");
     }
-    // Three outcomes, three codes, because "the image is wrong" and "we could
-    // not look" call for different responses and a script should not have to
-    // parse prose to tell them apart. Both are non-zero: the module refuses to
-    // become operational either way, so reporting success would be reporting a
-    // binary as usable when every command it offers will fail.
+    // Each outcome its own code, as `usage` lists them, because "the image is
+    // wrong", "we could not look" and "the image is right but the module
+    // failed a later self-test" call for different responses and a script
+    // should not have to parse prose to tell them apart. Every one but a pass
+    // into an operational module is non-zero: reporting success would be
+    // reporting a binary as usable when every command it offers will fail.
     match oxicrypt_integrity::status() {
-        oxicrypt_integrity::IntegrityStatus::Passed => ExitCode::SUCCESS,
-        oxicrypt_integrity::IntegrityStatus::Mismatch
-        | oxicrypt_integrity::IntegrityStatus::SlotInvalid => ExitCode::FAILURE,
+        oxicrypt_integrity::IntegrityStatus::Passed => match started {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(oxicrypt_module::Error::SelfTestFailed { test }) => {
+                println!("  but a later self-test failed: {test}");
+                println!("  The module is in its error state and offers no service.");
+                ExitCode::from(4)
+            }
+            Err(e) => {
+                println!("  but the module did not become operational: {e}");
+                ExitCode::from(4)
+            }
+        },
+        oxicrypt_integrity::IntegrityStatus::SignatureInvalid
+        | oxicrypt_integrity::IntegrityStatus::SlotInvalid
+        | oxicrypt_integrity::IntegrityStatus::SlotDamaged
+        | oxicrypt_integrity::IntegrityStatus::KeyMismatch => ExitCode::FAILURE,
         _ => ExitCode::from(3),
     }
 }
@@ -249,8 +409,9 @@ fn report_integrity() -> ExitCode {
 ///
 /// The verdict alone says whether the image matched; it does not say what was
 /// compared, and "the module verified itself" means little without that. The
-/// extent is a strict subset of the file by construction — the slot holding the
-/// reference is excluded, and so is everything the loader rewrites.
+/// extent is a strict subset of the file by construction: the slot is signed
+/// through its own header rather than as an entry, and everything the loader
+/// rewrites is excluded.
 ///
 /// Read from the slot itself rather than by re-deriving the layout from the
 /// file. Two reasons, and the second is why this is not merely equivalent:
@@ -272,61 +433,39 @@ fn print_extent() {
     let Ok(parsed) = oxicrypt_integrity::slot::parse(&bytes) else {
         return;
     };
-    let Some(extent) = oxicrypt_integrity::slot::extent_len(&parsed.ranges) else {
+    let Some(extent) = oxicrypt_integrity::slot::extent_len(&parsed.fields.entries) else {
         return;
     };
     println!(
-        "  extent: {extent} bytes in {} range(s) — the loader-invariant image, \
-         less the slot",
-        parsed.ranges.len()
+        "  extent: {extent} bytes in {} entries, less the slot",
+        parsed.fields.entries.len()
     );
     println!("  (oxicrypt-integrity-sign --show reports the full breakdown)");
 }
 
-/// Pre-operational self-tests for the services this CLI offers.
+/// The integrity self-test and the algorithm self-tests [`init_module`]
+/// passes to [`oxicrypt_module::initialize_with_tests`], in that order.
 ///
-/// The integrity test runs first as its own, separate argument to
-/// [`oxicrypt_module::initialize_with_tests`]. This inventory covers the
-/// approved algorithms reachable from the subcommands: SHA for `hash`,
-/// HMAC for `hmac`, and the DRBG — with the AES it is built on — for
-/// `rand`.
-///
-/// The module refuses to become operational without an integrity group,
-/// which is a separate parameter. That guarantee does not extend to this
-/// inventory — a subcommand added without its KATs would start, and run an
-/// algorithm that was never self-tested. So a test enforces the coverage the
-/// module does not: `the_inventory_covers_every_algorithm_the_subcommands_reach`
-/// derives the crates this file calls and requires each to appear here, with
-/// the two exemptions named and their reasons recorded beside them.
-fn power_up_tests() -> Vec<oxicrypt_module::KatEntry> {
-    inventory()
-        .iter()
-        .flat_map(|(_, group)| group.iter().copied())
-        .collect()
-}
-
-/// The power-up inventory, named by the crate that publishes each group.
-///
-/// One source with two readers: [`power_up_tests`] flattens it for
-/// [`oxicrypt_module::initialize_with_tests`], and `cmd_selftest` walks it to
-/// show an operator each test in turn. Two lists would be two opinions about
-/// what this binary self-tests, and the one the operator watched would be the
-/// one that could drift from the one that ran.
-///
-/// The integrity group is deliberately absent: it is
-/// `initialize_with_tests`' separate first argument, because the module refuses
-/// to become operational without it. `cmd_selftest` prepends it for display.
-fn inventory() -> &'static [(&'static str, &'static [oxicrypt_module::KatEntry])] {
-    &[
-        ("sha", oxicrypt_sha::KATS),
-        ("hmac", oxicrypt_hmac::KATS),
-        ("aes", oxicrypt_aes::KATS),
-        ("drbg", oxicrypt_drbg::KATS),
-    ]
+/// The algorithm self-tests are [`power_up::power_up_tests`]. The module
+/// refuses to become operational without an integrity group, which is a
+/// separate parameter. That guarantee does not extend to the algorithm
+/// self-tests — a subcommand added without its KATs would start, and run an
+/// algorithm that was never self-tested. So
+/// `the_inventory_covers_every_linked_algorithm_crate` reads this binary's
+/// resolved dependency graph and requires every linked algorithm crate's
+/// `KATS` here, with the exemptions named and their reasons recorded beside
+/// them, and `init_module_passes_its_power_up_set_to_the_module` checks that
+/// [`init_module`] passes exactly this pair.
+fn power_up_set() -> (
+    &'static [oxicrypt_module::KatEntry],
+    Vec<oxicrypt_module::KatEntry>,
+) {
+    (oxicrypt_integrity::KATS, power_up::power_up_tests())
 }
 
 fn init_module() -> Result<(), oxicrypt_module::Error> {
-    match oxicrypt_module::initialize_with_tests(oxicrypt_integrity::KATS, &power_up_tests()) {
+    let (integrity, tests) = power_up_set();
+    match initialize_with_tests(integrity, &tests) {
         Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
         Err(e) => Err(e),
     }
@@ -444,7 +583,7 @@ fn hmac_oneshot<H: oxicrypt_hmac::BlockHash<B, L>, const B: usize, const L: usiz
 ) -> Result<Vec<u8>, oxicrypt_module::Error> {
     let mut mac = oxicrypt_hmac::Hmac::<H, B, L>::new(key)?;
     mac.update(data);
-    Ok(mac.finalize().to_vec())
+    Ok(mac.finalize()?.to_vec())
 }
 
 // ── rand ────────────────────────────────────────────────────────
@@ -488,42 +627,54 @@ fn cmd_rand(args: &[String]) -> ExitCode {
 
 // ── selftest ────────────────────────────────────────────────────
 
-/// Runs the module's self-tests on demand and reports each one.
+/// Shows the module's power-up self-tests by name and runs the algorithm
+/// self-tests again.
 ///
-/// # Why this exists, and what it is
+/// # What it is
 ///
 /// The module runs its full power-up battery before it becomes operational —
 /// the integrity test first, then every known-answer test in the inventory —
 /// and then says nothing about it. An operator holding the binary has no way to
-/// see what was tested. This is that view: the same inventory, each entry run
-/// again and reported by name.
+/// see what was tested. This is that view: the same inventory, reported by
+/// name.
 ///
-/// **ISO/IEC 19790:2012 §7.10.1 and FIPS 140-3 IG 10.3.E**: at Security Levels 1
-/// and 2, acceptable means for initiating the self-tests include *a provided
-/// service*, resetting, rebooting or power cycling. This is the provided
-/// service. The automatic-timer obligations (`AS10.54`, `AS10.55`) apply at
-/// Levels 3 and 4 and are not claimed here.
+/// `oxi` is a test driver, not the module's on-demand self-test. The module
+/// tests itself on demand by restarting: a new process initialises the module,
+/// which runs the whole battery before any service is offered (ISO/IEC
+/// 19790:2012 `[10.53]` accepts resetting or rebooting at Security Levels 1 and
+/// 2; IG 10.3.E applies from Level 3). Running this command starts `oxi`, and
+/// with it the module, so every invocation is such a restart; what follows the
+/// start is a report.
 ///
-/// **The indicator is required, not decoration.** IG's reading of `AS02.24`:
-/// self-tests themselves need no indicator, but *a service providing on-demand
-/// self-tests does*. So this prints an explicit terminal verdict line and
-/// carries it in the exit code.
+/// The integrity test runs only inside the power-up self-tests, so its line
+/// reports the verdict recorded when this process started rather than running
+/// it again. The algorithm self-tests are run again on the operational module
+/// and each is reported. The verdict line and the exit code agree, so a script
+/// need not parse prose.
 ///
 /// # What it does NOT claim
 ///
-/// It re-runs the test functions; it does not re-establish the module's
-/// pre-operational state. `initialize_with_tests` claims the `SelfTest` phase
-/// with a compare-exchange from `PowerOff` and is one-shot per process, by
-/// design — a second caller gets `AlreadyInitialized`. So this is reachable
-/// only on a module that ALREADY passed its power-up tests, which is the
-/// conservative order: it can demonstrate the tests, never substitute for them.
-/// A restart remains the way to re-run the pre-operational sequence itself.
+/// It does not re-establish the module's pre-operational state.
+/// `initialize_with_tests` claims the `SelfTest` phase with a compare-exchange
+/// from `PowerOff` and is one-shot per process, by design — a second caller
+/// gets `AlreadyInitialized`. So this is reachable only on a module that
+/// ALREADY passed its power-up tests: it can demonstrate the tests, never
+/// substitute for them.
 ///
 /// A failure here is treated as a self-test failure, not as a report: the
 /// module is placed in the error state, which is what
 /// ISO/IEC 19790:2012 §7.10.3 requires of a failed self-test, and every service
 /// call afterwards is refused.
 fn cmd_selftest(args: &[String]) -> ExitCode {
+    /// Whether `entry` passes: the image check's verdict from this process's
+    /// start, since it runs only there, and every other entry run again.
+    fn passes(entry: &oxicrypt_module::KatEntry) -> bool {
+        if entry.name == oxicrypt_integrity::INTEGRITY_TEST_NAME {
+            return oxicrypt_integrity::status() == oxicrypt_integrity::IntegrityStatus::Passed;
+        }
+        (entry.run)().is_ok()
+    }
+
     let mut quiet = false;
     for a in args {
         if a == "--quiet" {
@@ -536,18 +687,32 @@ fn cmd_selftest(args: &[String]) -> ExitCode {
     }
 
     if !quiet {
-        println!("oxi selftest — on-demand invocation of the module's self-tests");
+        println!("oxi selftest — the module's power-up self-tests, by name");
         println!("  module state: {:?}", oxicrypt_module::state());
-        println!("  these are the tests this binary runs at power-up; each is run again below");
+        println!(
+            "  the image check shows this start's verdict; the algorithm self-tests run again"
+        );
+        println!("  to test the module itself again, start a new process");
         println!();
     }
 
-    // The integrity group first, exactly as `initialize_with_tests` orders it:
-    // everything after it depends on its verdict.
-    let groups: Vec<(&str, &[oxicrypt_module::KatEntry])> =
-        core::iter::once(("integrity", oxicrypt_integrity::KATS))
-            .chain(inventory().iter().copied())
-            .collect();
+    // Exactly the entries `init_module` passes, in its order: the integrity
+    // group first, since everything after it depends on its verdict, then
+    // the algorithm self-tests, labelled by the inventory group each came
+    // from.
+    let (integrity, tests) = power_up_set();
+    let mut groups: Vec<(&str, &[oxicrypt_module::KatEntry])> = vec![("integrity", integrity)];
+    let mut rest = tests.as_slice();
+    for (name, group) in inventory() {
+        let Some((head, tail)) = rest.split_at_checked(group.len()) else {
+            break;
+        };
+        groups.push((name, head));
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        groups.push(("other", rest));
+    }
 
     let mut passed = 0_usize;
     let mut failed: Vec<&str> = Vec::new();
@@ -556,15 +721,15 @@ fn cmd_selftest(args: &[String]) -> ExitCode {
             println!("{group} ({})", entries.len());
         }
         for entry in *entries {
-            if (entry.run)().is_err() {
-                failed.push(entry.name);
-                if !quiet {
-                    println!("  FAIL  {}", entry.name);
-                }
-            } else {
+            if passes(entry) {
                 passed = passed.saturating_add(1);
                 if !quiet {
                     println!("  ok    {}", entry.name);
+                }
+            } else {
+                failed.push(entry.name);
+                if !quiet {
+                    println!("  FAIL  {}", entry.name);
                 }
             }
         }
@@ -577,9 +742,8 @@ fn cmd_selftest(args: &[String]) -> ExitCode {
     println!("{passed} of {total} self-tests passed");
 
     if failed.is_empty() {
-        // The indicator required of a service that provides on-demand
-        // self-tests. One line, fixed wording, and the exit code agrees with
-        // it so a script need not parse prose.
+        // The verdict line. One line, fixed wording, and the exit code
+        // agrees with it so a script need not parse prose.
         println!("self-test indicator: PASS");
         ExitCode::SUCCESS
     } else {
@@ -647,22 +811,135 @@ fn getrandom(buf: &mut [u8]) -> io::Result<()> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use super::{init_module, power_up_set};
+    use oxicrypt_module::{Error, KatEntry};
     use std::collections::BTreeSet;
+    use std::sync::{Mutex, PoisonError};
 
-    /// Crates whose KATs belong somewhere other than the inventory, with the
-    /// reason each is exempt.
+    /// Linked `oxicrypt-*` crates that publish no algorithm KATs, or whose
+    /// KATs belong somewhere other than the inventory, each with the reason.
     ///
-    /// `oxicrypt-module` publishes no algorithm and no `KATS`. `oxicrypt-integrity`
-    /// publishes `KATS`, but they are passed as `initialize_with_tests`' *first*
-    /// argument — the module refuses to become operational without them, which is
-    /// a guarantee the inventory does not have and does not need to duplicate.
-    const NOT_IN_THE_INVENTORY: [(&str, &str); 2] = [
+    /// `oxicrypt-integrity` publishes `KATS`, but they are passed as
+    /// `initialize_with_tests`' *first* argument — the module refuses to
+    /// become operational without them, which is a guarantee the inventory
+    /// does not have and does not need to duplicate.
+    const NOT_IN_THE_INVENTORY: &[(&str, &str)] = &[
         ("oxicrypt_module", "publishes no algorithm and no KATS"),
         (
             "oxicrypt_integrity",
             "its KATS are the separate integrity argument, which the module requires",
         ),
+        (
+            "oxicrypt_imageread",
+            "reads the module's own image for the integrity test; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_zeroize",
+            "zeroizes secret buffers; it implements no algorithm",
+        ),
+        (
+            "oxicrypt_test_vectors",
+            "vector data that algorithm crates' KATs read; it implements no algorithm",
+        ),
     ];
+
+    /// Each algorithm crate's own `KATS` slice, keyed by the crate's path
+    /// as written. `stringify!` takes the key from the same path the slice
+    /// is read through, so a key cannot name a different crate's slice.
+    macro_rules! kats_by_crate {
+        ($($krate:ident),* $(,)?) => {
+            &[$((stringify!($krate), $krate::KATS)),*]
+        };
+    }
+
+    /// Every approved algorithm crate this binary links.
+    const KATS_BY_CRATE: &[(&str, &[KatEntry])] = kats_by_crate![
+        oxicrypt_sha,
+        oxicrypt_hmac,
+        oxicrypt_aes,
+        oxicrypt_drbg,
+        oxicrypt_xof,
+        oxicrypt_ml_dsa
+    ];
+
+    /// The names of the integrity and algorithm self-tests the most recent
+    /// [`init_module`] passed to the module.
+    static PASSED: Mutex<Option<(Vec<&'static str>, Vec<&'static str>)>> = Mutex::new(None);
+
+    fn names(kats: &[KatEntry]) -> Vec<&'static str> {
+        kats.iter().map(|k| k.name).collect()
+    }
+
+    /// [`init_module`] calls this in place of
+    /// `oxicrypt_module::initialize_with_tests` in this binary's tests. It
+    /// records what it was given, then forwards the call unchanged.
+    pub(super) fn initialize_with_tests(
+        integrity: &[KatEntry],
+        tests: &[KatEntry],
+    ) -> Result<(), Error> {
+        *PASSED.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((names(integrity), names(tests)));
+        oxicrypt_module::initialize_with_tests(integrity, tests)
+    }
+
+    /// Every workspace package in this binary's normal-dependency closure with
+    /// default features, on every target platform, except this package
+    /// itself, with hyphens mapped to underscores so they compare against
+    /// crate paths. A dependency enabled only by a non-default feature is not
+    /// read; the entry points have no features. A package from outside the
+    /// workspace is not an `oxicrypt` crate and is not returned.
+    ///
+    /// Read from Cargo's resolved dependency graph, so a dependency declared
+    /// in a sub-table, under `[target.*]` or under another name, and a crate
+    /// linked only through another dependency, are all included. The `cargo`
+    /// that built this test runs it, offline and against the committed
+    /// `Cargo.lock`.
+    fn linked_packages() -> BTreeSet<String> {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
+        let out = std::process::Command::new(cargo)
+            .args([
+                "tree",
+                "--offline",
+                "--locked",
+                "--manifest-path",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+                "-p",
+                env!("CARGO_PKG_NAME"),
+                "-e",
+                "normal",
+                "--target",
+                "all",
+                "--prefix",
+                "none",
+                "--format",
+                "{p}",
+            ])
+            .output()
+            .expect("cargo tree could not be run");
+        assert!(
+            out.status.success(),
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+            .canonicalize()
+            .expect("the workspace root is readable");
+        String::from_utf8(out.stdout)
+            .expect("cargo tree printed non-UTF-8")
+            .lines()
+            .filter(|l| {
+                // `name vX.Y.Z (/path/to/package)`; a registry or git
+                // package prints no path and is not a workspace crate.
+                l.split_once(" (")
+                    .and_then(|(_, rest)| rest.split_once(')'))
+                    .and_then(|(dir, _)| std::path::Path::new(dir).canonicalize().ok())
+                    .is_some_and(|dir| dir.starts_with(&root))
+            })
+            .filter_map(|l| l.split_whitespace().next())
+            .filter(|p| *p != env!("CARGO_PKG_NAME"))
+            .map(|p| p.replace('-', "_"))
+            .collect()
+    }
 
     /// The body of a named free function, from its `fn` line to the closing
     /// brace in column zero.
@@ -678,102 +955,6 @@ mod tests {
             .find("\n}\n")
             .unwrap_or_else(|| panic!("{decl} is unterminated"));
         rest.get(..end).unwrap_or_default()
-    }
-
-    /// Every `oxicrypt_*` crate whose items `src` calls, ignoring comments.
-    ///
-    /// Comments are stripped because a crate path inside one is not a call, and
-    /// the exemption check below turns that distinction into a live question: it
-    /// requires each exempted crate to still be reached from this file, so a
-    /// path surviving only in prose would keep a stale exemption alive.
-    fn crates_called(src: &str) -> BTreeSet<String> {
-        let stripped: String = src
-            .lines()
-            .map(|l| match l.find("//") {
-                Some(i) => l.get(..i).unwrap_or_default(),
-                None => l,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let src = stripped.as_str();
-        let mut out = BTreeSet::new();
-        for token in src.split("oxicrypt_").skip(1) {
-            let name: String = token
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            // A path, not a word: `oxicrypt_sha::sha256` counts, prose does not.
-            if !name.is_empty() && token.get(name.len()..).is_some_and(|r| r.starts_with("::")) {
-                out.insert(format!("oxicrypt_{name}"));
-            }
-        }
-        out
-    }
-
-    /// Every crate whose `KATS` the power-up inventory lists.
-    ///
-    /// Reads `fn inventory`, which is where the groups are named.
-    /// `power_up_tests` only flattens it and mentions no crate at all, so
-    /// pointing this at that function would find nothing and report a fully
-    /// uncovered inventory as fully covered.
-    fn crates_in_inventory(src: &str) -> BTreeSet<String> {
-        let start = src
-            .find("fn inventory(")
-            .expect("inventory is no longer declared");
-        let rest = src.get(start..).unwrap_or_default();
-        let end = rest.find("\n}\n").expect("power_up_tests is unterminated");
-        crates_called(rest.get(..end).unwrap_or_default())
-            .into_iter()
-            .filter(|c| {
-                rest.get(..end)
-                    .unwrap_or_default()
-                    .contains(&format!("{c}::KATS"))
-            })
-            .collect()
-    }
-
-    /// The two scanners read paths, not prose, and each other's absence.
-    ///
-    /// Without this the check below is unfalsifiable: a scanner that returned
-    /// nothing would report a fully covered inventory.
-    #[test]
-    fn the_crate_scanners_catch_what_they_must() {
-        let called = crates_called("oxicrypt_sha::sha256(&x); oxicrypt_hmac::KATS");
-        assert!(called.contains("oxicrypt_sha") && called.contains("oxicrypt_hmac"));
-        // The mirror control: a mention that is not a path is not a call.
-        assert!(
-            crates_called("the oxicrypt_sha crate, and oxicrypt_drbg generally").is_empty(),
-            "prose must not read as a call"
-        );
-        // And a real path inside a COMMENT is still not a call. This one bites
-        // in practice: the exemption block below discusses
-        // `oxicrypt_integrity::mac_over_file_ranges` in prose, and without this
-        // the exemption's own comment would satisfy the "is it still called?"
-        // guard that exists to retire stale exemptions.
-        assert!(
-            crates_called("// see oxicrypt_ecdsa::sign for the shape").is_empty(),
-            "a crate path inside a comment is not a call"
-        );
-        assert!(
-            crates_called("let x = oxicrypt_sha::sha256(b\"\"); // and oxicrypt_ecdsa::sign")
-                == ["oxicrypt_sha".to_owned()].into_iter().collect(),
-            "code before a comment still counts; the comment does not"
-        );
-
-        let listed = crates_in_inventory(
-            "fn inventory() {\n    oxicrypt_sha::KATS,\n    oxicrypt_hmac::KATS,\n}\n",
-        );
-        assert_eq!(
-            listed.len(),
-            2,
-            "the inventory scanner misread its own shape"
-        );
-        // A crate merely named inside the inventory, without its KATS, is not
-        // covered by it — which is exactly the drift this guards against.
-        let partial = crates_in_inventory(
-            "fn inventory() {\n    oxicrypt_sha::KATS,\n    oxicrypt_aes::something_else,\n}\n",
-        );
-        assert_eq!(partial.len(), 1, "only a KATS reference counts as coverage");
     }
 
     /// A failed on-demand self-test puts the module in the error state.
@@ -817,48 +998,105 @@ mod tests {
         );
     }
 
-    /// Every algorithm crate the CLI can reach has its known-answer tests in the
-    /// power-up inventory.
+    /// Every approved algorithm crate this binary links, directly or through
+    /// another dependency, has all of its known-answer tests in the power-up
+    /// set, each exactly once, and nothing else is in it.
     ///
-    /// The module requires an integrity group before it will become operational.
-    /// That guarantee does not extend to this inventory, so a subcommand added
-    /// without its KATs would start and run an algorithm that was never
-    /// self-tested. This is the check that was missing.
+    /// The module requires an integrity group before it will become
+    /// operational. That guarantee does not extend to the algorithm
+    /// self-tests, so a subcommand added without its KATs would start and run
+    /// an algorithm that was never self-tested.
     #[test]
-    fn the_inventory_covers_every_algorithm_the_subcommands_reach() {
-        let src = include_str!("main.rs");
-        let called = crates_called(src);
-        let listed = crates_in_inventory(src);
+    fn the_inventory_covers_every_linked_algorithm_crate() {
+        let linked = linked_packages();
+        assert!(
+            linked.contains("oxicrypt_module") && linked.len() >= 4,
+            "read {linked:?} from cargo tree; the dependency reader is broken"
+        );
 
-        assert!(
-            called.len() >= 4,
-            "read only {} oxicrypt crates from this file — the scanner is broken, not the file",
-            called.len()
-        );
-        assert!(
-            !listed.is_empty(),
-            "read no crates from the inventory — the scanner is broken"
-        );
-        for (exempt, reason) in NOT_IN_THE_INVENTORY {
+        // Entries are attributed to a crate by name, so names must be unique
+        // across all slices for one crate's entry not to stand in for
+        // another's.
+        let mut all_names = BTreeSet::new();
+        for (krate, slice) in KATS_BY_CRATE {
+            for kat in *slice {
+                assert!(
+                    all_names.insert(kat.name),
+                    "KAT name {} in {krate} is not unique across crates",
+                    kat.name
+                );
+            }
+        }
+
+        let (integrity, kats) = power_up_set();
+        assert_eq!(names(integrity), names(oxicrypt_integrity::KATS));
+        let mut run = BTreeSet::new();
+        for kat in &kats {
+            assert!(run.insert(kat.name), "{} runs twice at power-up", kat.name);
+        }
+
+        for (krate, reason) in NOT_IN_THE_INVENTORY {
             assert!(!reason.is_empty());
             assert!(
-                called.contains(exempt),
-                "the exemption names {exempt}, which this file no longer calls — remove it"
+                linked.contains(*krate),
+                "the exemption names {krate}, which this binary does not link; remove it"
             );
         }
 
-        let exempt: BTreeSet<String> = NOT_IN_THE_INVENTORY
-            .iter()
-            .map(|(c, _)| (*c).to_string())
-            .collect();
-        let uncovered: Vec<&String> = called
-            .iter()
-            .filter(|c| !exempt.contains(*c) && !listed.contains(*c))
-            .collect();
+        let exempt: BTreeSet<&str> = NOT_IN_THE_INVENTORY.iter().map(|(c, _)| *c).collect();
+        let mut expected = 0usize;
+        let mut uncovered = Vec::new();
+        for krate in linked.iter().filter(|c| !exempt.contains(c.as_str())) {
+            let Some((_, slice)) = KATS_BY_CRATE.iter().find(|(k, _)| k == krate) else {
+                panic!(
+                    "{krate} is linked but KATS_BY_CRATE has no entry for it; \
+                     add its KATS here and to power_up.rs"
+                );
+            };
+            assert!(!slice.is_empty(), "{krate} publishes an empty KATS slice");
+            expected += slice.len();
+            if slice.iter().any(|k| !run.contains(k.name)) {
+                uncovered.push(krate.as_str());
+            }
+        }
         assert!(
             uncovered.is_empty(),
-            "these crates are reachable from a subcommand but their KATS are not in \
-             power_up_tests: {uncovered:?}"
+            "these crates are linked but their KATS are not in power_up_tests: {uncovered:?}"
         );
+        assert_eq!(
+            kats.len(),
+            expected,
+            "power_up_tests runs KATs from a crate that is not a linked algorithm crate"
+        );
+    }
+
+    /// [`init_module`] hands the module exactly the pair `power_up_set`
+    /// returns. The integrity test fails in an unsigned test binary, so the
+    /// call itself fails; what it passed is recorded first.
+    #[test]
+    fn init_module_passes_its_power_up_set_to_the_module() {
+        let (want_integrity, want_tests) = power_up_set();
+        // `oxi --integrity` starts the module with the same set.
+        for (what, start) in [
+            (
+                "init_module",
+                (|| {
+                    let _ = init_module();
+                }) as fn(),
+            ),
+            ("report_integrity", || {
+                let _ = super::report_integrity();
+            }),
+        ] {
+            start();
+            let (integrity, tests) = PASSED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+                .unwrap_or_else(|| panic!("{what} did not call initialize_with_tests"));
+            assert_eq!(integrity, names(want_integrity), "{what}");
+            assert_eq!(tests, names(&want_tests), "{what}");
+            assert!(!tests.is_empty());
+        }
     }
 }

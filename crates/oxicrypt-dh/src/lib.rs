@@ -82,8 +82,10 @@
 //!
 //! Public entry points gate on
 //! [`oxicrypt_module::require_operational`]; hidden `*_internal`
-//! primitives bypass the gate so the power-up KATs can run while
-//! the module is still in `SelfTest`.
+//! primitives skip that gate so the power-up KATs can run while
+//! the module is still in `SelfTest`. They call
+//! [`oxicrypt_module::require_self_test_started`] instead, so they refuse
+//! in every state other than `SelfTest` and `Operational`.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -97,6 +99,7 @@
 use oxicrypt_drbg::hmac::HmacDrbgSha256;
 use oxicrypt_module::{
     Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    require_self_test_started,
 };
 use oxicrypt_rsa::bigint3072::U3072;
 use oxicrypt_rsa::mont3072::MontCtx3072;
@@ -227,22 +230,35 @@ fn validate_public_key(y: &U3072) -> bool {
 }
 
 // ------------------------------------------------------------------
-// Core primitive (state-gate-free, for KATs)
+// Core primitive (no operational gate; for KATs)
 // ------------------------------------------------------------------
 
 /// Compute the SP 800-56Ar3 §5.7.1.1 FFC DH primitive:
 /// `Z = y_B ^ x_A mod p`.
 ///
-/// Returns `None` when:
+/// Returns [`Error::InvalidInput`] when:
 /// - `x` is not in `[1, q − 1]`
 /// - `y` fails SP 800-56Ar3 §5.6.2.3.2 partial public-key validation
 /// - `Z == 1` (SP 800-56Ar3 §5.7.1.1 error condition)
 ///
-/// This function bypasses the FIPS module state gate so it can be
-/// called from the power-up KAT runner; production callers should
-/// use [`compute_shared_secret_3072`] instead.
+/// This function skips the operational and profile gates so it can be
+/// called from the power-up KAT runner, and returns
+/// [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call (in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests);
+/// production callers should use [`compute_shared_secret_3072`] instead.
 #[doc(hidden)]
 pub fn compute_shared_secret_3072_internal(
+    x_bytes: &[u8; KEY_BYTES],
+    y_bytes: &[u8; KEY_BYTES],
+) -> Result<[u8; KEY_BYTES], Error> {
+    require_self_test_started()?;
+    compute_shared_secret_3072_internal_unguarded(x_bytes, y_bytes).ok_or(Error::InvalidInput)
+}
+
+/// Body of [`compute_shared_secret_3072_internal`], run once its guard has passed.
+fn compute_shared_secret_3072_internal_unguarded(
     x_bytes: &[u8; KEY_BYTES],
     y_bytes: &[u8; KEY_BYTES],
 ) -> Option<[u8; KEY_BYTES]> {
@@ -280,7 +296,7 @@ pub fn compute_shared_secret_3072_internal(
 }
 
 // ------------------------------------------------------------------
-// Key-pair generation (state-gate-free, for internal use)
+// Key-pair generation (no operational gate; for internal use)
 // ------------------------------------------------------------------
 
 /// Generate a DH-3072 key pair `(x, y)` where `x ∈ [1, q − 1]`
@@ -293,21 +309,41 @@ pub fn compute_shared_secret_3072_internal(
 /// `KEYGEN_MAX_ATTEMPTS = 128` fails with probability far below
 /// `2^{-128}`.
 ///
-/// Returns `None` if the DRBG fails or if all attempts are
-/// rejected (statistically impossible with a working DRBG).
+/// Returns [`Error::InvalidInput`] if the DRBG fails or if all attempts
+/// are rejected (statistically impossible with a working DRBG), and
+/// [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
 #[doc(hidden)]
 pub fn generate_keypair_3072_internal(
     drbg: &mut HmacDrbgSha256,
-) -> Option<([u8; KEY_BYTES], [u8; KEY_BYTES])> {
+) -> Result<([u8; KEY_BYTES], [u8; KEY_BYTES]), Error> {
+    require_self_test_started()?;
+    generate_keypair_3072_internal_unguarded(drbg)?.ok_or(Error::InvalidInput)
+}
+
+/// A private value `x` and public value `y`, each big-endian.
+type Keypair3072 = ([u8; KEY_BYTES], [u8; KEY_BYTES]);
+
+/// Body of [`generate_keypair_3072_internal`], run once its guard has passed.
+fn generate_keypair_3072_internal_unguarded(
+    drbg: &mut HmacDrbgSha256,
+) -> Result<Option<Keypair3072>, Error> {
     let q = U3072::from_be_bytes(&GROUP15_Q_BYTES);
     let one = U3072::from_be_bytes(&ONE_BYTES);
-    let ctx = group15_mont_ctx()?;
+    let Some(ctx) = group15_mont_ctx() else {
+        return Ok(None);
+    };
 
     let mut buf = [0u8; KEY_BYTES];
 
     for _ in 0..KEYGEN_MAX_ATTEMPTS {
-        if drbg.generate(None, &mut buf).is_err() {
-            return None;
+        if let Err(e) = drbg.generate(None, &mut buf) {
+            return match e {
+                oxicrypt_drbg::DrbgError::Module(e) => Err(e),
+                _ => Ok(None),
+            };
         }
 
         // Mask top bit so candidate < 2^3071 (q < 2^3071).
@@ -339,10 +375,10 @@ pub fn generate_keypair_3072_internal(
         // elided on a local that is dead afterwards.
         oxicrypt_zeroize::zeroize(&mut buf);
 
-        return Some((x.to_be_bytes(), y.to_be_bytes()));
+        return Ok(Some((x.to_be_bytes(), y.to_be_bytes())));
     }
 
-    None
+    Ok(None)
 }
 
 // ------------------------------------------------------------------
@@ -365,7 +401,7 @@ pub fn compute_shared_secret_3072(
 ) -> Result<[u8; KEY_BYTES], Error> {
     require_operational()?;
     require_allowed(Service::Dh3072)?;
-    compute_shared_secret_3072_internal(x_bytes, y_bytes).ok_or(Error::InvalidInput)
+    compute_shared_secret_3072_internal(x_bytes, y_bytes)
 }
 
 /// Generate a DH-3072 key pair `(private_key, public_key)`.
@@ -385,7 +421,7 @@ pub fn generate_keypair_3072(
 ) -> Result<([u8; KEY_BYTES], [u8; KEY_BYTES]), Error> {
     require_operational()?;
     require_allowed(Service::Dh3072)?;
-    generate_keypair_3072_internal(drbg).ok_or(Error::InvalidInput)
+    generate_keypair_3072_internal(drbg)
 }
 
 // ------------------------------------------------------------------
@@ -540,13 +576,15 @@ const KAT_Z: [u8; 384] = [
 /// validation.
 pub fn self_test() -> Result<(), SelfTestFailure> {
     // Positive 1: Z = y_B^{x_A} mod p.
-    let z1 = compute_shared_secret_3072_internal(&KAT_X_A, &KAT_Y_B).ok_or(SelfTestFailure)?;
+    let z1 =
+        compute_shared_secret_3072_internal(&KAT_X_A, &KAT_Y_B).map_err(|_| SelfTestFailure)?;
     if z1 != KAT_Z {
         return Err(SelfTestFailure);
     }
 
     // Positive 2: Z = y_A^{x_B} mod p (symmetry of DH).
-    let z2 = compute_shared_secret_3072_internal(&KAT_X_B, &KAT_Y_A).ok_or(SelfTestFailure)?;
+    let z2 =
+        compute_shared_secret_3072_internal(&KAT_X_B, &KAT_Y_A).map_err(|_| SelfTestFailure)?;
     if z2 != KAT_Z {
         return Err(SelfTestFailure);
     }
@@ -557,7 +595,10 @@ pub fn self_test() -> Result<(), SelfTestFailure> {
     let one_val = U3072::from_be_bytes(&ONE_BYTES);
     let (p_minus_1, _) = p.subtracting(&one_val);
     let pm1_bytes = p_minus_1.to_be_bytes();
-    if compute_shared_secret_3072_internal(&KAT_X_A, &pm1_bytes).is_some() {
+    if !matches!(
+        compute_shared_secret_3072_internal(&KAT_X_A, &pm1_bytes),
+        Err(Error::InvalidInput)
+    ) {
         return Err(SelfTestFailure);
     }
 
@@ -596,20 +637,31 @@ mod tests {
         oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, tests)
     }
 
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    fn start_module() {
+        let _ = init_with_tests(&[]);
+        assert_eq!(oxicrypt_module::require_self_test_started(), Ok(()));
+    }
+
     #[test]
     fn kat_alice_to_bob_matches() {
+        start_module();
         let z = compute_shared_secret_3072_internal(&KAT_X_A, &KAT_Y_B).unwrap();
         assert_eq!(z, KAT_Z);
     }
 
     #[test]
     fn kat_bob_to_alice_matches() {
+        start_module();
         let z = compute_shared_secret_3072_internal(&KAT_X_B, &KAT_Y_A).unwrap();
         assert_eq!(z, KAT_Z);
     }
 
     #[test]
     fn tampered_peer_key_changes_shared_secret() {
+        start_module();
         // Flipping a low-order bit of this fixture leaves y inside
         // [2, p - 2], so validation accepts it and Z changes.
         // The result should be a valid but different shared secret.
@@ -621,45 +673,70 @@ mod tests {
 
     #[test]
     fn rejects_zero_private_key() {
+        start_module();
         let zero = [0u8; KEY_BYTES];
-        assert!(compute_shared_secret_3072_internal(&zero, &KAT_Y_B).is_none());
+        assert_eq!(
+            compute_shared_secret_3072_internal(&zero, &KAT_Y_B),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_private_key_equal_to_q() {
+        start_module();
         // x == q is out of range (must be < q).
-        assert!(compute_shared_secret_3072_internal(&GROUP15_Q_BYTES, &KAT_Y_B).is_none());
+        assert_eq!(
+            compute_shared_secret_3072_internal(&GROUP15_Q_BYTES, &KAT_Y_B),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_peer_key_zero() {
+        start_module();
         let zero = [0u8; KEY_BYTES];
-        assert!(compute_shared_secret_3072_internal(&KAT_X_A, &zero).is_none());
+        assert_eq!(
+            compute_shared_secret_3072_internal(&KAT_X_A, &zero),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_peer_key_one() {
-        assert!(compute_shared_secret_3072_internal(&KAT_X_A, &ONE_BYTES).is_none());
+        start_module();
+        assert_eq!(
+            compute_shared_secret_3072_internal(&KAT_X_A, &ONE_BYTES),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_peer_key_p_minus_one() {
+        start_module();
         // p - 1 is the sole order-2 element and lies outside [2, p - 2],
         // so the range check rejects it.
         let p = U3072::from_be_bytes(&GROUP15_P_BYTES);
         let one = U3072::from_be_bytes(&ONE_BYTES);
         let (p_minus_1, _) = p.subtracting(&one);
         let pm1_bytes = p_minus_1.to_be_bytes();
-        assert!(compute_shared_secret_3072_internal(&KAT_X_A, &pm1_bytes).is_none());
+        assert_eq!(
+            compute_shared_secret_3072_internal(&KAT_X_A, &pm1_bytes),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn rejects_peer_key_equal_to_p() {
-        assert!(compute_shared_secret_3072_internal(&KAT_X_A, &GROUP15_P_BYTES).is_none());
+        start_module();
+        assert_eq!(
+            compute_shared_secret_3072_internal(&KAT_X_A, &GROUP15_P_BYTES),
+            Err(Error::InvalidInput)
+        );
     }
 
     #[test]
     fn validate_kat_public_keys_pass_range_check() {
+        start_module();
         let y_a = U3072::from_be_bytes(&KAT_Y_A);
         let y_b = U3072::from_be_bytes(&KAT_Y_B);
         assert!(validate_public_key(&y_a));
@@ -668,6 +745,7 @@ mod tests {
 
     #[test]
     fn self_test_passes() {
+        start_module();
         self_test().unwrap();
     }
 

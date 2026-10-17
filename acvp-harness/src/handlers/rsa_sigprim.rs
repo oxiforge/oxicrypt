@@ -147,7 +147,7 @@ fn handle_sigprim_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         };
 
         match result {
-            Some(sig) => {
+            Ok(sig) => {
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
                     ("testPassed".to_string(), JsonValue::Bool(true)),
@@ -157,12 +157,13 @@ fn handle_sigprim_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                     ),
                 ]));
             }
-            None => {
+            Err(oxicrypt_module::Error::InvalidInput) => {
                 results.push(JsonValue::Object(vec![
                     ("tcId".to_string(), JsonValue::Number(test_case_id)),
                     ("testPassed".to_string(), JsonValue::Bool(false)),
                 ]));
             }
+            Err(e) => return Err(DispatchError::Module(e)),
         }
     }
 

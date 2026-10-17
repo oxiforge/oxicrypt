@@ -141,9 +141,10 @@ manifest = "docs/llm-api-manifest/llm-api.yaml"
 spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"
 
 [profile.release]
-# Reproducibility matters for the software integrity KAT. Keep optimization
-# aggressive but disable LTO for now so builds are deterministic across
-# toolchain patch versions; we'll revisit in Phase 4.
+# The software integrity test does not need reproducible builds: each artifact
+# is signed after it is linked and verifies against its own signature.
+# codegen-units = 1 keeps output deterministic for a given toolchain, and LTO
+# stays off.
 opt-level = 3
 lto = false
 codegen-units = 1

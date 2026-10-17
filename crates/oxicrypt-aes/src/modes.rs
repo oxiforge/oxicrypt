@@ -29,6 +29,8 @@
     clippy::many_single_char_names
 )]
 
+use oxicrypt_module::{Error, SelfTestStarted, require_self_test_started_token};
+
 use crate::block::{Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE};
 
 // ----------------------------------------------------------------------
@@ -36,37 +38,43 @@ use crate::block::{Aes128Key, Aes192Key, Aes256Key, BLOCK_SIZE};
 // ----------------------------------------------------------------------
 
 /// Minimal block-cipher primitive used by mode code.
+///
+/// Its methods are the per-block path for a mode function that checked
+/// the module state once at its own entry point and holds the proof.
+#[doc(hidden)]
 pub trait BlockCipher {
     /// Block size in bytes. Always 16 for AES.
     const BLOCK_SIZE: usize = BLOCK_SIZE;
     /// Encrypt a 16-byte block in place.
-    fn encrypt_block(&self, block: &mut [u8; 16]);
+    #[doc(hidden)]
+    fn encrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]);
     /// Decrypt a 16-byte block in place.
-    fn decrypt_block(&self, block: &mut [u8; 16]);
+    #[doc(hidden)]
+    fn decrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]);
 }
 
 impl BlockCipher for Aes128Key {
-    fn encrypt_block(&self, block: &mut [u8; 16]) {
-        Aes128Key::encrypt_block(self, block);
+    fn encrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]) {
+        Aes128Key::encrypt_block_with(self, started, block);
     }
-    fn decrypt_block(&self, block: &mut [u8; 16]) {
-        Aes128Key::decrypt_block(self, block);
+    fn decrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]) {
+        Aes128Key::decrypt_block_with(self, started, block);
     }
 }
 impl BlockCipher for Aes192Key {
-    fn encrypt_block(&self, block: &mut [u8; 16]) {
-        Aes192Key::encrypt_block(self, block);
+    fn encrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]) {
+        Aes192Key::encrypt_block_with(self, started, block);
     }
-    fn decrypt_block(&self, block: &mut [u8; 16]) {
-        Aes192Key::decrypt_block(self, block);
+    fn decrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]) {
+        Aes192Key::decrypt_block_with(self, started, block);
     }
 }
 impl BlockCipher for Aes256Key {
-    fn encrypt_block(&self, block: &mut [u8; 16]) {
-        Aes256Key::encrypt_block(self, block);
+    fn encrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]) {
+        Aes256Key::encrypt_block_with(self, started, block);
     }
-    fn decrypt_block(&self, block: &mut [u8; 16]) {
-        Aes256Key::decrypt_block(self, block);
+    fn decrypt_block_with(&self, started: &SelfTestStarted, block: &mut [u8; 16]) {
+        Aes256Key::decrypt_block_with(self, started, block);
     }
 }
 
@@ -95,6 +103,15 @@ pub enum ModeError {
     InvalidPayloadLength,
     /// CCM: associated data exceeds the SP 800-38C §A.2.2 cap.
     InvalidAadLength,
+    /// The module refused the operation, for example
+    /// [`Error::NotOperational`] once it has entered the error state.
+    Module(Error),
+}
+
+impl From<Error> for ModeError {
+    fn from(e: Error) -> Self {
+        Self::Module(e)
+    }
 }
 
 impl core::fmt::Display for ModeError {
@@ -141,6 +158,7 @@ impl core::fmt::Display for ModeError {
                 "CCM associated data exceeds the SP 800-38C §A.2.2 maximum; \
                  reduce the AAD length"
             ),
+            Self::Module(e) => write!(f, "the module refused the operation: {e}"),
         }
     }
 }
@@ -156,6 +174,7 @@ pub fn ecb_encrypt<B: BlockCipher>(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if input.len() != output.len() || input.len() % BLOCK_SIZE != 0 {
         return Err(ModeError::NotBlockAligned);
     }
@@ -163,7 +182,7 @@ pub fn ecb_encrypt<B: BlockCipher>(
     while i < input.len() {
         let mut blk = [0u8; 16];
         blk.copy_from_slice(&input[i..i + 16]);
-        cipher.encrypt_block(&mut blk);
+        cipher.encrypt_block_with(started, &mut blk);
         output[i..i + 16].copy_from_slice(&blk);
         i += 16;
     }
@@ -176,6 +195,7 @@ pub fn ecb_decrypt<B: BlockCipher>(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if input.len() != output.len() || input.len() % BLOCK_SIZE != 0 {
         return Err(ModeError::NotBlockAligned);
     }
@@ -183,7 +203,7 @@ pub fn ecb_decrypt<B: BlockCipher>(
     while i < input.len() {
         let mut blk = [0u8; 16];
         blk.copy_from_slice(&input[i..i + 16]);
-        cipher.decrypt_block(&mut blk);
+        cipher.decrypt_block_with(started, &mut blk);
         output[i..i + 16].copy_from_slice(&blk);
         i += 16;
     }
@@ -202,6 +222,7 @@ pub fn cbc_encrypt<B: BlockCipher>(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if input.len() != output.len() || input.len() % BLOCK_SIZE != 0 {
         return Err(ModeError::NotBlockAligned);
     }
@@ -212,7 +233,7 @@ pub fn cbc_encrypt<B: BlockCipher>(
         for j in 0..16 {
             blk[j] = input[i + j] ^ prev[j];
         }
-        cipher.encrypt_block(&mut blk);
+        cipher.encrypt_block_with(started, &mut blk);
         output[i..i + 16].copy_from_slice(&blk);
         prev = blk;
         i += 16;
@@ -227,6 +248,7 @@ pub fn cbc_decrypt<B: BlockCipher>(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if input.len() != output.len() || input.len() % BLOCK_SIZE != 0 {
         return Err(ModeError::NotBlockAligned);
     }
@@ -236,7 +258,7 @@ pub fn cbc_decrypt<B: BlockCipher>(
         let mut blk = [0u8; 16];
         blk.copy_from_slice(&input[i..i + 16]);
         let cipher_in = blk;
-        cipher.decrypt_block(&mut blk);
+        cipher.decrypt_block_with(started, &mut blk);
         for j in 0..16 {
             blk[j] ^= prev[j];
         }
@@ -275,12 +297,25 @@ fn inc32(ctr: &mut [u8; 16]) {
 /// which treats the full 128-bit block as a big-endian counter —
 /// but because the Appendix F.5 test counters only span the low 32
 /// bits, [`ctr_xor`] and the Appendix F.5 vectors agree.
-pub fn ctr_xor<B: BlockCipher>(cipher: &B, icb: &[u8; 16], input: &[u8], output: &mut [u8]) {
+///
+/// # Errors
+///
+/// Returns [`ModeError::Module`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call: in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests.
+pub fn ctr_xor<B: BlockCipher>(
+    cipher: &B,
+    icb: &[u8; 16],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     let mut ctr = *icb;
     let mut i = 0;
     while i < input.len() {
         let mut ks = ctr;
-        cipher.encrypt_block(&mut ks);
+        cipher.encrypt_block_with(started, &mut ks);
         let take = core::cmp::min(16, input.len() - i);
         for j in 0..take {
             output[i + j] = input[i + j] ^ ks[j];
@@ -288,6 +323,7 @@ pub fn ctr_xor<B: BlockCipher>(cipher: &B, icb: &[u8; 16], input: &[u8], output:
         inc128_for_ctr(&mut ctr);
         i += 16;
     }
+    Ok(())
 }
 
 /// Full 128-bit big-endian increment, used by CTR mode to follow the
@@ -397,6 +433,7 @@ pub fn gcm_encrypt<B: BlockCipher>(
     ciphertext_out: &mut [u8],
     tag_out: &mut [u8; 16],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if iv.len() != 12 {
         return Err(ModeError::InvalidIvLength);
     }
@@ -406,7 +443,7 @@ pub fn gcm_encrypt<B: BlockCipher>(
 
     // H = AES_K(0^128)
     let mut h = [0u8; 16];
-    cipher.encrypt_block(&mut h);
+    cipher.encrypt_block_with(started, &mut h);
 
     // J0 = IV || 0x00000001
     let mut j0 = [0u8; 16];
@@ -419,7 +456,7 @@ pub fn gcm_encrypt<B: BlockCipher>(
     let mut i = 0;
     while i < plaintext.len() {
         let mut ks = counter;
-        cipher.encrypt_block(&mut ks);
+        cipher.encrypt_block_with(started, &mut ks);
         let take = core::cmp::min(16, plaintext.len() - i);
         for j in 0..take {
             ciphertext_out[i + j] = plaintext[i + j] ^ ks[j];
@@ -444,7 +481,7 @@ pub fn gcm_encrypt<B: BlockCipher>(
 
     // T = GCTR_K(J0, S) = AES_K(J0) XOR S (single-block).
     let mut ej0 = j0;
-    cipher.encrypt_block(&mut ej0);
+    cipher.encrypt_block_with(started, &mut ej0);
     for k in 0..16 {
         tag_out[k] = ej0[k] ^ y[k];
     }
@@ -461,6 +498,7 @@ pub fn gcm_decrypt<B: BlockCipher>(
     tag: &[u8; 16],
     plaintext_out: &mut [u8],
 ) -> Result<(), ModeError> {
+    let started = &require_self_test_started_token()?;
     if iv.len() != 12 {
         return Err(ModeError::InvalidIvLength);
     }
@@ -469,7 +507,7 @@ pub fn gcm_decrypt<B: BlockCipher>(
     }
 
     let mut h = [0u8; 16];
-    cipher.encrypt_block(&mut h);
+    cipher.encrypt_block_with(started, &mut h);
 
     let mut j0 = [0u8; 16];
     j0[..12].copy_from_slice(iv);
@@ -490,7 +528,7 @@ pub fn gcm_decrypt<B: BlockCipher>(
     y = gf_mul(&y, &h);
 
     let mut ej0 = j0;
-    cipher.encrypt_block(&mut ej0);
+    cipher.encrypt_block_with(started, &mut ej0);
     let mut computed_tag = [0u8; 16];
     for k in 0..16 {
         computed_tag[k] = ej0[k] ^ y[k];
@@ -511,7 +549,7 @@ pub fn gcm_decrypt<B: BlockCipher>(
     let mut i = 0;
     while i < ciphertext.len() {
         let mut ks = counter;
-        cipher.encrypt_block(&mut ks);
+        cipher.encrypt_block_with(started, &mut ks);
         let take = core::cmp::min(16, ciphertext.len() - i);
         for j in 0..take {
             plaintext_out[i + j] = ciphertext[i + j] ^ ks[j];
@@ -535,8 +573,9 @@ mod tests {
     // `kat` module.
     #[test]
     fn ecb_roundtrip_aes128_single_block() {
+        crate::test_support::start_module();
         let key = [0u8; 16];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let pt = [0x00; 16];
         let mut ct = [0u8; 16];
         let mut back = [0u8; 16];
@@ -547,8 +586,9 @@ mod tests {
 
     #[test]
     fn cbc_roundtrip_aes128() {
+        crate::test_support::start_module();
         let key = [0x11u8; 16];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let iv = [0x22u8; 16];
         let pt = [0xaau8; 32];
         let mut ct = [0u8; 32];
@@ -560,21 +600,23 @@ mod tests {
 
     #[test]
     fn ctr_roundtrip_aes128() {
+        crate::test_support::start_module();
         let key = [0x33u8; 16];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let icb = [0x44u8; 16];
         let pt = [0x55u8; 37];
         let mut ct = [0u8; 37];
         let mut back = [0u8; 37];
-        ctr_xor(&k, &icb, &pt, &mut ct);
-        ctr_xor(&k, &icb, &ct, &mut back);
+        ctr_xor(&k, &icb, &pt, &mut ct).unwrap();
+        ctr_xor(&k, &icb, &ct, &mut back).unwrap();
         assert_eq!(back, pt);
     }
 
     #[test]
     fn gcm_roundtrip_aes128() {
+        crate::test_support::start_module();
         let key = [0x66u8; 16];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let iv = [0x77u8; 12];
         let aad = [0x88u8; 13];
         let pt = [0x99u8; 37];
@@ -588,8 +630,9 @@ mod tests {
 
     #[test]
     fn gcm_detects_tag_tamper() {
+        crate::test_support::start_module();
         let key = [0u8; 16];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let iv = [0u8; 12];
         let pt = [0u8; 16];
         let mut ct = [0u8; 16];

@@ -89,6 +89,6 @@ absent:
 | `policy_carries_no_new_unresolved_drafting_markers` | The document is not accumulating `TODO` / `[… pending]` text |
 | `policy_states_the_as_built_accounting` | §1 / §3.1 / §9.2 crate counts match the workspace on disk |
 
-The equivalent assertions against `AGENTS.md` and `README.md` — the same crate counts, the same
-unsafe-exception set — run for everyone, so boundary-accounting drift is still caught in a public
-clone.
+The assertions against `AGENTS.md` (the workspace crate count, the in-boundary `forbid` count and
+the named unsafe-exception set) and `README.md` (the workspace crate count and a row per crate) run
+for everyone, so boundary-accounting drift is still caught in a public clone.

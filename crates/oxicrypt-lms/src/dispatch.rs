@@ -111,6 +111,7 @@ mod tests {
 
     #[test]
     fn typecode_reads_big_endian_and_refuses_short_input() {
+        crate::test_support::start_module();
         let bytes = [0, 0, 0, 5, 0, 0, 0, 3];
         assert_eq!(typecode(&bytes, 0), Some(5));
         assert_eq!(typecode(&bytes, 4), Some(3));

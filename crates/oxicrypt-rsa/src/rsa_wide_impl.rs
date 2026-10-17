@@ -16,7 +16,7 @@
 //! | `rsa_crt_${nlen}_private_exp_internal` | `pub(crate)` | CRT sign/decrypt + Bellcore |
 //! | `pairwise_consistency_test_${nlen}_internal` | `pub(crate)` | IG 10.3.A PCT |
 //! | `RsaPrivateKey$NLEN` | `pub` | Validated private-key handle |
-//! | Verify / sign / encrypt / decrypt internals | `#[doc(hidden)]` | State-gate-free primitives |
+//! | Verify / sign / encrypt / decrypt internals | `#[doc(hidden)]` | Primitives without the operational gate |
 //! | Public gated wrappers | `pub` | Module-gated entry points |
 //!
 //! # Architecture note
@@ -63,7 +63,9 @@ macro_rules! define_rsa_wide {
         svc_pss_verify = $svc_pss_verify:expr;
         svc_oaep = $svc_oaep:expr;
     ) => {
-        use oxicrypt_module::{Error, Service, require_allowed, require_operational};
+        use oxicrypt_module::{
+            Error, Service, require_allowed, require_operational, require_self_test_started,
+        };
 
         /// Fixed modulus byte length.
         pub const MODULUS_BYTES: usize = $fbytes;
@@ -101,7 +103,7 @@ macro_rules! define_rsa_wide {
         }
 
         /// Borrowed CRT references for internal primitives.
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy)]
         pub(crate) struct $crt_raw<'a> {
             pub p: &'a [u8; CRT_HALF_BYTES],
             pub q: &'a [u8; CRT_HALF_BYTES],
@@ -121,102 +123,173 @@ macro_rules! define_rsa_wide {
             $full { limbs }
         }
 
-        // ────────── Core verify primitive (state-gate-free) ────
+        // ────────── Core verify primitive (no operational gate) ────
 
-        /// RSASSA-PKCS1-v1_5 verify, bypassing the FIPS module state gate.
+        /// RSASSA-PKCS1-v1_5 verify, skipping the operational and profile gates.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn pkcs1_v15_verify_internal(
             n_bytes: &[u8; MODULUS_BYTES],
             e: u64,
             msg: &[u8],
             sig_bytes: &[u8; SIGNATURE_BYTES],
-        ) -> bool {
+        ) -> Result<bool, Error> {
+            require_self_test_started()?;
+            pkcs1_v15_verify_internal_unguarded(n_bytes, e, msg, sig_bytes)
+        }
+
+        /// Body of [`pkcs1_v15_verify_internal`], run once its guard has passed.
+        fn pkcs1_v15_verify_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            msg: &[u8],
+            sig_bytes: &[u8; SIGNATURE_BYTES],
+        ) -> Result<bool, Error> {
             let n = $full::from_be_bytes(n_bytes);
             let Some(ctx) = $fmont::new(n) else {
-                return false;
+                return Ok(false);
             };
             let s = $full::from_be_bytes(sig_bytes);
             if s.ct_lt(&ctx.n) != 1 {
-                return false;
+                return Ok(false);
             }
             let m = ctx.pow_public_u64(&s, e);
             let em_recovered = m.to_be_bytes();
-            let digest = crate::pkcs1_v15::sha256_internal(msg);
+            let digest = crate::pkcs1_v15::sha256_digest(msg)?;
             let mut em_expected = [0u8; MODULUS_BYTES];
             if crate::pkcs1_v15::encode_sha256(&digest, &mut em_expected).is_none() {
-                return false;
+                return Ok(false);
             }
-            crate::pkcs1_v15::ct_eq(&em_recovered, &em_expected) == 1
+            Ok(crate::pkcs1_v15::ct_eq(&em_recovered, &em_expected) == 1)
         }
 
-        // ────────── Core sign primitive (state-gate-free) ──────
+        // ────────── Core sign primitive (no operational gate) ──────
 
         /// RSASSA-PKCS1-v1_5 sign via direct `m^d mod n` ladder.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn pkcs1_v15_sign_internal(
             n_bytes: &[u8; MODULUS_BYTES],
             d_bytes: &[u8; MODULUS_BYTES],
             msg: &[u8],
-        ) -> Option<[u8; SIGNATURE_BYTES]> {
+        ) -> Result<[u8; SIGNATURE_BYTES], Error> {
+            require_self_test_started()?;
+            pkcs1_v15_sign_internal_unguarded(n_bytes, d_bytes, msg)?.ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`pkcs1_v15_sign_internal`], run once its guard has passed.
+        fn pkcs1_v15_sign_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            d_bytes: &[u8; MODULUS_BYTES],
+            msg: &[u8],
+        ) -> Result<Option<[u8; SIGNATURE_BYTES]>, Error> {
             let n = $full::from_be_bytes(n_bytes);
-            let ctx = $fmont::new(n)?;
+            let Some(ctx) = $fmont::new(n) else {
+                return Ok(None);
+            };
             let d = $full::from_be_bytes(d_bytes);
             if d.ct_lt(&ctx.n) != 1 {
-                return None;
+                return Ok(None);
             }
-            let digest = crate::pkcs1_v15::sha256_internal(msg);
+            let digest = crate::pkcs1_v15::sha256_digest(msg)?;
             let mut em = [0u8; MODULUS_BYTES];
-            crate::pkcs1_v15::encode_sha256(&digest, &mut em)?;
+            if crate::pkcs1_v15::encode_sha256(&digest, &mut em).is_none() {
+                return Ok(None);
+            }
             let m = $full::from_be_bytes(&em);
             let s = ctx.pow_secret(&m, &d);
-            Some(s.to_be_bytes())
+            Ok(Some(s.to_be_bytes()))
         }
 
         // ────────── Core PSS sign primitive ────────────────────
 
         /// RSASSA-PSS sign with caller-supplied salt.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn pss_sign_internal(
             n_bytes: &[u8; MODULUS_BYTES],
             d_bytes: &[u8; MODULUS_BYTES],
             msg: &[u8],
             salt: &[u8; crate::pss::SLEN],
-        ) -> Option<[u8; SIGNATURE_BYTES]> {
+        ) -> Result<[u8; SIGNATURE_BYTES], Error> {
+            require_self_test_started()?;
+            pss_sign_internal_unguarded(n_bytes, d_bytes, msg, salt)?.ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`pss_sign_internal`], run once its guard has passed.
+        fn pss_sign_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            d_bytes: &[u8; MODULUS_BYTES],
+            msg: &[u8],
+            salt: &[u8; crate::pss::SLEN],
+        ) -> Result<Option<[u8; SIGNATURE_BYTES]>, Error> {
             let n = $full::from_be_bytes(n_bytes);
-            let ctx = $fmont::new(n)?;
+            let Some(ctx) = $fmont::new(n) else {
+                return Ok(None);
+            };
             let d = $full::from_be_bytes(d_bytes);
             if d.ct_lt(&ctx.n) != 1 {
-                return None;
+                return Ok(None);
             }
-            let digest = crate::pkcs1_v15::sha256_internal(msg);
+            let digest = crate::pkcs1_v15::sha256_digest(msg)?;
             let mut em = [0u8; $emlen];
-            crate::pss::emsa_pss_encode_n(&digest, salt, $embits, &mut em)?;
+            if crate::pss::emsa_pss_encode_n(&digest, salt, $embits, &mut em)?.is_none() {
+                return Ok(None);
+            }
             let m = $full::from_be_bytes(&em);
             let s = ctx.pow_secret(&m, &d);
-            Some(s.to_be_bytes())
+            Ok(Some(s.to_be_bytes()))
         }
 
         // ────────── PSS verify ─────────────────────────────────
 
         /// RSASSA-PSS verify.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn pss_verify_internal(
             n_bytes: &[u8; MODULUS_BYTES],
             e: u64,
             msg: &[u8],
             sig_bytes: &[u8; SIGNATURE_BYTES],
-        ) -> bool {
+        ) -> Result<bool, Error> {
+            require_self_test_started()?;
+            pss_verify_internal_unguarded(n_bytes, e, msg, sig_bytes)
+        }
+
+        /// Body of [`pss_verify_internal`], run once its guard has passed.
+        fn pss_verify_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            msg: &[u8],
+            sig_bytes: &[u8; SIGNATURE_BYTES],
+        ) -> Result<bool, Error> {
             let n = $full::from_be_bytes(n_bytes);
             let Some(ctx) = $fmont::new(n) else {
-                return false;
+                return Ok(false);
             };
             let s = $full::from_be_bytes(sig_bytes);
             if s.ct_lt(&ctx.n) != 1 {
-                return false;
+                return Ok(false);
             }
             let m = ctx.pow_public_u64(&s, e);
             let em = m.to_be_bytes();
-            let digest = crate::pkcs1_v15::sha256_internal(msg);
+            let digest = crate::pkcs1_v15::sha256_digest(msg)?;
             crate::pss::emsa_pss_verify_n(&digest, $embits, &em)
         }
 
@@ -295,6 +368,11 @@ macro_rules! define_rsa_wide {
         // ──── CRT sign wrappers ────────────────────────────────
 
         /// PKCS1v1.5 sign via CRT path.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         #[allow(clippy::too_many_arguments, clippy::similar_names)]
         pub fn pkcs1_v15_sign_crt_internal(
@@ -306,10 +384,31 @@ macro_rules! define_rsa_wide {
             dq_bytes: &[u8; CRT_HALF_BYTES],
             qinv_bytes: &[u8; CRT_HALF_BYTES],
             msg: &[u8],
-        ) -> Option<[u8; SIGNATURE_BYTES]> {
-            let digest = crate::pkcs1_v15::sha256_internal(msg);
+        ) -> Result<[u8; SIGNATURE_BYTES], Error> {
+            require_self_test_started()?;
+            pkcs1_v15_sign_crt_internal_unguarded(
+                n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, msg,
+            )?
+            .ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`pkcs1_v15_sign_crt_internal`], run once its guard has passed.
+        #[allow(clippy::too_many_arguments, clippy::similar_names)]
+        fn pkcs1_v15_sign_crt_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            p_bytes: &[u8; CRT_HALF_BYTES],
+            q_bytes: &[u8; CRT_HALF_BYTES],
+            dp_bytes: &[u8; CRT_HALF_BYTES],
+            dq_bytes: &[u8; CRT_HALF_BYTES],
+            qinv_bytes: &[u8; CRT_HALF_BYTES],
+            msg: &[u8],
+        ) -> Result<Option<[u8; SIGNATURE_BYTES]>, Error> {
+            let digest = crate::pkcs1_v15::sha256_digest(msg)?;
             let mut em = [0u8; MODULUS_BYTES];
-            crate::pkcs1_v15::encode_sha256(&digest, &mut em)?;
+            if crate::pkcs1_v15::encode_sha256(&digest, &mut em).is_none() {
+                return Ok(None);
+            }
             let crt = $crt_raw {
                 p: p_bytes,
                 q: q_bytes,
@@ -317,10 +416,15 @@ macro_rules! define_rsa_wide {
                 dq: dq_bytes,
                 qinv: qinv_bytes,
             };
-            crt_private_exp_internal(n_bytes, e, crt, &em)
+            Ok(crt_private_exp_internal(n_bytes, e, crt, &em))
         }
 
         /// PSS sign via CRT path.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         #[allow(clippy::too_many_arguments, clippy::similar_names)]
         pub fn pss_sign_crt_internal(
@@ -333,10 +437,32 @@ macro_rules! define_rsa_wide {
             qinv_bytes: &[u8; CRT_HALF_BYTES],
             msg: &[u8],
             salt: &[u8; crate::pss::SLEN],
-        ) -> Option<[u8; SIGNATURE_BYTES]> {
-            let digest = crate::pkcs1_v15::sha256_internal(msg);
+        ) -> Result<[u8; SIGNATURE_BYTES], Error> {
+            require_self_test_started()?;
+            pss_sign_crt_internal_unguarded(
+                n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, msg, salt,
+            )?
+            .ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`pss_sign_crt_internal`], run once its guard has passed.
+        #[allow(clippy::too_many_arguments, clippy::similar_names)]
+        fn pss_sign_crt_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            p_bytes: &[u8; CRT_HALF_BYTES],
+            q_bytes: &[u8; CRT_HALF_BYTES],
+            dp_bytes: &[u8; CRT_HALF_BYTES],
+            dq_bytes: &[u8; CRT_HALF_BYTES],
+            qinv_bytes: &[u8; CRT_HALF_BYTES],
+            msg: &[u8],
+            salt: &[u8; crate::pss::SLEN],
+        ) -> Result<Option<[u8; SIGNATURE_BYTES]>, Error> {
+            let digest = crate::pkcs1_v15::sha256_digest(msg)?;
             let mut em = [0u8; $emlen];
-            crate::pss::emsa_pss_encode_n(&digest, salt, $embits, &mut em)?;
+            if crate::pss::emsa_pss_encode_n(&digest, salt, $embits, &mut em)?.is_none() {
+                return Ok(None);
+            }
             let crt = $crt_raw {
                 p: p_bytes,
                 q: q_bytes,
@@ -344,12 +470,17 @@ macro_rules! define_rsa_wide {
                 dq: dq_bytes,
                 qinv: qinv_bytes,
             };
-            crt_private_exp_internal(n_bytes, e, crt, &em)
+            Ok(crt_private_exp_internal(n_bytes, e, crt, &em))
         }
 
         // ──── OAEP encrypt / decrypt ───────────────────────────
 
         /// RSAES-OAEP encrypt with caller-supplied seed.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn oaep_encrypt_internal(
             n_bytes: &[u8; MODULUS_BYTES],
@@ -357,17 +488,39 @@ macro_rules! define_rsa_wide {
             label: &[u8],
             msg: &[u8],
             seed: &[u8; crate::oaep::HLEN],
-        ) -> Option<[u8; MODULUS_BYTES]> {
+        ) -> Result<[u8; MODULUS_BYTES], Error> {
+            require_self_test_started()?;
+            oaep_encrypt_internal_unguarded(n_bytes, e, label, msg, seed)?
+                .ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`oaep_encrypt_internal`], run once its guard has passed.
+        fn oaep_encrypt_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            label: &[u8],
+            msg: &[u8],
+            seed: &[u8; crate::oaep::HLEN],
+        ) -> Result<Option<[u8; MODULUS_BYTES]>, Error> {
             let n = $full::from_be_bytes(n_bytes);
-            let ctx_n = $fmont::new(n)?;
+            let Some(ctx_n) = $fmont::new(n) else {
+                return Ok(None);
+            };
             let mut em = [0u8; OAEP_K];
-            crate::oaep::emsa_oaep_encode_n(label, msg, seed, &mut em)?;
+            if crate::oaep::emsa_oaep_encode_n(label, msg, seed, &mut em)?.is_none() {
+                return Ok(None);
+            }
             let m = $full::from_be_bytes(&em);
             let c = ctx_n.pow_public_u64(&m, e);
-            Some(c.to_be_bytes())
+            Ok(Some(c.to_be_bytes()))
         }
 
         /// RSAES-OAEP decrypt (non-CRT path).
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn oaep_decrypt_nocrt_internal(
             n_bytes: &[u8; MODULUS_BYTES],
@@ -375,16 +528,31 @@ macro_rules! define_rsa_wide {
             label: &[u8],
             ct: &[u8; MODULUS_BYTES],
             out: &mut [u8],
-        ) -> Option<usize> {
+        ) -> Result<usize, Error> {
+            require_self_test_started()?;
+            oaep_decrypt_nocrt_internal_unguarded(n_bytes, d_bytes, label, ct, out)?
+                .ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`oaep_decrypt_nocrt_internal`], run once its guard has passed.
+        fn oaep_decrypt_nocrt_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            d_bytes: &[u8; MODULUS_BYTES],
+            label: &[u8],
+            ct: &[u8; MODULUS_BYTES],
+            out: &mut [u8],
+        ) -> Result<Option<usize>, Error> {
             let n = $full::from_be_bytes(n_bytes);
-            let ctx_n = $fmont::new(n)?;
+            let Some(ctx_n) = $fmont::new(n) else {
+                return Ok(None);
+            };
             let d = $full::from_be_bytes(d_bytes);
             if d.ct_lt(&ctx_n.n) != 1 {
-                return None;
+                return Ok(None);
             }
             let c = $full::from_be_bytes(ct);
             if c.ct_lt(&ctx_n.n) != 1 {
-                return None;
+                return Ok(None);
             }
             let m = ctx_n.pow_secret(&c, &d);
             let em = m.to_be_bytes();
@@ -392,6 +560,11 @@ macro_rules! define_rsa_wide {
         }
 
         /// RSAES-OAEP decrypt via CRT path with Bellcore.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         #[allow(clippy::too_many_arguments, clippy::similar_names)]
         pub fn oaep_decrypt_crt_internal(
@@ -405,7 +578,28 @@ macro_rules! define_rsa_wide {
             label: &[u8],
             ct: &[u8; MODULUS_BYTES],
             out: &mut [u8],
-        ) -> Option<usize> {
+        ) -> Result<usize, Error> {
+            require_self_test_started()?;
+            oaep_decrypt_crt_internal_unguarded(
+                n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, label, ct, out,
+            )?
+            .ok_or(Error::InvalidInput)
+        }
+
+        /// Body of [`oaep_decrypt_crt_internal`], run once its guard has passed.
+        #[allow(clippy::too_many_arguments, clippy::similar_names)]
+        fn oaep_decrypt_crt_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            p_bytes: &[u8; CRT_HALF_BYTES],
+            q_bytes: &[u8; CRT_HALF_BYTES],
+            dp_bytes: &[u8; CRT_HALF_BYTES],
+            dq_bytes: &[u8; CRT_HALF_BYTES],
+            qinv_bytes: &[u8; CRT_HALF_BYTES],
+            label: &[u8],
+            ct: &[u8; MODULUS_BYTES],
+            out: &mut [u8],
+        ) -> Result<Option<usize>, Error> {
             let crt = $crt_raw {
                 p: p_bytes,
                 q: q_bytes,
@@ -413,29 +607,46 @@ macro_rules! define_rsa_wide {
                 dq: dq_bytes,
                 qinv: qinv_bytes,
             };
-            let em = crt_private_exp_internal(n_bytes, e, crt, ct)?;
+            let Some(em) = crt_private_exp_internal(n_bytes, e, crt, ct) else {
+                return Ok(None);
+            };
             crate::oaep::emsa_oaep_decode_n(label, &em, out)
         }
 
         // ──── Pairwise Consistency Test ────────────────────────
 
         /// IG 10.3.A PCT: sign a probe, verify it back.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn pairwise_consistency_test_internal(
             n_bytes: &[u8; MODULUS_BYTES],
             e: u64,
             d_bytes: &[u8; MODULUS_BYTES],
-        ) -> bool {
+        ) -> Result<bool, Error> {
+            require_self_test_started()?;
+            pairwise_consistency_test_internal_unguarded(n_bytes, e, d_bytes)
+        }
+
+        /// Body of [`pairwise_consistency_test_internal`], run once its guard has passed.
+        fn pairwise_consistency_test_internal_unguarded(
+            n_bytes: &[u8; MODULUS_BYTES],
+            e: u64,
+            d_bytes: &[u8; MODULUS_BYTES],
+        ) -> Result<bool, Error> {
             const PROBE: &[u8] = concat!(
                 "fips-rsa PCT probe / RSA-",
                 stringify!($nlen),
                 " / PKCS#1 v1.5 / SHA-256"
             )
             .as_bytes();
-            let Some(sig) = pkcs1_v15_sign_internal(n_bytes, d_bytes, PROBE) else {
-                return false;
+            let Some(sig) = pkcs1_v15_sign_internal_unguarded(n_bytes, d_bytes, PROBE)? else {
+                return Ok(false);
             };
-            pkcs1_v15_verify_internal(n_bytes, e, PROBE, &sig)
+            pkcs1_v15_verify_internal_unguarded(n_bytes, e, PROBE, &sig)
         }
 
         // ──── Public gated wrappers ────────────────────────────
@@ -449,7 +660,7 @@ macro_rules! define_rsa_wide {
         ) -> Result<(), Error> {
             require_operational()?;
             require_allowed($svc_pkcs1_verify)?;
-            if pkcs1_v15_verify_internal(n_bytes, e, msg, sig_bytes) {
+            if pkcs1_v15_verify_internal_unguarded(n_bytes, e, msg, sig_bytes)? {
                 Ok(())
             } else {
                 Err(Error::InvalidInput)
@@ -465,7 +676,7 @@ macro_rules! define_rsa_wide {
         ) -> Result<(), Error> {
             require_operational()?;
             require_allowed($svc_pss_verify)?;
-            if pss_verify_internal(n_bytes, e, msg, sig_bytes) {
+            if pss_verify_internal_unguarded(n_bytes, e, msg, sig_bytes)? {
                 Ok(())
             } else {
                 Err(Error::InvalidInput)
@@ -483,9 +694,12 @@ macro_rules! define_rsa_wide {
             require_operational()?;
             require_allowed($svc_oaep)?;
             let mut seed = [0u8; crate::oaep::HLEN];
-            drbg.generate(None, &mut seed)
-                .map_err(|_| Error::InvalidInput)?;
-            oaep_encrypt_internal(n_bytes, e, label, msg, &seed).ok_or(Error::InvalidInput)
+            drbg.generate(None, &mut seed).map_err(|e| match e {
+                oxicrypt_drbg::DrbgError::Module(e) => e,
+                _ => Error::InvalidInput,
+            })?;
+            oaep_encrypt_internal_unguarded(n_bytes, e, label, msg, &seed)?
+                .ok_or(Error::InvalidInput)
         }
 
         // ──── Private-key handle ───────────────────────────────
@@ -519,7 +733,7 @@ macro_rules! define_rsa_wide {
             ) -> Result<Self, Error> {
                 require_operational()?;
                 require_allowed($svc_keygen)?;
-                if !pairwise_consistency_test_internal(n_bytes, e, d_bytes) {
+                if !pairwise_consistency_test_internal_unguarded(n_bytes, e, d_bytes)? {
                     return Err(Error::InvalidInput);
                 }
                 Ok(Self {
@@ -550,12 +764,13 @@ macro_rules! define_rsa_wide {
                     " / PKCS#1 v1.5 / SHA-256"
                 )
                 .as_bytes();
-                let Some(sig) = pkcs1_v15_sign_crt_internal(
+                let Some(sig) = pkcs1_v15_sign_crt_internal_unguarded(
                     n_bytes, e, p_bytes, q_bytes, dp_bytes, dq_bytes, qinv_bytes, probe,
-                ) else {
+                )?
+                else {
                     return Err(Error::InvalidInput);
                 };
-                if !pkcs1_v15_verify_internal(n_bytes, e, probe, &sig) {
+                if !pkcs1_v15_verify_internal_unguarded(n_bytes, e, probe, &sig)? {
                     return Err(Error::InvalidInput);
                 }
                 Ok(Self {
@@ -573,15 +788,29 @@ macro_rules! define_rsa_wide {
             }
 
             /// Public modulus, big-endian.
-            #[must_use]
-            pub fn modulus_bytes(&self) -> &[u8; MODULUS_BYTES] {
-                &self.n_bytes
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::NotOperational`] unless
+            /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+            /// `Operational`, or in `SelfTest` on the thread running the power-up
+            /// self-tests), so a key built before a failure outputs nothing after it.
+            pub fn modulus_bytes(&self) -> Result<&[u8; MODULUS_BYTES], Error> {
+                require_self_test_started()?;
+                Ok(&self.n_bytes)
             }
 
             /// Public exponent.
-            #[must_use]
-            pub fn public_exponent(&self) -> u64 {
-                self.e
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::NotOperational`] unless
+            /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+            /// `Operational`, or in `SelfTest` on the thread running the power-up
+            /// self-tests), so a key built before a failure outputs nothing after it.
+            pub fn public_exponent(&self) -> Result<u64, Error> {
+                require_self_test_started()?;
+                Ok(self.e)
             }
 
             /// Sign with RSASSA-PKCS1-v1_5 SHA-256.
@@ -592,7 +821,7 @@ macro_rules! define_rsa_wide {
                 require_operational()?;
                 require_allowed($svc_pkcs1_sign)?;
                 if let Some(crt) = self.crt.as_ref() {
-                    pkcs1_v15_sign_crt_internal(
+                    pkcs1_v15_sign_crt_internal_unguarded(
                         &self.n_bytes,
                         self.e,
                         &crt.p_bytes,
@@ -601,10 +830,10 @@ macro_rules! define_rsa_wide {
                         &crt.dq_bytes,
                         &crt.qinv_bytes,
                         msg,
-                    )
+                    )?
                     .ok_or(Error::InvalidInput)
                 } else {
-                    pkcs1_v15_sign_internal(&self.n_bytes, &self.d_bytes, msg)
+                    pkcs1_v15_sign_internal_unguarded(&self.n_bytes, &self.d_bytes, msg)?
                         .ok_or(Error::InvalidInput)
                 }
             }
@@ -618,7 +847,7 @@ macro_rules! define_rsa_wide {
                 require_operational()?;
                 require_allowed($svc_pss_sign)?;
                 if let Some(crt) = self.crt.as_ref() {
-                    pss_sign_crt_internal(
+                    pss_sign_crt_internal_unguarded(
                         &self.n_bytes,
                         self.e,
                         &crt.p_bytes,
@@ -628,10 +857,10 @@ macro_rules! define_rsa_wide {
                         &crt.qinv_bytes,
                         msg,
                         salt,
-                    )
+                    )?
                     .ok_or(Error::InvalidInput)
                 } else {
-                    pss_sign_internal(&self.n_bytes, &self.d_bytes, msg, salt)
+                    pss_sign_internal_unguarded(&self.n_bytes, &self.d_bytes, msg, salt)?
                         .ok_or(Error::InvalidInput)
                 }
             }
@@ -645,10 +874,12 @@ macro_rules! define_rsa_wide {
                 require_operational()?;
                 require_allowed($svc_pss_sign)?;
                 let mut salt = [0u8; crate::pss::SLEN];
-                drbg.generate(None, &mut salt)
-                    .map_err(|_| Error::InvalidInput)?;
+                drbg.generate(None, &mut salt).map_err(|e| match e {
+                    oxicrypt_drbg::DrbgError::Module(e) => e,
+                    _ => Error::InvalidInput,
+                })?;
                 if let Some(crt) = self.crt.as_ref() {
-                    pss_sign_crt_internal(
+                    pss_sign_crt_internal_unguarded(
                         &self.n_bytes,
                         self.e,
                         &crt.p_bytes,
@@ -658,10 +889,10 @@ macro_rules! define_rsa_wide {
                         &crt.qinv_bytes,
                         msg,
                         &salt,
-                    )
+                    )?
                     .ok_or(Error::InvalidInput)
                 } else {
-                    pss_sign_internal(&self.n_bytes, &self.d_bytes, msg, &salt)
+                    pss_sign_internal_unguarded(&self.n_bytes, &self.d_bytes, msg, &salt)?
                         .ok_or(Error::InvalidInput)
                 }
             }
@@ -679,7 +910,7 @@ macro_rules! define_rsa_wide {
                     return Err(Error::InvalidInput);
                 }
                 if let Some(crt) = self.crt.as_ref() {
-                    oaep_decrypt_crt_internal(
+                    oaep_decrypt_crt_internal_unguarded(
                         &self.n_bytes,
                         self.e,
                         &crt.p_bytes,
@@ -690,11 +921,17 @@ macro_rules! define_rsa_wide {
                         label,
                         ct,
                         out,
-                    )
+                    )?
                     .ok_or(Error::InvalidInput)
                 } else {
-                    oaep_decrypt_nocrt_internal(&self.n_bytes, &self.d_bytes, label, ct, out)
-                        .ok_or(Error::InvalidInput)
+                    oaep_decrypt_nocrt_internal_unguarded(
+                        &self.n_bytes,
+                        &self.d_bytes,
+                        label,
+                        ct,
+                        out,
+                    )?
+                    .ok_or(Error::InvalidInput)
                 }
             }
 
@@ -706,7 +943,11 @@ macro_rules! define_rsa_wide {
             ) -> Result<Self, Error> {
                 require_operational()?;
                 require_allowed($svc_keygen)?;
-                let km = $keygen_fn(drbg, e).map_err(|_| Error::InvalidInput)?;
+                let km = $keygen_fn(drbg, e).map_err(|e| match e {
+                    crate::keygen::KeygenError::Drbg(oxicrypt_drbg::DrbgError::Module(e))
+                    | crate::keygen::KeygenError::Module(e) => e,
+                    _ => Error::InvalidInput,
+                })?;
                 let n_bytes = km.n.to_be_bytes();
                 let d_bytes = km.d.to_be_bytes();
                 let p_bytes = km.p.to_be_bytes();

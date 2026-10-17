@@ -110,12 +110,15 @@ fn sha384_hash(data: &[u8]) -> Result<[u8; 48], DispatchError> {
 
 /// HKDF-Extract = HMAC(salt, IKM). Returns a fresh L-byte PRK.
 /// `salt` of `None` is interpreted as `L` zero bytes per RFC 5869 §2.2.
-fn hkdf_extract<P: PrfHmac<L>, const L: usize>(salt: Option<&[u8]>, ikm: &[u8]) -> [u8; L] {
+fn hkdf_extract<P: PrfHmac<L>, const L: usize>(
+    salt: Option<&[u8]>,
+    ikm: &[u8],
+) -> Result<[u8; L], DispatchError> {
     let zero_salt = [0u8; L];
     let salt_bytes: &[u8] = salt.unwrap_or(&zero_salt);
-    let mut mac = P::prf_new(salt_bytes);
+    let mut mac = P::prf_new(salt_bytes)?;
     mac.prf_update(ikm);
-    mac.prf_finalize()
+    Ok(mac.prf_finalize()?)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -209,7 +212,7 @@ where
     //             +-----> Derive-Secret(., "s ap traffic", ClientHello..server Finished)
     //             +-----> Derive-Secret(., "exp master",   ClientHello..server Finished)
     //             +-----> Derive-Secret(., "res master",   ClientHello..client Finished)
-    let early_secret: [u8; L] = hkdf_extract::<P, L>(Some(&zero), psk);
+    let early_secret: [u8; L] = hkdf_extract::<P, L>(Some(&zero), psk)?;
 
     let mut client_early_traffic_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -217,7 +220,7 @@ where
         b"c e traffic",
         &th_client_hello,
         &mut client_early_traffic_secret,
-    );
+    )?;
 
     let mut early_exporter_master_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -225,7 +228,7 @@ where
         b"e exp master",
         &th_client_hello,
         &mut early_exporter_master_secret,
-    );
+    )?;
 
     // Hash of the empty string for the "derived" Derive-Secret calls.
     let th_empty = hash_fn(&[])?;
@@ -236,8 +239,8 @@ where
         b"derived",
         &th_empty,
         &mut handshake_extract_salt,
-    );
-    let handshake_secret: [u8; L] = hkdf_extract::<P, L>(Some(&handshake_extract_salt), dhe);
+    )?;
+    let handshake_secret: [u8; L] = hkdf_extract::<P, L>(Some(&handshake_extract_salt), dhe)?;
 
     let mut client_handshake_traffic_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -245,7 +248,7 @@ where
         b"c hs traffic",
         &th_server_hello,
         &mut client_handshake_traffic_secret,
-    );
+    )?;
 
     let mut server_handshake_traffic_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -253,7 +256,7 @@ where
         b"s hs traffic",
         &th_server_hello,
         &mut server_handshake_traffic_secret,
-    );
+    )?;
 
     let mut master_extract_salt = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -261,8 +264,8 @@ where
         b"derived",
         &th_empty,
         &mut master_extract_salt,
-    );
-    let master_secret: [u8; L] = hkdf_extract::<P, L>(Some(&master_extract_salt), &zero);
+    )?;
+    let master_secret: [u8; L] = hkdf_extract::<P, L>(Some(&master_extract_salt), &zero)?;
 
     let mut client_application_traffic_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -270,7 +273,7 @@ where
         b"c ap traffic",
         &th_server_finished,
         &mut client_application_traffic_secret,
-    );
+    )?;
 
     let mut server_application_traffic_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -278,7 +281,7 @@ where
         b"s ap traffic",
         &th_server_finished,
         &mut server_application_traffic_secret,
-    );
+    )?;
 
     let mut exporter_master_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -286,7 +289,7 @@ where
         b"exp master",
         &th_server_finished,
         &mut exporter_master_secret,
-    );
+    )?;
 
     let mut resumption_master_secret = [0u8; L];
     tls13_derive_secret_internal::<P, L>(
@@ -294,7 +297,7 @@ where
         b"res master",
         &th_client_finished,
         &mut resumption_master_secret,
-    );
+    )?;
 
     // Suppress unused tls13_hkdf_expand_label_internal warning — we
     // route through tls13_derive_secret_internal everywhere here, but

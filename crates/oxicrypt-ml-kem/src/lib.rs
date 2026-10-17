@@ -44,9 +44,15 @@
 //!
 //! # Power-up self-tests
 //!
-//! [`KATS`] aggregates the per-variant power-up KATs (one entry per
-//! parameter set, each running a deterministic round-trip plus an
-//! implicit-rejection negative test).
+//! [`KATS`] holds the power-up cryptographic algorithm self-tests
+//! required by FIPS 140-3 IG 10.3.A item 14, each a known-answer test
+//! against a NIST ACVP-Server vector: key generation compared to the
+//! expected decapsulation key, encapsulation compared to the expected
+//! ciphertext and shared secret, and decapsulation of a valid and of a
+//! modified ciphertext compared to the expected shared secret, which
+//! covers the implicit-rejection path. They run on ML-KEM-1024, approved
+//! under the CNSA 2.0, Migration and Unrestricted profiles, so the
+//! self-tested set is one that CNSA 2.0 uses; all three parameter sets share one implementation through the `ml_kem_impl!` macro.
 //!
 //! # Backward compatibility
 //!
@@ -89,8 +95,10 @@
 //! Public entry points (`keygen`, `encapsulate`, `decapsulate` per
 //! variant) gate on [`oxicrypt_module::require_operational`] and
 //! [`oxicrypt_module::require_allowed`]. The `*_internal` surface
-//! (hidden) runs gate-free so power-up KATs can execute during
-//! `SelfTest`.
+//! (hidden) runs without the operational gate so power-up KATs can
+//! execute during `SelfTest`; it calls
+//! [`oxicrypt_module::require_self_test_started`] instead, so it refuses
+//! in every state other than `SelfTest` and `Operational`.
 //!
 //! # Constant-time behaviour
 //!
@@ -120,6 +128,8 @@
 #![cfg_attr(not(feature = "parallel"), no_std)]
 #![forbid(unsafe_code)]
 
+mod cast;
+mod cast_vectors;
 mod encode;
 mod field;
 pub(crate) mod ml_kem_impl;
@@ -128,6 +138,8 @@ mod ntt;
 pub mod params;
 mod poly;
 mod sample;
+#[cfg(feature = "parallel")]
+mod sweep;
 
 /// ML-KEM-512 instantiation (FIPS 203 Table 2: k=2, η₁=3, η₂=2, dᵤ=10, dᵥ=4).
 pub mod ml_kem_512;
@@ -149,16 +161,24 @@ pub use ml_kem_1024::{
     encaps_internal, encapsulate, keygen, keygen_internal,
 };
 
-use oxicrypt_module::KatEntry;
+pub use cast::KATS;
 
-/// Power-up KATs aggregated across all three ML-KEM parameter sets.
-///
-/// Each entry runs a deterministic round-trip plus an implicit-
-/// rejection negative test for its variant. The aggregated slice is
-/// what `oxicrypt-integrity` registers with
-/// [`oxicrypt_module::initialize_with_tests`].
-pub const KATS: &[KatEntry] = &[
-    ml_kem_512::KAT_ENTRY,
-    ml_kem_768::KAT_ENTRY,
-    ml_kem_1024::KAT_ENTRY,
-];
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
+    }
+}

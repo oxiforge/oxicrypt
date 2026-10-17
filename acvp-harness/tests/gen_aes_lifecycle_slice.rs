@@ -80,7 +80,7 @@ fn generate_aes_lifecycle_slices() {
     let mut key_bytes = [0u8; 32];
     drbg.generate(None, &mut key_bytes).expect("drbg gen key");
     let key_hex = hex_upper(&key_bytes);
-    let cipher = oxicrypt_aes::Aes256Key::new_internal(&key_bytes);
+    let cipher = oxicrypt_aes::Aes256Key::new_internal(&key_bytes).expect("AES key");
 
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../vendor/nist/acvp-server/gen-val/json-files");
@@ -263,7 +263,7 @@ fn generate_aes_lifecycle_slices() {
             drbg.generate(None, &mut pt).expect("drbg gen pt");
 
             let mut ct = [0u8; 48];
-            oxicrypt_aes::ctr_xor(&cipher, &icb, &pt, &mut ct);
+            oxicrypt_aes::ctr_xor(&cipher, &icb, &pt, &mut ct).unwrap();
 
             enc_tests.push(format!(
                 r#"        {{

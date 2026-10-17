@@ -804,6 +804,7 @@ mod tests {
 
     #[test]
     fn login_body_is_versioned_envelope_with_password_only() {
+        crate::start_module().unwrap();
         let parsed = json::parse(&build_login_body("00000000")).unwrap();
         let arr = parsed.as_array().unwrap();
         assert_eq!(arr.len(), 2);
@@ -820,6 +821,7 @@ mod tests {
 
     #[test]
     fn single_refresh_body_carries_password_and_string_token() {
+        crate::start_module().unwrap();
         let parsed = json::parse(&build_single_refresh_body("12345678", "jwt-old")).unwrap();
         let payload = &parsed.as_array().unwrap()[1];
         assert_eq!(
@@ -834,6 +836,7 @@ mod tests {
 
     #[test]
     fn bulk_refresh_body_carries_password_and_token_array_in_order() {
+        crate::start_module().unwrap();
         let tokens = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let parsed = json::parse(&build_bulk_refresh_body("87654321", &tokens)).unwrap();
         let payload = &parsed.as_array().unwrap()[1];
@@ -851,6 +854,7 @@ mod tests {
 
     #[test]
     fn endpoint_paths_are_esv_v1() {
+        crate::start_module().unwrap();
         assert_eq!(LOGIN_PATH, "/esv/v1/login");
         assert_eq!(BULK_REFRESH_PATH, "/esv/v1/login/refresh");
         // Single refresh is a same-scope re-login per the ESV protocol specification §2.
@@ -862,12 +866,14 @@ mod tests {
 
     #[test]
     fn parse_access_token_from_versioned_envelope() {
+        crate::start_module().unwrap();
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-123"}]"#;
         assert_eq!(parse_access_token(body).unwrap(), "jwt-123");
     }
 
     #[test]
     fn parse_access_token_rejects_bulk_array_response() {
+        crate::start_module().unwrap();
         // A bulk-refresh array response must not parse as a single token.
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":["a","b"]}]"#;
         assert!(parse_access_token(body).is_err());
@@ -875,6 +881,7 @@ mod tests {
 
     #[test]
     fn parse_access_token_rejects_bare_object_envelope() {
+        crate::start_module().unwrap();
         // Item 2: the acvp helper accepts a bare {accessToken}; the strict
         // esv-side parser requires the two-element versioned envelope.
         let bare = r#"{"accessToken":"jwt-bare"}"#;
@@ -886,6 +893,7 @@ mod tests {
 
     #[test]
     fn parse_access_token_tolerates_trailing_envelope_element() {
+        crate::start_module().unwrap();
         // Item 5: at-least-two tolerance — a third element is additive server
         // variance and is ignored; the payload is still element 1.
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-x"},{"extra":true}]"#;
@@ -894,6 +902,7 @@ mod tests {
 
     #[test]
     fn parse_access_token_rejects_single_element_envelope() {
+        crate::start_module().unwrap();
         // One element is below the at-least-two floor.
         let body = r#"[{"esvVersion":"1.0"}]"#;
         assert!(parse_access_token(body).is_err());
@@ -901,6 +910,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_returns_array_in_order() {
+        crate::start_module().unwrap();
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":["t1","t2","t3"]}]"#;
         assert_eq!(
             parse_bulk_refresh_tokens(body, 3).unwrap(),
@@ -910,6 +920,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_wraps_single_string() {
+        crate::start_module().unwrap();
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":"solo"}]"#;
         assert_eq!(
             parse_bulk_refresh_tokens(body, 1).unwrap(),
@@ -919,6 +930,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_errors_when_absent() {
+        crate::start_module().unwrap();
         let body = r#"[{"esvVersion":"1.0"},{"nope":true}]"#;
         assert!(parse_bulk_refresh_tokens(body, 1).is_err());
     }
@@ -927,6 +939,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_rejects_short_count() {
+        crate::start_module().unwrap();
         // Submitted 2, server returned 1 → positional mapping broken.
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":["only-one"]}]"#;
         let err = parse_bulk_refresh_tokens(body, 2).unwrap_err();
@@ -935,6 +948,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_rejects_empty_array() {
+        crate::start_module().unwrap();
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":[]}]"#;
         assert!(parse_bulk_refresh_tokens(body, 2).is_err());
         // Even a zero-expected empty array is a degenerate no-op we reject
@@ -947,6 +961,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_exact_count_preserves_order() {
+        crate::start_module().unwrap();
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":["x","y"]}]"#;
         assert_eq!(
             parse_bulk_refresh_tokens(body, 2).unwrap(),
@@ -956,6 +971,7 @@ mod tests {
 
     #[test]
     fn parse_bulk_refresh_tokens_single_string_wrong_expected_fails() {
+        crate::start_module().unwrap();
         // A single string when two were submitted is a count mismatch.
         let body = r#"[{"esvVersion":"1.0"},{"accessToken":"solo"}]"#;
         assert!(parse_bulk_refresh_tokens(body, 2).is_err());
@@ -965,6 +981,7 @@ mod tests {
 
     #[test]
     fn login_posts_to_login_path_and_returns_session() {
+        crate::start_module().unwrap();
         let mut t = StubTransport::new(vec![ok(
             r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-A"}]"#,
         )]);
@@ -985,6 +1002,7 @@ mod tests {
 
     #[test]
     fn login_surfaces_http_error_status_and_body() {
+        crate::start_module().unwrap();
         let mut t = StubTransport::new(vec![status(403, "forbidden")]);
         let mut sl = RecordingSleeper::default();
         let Err(err) = login(SECRET, &mut t, &mut sl) else {
@@ -998,6 +1016,7 @@ mod tests {
 
     #[test]
     fn is_totp_window_reuse_matches_only_the_reuse_403() {
+        crate::start_module().unwrap();
         let phrase = r#"[{"esvVersion":"1.0"},{"error":"TOTP Window has already been used"}]"#;
         assert!(is_totp_window_reuse(403, phrase));
         // Non-403 status with the phrase, or a 403 without it, do not match.
@@ -1008,6 +1027,7 @@ mod tests {
 
     #[test]
     fn login_retries_on_totp_window_reuse_then_succeeds() {
+        crate::start_module().unwrap();
         let mut t = StubTransport::new(vec![
             totp_reuse_403(),
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-A"}]"#),
@@ -1027,6 +1047,7 @@ mod tests {
 
     #[test]
     fn login_non_window_403_is_not_retried() {
+        crate::start_module().unwrap();
         let mut t = StubTransport::new(vec![status(403, "bad certificate")]);
         let mut sl = RecordingSleeper::default();
         assert!(login(SECRET, &mut t, &mut sl).is_err());
@@ -1036,6 +1057,7 @@ mod tests {
 
     #[test]
     fn totp_window_reuse_retry_cap_is_enforced() {
+        crate::start_module().unwrap();
         // Persistent reuse: initial + CAP retries all reused → typed error.
         let mut responses = Vec::new();
         for _ in 0..=TOTP_REUSE_RETRY_CAP {
@@ -1056,6 +1078,7 @@ mod tests {
 
     #[test]
     fn refresh_replaces_token_and_embeds_old_token() {
+        crate::start_module().unwrap();
         let mut t = StubTransport::new(vec![
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-A"}]"#),
             ok(r#"[{"esvVersion":"1.0"},{"accessToken":"jwt-B"}]"#),
@@ -1082,6 +1105,7 @@ mod tests {
 
     #[test]
     fn refresh_falls_back_to_fresh_login_on_401() {
+        crate::start_module().unwrap();
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![
             status(401, "unauthorized: token expired"), // embedded-token refresh rejected
@@ -1113,6 +1137,7 @@ mod tests {
 
     #[test]
     fn refresh_surfaces_typed_error_when_both_refresh_and_login_fail() {
+        crate::start_module().unwrap();
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![
             status(403, "expired"), // refresh rejected
@@ -1128,6 +1153,7 @@ mod tests {
 
     #[test]
     fn refresh_if_stale_is_a_noop_when_fresh() {
+        crate::start_module().unwrap();
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![]);
         let mut sl = RecordingSleeper::default();
@@ -1138,6 +1164,7 @@ mod tests {
 
     #[test]
     fn refresh_if_stale_refreshes_when_aged_past_margin() {
+        crate::start_module().unwrap();
         let mut session =
             EsvSession::with_age("jwt-A".to_string(), std::time::Duration::from_mins(25));
         assert!(session.needs_refresh());
@@ -1155,12 +1182,14 @@ mod tests {
 
     #[test]
     fn refresh_margin_defaults_to_acvp_measured_const() {
+        crate::start_module().unwrap();
         let session = EsvSession::new("jwt-A".to_string());
         assert_eq!(session.refresh_margin_secs(), TOKEN_REFRESH_MARGIN_SECS);
     }
 
     #[test]
     fn tunable_refresh_margin_changes_needs_refresh() {
+        crate::start_module().unwrap();
         // A 2-minute-old token is fresh under the 20-min default…
         let session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::from_mins(2));
         assert!(!session.needs_refresh());
@@ -1176,6 +1205,7 @@ mod tests {
 
     #[test]
     fn authenticated_request_refreshes_and_retries_once_on_403() {
+        crate::start_module().unwrap();
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![
             status(403, "expired"),                                  // first attempt
@@ -1206,6 +1236,7 @@ mod tests {
 
     #[test]
     fn authenticated_request_does_not_retry_on_success() {
+        crate::start_module().unwrap();
         let mut session = EsvSession::with_age("jwt-A".to_string(), std::time::Duration::ZERO);
         let mut t = StubTransport::new(vec![ok("payload-ok")]);
         let mut sl = RecordingSleeper::default();
@@ -1219,6 +1250,7 @@ mod tests {
 
     #[test]
     fn authenticated_request_proactively_refreshes_before_sending_when_stale() {
+        crate::start_module().unwrap();
         let mut session =
             EsvSession::with_age("jwt-A".to_string(), std::time::Duration::from_mins(25));
         let mut t = StubTransport::new(vec![
@@ -1239,6 +1271,7 @@ mod tests {
 
     #[test]
     fn bulk_refresh_posts_token_array_and_parses_response() {
+        crate::start_module().unwrap();
         let tokens = vec!["t1".to_string(), "t2".to_string()];
         let mut t = StubTransport::new(vec![ok(
             r#"[{"esvVersion":"1.0"},{"accessToken":["n1","n2"]}]"#,
@@ -1260,6 +1293,7 @@ mod tests {
 
     #[test]
     fn bulk_refresh_fails_when_server_returns_wrong_count() {
+        crate::start_module().unwrap();
         // Submitted 2, server returned 1 → typed count-integrity error.
         let tokens = vec!["t1".to_string(), "t2".to_string()];
         let mut t = StubTransport::new(vec![ok(
@@ -1273,6 +1307,7 @@ mod tests {
 
     #[test]
     fn totp_matches_rfc6238_appendix_b_sha256_vector() {
+        crate::start_module().unwrap();
         // RFC 6238 Appendix B (HMAC-SHA-256): seed = ASCII
         // "12345678901234567890123456789012", T = 59 s → counter 1 (30 s
         // step) → 8-digit TOTP "46119246". This is a real known-answer
@@ -1284,6 +1319,7 @@ mod tests {
 
     #[test]
     fn reused_totp_is_deterministic_and_eight_digits() {
+        crate::start_module().unwrap();
         // The generator is acvp-harness's, byte-identical to the ESV
         // reference client's totp.py (RFC-4226 dynamic truncation over
         // HMAC-SHA-256, top bit masked, mod 10^8, 8 digits).

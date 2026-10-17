@@ -73,7 +73,7 @@ fn generate_rsa_siggen_cross_slice() {
     )
     .expect("drbg instantiate");
 
-    let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537).expect("RSA keygen");
+    let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, 65537).expect("RSA keygen");
 
     let n_bytes: [u8; 256] = km.n.to_be_bytes();
     let d_bytes: [u8; 256] = km.d.to_be_bytes();
@@ -107,10 +107,11 @@ fn generate_rsa_siggen_cross_slice() {
             &qinv_bytes,
             &msg,
         )
-        .unwrap_or_else(|| panic!("PKCS#1v1.5 CRT sign failed for test {i}"));
+        .unwrap_or_else(|e| panic!("PKCS#1v1.5 CRT sign failed for test {i}: {e:?}"));
 
         // Verify the signature.
-        let ok = oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, &msg, &sig);
+        let ok = oxicrypt_rsa::rsa_pkcs1_v15_verify_2048_sha256_internal(&n_bytes, e, &msg, &sig)
+            .unwrap();
         assert!(ok, "PKCS#1v1.5 CRT verify failed for test {i}");
 
         pkcs_crt_tests.push(format!(
@@ -130,10 +131,11 @@ fn generate_rsa_siggen_cross_slice() {
 
         let sig =
             oxicrypt_rsa::rsa_pss_sign_2048_sha256_internal(&n_bytes, &d_bytes, &msg, &salt_arr)
-                .unwrap_or_else(|| panic!("PSS non-CRT sign failed for test {i}"));
+                .unwrap_or_else(|e| panic!("PSS non-CRT sign failed for test {i}: {e:?}"));
 
         // Verify the signature.
-        let ok = oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, &msg, &sig);
+        let ok =
+            oxicrypt_rsa::rsa_pss_verify_2048_sha256_internal(&n_bytes, e, &msg, &sig).unwrap();
         assert!(ok, "PSS non-CRT verify failed for test {i}");
 
         let tc_id = MESSAGES.len() + i + 1;

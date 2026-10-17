@@ -22,7 +22,7 @@ default = []
 # per-FORS-tree sweep (`fors_sign`) become indexed disjoint-slice `rayon`
 # `par_chunks_mut().enumerate()` loops; each closure writes one chunk it
 # exclusively owns and reads no other chunk, so output is byte-identical
-# to the sequential build (R77). Pulls in `rayon`, which requires `std`,
+# to the sequential build. Pulls in `rayon`, which requires `std`,
 # so the crate becomes `std` only under this feature — the default build
 # stays provably `no_std` with no rayon in its graph. Performance build
 # only: the CMVP validation-target configuration is the default single-threaded

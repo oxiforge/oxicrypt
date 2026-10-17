@@ -6,6 +6,6 @@ fn main() {
     initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_hmac::KATS).unwrap();
     let mut mac = HmacSha256::new(b"secret-key-at-least-32-bytes-long!!").unwrap();
     mac.update(b"message to authenticate");
-    let tag = mac.finalize();
+    let tag = mac.finalize().unwrap();
     assert_eq!(tag.len(), 32);
 }

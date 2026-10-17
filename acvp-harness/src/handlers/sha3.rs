@@ -375,7 +375,7 @@ pub(crate) fn ldt_stream<const RATE: usize, const OUT: usize>(
     if pattern.is_empty() {
         return Err(DispatchError::Crypto("LDT: empty content pattern"));
     }
-    let mut hasher = oxicrypt_sha::sha3::Sha3::<RATE, OUT>::new_internal();
+    let mut hasher = oxicrypt_sha::sha3::Sha3::<RATE, OUT>::new_internal()?;
     let pat_len = pattern.len() as u64;
     let mut remaining = full_bytes;
 
@@ -391,5 +391,5 @@ pub(crate) fn ldt_stream<const RATE: usize, const OUT: usize>(
         hasher.update(&pattern[..tail]);
     }
 
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize()?.to_vec())
 }

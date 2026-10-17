@@ -23,10 +23,8 @@
 //!
 //! # Approved services (per FIPS 205)
 //!
-//! Batch 3 keeps the three generic `SlhDsaKeygen` / `SlhDsaSign` /
-//! `SlhDsaVerify` Service variants in place; Batch 4 will split them
-//! into 36 variant-specific entries (12 paramSets × Keygen/Sign/Verify)
-//! and tighten profile gating. CNSSP 15 lists no SLH-DSA parameter
+//! The `Service` enum carries 36 variant-specific entries (12 paramSets
+//! × Keygen/Sign/Verify). CNSSP 15 lists no SLH-DSA parameter
 //! set, so all 12 variants — including `SHA2-256s` — are permitted
 //! under
 //! [`AlgorithmProfile::Unrestricted`](oxicrypt_module::AlgorithmProfile)
@@ -67,9 +65,11 @@
 //!
 //! # Self-tests
 //!
-//! Power-up KAT: deterministic keygen → sign → verify round-trip
-//! with a fixed seed (FIPS 140-3 IG D.G). Aggregated via
-//! [`KATS`] which currently re-exports the SHA2-256s variant's KAT.
+//! [`KATS`] holds the power-up self-tests: separate key generation,
+//! signature generation and verification CASTs on SLH-DSA-SHA2-128f and
+//! SLH-DSA-SHAKE-128f, six in all, each checked against a NIST ACVP
+//! vector (FIPS 140-3 IG 10.3.A item 16; Note 29 requires one SHA2 and
+//! one SHAKE parameter set, Note 30 allows the lowest-height trees).
 //!
 //! # Data-parallel evaluation (`parallel` feature, default OFF)
 //!
@@ -80,7 +80,7 @@
 //! closure computes one output chunk as a pure function of its index
 //! plus the immutable seeds/address and writes only the chunk it
 //! exclusively owns, so the parallel output is byte-identical to the
-//! sequential build (security policy R77). The feature pulls in
+//! sequential build. The feature pulls in
 //! `rayon` (hence `std`), so the crate is `#![no_std]` only when the
 //! feature is OFF; the default build graph contains no `rayon` and is
 //! the CMVP validation-target single-threaded configuration. `parallel` is a
@@ -106,6 +106,12 @@
 )]
 
 pub(crate) mod slh_dsa_impl;
+
+mod cast;
+mod cast_vectors;
+#[cfg(feature = "parallel")]
+mod sweep;
+pub use cast::KATS;
 
 /// SLH-DSA-SHA2-128f instantiation (n=16, h=66, d=22, a=6, k=33, w=16).
 pub mod slh_dsa_sha2_128f;
@@ -138,6 +144,25 @@ pub mod slh_dsa_shake_256s;
 // callers should reach for the variant module they need explicitly
 // (`slh_dsa_sha2_128s`, `slh_dsa_sha2_256f`, etc.) to disambiguate.
 pub use slh_dsa_sha2_256s::{
-    KATS, PK_LEN, SIG_LEN, SK_LEN, keygen, keygen_internal, sign, sign_internal, verify,
-    verify_internal,
+    PK_LEN, SIG_LEN, SK_LEN, keygen, keygen_internal, sign, sign_internal, verify, verify_internal,
 };
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use oxicrypt_module::{KatEntry, initialize_with_tests, require_self_test_started};
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[KatEntry] = &[KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Brings the module out of `PowerOff` so that a test can call the
+    /// `*_internal` functions, which refuse until the self-tests have
+    /// started. A second call in the same process is a no-op.
+    pub(crate) fn start_module() {
+        let _ = initialize_with_tests(UNSIGNED_TEST_BINARY, &[]);
+        assert_eq!(require_self_test_started(), Ok(()));
+    }
+}

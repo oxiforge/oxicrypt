@@ -59,7 +59,7 @@ fn build_em(label: &[u8], secret: &[u8], em: &mut [u8; K]) {
     seed.copy_from_slice(&secret[..HLEN]);
     let msg = &secret[HLEN..HLEN + PROBE_MSG_LEN];
     assert!(
-        emsa_oaep_encode(label, msg, &seed, em).is_some(),
+        matches!(emsa_oaep_encode(label, msg, &seed, em), Ok(Some(()))),
         "ct-validation: oaep_decode probe encode failed"
     );
 }
@@ -82,7 +82,7 @@ pub fn run(cfg: &RunConfig) -> VerdictReport {
         build_em(&label_for_target, secret, &mut em);
         let mut out = [0u8; MAX_MSG_LEN];
         let r = emsa_oaep_decode(&label_for_target, &em, &mut out);
-        std::hint::black_box(r);
+        std::hint::black_box(&r);
     });
 
     run_target("rsa_oaep_decode", &fixed_secret, target, cfg)

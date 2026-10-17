@@ -67,7 +67,7 @@ crate::rsa_wide_impl::define_rsa_wide! {
     half_limbs = 24;
     half_mont = MontCtx1536;
     half_reduce = crate::keygen3072::u3072_mod_u1536;
-    keygen_fn = crate::keygen3072::generate_3072;
+    keygen_fn = crate::keygen3072::generate_3072_internal;
     keygen_km = KeyMaterial3072;
     nlen = 3072;
     em_bits = 3071;
@@ -110,6 +110,7 @@ mod tests {
 
     #[test]
     fn pkcs1_v15_sign_verify_roundtrip() {
+        crate::test_support::start_module();
         init_module();
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0xA1u8; 48], &[0xB2u8; 24], b"rsa3072-test")
@@ -117,11 +118,18 @@ mod tests {
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let msg = b"rsa-3072 pkcs1v15 roundtrip";
         let sig = key.sign_pkcs1_v15_sha256(msg).unwrap();
-        pkcs1_v15_verify(key.modulus_bytes(), key.public_exponent(), msg, &sig).unwrap();
+        pkcs1_v15_verify(
+            key.modulus_bytes().unwrap(),
+            key.public_exponent().unwrap(),
+            msg,
+            &sig,
+        )
+        .unwrap();
     }
 
     #[test]
     fn pkcs1_v15_verify_rejects_tampered_sig() {
+        crate::test_support::start_module();
         init_module();
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0xC3u8; 48], &[0xD4u8; 24], b"rsa3072-tamper")
@@ -130,11 +138,20 @@ mod tests {
         let msg = b"tamper test 3072";
         let mut sig = key.sign_pkcs1_v15_sha256(msg).unwrap();
         sig[100] ^= 0x01;
-        assert!(pkcs1_v15_verify(key.modulus_bytes(), key.public_exponent(), msg, &sig).is_err());
+        assert!(
+            pkcs1_v15_verify(
+                key.modulus_bytes().unwrap(),
+                key.public_exponent().unwrap(),
+                msg,
+                &sig
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn pss_sign_verify_roundtrip() {
+        crate::test_support::start_module();
         init_module();
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0xE5u8; 48], &[0xF6u8; 24], b"rsa3072-pss")
@@ -143,11 +160,18 @@ mod tests {
         let msg = b"rsa-3072 pss roundtrip";
         let salt = [0x77u8; 32];
         let sig = key.sign_pss_sha256_with_salt(msg, &salt).unwrap();
-        pss_verify(key.modulus_bytes(), key.public_exponent(), msg, &sig).unwrap();
+        pss_verify(
+            key.modulus_bytes().unwrap(),
+            key.public_exponent().unwrap(),
+            msg,
+            &sig,
+        )
+        .unwrap();
     }
 
     #[test]
     fn pss_verify_rejects_wrong_msg() {
+        crate::test_support::start_module();
         init_module();
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0x11u8; 48], &[0x22u8; 24], b"rsa3072-pss-bad")
@@ -157,8 +181,8 @@ mod tests {
         let sig = key.sign_pss_sha256_with_salt(b"original", &salt).unwrap();
         assert!(
             pss_verify(
-                key.modulus_bytes(),
-                key.public_exponent(),
+                key.modulus_bytes().unwrap(),
+                key.public_exponent().unwrap(),
                 b"different",
                 &sig
             )
@@ -168,6 +192,7 @@ mod tests {
 
     #[test]
     fn oaep_encrypt_decrypt_roundtrip() {
+        crate::test_support::start_module();
         init_module();
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0x44u8; 48], &[0x55u8; 24], b"rsa3072-oaep")
@@ -177,8 +202,8 @@ mod tests {
         let msg = b"hello OAEP 3072";
         let ct = oaep_encrypt(
             &mut drbg,
-            key.modulus_bytes(),
-            key.public_exponent(),
+            key.modulus_bytes().unwrap(),
+            key.public_exponent().unwrap(),
             label,
             msg,
         )
@@ -190,6 +215,7 @@ mod tests {
 
     #[test]
     fn oaep_rejects_wrong_label() {
+        crate::test_support::start_module();
         init_module();
         let mut drbg = HmacDrbgSha256::new();
         drbg.instantiate(&[0x66u8; 48], &[0x77u8; 24], b"rsa3072-oaep-bad")
@@ -197,8 +223,8 @@ mod tests {
         let key = RsaPrivateKey3072::generate(&mut drbg, 65537).unwrap();
         let ct = oaep_encrypt(
             &mut drbg,
-            key.modulus_bytes(),
-            key.public_exponent(),
+            key.modulus_bytes().unwrap(),
+            key.public_exponent().unwrap(),
             b"right",
             b"msg",
         )
@@ -209,6 +235,7 @@ mod tests {
 
     #[test]
     fn from_components_pct_catches_mismatch() {
+        crate::test_support::start_module();
         init_module();
         // A random 384-byte "modulus" won't produce a valid RSA key.
         let bad_n = [0xffu8; MODULUS_BYTES];

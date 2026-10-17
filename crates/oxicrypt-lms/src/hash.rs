@@ -1,5 +1,5 @@
 //! Hash-adapter shims that present a uniform `(new_internal, update,
-//! finalize) -> [u8; N]` API across the four hash families used by the
+//! finalize)` API across the four hash families used by the
 //! LMS grid (SP 800-208 §4.1–§4.4).
 //!
 //! Each adapter is a concrete type with a fixed output length, so the
@@ -28,6 +28,7 @@
 
 #![allow(dead_code)]
 
+use oxicrypt_module::{Error, require_self_test_started};
 use oxicrypt_sha::sha256::Sha256;
 use oxicrypt_xof::Shake256;
 
@@ -40,13 +41,16 @@ pub struct Sha256N32 {
 }
 
 impl Sha256N32 {
-    /// Construct an adapter that bypasses the module gate, matching
-    /// `Sha256::new_internal`. LMS `verify` calls the LMS gate itself
-    /// before invoking the hasher; the adapter must not double-gate.
-    pub fn new_internal() -> Self {
-        Self {
-            inner: Sha256::new_internal(),
-        }
+    /// Construct an adapter without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Ok(Self {
+            inner: Sha256::new_internal()?,
+        })
     }
 
     /// Absorb `data` into the hash state.
@@ -55,7 +59,15 @@ impl Sha256N32 {
     }
 
     /// Finalize and return the 32-byte digest.
-    pub fn finalize(self) -> [u8; 32] {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    pub fn finalize(self) -> Result<[u8; 32], Error> {
+        require_self_test_started()?;
         self.inner.finalize()
     }
 }
@@ -72,11 +84,16 @@ pub struct Sha256N24 {
 }
 
 impl Sha256N24 {
-    /// Construct an adapter that bypasses the module gate.
-    pub fn new_internal() -> Self {
-        Self {
-            inner: Sha256::new_internal(),
-        }
+    /// Construct an adapter without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Ok(Self {
+            inner: Sha256::new_internal()?,
+        })
     }
 
     /// Absorb `data` into the hash state.
@@ -85,11 +102,19 @@ impl Sha256N24 {
     }
 
     /// Finalize and return the **first 24 bytes** of the SHA-256 digest.
-    pub fn finalize(self) -> [u8; 24] {
-        let full = self.inner.finalize();
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    pub fn finalize(self) -> Result<[u8; 24], Error> {
+        require_self_test_started()?;
+        let full = self.inner.finalize()?;
         let mut out = [0u8; 24];
         out.copy_from_slice(&full[..24]);
-        out
+        Ok(out)
     }
 }
 
@@ -104,11 +129,16 @@ pub struct Shake256N32 {
 }
 
 impl Shake256N32 {
-    /// Construct an adapter that bypasses the module gate.
-    pub fn new_internal() -> Self {
-        Self {
-            inner: Shake256::new_internal(),
-        }
+    /// Construct an adapter without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Ok(Self {
+            inner: Shake256::new_internal()?,
+        })
     }
 
     /// Absorb `data` into the sponge.
@@ -117,11 +147,19 @@ impl Shake256N32 {
     }
 
     /// Finalize the absorb phase and squeeze 32 bytes of output.
-    pub fn finalize(mut self) -> [u8; 32] {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    pub fn finalize(mut self) -> Result<[u8; 32], Error> {
+        require_self_test_started()?;
         self.inner.finalize();
         let mut out = [0u8; 32];
-        self.inner.squeeze(&mut out);
-        out
+        self.inner.squeeze(&mut out)?;
+        Ok(out)
     }
 }
 
@@ -136,11 +174,16 @@ pub struct Shake256N24 {
 }
 
 impl Shake256N24 {
-    /// Construct an adapter that bypasses the module gate.
-    pub fn new_internal() -> Self {
-        Self {
-            inner: Shake256::new_internal(),
-        }
+    /// Construct an adapter without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
+    pub fn new_internal() -> Result<Self, Error> {
+        require_self_test_started()?;
+        Ok(Self {
+            inner: Shake256::new_internal()?,
+        })
     }
 
     /// Absorb `data` into the sponge.
@@ -149,10 +192,18 @@ impl Shake256N24 {
     }
 
     /// Finalize the absorb phase and squeeze 24 bytes of output.
-    pub fn finalize(mut self) -> [u8; 24] {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    pub fn finalize(mut self) -> Result<[u8; 24], Error> {
+        require_self_test_started()?;
         self.inner.finalize();
         let mut out = [0u8; 24];
-        self.inner.squeeze(&mut out);
-        out
+        self.inner.squeeze(&mut out)?;
+        Ok(out)
     }
 }

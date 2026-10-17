@@ -39,9 +39,10 @@
     clippy::cast_possible_truncation
 )]
 
+use oxicrypt_module::Error;
 use oxicrypt_sha::sha256::{DIGEST_SIZE as SHA256_DIGEST_SIZE, Sha256};
 
-use crate::pkcs1_v15::sha256_internal;
+use crate::pkcs1_v15::sha256_digest;
 
 /// Hash output length (SHA-256).
 pub const HLEN: usize = SHA256_DIGEST_SIZE;
@@ -62,38 +63,52 @@ pub const TOP_BITS_TO_CLEAR: u32 = (8 * EM_LEN - EM_BITS) as u32;
 ///
 /// Implementation of RFC 8017 §B.2.1: for `counter = 0, 1, …`,
 /// concatenate `SHA-256(seed || I2OSP(counter, 4))`.
-pub fn mgf1_sha256(seed: &[u8], out: &mut [u8]) {
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] unless
+/// [`oxicrypt_module::require_self_test_started`] admits the call (in
+/// `Operational`, or in `SelfTest` on the thread running the power-up
+/// self-tests); the hash is built by `Sha256::new_internal`.
+pub fn mgf1_sha256(seed: &[u8], out: &mut [u8]) -> Result<(), Error> {
     let mut counter: u32 = 0;
     let mut written = 0;
     while written < out.len() {
-        let mut h = Sha256::new_internal();
+        let mut h = Sha256::new_internal()?;
         h.update(seed);
         h.update(&counter.to_be_bytes());
-        let block = h.finalize();
+        let block = h.finalize()?;
         let remaining = out.len() - written;
         let take = core::cmp::min(remaining, SHA256_DIGEST_SIZE);
         out[written..written + take].copy_from_slice(&block[..take]);
         written += take;
         counter = counter.wrapping_add(1);
     }
+    Ok(())
 }
 
 /// EMSA-PSS-ENCODE for SHA-256 with `sLen = hLen = 32`, writing an
 /// `EM_LEN`-byte encoded message into `em`.
 ///
-/// Follows RFC 8017 §9.1.1 step-for-step. Returns `None` only for the
+/// Follows RFC 8017 §9.1.1 step-for-step. Returns `Ok(None)` only for the
 /// one failure mode RFC 8017 flags: `emLen < hLen + sLen + 2`, which
 /// cannot happen for the pinned `(EM_LEN, HLEN, SLEN)` constants but
 /// is checked anyway so the routine can be reused with different
 /// parameter triples later.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module refuses the SHA-256
+/// or MGF1 computation, which it does in every state other than
+/// `SelfTest` and `Operational`.
 pub fn emsa_pss_encode(
     m_hash: &[u8; HLEN],
     salt: &[u8; SLEN],
     em: &mut [u8; EM_LEN],
-) -> Option<()> {
+) -> Result<Option<()>, Error> {
     // Step 3: check emLen is large enough.
     if EM_LEN < HLEN + SLEN + 2 {
-        return None;
+        return Ok(None);
     }
 
     // Step 5: M' = (0x00)*8 || mHash || salt.
@@ -103,7 +118,7 @@ pub fn emsa_pss_encode(
     m_prime[8 + HLEN..].copy_from_slice(salt);
 
     // Step 6: H = Hash(M').
-    let h = sha256_internal(&m_prime);
+    let h = sha256_digest(&m_prime)?;
 
     // Step 7–8: DB = PS || 0x01 || salt. PS is (emLen − sLen − hLen − 2)
     // zero octets, which for (256, 32, 32) is 190.
@@ -116,7 +131,7 @@ pub fn emsa_pss_encode(
 
     // Step 9: dbMask = MGF1(H, emLen − hLen − 1).
     let mut db_mask = [0u8; EM_LEN];
-    mgf1_sha256(&h, &mut db_mask[..db_len]);
+    mgf1_sha256(&h, &mut db_mask[..db_len])?;
 
     // Step 10: maskedDB = DB ⊕ dbMask.
     for i in 0..db_len {
@@ -134,26 +149,32 @@ pub fn emsa_pss_encode(
     em[db_len..db_len + HLEN].copy_from_slice(&h);
     em[EM_LEN - 1] = 0xbc;
 
-    Some(())
+    Ok(Some(()))
 }
 
 /// EMSA-PSS-VERIFY for SHA-256 with `sLen = hLen = 32`. Returns
-/// `true` iff `em` is a well-formed PSS encoding of `m_hash`.
+/// `Ok(true)` iff `em` is a well-formed PSS encoding of `m_hash`.
 ///
 /// Follows RFC 8017 §9.1.2 step-for-step. The final `H == H'`
 /// comparison uses a constant-time byte compare to avoid a
 /// trivially-observable "bail on first mismatch" timing side channel;
 /// the earlier structural checks are allowed to short-circuit since
 /// the data they operate on is public.
-pub fn emsa_pss_verify(m_hash: &[u8; HLEN], em: &[u8; EM_LEN]) -> bool {
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module refuses the SHA-256
+/// or MGF1 computation, which it does in every state other than
+/// `SelfTest` and `Operational`.
+pub fn emsa_pss_verify(m_hash: &[u8; HLEN], em: &[u8; EM_LEN]) -> Result<bool, Error> {
     // Step 3: check emLen is large enough.
     if EM_LEN < HLEN + SLEN + 2 {
-        return false;
+        return Ok(false);
     }
 
     // Step 4: rightmost byte must be 0xbc.
     if em[EM_LEN - 1] != 0xbc {
-        return false;
+        return Ok(false);
     }
 
     // Step 5: split EM into maskedDB and H.
@@ -165,13 +186,13 @@ pub fn emsa_pss_verify(m_hash: &[u8; HLEN], em: &[u8; EM_LEN]) -> bool {
     if TOP_BITS_TO_CLEAR > 0 {
         let mask = 0xffu8 << (8 - TOP_BITS_TO_CLEAR);
         if masked_db[0] & mask != 0 {
-            return false;
+            return Ok(false);
         }
     }
 
     // Step 7: dbMask = MGF1(H, emLen − hLen − 1).
     let mut db_mask = [0u8; EM_LEN];
-    mgf1_sha256(h, &mut db_mask[..db_len]);
+    mgf1_sha256(h, &mut db_mask[..db_len])?;
 
     // Step 8: DB = maskedDB ⊕ dbMask.
     let mut db = [0u8; EM_LEN];
@@ -190,11 +211,11 @@ pub fn emsa_pss_verify(m_hash: &[u8; HLEN], em: &[u8; EM_LEN]) -> bool {
     let ps_len = db_len - SLEN - 1;
     for &b in &db[..ps_len] {
         if b != 0 {
-            return false;
+            return Ok(false);
         }
     }
     if db[ps_len] != 0x01 {
-        return false;
+        return Ok(false);
     }
 
     // Step 11: salt = last sLen bytes of DB.
@@ -204,10 +225,10 @@ pub fn emsa_pss_verify(m_hash: &[u8; HLEN], em: &[u8; EM_LEN]) -> bool {
     let mut m_prime = [0u8; 8 + HLEN + SLEN];
     m_prime[8..8 + HLEN].copy_from_slice(m_hash);
     m_prime[8 + HLEN..].copy_from_slice(salt);
-    let h_prime = sha256_internal(&m_prime);
+    let h_prime = sha256_digest(&m_prime)?;
 
     // Step 14: H == H' under a constant-time compare.
-    crate::pkcs1_v15::ct_eq(&h_prime, h) == 1
+    Ok(crate::pkcs1_v15::ct_eq(&h_prime, h) == 1)
 }
 
 // ------------------------------------------------------------------
@@ -228,18 +249,24 @@ const MAX_EM_LEN: usize = 512;
 /// that RSA-3072 and RSA-4096 can share the same PSS logic without
 /// duplicating the encode step. The fixed-array version is kept for
 /// RSA-2048 backwards compatibility and KAT pinning.
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module refuses the SHA-256
+/// or MGF1 computation, which it does in every state other than
+/// `SelfTest` and `Operational`.
 pub fn emsa_pss_encode_n(
     m_hash: &[u8; HLEN],
     salt: &[u8; SLEN],
     em_bits: usize,
     em: &mut [u8],
-) -> Option<()> {
+) -> Result<Option<()>, Error> {
     let em_len = em.len();
     if em_len != (em_bits + 7) / 8 {
-        return None;
+        return Ok(None);
     }
     if !(HLEN + SLEN + 2..=MAX_EM_LEN).contains(&em_len) {
-        return None;
+        return Ok(None);
     }
     let top_bits_to_clear = (8 * em_len - em_bits) as u32;
 
@@ -249,7 +276,7 @@ pub fn emsa_pss_encode_n(
     m_prime[8 + HLEN..].copy_from_slice(salt);
 
     // H = Hash(M').
-    let h = sha256_internal(&m_prime);
+    let h = sha256_digest(&m_prime)?;
 
     // DB = PS || 0x01 || salt.
     let db_len = em_len - HLEN - 1;
@@ -260,7 +287,7 @@ pub fn emsa_pss_encode_n(
 
     // dbMask = MGF1(H, db_len).
     let mut db_mask = [0u8; MAX_EM_LEN];
-    mgf1_sha256(&h, &mut db_mask[..db_len]);
+    mgf1_sha256(&h, &mut db_mask[..db_len])?;
 
     // maskedDB = DB ⊕ dbMask.
     for i in 0..db_len {
@@ -278,24 +305,30 @@ pub fn emsa_pss_encode_n(
     em[db_len..db_len + HLEN].copy_from_slice(&h);
     em[em_len - 1] = 0xbc;
 
-    Some(())
+    Ok(Some(()))
 }
 
 /// Slice-based EMSA-PSS-VERIFY for SHA-256 with `sLen = hLen = 32`.
 ///
 /// `em_bits` is `modBits − 1`. `em.len()` must equal `ceil(em_bits / 8)`.
-pub fn emsa_pss_verify_n(m_hash: &[u8; HLEN], em_bits: usize, em: &[u8]) -> bool {
+///
+/// # Errors
+///
+/// Returns [`Error::NotOperational`] if the module refuses the SHA-256
+/// or MGF1 computation, which it does in every state other than
+/// `SelfTest` and `Operational`.
+pub fn emsa_pss_verify_n(m_hash: &[u8; HLEN], em_bits: usize, em: &[u8]) -> Result<bool, Error> {
     let em_len = em.len();
     if em_len != (em_bits + 7) / 8 {
-        return false;
+        return Ok(false);
     }
     if !(HLEN + SLEN + 2..=MAX_EM_LEN).contains(&em_len) {
-        return false;
+        return Ok(false);
     }
     let top_bits_to_clear = (8 * em_len - em_bits) as u32;
 
     if em[em_len - 1] != 0xbc {
-        return false;
+        return Ok(false);
     }
 
     let db_len = em_len - HLEN - 1;
@@ -305,12 +338,12 @@ pub fn emsa_pss_verify_n(m_hash: &[u8; HLEN], em_bits: usize, em: &[u8]) -> bool
     if top_bits_to_clear > 0 {
         let mask = 0xffu8 << (8 - top_bits_to_clear);
         if masked_db[0] & mask != 0 {
-            return false;
+            return Ok(false);
         }
     }
 
     let mut db_mask = [0u8; MAX_EM_LEN];
-    mgf1_sha256(h, &mut db_mask[..db_len]);
+    mgf1_sha256(h, &mut db_mask[..db_len])?;
 
     let mut db = [0u8; MAX_EM_LEN];
     for i in 0..db_len {
@@ -325,11 +358,11 @@ pub fn emsa_pss_verify_n(m_hash: &[u8; HLEN], em_bits: usize, em: &[u8]) -> bool
     let ps_len = db_len - SLEN - 1;
     for &b in &db[..ps_len] {
         if b != 0 {
-            return false;
+            return Ok(false);
         }
     }
     if db[ps_len] != 0x01 {
-        return false;
+        return Ok(false);
     }
 
     let salt = &db[ps_len + 1..ps_len + 1 + SLEN];
@@ -337,9 +370,9 @@ pub fn emsa_pss_verify_n(m_hash: &[u8; HLEN], em_bits: usize, em: &[u8]) -> bool
     let mut m_prime = [0u8; 8 + HLEN + SLEN];
     m_prime[8..8 + HLEN].copy_from_slice(m_hash);
     m_prime[8 + HLEN..].copy_from_slice(salt);
-    let h_prime = sha256_internal(&m_prime);
+    let h_prime = sha256_digest(&m_prime)?;
 
-    crate::pkcs1_v15::ct_eq(&h_prime, h) == 1
+    Ok(crate::pkcs1_v15::ct_eq(&h_prime, h) == 1)
 }
 
 #[cfg(test)]
@@ -349,120 +382,136 @@ mod tests {
 
     #[test]
     fn mgf1_matches_rfc8017_b2_first_block() {
+        crate::test_support::start_module();
         // MGF1(0x00, 32) reproduces SHA-256(0x00 || 0x00000000).
         let seed = [0u8; 1];
         let mut out = [0u8; 32];
-        mgf1_sha256(&seed, &mut out);
+        mgf1_sha256(&seed, &mut out).unwrap();
 
-        let mut h = Sha256::new_internal();
+        let mut h = Sha256::new_internal().unwrap();
         h.update(&seed);
         h.update(&0u32.to_be_bytes());
-        assert_eq!(out, h.finalize());
+        assert_eq!(out, h.finalize().unwrap());
     }
 
     #[test]
     fn mgf1_multi_block_continues_with_counter() {
+        crate::test_support::start_module();
         // Produce 2*HLEN bytes; the second half must equal the hash
         // of seed || 0x00000001.
         let seed = b"abc";
         let mut out = [0u8; 2 * SHA256_DIGEST_SIZE];
-        mgf1_sha256(seed, &mut out);
+        mgf1_sha256(seed, &mut out).unwrap();
 
-        let mut h0 = Sha256::new_internal();
+        let mut h0 = Sha256::new_internal().unwrap();
         h0.update(seed);
         h0.update(&0u32.to_be_bytes());
-        assert_eq!(&out[..SHA256_DIGEST_SIZE], &h0.finalize());
+        assert_eq!(&out[..SHA256_DIGEST_SIZE], &h0.finalize().unwrap());
 
-        let mut h1 = Sha256::new_internal();
+        let mut h1 = Sha256::new_internal().unwrap();
         h1.update(seed);
         h1.update(&1u32.to_be_bytes());
-        assert_eq!(&out[SHA256_DIGEST_SIZE..], &h1.finalize());
+        assert_eq!(&out[SHA256_DIGEST_SIZE..], &h1.finalize().unwrap());
     }
 
     #[test]
     fn encode_then_verify_roundtrips() {
-        let m_hash = sha256_internal(b"roundtrip-msg");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"roundtrip-msg").unwrap();
         let salt = [0x33u8; SLEN];
         let mut em = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
-        assert!(emsa_pss_verify(&m_hash, &em));
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap().unwrap();
+        assert!(emsa_pss_verify(&m_hash, &em).unwrap());
     }
 
     #[test]
     fn encode_clears_top_bit() {
+        crate::test_support::start_module();
         // The top bit of maskedDB must always be zero for emBits=2047.
-        let m_hash = sha256_internal(b"top-bit-check");
+        let m_hash = sha256_digest(b"top-bit-check").unwrap();
         let salt = [0xffu8; SLEN];
         let mut em = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap().unwrap();
         assert_eq!(em[0] & 0x80, 0);
     }
 
     #[test]
     fn verify_rejects_missing_trailer() {
-        let m_hash = sha256_internal(b"trailer-check");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"trailer-check").unwrap();
         let salt = [0x00u8; SLEN];
         let mut em = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap().unwrap();
         em[EM_LEN - 1] ^= 0xff;
-        assert!(!emsa_pss_verify(&m_hash, &em));
+        assert!(!emsa_pss_verify(&m_hash, &em).unwrap());
     }
 
     #[test]
     fn verify_rejects_nonzero_top_bit() {
-        let m_hash = sha256_internal(b"top-bit-nonzero");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"top-bit-nonzero").unwrap();
         let salt = [0x00u8; SLEN];
         let mut em = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap().unwrap();
         em[0] |= 0x80;
-        assert!(!emsa_pss_verify(&m_hash, &em));
+        assert!(!emsa_pss_verify(&m_hash, &em).unwrap());
     }
 
     #[test]
     fn verify_rejects_wrong_hash() {
-        let m_hash = sha256_internal(b"original-msg");
-        let other_hash = sha256_internal(b"different-msg");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"original-msg").unwrap();
+        let other_hash = sha256_digest(b"different-msg").unwrap();
         let salt = [0x7bu8; SLEN];
         let mut em = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
-        assert!(!emsa_pss_verify(&other_hash, &em));
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap().unwrap();
+        assert!(!emsa_pss_verify(&other_hash, &em).unwrap());
     }
 
     // --- Slice-based PSS (for RSA-3072 / RSA-4096) ---
 
     #[test]
     fn encode_n_matches_fixed_for_2048() {
+        crate::test_support::start_module();
         // The slice-based variant at EM_BITS=2047, em_len=256 must produce
         // identical output to the fixed-array version.
-        let m_hash = sha256_internal(b"cross-check-2048");
+        let m_hash = sha256_digest(b"cross-check-2048").unwrap();
         let salt = [0x44u8; SLEN];
         let mut em_fixed = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em_fixed).unwrap();
+        emsa_pss_encode(&m_hash, &salt, &mut em_fixed)
+            .unwrap()
+            .unwrap();
         let mut em_slice = [0u8; EM_LEN];
-        emsa_pss_encode_n(&m_hash, &salt, EM_BITS, &mut em_slice).unwrap();
+        emsa_pss_encode_n(&m_hash, &salt, EM_BITS, &mut em_slice)
+            .unwrap()
+            .unwrap();
         assert_eq!(em_fixed, em_slice);
     }
 
     #[test]
     fn verify_n_matches_fixed_for_2048() {
-        let m_hash = sha256_internal(b"verify-cross-check-2048");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"verify-cross-check-2048").unwrap();
         let salt = [0x55u8; SLEN];
         let mut em = [0u8; EM_LEN];
-        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap();
-        assert!(emsa_pss_verify(&m_hash, &em));
-        assert!(emsa_pss_verify_n(&m_hash, EM_BITS, &em));
+        emsa_pss_encode(&m_hash, &salt, &mut em).unwrap().unwrap();
+        assert!(emsa_pss_verify(&m_hash, &em).unwrap());
+        assert!(emsa_pss_verify_n(&m_hash, EM_BITS, &em).unwrap());
     }
 
     #[test]
     fn encode_n_roundtrip_3072() {
+        crate::test_support::start_module();
         // RSA-3072: emBits = 3071, emLen = 384.
         let em_bits = 3071;
         let em_len = 384;
-        let m_hash = sha256_internal(b"pss-3072-roundtrip");
+        let m_hash = sha256_digest(b"pss-3072-roundtrip").unwrap();
         let salt = [0xaau8; SLEN];
         let mut em = [0u8; 384];
-        emsa_pss_encode_n(&m_hash, &salt, em_bits, &mut em).unwrap();
-        assert!(emsa_pss_verify_n(&m_hash, em_bits, &em));
+        emsa_pss_encode_n(&m_hash, &salt, em_bits, &mut em)
+            .unwrap()
+            .unwrap();
+        assert!(emsa_pss_verify_n(&m_hash, em_bits, &em).unwrap());
         // Top bit must be clear (8*384 - 3071 = 1 bit to clear).
         assert_eq!(em[0] & 0x80, 0);
         // Trailer byte.
@@ -471,34 +520,45 @@ mod tests {
 
     #[test]
     fn encode_n_roundtrip_4096() {
+        crate::test_support::start_module();
         // RSA-4096: emBits = 4095, emLen = 512.
         let em_bits = 4095;
         let em_len = 512;
-        let m_hash = sha256_internal(b"pss-4096-roundtrip");
+        let m_hash = sha256_digest(b"pss-4096-roundtrip").unwrap();
         let salt = [0xbbu8; SLEN];
         let mut em = [0u8; 512];
-        emsa_pss_encode_n(&m_hash, &salt, em_bits, &mut em).unwrap();
-        assert!(emsa_pss_verify_n(&m_hash, em_bits, &em));
+        emsa_pss_encode_n(&m_hash, &salt, em_bits, &mut em)
+            .unwrap()
+            .unwrap();
+        assert!(emsa_pss_verify_n(&m_hash, em_bits, &em).unwrap());
         assert_eq!(em[0] & 0x80, 0);
         assert_eq!(em[em_len - 1], 0xbc);
     }
 
     #[test]
     fn verify_n_rejects_wrong_hash_3072() {
-        let m_hash = sha256_internal(b"orig-3072");
-        let other = sha256_internal(b"other-3072");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"orig-3072").unwrap();
+        let other = sha256_digest(b"other-3072").unwrap();
         let salt = [0x01u8; SLEN];
         let mut em = [0u8; 384];
-        emsa_pss_encode_n(&m_hash, &salt, 3071, &mut em).unwrap();
-        assert!(!emsa_pss_verify_n(&other, 3071, &em));
+        emsa_pss_encode_n(&m_hash, &salt, 3071, &mut em)
+            .unwrap()
+            .unwrap();
+        assert!(!emsa_pss_verify_n(&other, 3071, &em).unwrap());
     }
 
     #[test]
     fn encode_n_rejects_mismatched_em_len() {
-        let m_hash = sha256_internal(b"bad-len");
+        crate::test_support::start_module();
+        let m_hash = sha256_digest(b"bad-len").unwrap();
         let salt = [0u8; SLEN];
         // emBits=3071 requires emLen=384, pass a 256-byte buffer instead.
         let mut em = [0u8; 256];
-        assert!(emsa_pss_encode_n(&m_hash, &salt, 3071, &mut em).is_none());
+        assert!(
+            emsa_pss_encode_n(&m_hash, &salt, 3071, &mut em)
+                .unwrap()
+                .is_none()
+        );
     }
 }

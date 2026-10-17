@@ -27,7 +27,7 @@ fn main() {
     let mut mac =
         oxicrypt_hmac::Hmac::<Sha256, BLOCK_SIZE, DIGEST_SIZE>::new(key).expect("hmac new");
     mac.update(message);
-    let tag = mac.finalize();
+    let tag = mac.finalize().expect("hmac finalize");
 
     println!("Key:     {:?}", std::str::from_utf8(key).expect("utf8"));
     println!("Message: {:?}", std::str::from_utf8(message).expect("utf8"));

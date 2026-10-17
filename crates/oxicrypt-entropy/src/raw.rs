@@ -6,8 +6,7 @@
 //! (ESV) data file. The two are **distinct types constructed separately**
 //! ([`RawCollector`] has **no conditioner field**) — there is no API path
 //! that yields both raw and conditioned output from one instance. Raw versus
-//! conditioned is a compile-time type distinction, never a runtime flag (the
-//! R75/R77 compiler-checked-disjointness precedent).
+//! conditioned is a compile-time type distinction, never a runtime flag.
 //!
 //! # Two postures over the same captured stream
 //!
@@ -1455,6 +1454,7 @@ mod tests {
         // RawCollector and EntropyPipeline are different types over the same S;
         // this helper accepts ONLY a RawCollector, never a pipeline.
         fn takes_raw<S: NoiseSource>(_: &RawCollector<S>) {}
+        crate::test_support::start_module();
         let c = RawCollector::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
         takes_raw(&c);
         // The collector exposes no conditioner accessor and no conditioned
@@ -1466,6 +1466,7 @@ mod tests {
 
     #[test]
     fn claim_above_ceiling_is_refused() {
+        crate::test_support::start_module();
         let err = RawCollector::new(
             PrngMock::new(),
             MinEntropy::from_steps(4 * 256 + 1),
@@ -1483,6 +1484,7 @@ mod tests {
 
     #[test]
     fn unsupported_alpha_is_typed_at_construction() {
+        crate::test_support::start_module();
         let a25 = Alpha::from_exp(25).unwrap();
         let err = RawCollector::new(PrngMock::new(), MinEntropy::from_bits(2), a25).unwrap_err();
         assert_eq!(
@@ -1495,6 +1497,7 @@ mod tests {
 
     #[test]
     fn startup_gates_then_operational() {
+        crate::test_support::start_module();
         let mut c =
             RawCollector::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
         assert!(!c.is_operational());
@@ -1505,6 +1508,7 @@ mod tests {
 
     #[test]
     fn dead_source_fails_startup_and_poisons() {
+        crate::test_support::start_module();
         let mut c = RawCollector::new(DeadMock, MinEntropy::from_bits(2), alpha20()).unwrap();
         assert_eq!(
             c.run_startup().unwrap_err(),
@@ -1515,6 +1519,7 @@ mod tests {
 
     #[test]
     fn startup_twice_is_refused() {
+        crate::test_support::start_module();
         let mut c =
             RawCollector::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
         c.run_startup().unwrap();
@@ -1527,6 +1532,7 @@ mod tests {
     #[test]
     fn collector_debug_redacts_samples() {
         use std::format;
+        crate::test_support::start_module();
         let c = RawCollector::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
         let rendered = format!("{c:?}");
         assert!(rendered.contains("RawCollector"));
@@ -1569,6 +1575,7 @@ mod tests {
 
         #[test]
         fn characterization_keeps_every_sample_and_annotates_trip() {
+            crate::test_support::start_module();
             // A source that dies mid-run trips RCT; in characterization the
             // sample is annotated and STILL emitted — zero dropped samples.
             let src = DiesLaterMock {
@@ -1597,6 +1604,7 @@ mod tests {
 
         #[test]
         fn stream_to_bounds_retained_trip_annotations() {
+            crate::test_support::start_module();
             // A source that dies to a constant post-startup trips RCT on nearly
             // every subsequent sample. Over a capture far larger than the cap,
             // the retained trip list must stay bounded (no unbounded growth /
@@ -1655,6 +1663,7 @@ mod tests {
                     meta()
                 }
             }
+            crate::test_support::start_module();
             let mut c = RawCollector::new(
                 OscWide { emitted: 0, bit: 0 },
                 MinEntropy::from_bits(8),
@@ -1680,6 +1689,7 @@ mod tests {
 
         #[test]
         fn clean_characterization_has_no_trips() {
+            crate::test_support::start_module();
             let mut c = started(2);
             let dataset = c
                 .collect(
@@ -1697,6 +1707,7 @@ mod tests {
 
         #[test]
         fn certification_trip_invalidates_and_signals_recollect() {
+            crate::test_support::start_module();
             let src = DiesLaterMock {
                 inner: PrngMock::new(),
                 die_after: STARTUP_MIN_SAMPLES + 100,
@@ -1718,6 +1729,7 @@ mod tests {
 
         #[test]
         fn certification_clean_run_is_valid_for_submission() {
+            crate::test_support::start_module();
             let mut c = started(2);
             let n = 4096u32;
             let dataset = c
@@ -1734,11 +1746,13 @@ mod tests {
 
         #[test]
         fn raw_data_sample_count_constant_is_one_million() {
+            crate::test_support::start_module();
             assert_eq!(crate::sp800_90b::RAW_DATA_SAMPLE_COUNT, 1_000_000);
         }
 
         #[test]
         fn emit_honors_requested_count_one_byte_each() {
+            crate::test_support::start_module();
             // Parameterized to a smaller N for speed; the constant wiring is
             // asserted separately above. One byte per sample by Vec<u8> type.
             let mut c = started(2);
@@ -1755,6 +1769,7 @@ mod tests {
 
         #[test]
         fn in_range_narrow_symbols_are_emitted() {
+            crate::test_support::start_module();
             let mut c =
                 RawCollector::new(NarrowMock(0), MinEntropy::from_bits(2), alpha20()).unwrap();
             c.run_startup().unwrap();
@@ -1795,6 +1810,7 @@ mod tests {
                     meta()
                 }
             }
+            crate::test_support::start_module();
             let mut c = RawCollector::new(
                 WidensLater {
                     emitted: 0,
@@ -1844,6 +1860,7 @@ mod tests {
                     meta()
                 }
             }
+            crate::test_support::start_module();
             let mut c = RawCollector::new(
                 MarkerMock { emitted: 0 },
                 MinEntropy::from_bits(2),
@@ -1868,6 +1885,7 @@ mod tests {
 
         #[test]
         fn metadata_validates_against_vendored_schema() {
+            crate::test_support::start_module();
             let mut c = started(2);
             let dataset = c
                 .collect(
@@ -1891,6 +1909,7 @@ mod tests {
 
         #[test]
         fn metadata_with_trips_validates() {
+            crate::test_support::start_module();
             let src = DiesLaterMock {
                 inner: PrngMock::new(),
                 die_after: STARTUP_MIN_SAMPLES + 50,
@@ -1913,6 +1932,7 @@ mod tests {
 
         #[test]
         fn validator_rejects_missing_required_field() {
+            crate::test_support::start_module();
             // A document missing `sample_count` must FAIL — proving the
             // validator actually validates (not a string-equality stub).
             let bad = r#"{
@@ -1934,6 +1954,7 @@ mod tests {
 
         #[test]
         fn validator_rejects_wrong_type_and_bad_version() {
+            crate::test_support::start_module();
             // sample_count as a string (wrong type).
             let wrong_type = r#"{
                 "schema_version": 1, "sample_count": "lots", "sample_width_bits": 8,
@@ -1993,6 +2014,7 @@ mod tests {
                     }
                 }
             }
+            crate::test_support::start_module();
             let mut c = RawCollector::new(
                 QuoteMock { emitted: 0 },
                 MinEntropy::from_bits(2),

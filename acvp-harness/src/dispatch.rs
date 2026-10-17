@@ -94,6 +94,25 @@ impl From<HexError> for DispatchError {
     }
 }
 
+impl From<oxicrypt_module::Error> for DispatchError {
+    fn from(e: oxicrypt_module::Error) -> Self {
+        Self::Module(e)
+    }
+}
+
+/// Maps the error of an `*_internal` primitive: `InvalidInput`, the
+/// primitive rejecting its input, becomes `Crypto(context)`; any other
+/// module error, such as the self-test guard refusing the call, stays a
+/// `Module` error.
+pub(crate) fn primitive_err(
+    context: &'static str,
+) -> impl Fn(oxicrypt_module::Error) -> DispatchError {
+    move |e| match e {
+        oxicrypt_module::Error::InvalidInput => DispatchError::Crypto(context),
+        other => DispatchError::Module(other),
+    }
+}
+
 /// Trait implemented by every per-algorithm AFT dispatcher.
 ///
 /// Handlers are stateless: the `&self` receiver lets the registry
@@ -134,11 +153,9 @@ pub trait AlgorithmHandler: Send + Sync {
     ///
     /// Default impl ignores the filter and delegates to
     /// [`Self::acvp_capabilities`]. Override only when the
-    /// underlying cap-builder supports per-paramSet filtering — at
-    /// time of writing, only the SLH-DSA family does, per
-    /// `feedback_single_algo_per_acvts_session`'s
-    /// one-vector-set-per-session rule for new multi-variant PQ
-    /// families.
+    /// underlying cap-builder supports per-paramSet filtering. Only the
+    /// SLH-DSA family does, so that a session can request one parameter
+    /// set of a new multi-variant PQ family at a time.
     fn acvp_capabilities_filtered(&self, _paramset_filter: Option<&str>) -> Option<JsonValue> {
         self.acvp_capabilities()
     }
@@ -400,6 +417,7 @@ mod tests {
 
     #[test]
     fn registry_lookup() {
+        crate::ensure_initialized().unwrap();
         let r = with_default_handlers();
         // SHA3-256 and HMAC-SHA2-256
         assert!(r.find("SHA3-256", None, "2.0").is_some());

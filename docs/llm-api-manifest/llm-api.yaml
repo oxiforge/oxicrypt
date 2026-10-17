@@ -22,6 +22,10 @@ library:
       enforcement: runtime
       severity: error
 
+    - description: The hidden *_internal functions are not services and skip require_operational(); each public one calls require_self_test_started() first and returns Error::NotOperational unless the module is Operational, or in SelfTest and the caller is the thread running the power-up self-tests.
+      enforcement: runtime
+      severity: error
+
     - description: Zero third-party dependencies in the cryptographic boundary; all cryptographic code is in-tree pure Rust.
       enforcement: convention
       severity: error
@@ -221,19 +225,22 @@ modules:
       - oxicrypt-drbg
 
   - name: oxicrypt-imageread
-    description: Kernel-mediated reads of the module's own loaded image via mach_vm_read_overwrite on Darwin and ReadProcessMemory on Windows, compiling to a NoMechanism stub on every other target including Linux and Android.
+    description: The system calls the integrity test needs, isolated so oxicrypt-integrity keeps forbid(unsafe_code) — kernel-mediated reads of the module's own loaded image (process_vm_readv on Linux and Android, mach_vm_read_overwrite on Darwin, ReadProcessMemory on Windows), the image path of an address, bound-import resolution and the calling thread's kernel id, with a NoMechanism stub on every other target.
     no_std: false
     depends_on: []
 
   - name: oxicrypt-integrity
-    description: HMAC-SHA-256 software integrity check over the module's loader-invariant runtime image, with a 16 KiB reserved slot carrying a range table and the reference MAC.
+    description: Pre-operational software integrity test, an ML-DSA-87 signature (FIPS 204, under the context string oxicrypt-integrity) over the module's loaded image verified with a public key the build embeds from OXICRYPT_INTEGRITY_VERIFY_KEY, with a 64 KiB reserved slot carrying a typed entry table, the key fingerprint and the signature.
     no_std: false
     depends_on:
       - oxicrypt-module
+      - oxicrypt-ml-dsa
       - oxicrypt-hmac
+      - oxicrypt-imageread
+      - oxicrypt-sha
 
   - name: oxicrypt-zeroize
-    description: "Volatile-write zeroization for CSP buffers: zeroize() for byte slices, zeroize_u32() for u32 arrays, zeroize_u64() for u64 arrays."
+    description: "Volatile-write zeroization for CSP buffers: zeroize() for byte slices, zeroize_u32() for u32 arrays, zeroize_i32() for i32 arrays, zeroize_u64() for u64 arrays."
     no_std: true
     depends_on: []
 
@@ -335,7 +342,7 @@ modules:
     depends_on: []
 
   - name: oxicrypt-integrity-sign
-    description: Out-of-boundary build tool and library that derives a module artifact's loader-invariant extent and writes its reference MAC into the embedded integrity slot, published for `cargo install oxicrypt-integrity-sign` and not itself part of the FIPS-validated module.
+    description: Out-of-boundary build tool and library that generates the integrity key pair, derives a module artifact's extent and signs it with ML-DSA-87 into the embedded integrity slot, published for `cargo install oxicrypt-integrity-sign` and not itself part of the FIPS-validated module.
     no_std: false
     depends_on:
       - oxicrypt-integrity
@@ -475,6 +482,8 @@ types:
         description: Ready for approved services.
       - name: Error
         description: Terminal failure.
+      - name: IntegrityUnverified
+        description: Terminal; the module was initialised without the pre-operational integrity test.
 
   - name: Error
     module: oxicrypt-module
@@ -487,8 +496,12 @@ types:
         description: A power-up KAT failed.
       - name: ConditionalTestFailed
         description: A conditional self-test (e.g., PCT) failed.
+      - name: IntegrityNotAttested
+        description: Initialisation was attempted with an empty integrity group.
       - name: AlreadyInitialized
-        description: initialize_with_tests() called more than once.
+        description: Initialisation was called on a module that is, or that another thread's running initialisation makes, Operational; nothing re-runs.
+      - name: AlreadyFailed
+        description: Initialisation was called on a module whose initialisation failed (Error or IntegrityUnverified); terminal, no test re-runs and nothing resets until the process restarts.
       - name: InvalidInput
         description: Caller supplied invalid parameters.
       - name: AlgorithmRestricted
@@ -514,6 +527,11 @@ types:
     module: oxicrypt-module
     kind: enum
     description: Per-algorithm-and-parameter enumeration of every approved service, used with require_allowed() to enforce profile restrictions.
+
+  - name: SelfTestStarted
+    module: oxicrypt-module
+    kind: opaque
+    description: Zero-sized proof, obtainable only from require_self_test_started_token, that the module was Operational, or in SelfTest with the holder on the initialising thread, when it was issued; neither Clone nor Copy.
 
   - name: KatEntry
     module: oxicrypt-module
@@ -575,7 +593,7 @@ types:
       - name: InvalidAadLength
         description: AAD length exceeds the mode's allowed maximum.
       - name: IntegrityUnverified
-        description: The module was initialised without the pre-operational software integrity test, so it was never verified against its reference MAC.
+        description: The module was initialised without the pre-operational software integrity test, so it was never verified against its signature.
       - name: Internal
         description: Catch-all for should-never-happen cases.
 
@@ -650,6 +668,8 @@ types:
         description: Payload exceeds mode's maximum.
       - name: InvalidAadLength
         description: AAD exceeds mode's maximum.
+      - name: Module
+        description: The module refused the operation (carries oxicrypt_module::Error, NotOperational outside SelfTest and Operational).
 
   - name: CtrDrbgAes256
     module: oxicrypt-drbg
@@ -675,6 +695,8 @@ types:
         description: Seed material wrong length for no-df instantiate.
       - name: RequestTooLong
         description: Requested output exceeds single-call maximum.
+      - name: Module
+        description: Module state error (wraps oxicrypt_module::Error); a CTR_DRBG, Hash_DRBG or HMAC_DRBG instance refuses once the module has left SelfTest and Operational.
 
   - name: RsaPrivateKey2048
     module: oxicrypt-rsa
@@ -1189,6 +1211,8 @@ types:
     variants:
       - name: Unavailable
         description: The source cannot currently produce samples.
+      - name: Module
+        description: The module refused the source's hash computation (wraps oxicrypt_module::Error).
 
   - name: EntropyError
     module: oxicrypt-entropy
@@ -1201,6 +1225,8 @@ types:
         description: Injected claim exceeds the information content of the declared width.
       - name: Source
         description: Underlying noise-source failure (wraps SourceError).
+      - name: Module
+        description: The module refused the pipeline's hash computation (wraps oxicrypt_module::Error); the pipeline is not poisoned.
 
   - name: JitterConfig
     module: oxicrypt-entropy
@@ -1215,7 +1241,7 @@ types:
   - name: TimerError
     module: oxicrypt-entropy
     kind: enum
-    description: "Typed timer-layer errors (non-exhaustive): Unsupported, Unavailable, Backwards, Inadequate { reason, report }."
+    description: "Typed timer-layer errors (non-exhaustive): Unsupported, Unavailable, Backwards, Inadequate { reason, report }, Module."
     variants:
       - name: Unsupported
         description: Reserved timer source, unselectable this phase.
@@ -1225,6 +1251,8 @@ types:
         description: Read went backwards; sample must be discarded.
       - name: Inadequate
         description: "Measured behavior refused; struct variant carrying reason: InadequacyReason and report: AdequacyReport (the measured evidence)."
+      - name: Module
+        description: The module refused the workload's hash computation (wraps oxicrypt_module::Error).
 
   - name: InadequacyReason
     module: oxicrypt-entropy
@@ -1389,15 +1417,15 @@ types:
   - name: IntegritySlot
     module: oxicrypt-integrity
     kind: struct
-    description: repr(C) 16 KiB reserved slot embedded in the module's runtime image, holding the format version, range table, and reference MAC between a header and a footer magic.
-    size_bytes: 16384
+    description: repr(C) 64 KiB reserved slot embedded in the module's runtime image, holding the format version 4 header, the typed entry table, the string table and the ML-DSA-87 signature between a header and a footer magic.
+    size_bytes: 65536
     fields:
     - name: hdr
       type: '[u8; 16]'
       description: Header magic; equals SLOT_HEADER_MAGIC in a valid slot.
     - name: body
       type: '[u8; SLOT_BODY_SIZE]'
-      description: Opaque body holding the version, flags, range count, slot_rva, reference MAC, and range table; interior layout is defined by the field offsets in the slot module and parsed from bytes, never by Rust field access.
+      description: Opaque body holding the header fields, entry table and string table; interior layout is defined by the field offsets in the slot module and parsed from bytes, never by Rust field access.
     - name: ftr
       type: '[u8; 16]'
       description: Footer magic; equals SLOT_FOOTER_MAGIC in a valid slot.
@@ -1406,23 +1434,163 @@ types:
       zeroize_on_drop: false
       constant_time: false
 
+  - name: KeyRecord
+    module: oxicrypt-integrity
+    kind: struct
+    description: repr(C) record holding the embedded ML-DSA-87 verifying key between two magics, so the signer can find it in the file; the key is all zero in a build without OXICRYPT_INTEGRITY_VERIFY_KEY.
+    size_bytes: 2624
+    fields:
+    - name: hdr
+      type: '[u8; 16]'
+      description: Header magic; equals KEY_RECORD_HEADER_MAGIC.
+    - name: key
+      type: '[u8; VERIFY_KEY_LEN]'
+      description: The encoded ML-DSA-87 public key (2,592 bytes); all zero when the build had none.
+    - name: ftr
+      type: '[u8; 16]'
+      description: Footer magic; equals KEY_RECORD_FOOTER_MAGIC.
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: Entry
+    module: oxicrypt-integrity
+    kind: struct
+    description: One contiguous run of the signed extent with its kind, addressed by rva for the verifier reading the loaded image and by file_off for the signer and the file route; a Plain run may carry the Hole words after it, and its rva_end, file_end and span include them.
+    fields:
+    - name: rva
+      type: u32
+      description: Offset of the run from the image base, as loaded.
+    - name: file_off
+      type: u32
+      description: Offset of the same run in the signed file.
+    - name: len
+      type: u32
+      description: Length of the run in bytes, never zero; for a Plain entry the hashed bytes before its hole.
+    - name: kind
+      type: EntryKind
+      description: How the verifier treats the run.
+    - name: meta
+      type: u16
+      description: Index of the BindRecord for a Bind entry; for a Plain entry, the number of 8-byte Hole words that follow its len bytes inside the entry; zero otherwise.
+
+  - name: EntryKind
+    module: oxicrypt-integrity
+    kind: enum
+    description: How the verifier treats the bytes an entry names, and what the entry contributes to the signature input.
+    variants:
+    - name: Plain
+      description: "0: the loaded bytes equal the file bytes and are signed."
+    - name: Hole
+      description: "1: the loader overwrites the bytes without reading them; nothing is signed."
+    - name: Relative
+      description: "2: 8-byte words the loader rebases; each is signed as its unslid value, the loaded word minus the slide."
+    - name: Bind
+      description: "3: 8-byte words the loader binds to an import; each must equal the recorded import's resolution plus its addend, except that on Darwin x86_64 a word with no addend that is jmp *disp32(%rip) at exactly the stub address of the stub-and-resolver export the record's name leads to, resolved from the record's library through its re-exports as dyld resolves it, the stub the loader binds a resolver function to, is accepted."
+    - name: FileOnly
+      description: "4: initialised writable data, signed from the image file the loader reports."
+
+  - name: BindRecord
+    module: oxicrypt-integrity
+    kind: struct
+    description: The import a Bind entry's words are bound to, stored in the slot's string table.
+    fields:
+    - name: library
+      type: String
+      description: The library or DLL the import comes from, as the loader names it.
+    - name: symbol
+      type: String
+      description: The symbol name with any platform prefix removed; empty for an import by ordinal.
+    - name: ordinal
+      type: u16
+      description: The PE ordinal for an import by ordinal; zero otherwise.
+    - name: addend
+      type: i64
+      description: The value added to the resolved address.
+    - name: weak
+      type: bool
+      description: A weak import, which may legitimately fail to resolve, in which case its words must be zero.
+
+  - name: SlotFields
+    module: oxicrypt-integrity
+    kind: struct
+    description: Everything the signer writes into a slot except the signature, all of it covered by the signature.
+    fields:
+    - name: flags
+      type: u32
+      description: Loader flags; FLAG_LOADER_BIONIC marks an artifact loaded by bionic.
+    - name: slot_rva
+      type: u32
+      description: Offset of the slot from the image base.
+    - name: key_id
+      type: '[u8; 32]'
+      description: SHA-256 of the verifying key the signature was made for.
+    - name: link_base
+      type: u64
+      description: The image base the file was linked at; the slide is the load base minus this.
+    - name: slot_file_off
+      type: u32
+      description: File offset of the slot.
+    - name: file_len
+      type: u32
+      description: Length of the signed file image.
+    - name: entries
+      type: Vec<Entry>
+      description: The extent, ascending and in canonical (merged) form.
+    - name: records
+      type: Vec<BindRecord>
+      description: The imports the Bind entries index.
+
   - name: Unreadable
     module: oxicrypt-integrity
     kind: enum
-    description: Why no byte-acquisition mechanism could supply the module's own bytes.
+    description: Why the module's own bytes could not be obtained, so the integrity test was not performed.
     variants:
     - name: NoMechanism
       description: This target has no implemented byte-acquisition mechanism.
+    - name: MemoryRoutesFailed
+      description: "Struct variant carrying the io::Error from /proc/self/mem and the ReadError from process_vm_readv: both Linux memory routes failed."
+    - name: MemoryRead
+      description: "Tuple variant carrying an io::Error: a later read through the memory route chosen by the first read failed."
+    - name: SelfReadFailed
+      description: "Tuple variant carrying an oxicrypt_imageread::ReadError: the kernel refused to copy the module's own image."
     - name: MapsUnavailable
-      description: "Tuple variant carrying an io::Error: /proc/self/maps could not be read, so neither the load base nor the backing file could be established."
+      description: "Tuple variant carrying an io::Error: /proc/self/maps could not be read, so the image file cannot be located and the file route is not performed."
     - name: MapsUnparseable
       description: The mapping holding the slot was found but a field of it did not parse, so its file offset cannot be trusted.
     - name: SlotUnmapped
-      description: The slot's address falls in no mapping named by /proc/self/maps.
+      description: The slot's address falls in no reported mapping, or an address computed from it overflows.
     - name: NoBackingFile
-      description: The mapping holding the slot names no backing file, so the file-read fallback has nothing to open.
-    - name: AllMechanismsFailed
-      description: "Tuple variant carrying Vec<io::Error>: every mechanism was tried and each failed, in the order attempted."
+      description: The mapping holding the slot names no image file.
+    - name: ImagePath
+      description: "Tuple variant carrying a ReadError: the operating system named no image file for the slot's address."
+    - name: ImagePathWithoutMaps
+      description: "Struct variant carrying the maps io::Error and a ReadError: on Linux and Android /proc/self/maps does not exist and the loader named no image file either, so the image cannot be measured."
+    - name: ImagePathRelative
+      description: "Tuple variant carrying a PathBuf: on Linux and Android without /proc/self/maps the loader names the image only by the relative path it was loaded by, which does not identify the file."
+    - name: FileOpen
+      description: "Tuple variant carrying an io::Error: the image file could not be opened or its length read."
+    - name: FileRead
+      description: "Tuple variant carrying an io::Error: a read of the image file failed."
+    - name: FileLength
+      description: "Struct variant carrying expected and actual lengths: a plain image file is not exactly file_len bytes, or an archive does not hold the image."
+    - name: ArchiveBaseUnaligned
+      description: "Tuple variant carrying u64: the image's offset inside the archive that maps it is not page-aligned."
+    - name: ForeignArchiveMapping
+      description: A mapping of the image file overlaps the image's file range and meets the address range the slot's entries describe, but runs outside it or maps archive bytes from before the image, which is classified as damage while a mapping wholly outside the range, such as a second load of the file, is not.
+    - name: Resolver
+      description: "Tuple variant carrying a ReadError: the operating system's resolver failed on a bound import's names."
+    - name: MappingMisplaced
+      description: A mapping of the image file inside the image's address range moves its bytes unlike the slot's entry for them; classified as damage.
+    - name: ExportTrie
+      description: Darwin x86_64; a library a bound import resolves through is not loaded, the chain of re-exports cycles or runs past eight hops, or an export trie cannot be found through its image's load commands as loaded or is malformed, so a resolver stub cannot be checked.
+    - name: UniversalTable
+      description: Darwin; the image file is universal and its architecture table runs past the limits dyld reads it within (the first 4 KiB and the file), or is followed by an arm64 entry dyld loads although the table does not count it.
+    - name: SliceNotFound
+      description: Darwin; the image file the loader names holds no image whose Mach header and integrity slot are the loaded image's, neither the file itself nor exactly one slice of a universal file.
+    - name: OutOfMemory
+      description: The signature input could not be allocated.
 
   - name: IntegrityError
     module: oxicrypt-integrity
@@ -1434,18 +1602,22 @@ types:
     - std::error::Error
     variants:
     - name: CastNotRun
-      description: The integrity technique's own HMAC-SHA-256 algorithm self-test has not passed in this process, so the integrity test may not use it.
-    - name: Mismatch
-      description: The computed MAC over the loader-invariant image does not equal the reference MAC in the slot.
+      description: The integrity technique's own ML-DSA-87 signature-verification self-test has not passed in this process, so the integrity test may not use it.
+    - name: NoVerifyKey
+      description: The module carries no verifying key (built without one, or signed and then had its key record zeroed, which it cannot tell apart), so it has nothing to verify its image against.
+    - name: SignatureInvalid
+      description: The signature over the image does not verify under the embedded key, or a bound import does not hold its recorded value.
     - name: SlotInvalid
-      description: "Tuple variant carrying a SlotDefect: the slot is absent, malformed, or describes an impossible extent."
+      description: "Tuple variant carrying a SlotDefect: the slot or the embedded key record is malformed, the slot is the unsigned template, it was signed for a different key, or it describes an impossible extent; IntegrityStatus tells these apart."
     - name: Unreadable
       description: "Tuple variant carrying an Unreadable: the module's own bytes could not be obtained, so the test was not performed."
+    - name: Module
+      description: "Tuple variant carrying an oxicrypt_module::Error: the module refused a primitive the test uses outside the SelfTest and Operational states."
 
   - name: Range
     module: oxicrypt-integrity
     kind: struct
-    description: One contiguous run of loader-invariant bytes, addressed by rva for the verifier reading the loaded image and by file_off for the signer computing the reference MAC and for the file-read fallback.
+    description: A run of bytes addressed both ways before a kind is assigned, the shape a format classifier produces; Entry::plain turns one into a Plain entry.
     fields:
     - name: rva
       type: u32
@@ -1455,7 +1627,7 @@ types:
       description: Offset of the same run in the signed file.
     - name: len
       type: u32
-      description: Length of the run in bytes, never zero.
+      description: Length of the run in bytes.
 
   - name: SlotDefect
     module: oxicrypt-integrity
@@ -1475,73 +1647,121 @@ types:
     - name: UnsupportedVersion
       description: "Tuple variant carrying u32: the version is not SLOT_VERSION; zero means the artifact was never signed."
     - name: UnknownFlags
-      description: "Tuple variant carrying u32: the reserved flags word is non-zero, written by a tool asserting a feature this verifier does not implement."
-    - name: NoRanges
-      description: The range count is zero; an extent covering nothing would make the test vacuous.
-    - name: TooManyRanges
-      description: "Tuple variant carrying u32: the range count exceeds MAX_RANGES."
-    - name: EmptyRange
-      description: "Tuple variant carrying u32: the range at this index has zero length."
-    - name: RangeOverflow
-      description: "Tuple variant carrying u32: the range at this index overflows the RVA space."
+      description: "Tuple variant carrying u32: the flags word sets a bit this verifier does not implement."
+    - name: NoEntries
+      description: The entry count is zero; an extent covering nothing would make the test vacuous.
+    - name: TooManyEntries
+      description: "Tuple variant carrying u32: the entry count exceeds MAX_ENTRIES, or the table overruns the string table."
+    - name: EmptyEntry
+      description: "Tuple variant carrying u32: the entry at this index has zero length."
+    - name: EntryOverflow
+      description: "Tuple variant carrying u32: the entry at this index overflows the RVA or file-offset space."
     - name: Unordered
-      description: "Tuple variant carrying u32: the range at this index starts before the previous range ends, so the table is unordered or self-overlapping."
+      description: "Tuple variant carrying u32: the entry at this index starts before the previous entry ends."
     - name: OverlapsSlot
-      description: "Tuple variant carrying u32: the range at this index covers part of the slot, so signer and verifier would hash different bytes."
-    - name: RangeOutOfBounds
-      description: "Tuple variant carrying u32: the range at this index falls outside the image being hashed."
+      description: "Tuple variant carrying u32: the entry at this index covers part of the slot, by RVA or by file offset."
+    - name: EntryOutOfBounds
+      description: "Tuple variant carrying u32: the entry at this index falls outside the image being hashed."
+    - name: MalformedEntry
+      description: "Tuple variant carrying u32: the entry has an unknown kind, a run byte on an entry that carries no words, a meta value its kind does not use, or a length its kind does not allow."
+    - name: NonMaximal
+      description: "Tuple variant carrying u32: the entry continues the previous one with the same kind and meta, or the stored table is not the one packing of its entries; the canonical table merges them."
+    - name: BindRecordOutOfRange
+      description: "Tuple variant carrying u32: the Bind entry names a record the string table does not hold."
+    - name: StringTable
+      description: The string table is misplaced or is not a sequence of well-formed records.
+    - name: NonZeroPadding
+      description: A byte outside every field, the table and the string table is not zero.
+    - name: FileLenTooShort
+      description: "Tuple variant carrying u32: the entry ends past file_len."
+    - name: KeyMismatch
+      description: The slot's key_id is not the fingerprint of the key the module embeds.
+    - name: UnresolvedImport
+      description: "Tuple variant carrying u32: the Bind entry names an import that did not resolve and is not weak."
+    - name: Unsigned
+      description: The slot is exactly the unsigned template the build emits, which a never-signed build and a signed one whose slot was overwritten both carry.
+    - name: BindUnsupported
+      description: "Tuple variant carrying u32: the Bind entry records an import this platform's loader never binds; the signer writes none, so this is damage."
+    - name: FileLenMismatch
+      description: The image file is not the length the slot records, checked before the slot's signature can be.
     - name: SlotRvaTooLarge
       description: The slot's recorded RVA exceeds the address the slot was found at, so no load base can be derived from the pair.
+    - name: KeyRecord
+      description: The embedded verifying-key record is absent or its magics are wrong.
+    - name: ExtentTooLarge
+      description: The entries' payload is larger than the file image the slot describes.
+    - name: SlotOutsideImage
+      description: The slot itself does not lie inside the image it describes, by file range or by address range.
+    - name: RecordOrder
+      description: "Tuple variant carrying u32: a Bind record is used before an earlier one was first used, or a record is left unused, so the string table is not in its canonical order."
 
   - name: SlotImage
     module: oxicrypt-integrity
     kind: struct
-    description: A parsed, fully validated integrity slot.
+    description: A parsed, structurally validated integrity slot.
     fields:
     - name: version
       type: u32
       description: Format version, always SLOT_VERSION once parsed.
-    - name: flags
-      type: u32
-      description: Reserved flags word.
-    - name: slot_rva
-      type: u32
-      description: Offset of the slot itself from the image base.
-    - name: mac
-      type: '[u8; 32]'
-      description: Reference MAC over the listed ranges, in order.
-    - name: ranges
-      type: 'Vec<Range>'
-      description: The loader-invariant extent.
+    - name: fields
+      type: SlotFields
+      description: Everything the signature covers in the slot, decoded.
+    - name: signature
+      type: '[u8; SIG_LEN]'
+      description: The ML-DSA-87 signature (4,627 bytes), as FIPS 204 sigEncode writes it.
 
   - name: IntegrityStatus
     module: oxicrypt-integrity
     kind: enum
-    description: The pre-operational integrity test's status indicator, whose discriminants the C ABI reports and whose four failure values Security Policy 5.2 enumerates.
+    description: The pre-operational integrity test's status indicator, whose discriminants the C ABI reports and whose failure values Security Policy 5.2 enumerates.
     variants:
     - name: NotRun
-      description: The test has not run in this process.
+      description: "0: the test has not run in this process."
     - name: Passed
-      description: The test ran and the image matched its reference MAC.
-    - name: Mismatch
-      description: The computed MAC does not equal the reference MAC in the slot.
+      description: "1: the test ran and the signature over the image verified."
+    - name: SignatureInvalid
+      description: "2: the signature over the image does not verify under the embedded key, or a bound import's word does not hold its recorded value; bind words are checked before the signature, so a slot naming an import that does not resolve reports 10 or 4 instead, and on Darwin x86_64 a mismatched bind word whose export-trie walk fails reports 4."
     - name: SlotInvalid
-      description: The slot is absent, malformed, or describes an impossible extent.
+      description: "3: the slot is byte for byte the unsigned template the build emits, which a never-signed build and a signed one whose slot was overwritten both report, so it is a reason to sign only for a binary you built yourself and have not signed, and otherwise a reason to obtain a fresh copy from its publisher."
     - name: Unreadable
-      description: The module's own bytes could not be obtained, so the test was not performed and this says nothing about the image.
+      description: "4: the module's own bytes could not be obtained, so the test was not performed and this says nothing about the image."
     - name: CastNotRun
-      description: The test was reached before the HMAC-SHA-256 CAST it depends on.
+      description: "5: the test was reached before the ML-DSA-87 and SHA-256 CASTs it depends on had both passed."
     - name: Unknown
-      description: The recorded indicator is not a value this module writes, reported rather than folded into NotRun so an impossible value is visible instead of reading as benign.
+      description: "6: the recorded indicator is not a value this module writes."
+    - name: Refused
+      description: "7: the module refused a primitive the test uses after the test had been admitted; the test was not performed."
+    - name: NoVerifyKey
+      description: "8: the module carries no verifying key, either built without one or with its key record zeroed after signing, which alone is never a reason to sign it."
+    - name: KeyMismatch
+      description: "9: the slot was signed for a different verifying key than the one the module embeds."
+    - name: SlotDamaged
+      description: "10: a signed slot or the key record is damaged, or a bound import record names an import that does not resolve or that this platform cannot bind; the module is corrupt and must be replaced, not signed again."
+
+  - name: Symbol
+    module: oxicrypt-imageread
+    kind: enum
+    description: One import a loader binds, by name or by ordinal, as resolve_symbol takes it.
+    variants:
+    - name: Name
+      description: "Tuple variant carrying &str: an export named by its symbol name, without any platform prefix."
+    - name: Ordinal
+      description: "Tuple variant carrying u16: a PE export named by its ordinal."
 
   - name: Layout
     module: oxicrypt-integrity-sign
     kind: struct
-    description: What the signer needs to know about an artifact after classifying it — the loader-invariant extent with the slot already subtracted, where the slot sits, and how much of the mapped image the extent covers.
+    description: What the signer needs to know about an artifact after classifying it — the typed extent with the slot already subtracted, the slot flags, where the slot sits, the link base and file length the slot records, and how much of the mapped image the extent covers.
     fields:
     - name: ranges
       type: 'Vec<Range>'
-      description: The loader-invariant extent, slot already subtracted, ascending.
+      description: The Plain entries of the extent, slot already subtracted, ascending.
+    - name: entries
+      type: 'Vec<Entry>'
+      description: The whole typed table the slot records, slot already subtracted, ascending and merged.
+    - name: flags
+      type: u32
+      description: The slot's flags; for ELF, the loader the image is typed for.
     - name: slot_file_off
       type: usize
       description: File offset of the integrity slot.
@@ -1550,11 +1770,128 @@ types:
       description: Offset of the integrity slot from the image base.
     - name: invariant_len
       type: u64
-      description: File-backed bytes across all non-writable load segments before the slot was subtracted, reported so an operator can see what fraction of the mapped image the extent covers.
+      description: File-backed bytes the extent types, of every kind, before the slot was subtracted.
     - name: mapped_len
       type: u64
       description: File-backed bytes across every load segment.
+    - name: link_base
+      type: u64
+      description: The image base the file was linked at, which a Relative word's unslid value is relative to; zero where the classifier emits no Relative entry.
+    - name: file_len
+      type: u32
+      description: Length of the file image the slot describes, stopping before a Mach-O code signature or a PE certificate table.
+    - name: relative
+      type: RelativeEncoding
+      description: How the file holds a Relative word, which decides the unslid value the signature covers.
+    - name: records
+      type: Vec<BindRecord>
+      description: The imports the Bind entries name, in order of first use; a Bind entry's meta indexes this list.
 
+  - name: RelativeEncoding
+    module: oxicrypt-integrity-sign
+    kind: enum
+    description: How a format stores a word the loader rebases; its unslid method gives the value the loader writes less the slide.
+    variants:
+    - name: FileWord
+      description: The file word is the unslid address (ELF RELR, PE DIR64).
+    - name: ChainedPtr64
+      description: A Mach-O DYLD_CHAINED_PTR_64 rebase; target in bits 0..36 with high8 in bits 36..44.
+    - name: ChainedPtr64Offset
+      description: A Mach-O DYLD_CHAINED_PTR_64_OFFSET rebase; target is an offset from the link base.
+
+  - name: SignOptions
+    module: oxicrypt-integrity-sign
+    kind: struct
+    description: Choices a signing run may make that the artifact does not decide; the default types an ELF image for the loader its notes declare and reads its symbols from the image itself.
+    fields:
+    - name: loader
+      type: 'Option<elf::Loader>'
+      description: The loader to type an ELF image for, instead of the one its notes declare.
+    - name: symbols
+      type: "Option<&'a [u8]>"
+      description: The separated debug file's bytes, read for module statics when the image has been stripped.
+    - name: reserved_against
+      type: "Option<&'a [u8]>"
+      description: The reference the platform signer's writes are measured against (refused for ELF) — for a Mach-O image the same build after one codesign with the final identity and options, the image being signed the result of the next, each of the four envelope locator fields that differs typed as a hole; for a PE image the same build as linked, the image being signed the result of signtool with the final certificate and options, CheckSum and the Security directory entry typed as holes where they differ; any other difference refuses with ReservationDiff.
+
+  - name: "elf::Loader"
+    module: oxicrypt-integrity-sign
+    kind: enum
+    description: The dynamic loader an ELF image is typed for, recorded in the slot's flags; from_name parses glibc or bionic and slot_flags gives the flag bits.
+    variants:
+    - name: Glibc
+      description: Adjusts the pointer-valued .dynamic entries in place and applies RELR; recorded as flag 0.
+    - name: Bionic
+      description: Adjusts no .dynamic entry; recorded as FLAG_LOADER_BIONIC.
+
+  - name: "elf::StaticRow"
+    module: oxicrypt-integrity-sign
+    kind: struct
+    description: A zero-initialised module static whose bytes the file holds, which an edit of the file could preset.
+    fields:
+    - name: name
+      type: String
+      description: The symbol's name as the symbol table spells it.
+    - name: addr
+      type: u64
+      description: The symbol's address.
+    - name: size
+      type: u64
+      description: The symbol's size in bytes.
+    - name: file_backed
+      type: u64
+      description: How many of its bytes lie inside the segment's file extent.
+
+  - name: "elf::Statics"
+    module: oxicrypt-integrity-sign
+    kind: struct
+    description: The file-backed module statics report for an ELF image; the signer refuses while rows is non-empty or matched is zero.
+    fields:
+    - name: matched
+      type: usize
+      description: Module statics found in writable, non-RELRO memory.
+    - name: initialised
+      type: usize
+      description: Of those, the file-backed ones holding initialised data, which are FileOnly.
+    - name: rows
+      type: 'Vec<StaticRow>'
+      description: The file-backed zero-initialised ones.
+    - name: missing
+      type: "Vec<&'static str>"
+      description: The required statics, of REQUIRED_STATICS, not found in writable non-RELRO memory; empty when each was found and checked.
+
+  - name: "elf::REQUIRED_STATICS"
+    module: oxicrypt-integrity-sign
+    kind: const
+    type: "[(&str, &str, bool); 4]"
+    description: The module statics the file-backed statics check must find by name — oxicrypt_module::STATE, oxicrypt_integrity::LAST_STATUS, oxicrypt_integrity::ML_DSA_CAST_PASSED and oxicrypt_integrity::SHA256_CAST_PASSED — each with the length-prefixed path both Rust manglings spell and whether it is owned by the boot sequence's test, so it is required only where links_boot_test finds that test.
+
+  - name: SlotBudget
+    module: oxicrypt-integrity-sign
+    kind: struct
+    description: What an image's extent takes of its slot, computed as signing encodes it; fits() is true when signing would accept the slot, decided by the encode-and-parse signing itself runs (capacity, MAX_EXPANDED, every entry and the canonical form).
+    fields:
+    - name: stored
+      type: usize
+      description: Stored entries the merged table takes.
+    - name: string_table
+      type: usize
+      description: Bytes the string table of bound-import records takes.
+    - name: capacity
+      type: usize
+      description: Stored entries that fit beside that string table.
+    - name: refused
+      type: Option<String>
+      description: Why signing would refuse the slot, or None when it would accept it.
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: SigningKey
+    module: oxicrypt-integrity-sign
+    kind: opaque
+    description: An ML-DSA-87 signing key — the 32-byte key-generation seed, the private key it derives and its public half — read from a 32-byte seed file or derived from a seed an approved DRBG draws, checked by a pairwise consistency test, wiped on drop, and used to sign a slot's framed signature input deterministically.
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -1566,33 +1903,47 @@ functions:
 
   - name: initialize_with_tests
     module: oxicrypt-module
-    description: Initialize the module by running all provided power-up KATs; transitions PowerOff -> SelfTest -> Operational (or Error).
-    signature: "pub fn initialize_with_tests(tests: &[KatEntry]) -> Result<(), Error>"
+    description: Initialize the module by running the integrity group and then every power-up KAT; transitions PowerOff -> SelfTest -> Operational, or to a terminal state on failure.
+    signature: "pub fn initialize_with_tests(integrity: &[KatEntry], tests: &[KatEntry]) -> Result<(), Error>"
     parameters:
+      - name: integrity
+        type: "&[KatEntry]"
+        direction: in
+        description: The pre-operational integrity group, oxicrypt_integrity::KATS; an empty slice is refused.
+        constraints:
+          nullability: required
+          valid_range: non-empty
       - name: tests
         type: "&[KatEntry]"
         direction: in
-        description: Array of KAT entries to run, collected from each algorithm crate's KATS constant.
+        description: The concatenated KATS slices of every approved algorithm crate the binary links.
         constraints:
           nullability: required
           valid_range: non-empty
     returns:
       type: "Result<(), Error>"
-      description: Ok(()) if all KATs pass, Err if any fail.
+      description: Ok(()) if every entry passes, Err on the first failure.
       error_variants:
         - name: AlreadyInitialized
-          condition: Called more than once in the process lifetime.
+          condition: Another call already brought the module to Operational, or brought it there while this call waited.
+        - name: AlreadyFailed
+          condition: Another call's initialisation already failed, or failed while this call waited; the module stays in Error or IntegrityUnverified.
+        - name: NotOperational
+          condition: A conditional self-test latched Error while the power-up tests ran, or the call came from inside a self-test on the initialising thread (current SelfTest; nothing changes).
+        - name: IntegrityNotAttested
+          condition: The integrity slice was empty.
         - name: SelfTestFailed
-          condition: Any KatEntry::run() returned Err.
+          condition: Any KatEntry::run() returned Err, or the platform gave the calling thread no id the module can record (test is THREAD_ID_CHECK; the module latches Error).
     preconditions:
       - description: Module must be in PowerOff state.
         check: "oxicrypt_module::state() == State::PowerOff"
+      - description: A binary passes the KATS of every approved algorithm crate it links, directly or through another dependency; the module refuses to become operational if any entry fails, and the C library's oxi_init, the ACVP harness and the oxi CLI each have a test that reads the binary's resolved dependency graph and fails when a linked algorithm crate's KATS are missing from their power-up set.
     postconditions:
       - description: Module is in Operational state (on success).
-      - description: Module is in Error state (on failure, terminal).
-    thread_safety: not-thread-safe
+      - description: Module is in Error state after a failed KAT, or IntegrityUnverified after an empty integrity slice (terminal).
+    thread_safety: thread-safe
     side_effects:
-      - description: Sets global module state. Exactly once per process.
+      - description: Sets global module state. Exactly once per process; concurrent callers resolve to one winner, whose thread alone runs the tests and alone passes require_self_test_started while they run. A test that unwinds leaves the module in Error.
     security:
       constant_time: false
       handles_secrets: false
@@ -1604,33 +1955,45 @@ functions:
           let digest = oxicrypt_sha::sha256(b"data")?;
           // Error: NotOperational
         right: |
-          oxicrypt_module::initialize_with_tests(&all_kats)?;
+          oxicrypt_module::initialize_with_tests(oxicrypt_integrity::KATS, &all_kats)?;
           let digest = oxicrypt_sha::sha256(b"data")?;
 
   - name: initialize_with_profile
     module: oxicrypt-module
-    description: Initialize the module with a specific algorithm restriction profile and run all power-up KATs; KATs run all algorithms regardless of profile.
-    signature: "pub fn initialize_with_profile(tests: &[KatEntry], profile: AlgorithmProfile) -> Result<(), Error>"
+    description: Initialize the module with a specific algorithm restriction profile and run the integrity group and all power-up KATs; KATs run all algorithms regardless of profile.
+    signature: "pub fn initialize_with_profile(integrity: &[KatEntry], tests: &[KatEntry], profile: AlgorithmProfile) -> Result<(), Error>"
     parameters:
+      - name: integrity
+        type: "&[KatEntry]"
+        direction: in
+        description: The pre-operational integrity group, oxicrypt_integrity::KATS; an empty slice is refused.
       - name: tests
         type: "&[KatEntry]"
         direction: in
-        description: KAT entries to run.
+        description: The concatenated KATS slices of every approved algorithm crate the binary links.
       - name: profile
         type: AlgorithmProfile
         direction: in
         description: "Algorithm restriction policy: Unrestricted, Cnsa2, Cnsa1, or Migration."
     returns:
       type: "Result<(), Error>"
-      description: Ok(()) if all KATs pass.
+      description: Ok(()) if every entry passes.
       error_variants:
         - name: AlreadyInitialized
-          condition: Called more than once in the process lifetime.
+          condition: Another call already brought the module to Operational, or brought it there while this call waited.
+        - name: AlreadyFailed
+          condition: Another call's initialisation already failed, or failed while this call waited; the module stays in Error or IntegrityUnverified.
+        - name: NotOperational
+          condition: A conditional self-test latched Error while the power-up tests ran, or the call came from inside a self-test on the initialising thread (current SelfTest; nothing changes).
+        - name: IntegrityNotAttested
+          condition: The integrity slice was empty.
         - name: SelfTestFailed
-          condition: Any KatEntry::run() returned Err.
-    thread_safety: not-thread-safe
+          condition: Any KatEntry::run() returned Err, or the platform gave the calling thread no id the module can record (test is THREAD_ID_CHECK; the module latches Error).
+    preconditions:
+      - description: A binary passes the KATS of every approved algorithm crate it links, directly or through another dependency; the module refuses to become operational if any entry fails, and the C library's oxi_init, the ACVP harness and the oxi CLI each have a test that reads the binary's resolved dependency graph and fails when a linked algorithm crate's KATS are missing from their power-up set.
+    thread_safety: thread-safe
     side_effects:
-      - description: Sets global module state and algorithm profile. Once per process.
+      - description: Sets global module state and algorithm profile. Once per process, under the same single-winner rule as initialize_with_tests.
 
   - name: require_allowed
     module: oxicrypt-module
@@ -1667,6 +2030,48 @@ functions:
       error_variants:
         - name: NotOperational
           condition: Module state is not Operational.
+    preconditions: []
+    postconditions: []
+    thread_safety: thread-safe
+    side_effects: []
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: require_self_test_started
+    module: oxicrypt-module
+    description: Guard returning Ok(()) if the module is Operational, or in SelfTest and called on the thread running the power-up self-tests, Err otherwise; called first by every public *_internal function.
+    signature: "pub fn require_self_test_started() -> Result<(), Error>"
+    parameters: []
+    returns:
+      type: "Result<(), Error>"
+      description: Ok if Operational, or SelfTest on the initialising thread; Err otherwise.
+      error_variants:
+        - name: NotOperational
+          condition: Module state is PowerOff, Error or IntegrityUnverified, or SelfTest and the caller is not the initialising thread.
+    preconditions: []
+    postconditions: []
+    thread_safety: thread-safe
+    side_effects: []
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+      fips_gate: null
+
+  - name: require_self_test_started_token
+    module: oxicrypt-module
+    description: The require_self_test_started check, returning a SelfTestStarted proof for a constructor that must not repeat the check inside a timed region.
+    signature: "pub fn require_self_test_started_token() -> Result<SelfTestStarted, Error>"
+    parameters: []
+    returns:
+      type: "Result<SelfTestStarted, Error>"
+      description: The proof if Operational, or SelfTest on the initialising thread; Err otherwise.
+      error_variants:
+        - name: NotOperational
+          condition: Module state is PowerOff, Error or IntegrityUnverified, or SelfTest and the caller is not the initialising thread.
     preconditions: []
     postconditions: []
     thread_safety: thread-safe
@@ -1775,15 +2180,18 @@ functions:
   - name: "Sha256::finalize"
     module: oxicrypt-sha
     description: Consume the hasher and return the digest.
-    signature: "pub fn finalize(self) -> [u8; 32]"
+    signature: "pub fn finalize(self) -> Result<[u8; 32], Error>"
     parameters:
       - name: self
         type: Sha256
         direction: in
         description: The hasher to finalize.
     returns:
-      type: "[u8; 32]"
+      type: "Result<[u8; 32], Error>"
       description: 32-byte SHA-256 digest.
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational, including after it entered the Error state since the object was built.
     preconditions:
       - description: Hasher was created and optionally updated.
     postconditions:
@@ -1799,13 +2207,13 @@ functions:
         wrong: |
           let mut h = Sha256::new()?;
           h.update(b"data");
-          let d1 = h.finalize();
+          let d1 = h.finalize()?;
           h.update(b"more");  // compile error: h moved
         right: |
           let mut h = Sha256::new()?;
           h.update(b"data");
           h.update(b"more");
-          let digest = h.finalize();
+          let digest = h.finalize()?;
 
   - name: sha1
     module: oxicrypt-sha
@@ -2095,7 +2503,7 @@ functions:
       code: |
         let mut mac = oxicrypt_hmac::HmacSha256::new(b"secret-key")?;
         mac.update(b"message");
-        let tag = mac.finalize();  // [u8; 32]
+        let tag = mac.finalize()?;  // [u8; 32]
 
   - name: "HmacSha256::update"
     module: oxicrypt-hmac
@@ -2122,15 +2530,18 @@ functions:
   - name: "HmacSha256::finalize"
     module: oxicrypt-hmac
     description: Compute and return the HMAC tag; takes &mut self (not consumed) and resets to the initial keyed state, so update may be called again.
-    signature: "pub fn finalize(&mut self) -> [u8; 32]"
+    signature: "pub fn finalize(&mut self) -> Result<[u8; 32], Error>"
     parameters:
       - name: self
         type: "&mut HmacSha256"
         direction: in-out
         description: The HMAC instance.
     returns:
-      type: "[u8; 32]"
+      type: "Result<[u8; 32], Error>"
       description: 32-byte HMAC-SHA-256 tag.
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational, including after it entered the Error state since the object was built.
     postconditions:
       - description: Tag is returned. Instance resets to the initial key-padded state.
     thread_safety: not-thread-safe
@@ -2143,11 +2554,11 @@ functions:
       - description: HMAC finalize takes &mut self and is NOT consumed; it resets to the initial keyed state so update() may be called again.
         wrong: |
           let mac = HmacSha256::new(b"key")?;  // immutable — cannot call update
-          let tag = mac.finalize();              // compile error: immutable binding
+          let tag = mac.finalize()?;             // compile error: immutable binding
         right: |
           let mut mac = HmacSha256::new(b"key")?;
           mac.update(b"message");
-          let tag = mac.finalize();  // mac still valid; can re-use for next message
+          let tag = mac.finalize()?;  // mac still valid; can re-use for next message
 
   # Remaining HMAC variant constructors.
 
@@ -2450,7 +2861,7 @@ functions:
         x.update(b"hello world");
         x.finalize();
         let mut out = [0u8; 64];
-        x.squeeze(&mut out);  // may squeeze again for more output
+        x.squeeze(&mut out)?;  // may squeeze again for more output
 
   - name: "Shake128::update"
     module: oxicrypt-xof
@@ -2492,7 +2903,7 @@ functions:
           x.update(b"data");
           x.finalize();
           let mut out = [0u8; 32];
-          x.squeeze(&mut out);
+          x.squeeze(&mut out)?;
 
   - name: "Shake128::finalize"
     module: oxicrypt-xof
@@ -2523,7 +2934,7 @@ functions:
   - name: "Shake128::squeeze"
     module: oxicrypt-xof
     description: Read out.len() bytes of extendable output; may be called repeatedly after finalize() with the same byte stream as one combined squeeze.
-    signature: "pub fn squeeze(&mut self, out: &mut [u8])"
+    signature: "pub fn squeeze(&mut self, out: &mut [u8]) -> Result<(), Error>"
     parameters:
       - name: self
         type: "&mut Shake128"
@@ -2537,8 +2948,11 @@ functions:
           nullability: required
           valid_range: "any length, including 0"
     returns:
-      type: "()"
-      description: No return value; output is written to `out`.
+      type: "Result<(), Error>"
+      description: Output is written to `out`.
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational, including after it entered the Error state since the object was built.
     preconditions:
       - description: finalize() must have been called.
         check: "internal: debug_assert!(finalized)"
@@ -2556,13 +2970,13 @@ functions:
           let mut x = Shake128::new()?;
           x.update(b"data");
           let mut out = [0u8; 32];
-          x.squeeze(&mut out);  // debug-assert failure: not finalized
+          x.squeeze(&mut out)?;  // debug-assert failure: not finalized
         right: |
           let mut x = Shake128::new()?;
           x.update(b"data");
           x.finalize();
           let mut out = [0u8; 32];
-          x.squeeze(&mut out);
+          x.squeeze(&mut out)?;
 
   - name: "Shake256::new"
     module: oxicrypt-xof
@@ -2639,7 +3053,7 @@ functions:
         x.update(&[0x00, 0x01, 0x02, 0x03]);
         x.finalize();
         let mut out = [0u8; 32];
-        x.squeeze(&mut out);
+        x.squeeze(&mut out)?;
 
   - name: "CShake256::new"
     module: oxicrypt-xof
@@ -2727,7 +3141,7 @@ functions:
         let mut m = oxicrypt_xof::Kmac128::new(b"secret-key", b"")?;
         m.update(b"message");
         let mut tag = [0u8; 32];
-        m.finalize_into(&mut tag);
+        m.finalize_into(&mut tag)?;
 
   - name: "Kmac128::update"
     module: oxicrypt-xof
@@ -2756,7 +3170,7 @@ functions:
     module: oxicrypt-xof
     family: xof-hasher-finalize-into
     description: Bind the output length L = tag.len()*8 into the computation, then finalize and write exactly tag.len() bytes into tag; canonical for the xof-fixed-hasher finalize_into shape.
-    signature: "pub fn finalize_into(&mut self, tag: &mut [u8])"
+    signature: "pub fn finalize_into(&mut self, tag: &mut [u8]) -> Result<(), Error>"
     parameters:
       - name: self
         type: "&mut Kmac128"
@@ -2770,8 +3184,11 @@ functions:
           nullability: required
           valid_range: "any length; tag.len()*8 is bound in as L"
     returns:
-      type: "()"
-      description: No return value; the tag is written to `tag`.
+      type: "Result<(), Error>"
+      description: The tag is written to `tag`.
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational, including after it entered the Error state since the object was built.
     preconditions:
       - description: Instance created via new(); finalize_into not already called.
     postconditions:
@@ -2787,12 +3204,12 @@ functions:
         wrong: |
           // Expecting tag32 == &tag64[..32] — it does NOT hold for KMAC.
           let mut tag32 = [0u8; 32];
-          m.finalize_into(&mut tag32);
+          m.finalize_into(&mut tag32)?;
         right: |
           // Either commit to one fixed length, or use the XOF variant:
           let mut out = [0u8; 64];
           let mut x = KmacXof128::new(b"key", b"")?;
-          x.update(b"msg"); x.finalize(); x.squeeze(&mut out);
+          x.update(b"msg"); x.finalize(); x.squeeze(&mut out)?;
 
   - name: "Kmac256::new"
     module: oxicrypt-xof
@@ -2953,7 +3370,7 @@ functions:
         h.update(&[0x00, 0x01, 0x02]);          // tuple element 0
         h.update(&[0x10, 0x11, 0x12, 0x13]);    // tuple element 1
         let mut out = [0u8; 32];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out)?;
 
   - name: "TupleHash128::update"
     module: oxicrypt-xof
@@ -2989,7 +3406,7 @@ functions:
     module: oxicrypt-xof
     family: xof-hasher-finalize-into
     description: "Bind the output length and write the TupleHash into `out`."
-    signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
+    signature: "pub fn finalize_into(&mut self, out: &mut [u8]) -> Result<(), Error>"
     parameters:
       - name: self
         type: "&mut TupleHash128"
@@ -3003,7 +3420,10 @@ functions:
           nullability: required
           valid_range: "any length"
     returns:
-      type: "()"
+      type: "Result<(), Error>"
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational, including after it entered the Error state since the object was built.
     preconditions:
       - description: At least the intended tuple elements were added via update().
     postconditions:
@@ -3147,7 +3567,7 @@ functions:
         let mut h = oxicrypt_xof::ParallelHash128::new(8, b"")?;
         h.update(&data);
         let mut out = [0u8; 32];
-        h.finalize_into(&mut out);
+        h.finalize_into(&mut out)?;
     pitfalls:
       - description: block_size of 0 or > 8192 PANICS — it is not reported as an Error.
         wrong: |
@@ -3182,7 +3602,7 @@ functions:
     module: oxicrypt-xof
     family: xof-hasher-finalize-into
     description: "Flush the trailing partial block, bind the output length, and write the hash into `out`."
-    signature: "pub fn finalize_into(&mut self, out: &mut [u8])"
+    signature: "pub fn finalize_into(&mut self, out: &mut [u8]) -> Result<(), Error>"
     parameters:
       - name: self
         type: "&mut ParallelHash128"
@@ -3196,7 +3616,10 @@ functions:
           nullability: required
           valid_range: "any length"
     returns:
-      type: "()"
+      type: "Result<(), Error>"
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational, including after it entered the Error state since the object was built.
     preconditions:
       - description: Instance created via new(block_size, s); data optionally fed via update().
     postconditions:
@@ -3908,7 +4331,7 @@ functions:
     description: AES-CTR encrypt/decrypt (the same XOR operation) over an icb-seeded full 128-bit big-endian counter (SP 800-38A Appendix F.5); input/output may be any length.
     signature: >-
       pub fn ctr_xor<B: BlockCipher>(cipher: &B, icb: &[u8; 16],
-      input: &[u8], output: &mut [u8])
+      input: &[u8], output: &mut [u8]) -> Result<(), ModeError>
     parameters:
       - name: cipher
         type: "&impl BlockCipher"
@@ -3929,7 +4352,10 @@ functions:
         direction: out
         description: Output buffer.
     returns:
-      type: "()"
+      type: "Result<(), ModeError>"
+      error_variants:
+        - name: Module
+          condition: The module is not in SelfTest or Operational.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4167,6 +4593,8 @@ functions:
           condition: "out.len() > 65536"
         - name: InputTooLong
           condition: "additional_input.len() > 192"
+        - name: Module
+          condition: The module refused the operation because it is not in SelfTest or Operational.
     preconditions:
       - description: DRBG must be instantiated.
         check: Must have called instantiate_df or instantiate_no_df.
@@ -4231,6 +4659,8 @@ functions:
           condition: Startup has already run on this pipeline.
         - name: Health
           condition: A continuous health test failed; the pipeline is permanently poisoned.
+        - name: Module
+          condition: The module refused the conditioning KAT's hash; the pipeline is not poisoned and startup may be retried.
 
   - name: EntropyPipeline::on_demand_test
     module: oxicrypt-entropy
@@ -4496,8 +4926,8 @@ functions:
 
   - name: cmac_tag
     module: oxicrypt-cmac
-    description: Generic CMAC over any BlockCipher with no module-state gating; an internal composition helper, callers needing FIPS gating use the typed variants.
-    signature: "pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> [u8; 16]"
+    description: Generic CMAC over any BlockCipher, without the profile gate and refusing outside SelfTest and Operational; an internal composition helper, callers needing FIPS gating use the typed variants.
+    signature: "pub fn cmac_tag<B: BlockCipher>(cipher: &B, msg: &[u8]) -> Result<[u8; 16], Error>"
     parameters:
       - name: cipher
         type: "&impl BlockCipher"
@@ -4508,8 +4938,11 @@ functions:
         direction: in
         description: Message to authenticate.
     returns:
-      type: "[u8; 16]"
+      type: "Result<[u8; 16], Error>"
       description: 16-byte CMAC tag.
+      error_variants:
+        - name: NotOperational
+          condition: The module is not in SelfTest or Operational.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -4790,6 +5223,24 @@ functions:
         right: |
           Pbkdf2HmacSha256::derive(password, salt, 600_000, &mut key)?;
 
+  - name: pbkdf2_self_test_sha224
+    module: oxicrypt-kdf
+    description: The PBKDF2 power-up CAST, an SP 800-132 master key derived with PBKDF2-HMAC-SHA2-224 from a NIST ACVP-Server vector (iteration count 398, 224-bit salt, 240-bit key) and compared with the expected value; the PBKDF2 entry of KATS runs it.
+    signature: "pub fn pbkdf2_self_test_sha224() -> Result<(), SelfTestFailure>"
+    returns:
+      type: "Result<(), SelfTestFailure>"
+      error_variants:
+        - name: SelfTestFailure
+          condition: The derived master key differs from the expected value.
+    preconditions:
+      - description: None; it runs before the module is operational, and a binary normally runs it through KATS rather than directly.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+      fips_gate: null
+
   # ── TLS 1.3 KDF (RFC 8446 §7.1) ──────────────────────────────────
 
   - name: tls13_hkdf_expand_label
@@ -4815,7 +5266,7 @@ functions:
       - name: out
         type: "&mut [u8]"
         direction: out
-        description: "Output buffer; a length above 65535 saturates the HkdfLabel length field at u16::MAX rather than erroring, so the caller must keep it within u16."
+        description: "Output buffer, at most 65535 bytes and at most 255 blocks of L bytes; zeroized on InvalidInput or a refusal during derivation, untouched when an entry check refuses."
     returns:
       type: "Result<(), Error>"
       error_variants:
@@ -4823,6 +5274,8 @@ functions:
           condition: Module not initialized, in SelfTest, or latched in Error state.
         - name: AlgorithmRestricted
           condition: Active AlgorithmProfile does not allow Service::Tls13Kdf.
+        - name: InvalidInput
+          condition: "out exceeds 65535 bytes or 255 blocks of L bytes, label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1)."
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -4861,6 +5314,8 @@ functions:
           condition: Module not initialized, in SelfTest, or latched in Error state.
         - name: AlgorithmRestricted
           condition: Active AlgorithmProfile does not allow Service::Tls13Kdf.
+        - name: InvalidInput
+          condition: "out exceeds 65535 bytes or 255 blocks of L bytes, label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1)."
     thread_safety: thread-safe
     security:
       constant_time: true
@@ -6202,6 +6657,22 @@ functions:
       fips_approved: true
       fips_gate: Operational
     profiles: [Unrestricted]
+
+  - name: verify_cast
+    module: oxicrypt-ml-dsa
+    description: The ML-DSA-87 signature-verification CAST on its own (FIPS 204 Algorithm 8, ML-DSA.Verify_internal) — a fixed NIST (pk, M′, σ) must verify and the same σ with one bit of c̃ flipped must not; the fifth entry of KATS, and the technique CAST the software integrity test runs before it verifies the module image.
+    signature: 'pub fn verify_cast() -> Result<(), SelfTestFailure>'
+    preconditions:
+    - description: The module's self-tests have started.
+      check: "oxicrypt_module::require_self_test_started()"
+    returns:
+      type: 'Result<(), SelfTestFailure>'
+      description: Ok when both verdicts are the expected ones; SelfTestFailure when either differs or the module refuses the primitive.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
 
   # ── LMS (SP 800-208 / RFC 8554) ────────────────────────────────────
   # Verification only. The crate root re-exports the LMS_SHA256_M32_H10 /
@@ -7664,11 +8135,61 @@ functions:
 
   - name: oxi_integrity_status
     module: oxicrypt-ffi
-    description: Query the pre-operational integrity test's status indicator, returning NotRun (0), Passed (1), Mismatch (2), SlotInvalid (3), Unreadable (4), CastNotRun (5) or Unknown (6) for the first run in this process.
+    description: Query the pre-operational integrity test's status indicator, returning NotRun (0), Passed (1), SignatureInvalid (2), SlotInvalid (3, the unsigned template), Unreadable (4), CastNotRun (5), Unknown (6), Refused (7, the module refused a primitive so the test was not performed), NoVerifyKey (8), KeyMismatch (9) or SlotDamaged (10, a signed slot is damaged) for the first run in this process.
     signature: "int oxi_integrity_status(void)"
     returns:
       type: int
       description: The status-indicator discriminant for the first run, or 0 when the test has not run in this process.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_integrity_key_fingerprint
+    module: oxicrypt-ffi
+    description: Write the 32-byte SHA-256 fingerprint of the verifying key this library embeds, recorded when oxi_init's integrity test read the key, so it is available whether or not the test passed.
+    signature: "int oxi_integrity_key_fingerprint(uint8_t *out, size_t out_len)"
+    parameters:
+    - name: out
+      type: '*mut u8'
+      direction: out
+      description: Buffer receiving the fingerprint.
+    - name: out_len
+      type: usize
+      constraints:
+        min: 32
+      direction: in
+      description: Capacity of out in bytes.
+    returns:
+      type: int
+      description: Ok (0) when written; NullPointer (10) for a null out; BufferTooSmall (11) when out_len is under 32; NotOperational (1) when the test has not read a key, which oxi_integrity_status distinguishes.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_integrity_status_detail
+    module: oxicrypt-ffi
+    description: Write the integrity test's failure in words as NUL-terminated UTF-8, naming the cause the status value cannot carry; *written receives the bytes needed including the NUL, so out_len 0 sizes the buffer.
+    signature: "int oxi_integrity_status_detail(uint8_t *out, size_t out_len, size_t *written)"
+    parameters:
+    - name: out
+      type: '*mut u8'
+      direction: out
+      description: Buffer receiving the text; may be null when out_len is 0.
+    - name: out_len
+      type: usize
+      direction: in
+      description: Capacity of out in bytes.
+    - name: written
+      type: '*mut usize'
+      direction: out
+      description: Receives the bytes the text needs including its NUL, or 0 when there is none.
+    returns:
+      type: int
+      description: Ok (0) when written; NullPointer (10) for a null written or a null out with non-zero out_len; BufferTooSmall (11) when out_len is under *written; NotOperational (1) when the boot sequence's integrity test has not failed.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -8480,6 +9001,8 @@ functions:
           condition: A pointer argument that the call requires was NULL.
         - name: AlgorithmRestricted
           condition: The active algorithm profile does not permit this service.
+        - name: InvalidInput
+          condition: "out_len exceeds 65535 or 255 hash blocks, the label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1); out is zeroized."
 
   - name: oxi_tls13_hkdf_expand_label_sha384
     module: oxicrypt-ffi
@@ -8526,6 +9049,8 @@ functions:
           condition: A pointer argument that the call requires was NULL.
         - name: AlgorithmRestricted
           condition: The active algorithm profile does not permit this service.
+        - name: InvalidInput
+          condition: "out_len exceeds 65535 or 255 hash blocks, the label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1); out is zeroized."
 
   - name: oxi_tls13_derive_secret_sha256
     module: oxicrypt-ffi
@@ -8571,6 +9096,8 @@ functions:
           condition: A pointer argument that the call requires was NULL.
         - name: AlgorithmRestricted
           condition: The active algorithm profile does not permit this service.
+        - name: InvalidInput
+          condition: "out_len exceeds 65535 or 255 hash blocks, the label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1); out is zeroized."
 
   - name: oxi_tls13_derive_secret_sha384
     module: oxicrypt-ffi
@@ -8616,6 +9143,8 @@ functions:
           condition: A pointer argument that the call requires was NULL.
         - name: AlgorithmRestricted
           condition: The active algorithm profile does not permit this service.
+        - name: InvalidInput
+          condition: "out_len exceeds 65535 or 255 hash blocks, the label is empty or longer than 249 bytes, or the context is longer than 255 bytes (RFC 8446 §7.1); out is zeroized."
 
   # AES-256-GCM with opaque OxiAes256Key handle; one-shot only.
 
@@ -12693,6 +13222,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: NotOperational
+          condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -12737,6 +13268,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: NotOperational
+          condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: ReseedRequired
@@ -12884,6 +13417,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: NotOperational
+          condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -12928,6 +13463,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: NotOperational
+          condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: ReseedRequired
@@ -13072,6 +13609,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: NotOperational
+          condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -13116,6 +13655,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: NotOperational
+          condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: ReseedRequired
@@ -15571,6 +16112,26 @@ functions:
       handles_secrets: true
       fips_approved: false
 
+  - name: zeroize_i32
+    module: oxicrypt-zeroize
+    description: Overwrite every element of an i32 slice with zero using volatile stores.
+    signature: 'pub fn zeroize_i32(buf: &mut [i32])'
+    parameters:
+    - name: buf
+      type: '&mut [i32]'
+      direction: inout
+      description: Coefficient array to clear, such as an ML-DSA polynomial.
+    returns:
+      type: ()
+      description: No value; the effect is entirely on buf.
+    postconditions:
+    - description: Every element of buf is 0.
+    thread_safety: thread-safe
+    security:
+      constant_time: true
+      handles_secrets: true
+      fips_approved: false
+
   - name: zeroize_u64
     module: oxicrypt-zeroize
     description: Overwrite every limb of a u64 slice with zero using volatile stores.
@@ -15796,71 +16357,222 @@ functions:
       handles_secrets: true
       fips_approved: false
 
-  - name: encode_hmac_hex
+  - name: format_fingerprint
     module: oxicrypt-integrity
-    description: Format a 32-byte MAC as 64 lowercase ASCII hex characters.
-    signature: 'pub fn encode_hmac_hex(mac: &[u8; 32]) -> [u8; 64]'
+    description: 'Format a 32-byte key fingerprint as sha256: followed by 64 lowercase hex digits.'
+    signature: 'pub fn format_fingerprint(fingerprint: &[u8; 32]) -> String'
     parameters:
-    - name: mac
+    - name: fingerprint
       type: '&[u8; 32]'
       constraints:
         size: 32
       direction: in
-      description: MAC bytes to encode.
+      description: The fingerprint to format.
     returns:
-      type: '[u8; 64]'
-      description: Lowercase hex encoding, high nibble first per input byte.
+      type: String
+      description: The text sha256:<hex>.
     thread_safety: thread-safe
     security:
       constant_time: false
       handles_secrets: false
       fips_approved: false
 
-  - name: constant_time_eq
+  - name: key_fingerprint
     module: oxicrypt-integrity
-    description: Compare two 32-byte MACs by OR-accumulating the XOR of every byte pair, without short-circuiting.
-    signature: 'pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool'
+    description: SHA-256 of a raw verifying key, the key_id a slot carries and the fingerprint an operator reads.
+    signature: 'pub fn key_fingerprint(key: &[u8; key::VERIFY_KEY_LEN]) -> Result<[u8; 32], oxicrypt_module::Error>'
     parameters:
-    - name: a
-      type: '&[u8; 32]'
+    - name: key
+      type: '&[u8; key::VERIFY_KEY_LEN]'
       constraints:
-        size: 32
+        size: 2592
       direction: in
-      description: First MAC.
-    - name: b
-      type: '&[u8; 32]'
-      constraints:
-        size: 32
-      direction: in
-      description: Second MAC.
+      description: The encoded ML-DSA-87 public key.
+    preconditions:
+    - description: "require_self_test_started admits the call: the module is Operational, or in SelfTest on the thread running the power-up self-tests."
+      check: "oxicrypt_module::require_self_test_started()"
     returns:
-      type: bool
-      description: True if all 32 byte pairs are equal.
+      type: 'Result<[u8; 32], oxicrypt_module::Error>'
+      description: The SHA-256 digest of the key.
+      error_variants:
+      - name: NotOperational
+        condition: The module is outside the SelfTest and Operational states.
     thread_safety: thread-safe
     security:
-      constant_time: true
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: status_detail
+    module: oxicrypt-integrity
+    description: The boot sequence's integrity failure in words, naming the cause the status value cannot carry, latched with status().
+    signature: 'pub fn status_detail() -> Option<&''static str>'
+    returns:
+      type: "Option<&'static str>"
+      description: The first failure's text, or None until the boot sequence's integrity test has failed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
       handles_secrets: false
       fips_approved: false
 
-  - name: mac_over_file_ranges
+  - name: verify_key_fingerprint
     module: oxicrypt-integrity
-    description: Compute the reference MAC over ranges taken from the file bytes in image, in table order; the signer's half of the identity that makes the loader-invariant design work.
-    signature: 'pub fn mac_over_file_ranges(image: &[u8], ranges: &[Range]) -> Result<[u8; 32], SlotDefect>'
+    description: The fingerprint of the verifying key this module embeds, recorded by the integrity test from the key record it read, so it equals the fingerprint oxicrypt-integrity-sign --show prints for the file.
+    signature: 'pub fn verify_key_fingerprint() -> Option<[u8; 32]>'
+    returns:
+      type: 'Option<[u8; 32]>'
+      description: The fingerprint, or None until the test has read the key in this process and for a module built without one.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: ml_dsa_cast
+    module: oxicrypt-integrity
+    description: The integrity technique's cryptographic algorithm self-test, the ML-DSA-87 signature-verification CAST (oxicrypt_ml_dsa::verify_cast), which must accept a NIST vector's valid signature and reject it with one bit flipped; first in KATS, and its pass, with sha256_cast's, is required before verify_loaded_image runs.
+    signature: 'pub fn ml_dsa_cast() -> Result<(), SelfTestFailure>'
+    returns:
+      type: 'Result<(), SelfTestFailure>'
+      description: Ok when the known-answer test passes; a failure of a test that ran latches the module into Error and withdraws the CAST's pass on every path, while a call the module refuses runs nothing and changes nothing.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: sha256_cast
+    module: oxicrypt-integrity
+    description: The SHA-256 CAST (oxicrypt_sha::sha256::self_test) for the SHA-256 key fingerprint the integrity test computes; second in KATS, and its pass, with ml_dsa_cast's, is required before verify_loaded_image runs.
+    signature: 'pub fn sha256_cast() -> Result<(), SelfTestFailure>'
+    returns:
+      type: 'Result<(), SelfTestFailure>'
+      description: Ok when the known-answer test passes; a failure latches the module into Error and withdraws the CAST's pass on every path, while a call the module refuses runs nothing and changes nothing.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: true
+
+  - name: file_signature_input
+    module: oxicrypt-integrity
+    description: Build a slot's signed message M′ from the file bytes of an image — MESSAGE_PREFIX, then the slot without its signature field, then each Plain, Relative and FileOnly entry's file bytes in table order — the signer's half of the message the verifier builds from the loaded image.
+    signature: 'pub fn file_signature_input(image: &[u8], slot_bytes: &[u8], slot: &SlotImage, unslid: &dyn Fn(u64) -> Option<u64>) -> Result<Vec<u8>, IntegrityError>'
     parameters:
     - name: image
       type: '&[u8]'
       direction: in
-      description: Full contents of the signed file.
-    - name: ranges
-      type: '&[Range]'
+      description: Full contents of the file.
+    - name: slot_bytes
+      type: '&[u8]'
       direction: in
-      description: The loader-invariant extent, addressed by file_off.
+      description: The slot's SLOT_SIZE bytes.
+    - name: slot
+      type: '&SlotImage'
+      direction: in
+      description: The same slot, parsed.
+    - name: unslid
+      type: '&dyn Fn(u64) -> Option<u64>'
+      direction: in
+      description: The format's decoder from a Relative word as the file holds it to its unslid value; the identity for ELF and PE.
     returns:
-      type: Result<[u8; 32], SlotDefect>
-      description: The HMAC-SHA-256 computed over the listed ranges, in order.
+      type: 'Result<Vec<u8>, IntegrityError>'
+      description: The message ML-DSA.Sign_internal signs and ML-DSA.Verify_internal verifies, M′ = 0x00 || 18 || "oxicrypt-integrity" || M.
       error_variants:
-      - name: RangeOutOfBounds
-        condition: A range's file_off/len falls outside image, or the addition overflows.
+      - name: SlotInvalid
+        condition: An entry falls outside image, or slot_bytes is not SLOT_SIZE long.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: key::key_record_address
+    module: oxicrypt-integrity
+    description: Runtime address of the embedded key record, which the verifier reads through the byte-acquisition mechanism.
+    signature: 'pub fn key_record_address() -> usize'
+    returns:
+      type: usize
+      description: The address of FIPS_INTEGRITY_VERIFY_KEY in this process.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: key::parse_key_record
+    module: oxicrypt-integrity
+    description: Decode a key record's bytes into the embedded key, or None for the all-zero key of a build without one.
+    signature: 'pub fn parse_key_record(bytes: &[u8]) -> Result<Option<[u8; VERIFY_KEY_LEN]>, SlotDefect>'
+    parameters:
+    - name: bytes
+      type: '&[u8]'
+      direction: in
+      description: KEY_RECORD_SIZE bytes.
+    returns:
+      type: 'Result<Option<[u8; VERIFY_KEY_LEN]>, SlotDefect>'
+      description: The key, or None for an all-zero key.
+      error_variants:
+      - name: KeyRecord
+        condition: The length is wrong or either magic is absent.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: key::find_key_record
+    module: oxicrypt-integrity
+    description: Locate the key record in an artifact's file bytes by both magics, requiring exactly one.
+    signature: 'pub fn find_key_record(bytes: &[u8]) -> Result<usize, String>'
+    parameters:
+    - name: bytes
+      type: '&[u8]'
+      direction: in
+      description: The artifact's file bytes.
+    returns:
+      type: 'Result<usize, String>'
+      description: The record's file offset, or a description when none or several are found.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: slot::merge
+    module: oxicrypt-integrity
+    description: Merge ascending entries that continue each other in both coordinates with the same kind and meta into the canonical table parse requires.
+    signature: 'pub fn merge(entries: &[Entry]) -> Vec<Entry>'
+    parameters:
+    - name: entries
+      type: '&[Entry]'
+      direction: in
+      description: Ascending entries.
+    returns:
+      type: Vec<Entry>
+      description: The canonical, maximal table.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: slot::signed_header
+    module: oxicrypt-integrity
+    description: The slot bytes the signature covers, everything but the SIG_LEN-byte signature field.
+    signature: 'pub fn signed_header(slot: &[u8]) -> Result<Vec<u8>, SlotDefect>'
+    parameters:
+    - name: slot
+      type: '&[u8]'
+      direction: in
+      description: SLOT_SIZE bytes.
+    returns:
+      type: 'Result<Vec<u8>, SlotDefect>'
+      description: SLOT_SIZE - SIG_LEN bytes.
+      error_variants:
+      - name: WrongSize
+        condition: slot is not SLOT_SIZE long.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -15895,20 +16607,24 @@ functions:
 
   - name: verify_loaded_image
     module: oxicrypt-integrity
-    description: Run the pre-operational software integrity test against the loaded module image — locate the slot, acquire its bytes through the platform mechanism, validate the slot, derive the load base, hash the listed ranges from the loaded image, and compare without short-circuiting.
+    description: Run the pre-operational software integrity test against the loaded module image — read the embedded key record and the slot through the platform mechanism, validate the slot and its key id, build the signature input from the loaded image framed under the integrity context, and verify the ML-DSA-87 signature with ML-DSA.Verify_internal, only inside the power-up self-tests and on the thread running them, since on-demand testing is a process restart.
     signature: 'pub fn verify_loaded_image() -> Result<(), IntegrityError>'
     returns:
       type: Result<(), IntegrityError>
-      description: Ok when the recomputed MAC equals the reference MAC in the slot.
+      description: Ok when the signature verifies under the embedded key.
       error_variants:
+      - name: Module
+        condition: Called outside the power-up self-tests; runs nothing and changes no state. Carries AlreadyInitialized once the module is Operational, otherwise the guard's NotOperational (PowerOff, Error, or SelfTest on another thread).
       - name: CastNotRun
-        condition: hmac_cast() has not passed in this process.
-      - name: Mismatch
-        condition: The recomputed MAC differs from the reference MAC in the slot.
+        condition: The self-tests reached the image check before ml_dsa_cast() and sha256_cast() both passed; latches Error.
+      - name: NoVerifyKey
+        condition: The module was built without a verifying key.
+      - name: SignatureInvalid
+        condition: The signature does not verify, or a bound import does not hold its recorded value.
       - name: SlotInvalid
-        condition: The slot is absent, malformed, or describes an impossible extent.
+        condition: The slot or the embedded key record is malformed, the slot is the unsigned template, it was signed for a different key (KeyMismatch), or it describes an impossible extent.
       - name: Unreadable
-        condition: No byte-acquisition mechanism could supply the module's own bytes.
+        condition: No memory route could supply the module's own bytes, the operating system refused a read of mapped memory or of the image file, or the image's mappings or file size could not be measured.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -15917,29 +16633,27 @@ functions:
 
   - name: encode
     module: oxicrypt-integrity
-    description: Serialize an integrity slot from a range table, slot RVA, and reference MAC.
-    signature: 'pub fn encode(ranges: &[Range], slot_rva: u32, mac: &[u8; 32]) -> Result<Vec<u8>, SlotDefect>'
+    description: Serialize a version 4 integrity slot from its fields and signature.
+    signature: 'pub fn encode(fields: &SlotFields, signature: &[u8; SIG_LEN]) -> Result<Vec<u8>, SlotDefect>'
     parameters:
-    - name: ranges
-      type: '&[Range]'
+    - name: fields
+      type: '&SlotFields'
       direction: in
-      description: The loader-invariant extent, in table order.
-    - name: slot_rva
-      type: u32
-      direction: in
-      description: Offset of the slot itself from the image base.
-    - name: mac
-      type: '&[u8; 32]'
+      description: Everything the signature covers.
+    - name: signature
+      type: '&[u8; SIG_LEN]'
       constraints:
-        size: 32
+        size: 4627
       direction: in
-      description: Reference MAC to embed.
+      description: The ML-DSA-87 signature, or zeros while building the signature input.
     returns:
       type: Result<Vec<u8>, SlotDefect>
       description: SLOT_SIZE bytes in the wire format described by the slot module.
       error_variants:
-      - name: TooManyRanges
-        condition: ranges.len() exceeds MAX_RANGES.
+      - name: TooManyEntries
+        condition: The entries and string table do not fit between the header and the footer.
+      - name: StringTable
+        condition: A record's name is too long to encode.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -15948,7 +16662,7 @@ functions:
 
   - name: parse
     module: oxicrypt-integrity
-    description: Parse and fully validate an integrity slot's bytes.
+    description: Parse and structurally validate a version 4 integrity slot, accepting only its canonical encoding; the key id and the signature are the verifier's checks.
     signature: 'pub fn parse(bytes: &[u8]) -> Result<SlotImage, SlotDefect>'
     parameters:
     - name: bytes
@@ -15959,28 +16673,70 @@ functions:
       type: Result<SlotImage, SlotDefect>
       description: The parsed slot once every structural check passes.
       error_variants:
-      - name: WrongSize
-        condition: bytes.len() != SLOT_SIZE.
-      - name: HeaderMagic
-        condition: The header magic is absent.
-      - name: FooterMagic
-        condition: The footer magic is absent.
       - name: UnsupportedVersion
-        condition: The version field is not SLOT_VERSION.
-      - name: UnknownFlags
-        condition: The reserved flags word is non-zero.
-      - name: NoRanges
-        condition: The range count is zero.
-      - name: TooManyRanges
-        condition: The range count exceeds MAX_RANGES.
-      - name: EmptyRange
-        condition: A range entry has zero length.
-      - name: RangeOverflow
-        condition: A range entry's rva + len overflows u32.
-      - name: Unordered
-        condition: A range entry starts before the previous range ends.
-      - name: OverlapsSlot
-        condition: A range entry covers part of the slot.
+        condition: The version field is not 3; versions 1 and 2 and the unsigned 0 are refused.
+      - name: NonMaximal
+        condition: Two adjacent entries continue each other with the same kind and meta.
+      - name: NonZeroPadding
+        condition: An unused byte is not zero.
+      - name: BindRecordOutOfRange
+        condition: A Bind entry names a record the string table does not hold.
+      - name: FileLenTooShort
+        condition: An entry ends past file_len.
+      - name: MalformedEntry
+        condition: An entry's kind, run byte, meta or length is invalid for its kind.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: table_len
+    module: oxicrypt-integrity
+    description: How many stored entries a canonical table takes in a slot, after encode packs each Relative run into the Plain entry before it and each run of identical contiguous periods into one entry; the count MAX_ENTRIES bounds.
+    signature: 'pub fn table_len(entries: &[Entry]) -> usize'
+    parameters:
+    - name: entries
+      type: '&[Entry]'
+      direction: in
+      description: The canonical entry table.
+    returns:
+      type: usize
+      description: The number of stored entries.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: slot::string_table_len
+    module: oxicrypt-integrity
+    description: How many bytes a list of bound-import records takes as a slot's string table, encoded exactly as encode writes them.
+    signature: 'pub fn string_table_len(records: &[BindRecord]) -> Result<usize, SlotDefect>'
+    parameters:
+    - name: records
+      type: '&[BindRecord]'
+      direction: in
+      description: The records the table holds.
+    returns:
+      type: 'Result<usize, SlotDefect>'
+      description: The string table's length in bytes.
+      error_variants:
+      - name: StringTable
+        condition: A record's name is too long to encode.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: slot_budget
+    module: oxicrypt-integrity-sign
+    description: What an image's extent takes of its slot as write_entries would encode it — the stored entries of the merged table, the string table of the records it names, and the stored entries that fit beside that string table; --show prints it as its slot budget line.
+    signature: 'pub fn slot_budget(layout: &image::Layout) -> Result<SlotBudget, String>'
+    returns:
+      type: 'Result<SlotBudget, String>'
+      description: The budget, or a description when a record's name is too long to encode.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -15989,16 +16745,16 @@ functions:
 
   - name: extent_len
     module: oxicrypt-integrity
-    description: Total number of bytes an extent covers.
-    signature: 'pub fn extent_len(ranges: &[Range]) -> Option<u64>'
+    description: Total number of bytes a table's entries cover, of every kind.
+    signature: 'pub fn extent_len(entries: &[Entry]) -> Option<u64>'
     parameters:
-    - name: ranges
-      type: '&[Range]'
+    - name: entries
+      type: '&[Entry]'
       direction: in
-      description: The loader-invariant extent.
+      description: The entry table.
     returns:
       type: Option<u64>
-      description: Sum of every range's length, or None on overflow.
+      description: Sum of every entry's length, or None on overflow.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -16025,11 +16781,63 @@ functions:
 
   - name: sign_image
     module: oxicrypt-integrity-sign
-    description: Sign an image in place — derive its loader-invariant extent, compute the reference MAC over that extent's file bytes, and write the range table and MAC into the embedded slot.
-    signature: 'pub fn sign_image(image: &mut [u8]) -> Result<[u8; 32], String>'
+    description: Sign an image in place — derive its extent, write the version 4 slot with the embedded key's fingerprint, and sign the slot and the extent's file bytes with ML-DSA-87 under the integrity context; refuses an image built without a verifying key (NoVerifyKey), embedding a different key (SigningKeyAbsent), or, for ELF, with a file-backed zero-initialised module static (FileBackedStatic) or no symbol table to check (StaticsUnchecked).
+    signature: 'pub fn sign_image(image: &mut [u8], key: &SigningKey) -> Result<[u8; slot::SIG_LEN], String>'
     returns:
-      type: 'Result<[u8; 32], String>'
-      description: The reference MAC written into the slot, or a description of why the image could not be signed.
+      type: 'Result<[u8; slot::SIG_LEN], String>'
+      description: The signature written into the slot, or a description of why the image could not be signed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: embedded_verify_key
+    module: oxicrypt-integrity-sign
+    description: The verifying key an artifact embeds, read from its key record, or None for an artifact built without one.
+    signature: 'pub fn embedded_verify_key(image: &[u8]) -> Result<Option<[u8; VERIFY_KEY_LEN]>, String>'
+    returns:
+      type: 'Result<Option<[u8; VERIFY_KEY_LEN]>, String>'
+      description: The encoded public key, None for an all-zero key, or a description when the record is absent or ambiguous.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: embed_verify_key
+    module: oxicrypt-integrity-sign
+    description: Write a public key into an artifact's key record, what a build with OXICRYPT_INTEGRITY_VERIFY_KEY set produces, done after the link; for test fixtures, which need a key pair for an artifact built without one.
+    signature: 'pub fn embed_verify_key(image: &mut [u8], public: &[u8; VERIFY_KEY_LEN]) -> Result<(), String>'
+    returns:
+      type: 'Result<(), String>'
+      description: Ok once written, or a description when the record is absent or ambiguous.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: key::keygen
+    module: oxicrypt-integrity-sign
+    description: Generate an ML-DSA-87 key pair and write it into a directory outside any git work tree — the 32-byte key-generation seed to integrity-signing.key with mode 0600, the 2,592-byte public key to integrity-verify.pub — never overwriting an existing pair.
+    signature: 'pub fn keygen(dir: &Path) -> Result<(PathBuf, PathBuf, [u8; 32]), String>'
+    returns:
+      type: 'Result<(PathBuf, PathBuf, [u8; 32]), String>'
+      description: The private key path, the public key path and the key's fingerprint.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: start_module
+    module: oxicrypt-integrity-sign
+    description: Start this process's copy of the module so the signer can hash, sign and verify, with the ML-DSA-87 and SHA-256 CASTs as the integrity group and no image check (the signer is not the module image), followed by the SHA, HMAC, DRBG, SHAKE and ML-DSA self-tests; a module already operational is left as it is.
+    signature: 'pub fn start_module() -> Result<(), String>'
+    returns:
+      type: 'Result<(), String>'
+      description: Ok once the module is operational, or a description of why it did not start.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -16038,11 +16846,206 @@ functions:
 
   - name: write_extent
     module: oxicrypt-integrity-sign
-    description: Write an arbitrary extent into an image's slot, separate from sign_image so a test can sign an image against an extent the classifier would never emit and thereby build the control proving the runtime stability probe can fail.
-    signature: 'pub fn write_extent(image: &mut [u8], ranges: &[slot::Range], slot_rva: u32, slot_file_off: usize) -> Result<[u8; 32], String>'
+    description: Write an arbitrary extent, as Plain entries, into an image's slot and sign it, separate from sign_image so a test can sign an image against an extent the classifier would never emit and thereby build the control proving the runtime stability probe can fail.
+    signature: 'pub fn write_extent(image: &mut [u8], layout: &image::Layout, ranges: &[Range], key: &SigningKey) -> Result<[u8; slot::SIG_LEN], String>'
+    returns:
+      type: 'Result<[u8; slot::SIG_LEN], String>'
+      description: The signature written into the slot, or a description of why the image could not be signed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: classify_with
+    module: oxicrypt-integrity-sign
+    description: Derive an image's typed extent as classify does, with an ELF image typed for the loader SignOptions names instead of the one its notes declare, and a Mach-O or PE image's envelope holes measured against SignOptions' reserved_against reference.
+    signature: 'pub fn classify_with(image: &[u8], options: &SignOptions<''_>) -> Result<image::Layout, String>'
+    returns:
+      type: 'Result<image::Layout, String>'
+      description: The classified layout, or a description of why the image could not be classified.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: sign_image_with
+    module: oxicrypt-integrity-sign
+    description: Sign an image in place as sign_image does, with the loader, the debug-file symbol table and the Mach-O or PE reservation reference SignOptions supplies; refuses an image with a file-backed zero-initialised module static (FileBackedStatic) or no symbol table to check (StaticsUnchecked).
+    signature: 'pub fn sign_image_with(image: &mut [u8], key: &SigningKey, options: &SignOptions<''_>) -> Result<[u8; slot::SIG_LEN], String>'
+    returns:
+      type: 'Result<[u8; slot::SIG_LEN], String>'
+      description: The signature written into the slot, or a description, beginning with the refusal's name where one applies, of why the image could not be signed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: verify_image_for
+    module: oxicrypt-integrity-sign
+    description: Check an image against its slot as verify_image does, requiring an ELF slot's loader to be the one given rather than the one the image declares, the check for an artifact signed with --loader.
+    signature: 'pub fn verify_image_for(image: &[u8], loader: Option<elf::Loader>) -> Result<[u8; 32], String>'
     returns:
       type: 'Result<[u8; 32], String>'
-      description: The reference MAC written into the slot, or a description of why the image could not be signed.
+      description: The embedded key's fingerprint, or a description as verify_image gives.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "elf::links_boot_test"
+    module: oxicrypt-integrity-sign
+    description: Report whether an image links the boot sequence's integrity test, by finding its test-inventory name in the image's bytes; the signer itself keeps only a masked copy of that name.
+    signature: 'pub fn links_boot_test(image: &[u8]) -> bool'
+    returns:
+      type: 'bool'
+      description: True when the image carries INTEGRITY_TEST_NAME.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: debug_symbols
+    module: oxicrypt-integrity-sign
+    description: The separated debug file an ELF artifact names through its .gnu_debuglink, looked for beside the artifact and in its .debug subdirectory and required to match the link's CRC, or for a Mach-O artifact the file under <artifact>.dSYM/Contents/Resources/DWARF whose LC_UUID is the artifact's, or for a PE artifact the program database its CodeView record names, by file name beside the artifact, required to carry the record's GUID and age, or None when the artifact keeps local data objects in its own symbol table or no debug file is found.
+    signature: 'pub fn debug_symbols(path: &std::path::Path, bytes: &[u8]) -> Result<Option<Vec<u8>>, String>'
+    returns:
+      type: 'Result<Option<Vec<u8>>, String>'
+      description: The debug file's bytes, None, or a description beginning StaticsUnchecked when every debug file found fails the CRC.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "elf::has_local_objects"
+    module: oxicrypt-integrity-sign
+    description: Report whether an ELF image's symbol table holds any local data object, which a strip keeping only global symbols removes along with the module's statics.
+    signature: 'pub fn has_local_objects(bytes: &[u8]) -> bool'
+    returns:
+      type: 'bool'
+      description: True when a SHT_SYMTAB section lists a local STT_OBJECT symbol.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: module_statics
+    module: oxicrypt-integrity-sign
+    description: The module statics of an ELF image, read from its own symbol table or, when it holds no local objects, from the supplied debug-file bytes, which must match the image's .gnu_debuglink CRC, with relocations read as the given loader reads them; of a Mach-O image, read from its own symbol table or its dSYM as macho::module_statics does; of a PE image, read from the supplied program database as pe::module_statics does.
+    signature: 'pub fn module_statics(image: &[u8], symbols: Option<&[u8]>, loader: Option<elf::Loader>) -> Result<elf::Statics, String>'
+    returns:
+      type: 'Result<elf::Statics, String>'
+      description: The statics report, or a description beginning StaticsUnchecked when neither input carries a symbol table.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: write_entries
+    module: oxicrypt-integrity-sign
+    description: Write an arbitrary typed table into an image's slot, merged into canonical form, and sign it; the typed counterpart of write_extent, for controls that retype entries the classifier emitted.
+    signature: 'pub fn write_entries(image: &mut [u8], layout: &image::Layout, entries: &[Entry], key: &SigningKey) -> Result<[u8; slot::SIG_LEN], String>'
+    returns:
+      type: 'Result<[u8; slot::SIG_LEN], String>'
+      description: The signature written into the slot, or a description of why the image could not be signed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: elf::classify_for
+    module: oxicrypt-integrity-sign
+    description: Derive an ELF64 image's typed extent as elf::classify does, typed for the given loader when one is given rather than the loader the image's notes declare.
+    signature: 'pub fn classify_for(bytes: &[u8], loader: Option<Loader>) -> Result<Layout, String>'
+    returns:
+      type: 'Result<Layout, String>'
+      description: The classified layout, or a description beginning with the refusal's name where one applies.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: elf::inferred_loader
+    module: oxicrypt-integrity-sign
+    description: 'The loader an ELF64 image declares: bionic when a PT_NOTE segment carries the Android ident note, glibc otherwise.'
+    signature: 'pub fn inferred_loader(bytes: &[u8]) -> Result<Loader, String>'
+    returns:
+      type: 'Result<Loader, String>'
+      description: The inferred loader, or a description when the image or a note segment is malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: elf::has_symtab
+    module: oxicrypt-integrity-sign
+    description: Report whether an ELF64 image carries a non-empty symbol table section.
+    signature: 'pub fn has_symtab(bytes: &[u8]) -> bool'
+    returns:
+      type: 'bool'
+      description: True when a SHT_SYMTAB section with content is present.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: elf::debuglink
+    module: oxicrypt-integrity-sign
+    description: The file name and CRC an ELF64 image's .gnu_debuglink section records for its separated debug file.
+    signature: 'pub fn debuglink(bytes: &[u8]) -> Result<Option<(String, u32)>, String>'
+    returns:
+      type: 'Result<Option<(String, u32)>, String>'
+      description: The debug file's name and CRC, None when the image names none, or a description when the link is malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: elf::debuglink_crc
+    module: oxicrypt-integrity-sign
+    description: The CRC-32 a .gnu_debuglink records for its debug file, computed over the given bytes.
+    signature: 'pub fn debuglink_crc(bytes: &[u8]) -> u32'
+    returns:
+      type: 'u32'
+      description: The standard CRC-32 of the bytes.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: elf::module_statics
+    module: oxicrypt-integrity-sign
+    description: Name every module static (a defined object symbol containing oxicrypt, in writable non-RELRO memory) whose bytes the ELF file holds and which is either zero-initialised or one of REQUIRED_STATICS, whatever its value, reading the symbol table from symbols and the bytes and relocations from image as the given loader reads them.
+    signature: 'pub fn module_statics(image: &[u8], symbols: &[u8], loader: Option<Loader>) -> Result<Statics, String>'
+    returns:
+      type: 'Result<Statics, String>'
+      description: The statics report, or a description beginning StaticsUnchecked when symbols carries no symbol table.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: after_signing_note
+    module: oxicrypt-integrity-sign
+    description: Report the step a signed image still needs before it will run, which for a Mach-O image is renewing the Apple code signature with codesign after integrity signing; the signed image stops at LC_CODE_SIGNATURE's dataoff, so codesign rewrites or grows only the blob beyond it and the locator fields measured as holes, while other formats need nothing further.
+    signature: 'pub fn after_signing_note(image: &[u8]) -> Option<&''static str>'
+    returns:
+      type: "Option<&'static str>"
+      description: A one-line instruction for a Mach-O image, or None for every other format.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -16075,9 +17078,9 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: writable_ranges
+  - name: "elf::writable_ranges"
     module: oxicrypt-integrity-sign
-    description: Report the file-backed ranges of every writable load segment, used to build the negative control in which an extent widened over loader-rewritten bytes must be rejected at runtime.
+    description: Report the file-backed ranges of every writable load segment of an ELF64 image, the bytes the loader may write.
     signature: 'pub fn writable_ranges(bytes: &[u8]) -> Result<Vec<Range>, String>'
     returns:
       type: 'Result<Vec<Range>, String>'
@@ -16088,9 +17091,9 @@ functions:
       handles_secrets: false
       fips_approved: false
 
-  - name: classify
+  - name: "elf::classify"
     module: oxicrypt-integrity-sign
-    description: Derive an artifact's loader-invariant extent — every PT_LOAD segment lacking PF_W, file-backed prefix only, with the integrity slot subtracted.
+    description: Derive an ELF64 image's typed extent for the loader its notes declare — every file-backed byte of every PT_LOAD typed from PT_DYNAMIC (read-only segments and RELRO Plain, RELA destinations and DT_DEBUG Hole, RELR destinations and glibc-adjusted .dynamic pointers Relative, other writable bytes FileOnly), with the integrity slot subtracted; refuses by name, among others, a PT_LOAD both writable and executable (WritableExecutable), APS2 packing, RELR on bionic, the x86-64 PLT-rewrite tags (PltRewrite), lazy binding, text and REL-form relocations, copy and unaccepted relocation types, misplaced relocation targets or PT_DYNAMIC, a .dynamic table outside Plain bytes, a SHT_DYNAMIC string section other than DT_STRTAB, and a TLS relocation against an undefined weak symbol, and refuses as malformed a .dynamic table that carries DT_FLAGS_1 or another single-valued tag twice; DT_DEBUG is a Hole only where the loader writes it.
     signature: 'pub fn classify(bytes: &[u8]) -> Result<Layout, String>'
     returns:
       type: 'Result<Layout, String>'
@@ -16100,6 +17103,305 @@ functions:
       constant_time: false
       handles_secrets: false
       fips_approved: false
+
+  - name: "classify"
+    module: oxicrypt-integrity-sign
+    description: Derive an image's extent, choosing the ELF, Mach-O or PE classifier from the image's own magic; ELF and Mach-O type every file-backed byte of every load segment, PE takes only what the loader maps executable.
+    signature: 'pub fn classify(image: &[u8]) -> Result<image::Layout, String>'
+    returns:
+      type: "Result<image::Layout, String>"
+      description: The classified layout, or a description of why the format is unrecognised, out of scope or rejected by its classifier.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "verify_image"
+    module: oxicrypt-integrity-sign
+    description: Check an image against the slot it carries — require the slot's key id to name the embedded key, rebuild the signature input from the file, and verify the ML-DSA-87 signature; the offline check, which says nothing about the loaded image.
+    signature: 'pub fn verify_image(image: &[u8]) -> Result<[u8; 32], String>'
+    returns:
+      type: 'Result<[u8; 32], String>'
+      description: The embedded key's fingerprint, or a description beginning NoVerifyKey, KeyMismatch, SignatureInvalid, LoaderMismatch or, for a Mach-O image whose chain words do not decode to the kinds and imports the signed table records, FixupMismatch, or, for a PE image whose lookup tables, names and descriptors do not decode to the signed records, ImportMismatch, or naming the slot defect.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::is_macho64_le"
+    module: oxicrypt-integrity-sign
+    description: Report whether the bytes look like a little-endian 64-bit Mach-O image.
+    signature: 'pub fn is_macho64_le(bytes: &[u8]) -> bool'
+    returns:
+      type: "bool"
+      description: True when the image is Mach-O 64-bit little-endian.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::unsupported_reason"
+    module: oxicrypt-integrity-sign
+    description: Report why the bytes are a Mach-O image this signer will not classify (big-endian, or a universal file, whose thin slices are signed before lipo joins them), so a caller can tell a Mach-O out of scope from a file that is not Mach-O at all.
+    signature: 'pub fn unsupported_reason(bytes: &[u8]) -> Option<&''static str>'
+    returns:
+      type: "Option<&'static str>"
+      description: A one-line explanation for an unsupported Mach-O shape, or None for any other input.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::classify"
+    module: oxicrypt-integrity-sign
+    description: Derive a Mach-O 64-bit image's typed extent from its load commands and chained fixups, with the four envelope locator fields Plain — the header, load commands, read-only segments and __LINKEDIT up to LC_CODE_SIGNATURE's dataoff Plain; __DATA_CONST and __DATA,__thread_data Plain with each DYLD_CHAINED_PTR_64 or _64_OFFSET rebase Relative and each bind Bind; every other file-backed byte of __DATA FileOnly; file_len at dataoff — refusing OpcodeFixups, LazyPointers, Arm64e, PointerFormat, SpecialOrdinal, ChainInvalid, FixupTarget, ClassicRelocations, WritableSegment and TableNotCovered by name.
+    signature: 'pub fn classify(bytes: &[u8]) -> Result<Layout, String>'
+    returns:
+      type: "Result<Layout, String>"
+      description: The classified layout with its bound-import records, or a description, beginning with the refusal's name where one applies, of why the image is malformed or refused.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::classify_with"
+    module: oxicrypt-integrity-sign
+    description: Derive a Mach-O image's typed extent as macho::classify does, with each envelope locator field that differs between reserved_against and the image typed as a Hole.
+    signature: 'pub fn classify_with(bytes: &[u8], reserved_against: Option<&[u8]>) -> Result<Layout, String>'
+    returns:
+      type: "Result<Layout, String>"
+      description: The classified layout, or a description beginning with the refusal's name.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::reservation_holes"
+    module: oxicrypt-integrity-sign
+    description: The envelope locator fields codesign rewrote between a reference (one codesign with the final identity and options) and the image (the next); any other differing byte of the header and load commands, or a different layout of the four fields, refuses with ReservationDiff.
+    signature: 'pub fn reservation_holes(reference: &[u8], bytes: &[u8]) -> Result<Vec<LocatorField>, String>'
+    returns:
+      type: "Result<Vec<LocatorField>, String>"
+      description: The fields that differed, in declaration order, or a description of the refusal.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::relative_encoding"
+    module: oxicrypt-integrity-sign
+    description: The chain encoding a Mach-O image's Relative words use, read from its chained fixups; what the offline check needs to rebuild the signature input before it has authenticated the image.
+    signature: 'pub fn relative_encoding(bytes: &[u8]) -> Result<RelativeEncoding, String>'
+    returns:
+      type: "Result<RelativeEncoding, String>"
+      description: ChainedPtr64, ChainedPtr64Offset, or FileWord for an image with no chained fixups; or a description of why the chains are refused.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::check_signed"
+    module: oxicrypt-integrity-sign
+    description: Check a signed Mach-O image's slot fields against the image's own chained fixups — the table and bound-import records must be exactly the typing of the file with the locator fields the slot types as holes — so a bind's ordinal or addend, a chain's next field or a word's bind bit, none of which is hashed, is refused.
+    signature: 'pub fn check_signed(bytes: &[u8], fields: &SlotFields) -> Result<(), String>'
+    returns:
+      type: "Result<(), String>"
+      description: Ok, or a description beginning FixupMismatch naming the first difference, or the classifier's refusal.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::module_statics"
+    module: oxicrypt-integrity-sign
+    description: Name every zero-initialised module static a Mach-O image's file holds, from its own symbol table or from a dSYM whose LC_UUID is the image's (StaticsUnchecked otherwise), reading defined section symbols and N_STSYM debug-map entries — a symbol named oxicrypt in a writable, non-constant segment, sized to the next symbol in its section, file-backed when any byte lies below its segment's file size, zero-initialised when its section is zero-fill or its file bytes are zero with no fixup into it; the statics REQUIRED_STATICS pins are rows whenever any byte is file-backed.
+    signature: 'pub fn module_statics(bytes: &[u8], symbols: Option<&[u8]>) -> Result<Statics, String>'
+    returns:
+      type: "Result<Statics, String>"
+      description: The statics report, or a description beginning StaticsUnchecked when the image has no symbol table.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::image_uuid"
+    module: oxicrypt-integrity-sign
+    description: The LC_UUID of a Mach-O image or dSYM, which matches a dSYM to the image it was written for.
+    signature: 'pub fn image_uuid(bytes: &[u8]) -> Result<Option<[u8; 16]>, String>'
+    returns:
+      type: "Result<Option<[u8; 16]>, String>"
+      description: The UUID, None when the file has no LC_UUID, or a description when it is malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "macho::LocatorField"
+    module: oxicrypt-integrity-sign
+    kind: enum
+    description: One of the four load-command fields codesign may rewrite when it signs; name gives the field as a refusal or report spells it.
+    variants:
+    - name: DataOff
+      description: LC_CODE_SIGNATURE's dataoff.
+    - name: DataSize
+      description: LC_CODE_SIGNATURE's datasize.
+    - name: VmSize
+      description: __LINKEDIT's vmsize.
+    - name: FileSize
+      description: __LINKEDIT's filesize.
+
+  - name: "pe::is_pe32plus"
+    module: oxicrypt-integrity-sign
+    description: Report whether the bytes look like a PE32+ image.
+    signature: 'pub fn is_pe32plus(bytes: &[u8]) -> bool'
+    returns:
+      type: "bool"
+      description: True when the image is PE32+.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::unsupported_reason"
+    module: oxicrypt-integrity-sign
+    description: Report why the bytes are a PE image this signer will not classify (a 32-bit PE, or an optional header whose magic is neither PE32 nor PE32+), so a caller can tell a PE out of scope from a file that is not PE at all.
+    signature: 'pub fn unsupported_reason(bytes: &[u8]) -> Option<&''static str>'
+    returns:
+      type: "Option<&'static str>"
+      description: A one-line explanation for an unsupported PE shape, or None for any other input.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::writable_ranges"
+    module: oxicrypt-integrity-sign
+    description: Report the file-backed bytes of every writable section of a PE32+ image, the ranges the loader may write.
+    signature: 'pub fn writable_ranges(bytes: &[u8]) -> Result<Vec<Range>, String>'
+    returns:
+      type: "Result<Vec<Range>, String>"
+      description: The writable sections' file-backed ranges, or a description of why the image is malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::classify"
+    module: oxicrypt-integrity-sign
+    description: Derive an x86_64 PE32+ image's typed extent, every byte the loader maps from the file, with CheckSum and the Security directory entry Plain — the headers and read-only sections Plain, ImageBase and each DIR64 destination Relative against ImageBase as the link base, each import thunk Bind with its DLL and symbol or ordinal, the TLS template Plain, every other writable file byte, each storage word the load configuration names for the loader to write and the file alignment padding after each section FileOnly — with the slot subtracted, the signed image ending at the certificate table, and refusing by name, among others, Machine, Alignment, Geometry, RelocationBlock, DelayLoadDescriptor, RelocationType (HIGHLOW, HIGH, LOW or another non-DIR64 relocation), RelocTarget, BoundImports, MissingLookupTable, ImportTable, DelayLoadIat, Xfg, UncheckedRelocation, TlsTemplate, TlsIndex, DelayLoadHandle, TableNotCovered, WordOverlap, TooManyImports and CertificateTable.
+    signature: 'pub fn classify(bytes: &[u8]) -> Result<Layout, String>'
+    returns:
+      type: "Result<Layout, String>"
+      description: The classified layout with its bound-import records, or a description, beginning with the refusal's name where one applies, of why the image is malformed or refused or the slot is missing, ambiguous or in a writable section.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::classify_with"
+    module: oxicrypt-integrity-sign
+    description: Derive a PE32+ image's typed extent as pe::classify does, with CheckSum and the Security directory entry typed as holes where they differ between reserved_against, the same build as linked, and the image.
+    signature: 'pub fn classify_with(bytes: &[u8], reserved_against: Option<&[u8]>) -> Result<Layout, String>'
+    returns:
+      type: "Result<Layout, String>"
+      description: The classified layout, or a description beginning with the refusal's name.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::reservation_holes"
+    module: oxicrypt-integrity-sign
+    description: The header fields signtool rewrote between a reference (the same build before the last signtool run, as linked) and the image (after it); any other differing byte before the certificate table, a different header layout, or signed images whose lengths differ by more than Authenticode's zero padding refuses with ReservationDiff.
+    signature: 'pub fn reservation_holes(reference: &[u8], bytes: &[u8]) -> Result<Vec<ReservedField>, String>'
+    returns:
+      type: "Result<Vec<ReservedField>, String>"
+      description: The fields that differed, in declaration order, or a description of the refusal.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::check_signed"
+    module: oxicrypt-integrity-sign
+    description: Check a signed PE32+ image's slot fields against the image's own structures — the table, link base, file length and bound-import records must be exactly the typing of the file with the reserved fields the slot types as holes — so the lookup tables, names and descriptors are decoded again against the signed records.
+    signature: 'pub fn check_signed(bytes: &[u8], fields: &SlotFields) -> Result<(), String>'
+    returns:
+      type: "Result<(), String>"
+      description: Ok, or a description beginning ImportMismatch when the records differ or FixupMismatch naming the first entry that does, or the classifier's refusal.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::codeview"
+    module: oxicrypt-integrity-sign
+    description: The CodeView (RSDS) record of a PE32+ image's debug directory, naming the program database the linker wrote with it by GUID, age and path.
+    signature: 'pub fn codeview(bytes: &[u8]) -> Result<Option<CodeView>, String>'
+    returns:
+      type: "Result<Option<CodeView>, String>"
+      description: The record, None when the image has none, or a description when the image is malformed.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::module_statics"
+    module: oxicrypt-integrity-sign
+    description: Name every zero-initialised module static a PE32+ image's file holds, from the program database whose GUID and age are the ones the image's CodeView record names (StaticsUnchecked otherwise), reading its data and public symbols — a symbol named oxicrypt in a writable section, sized to the next symbol in its section, file-backed when any byte lies inside the section's raw data, zero-initialised when those bytes are zero with no DIR64 relocation into them; the statics REQUIRED_STATICS pins, matched by mangled path or qualified name, are rows whenever any byte is file-backed.
+    signature: 'pub fn module_statics(bytes: &[u8], pdb: Option<&[u8]>) -> Result<Statics, String>'
+    returns:
+      type: "Result<Statics, String>"
+      description: The statics report, or a description beginning StaticsUnchecked when no matching program database is supplied.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "pe::CodeView"
+    module: oxicrypt-integrity-sign
+    kind: struct
+    description: The identity of the program database a PE32+ image names.
+    fields:
+    - name: guid
+      type: "[u8; 16]"
+      description: The PDB's GUID, as the record holds it.
+    - name: age
+      type: u32
+      description: The PDB's age.
+    - name: path
+      type: String
+      description: The PDB's path as the linker recorded it; the signer looks for its file name beside the artifact.
+
+  - name: "pe::ReservedField"
+    module: oxicrypt-integrity-sign
+    kind: enum
+    description: One of the two header fields signtool may rewrite when it signs; name gives the field as a refusal or report spells it.
+    variants:
+    - name: CheckSum
+      description: The optional header's CheckSum.
+    - name: SecurityDirectory
+      description: The Security directory entry, the certificate table's file offset and size.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -16151,6 +17453,91 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  - name: image_path
+    module: oxicrypt-imageread
+    description: The path of the image file the loader mapped the code at an address from — dladdr on Linux, Android and Darwin, GetModuleHandleExW and GetModuleFileNameW on Windows; the integrity test asks it on Linux and Android only when /proc/self/maps cannot be read, and for a main executable glibc reports the path the program was started with.
+    signature: "pub fn image_path(addr: usize) -> Result<PathBuf, ReadError>"
+    returns:
+      type: Result<PathBuf, ReadError>
+      description: The image file's path.
+      error_variants:
+        - name: NoMechanism
+          condition: The target has no implementation.
+        - name: NoImage
+          condition: Linux, Android and Darwin; the loader names no image file for the address, or names it with an empty path.
+        - name: Os
+          condition: Windows; the operating system refused the request, including for an address in no loaded module.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: resolve_symbol
+    module: oxicrypt-imageread
+    description: Resolve an import in an already-loaded library the way the loader bound it, without loading anything — dlopen(RTLD_NOLOAD | RTLD_LAZY | RTLD_FIRST) and dlsym on Darwin, GetModuleHandleExW and GetProcAddress on Windows; NoMechanism elsewhere.
+    signature: "pub fn resolve_symbol(library: &str, symbol: Symbol<'_>) -> Result<Option<usize>, ReadError>"
+    returns:
+      type: Result<Option<usize>, ReadError>
+      description: The resolved address, or None when the library is not loaded or exports no such symbol.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: loaded_image
+    module: oxicrypt-imageread
+    description: The address of the Mach header of the loaded image whose path is exactly path, from dyld's image list, on Darwin; None when no loaded image has that path; NoMechanism elsewhere; the integrity test reads the export tries of the libraries an x86_64 import resolves through from there.
+    signature: "pub fn loaded_image(path: &[u8]) -> Result<Option<usize>, ReadError>"
+    returns:
+      type: Result<Option<usize>, ReadError>
+      description: The image's Mach header address, or None.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: page_size
+    module: oxicrypt-imageread
+    description: The kernel's page size from the auxiliary vector (AT_PAGESZ) on Linux and Android, the granularity the loader maps a segment at; NoMechanism elsewhere.
+    signature: "pub fn page_size() -> Result<u64, ReadError>"
+    returns:
+      type: Result<u64, ReadError>
+      description: The page size in bytes.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: range_in_image
+    module: oxicrypt-imageread
+    description: Whether every byte of [addr, addr + len) is committed, readable memory of the allocation holding image_addr — a VirtualQuery walk over each region of the range on Windows, where a module is one allocation; NoMechanism elsewhere.
+    signature: "pub fn range_in_image(image_addr: usize, addr: usize, len: usize) -> Result<bool, ReadError>"
+    returns:
+      type: Result<bool, ReadError>
+      description: True when the whole range lies in the image's committed, accessible regions.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: current_thread_id
+    module: oxicrypt-imageread
+    description: The operating system's identifier for the calling thread — gettid on Linux and Android, pthread_threadid_np on Darwin, GetCurrentThreadId on Windows.
+    signature: "pub fn current_thread_id() -> Result<u64, ReadError>"
+    returns:
+      type: Result<u64, ReadError>
+      description: The kernel's thread id.
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
   - name: available
     module: oxicrypt-imageread
     description: Whether this target has a self-image read mechanism, answerable without provoking a read.
@@ -16183,6 +17570,10 @@ error_types:
         description: A pairwise consistency test failed during key construction.
         recoverable: true
         user_action: Retry key generation with fresh entropy.
+      - name: IntegrityNotAttested
+        description: Initialisation was attempted with an empty integrity group, leaving the module in the terminal IntegrityUnverified state.
+        recoverable: false
+        user_action: Pass oxicrypt_integrity::KATS as the integrity argument of initialize_with_tests or initialize_with_profile and restart the process.
       - name: AlreadyInitialized
         description: initialize_with_tests called more than once.
         recoverable: false
@@ -16209,6 +17600,10 @@ error_types:
         description: Output buffer wrong size.
         recoverable: true
         user_action: Resize output buffer to match input length.
+      - name: Module
+        description: The module refused the operation; it is not in SelfTest or Operational.
+        recoverable: false
+        user_action: Initialise the module before use; after it enters the Error state, restart the process.
 
   - name: DrbgError
     module: oxicrypt-drbg
@@ -16225,6 +17620,10 @@ error_types:
         description: Requested more than 65536 bytes in one call.
         recoverable: true
         user_action: Split into multiple generate calls.
+      - name: Module
+        description: Module state error (wraps oxicrypt_module::Error).
+        recoverable: false
+        user_action: If the module was never started (PowerOff), initialise it; if it is in the Error state, restart the process.
 
   - name: KdfError
     module: oxicrypt-kdf
@@ -16386,7 +17785,7 @@ error_types:
         user_action: Reduce the AAD to within the mode's maximum.
       - name: IntegrityUnverified
         value: 28
-        description: The module was initialised without the pre-operational software integrity test in its inventory, so it was never verified against its reference MAC rather than having failed a test.
+        description: The module was initialised without the pre-operational software integrity test in its inventory, so it was never verified against its signature rather than having failed a test.
         recoverable: false
         user_action: Initialise the module with an inventory that includes the integrity test, and run a signed artifact.
       - name: Internal
@@ -16400,78 +17799,56 @@ error_types:
     description: Failure of the pre-operational software integrity test (ISO/IEC 19790:2012 §7.10.2.2, AS10.17-AS10.18).
     variants:
       - name: CastNotRun
-        description: The integrity technique's own HMAC-SHA-256 algorithm self-test has not passed in this process, so the integrity test may not use it.
+        description: The integrity technique's own ML-DSA-87 signature-verification self-test has not passed in this process, so the integrity test may not use it.
         recoverable: true
-        user_action: Run hmac_cast() before calling verify_loaded_image(); the crate's KATS constant already lists them in the required order for a front end that iterates it. This is a front-end sequencing fault, not a finding about the module image.
-      - name: Mismatch
-        description: The computed MAC over the loader-invariant image does not equal the reference MAC in the slot.
+        user_action: Run ml_dsa_cast() and sha256_cast() before calling verify_loaded_image(); the crate's KATS constant already lists them in the required order. This is a front-end sequencing fault, not a finding about the module image.
+      - name: NoVerifyKey
+        description: The module was built without a verifying key.
+        recoverable: false
+        user_action: The module cannot tell a build without a key from one whose key was erased. If you built this binary from source yourself, generate a key pair with oxicrypt-integrity-sign --keygen, rebuild with OXICRYPT_INTEGRITY_VERIFY_KEY set to its public half, and sign with its private half. If you received it from anyone else, do not sign it; obtain a fresh copy from its publisher.
+      - name: SignatureInvalid
+        description: The signature over the image does not verify under the embedded key.
         recoverable: false
         user_action: >-
-          The module is in the terminal Error state and no service will run. The binary may be corrupted or its integrity slot unsigned; verify it with oxicrypt-integrity-sign --verify and reinstall from a published release artifact.
+          The module is in the terminal Error state and no service will run. The binary changed after it was signed; do not re-sign it. Replace it with a published release artifact or rebuild from source.
       - name: SlotInvalid
-        description: The slot is absent, malformed, or describes an impossible extent.
+        description: The slot is the unsigned template (status 3), names a different key (status 9), or is damaged (status 10).
         recoverable: false
-        user_action: The artifact was not linked against oxicrypt-integrity, its slot was stripped, or it was never signed; rebuild and sign it with oxicrypt-integrity-sign --sign rather than shipping it.
+        user_action: 'For the unsigned template, the module cannot tell a never-signed binary from a signed one whose slot was overwritten. If you built this binary from source yourself and have not signed it yet, sign it with your own key (docs/integrity-signing.md). If you received it from anyone else, do not sign it: obtain a fresh copy from its publisher. For KeyMismatch or damage, do not sign it again; compare verify_key_fingerprint with the slot''s key id, and replace the binary.'
       - name: Unreadable
-        description: No byte-acquisition mechanism could supply the module's own bytes, so the test was not performed.
+        description: No memory route could supply the module's own bytes, so the test was not performed.
         recoverable: false
-        user_action: Treat the module as unverified rather than proceeding. On a target with no implemented mechanism this is expected and the module correctly refuses to become operational; on a target that should have one, check that /proc/self/maps and the backing file are both readable by this process.
+        user_action: Treat the module as unverified rather than proceeding. On Linux, check that neither /proc/self/mem nor process_vm_readv is denied to this process (for example by a seccomp filter). Do not sign it; if this persists in an ordinary environment, obtain a fresh copy from its publisher.
+
   - name: SlotDefect
     module: oxicrypt-integrity
-    description: Why an integrity slot was refused, returned directly by mac_over_file_ranges, encode, and parse and nested in IntegrityError::SlotInvalid.
+    description: Why an integrity slot was refused, returned by encode and parse and nested in IntegrityError::SlotInvalid.
     variants:
-      - name: WrongSize
-        description: The acquired bytes are not SLOT_SIZE long.
+      - name: UnsupportedVersion
+        description: The version is not SLOT_VERSION; zero means the artifact was never signed, and versions 1 and 2 are refused.
         recoverable: false
-        user_action: This indicates a bug in the caller's byte-acquisition mechanism rather than a corrupt artifact; report it.
+        user_action: In a version-3 build this is damage, not an unsigned binary. Do not sign it; replace it with a fresh copy from its publisher, or rebuild from source.
+      - name: KeyMismatch
+        description: The slot was signed for a different verifying key than the one the module embeds.
+        recoverable: false
+        user_action: Do not sign it again. Compare the module's verify_key_fingerprint with the slot's key id from oxicrypt-integrity-sign --show; if the binary is not one you built with that key, replace it.
+      - name: KeyRecord
+        description: The embedded verifying-key record is absent or malformed.
+        recoverable: false
+        user_action: Treat the artifact as corrupt; rebuild from a trusted source.
       - name: HeaderMagic
         description: The header magic is absent — the artifact was not linked against oxicrypt-integrity, or the slot was stripped.
         recoverable: false
-        user_action: Rebuild and sign the artifact with oxicrypt-integrity-sign; do not ship it as-is.
-      - name: FooterMagic
-        description: The footer magic is absent — the slot is truncated or overwritten.
+        user_action: In a version-3 build the slot is the module's own static, so a missing magic is damage. Do not sign it; replace it with a fresh copy from its publisher, or rebuild from source.
+      - name: UnresolvedImport
+        description: A Bind entry names a non-weak import that did not resolve.
         recoverable: false
-        user_action: Treat the artifact as corrupt; rebuild and re-sign from a trusted source.
-      - name: UnsupportedVersion
-        description: The version is not SLOT_VERSION; zero means the artifact was never signed.
+        user_action: The library the artifact was signed against is not the one loaded; install the matching dependency.
+      - name: NonMaximal
+        description: The table is not in canonical form.
         recoverable: false
-        user_action: Sign the artifact with the current oxicrypt-integrity-sign, or rebuild against the crate version whose SLOT_VERSION matches.
-      - name: UnknownFlags
-        description: The reserved flags word is non-zero, so the slot was written by a tool asserting a feature this verifier does not implement.
-        recoverable: false
-        user_action: Use a oxicrypt-integrity-sign build matching this verifier's crate version.
-      - name: NoRanges
-        description: The range count is zero; an extent covering nothing would make the test vacuous.
-        recoverable: false
-        user_action: Re-sign with oxicrypt-integrity-sign, which always derives at least one range.
-      - name: TooManyRanges
-        description: The range count exceeds MAX_RANGES.
-        recoverable: false
-        user_action: This is a signer or format defect to report, not something a caller can work around.
-      - name: EmptyRange
-        description: The range at this index has zero length.
-        recoverable: false
-        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
-      - name: RangeOverflow
-        description: The range at this index overflows the RVA space.
-        recoverable: false
-        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
-      - name: Unordered
-        description: The range at this index starts before the previous range ends, so the table is unordered or self-overlapping.
-        recoverable: false
-        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
-      - name: OverlapsSlot
-        description: The range at this index covers part of the slot, so signer and verifier would hash different bytes.
-        recoverable: false
-        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
-      - name: RangeOutOfBounds
-        description: The range at this index falls outside the image being hashed.
-        recoverable: false
-        user_action: Treat the artifact as mismatched between its slot and its bytes; re-sign it.
-      - name: SlotRvaTooLarge
-        description: The slot's recorded RVA exceeds the address the slot was found at, so no load base can be derived from the pair.
-        recoverable: false
-        user_action: Re-sign the artifact with a current oxicrypt-integrity-sign build.
+        user_action: The signer writes only the canonical form, so this is damage. Do not sign it again; replace the binary.
+
   - name: EntropyError
     module: oxicrypt-entropy
     description: Refusal from the SP 800-90B entropy pipeline, at construction or while producing a sample.
@@ -16537,17 +17914,25 @@ error_types:
     module: oxicrypt-imageread
     variants:
       - name: NoMechanism
-        description: This target has no implemented self-image read mechanism.
+        description: This target has no implemented mechanism for the request.
         recoverable: false
         user_action: The module cannot perform its pre-operational integrity test on this platform and will not become operational.
       - name: Os
-        description: The operating system refused the read and reported a status — a kern_return_t on Darwin, a GetLastError value on Windows.
+        description: The operating system refused the request and reported a status — errno on Linux and Android, a kern_return_t or errno on Darwin, a GetLastError value on Windows.
         recoverable: false
-        user_action: The address named by the artifact's range table is not readable. Re-sign the artifact, and treat a persistent failure as a corrupt or mismatched image.
+        user_action: The address named by the artifact's table is not readable, or the process lacks the right. Do not sign the binary; treat a persistent failure as a corrupt or mismatched image and replace it.
       - name: Short
         description: The mechanism succeeded but supplied fewer bytes than requested, which means the request straddled the end of a mapping.
         recoverable: false
-        user_action: A statement about the range table rather than about permissions. Re-sign the artifact with a signer matching this build.
+        user_action: A statement about the table rather than about permissions. Do not sign the binary; replace it.
+      - name: InvalidName
+        description: A library or symbol name could not be passed to the operating system.
+        recoverable: false
+        user_action: The slot's string table names an import no loader could have produced. Do not sign the binary; replace it.
+      - name: NoImage
+        description: The loader names no image file for the address, which lies in no loaded object or whose recorded name is empty.
+        recoverable: false
+        user_action: The environment cannot name the module's image file. Provide /proc where it is missing; do not sign the binary.
 
 constants:
   - name: SHA1_DIGEST_SIZE
@@ -16718,6 +18103,12 @@ constants:
     value: "4627"
     description: ML-DSA-87 signature size in bytes.
 
+  - name: VERIFY_CAST_NAME
+    module: oxicrypt-ml-dsa
+    type: '&str'
+    value: '"ML-DSA-87 CAST (signature verification, FIPS 204, NIST ACVP vector)"'
+    description: The name KATS gives verify_cast.
+
   - name: SIGNATURE_LEN
     module: oxicrypt-lms
     type: usize
@@ -16781,11 +18172,77 @@ constants:
     value: '48'
     description: TLS 1.2 master-secret length in bytes per RFC 5246 §8.1.
 
-  - name: FIPS_INTEGRITY_KEY
+  - name: THREAD_ID_CHECK
+    module: oxicrypt-module
+    type: '&str'
+    value: '"initialising thread id: none the module can record"'
+    description: The test name in Error::SelfTestFailed when the platform gives the initialising thread no id the module can record.
+
+  - name: INTEGRITY_TEST_NAME
     module: oxicrypt-integrity
-    type: '[u8; 32]'
-    value: '*b"oxicrypt-fips140-3-integrity-key"'
-    description: Fixed, publicly known 32-byte HMAC key used for the module-binary integrity check.
+    type: '&str'
+    value: '"Module image integrity (ML-DSA-87 signature over the typed extent)"'
+    description: The integrity test's name in KATS, present in an artifact's read-only data exactly when the boot sequence's integrity test is linked; the signer reads it to decide which module statics the artifact must name.
+
+  - name: ML_DSA_CAST_NAME
+    module: oxicrypt-integrity
+    type: '&str'
+    value: '"ML-DSA-87 CAST (signature verification, FIPS 204, integrity technique)"'
+    description: The integrity technique's CAST name, used by every inventory and the Security Policy; distinct from the name oxicrypt_ml_dsa::KATS gives the same vector.
+
+  - name: SHA256_CAST_NAME
+    module: oxicrypt-integrity
+    type: '&str'
+    value: '"SHA-256 CAST (NIST CAVP SHA256ShortMsg Len=8, integrity key fingerprint)"'
+    description: The integrity group's SHA-256 CAST name; distinct from the name oxicrypt_sha::KATS gives the same test.
+
+  - name: SIGNATURE_CONTEXT
+    module: oxicrypt-integrity
+    type: '&[u8]'
+    value: 'b"oxicrypt-integrity"'
+    description: The FIPS 204 context string every integrity signature is made under, which separates integrity signatures from signatures the same key makes under any other context string.
+
+  - name: MESSAGE_PREFIX
+    module: oxicrypt-integrity
+    type: '[u8; 20]'
+    value: 0x00, 0x12, then the ASCII bytes oxicrypt-integrity
+    description: FIPS 204's external framing of SIGNATURE_CONTEXT for pure ML-DSA (0x00 || len(ctx) || ctx); the signed message M′ is this prefix followed by the signature input, built by both the verifier and file_signature_input.
+
+  - name: VERIFY_KEY_LEN
+    module: oxicrypt-integrity
+    type: usize
+    value: '2592'
+    description: Length of an encoded ML-DSA-87 public key (oxicrypt_ml_dsa::ml_dsa_87::PK_LEN), as the key record holds it.
+
+  - name: KEY_RECORD_HEADER_MAGIC
+    module: oxicrypt-integrity
+    type: '[u8; 16]'
+    value: 0xfa followed by the ASCII bytes OXICRYPT_VKEY_H
+    description: Header magic of the embedded verifying-key record.
+
+  - name: KEY_RECORD_FOOTER_MAGIC
+    module: oxicrypt-integrity
+    type: '[u8; 16]'
+    value: 0xfb followed by the ASCII bytes OXICRYPT_VKEY_F
+    description: Footer magic of the embedded verifying-key record.
+
+  - name: KEY_RECORD_SIZE
+    module: oxicrypt-integrity
+    type: usize
+    value: '2624'
+    description: Size of a KeyRecord in bytes.
+
+  - name: KEY_RECORD_KEY_OFFSET
+    module: oxicrypt-integrity
+    type: usize
+    value: '16'
+    description: Offset of the key within a KeyRecord.
+
+  - name: FIPS_INTEGRITY_VERIFY_KEY
+    module: oxicrypt-integrity
+    type: KeyRecord
+    value: "hdr = KEY_RECORD_HEADER_MAGIC, key = the build's OXICRYPT_INTEGRITY_VERIFY_KEY or 2,592 zero bytes, ftr = KEY_RECORD_FOOTER_MAGIC"
+    description: "The #[used] static carrying the verifying key this module was built with, read through the byte-acquisition mechanism by address."
 
   - name: SLOT_HEADER_MAGIC
     module: oxicrypt-integrity
@@ -16802,20 +18259,20 @@ constants:
   - name: SLOT_SIZE
     module: oxicrypt-integrity
     type: usize
-    value: '16384'
-    description: Total size in bytes of the embedded integrity slot; 16 KiB, sized to hold the range table (up to MAX_RANGES entries) plus the reference MAC.
+    value: '65536'
+    description: Total size in bytes of the embedded integrity slot; 64 KiB, sized to hold the entry table and the string table.
 
   - name: SLOT_VERSION
     module: oxicrypt-integrity
     type: u32
-    value: '2'
-    description: Format version written by the signer and required by the verifier, currently 2 (version 1, a 64-byte whole-file-MAC slot, is not accepted).
+    value: '4'
+    description: Format version written by the signer and required by the verifier, currently 4; versions 1 to 3 are refused.
 
   - name: FIPS_INTEGRITY_SLOT
     module: oxicrypt-integrity
     type: IntegritySlot
     value: "hdr = SLOT_HEADER_MAGIC, body = SLOT_BODY_SIZE zero bytes, ftr = SLOT_FOOTER_MAGIC"
-    description: "The #[used] 16 KiB static carrying the module's integrity slot, read through the byte-acquisition mechanism by address rather than dereferenced directly."
+    description: "The #[used] 64 KiB static carrying the module's integrity slot, read through the byte-acquisition mechanism by address rather than dereferenced directly."
 
   - name: SLOT_BODY_SIZE
     module: oxicrypt-integrity
@@ -16839,13 +18296,13 @@ constants:
     module: oxicrypt-integrity
     type: usize
     value: '20'
-    description: Offset of the reserved flags word within the slot.
+    description: Offset of the flags word within the slot.
 
   - name: OFF_COUNT
     module: oxicrypt-integrity
     type: usize
     value: '24'
-    description: Offset of the range-count field within the slot.
+    description: Offset of the entry-count field within the slot.
 
   - name: OFF_SLOT_RVA
     module: oxicrypt-integrity
@@ -16853,17 +18310,59 @@ constants:
     value: '28'
     description: Offset of the slot's own RVA field within the slot.
 
-  - name: OFF_MAC
+  - name: OFF_SIG
     module: oxicrypt-integrity
     type: usize
     value: '32'
-    description: Offset of the reference-MAC field within the slot.
+    description: Offset of the ML-DSA-87 signature within the slot.
+
+  - name: SIG_LEN
+    module: oxicrypt-integrity
+    type: usize
+    value: '4627'
+    description: Length of the signature field, an encoded ML-DSA-87 signature (oxicrypt_ml_dsa::ml_dsa_87::SIG_LEN).
+
+  - name: OFF_KEY_ID
+    module: oxicrypt-integrity
+    type: usize
+    value: '4659'
+    description: Offset of the verifying key's fingerprint within the slot.
+
+  - name: OFF_LINK_BASE
+    module: oxicrypt-integrity
+    type: usize
+    value: '4691'
+    description: Offset of the link base within the slot.
+
+  - name: OFF_STRTAB_OFF
+    module: oxicrypt-integrity
+    type: usize
+    value: '4699'
+    description: Offset of the string table's offset field within the slot.
+
+  - name: OFF_STRTAB_LEN
+    module: oxicrypt-integrity
+    type: usize
+    value: '4703'
+    description: Offset of the string table's length field within the slot.
+
+  - name: OFF_SLOT_FILE_OFF
+    module: oxicrypt-integrity
+    type: usize
+    value: '4707'
+    description: Offset of the slot's own file offset within the slot.
+
+  - name: OFF_FILE_LEN
+    module: oxicrypt-integrity
+    type: usize
+    value: '4711'
+    description: Offset of the signed file image's length within the slot.
 
   - name: OFF_TABLE
     module: oxicrypt-integrity
     type: usize
-    value: '64'
-    description: Offset of the first range-table entry within the slot.
+    value: '4715'
+    description: Offset of the first entry within the slot.
 
   - name: OFF_FTR
     module: oxicrypt-integrity
@@ -16871,15 +18370,167 @@ constants:
     value: 'SLOT_SIZE - 16'
     description: Offset of the footer magic within the slot.
 
-  - name: RANGE_ENTRY_SIZE
+  - name: ENTRY_SIZE
     module: oxicrypt-integrity
     type: usize
-    value: '12'
-    description: Size of one range-table entry — three little-endian u32s (rva, file_off, len).
+    value: '16'
+    description: Size of one stored entry — rva, file_off and len as little-endian u32s, then kind, a run byte (on a Plain entry, bit 7 marks its words Relative rather than Hole and bits 0–6 count further identical periods, 0 to 127) and a u16 meta.
 
-  - name: MAX_RANGES
+  - name: BIND_RECORD_HEADER
     module: oxicrypt-integrity
     type: usize
-    value: '1358'
-    description: Number of range entries the table can hold, computed as (OFF_FTR - OFF_TABLE) / RANGE_ENTRY_SIZE with the remainder left as padding.
+    value: '16'
+    description: Size of a BindRecord's fixed header in the string table, before its library and symbol names.
+
+  - name: FLAG_LOADER_BIONIC
+    module: oxicrypt-integrity
+    type: u32
+    value: '1'
+    description: Slot flag recording that the artifact is loaded by bionic rather than glibc.
+
+  - name: MAX_EXPANDED
+    module: oxicrypt-integrity
+    type: usize
+    value: '65536'
+    description: The most entries a stored table may expand to; parse refuses a slot that expands to more with TooManyEntries before reading it further.
+
+  - name: MAX_ENTRIES
+    module: oxicrypt-integrity
+    type: usize
+    value: '3800'
+    description: Number of stored entries the table can hold when no string table is present, computed as (OFF_FTR - OFF_TABLE) / ENTRY_SIZE with the remainder left as padding; a stored Plain entry may stand for up to 128 periods of Plain bytes and their words.
+
+  - name: "key::SEED_LEN"
+    module: oxicrypt-integrity-sign
+    type: usize
+    value: '32'
+    description: Length of an ML-DSA-87 key-generation seed, the whole of a signing key file.
+
+  - name: SIGNING_KEY_FILE
+    module: oxicrypt-integrity-sign
+    type: '&str'
+    value: '"integrity-signing.key"'
+    description: File name keygen gives the private key.
+
+  - name: VERIFY_KEY_FILE
+    module: oxicrypt-integrity-sign
+    type: '&str'
+    value: '"integrity-verify.pub"'
+    description: File name keygen gives the public key, the file OXICRYPT_INTEGRITY_VERIFY_KEY names.
+
+  # ── Power-up self-test slices ─────────────────────────────────────
+
+  - name: KATS
+    module: oxicrypt-sha
+    type: "&[KatEntry]"
+    value: "11 entries"
+    description: Power-up KAT slice for this crate, one known-answer test per hash (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256, SHA3-224, SHA3-256, SHA3-384, SHA3-512), passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-xof
+    type: "&[KatEntry]"
+    value: "12 entries"
+    description: Power-up KAT slice for this crate, one known-answer test each for SHAKE128, SHAKE256, cSHAKE128, cSHAKE256, KMAC128, KMAC256, KMACXOF128, KMACXOF256, TupleHash128, TupleHash256, ParallelHash128 and ParallelHash256, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-hmac
+    type: "&[KatEntry]"
+    value: "11 entries"
+    description: Power-up KAT slice for this crate, one HMAC known-answer test per approved hash (SHA-1, SHA-2 family, SHA-3 family), passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-kdf
+    type: "&[KatEntry]"
+    value: "45 entries"
+    description: Power-up KAT slice for this crate, 11 HKDF tests and 33 SP 800-108 KBKDF tests (counter, feedback and double-pipeline mode, each over the 11 HMAC hashes) and one PBKDF2-HMAC-SHA2-224 CAST, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-aes
+    type: "&[KatEntry]"
+    value: "23 entries"
+    description: Power-up KAT slice for this crate, encrypt-and-decrypt known-answer tests for ECB, CBC, CTR, GCM and CCM at each key size plus six KW and two KWP tests, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-cmac
+    type: "&[KatEntry]"
+    value: "6 entries"
+    description: Power-up KAT slice for this crate, two AES-CMAC known-answer tests per key size covering the K1 and K2 subkey paths, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-drbg
+    type: "&[KatEntry]"
+    value: "24 entries"
+    description: Power-up KAT slice for this crate, 12 CTR_DRBG, Hash_DRBG and HMAC_DRBG known-answer tests without prediction resistance, nine with prediction resistance and three SP 800-90A health tests, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-ecdsa
+    type: "&[KatEntry]"
+    value: "2 entries"
+    description: Power-up KAT slice for this crate, a sign-and-verify test each for ECDSA P-256 and P-384, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-eddsa
+    type: "&[KatEntry]"
+    value: "1 entry"
+    description: Power-up KAT slice for this crate, one Ed25519 keygen, sign and verify test, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-rsa
+    type: "&[KatEntry]"
+    value: "1 entry"
+    description: Power-up KAT slice for this crate, one test covering PKCS#1 v1.5 and PSS sign and verify, tamper rejection and the pairwise consistency test, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-ecdh
+    type: "&[KatEntry]"
+    value: "2 entries"
+    description: Power-up KAT slice for this crate, a shared-secret test each for P-256 and P-384 in both directions with tamper rejection, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-tls-kdf
+    type: "&[KatEntry]"
+    value: "2 entries"
+    description: Power-up KAT slice for this crate, one TLS 1.2 PRF test and one TLS 1.3 key schedule test, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-dh
+    type: "&[KatEntry]"
+    value: "1 entry"
+    description: Power-up KAT slice for this crate, one 3072-bit finite-field DH test in both directions with tamper rejection, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-ml-kem
+    type: "&[KatEntry]"
+    value: "4 entries"
+    description: Power-up KAT slice for this crate, ML-KEM-1024 self-tests on NIST ACVP vectors for key generation (decapsulation key and encapsulation key), encapsulation, decapsulation and implicit rejection, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-ml-dsa
+    type: "&[KatEntry]"
+    value: "5 entries"
+    description: Power-up KAT slice for this crate, ML-DSA self-tests on NIST vectors for ML-DSA-87 key generation, signature generation and verification (accepting a valid signature and rejecting it with one bit flipped) plus two rejection-path signature-generation tests from the ACVP ML-DSA specification draft-celi-acvp-ml-dsa-01 (ML-DSA-87, ML-DSA-44), passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-slh-dsa
+    type: "&[KatEntry]"
+    value: "6 entries"
+    description: Power-up KAT slice for this crate, SLH-DSA-SHA2-128f and SLH-DSA-SHAKE-128f self-tests on NIST ACVP vectors for key generation, signature generation and signature verification (accepting a valid signature and rejecting it with one bit flipped), passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-lms
+    type: "&[KatEntry]"
+    value: "4 entries"
+    description: Power-up KAT slice for this crate, LMS signature verification on NIST ACVP vectors for the SHA-256 and SHAKE hash families at 32-byte and 24-byte output, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-xmss
+    type: "&[KatEntry]"
+    value: "1 entry"
+    description: Power-up KAT slice for this crate, one XMSS-SHA2_10_256 signature verification test, passed in the tests argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: KATS
+    module: oxicrypt-integrity
+    type: "&[KatEntry]"
+    value: "3 entries"
+    description: Pre-operational integrity group, the ML-DSA-87 signature-verification CAST, then the SHA-256 CAST for the key fingerprint, then the ML-DSA-87 signature check of the module image, passed as the integrity argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
 

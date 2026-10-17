@@ -1,7 +1,7 @@
 //! Declarative macro that generates a full ML-KEM parameter-set
 //! implementation (K-PKE inner scheme + Fujisaki–Okamoto KEM +
-//! gated public wrappers + power-up KAT) from a small parameter
-//! tuple.
+//! gated public wrappers) from a small parameter tuple. The power-up
+//! self-tests are in `cast`.
 //!
 //! This is the encoding/wiring single source of truth for ML-KEM-512,
 //! ML-KEM-768, and ML-KEM-1024. It mirrors the
@@ -46,10 +46,9 @@
 //! | `kpke_keygen`, `kpke_encrypt`, `kpke_decrypt` | private | FIPS 203 §5 |
 //! | `ml_kem_keygen`, `ml_kem_encaps`, `ml_kem_decaps` | private | FIPS 203 §6 |
 //! | `keygen`, `encapsulate`, `decapsulate` | `pub` | Module-gated entry points |
-//! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden) | Gate-free mirrors |
-//! | `KATS`, `self_test` | `pub` | Power-up self-test |
+//! | `keygen_internal`, `encaps_internal`, `decaps_internal` | `pub` (hidden) | Mirrors without the operational gate |
 //!
-//! # Architectural note (CMVP gem)
+//! # Architectural note
 //!
 //! The macro is the **single source of truth for every parameter-set
 //! divergence**. There is no parallel hand-written implementation
@@ -77,14 +76,8 @@ macro_rules! ml_kem_impl {
         svc_keygen = $svc_keygen:expr;
         svc_encaps = $svc_encaps:expr;
         svc_decaps = $svc_decaps:expr;
-        // KAT seeds (each variant carries its own deterministic
-        // round-trip + implicit-rejection oracle).
-        kat_d = $kat_d:expr;
-        kat_z = $kat_z:expr;
-        kat_m = $kat_m:expr;
-        kat_name = $kat_name:expr;
     ) => {
-        use oxicrypt_module::{Error, KatEntry, SelfTestFailure, Service};
+        use oxicrypt_module::{Error, Service};
         use oxicrypt_sha::sha3::{SHA3_256_DIGEST_SIZE, SHA3_512_DIGEST_SIZE, Sha3_256, Sha3_512};
         use oxicrypt_xof::{Shake128, Shake256};
         use $crate::encode::{byte_decode, byte_encode, compress_poly, decompress_poly};
@@ -235,19 +228,20 @@ macro_rules! ml_kem_impl {
         /// order, each cell from its own fresh local XOF.
         #[cfg(not(feature = "parallel"))]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
-        fn expand_a(rho: &[u8; SEED_LEN]) -> PolyMatrix {
+        fn expand_a(rho: &[u8; SEED_LEN]) -> Result<PolyMatrix, Error> {
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut rows: [[Poly; K]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
             for i in 0..K {
                 for j in 0..K {
-                    let mut xof = Shake128::new_internal();
+                    let mut xof = Shake128::new_internal()?;
                     xof.update(rho);
                     xof.update(&[j as u8, i as u8]);
                     xof.finalize();
-                    rows[i][j] = sample_ntt(&mut xof);
+                    rows[i][j] = sample_ntt(&mut xof, &started);
                 }
             }
-            PolyMatrix { rows }
+            Ok(PolyMatrix { rows })
         }
 
         /// Expand the k × k public matrix Â from seed ρ.
@@ -267,26 +261,29 @@ macro_rules! ml_kem_impl {
         /// of thread count.
         #[cfg(feature = "parallel")]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
-        fn expand_a(rho: &[u8; SEED_LEN]) -> PolyMatrix {
+        fn expand_a(rho: &[u8; SEED_LEN]) -> Result<PolyMatrix, Error> {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
             };
 
+            let started = oxicrypt_module::require_self_test_started_token()?;
             let mut rows: [[Poly; K]; K] =
                 core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
-            (&mut rows[..])
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, row)| {
-                    for j in 0..K {
-                        let mut xof = Shake128::new_internal();
-                        xof.update(rho);
-                        xof.update(&[j as u8, i as u8]);
-                        xof.finalize();
-                        row[j] = sample_ntt(&mut xof);
-                    }
-                });
-            PolyMatrix { rows }
+            crate::sweep::run(|| {
+                (&mut rows[..]).par_iter_mut().enumerate().try_for_each(
+                    |(i, row)| -> Result<(), Error> {
+                        for j in 0..K {
+                            let mut xof = Shake128::new_with(&started);
+                            xof.update(rho);
+                            xof.update(&[j as u8, i as u8]);
+                            xof.finalize();
+                            row[j] = sample_ntt(&mut xof, &started);
+                        }
+                        Ok(())
+                    },
+                )
+            })??;
+            Ok(PolyMatrix { rows })
         }
 
         /// Sample a full noise vector (k polynomials) starting from
@@ -294,13 +291,17 @@ macro_rules! ml_kem_impl {
         ///
         /// Returns the vector and the next nonce value.
         #[allow(clippy::needless_range_loop)]
-        fn sample_noise_vec(sigma: &[u8; SEED_LEN], mut nonce: u8, eta: usize) -> (PolyVec, u8) {
+        fn sample_noise_vec(
+            sigma: &[u8; SEED_LEN],
+            mut nonce: u8,
+            eta: usize,
+        ) -> Result<(PolyVec, u8), Error> {
             let mut vec = PolyVec::zero();
             for i in 0..K {
-                vec.polys[i] = sample_noise(sigma, nonce, eta);
+                vec.polys[i] = sample_noise(sigma, nonce, eta)?;
                 nonce = nonce.wrapping_add(1);
             }
-            (vec, nonce)
+            Ok((vec, nonce))
         }
 
         // ── K-PKE (FIPS 203 §5, Algorithms 13–15) ───────────────────────
@@ -318,7 +319,11 @@ macro_rules! ml_kem_impl {
             clippy::cast_possible_truncation,
             clippy::similar_names
         )]
-        fn kpke_keygen(d: &[u8; SEED_LEN], ek_pke: &mut [u8], dk_pke: &mut [u8]) {
+        fn kpke_keygen(
+            d: &[u8; SEED_LEN],
+            ek_pke: &mut [u8],
+            dk_pke: &mut [u8],
+        ) -> Result<(), Error> {
             debug_assert!(ek_pke.len() >= EK_LEN);
             debug_assert!(dk_pke.len() >= 384 * K);
 
@@ -327,9 +332,9 @@ macro_rules! ml_kem_impl {
             g_input[..32].copy_from_slice(d);
             g_input[32] = K as u8;
 
-            let mut g = <Sha3_512>::new_internal();
+            let mut g = <Sha3_512>::new_internal()?;
             g.update(&g_input);
-            let g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize();
+            let g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize()?;
 
             let mut rho = [0u8; 32];
             let mut sigma = [0u8; 32];
@@ -337,11 +342,11 @@ macro_rules! ml_kem_impl {
             sigma.copy_from_slice(&g_out[32..64]);
 
             // 2. Expand matrix Â from ρ
-            let a_hat = expand_a(&rho);
+            let a_hat = expand_a(&rho)?;
 
             // 3. Sample secret vector s and error vector e
-            let (mut s, nonce) = sample_noise_vec(&sigma, 0, ETA1);
-            let (mut e, _nonce) = sample_noise_vec(&sigma, nonce, ETA1);
+            let (mut s, nonce) = sample_noise_vec(&sigma, 0, ETA1)?;
+            let (mut e, _nonce) = sample_noise_vec(&sigma, nonce, ETA1)?;
 
             // 4. NTT(s), NTT(e)
             s.ntt();
@@ -378,6 +383,7 @@ macro_rules! ml_kem_impl {
                     &mut dk_pke[i * POLY_ENCODED_12..(i + 1) * POLY_ENCODED_12],
                 );
             }
+            Ok(())
         }
 
         /// K-PKE encryption (FIPS 203 Algorithm 14).
@@ -393,7 +399,12 @@ macro_rules! ml_kem_impl {
             clippy::cast_possible_truncation,
             clippy::similar_names
         )]
-        fn kpke_encrypt(ek_pke: &[u8], m: &[u8; 32], r_seed: &[u8; 32], ct: &mut [u8]) {
+        fn kpke_encrypt(
+            ek_pke: &[u8],
+            m: &[u8; 32],
+            r_seed: &[u8; 32],
+            ct: &mut [u8],
+        ) -> Result<(), Error> {
             debug_assert!(ek_pke.len() >= EK_LEN);
             debug_assert!(ct.len() >= CT_LEN);
 
@@ -412,12 +423,12 @@ macro_rules! ml_kem_impl {
             rho.copy_from_slice(&ek_pke[K * POLY_ENCODED_12..K * POLY_ENCODED_12 + 32]);
 
             // 3. Expand Â from ρ
-            let a_hat = expand_a(&rho);
+            let a_hat = expand_a(&rho)?;
 
             // 4. Sample r, e₁, e₂
-            let (mut r_vec, nonce) = sample_noise_vec(r_seed, 0, ETA1);
-            let (e1, nonce) = sample_noise_vec(r_seed, nonce, ETA2);
-            let e2 = sample_noise(r_seed, nonce, ETA2);
+            let (mut r_vec, nonce) = sample_noise_vec(r_seed, 0, ETA1)?;
+            let (e1, nonce) = sample_noise_vec(r_seed, nonce, ETA2)?;
+            let e2 = sample_noise(r_seed, nonce, ETA2)?;
 
             // 5. NTT(r)
             r_vec.ntt();
@@ -458,6 +469,7 @@ macro_rules! ml_kem_impl {
                 &v.coeffs,
                 &mut ct[K * POLY_COMPRESSED_DU..K * POLY_COMPRESSED_DU + POLY_COMPRESSED_DV],
             );
+            Ok(())
         }
 
         /// K-PKE decryption (FIPS 203 Algorithm 15).
@@ -534,20 +546,21 @@ macro_rules! ml_kem_impl {
             z: &[u8; SEED_LEN],
             ek: &mut [u8; EK_LEN],
             dk: &mut [u8; DK_LEN],
-        ) {
+        ) -> Result<(), Error> {
             // 1. Run K-PKE.KeyGen to get (ek_PKE, dk_PKE)
             let dk_pke_len = 384 * K;
-            kpke_keygen(d, ek, &mut dk[..dk_pke_len]);
+            kpke_keygen(d, ek, &mut dk[..dk_pke_len])?;
 
             // 2. dk = dk_PKE ‖ ek ‖ H(ek) ‖ z
             dk[dk_pke_len..dk_pke_len + EK_LEN].copy_from_slice(ek);
 
-            let mut h = <Sha3_256>::new_internal();
+            let mut h = <Sha3_256>::new_internal()?;
             h.update(ek);
-            let h_ek: [u8; SHA3_256_DIGEST_SIZE] = h.finalize();
+            let h_ek: [u8; SHA3_256_DIGEST_SIZE] = h.finalize()?;
             dk[dk_pke_len + EK_LEN..dk_pke_len + EK_LEN + 32].copy_from_slice(&h_ek);
 
             dk[dk_pke_len + EK_LEN + 32..dk_pke_len + EK_LEN + 64].copy_from_slice(z);
+            Ok(())
         }
 
         /// ML-KEM.Encaps_internal (FIPS 203 Algorithm 17).
@@ -560,16 +573,16 @@ macro_rules! ml_kem_impl {
         fn ml_kem_encaps(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
-        ) -> ([u8; SHARED_SECRET_LEN], [u8; CT_LEN]) {
+        ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
             // 1. (K, r) ← G(m ‖ H(ek))
-            let mut h = <Sha3_256>::new_internal();
+            let mut h = <Sha3_256>::new_internal()?;
             h.update(ek);
-            let h_ek: [u8; SHA3_256_DIGEST_SIZE] = h.finalize();
+            let h_ek: [u8; SHA3_256_DIGEST_SIZE] = h.finalize()?;
 
-            let mut g = <Sha3_512>::new_internal();
+            let mut g = <Sha3_512>::new_internal()?;
             g.update(m);
             g.update(&h_ek);
-            let mut g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize();
+            let mut g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize()?;
 
             let mut k = [0u8; 32];
             let mut r = [0u8; 32];
@@ -578,7 +591,7 @@ macro_rules! ml_kem_impl {
 
             // 2. c ← K-PKE.Encrypt(ek, m, r)
             let mut ct = [0u8; CT_LEN];
-            kpke_encrypt(ek, m, &r, &mut ct);
+            let encrypted = kpke_encrypt(ek, m, &r, &mut ct);
 
             // Phase 2 zeroize: `k` and `r` are CSPs derived from the
             // FO-transform's `G(m ‖ H(ek))` expansion. `k` is the
@@ -592,7 +605,10 @@ macro_rules! ml_kem_impl {
             oxicrypt_zeroize::zeroize(&mut k);
             oxicrypt_zeroize::zeroize(&mut r);
             oxicrypt_zeroize::zeroize(&mut g_out);
-            result
+            // A refusal from the encryption step is reported only after
+            // the wipe above, so it leaves no CSP behind.
+            encrypted?;
+            Ok(result)
         }
 
         /// ML-KEM.Decaps_internal (FIPS 203 Algorithm 18).
@@ -606,7 +622,10 @@ macro_rules! ml_kem_impl {
             clippy::similar_names,
             clippy::many_single_char_names
         )]
-        fn ml_kem_decaps(dk: &[u8; DK_LEN], ct: &[u8; CT_LEN]) -> [u8; SHARED_SECRET_LEN] {
+        fn ml_kem_decaps(
+            dk: &[u8; DK_LEN],
+            ct: &[u8; CT_LEN],
+        ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
             let dk_pke_len = 384 * K;
 
             // Parse dk = dk_PKE ‖ ek ‖ H(ek) ‖ z
@@ -615,15 +634,19 @@ macro_rules! ml_kem_impl {
             let h_ek = &dk[dk_pke_len + EK_LEN..dk_pke_len + EK_LEN + 32];
             let z = &dk[dk_pke_len + EK_LEN + 32..dk_pke_len + EK_LEN + 64];
 
+            // The hashers are built before any secret-derived value
+            // exists, so a refusal here returns with nothing to wipe.
+            let mut g = <Sha3_512>::new_internal()?;
+            let mut j = Shake256::new_internal()?;
+
             // 1. m' ← K-PKE.Decrypt(dk_PKE, c)
             let mut m_prime = [0u8; 32];
             kpke_decrypt(dk_pke, ct, &mut m_prime);
 
             // 2. (K', r') ← G(m' ‖ H(ek))
-            let mut g = <Sha3_512>::new_internal();
             g.update(&m_prime);
             g.update(h_ek);
-            let mut g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize();
+            let mut g_out: [u8; SHA3_512_DIGEST_SIZE] = g.finalize()?;
 
             let mut k_prime = [0u8; 32];
             let mut r_prime = [0u8; 32];
@@ -631,18 +654,17 @@ macro_rules! ml_kem_impl {
             r_prime.copy_from_slice(&g_out[32..64]);
 
             // 3. K̄ ← J(z ‖ c) where J = SHAKE-256, first 32 bytes
-            let mut j = Shake256::new_internal();
             j.update(z);
             j.update(ct);
             j.finalize();
             let mut k_bar = [0u8; 32];
-            j.squeeze(&mut k_bar);
+            j.squeeze(&mut k_bar)?;
 
             // 4. c' ← K-PKE.Encrypt(ek, m', r')
             let mut ct_prime = [0u8; CT_LEN];
-            kpke_encrypt(ek, &m_prime, &r_prime, &mut ct_prime);
+            let encrypted = kpke_encrypt(ek, &m_prime, &r_prime, &mut ct_prime);
 
-            // 5. Constant-time comparison: if c == c', return K'; else K̄
+            // 5. Constant-time comparison: if c == c', return Ok(K'); else K̄
             //
             // `ct_select_32` reads `k_prime` and `k_bar` through `&[u8; 32]`
             // and constructs a new owned `[u8; 32]` — the input stack
@@ -676,7 +698,10 @@ macro_rules! ml_kem_impl {
             oxicrypt_zeroize::zeroize(&mut r_prime);
             oxicrypt_zeroize::zeroize(&mut g_out);
             oxicrypt_zeroize::zeroize(&mut ct_prime);
-            result
+            // A refusal from the re-encryption step is reported only
+            // after the wipe above, so it leaves no CSP behind.
+            encrypted?;
+            Ok(result)
         }
 
         // ── Public API (gated) ──────────────────────────────────────────
@@ -694,7 +719,7 @@ macro_rules! ml_kem_impl {
         ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_keygen)?;
-            keygen_internal(d, z).ok_or(Error::InvalidInput)
+            keygen_internal_unguarded(d, z)
         }
 
         /// Encapsulate a shared secret against an encapsulation key.
@@ -707,7 +732,7 @@ macro_rules! ml_kem_impl {
         ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_encaps)?;
-            Ok(encaps_internal(ek, m))
+            encaps_internal_unguarded(ek, m)
         }
 
         /// Decapsulate a shared secret from a ciphertext.
@@ -721,100 +746,82 @@ macro_rules! ml_kem_impl {
         ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
             oxicrypt_module::require_operational()?;
             oxicrypt_module::require_allowed($svc_decaps)?;
-            Ok(decaps_internal(dk, ct))
+            decaps_internal_unguarded(dk, ct)
         }
 
-        // ── Internal API (gate-free, for KATs and ACVP) ─────────────────
+        // ── Internal API (no operational gate; for KATs and ACVP) ─────────────────
 
-        /// Internal keygen — no module gate.
+        /// Internal keygen — no operational gate.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn keygen_internal(
             d: &[u8; SEED_LEN],
             z: &[u8; SEED_LEN],
-        ) -> Option<([u8; EK_LEN], [u8; DK_LEN])> {
-            let mut ek = [0u8; EK_LEN];
-            let mut dk = [0u8; DK_LEN];
-            ml_kem_keygen(d, z, &mut ek, &mut dk);
-            Some((ek, dk))
+        ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
+            oxicrypt_module::require_self_test_started()?;
+            keygen_internal_unguarded(d, z)
         }
 
-        /// Internal encaps — no module gate.
+        /// Body of [`keygen_internal`], run once its guard has passed.
+        fn keygen_internal_unguarded(
+            d: &[u8; SEED_LEN],
+            z: &[u8; SEED_LEN],
+        ) -> Result<([u8; EK_LEN], [u8; DK_LEN]), Error> {
+            let mut ek = [0u8; EK_LEN];
+            let mut dk = [0u8; DK_LEN];
+            ml_kem_keygen(d, z, &mut ek, &mut dk)?;
+            Ok((ek, dk))
+        }
+
+        /// Internal encaps — no operational gate.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
         pub fn encaps_internal(
             ek: &[u8; EK_LEN],
             m: &[u8; SEED_LEN],
-        ) -> ([u8; SHARED_SECRET_LEN], [u8; CT_LEN]) {
+        ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
+            oxicrypt_module::require_self_test_started()?;
+            encaps_internal_unguarded(ek, m)
+        }
+
+        /// Body of [`encaps_internal`], run once its guard has passed.
+        fn encaps_internal_unguarded(
+            ek: &[u8; EK_LEN],
+            m: &[u8; SEED_LEN],
+        ) -> Result<([u8; SHARED_SECRET_LEN], [u8; CT_LEN]), Error> {
             ml_kem_encaps(ek, m)
         }
 
-        /// Internal decaps — no module gate.
+        /// Internal decaps — no operational gate.
+        ///
+        /// Returns [`Error::NotOperational`] unless
+        /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+        /// `Operational`, or in `SelfTest` on the thread running the power-up
+        /// self-tests.
         #[doc(hidden)]
-        pub fn decaps_internal(dk: &[u8; DK_LEN], ct: &[u8; CT_LEN]) -> [u8; SHARED_SECRET_LEN] {
+        pub fn decaps_internal(
+            dk: &[u8; DK_LEN],
+            ct: &[u8; CT_LEN],
+        ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
+            oxicrypt_module::require_self_test_started()?;
+            decaps_internal_unguarded(dk, ct)
+        }
+
+        /// Body of [`decaps_internal`], run once its guard has passed.
+        fn decaps_internal_unguarded(
+            dk: &[u8; DK_LEN],
+            ct: &[u8; CT_LEN],
+        ) -> Result<[u8; SHARED_SECRET_LEN], Error> {
             ml_kem_decaps(dk, ct)
         }
-
-        // ── Power-up KATs ───────────────────────────────────────────────
-
-        /// Deterministic KAT seed for keygen.
-        const KAT_D: [u8; 32] = $kat_d;
-
-        /// Deterministic KAT seed for implicit-rejection randomness z.
-        const KAT_Z_SEED: [u8; 32] = $kat_z;
-
-        /// Deterministic KAT seed for encapsulation.
-        const KAT_M: [u8; 32] = $kat_m;
-
-        /// Self-test: deterministic round-trip + negative (tamper) test.
-        ///
-        /// 1. KeyGen from fixed (d, z).
-        /// 2. Encaps with fixed m → (K, c).
-        /// 3. Decaps(dk, c) → K'.
-        /// 4. Verify K == K' (positive test).
-        /// 5. Tamper c, Decaps(dk, c_bad) → K''.
-        /// 6. Verify K'' ≠ K (implicit rejection test).
-        pub fn self_test() -> Result<(), SelfTestFailure> {
-            // 1. KeyGen
-            let Some((ek, dk)) = keygen_internal(&KAT_D, &KAT_Z_SEED) else {
-                return Err(SelfTestFailure);
-            };
-
-            // 2. Encaps
-            let (k, ct) = encaps_internal(&ek, &KAT_M);
-
-            // 3. Decaps (positive)
-            let k_prime = decaps_internal(&dk, &ct);
-
-            // 4. K == K'
-            if k != k_prime {
-                return Err(SelfTestFailure);
-            }
-
-            // 5. Tamper ciphertext and decaps (negative — implicit rejection)
-            let mut ct_bad = ct;
-            ct_bad[0] ^= 0x01;
-            let k_bad = decaps_internal(&dk, &ct_bad);
-
-            // 6. K'' must differ from K (with overwhelming probability)
-            if k_bad == k {
-                return Err(SelfTestFailure);
-            }
-
-            Ok(())
-        }
-
-        /// Single power-up KAT entry for this parameter set.
-        ///
-        /// Aggregated into the crate-level `KATS` slice
-        /// by-value, avoiding the `indexing_slicing` clippy lint that
-        /// fires on `slice[0]` even inside `const` blocks.
-        pub const KAT_ENTRY: KatEntry = KatEntry {
-            name: $kat_name,
-            run: self_test,
-        };
-
-        /// Power-up KATs for this parameter set (single entry: round-trip
-        /// + implicit-rejection).
-        pub const KATS: &[KatEntry] = &[KAT_ENTRY];
 
         // Make `K`, `Q_U16`, `N`, `Poly`, `sample_*`, `Shake128`,
         // `Shake256`, etc. addressable from the unit-test module
@@ -827,12 +834,13 @@ macro_rules! ml_kem_impl {
         // Oracle choice: `expand_a` is reachable in-crate (the per-variant
         // unit-test module reaches the macro-internal items via
         // `use super::*`), so we add a direct equality oracle rather than
-        // relying only on the keygen-KAT-on/off check. We rebuild the
+        // relying only on keygen known-answer tests. We rebuild the
         // matrix with an always-sequential reference loop (which never
         // touches the rayon path) and assert it equals the feature-gated
-        // `expand_a` cell-for-cell, for a few deterministic ρ values. The
-        // keygen KATs (fixed ρ → fixed Â → fixed ek/dk) remain the
-        // end-to-end oracle; this test pins `expand_a` itself.
+        // `expand_a` cell-for-cell, for a few deterministic ρ values. Only
+        // ML-KEM-1024 has an end-to-end keygen known-answer test (the
+        // keygen CAST and `tests/nist_kat.rs`: fixed seeds → fixed ek/dk);
+        // this test pins `expand_a` itself, for every parameter set.
         #[cfg(all(test, feature = "parallel"))]
         #[allow(clippy::cast_possible_truncation, clippy::needless_range_loop)]
         mod parallel_determinism {
@@ -845,11 +853,14 @@ macro_rules! ml_kem_impl {
                     core::array::from_fn(|_| core::array::from_fn(|_| Poly::zero()));
                 for i in 0..K {
                     for j in 0..K {
-                        let mut xof = Shake128::new_internal();
+                        let mut xof = Shake128::new_internal().unwrap();
                         xof.update(rho);
                         xof.update(&[j as u8, i as u8]);
                         xof.finalize();
-                        rows[i][j] = sample_ntt(&mut xof);
+                        rows[i][j] = sample_ntt(
+                            &mut xof,
+                            &oxicrypt_module::require_self_test_started_token().unwrap(),
+                        );
                     }
                 }
                 PolyMatrix { rows }
@@ -857,12 +868,13 @@ macro_rules! ml_kem_impl {
 
             #[test]
             fn parallel_expand_a_matches_sequential_reference() {
+                crate::test_support::start_module();
                 for k in 0u8..4 {
                     let mut rho = [0u8; SEED_LEN];
                     for (idx, b) in rho.iter_mut().enumerate() {
                         *b = k.wrapping_mul(7).wrapping_add(idx as u8).wrapping_add(0x5a);
                     }
-                    let par = expand_a(&rho);
+                    let par = expand_a(&rho).unwrap();
                     let seq = expand_a_sequential_reference(&rho);
                     for i in 0..K {
                         for j in 0..K {

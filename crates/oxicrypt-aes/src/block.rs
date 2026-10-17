@@ -35,7 +35,10 @@
     clippy::many_single_char_names
 )]
 
-use oxicrypt_module::{Error, Service, require_allowed, require_operational};
+use oxicrypt_module::{
+    Error, SelfTestStarted, Service, require_allowed, require_operational,
+    require_self_test_started, require_self_test_started_token,
+};
 
 /// AES block size in bytes. Rijndael allows other sizes; AES fixes
 /// `Nb = 4` (128-bit block).
@@ -341,28 +344,65 @@ impl Aes128Key {
     pub fn new(key: &[u8; 16]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Aes128)?;
-        Ok(Self::new_internal(key))
+        Self::new_internal(key)
     }
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
     ///
     /// Used by power-up KATs and downstream crates (CMAC, CTR_DRBG)
     /// that run during `SelfTest`.
     #[doc(hidden)]
-    pub fn new_internal(key: &[u8; 16]) -> Self {
+    pub fn new_internal(key: &[u8; 16]) -> Result<Self, Error> {
+        require_self_test_started()?;
         let mut rk = [0u8; 16 * 11];
         expand_key(key, 4, 10, &mut rk);
-        Self { rk }
+        Ok(Self { rk })
     }
-    /// Encrypt a single 16-byte block in place.
-    pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+    /// Encrypt a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure produces no output after it.
+    pub fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.encrypt_block_with(&started, block);
+        Ok(())
+    }
+    /// [`Self::encrypt_block`] for a mode function or another algorithm
+    /// crate that checked the module state once at its own entry point
+    /// and holds the proof.
+    #[doc(hidden)]
+    pub fn encrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
         #[cfg(feature = "accel-aes")]
         if oxicrypt_aes_accel::encrypt_block(&self.rk, 10, block) {
             return;
         }
         encrypt_block_generic(block, &self.rk, 10);
     }
-    /// Decrypt a single 16-byte block in place.
-    pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+    /// Decrypt a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure produces no output after it.
+    pub fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.decrypt_block_with(&started, block);
+        Ok(())
+    }
+    /// [`Self::decrypt_block`] for a mode function or another algorithm
+    /// crate that checked the module state once at its own entry point
+    /// and holds the proof.
+    #[doc(hidden)]
+    pub fn decrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
         #[cfg(feature = "accel-aes")]
         if oxicrypt_aes_accel::decrypt_block(&self.rk, 10, block) {
             return;
@@ -383,25 +423,62 @@ impl Aes192Key {
     pub fn new(key: &[u8; 24]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Aes192)?;
-        Ok(Self::new_internal(key))
+        Self::new_internal(key)
     }
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
     #[doc(hidden)]
-    pub fn new_internal(key: &[u8; 24]) -> Self {
+    pub fn new_internal(key: &[u8; 24]) -> Result<Self, Error> {
+        require_self_test_started()?;
         let mut rk = [0u8; 16 * 13];
         expand_key(key, 6, 12, &mut rk);
-        Self { rk }
+        Ok(Self { rk })
     }
-    /// Encrypt a single 16-byte block in place.
-    pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+    /// Encrypt a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure produces no output after it.
+    pub fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.encrypt_block_with(&started, block);
+        Ok(())
+    }
+    /// [`Self::encrypt_block`] for a mode function or another algorithm
+    /// crate that checked the module state once at its own entry point
+    /// and holds the proof.
+    #[doc(hidden)]
+    pub fn encrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
         #[cfg(feature = "accel-aes")]
         if oxicrypt_aes_accel::encrypt_block(&self.rk, 12, block) {
             return;
         }
         encrypt_block_generic(block, &self.rk, 12);
     }
-    /// Decrypt a single 16-byte block in place.
-    pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+    /// Decrypt a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure produces no output after it.
+    pub fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.decrypt_block_with(&started, block);
+        Ok(())
+    }
+    /// [`Self::decrypt_block`] for a mode function or another algorithm
+    /// crate that checked the module state once at its own entry point
+    /// and holds the proof.
+    #[doc(hidden)]
+    pub fn decrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
         #[cfg(feature = "accel-aes")]
         if oxicrypt_aes_accel::decrypt_block(&self.rk, 12, block) {
             return;
@@ -422,25 +499,62 @@ impl Aes256Key {
     pub fn new(key: &[u8; 32]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(Service::Aes256)?;
-        Ok(Self::new_internal(key))
+        Self::new_internal(key)
     }
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
+    ///
+    /// Returns [`Error::NotOperational`] unless [`require_self_test_started`]
+    /// admits the call: in `Operational`, or in `SelfTest` on the thread
+    /// running the power-up self-tests.
     #[doc(hidden)]
-    pub fn new_internal(key: &[u8; 32]) -> Self {
+    pub fn new_internal(key: &[u8; 32]) -> Result<Self, Error> {
+        require_self_test_started()?;
         let mut rk = [0u8; 16 * 15];
         expand_key(key, 8, 14, &mut rk);
-        Self { rk }
+        Ok(Self { rk })
     }
-    /// Encrypt a single 16-byte block in place.
-    pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+    /// Encrypt a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure produces no output after it.
+    pub fn encrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.encrypt_block_with(&started, block);
+        Ok(())
+    }
+    /// [`Self::encrypt_block`] for a mode function or another algorithm
+    /// crate that checked the module state once at its own entry point
+    /// and holds the proof.
+    #[doc(hidden)]
+    pub fn encrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
         #[cfg(feature = "accel-aes")]
         if oxicrypt_aes_accel::encrypt_block(&self.rk, 14, block) {
             return;
         }
         encrypt_block_generic(block, &self.rk, 14);
     }
-    /// Decrypt a single 16-byte block in place.
-    pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+    /// Decrypt a single 16-byte block in place (ECB on one block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so a key built before a failure produces no output after it.
+    pub fn decrypt_block(&self, block: &mut [u8; 16]) -> Result<(), Error> {
+        let started = require_self_test_started_token()?;
+        self.decrypt_block_with(&started, block);
+        Ok(())
+    }
+    /// [`Self::decrypt_block`] for a mode function or another algorithm
+    /// crate that checked the module state once at its own entry point
+    /// and holds the proof.
+    #[doc(hidden)]
+    pub fn decrypt_block_with(&self, _started: &SelfTestStarted, block: &mut [u8; 16]) {
         #[cfg(feature = "accel-aes")]
         if oxicrypt_aes_accel::decrypt_block(&self.rk, 14, block) {
             return;
@@ -463,6 +577,7 @@ mod tests {
     // NIST AES example vectors — AES-128.
     #[test]
     fn fips197_appendix_c1_aes128() {
+        crate::test_support::start_module();
         let key = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
             0x0e, 0x0f,
@@ -475,17 +590,18 @@ mod tests {
             0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
             0xc5, 0x5a,
         ];
-        let k = Aes128Key::new_internal(&key);
+        let k = Aes128Key::new_internal(&key).unwrap();
         let mut buf = pt;
-        k.encrypt_block(&mut buf);
+        k.encrypt_block(&mut buf).unwrap();
         assert_eq!(buf, ct_expected);
-        k.decrypt_block(&mut buf);
+        k.decrypt_block(&mut buf).unwrap();
         assert_eq!(buf, pt);
     }
 
     // NIST AES example vectors — AES-192.
     #[test]
     fn fips197_appendix_c2_aes192() {
+        crate::test_support::start_module();
         let key = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
             0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
@@ -498,17 +614,18 @@ mod tests {
             0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d,
             0x71, 0x91,
         ];
-        let k = Aes192Key::new_internal(&key);
+        let k = Aes192Key::new_internal(&key).unwrap();
         let mut buf = pt;
-        k.encrypt_block(&mut buf);
+        k.encrypt_block(&mut buf).unwrap();
         assert_eq!(buf, ct_expected);
-        k.decrypt_block(&mut buf);
+        k.decrypt_block(&mut buf).unwrap();
         assert_eq!(buf, pt);
     }
 
     // NIST AES example vectors — AES-256.
     #[test]
     fn fips197_appendix_c3_aes256() {
+        crate::test_support::start_module();
         let key = [
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
             0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
@@ -522,11 +639,11 @@ mod tests {
             0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
             0x60, 0x89,
         ];
-        let k = Aes256Key::new_internal(&key);
+        let k = Aes256Key::new_internal(&key).unwrap();
         let mut buf = pt;
-        k.encrypt_block(&mut buf);
+        k.encrypt_block(&mut buf).unwrap();
         assert_eq!(buf, ct_expected);
-        k.decrypt_block(&mut buf);
+        k.decrypt_block(&mut buf).unwrap();
         assert_eq!(buf, pt);
     }
 }
@@ -557,17 +674,18 @@ mod accel_cross_path_tests {
 
     #[test]
     fn fips197_appendix_c_through_dispatch() {
+        crate::test_support::start_module();
         // C.1 — AES-128.
         let key128: [u8; 16] = core::array::from_fn(|i| i as u8);
         let expect128: [u8; 16] = [
             0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
             0xc5, 0x5a,
         ];
-        let k = Aes128Key::new_internal(&key128);
+        let k = Aes128Key::new_internal(&key128).unwrap();
         let mut b = PT;
-        k.encrypt_block(&mut b);
+        k.encrypt_block(&mut b).unwrap();
         assert_eq!(b, expect128, "AES-128 App C.1 ciphertext");
-        k.decrypt_block(&mut b);
+        k.decrypt_block(&mut b).unwrap();
         assert_eq!(b, PT, "AES-128 App C.1 round-trip");
 
         // C.2 — AES-192.
@@ -576,11 +694,11 @@ mod accel_cross_path_tests {
             0xdd, 0xa9, 0x7c, 0xa4, 0x86, 0x4c, 0xdf, 0xe0, 0x6e, 0xaf, 0x70, 0xa0, 0xec, 0x0d,
             0x71, 0x91,
         ];
-        let k = Aes192Key::new_internal(&key192);
+        let k = Aes192Key::new_internal(&key192).unwrap();
         let mut b = PT;
-        k.encrypt_block(&mut b);
+        k.encrypt_block(&mut b).unwrap();
         assert_eq!(b, expect192, "AES-192 App C.2 ciphertext");
-        k.decrypt_block(&mut b);
+        k.decrypt_block(&mut b).unwrap();
         assert_eq!(b, PT, "AES-192 App C.2 round-trip");
 
         // C.3 — AES-256.
@@ -589,47 +707,48 @@ mod accel_cross_path_tests {
             0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
             0x60, 0x89,
         ];
-        let k = Aes256Key::new_internal(&key256);
+        let k = Aes256Key::new_internal(&key256).unwrap();
         let mut b = PT;
-        k.encrypt_block(&mut b);
+        k.encrypt_block(&mut b).unwrap();
         assert_eq!(b, expect256, "AES-256 App C.3 ciphertext");
-        k.decrypt_block(&mut b);
+        k.decrypt_block(&mut b).unwrap();
         assert_eq!(b, PT, "AES-256 App C.3 round-trip");
     }
 
     #[test]
     fn dispatch_equals_portable_generic_across_many_blocks() {
-        let k128 = Aes128Key::new_internal(&[0x13; 16]);
-        let k192 = Aes192Key::new_internal(&[0x37; 24]);
-        let k256 = Aes256Key::new_internal(&[0x42; 32]);
+        crate::test_support::start_module();
+        let k128 = Aes128Key::new_internal(&[0x13; 16]).unwrap();
+        let k192 = Aes192Key::new_internal(&[0x37; 24]).unwrap();
+        let k256 = Aes256Key::new_internal(&[0x42; 32]).unwrap();
         for i in 0..512u32 {
             let x: [u8; 16] =
                 core::array::from_fn(|j| (i as usize).wrapping_mul(31).wrapping_add(j * 7) as u8);
 
             // AES-128.
             let (mut a, mut b) = (x, x);
-            k128.encrypt_block(&mut a);
+            k128.encrypt_block(&mut a).unwrap();
             encrypt_block_generic(&mut b, &k128.rk, 10);
             assert_eq!(a, b, "AES-128 dispatch≡portable encrypt, block {i}");
             let (mut da, mut db) = (a, b);
-            k128.decrypt_block(&mut da);
+            k128.decrypt_block(&mut da).unwrap();
             decrypt_block_generic(&mut db, &k128.rk, 10);
             assert_eq!(da, x, "AES-128 dispatch decrypt inverts, block {i}");
             assert_eq!(db, x, "AES-128 portable decrypt inverts, block {i}");
 
             // AES-192.
             let (mut a, mut b) = (x, x);
-            k192.encrypt_block(&mut a);
+            k192.encrypt_block(&mut a).unwrap();
             encrypt_block_generic(&mut b, &k192.rk, 12);
             assert_eq!(a, b, "AES-192 dispatch≡portable encrypt, block {i}");
 
             // AES-256.
             let (mut a, mut b) = (x, x);
-            k256.encrypt_block(&mut a);
+            k256.encrypt_block(&mut a).unwrap();
             encrypt_block_generic(&mut b, &k256.rk, 14);
             assert_eq!(a, b, "AES-256 dispatch≡portable encrypt, block {i}");
             let (mut da, mut db) = (a, b);
-            k256.decrypt_block(&mut da);
+            k256.decrypt_block(&mut da).unwrap();
             decrypt_block_generic(&mut db, &k256.rk, 14);
             assert_eq!(da, x, "AES-256 dispatch decrypt inverts, block {i}");
             assert_eq!(db, x, "AES-256 portable decrypt inverts, block {i}");

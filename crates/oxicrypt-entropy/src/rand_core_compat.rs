@@ -45,6 +45,51 @@ use crate::source::NoiseSource;
 
 use rand_core::{TryCryptoRng, TryRngCore};
 
+/// Buffered conditioned output, zeroized on drop.
+///
+/// The generator's own fields are moved out by [`EntropyRng::into_inner`],
+/// so the wipe lives on this field rather than in a `Drop` for the
+/// generator, which would forbid that move; dropping or unwrapping the
+/// generator drops this field and wipes the bytes either way.
+struct BufferedBlock([u8; CONDITIONED_BLOCK_LEN]);
+
+/// Prints the buffer's length only, never its bytes.
+impl core::fmt::Debug for BufferedBlock {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BufferedBlock")
+            .field("len", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for BufferedBlock {
+    fn drop(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.0);
+        #[cfg(test)]
+        wipe_witness::record(self.0.iter().all(|&b| b == 0));
+    }
+}
+
+/// What the last `Drop` of a [`BufferedBlock`] on this thread left in its
+/// buffer, read by the drop itself while the buffer is still owned.
+#[cfg(test)]
+mod wipe_witness {
+    extern crate std;
+
+    std::thread_local! {
+        static LAST: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+    }
+
+    pub(super) fn record(zeroed: bool) {
+        LAST.with(|c| c.set(Some(zeroed)));
+    }
+
+    /// `Some(true)` when the last drop left its buffer all zero.
+    pub(super) fn take() -> Option<bool> {
+        LAST.with(core::cell::Cell::take)
+    }
+}
+
 /// A `rand_core` generator backed by an entropy pipeline's vetted
 /// conditioned output.
 ///
@@ -59,8 +104,9 @@ use rand_core::{TryCryptoRng, TryRngCore};
 #[derive(Debug)]
 pub struct EntropyRng<S: NoiseSource> {
     pipeline: EntropyPipeline<S>,
-    /// The most recently fetched conditioned block.
-    block: [u8; CONDITIONED_BLOCK_LEN],
+    /// The most recently fetched conditioned block, zeroized when the
+    /// generator is dropped or unwrapped.
+    block: BufferedBlock,
     /// Bytes `[pos, CONDITIONED_BLOCK_LEN)` of `block` are unconsumed.
     /// `pos == CONDITIONED_BLOCK_LEN` means the buffer is empty.
     pos: usize,
@@ -76,7 +122,7 @@ impl<S: NoiseSource> EntropyRng<S> {
     pub fn new(pipeline: EntropyPipeline<S>) -> Self {
         Self {
             pipeline,
-            block: [0u8; CONDITIONED_BLOCK_LEN],
+            block: BufferedBlock([0u8; CONDITIONED_BLOCK_LEN]),
             pos: CONDITIONED_BLOCK_LEN, // start empty
         }
     }
@@ -97,35 +143,65 @@ impl<S: NoiseSource> EntropyRng<S> {
     }
 
     /// Unwraps the generator, returning the pipeline. Any buffered
-    /// conditioned-output tail is discarded.
+    /// conditioned-output tail is zeroized and discarded.
     #[must_use]
-    pub fn into_inner(self) -> EntropyPipeline<S> {
+    pub fn into_inner(mut self) -> EntropyPipeline<S> {
+        self.discard_block();
         self.pipeline
     }
 
     /// Fills `dst` from buffered conditioned output, drawing fresh blocks as
-    /// needed. On any pipeline error nothing further is written and the
-    /// error propagates; the buffer is left in a consistent state (the
-    /// failed block is not partially exposed).
+    /// needed.
+    ///
+    /// The module state is checked first: a refusal discards the buffered
+    /// block and returns [`EntropyError::Module`] with `dst` unchanged, so
+    /// output buffered while the module was operational is not served after
+    /// it fails. Any later pipeline error also discards the buffered block
+    /// and zeroizes `dst`, so a partial fill is never left visible.
     ///
     /// Driven byte-by-byte over a destination iterator with slice `get`
     /// accessors and saturating arithmetic so the body carries no
     /// panicking index/slice or overflowing op (the crate forbids both).
     fn fill(&mut self, dst: &mut [u8]) -> Result<(), EntropyError> {
+        if let Err(e) = oxicrypt_module::require_self_test_started() {
+            self.discard_block();
+            return Err(EntropyError::Module(e));
+        }
+        let result = self.fill_unwiped(dst);
+        if result.is_err() {
+            self.discard_block();
+            oxicrypt_zeroize::zeroize(dst);
+        }
+        result
+    }
+
+    /// Body of [`Self::fill`]; on `Err` the caller wipes `dst` and the block.
+    fn fill_unwiped(&mut self, dst: &mut [u8]) -> Result<(), EntropyError> {
         for out in dst.iter_mut() {
             if self.pos >= CONDITIONED_BLOCK_LEN {
                 // Buffer empty: draw a fresh conditioned block. Any error
                 // (NotReady, Health, Source, ...) propagates verbatim.
-                self.block = self.pipeline.conditioned_block()?;
+                self.block.0 = self.pipeline.conditioned_block()?;
                 self.pos = 0;
             }
             // `pos < CONDITIONED_BLOCK_LEN` holds here, so `get` is `Some`;
             // the `unreachable_*` fallback keeps the path panic-free for the
             // restriction lints without an `expect`/`unwrap`.
-            *out = self.block.get(self.pos).copied().unwrap_or(0);
+            *out = self.block.0.get(self.pos).copied().unwrap_or(0);
             self.pos = self.pos.saturating_add(1);
+            if self.pos >= CONDITIONED_BLOCK_LEN {
+                // Drained: wipe it now rather than leave it until the next
+                // draw or the generator's drop.
+                self.discard_block();
+            }
         }
         Ok(())
+    }
+
+    /// Zeroizes the buffered block and marks it empty.
+    fn discard_block(&mut self) {
+        oxicrypt_zeroize::zeroize(&mut self.block.0);
+        self.pos = CONDITIONED_BLOCK_LEN;
     }
 }
 
@@ -249,6 +325,7 @@ mod tests {
     //     fills exactly the requested length (including spanning blocks).
     #[test]
     fn fill_bytes_various_lengths_fill_exactly() {
+        crate::test_support::start_module();
         // Fixed 128-byte backing array (no alloc; no_std-test friendly); the
         // guard byte just past `len` proves the write extent is exact.
         for &len in &[0usize, 1, 31, 32, 33, 100] {
@@ -264,6 +341,7 @@ mod tests {
     //     same startup produce identical streams.
     #[test]
     fn deterministic_streams_match() {
+        crate::test_support::start_module();
         let mut a = started_rng();
         let mut b = started_rng();
         // Cross several blocks (200 bytes > 6 conditioned blocks) and a
@@ -282,6 +360,7 @@ mod tests {
     //     try_fill_bytes would have produced at the same stream position.
     #[test]
     fn next_uints_are_le_of_fill_bytes() {
+        crate::test_support::start_module();
         // u32 consistency.
         {
             let mut a = started_rng();
@@ -304,6 +383,7 @@ mod tests {
     //     try_* method returns Err(the EntropyError) and never panics.
     #[test]
     fn before_startup_all_methods_error_not_ready() {
+        crate::test_support::start_module();
         let p = EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
         let mut rng = EntropyRng::new(p);
         assert_eq!(rng.try_next_u32().unwrap_err(), EntropyError::NotReady);
@@ -317,6 +397,7 @@ mod tests {
 
     #[test]
     fn after_poisoning_all_methods_error() {
+        crate::test_support::start_module();
         // DeadMock trips the RCT at startup → permanently poisoned. Every
         // draw then errors (NotReady, the poisoned-state error) and none panic.
         let mut p = EntropyPipeline::new(DeadMock, MinEntropy::from_bits(2), alpha20()).unwrap();
@@ -332,10 +413,46 @@ mod tests {
         );
     }
 
+    /// Dropping the buffered block leaves it all zero.
+    #[test]
+    fn dropping_the_buffered_block_zeroes_it() {
+        let _ = super::wipe_witness::take();
+        drop(super::BufferedBlock([0xa5; CONDITIONED_BLOCK_LEN]));
+        assert_eq!(super::wipe_witness::take(), Some(true));
+        // Control: nothing dropped, nothing recorded.
+        assert_eq!(super::wipe_witness::take(), None);
+    }
+
+    /// A fill the pipeline refuses leaves `dst` all zero. The body run on
+    /// its own is the control: it leaves `dst` as it found it, so the zeros
+    /// come from the wipe.
+    #[test]
+    fn a_failed_fill_zeroes_its_destination() {
+        crate::test_support::start_module();
+        let unstarted = || {
+            let p =
+                EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
+            EntropyRng::new(p)
+        };
+        let mut control = [0xEEu8; 16];
+        assert_eq!(
+            unstarted().fill_unwiped(&mut control).unwrap_err(),
+            EntropyError::NotReady
+        );
+        assert!(control.iter().all(|&b| b == 0xEE));
+        let mut dst = [0xEEu8; 16];
+        assert_eq!(
+            unstarted().try_fill_bytes(&mut dst).unwrap_err(),
+            EntropyError::NotReady
+        );
+        assert!(dst.iter().all(|&b| b == 0), "dst left after an error");
+    }
+
     // Zero-length fill is a no-op success even before startup (no block
     // is drawn, so the not-ready pipeline is never consulted).
     #[test]
     fn zero_length_fill_is_ok_without_drawing() {
+        crate::test_support::start_module();
         let p = EntropyPipeline::new(PrngMock::new(), MinEntropy::from_bits(2), alpha20()).unwrap();
         let mut rng = EntropyRng::new(p);
         let mut empty: [u8; 0] = [];
@@ -347,6 +464,7 @@ mod tests {
     // Verified by determinism against a single 32-byte read.
     #[test]
     fn partial_block_tail_is_buffered_not_discarded() {
+        crate::test_support::start_module();
         let mut split = started_rng();
         let mut whole = started_rng();
         let mut one = [0u8; 1];

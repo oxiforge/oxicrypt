@@ -75,14 +75,14 @@ impl AlgorithmHandler for TupleHash128Handler {
                     h.update(elem);
                 }
                 h.finalize();
-                h.squeeze(out);
+                h.squeeze(out)?;
             } else {
                 let mut h = TupleHash128::new(s)
                     .map_err(|_| DispatchError::Crypto("TupleHash128::new returned Err"))?;
                 for elem in elements {
                     h.update(elem);
                 }
-                h.finalize_into(out);
+                h.finalize_into(out)?;
             }
             Ok(())
         })
@@ -109,14 +109,14 @@ impl AlgorithmHandler for TupleHash256Handler {
                     h.update(elem);
                 }
                 h.finalize();
-                h.squeeze(out);
+                h.squeeze(out)?;
             } else {
                 let mut h = TupleHash256::new(s)
                     .map_err(|_| DispatchError::Crypto("TupleHash256::new returned Err"))?;
                 for elem in elements {
                     h.update(elem);
                 }
-                h.finalize_into(out);
+                h.finalize_into(out)?;
             }
             Ok(())
         })
@@ -151,7 +151,7 @@ impl AlgorithmHandler for TupleHashXof128Handler {
                 h.update(elem);
             }
             h.finalize();
-            h.squeeze(out);
+            h.squeeze(out)?;
             Ok(())
         })
     }
@@ -175,7 +175,7 @@ impl AlgorithmHandler for TupleHashXof256Handler {
                 h.update(elem);
             }
             h.finalize();
-            h.squeeze(out);
+            h.squeeze(out)?;
             Ok(())
         })
     }

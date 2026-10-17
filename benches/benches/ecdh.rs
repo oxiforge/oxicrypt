@@ -24,12 +24,15 @@ fn bench_ecdh_p256(c: &mut Criterion) {
     // Use ECDSA keygen for a valid P-256 key pair.
     let alice = EcdsaP256PrivateKey::generate(&mut drbg).expect("keygen");
     let bob = EcdsaP256PrivateKey::generate(&mut drbg).expect("keygen");
-    let bob_pk = bob.public_key();
+    let bob_pk = bob.public_key().expect("public key");
 
     c.bench_function("ECDH P-256 shared secret", |b| {
         b.iter(|| {
-            compute_shared_secret_p256(black_box(alice.private_scalar()), black_box(&bob_pk))
-                .expect("ecdh");
+            compute_shared_secret_p256(
+                black_box(alice.private_scalar().expect("private scalar")),
+                black_box(&bob_pk),
+            )
+            .expect("ecdh");
         });
     });
 }

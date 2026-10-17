@@ -61,8 +61,8 @@
 //!   state. The caller is responsible for zeroizing the
 //!   original key buffer once it hands off to HMAC; the HMAC
 //!   state itself holds only the derived inner/outer hash
-//!   state, which is rebuilt by `new` and goes away when
-//!   the frame drops.
+//!   state, built by `new`; each hash type zeroizes its state
+//!   when it drops.
 //!
 //! # FIPS module gating
 //!
@@ -70,7 +70,9 @@
 //! [`oxicrypt_module::require_operational`]; the hidden
 //! `*_internal` surface is used by the HMAC KAT runner itself
 //! and by downstream consumers (HKDF, KBKDF, HMAC_DRBG) that
-//! need to run during `SelfTest`.
+//! need to run during `SelfTest`. It calls
+//! [`oxicrypt_module::require_self_test_started`] instead, so it
+//! refuses in every state other than `SelfTest` and `Operational`.
 //!
 //! # Approval basis
 //!
@@ -95,7 +97,8 @@
 )]
 
 use oxicrypt_module::{
-    Error, KatEntry, SelfTestFailure, Service, require_allowed, require_operational,
+    Error, KatEntry, SelfTestFailure, SelfTestStarted, Service, require_allowed,
+    require_operational, require_self_test_started_token,
 };
 
 // ----------------------------------------------------------------------
@@ -115,23 +118,24 @@ use oxicrypt_module::{
 /// use the public type aliases ([`HmacSha256`], etc.) and never
 /// name `BlockHash` directly.
 #[doc(hidden)]
-pub trait BlockHash<const B: usize, const L: usize>: Sized {
+pub trait BlockHash<const B: usize, const L: usize>: Sized + Clone {
     /// The [`Service`] variant for this HMAC instantiation.
     ///
     /// Used by [`Hmac::new`] to enforce algorithm-profile restrictions.
     const HMAC_SERVICE: Service;
-    /// Fresh hasher that bypasses the module state machine.
-    fn block_new() -> Self;
+    /// Fresh hasher, through the hash's `new_internal` constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
+    fn block_new() -> Result<Self, Error>;
     /// Absorb more input.
     fn block_update(&mut self, data: &[u8]);
     /// Finalize and return the `L`-byte digest.
-    ///
-    /// Resets internal state to a fresh hasher so subsequent calls
-    /// produce the digest of an empty input. The owning struct's
-    /// `Drop` zeroizes `outer_key`; the inner hash state is cleared by
-    /// this reset, so a value dropped without being finalized does not
-    /// have it cleared.
-    fn block_finalize(&mut self) -> [u8; L];
+    fn block_finalize(self, started: &SelfTestStarted) -> [u8; L];
 }
 
 // ----------------------------------------------------------------------
@@ -140,12 +144,14 @@ pub trait BlockHash<const B: usize, const L: usize>: Sized {
 
 /// Generic HMAC construction over any [`BlockHash`].
 ///
-/// Holds the inner hasher (already seeded with `K0 XOR ipad`) and
-/// the precomputed `K0 XOR opad` key so that [`Hmac::finalize`] can
-/// run the outer hash in one pass.
+/// Holds the inner hasher (already seeded with `K0 XOR ipad`), the
+/// outer hasher (already seeded with `K0 XOR opad`) and an empty hasher,
+/// all built at construction, so that [`Hmac::update`] and
+/// [`Hmac::finalize`] construct no hasher of their own.
 pub struct Hmac<H: BlockHash<B, L>, const B: usize, const L: usize> {
     inner: H,
-    outer_key: [u8; B],
+    outer: H,
+    blank: H,
 }
 
 const IPAD_BYTE: u8 = 0x36;
@@ -161,24 +167,35 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
     pub fn new(key: &[u8]) -> Result<Self, Error> {
         require_operational()?;
         require_allowed(H::HMAC_SERVICE)?;
-        Ok(Self::new_internal(key))
+        Self::new_internal(key)
     }
 
-    /// Constructor that bypasses the module state machine.
+    /// Constructor without the operational and profile gates.
     ///
     /// Used by the crate's power-up KATs, which run during the
     /// `SelfTest` state before `require_operational()` would permit
-    /// `Hmac::new`. Not intended for application code.
+    /// `Hmac::new`, and by other algorithm crates that compose HMAC. Not
+    /// intended for application code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call: in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests.
     #[doc(hidden)]
-    pub fn new_internal(key: &[u8]) -> Self {
+    pub fn new_internal(key: &[u8]) -> Result<Self, Error> {
+        let started = require_self_test_started_token()?;
+        let blank = H::block_new()?;
         // Step 1 — normalize the key to K0 (exactly B bytes).
         let mut k0 = [0u8; B];
         if key.len() > B {
             // len(K) > B: hash the key down to L bytes, pad with zeros.
-            let mut h = H::block_new();
+            let mut h = blank.clone();
             h.block_update(key);
-            let digest = h.block_finalize();
+            let mut digest = h.block_finalize(&started);
             k0[..L].copy_from_slice(&digest);
+            oxicrypt_zeroize::zeroize(&mut digest);
         } else {
             // len(K) <= B: copy and zero-pad on the right.
             k0[..key.len()].copy_from_slice(key);
@@ -192,11 +209,22 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
             outer_key[i] = k0[i] ^ OPAD_BYTE;
         }
 
-        // Step 3 — seed the inner hash with the ipad key.
-        let mut inner = H::block_new();
+        // Step 3 — seed the inner hash with the ipad key and the outer
+        // hash with the opad key.
+        let mut inner = blank.clone();
         inner.block_update(&ipad_key);
+        let mut outer = blank.clone();
+        outer.block_update(&outer_key);
+        // K0 and both padded keys are key-derived; none outlives this call.
+        oxicrypt_zeroize::zeroize(&mut k0);
+        oxicrypt_zeroize::zeroize(&mut ipad_key);
+        oxicrypt_zeroize::zeroize(&mut outer_key);
 
-        Self { inner, outer_key }
+        Ok(Self {
+            inner,
+            outer,
+            blank,
+        })
     }
 
     /// Feeds `data` into the HMAC.
@@ -205,21 +233,33 @@ impl<H: BlockHash<B, L>, const B: usize, const L: usize> Hmac<H, B, L> {
     }
 
     /// Finalizes and returns the L-byte MAC.
-    pub fn finalize(&mut self) -> [u8; L] {
+    ///
+    /// The inner hasher is replaced by an empty one; a second call does
+    /// not repeat the first result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotOperational`] unless
+    /// [`oxicrypt_module::require_self_test_started`] admits the call (in
+    /// `Operational`, or in `SelfTest` on the thread running the power-up
+    /// self-tests), so an object built before a failure produces no MAC after it.
+    pub fn finalize(&mut self) -> Result<[u8; L], Error> {
+        let started = require_self_test_started_token()?;
+        Ok(self.finalize_with(&started))
+    }
+
+    /// [`Self::finalize`] for another algorithm crate that checked the
+    /// module state once at its own entry point and holds the proof.
+    #[doc(hidden)]
+    pub fn finalize_with(&mut self, started: &SelfTestStarted) -> [u8; L] {
         // inner_digest = H( K0 XOR ipad || text )
-        let inner_digest = self.inner.block_finalize();
+        let inner = core::mem::replace(&mut self.inner, self.blank.clone());
+        let inner_digest = inner.block_finalize(started);
 
         // outer_digest = H( K0 XOR opad || inner_digest )
-        let mut outer = H::block_new();
-        outer.block_update(&self.outer_key);
+        let mut outer = self.outer.clone();
         outer.block_update(&inner_digest);
-        outer.block_finalize()
-    }
-}
-
-impl<H: BlockHash<B, L>, const B: usize, const L: usize> Drop for Hmac<H, B, L> {
-    fn drop(&mut self) {
-        oxicrypt_zeroize::zeroize(&mut self.outer_key);
+        outer.block_finalize(started)
     }
 }
 
@@ -231,19 +271,14 @@ macro_rules! impl_block_hash {
     ($t:ty, $b:expr, $l:expr, $service:expr) => {
         impl BlockHash<$b, $l> for $t {
             const HMAC_SERVICE: Service = $service;
-            fn block_new() -> Self {
+            fn block_new() -> Result<Self, Error> {
                 <$t>::new_internal()
             }
             fn block_update(&mut self, data: &[u8]) {
                 <$t>::update(self, data);
             }
-            fn block_finalize(&mut self) -> [u8; $l] {
-                // Swap out the live hasher for a blank one, then
-                // finalize the taken copy. This lets the trait take
-                // `&mut self` (needed for Drop on Hmac) while the
-                // underlying SHA `finalize` still takes `self`.
-                let taken = core::mem::replace(self, <$t>::new_internal());
-                <$t>::finalize(taken)
+            fn block_finalize(self, started: &SelfTestStarted) -> [u8; $l] {
+                <$t>::finalize_with(self, started)
             }
         }
     };
@@ -323,9 +358,9 @@ macro_rules! kat_fn {
         /// the full HMAC and compares its leading `MAC_PREFIX.len()`
         /// bytes against the truncated NIST expected value.
         pub fn $name() -> Result<(), SelfTestFailure> {
-            let mut m = <$alias>::new_internal(&$key);
+            let mut m = <$alias>::new_internal(&$key).map_err(|_| SelfTestFailure)?;
             m.update(&$msg);
-            let out = m.finalize();
+            let out = m.finalize().map_err(|_| SelfTestFailure)?;
             let prefix = &$prefix;
             match out.get(..prefix.len()) {
                 Some(head) if head == prefix => Ok(()),
@@ -502,8 +537,9 @@ mod tests {
 
     #[test]
     fn boot_self_tests_all_pass() {
-        // Direct call: the self_test functions don't require the
-        // module to be operational (they run *during* SelfTest).
+        // Direct call: the self_test functions need the self-tests to
+        // have started, not the module to be operational.
+        ensure_initialized();
         assert!(self_test_sha1().is_ok());
         assert!(self_test_sha224().is_ok());
         assert!(self_test_sha256().is_ok());
@@ -552,7 +588,7 @@ mod tests {
 
         let mut m = HmacSha256::new(&key).unwrap();
         m.update(data);
-        assert_eq!(m.finalize(), expected);
+        assert_eq!(m.finalize().unwrap(), expected);
     }
 
     #[test]
@@ -571,7 +607,7 @@ mod tests {
 
         let mut m = HmacSha3_256::new(&key).unwrap();
         m.update(data);
-        assert_eq!(m.finalize(), expected);
+        assert_eq!(m.finalize().unwrap(), expected);
     }
 
     #[test]
@@ -599,12 +635,18 @@ mod tests {
         // promises.
         ensure_initialized();
         let k = [0x0b; 20];
-        assert_eq!(HmacSha1::new(&k).unwrap().finalize().len(), 20);
-        assert_eq!(HmacSha224::new(&k).unwrap().finalize().len(), 28);
-        assert_eq!(HmacSha256::new(&k).unwrap().finalize().len(), 32);
-        assert_eq!(HmacSha384::new(&k).unwrap().finalize().len(), 48);
-        assert_eq!(HmacSha512::new(&k).unwrap().finalize().len(), 64);
-        assert_eq!(HmacSha512_224::new(&k).unwrap().finalize().len(), 28);
-        assert_eq!(HmacSha512_256::new(&k).unwrap().finalize().len(), 32);
+        assert_eq!(HmacSha1::new(&k).unwrap().finalize().unwrap().len(), 20);
+        assert_eq!(HmacSha224::new(&k).unwrap().finalize().unwrap().len(), 28);
+        assert_eq!(HmacSha256::new(&k).unwrap().finalize().unwrap().len(), 32);
+        assert_eq!(HmacSha384::new(&k).unwrap().finalize().unwrap().len(), 48);
+        assert_eq!(HmacSha512::new(&k).unwrap().finalize().unwrap().len(), 64);
+        assert_eq!(
+            HmacSha512_224::new(&k).unwrap().finalize().unwrap().len(),
+            28
+        );
+        assert_eq!(
+            HmacSha512_256::new(&k).unwrap().finalize().unwrap().len(),
+            32
+        );
     }
 }

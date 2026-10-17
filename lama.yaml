@@ -109,7 +109,7 @@ capabilities:
             initialize_with_tests(oxicrypt_integrity::KATS, oxicrypt_hmac::KATS).unwrap();
             let mut mac = HmacSha256::new(b"secret-key-at-least-32-bytes-long!!").unwrap();
             mac.update(b"message to authenticate");
-            let tag = mac.finalize();
+            let tag = mac.finalize().unwrap();
             assert_eq!(tag.len(), 32);
         }
 
@@ -218,7 +218,14 @@ capabilities:
             rng.instantiate(&[0xABu8; 32], &[0xCDu8; 16], b"").unwrap();
             let signing_key = Ed25519PrivateKey::generate(&mut rng).unwrap();
             let signature = signing_key.sign(b"message to sign").unwrap();
-            assert!(verify(&signing_key.public_key(), b"message to sign", &signature).unwrap());
+            assert!(
+                verify(
+                    &signing_key.public_key().unwrap(),
+                    b"message to sign",
+                    &signature
+                )
+                .unwrap()
+            );
         }
 
   - category: "Key agreement"
@@ -266,7 +273,7 @@ capabilities:
     standards: ["SP 800-56Br2"]
 
   - category: "Module integrity"
-    algorithms: ["HMAC-SHA-256 software integrity check"]
+    algorithms: ["ML-DSA-87 software integrity check"]
     standards:
       - "ISO/IEC 19790:2012 §7.10.2.2"
       - "FIPS 140-3 IG 10.2.A"

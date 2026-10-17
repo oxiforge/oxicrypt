@@ -90,7 +90,7 @@ fn generate_rsa_keygen_slice() {
         drbg.instantiate(&entropy, &nonce, &perso)
             .unwrap_or_else(|e| panic!("DRBG instantiate failed for test {i}: {e:?}"));
 
-        let km = oxicrypt_rsa::keygen::generate_2048(&mut drbg, 65537)
+        let km = oxicrypt_rsa::keygen::generate_2048_internal(&mut drbg, 65537)
             .unwrap_or_else(|e| panic!("RSA keygen failed for test {i}: {e:?}"));
 
         let n_bytes: [u8; 256] = km.n.to_be_bytes();
@@ -109,7 +109,7 @@ fn generate_rsa_keygen_slice() {
         let ct = oxicrypt_rsa::rsa_oaep_encrypt_2048_sha256_internal(
             &n_bytes, e, label, test_msg, &test_seed,
         )
-        .unwrap_or_else(|| panic!("OAEP encrypt sanity failed for test {i}"));
+        .unwrap_or_else(|e| panic!("OAEP encrypt sanity failed for test {i}: {e:?}"));
         let mut out = [0u8; oxicrypt_rsa::oaep::MAX_MSG_LEN];
         let pt_len = oxicrypt_rsa::rsa_oaep_decrypt_2048_sha256_crt_internal(
             &n_bytes,
@@ -123,7 +123,7 @@ fn generate_rsa_keygen_slice() {
             &ct,
             &mut out,
         )
-        .unwrap_or_else(|| panic!("CRT decrypt sanity failed for test {i}"));
+        .unwrap_or_else(|e| panic!("CRT decrypt sanity failed for test {i}: {e:?}"));
         assert_eq!(
             &out[..pt_len],
             test_msg,

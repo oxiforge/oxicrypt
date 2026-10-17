@@ -62,8 +62,7 @@
 //!
 //! # Side-channel posture
 //!
-//! See `docs/security-policy/security-policy.md` §12.1 for the full
-//! disclosure. The secret-dependent scalar mult on the base point is
+//! The secret-dependent scalar mult on the base point is
 //! covered by the `eddsa_ed25519_scalar_mul` target in
 //! `tools/ct-validation`; that harness holds its own measurements.
 //!
@@ -74,8 +73,10 @@
 use oxicrypt_module::KatEntry;
 
 pub mod ed25519;
+#[doc(hidden)]
 pub mod edwards;
 pub mod field;
+#[doc(hidden)]
 pub mod scalar;
 
 // ── Crate-root re-exports ────────────────────────────────────────

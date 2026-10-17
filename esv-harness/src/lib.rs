@@ -130,3 +130,34 @@ pub mod preflight;
 pub mod registration;
 pub mod session;
 pub mod supportdocs;
+
+/// The integrity group this harness starts the module with: the HMAC-SHA-256
+/// CAST, standing in for the integrity group of an artifact that is not the
+/// module image.
+const HARNESS_INTEGRITY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+    name: "HMAC-SHA-256 CAST (stand-in integrity group)",
+    run: oxicrypt_integrity::hmac_cast,
+}];
+
+/// Starts this process's copy of the module so the TOTP's HMAC-SHA-256 can
+/// run; the HMAC refuses until the module's self-tests have started.
+///
+/// The harness is outside the module boundary and is not the module image,
+/// so it starts the module with the HMAC-SHA-256 CAST as its integrity group
+/// and no image check, followed by the SHA, XOF and HMAC self-tests. A
+/// module already started in this process is left as it is.
+///
+/// # Errors
+///
+/// Returns a description when the module does not start.
+pub fn start_module() -> Result<(), String> {
+    let tests: Vec<oxicrypt_module::KatEntry> =
+        [oxicrypt_sha::KATS, oxicrypt_xof::KATS, oxicrypt_hmac::KATS]
+            .iter()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+    match oxicrypt_module::initialize_with_tests(HARNESS_INTEGRITY, &tests) {
+        Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => Ok(()),
+        Err(e) => Err(format!("the module did not start: {e}")),
+    }
+}

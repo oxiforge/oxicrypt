@@ -67,7 +67,7 @@ fn generate_eddsa_lifecycle_slices() {
     let mut signatures: Vec<Vec<[u8; 64]>> = Vec::new();
 
     for seed in &SEEDS {
-        let q = oxicrypt_eddsa::ed25519::keygen_internal(seed);
+        let q = oxicrypt_eddsa::ed25519::keygen_internal(seed).expect("Ed25519 keygen failed");
         public_keys.push(q);
 
         let mut sigs_for_seed = Vec::new();

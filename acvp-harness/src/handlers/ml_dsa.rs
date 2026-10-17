@@ -25,7 +25,7 @@
 //! Per-test field placement (`sk` for sigGen, `pk` for sigVer)
 //! follows §8.2.2 Table 14 and §8.3.2 Table 16 of the draft.
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -163,15 +163,15 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
         // sizes given in FIPS 204 §4 Table 2.
         let (pk_hex, sk_hex) = match parameter_set {
             "ML-DSA-44" => {
-                let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_44::keygen_internal(&seed);
+                let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_44::keygen_internal(&seed)?;
                 (hex::encode_upper(&pk), hex::encode_upper(&sk))
             }
             "ML-DSA-65" => {
-                let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_65::keygen_internal(&seed);
+                let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_65::keygen_internal(&seed)?;
                 (hex::encode_upper(&pk), hex::encode_upper(&sk))
             }
             "ML-DSA-87" => {
-                let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_87::keygen_internal(&seed);
+                let (pk, sk) = oxicrypt_ml_dsa::ml_dsa_87::keygen_internal(&seed)?;
                 (hex::encode_upper(&pk), hex::encode_upper(&sk))
             }
             other => return Err(unsupported_parameter_set(other)),
@@ -244,7 +244,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                         DispatchError::Crypto("ML-DSA-44 SigGen: sk has wrong length")
                     })?;
                 let sig = oxicrypt_ml_dsa::ml_dsa_44::sign_internal(&sk, &message)
-                    .ok_or(DispatchError::Crypto("ML-DSA-44 SigGen: signing failed"))?;
+                    .map_err(primitive_err("ML-DSA-44 SigGen: signing failed"))?;
                 hex::encode_upper(&sig)
             }
             "ML-DSA-65" => {
@@ -253,7 +253,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                         DispatchError::Crypto("ML-DSA-65 SigGen: sk has wrong length")
                     })?;
                 let sig = oxicrypt_ml_dsa::ml_dsa_65::sign_internal(&sk, &message)
-                    .ok_or(DispatchError::Crypto("ML-DSA-65 SigGen: signing failed"))?;
+                    .map_err(primitive_err("ML-DSA-65 SigGen: signing failed"))?;
                 hex::encode_upper(&sig)
             }
             "ML-DSA-87" => {
@@ -262,7 +262,7 @@ fn handle_siggen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                         DispatchError::Crypto("ML-DSA-87 SigGen: sk has wrong length")
                     })?;
                 let sig = oxicrypt_ml_dsa::ml_dsa_87::sign_internal(&sk, &message)
-                    .ok_or(DispatchError::Crypto("ML-DSA-87 SigGen: signing failed"))?;
+                    .map_err(primitive_err("ML-DSA-87 SigGen: signing failed"))?;
                 hex::encode_upper(&sig)
             }
             other => return Err(unsupported_parameter_set(other)),
@@ -348,7 +348,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 if let Ok(sig) =
                     <[u8; oxicrypt_ml_dsa::ml_dsa_44::SIG_LEN]>::try_from(sig_bytes.as_slice())
                 {
-                    oxicrypt_ml_dsa::ml_dsa_44::verify_internal(&pk, &message, &sig)
+                    oxicrypt_ml_dsa::ml_dsa_44::verify_internal(&pk, &message, &sig)?
                 } else {
                     false
                 }
@@ -361,7 +361,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 if let Ok(sig) =
                     <[u8; oxicrypt_ml_dsa::ml_dsa_65::SIG_LEN]>::try_from(sig_bytes.as_slice())
                 {
-                    oxicrypt_ml_dsa::ml_dsa_65::verify_internal(&pk, &message, &sig)
+                    oxicrypt_ml_dsa::ml_dsa_65::verify_internal(&pk, &message, &sig)?
                 } else {
                     false
                 }
@@ -374,7 +374,7 @@ fn handle_sigver_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
                 if let Ok(sig) =
                     <[u8; oxicrypt_ml_dsa::ml_dsa_87::SIG_LEN]>::try_from(sig_bytes.as_slice())
                 {
-                    oxicrypt_ml_dsa::ml_dsa_87::verify_internal(&pk, &message, &sig)
+                    oxicrypt_ml_dsa::ml_dsa_87::verify_internal(&pk, &message, &sig)?
                 } else {
                     false
                 }
