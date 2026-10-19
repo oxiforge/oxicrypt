@@ -155,7 +155,7 @@ wave that follows it.
   reconciles against are **D.G Key Transport Methods (2026-08-19)**, **D.J Entropy Estimation and
   Compliance with SP 800-90B (2021-11-05)** and **D.K Interpretation of SP 800-90B Requirements
   (2026-04-16)**. Reconcile on IG updates, per section rather than per cover date.
-- **`no_std`-capable**, `forbid(unsafe_code)` at every crate root, deny-level workspace lints.
+- **`no_std` algorithm crates**, `forbid(unsafe_code)` at every in-boundary crate root except the six readily auditable exception crates the security policy names, deny-level workspace lints.
 - **`oxicrypt-entropy` is inside the CMVP module boundary** — full workspace discipline applies to it:
   forbid-unsafe accounting, security-policy claims, doc-sync, `no_std`-capable core.
 - **Pure Rust, no C dependencies, no FFI** to any external entropy library.

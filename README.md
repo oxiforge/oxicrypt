@@ -222,10 +222,12 @@ auditable-unsafe rules). See **Performance features** below.
 64-bit atomics. A module becomes operational on Linux, Android, macOS and
 Windows, where it can record the initialising thread's id; the iOS code
 paths are neither built nor tested, iOS is not supported, and on any other
-target initialisation fails. The integrity crate uses `std` for file I/O and self-test
-orchestration; the module crate is `#![no_std]`. The parallel-capable crates
+target initialisation fails. The integrity crate and `oxicrypt-imageread`, the crate
+through which it reads the module's own loaded image, use `std` for file I/O and
+self-test orchestration; the module crate is `#![no_std]`. The parallel-capable crates
 (`oxicrypt-slh-dsa`, `oxicrypt-ml-kem`, `oxicrypt-ml-dsa`) become `std` only
-under their optional default-off `parallel` feature (rayon requires `std`); the default build stays `no_std`.
+under their optional default-off `parallel` feature (rayon requires `std`); these crates
+stay `no_std` in the default build.
 
 **Constant-time discipline.** At Level 1, FIPS 140-3 does not require
 side-channel resistance, but oxicrypt discloses its posture and actively
