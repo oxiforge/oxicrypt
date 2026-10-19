@@ -127,8 +127,15 @@ done
 # would match its own source file, so it could never pass.
 #
 # The list is therefore per-clone: $OXICRYPT_CONTAINMENT_DENY if set, else
-# $GIT_DIR/containment-deny. One extended regex per line; `#` comments and blank
-# lines ignored.
+# containment-deny in the repository's common git directory
+# (`git rev-parse --git-common-dir`), which a main checkout and every worktree
+# of it share; the per-worktree git directory would find no list in a
+# worktree. One extended regex per line; `#` comments and blank lines ignored.
+#
+# A clone that never configured a list skips the check, loudly: the check is
+# opt-in. A list named by $OXICRYPT_CONTAINMENT_DENY that does not exist fails
+# the push, because a configured check that cannot run must not read as one
+# that passed.
 #
 # This runs after stdin is parsed (it needs the pushed shas) but BEFORE the
 # tag-only short-circuit and the stamp cache. Both of those skip the expensive
@@ -144,22 +151,43 @@ done
 # Known limit: this prevents new leaks in what is pushed. It says nothing about
 # what is already in history.
 # ---------------------------------------------------------------------------
-deny_file="${OXICRYPT_CONTAINMENT_DENY:-$(git rev-parse --git-dir)/containment-deny}"
+if ! git_common_rel="$(git rev-parse --git-common-dir 2>/dev/null)"; then
+    echo "pre-push: FAILED — not inside a git repository; run the hook from the repository it guards." >&2
+    exit 1
+fi
+git_common_abs="$(cd "$git_common_rel" && pwd -P)"
+git_dir_abs="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
+deny_file="${OXICRYPT_CONTAINMENT_DENY:-$git_common_abs/containment-deny}"
+
+# A list created inside a worktree under the earlier default sits in that
+# worktree's own git directory, which this hook no longer reads. Refuse rather
+# than skip, so the move is made instead of the check silently lapsing.
+if [[ -z "${OXICRYPT_CONTAINMENT_DENY:-}" && "$git_dir_abs" != "$git_common_abs" \
+      && -f "$git_dir_abs/containment-deny" && ! -f "$git_common_abs/containment-deny" ]]; then
+    echo "pre-push: FAILED — a deny-list is in this worktree's own git directory, which is no longer read." >&2
+    echo "  Move it to the common git directory:" >&2
+    echo "    mv \"\$(git rev-parse --git-dir)/containment-deny\" \"\$(git rev-parse --git-common-dir)/containment-deny\"" >&2
+    exit 1
+fi
 
 # The deny-list must not live in the work tree. It holds the private strings; a
 # later `git add -A` would commit them, and the self-match that would expose
 # that only fires on the NEXT push — after the commit exists.
 deny_abs="$(cd "$(dirname "$deny_file")" 2>/dev/null && pwd -P || true)/$(basename "$deny_file")"
 work_top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-git_dir_abs="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
-if [[ -n "$work_top" && "$deny_abs" == "$work_top"/* && "$deny_abs" != "$git_dir_abs"/* ]]; then
+if [[ -n "$work_top" && "$deny_abs" == "$work_top"/* && "$deny_abs" != "$git_common_abs"/* ]]; then
     echo "pre-push: FAILED — the deny-list must live outside the work tree." >&2
     echo "  It holds the strings it protects; inside the tree, 'git add -A' commits them." >&2
-    echo "  Use \$GIT_DIR/containment-deny (the default) or a path outside the repo." >&2
+    echo "  Use containment-deny in the common git directory (the default) or a path outside the repo." >&2
     exit 1
 fi
 
-if [[ ! -f "$deny_file" ]]; then
+if [[ ! -f "$deny_file" && -n "${OXICRYPT_CONTAINMENT_DENY:-}" ]]; then
+    # Configured but absent: the check cannot run, so the push stops. The path
+    # is not printed, for the reason below.
+    echo "pre-push: FAILED — OXICRYPT_CONTAINMENT_DENY names a deny-list that does not exist (path not shown)." >&2
+    exit 1
+elif [[ ! -f "$deny_file" ]]; then
     # Loud, so an absent list is never mistaken for a pass — but the PATH is not
     # printed. A contributor who set OXICRYPT_CONTAINMENT_DENY to something like
     # ~/clients/<name>/deny.txt would otherwise have that name echoed into

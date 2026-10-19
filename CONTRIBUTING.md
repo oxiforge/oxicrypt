@@ -159,16 +159,16 @@ The `pre-push` hook therefore reads a deny-list that lives **outside version con
 
 | | |
 |---|---|
-| Location | `$OXICRYPT_CONTAINMENT_DENY` if set, otherwise `.git/containment-deny` |
+| Location | `$OXICRYPT_CONTAINMENT_DENY` if set, otherwise `containment-deny` in the common git directory (`git rev-parse --git-common-dir`, which is `.git/` in a main checkout and is shared by its worktrees) |
 | Format | One extended regex per line; `#` comments and blank lines ignored |
-| Absent | The check is **skipped**, loudly, and the push proceeds |
+| Absent | Never configured: the check is **skipped**, loudly, and the push proceeds. Named by `$OXICRYPT_CONTAINMENT_DENY` but missing: the push **fails**. An empty `$OXICRYPT_CONTAINMENT_DENY` counts as unset and uses the default location. A list left in a worktree's own git directory (`git rev-parse --git-dir`) by an earlier version of this command is not read: the push fails and asks for it to be moved to the common git directory |
 
 `.git/` is never tracked, so the file needs no `.gitignore` entry and cannot be committed by accident. Nobody adopts anyone else's list, and no list is ever shared.
 
 Create it with your editor rather than a heredoc — typing the patterns at a shell prompt puts them in `~/.bash_history`, which is one of the channels this exists to protect:
 
 ```sh
-$EDITOR "$(git rev-parse --git-dir)/containment-deny"
+$EDITOR "$(git rev-parse --git-common-dir)/containment-deny"
 ```
 
 One extended regex per line, for example `/home/yourname/` or `internal\.example\.corp`.
@@ -189,7 +189,7 @@ The hook runs a positive control, with the same flags as the real scan, before t
 When a pattern matches, the hook names the deny-list line number. To find the content locally without the hook ever echoing the string:
 
 ```sh
-git grep -n -E -f <(sed -n '<LINE>p' "$(git rev-parse --git-dir)/containment-deny")
+git grep -n -E -f <(sed -n '<LINE>p' "$(git rev-parse --git-common-dir)/containment-deny")
 ```
 
 This prevents **new** leaks in what you push. It says nothing about what is already in history; that is a separate sweep.
