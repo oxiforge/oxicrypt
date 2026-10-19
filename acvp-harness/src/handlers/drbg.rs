@@ -17,7 +17,7 @@
 //! - Hash: `SHA2-256`, `SHA2-384`, `SHA2-512`
 //! - HMAC: `SHA2-256`, `SHA2-384`, `SHA2-512`
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, drbg_err, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 use oxicrypt_drbg::ctr::{CtrDrbgAes128, CtrDrbgAes192, CtrDrbgAes256};
@@ -289,11 +289,11 @@ macro_rules! impl_ctr_drbg_ops {
                 perso: &[u8],
             ) -> Result<(), DispatchError> {
                 self.instantiate_df(entropy, nonce, perso)
-                    .map_err(|_| DispatchError::Crypto("ctrDRBG: instantiate_df failed"))
+                    .map_err(primitive_err("ctrDRBG: instantiate_df failed"))
             }
             fn do_instantiate_no_df(&mut self, seed_material: &[u8]) -> Result<(), DispatchError> {
                 self.instantiate_no_df(seed_material)
-                    .map_err(|_| DispatchError::Crypto("ctrDRBG: instantiate_no_df failed"))
+                    .map_err(primitive_err("ctrDRBG: instantiate_no_df failed"))
             }
             fn do_reseed_df(
                 &mut self,
@@ -301,11 +301,11 @@ macro_rules! impl_ctr_drbg_ops {
                 additional: &[u8],
             ) -> Result<(), DispatchError> {
                 self.reseed_df(entropy, additional)
-                    .map_err(|_| DispatchError::Crypto("ctrDRBG: reseed_df failed"))
+                    .map_err(drbg_err("ctrDRBG: reseed_df failed"))
             }
             fn do_reseed_no_df(&mut self, seed_material: &[u8]) -> Result<(), DispatchError> {
                 self.reseed_no_df(seed_material)
-                    .map_err(|_| DispatchError::Crypto("ctrDRBG: reseed_no_df failed"))
+                    .map_err(drbg_err("ctrDRBG: reseed_no_df failed"))
             }
             fn do_generate_df(
                 &mut self,
@@ -313,7 +313,7 @@ macro_rules! impl_ctr_drbg_ops {
                 out: &mut [u8],
             ) -> Result<(), DispatchError> {
                 self.generate_df(additional, out)
-                    .map_err(|_| DispatchError::Crypto("ctrDRBG: generate_df failed"))
+                    .map_err(drbg_err("ctrDRBG: generate_df failed"))
             }
             fn do_generate_no_df(
                 &mut self,
@@ -321,7 +321,7 @@ macro_rules! impl_ctr_drbg_ops {
                 out: &mut [u8],
             ) -> Result<(), DispatchError> {
                 self.generate_no_df(additional, out)
-                    .map_err(|_| DispatchError::Crypto("ctrDRBG: generate_no_df failed"))
+                    .map_err(drbg_err("ctrDRBG: generate_no_df failed"))
             }
         }
     };
@@ -506,7 +506,7 @@ macro_rules! impl_hash_drbg_ops {
                 perso: &[u8],
             ) -> Result<(), DispatchError> {
                 self.instantiate(entropy, nonce, perso)
-                    .map_err(|_| DispatchError::Crypto("hashDRBG: instantiate failed"))
+                    .map_err(primitive_err("hashDRBG: instantiate failed"))
             }
             fn do_reseed(
                 &mut self,
@@ -514,7 +514,7 @@ macro_rules! impl_hash_drbg_ops {
                 additional: &[u8],
             ) -> Result<(), DispatchError> {
                 self.reseed(entropy, additional)
-                    .map_err(|_| DispatchError::Crypto("hashDRBG: reseed failed"))
+                    .map_err(drbg_err("hashDRBG: reseed failed"))
             }
             fn do_generate(
                 &mut self,
@@ -522,7 +522,7 @@ macro_rules! impl_hash_drbg_ops {
                 out: &mut [u8],
             ) -> Result<(), DispatchError> {
                 self.generate(additional, out)
-                    .map_err(|_| DispatchError::Crypto("hashDRBG: generate failed"))
+                    .map_err(drbg_err("hashDRBG: generate failed"))
             }
             fn do_generate_pr(
                 &mut self,
@@ -531,7 +531,7 @@ macro_rules! impl_hash_drbg_ops {
                 out: &mut [u8],
             ) -> Result<(), DispatchError> {
                 self.generate_pr(entropy, additional, out)
-                    .map_err(|_| DispatchError::Crypto("hashDRBG: generate_pr failed"))
+                    .map_err(drbg_err("hashDRBG: generate_pr failed"))
             }
         }
     };
@@ -655,7 +655,7 @@ macro_rules! impl_hmac_drbg_ops {
                 perso: &[u8],
             ) -> Result<(), DispatchError> {
                 self.instantiate(entropy, nonce, perso)
-                    .map_err(|_| DispatchError::Crypto("hmacDRBG: instantiate failed"))
+                    .map_err(primitive_err("hmacDRBG: instantiate failed"))
             }
             fn do_reseed(
                 &mut self,
@@ -663,7 +663,7 @@ macro_rules! impl_hmac_drbg_ops {
                 additional: &[u8],
             ) -> Result<(), DispatchError> {
                 self.reseed(entropy, additional)
-                    .map_err(|_| DispatchError::Crypto("hmacDRBG: reseed failed"))
+                    .map_err(drbg_err("hmacDRBG: reseed failed"))
             }
             fn do_generate(
                 &mut self,
@@ -671,7 +671,7 @@ macro_rules! impl_hmac_drbg_ops {
                 out: &mut [u8],
             ) -> Result<(), DispatchError> {
                 self.generate(additional, out)
-                    .map_err(|_| DispatchError::Crypto("hmacDRBG: generate failed"))
+                    .map_err(drbg_err("hmacDRBG: generate failed"))
             }
             fn do_generate_pr(
                 &mut self,
@@ -680,7 +680,7 @@ macro_rules! impl_hmac_drbg_ops {
                 out: &mut [u8],
             ) -> Result<(), DispatchError> {
                 self.generate_pr(entropy, additional, out)
-                    .map_err(|_| DispatchError::Crypto("hmacDRBG: generate_pr failed"))
+                    .map_err(drbg_err("hmacDRBG: generate_pr failed"))
             }
         }
     };

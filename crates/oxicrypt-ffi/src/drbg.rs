@@ -63,6 +63,9 @@
 //! | `Err(Module(NotOperational))` | `NotOperational = 1` | all three |
 //! | `Err(Module(AlgorithmRestricted))` | `AlgorithmRestricted = 6` | `_instantiate` only |
 //! | `Err(Module(InvalidInput))` | `InvalidInput = 5` | `_instantiate` only (total seed > 768 bytes) |
+//! | `Err(Module(EntropyInputTooShort))` | `EntropyInputTooShort = 29` | `_instantiate` only (not CTR_DRBG `_no_df`) |
+//! | `Err(Module(NonceTooShort))` | `NonceTooShort = 30` | `_instantiate` only (not CTR_DRBG `_no_df`) |
+//! | `Err(DrbgError::EntropyInputTooShort)` | `EntropyInputTooShort = 29` | `_reseed` only (not CTR_DRBG `_no_df`) |
 //! | `Err(DrbgError::Uninstantiated)` | `Uninstantiated = 8` | `_reseed`, `_generate` |
 //! | `Err(DrbgError::ReseedRequired)` | `ReseedRequired = 9` | `_generate` only |
 //! | `Err(DrbgError::InputTooLong)` | `InvalidInput = 5` | `_reseed`, `_generate` |
@@ -216,9 +219,16 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_free(handle: *mut OxiHmacDrbgSha25
 ///
 /// Each input may be NULL when its corresponding length is 0.
 /// Personalization length 0 is the typical path for FIPS-conformant
-/// callers that don't have a personalization string; entropy and
-/// nonce SHOULD be sized per SP 800-90A Table 2 (security strength
-/// 256 → entropy ≥ 256 bits, nonce ≥ 128 bits).
+/// callers that don't have a personalization string. The instantiated
+/// security strength is 256 bits, so an entropy input shorter than
+/// 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`) returns
+/// `OxiResult::EntropyInputTooShort = 29`, and a nonce shorter than
+/// 16 bytes returns `OxiResult::NonceTooShort = 30`. The nonce floor is
+/// the module's own check, permitted by §9.1 step 8: a shorter nonce
+/// that would meet only the uniqueness condition of §8.6.7 is refused.
+/// An over-long combined input returns `InvalidInput = 5` even when the
+/// entropy input or nonce is also short. A refusal by any of these
+/// length checks leaves the handle uninstantiated.
 ///
 /// # Safety
 ///
@@ -272,7 +282,9 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_instantiate(
 /// Returns `OxiResult::Uninstantiated = 8` if the handle has not yet
 /// been instantiated. Returns `OxiResult::InvalidInput = 5` if the
 /// combined `entropy_len + additional_input_len` exceeds
-/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes.
+/// `HMAC_DRBG_MAX_PROVIDED = 768` bytes, and
+/// `OxiResult::EntropyInputTooShort = 29` if `entropy_len` is below
+/// 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`).
 ///
 /// # Safety
 ///
@@ -368,14 +380,15 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha256_generate(
 // hashes (SP 800-90A §10.1.2). The upstream `HmacDrbg<H: HmacAlg>`
 // is parametric over the hash alg, with `HmacDrbgSha384` and
 // `HmacDrbgSha512` already shipped as type aliases at
-// `crates/oxicrypt-drbg/src/hmac.rs:122`/`:124` — wider security
-// strengths (256-bit vs SHA-384's instantiate-time 192-bit floor and
-// SHA-512's 256-bit; per SP 800-90A Table 2 / Table 3) but identical
-// `instantiate / reseed / generate` shape. Same per-call-mutating
+// `crates/oxicrypt-drbg/src/hmac.rs:122`/`:124` — wider output
+// lengths (SHA-384 and SHA-512 are both instantiated at 256-bit
+// security strength, per SP 800-57 Part 1 and SP 800-90A Table 2) but
+// identical `instantiate / reseed / generate` shape. Same per-call-mutating
 // thread-safety contract, same `(K, V, reseed_counter)` Drop-zeroize,
 // same `OxiResult` discriminant set (Ok / NotOperational /
 // InvalidInput / AlgorithmRestricted / Uninstantiated /
-// ReseedRequired / OutputTooLong / NullPointer); see the SHA-256
+// ReseedRequired / OutputTooLong / NullPointer / EntropyInputTooShort /
+// NonceTooShort); see the SHA-256
 // rustdocs above for the full contract — comments here cite only
 // hash-specific deltas.
 
@@ -436,8 +449,13 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_free(handle: *mut OxiHmacDrbgSha38
 /// [`oxi_hmac_drbg_sha256_instantiate`] for full contract; the
 /// `entropy_len + nonce_len + perso_len` ceiling is the same upstream
 /// `HMAC_DRBG_MAX_PROVIDED = 768` bytes (alg-independent constant).
-/// Per SP 800-90A Table 2, security strength 192 → entropy ≥ 192
-/// bits, nonce ≥ 96 bits.
+/// The instantiated security strength is 256 bits (SP 800-57 Part 1),
+/// so per SP 800-90A Table 2 entropy ≥ 256 bits, nonce ≥ 128 bits.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+/// `min_length` and the module's nonce floor).
 ///
 /// # Safety
 ///
@@ -476,6 +494,10 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha384_instantiate(
 
 /// HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4). See
 /// [`oxi_hmac_drbg_sha256_reseed`] for full contract.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -604,6 +626,11 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_free(handle: *mut OxiHmacDrbgSha51
 /// nonce ≥ 128 bits — same as SHA-256 but with a wider internal
 /// `(K, V)` of 64 bytes each.
 ///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+/// `min_length` and the module's nonce floor).
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
@@ -641,6 +668,10 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_instantiate(
 
 /// HMAC_DRBG-SHA-512 Reseed (SP 800-90A §10.1.2.4). See
 /// [`oxi_hmac_drbg_sha256_reseed`].
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -723,8 +754,8 @@ pub unsafe extern "C" fn oxi_hmac_drbg_sha512_generate(
 // `Result<(), DrbgError>` for reseed and generate, same `Option<&[u8]>`
 // for generate's `additional_input`). Combined-input ceiling is
 // `HASH_DRBG_MAX_DF_INPUT` (alg-independent). Per SP 800-90A Table 2,
-// security strengths match HMAC: SHA-256 = 256, SHA-384 = 192,
-// SHA-512 = 256 bits. No new `OxiResult` discriminants.
+// security strengths match HMAC: 256 bits for SHA-256, SHA-384 and
+// SHA-512 (SP 800-57 Part 1).
 
 /// Opaque Hash_DRBG-SHA-256 handle. See `OxiHmacDrbgSha256`.
 ///
@@ -781,6 +812,11 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_free(handle: *mut OxiHashDrbgSha25
 /// nonce ≥ 128 bits. Combined-input ceiling is the alg-independent
 /// `HASH_DRBG_MAX_DF_INPUT` upstream constant.
 ///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+/// `min_length` and the module's nonce floor).
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
@@ -818,6 +854,10 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha256_instantiate(
 
 /// Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). See
 /// [`oxi_hmac_drbg_sha256_reseed`].
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -937,8 +977,14 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_free(handle: *mut OxiHashDrbgSha38
     drop(unsafe { Box::from_raw(handle) });
 }
 
-/// Hash_DRBG-SHA-384 Instantiate. Per SP 800-90A Table 2, security
-/// strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits.
+/// Hash_DRBG-SHA-384 Instantiate. The instantiated security strength
+/// is 256 bits (SP 800-57 Part 1), so per SP 800-90A Table 2
+/// entropy ≥ 256 bits, nonce ≥ 128 bits.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+/// `min_length` and the module's nonce floor).
 ///
 /// # Safety
 ///
@@ -976,6 +1022,10 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha384_instantiate(
 }
 
 /// Hash_DRBG-SHA-384 Reseed.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -1097,6 +1147,11 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_free(handle: *mut OxiHashDrbgSha51
 /// Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
 /// strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
 ///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+/// `min_length` and the module's nonce floor).
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
@@ -1133,6 +1188,10 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_instantiate(
 }
 
 /// Hash_DRBG-SHA-512 Reseed.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -1226,7 +1285,7 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_generate(
 // callers exercise both — collapsing them into a runtime `use_df`
 // flag would force conditional FFI-side validation that obscures the
 // upstream's distinct preconditions (no_df: exact length; df:
-// variable length up to MAX_DF_INPUT). One-to-one upstream-to-FFI
+// minimum entropy and nonce lengths, total up to MAX_DF_INPUT). One-to-one upstream-to-FFI
 // mapping is the reviewer-legible default.
 //
 // Per SP 800-90A Table 3, security strength is 128 / 192 / 256 bits
@@ -1238,7 +1297,9 @@ pub unsafe extern "C" fn oxi_hash_drbg_sha512_generate(
 // through `From<oxicrypt_module::Error>` + `From<DrbgError>` in
 // `error.rs` (DrbgError::InvalidSeedLength → InvalidInput,
 // DrbgError::InputTooLong → InvalidInput, DrbgError::RequestTooLong
-// → OutputTooLong).
+// → OutputTooLong, and for the `_df` functions
+// Error::EntropyInputTooShort and DrbgError::EntropyInputTooShort →
+// EntropyInputTooShort, Error::NonceTooShort → NonceTooShort).
 
 /// Opaque CTR_DRBG-AES-128 handle. See `OxiHmacDrbgSha256` for the
 /// per-call-mutating thread-safety and Drop-zeroize contract.
@@ -1331,7 +1392,9 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_instantiate_no_df(
 /// Combined-length ceiling is `MAX_DF_INPUT` (alg-independent).
 /// Each input may be NULL when its length is 0. Per SP 800-90A
 /// Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
-/// 64 bits.
+/// 64 bits; a shorter entropy input returns
+/// `OxiResult::EntropyInputTooShort = 29` and a shorter nonce
+/// `OxiResult::NonceTooShort = 30`.
 ///
 /// # Safety
 ///
@@ -1398,6 +1461,10 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes128_reseed_no_df(
 /// CTR_DRBG-AES-128 Reseed, **df** variant (SP 800-90A §10.2.1.4.2).
 /// Runs `Block_Cipher_df(entropy || additional_input, seedlen)` to
 /// derive the new seed. Combined-length ceiling is `MAX_DF_INPUT`.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 16 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -1596,6 +1663,11 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_instantiate_no_df(
 /// security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits. See
 /// [`oxi_ctr_drbg_aes128_instantiate_df`].
 ///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 24 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 12 bytes (SP 800-90A Rev. 1 Table 3
+/// `min_length` and the module's nonce floor).
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
@@ -1658,6 +1730,10 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes192_reseed_no_df(
 }
 
 /// CTR_DRBG-AES-192 Reseed, df.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 24 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -1845,6 +1921,11 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_instantiate_no_df(
 /// CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
 /// security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
 ///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+/// `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 3
+/// `min_length` and the module's nonce floor).
+///
 /// # Safety
 ///
 /// All pointer/length pairs must be valid. `handle` must be a live
@@ -1907,6 +1988,10 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_reseed_no_df(
 }
 
 /// CTR_DRBG-AES-256 Reseed, df.
+///
+/// Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+/// is below 32 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
+/// additional input does not count toward it.
 ///
 /// # Safety
 ///
@@ -2017,4 +2102,98 @@ pub unsafe extern "C" fn oxi_ctr_drbg_aes256_generate_df(
         return R::NotOperational as c_int;
     };
     staged(out_slice, |buf| drbg.generate_df(ai_opt, buf))
+}
+
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod tests {
+    use super::*;
+    use core::ptr;
+
+    /// Stands in for the pre-operational integrity test, which cannot pass
+    /// in an unsigned test binary.
+    const UNSIGNED_TEST_BINARY: &[oxicrypt_module::KatEntry] = &[oxicrypt_module::KatEntry {
+        name: "integrity not verifiable in an unsigned test binary",
+        run: || Ok(()),
+    }];
+
+    /// Initialising the module is process-global and other tests in this
+    /// crate assert it is uninitialised, so these tests rely on the
+    /// workspace's test runner, nextest, running each test in its own
+    /// process.
+    fn operational() {
+        match oxicrypt_module::initialize_with_tests(UNSIGNED_TEST_BINARY, &[]) {
+            Ok(()) | Err(oxicrypt_module::Error::AlreadyInitialized) => {}
+            Err(e) => panic!("module failed to initialise: {e:?}"),
+        }
+    }
+
+    const MATERIAL: [u8; 64] = [0x5a; 64];
+
+    /// Drives one handle family through its C entry points: an entropy
+    /// input one byte short returns `EntropyInputTooShort = 29` from
+    /// instantiate and reseed, a nonce one byte short returns
+    /// `NonceTooShort = 30` from instantiate, and the minimums succeed.
+    macro_rules! minimum_length_codes {
+        ($test:ident, $new:ident, $free:ident, $inst:ident, $reseed:ident, $ty:ty, $e:expr, $n:expr) => {
+            #[test]
+            fn $test() {
+                operational();
+                let (e, n) = ($e, $n);
+                let m = MATERIAL.as_ptr();
+                let mut h: *mut $ty = ptr::null_mut();
+                unsafe {
+                    assert_eq!($new(&mut h), R::Ok as c_int);
+                    assert_eq!(
+                        $inst(h, m, e - 1, m, n, ptr::null(), 0),
+                        R::EntropyInputTooShort as c_int
+                    );
+                    assert_eq!(
+                        $inst(h, m, e, m, n - 1, ptr::null(), 0),
+                        R::NonceTooShort as c_int
+                    );
+                    assert_eq!($inst(h, m, e, m, n, ptr::null(), 0), R::Ok as c_int);
+                    assert_eq!(
+                        $reseed(h, m, e - 1, ptr::null(), 0),
+                        R::EntropyInputTooShort as c_int
+                    );
+                    assert_eq!($reseed(h, m, e, ptr::null(), 0), R::Ok as c_int);
+                    $free(h);
+                }
+                assert_eq!(R::EntropyInputTooShort as c_int, 29);
+                assert_eq!(R::NonceTooShort as c_int, 30);
+            }
+        };
+    }
+
+    minimum_length_codes!(
+        hmac_drbg_sha384_reports_minimum_length_codes,
+        oxi_hmac_drbg_sha384_new,
+        oxi_hmac_drbg_sha384_free,
+        oxi_hmac_drbg_sha384_instantiate,
+        oxi_hmac_drbg_sha384_reseed,
+        OxiHmacDrbgSha384,
+        32,
+        16
+    );
+    minimum_length_codes!(
+        hash_drbg_sha384_reports_minimum_length_codes,
+        oxi_hash_drbg_sha384_new,
+        oxi_hash_drbg_sha384_free,
+        oxi_hash_drbg_sha384_instantiate,
+        oxi_hash_drbg_sha384_reseed,
+        OxiHashDrbgSha384,
+        32,
+        16
+    );
+    minimum_length_codes!(
+        ctr_drbg_aes128_df_reports_minimum_length_codes,
+        oxi_ctr_drbg_aes128_new,
+        oxi_ctr_drbg_aes128_free,
+        oxi_ctr_drbg_aes128_instantiate_df,
+        oxi_ctr_drbg_aes128_reseed_df,
+        OxiCtrDrbgAes128,
+        16,
+        8
+    );
 }

@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking:** HMAC_DRBG, Hash_DRBG and CTR_DRBG with a derivation function refuse an entropy
+  input shorter than the instantiated security strength on instantiate, reseed and
+  prediction-resistance generate, and a nonce shorter than half of it on instantiate: 32 and 16
+  bytes for every Hash_DRBG and HMAC_DRBG variant, so SHA-384 callers that supplied 24-byte
+  entropy or a 12-byte nonce are now refused, and the AES key length and half of it for CTR_DRBG.
+  The refusals are `Error::EntropyInputTooShort`, `Error::NonceTooShort` and a new
+  `DrbgError::EntropyInputTooShort` variant, which breaks exhaustive matches on `DrbgError`, and
+  reach the C ABI as `OxiResult::EntropyInputTooShort` (29) and `OxiResult::NonceTooShort` (30).
+  An instantiate refused by a length check leaves the DRBG uninstantiated. (#288)
+
 ## [0.25.0] - 2026-10-17
 
 - **Breaking: the pre-operational integrity test verifies an ML-DSA-87 signature** (FIPS 204)

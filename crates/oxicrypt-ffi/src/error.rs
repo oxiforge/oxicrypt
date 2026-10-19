@@ -13,6 +13,9 @@
 //! - 8-9:         `oxicrypt_drbg::DrbgError` variants
 //! - 10-12:       FFI-layer errors (null pointer, buffer too small, output too long)
 //! - 20-27:       `oxicrypt_aes::ModeError` variants
+//! - 28-30:       appended after the bands above: `IntegrityUnverified`
+//!   (`oxicrypt_module::Error`), then the DRBG minimum-length refusals
+//!   `EntropyInputTooShort` and `NonceTooShort`
 //! - 255:         Catch-all `Internal` (reserved)
 //!
 //! Future per-crate error types (sha, hmac, ecdsa, etc.) extend
@@ -100,6 +103,17 @@ pub enum OxiResult {
     /// integrity test, so it was never verified against its integrity
     /// signature. Distinct from `SelfTestFailed`: no test failed, none ran.
     IntegrityUnverified = 28,
+    /// A DRBG `_instantiate` or `_reseed` was given an entropy input shorter
+    /// than the minimum for the instantiated security strength (SP 800-90A
+    /// Rev. 1 Tables 2 and 3). Distinct from `InvalidInput = 5`, which an
+    /// over-long input returns, as does CTR_DRBG `_no_df` seed material
+    /// that is not exactly `seedlen` bytes.
+    EntropyInputTooShort = 29,
+    /// A DRBG `_instantiate` was given a nonce shorter than half the
+    /// instantiated security strength, the module's nonce floor
+    /// (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
+    /// would meet only the uniqueness condition of §8.6.7 is refused).
+    NonceTooShort = 30,
 
     /// Catch-all for "should-never-happen" cases. New error sources should
     /// be paired with new `OxiResult` variants in the same change set —
@@ -124,10 +138,12 @@ impl From<oxicrypt_module::Error> for OxiResult {
             oxicrypt_module::Error::AlgorithmRestricted { .. } => OxiResult::AlgorithmRestricted,
             oxicrypt_module::Error::NotImplemented => OxiResult::NotImplemented,
             oxicrypt_module::Error::IntegrityNotAttested => OxiResult::IntegrityUnverified,
+            oxicrypt_module::Error::EntropyInputTooShort => OxiResult::EntropyInputTooShort,
+            oxicrypt_module::Error::NonceTooShort => OxiResult::NonceTooShort,
             // `oxicrypt_module::Error` is non-exhaustive, so a variant it
             // adds later reaches this arm and reports `Internal` until it is
             // mapped above. No test here can see such a variant; the test
-            // `module_error_maps_to_distinct_oxi_results` checks only the nine
+            // `module_error_maps_to_distinct_oxi_results` checks only the eleven
             // variants it names.
             _ => OxiResult::Internal,
         }
@@ -200,6 +216,8 @@ impl From<oxicrypt_drbg::DrbgError> for OxiResult {
             // SP 800-90A Table 3 max_number_of_bits_per_request — output bound,
             // semantically identical to KDF's HKDF-Expand 255*HashLen ceiling.
             oxicrypt_drbg::DrbgError::RequestTooLong => OxiResult::OutputTooLong,
+            // The reseed form of the instantiate refusal reports the same code.
+            oxicrypt_drbg::DrbgError::EntropyInputTooShort => OxiResult::EntropyInputTooShort,
             oxicrypt_drbg::DrbgError::Module(m) => OxiResult::from(m),
         }
     }
@@ -220,7 +238,7 @@ mod tests {
 
     #[test]
     fn module_error_maps_to_distinct_oxi_results() {
-        // Each of the nine oxicrypt_module::Error variants that exist today
+        // Each of the eleven oxicrypt_module::Error variants that exist today
         // maps to its own OxiResult, never to the `Internal` catch-all.
         // AlreadyFailed deliberately shares NotOperational. The list is
         // kept by hand: a variant the module adds later is not caught here.
@@ -267,12 +285,34 @@ mod tests {
                 OxiResult::from(oxicrypt_module::Error::IntegrityNotAttested),
                 OxiResult::IntegrityUnverified,
             ),
+            (
+                OxiResult::from(oxicrypt_module::Error::EntropyInputTooShort),
+                OxiResult::EntropyInputTooShort,
+            ),
+            (
+                OxiResult::from(oxicrypt_module::Error::NonceTooShort),
+                OxiResult::NonceTooShort,
+            ),
         ];
-        assert_eq!(mappings.len(), 9, "one case per variant named above");
+        assert_eq!(mappings.len(), 11, "one case per variant named above");
         for (got, expected) in mappings {
             assert_ne!(got, OxiResult::Internal);
             assert_eq!(got, expected);
         }
+    }
+
+    #[test]
+    fn drbg_entropy_too_short_maps_apart_from_too_long() {
+        assert_eq!(
+            OxiResult::from(oxicrypt_drbg::DrbgError::EntropyInputTooShort),
+            OxiResult::EntropyInputTooShort
+        );
+        assert_eq!(
+            OxiResult::from(oxicrypt_drbg::DrbgError::InputTooLong),
+            OxiResult::InvalidInput
+        );
+        assert_eq!(OxiResult::EntropyInputTooShort as i32, 29);
+        assert_eq!(OxiResult::NonceTooShort as i32, 30);
     }
 
     #[test]

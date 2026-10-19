@@ -59,6 +59,23 @@ pub const HASH_DRBG_MAX_DF_INPUT: usize = 768;
 const HASH_DRBG_MAX_BITS_PER_REQ: usize = 1 << 16;
 /// SP 800-90A Table 2 reseed interval.
 const HASH_DRBG_RESEED_INTERVAL: u64 = 1u64 << 48;
+/// Instantiated security strength in bytes (256 bits): the highest
+/// strength SP 800-57 Part 1 assigns SHA-256, SHA-384 and SHA-512 for
+/// random bit generation, and the only strength this crate
+/// instantiates.
+const SECURITY_STRENGTH: usize = 32;
+/// Minimum entropy input length in bytes for instantiate and reseed:
+/// the security strength (SP 800-90A Rev. 1 Table 2 `min_length`).
+const MIN_ENTROPY_LEN: usize = SECURITY_STRENGTH;
+/// Minimum nonce length in bytes for instantiate: half the security
+/// strength. This floor is the module's nonce check, which SP 800-90A
+/// Rev. 1 §9.1 step 8 permits; a nonce of this length can carry the
+/// `security_strength / 2` bits of entropy that §8.6.7(a) asks for.
+/// §8.6.7(b) also accepts a shorter value that repeats no more often
+/// than a random string of that length would; the module refuses it.
+/// The strength is even, so the division is exact.
+#[allow(clippy::integer_division)]
+const MIN_NONCE_LEN: usize = SECURITY_STRENGTH / 2;
 
 /// Trait describing a concrete SHA-2 flavour used by Hash_DRBG.
 pub trait HashAlg {
@@ -167,6 +184,18 @@ impl<H: HashAlg> HashDrbg<H> {
     }
 
     /// Hash_DRBG Instantiate — SP 800-90A §10.1.1.2.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::EntropyInputTooShort`] when `entropy` is shorter
+    /// than 32 bytes, the 256-bit security strength (SP 800-90A Rev. 1
+    /// Table 2 `min_length`), and [`Error::NonceTooShort`] when `nonce`
+    /// is shorter than 16 bytes, the module's nonce floor (see
+    /// `MIN_NONCE_LEN`). Personalization never counts toward either
+    /// minimum. An over-long combined input returns
+    /// [`Error::InvalidInput`] even when one of them is also short. A
+    /// refusal by any of these length checks leaves the DRBG
+    /// uninstantiated.
     pub fn instantiate(
         &mut self,
         entropy: &[u8],
@@ -185,6 +214,9 @@ impl<H: HashAlg> HashDrbg<H> {
         nonce: &[u8],
         personalization: &[u8],
     ) -> Result<(), Error> {
+        // Any refusal below leaves no instantiation behind: a failed
+        // re-instantiate must not leave the earlier seed usable.
+        self.uninstantiate();
         let total = entropy
             .len()
             .checked_add(nonce.len())
@@ -192,6 +224,12 @@ impl<H: HashAlg> HashDrbg<H> {
             .ok_or(Error::InvalidInput)?;
         if total > HASH_DRBG_MAX_DF_INPUT {
             return Err(Error::InvalidInput);
+        }
+        if entropy.len() < MIN_ENTROPY_LEN {
+            return Err(Error::EntropyInputTooShort);
+        }
+        if nonce.len() < MIN_NONCE_LEN {
+            return Err(Error::NonceTooShort);
         }
         let mut seed_material = Wiped([0u8; HASH_DRBG_MAX_DF_INPUT]);
         seed_material[..entropy.len()].copy_from_slice(entropy);
@@ -212,6 +250,15 @@ impl<H: HashAlg> HashDrbg<H> {
     }
 
     /// Hash_DRBG Reseed — SP 800-90A §10.1.1.3.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DrbgError::Uninstantiated`] before any length check,
+    /// [`DrbgError::InputTooLong`] when `entropy || additional_input` is
+    /// over-long, and otherwise [`DrbgError::EntropyInputTooShort`] when
+    /// `entropy` is shorter than 32 bytes, the 256-bit security strength
+    /// (SP 800-90A Rev. 1 Table 2 `min_length`). Additional input never
+    /// counts toward the minimum.
     pub fn reseed(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
@@ -223,6 +270,9 @@ impl<H: HashAlg> HashDrbg<H> {
             .ok_or(DrbgError::InputTooLong)?;
         if total > HASH_DRBG_MAX_DF_INPUT {
             return Err(DrbgError::InputTooLong);
+        }
+        if entropy.len() < MIN_ENTROPY_LEN {
+            return Err(DrbgError::EntropyInputTooShort);
         }
         let mut seed_material = Wiped([0u8; HASH_DRBG_MAX_DF_INPUT]);
         seed_material[0] = 0x01;
@@ -332,9 +382,12 @@ impl<H: HashAlg> HashDrbg<H> {
     }
 
     /// Zeroise and mark the instance uninstantiated.
+    ///
+    /// `V` and `C` are cleared with the volatile writes of
+    /// `oxicrypt-zeroize`, as on drop (SP 800-90A §9.4).
     pub fn uninstantiate(&mut self) {
-        self.v = [0u8; MAX_SEEDLEN];
-        self.c = [0u8; MAX_SEEDLEN];
+        oxicrypt_zeroize::zeroize(&mut self.v);
+        oxicrypt_zeroize::zeroize(&mut self.c);
         self.reseed_counter = 0;
         self.instantiated = false;
     }
@@ -644,5 +697,163 @@ mod tests {
         let src = [0x01u8];
         add_into_be(&mut dst, &src);
         assert_eq!(dst, [0x00, 0x00, 0x00]);
+    }
+
+    /// Instantiates `drbg` with `entropy_len` bytes of entropy input and
+    /// `nonce_len` bytes of nonce.
+    fn instantiate_with<A: HashAlg>(
+        drbg: &mut HashDrbg<A>,
+        entropy_len: usize,
+        nonce_len: usize,
+    ) -> Result<(), Error> {
+        let material = [0x5au8; 64];
+        drbg.instantiate_internal(&material[..entropy_len], &material[..nonce_len], &[])
+    }
+
+    /// SP 800-90A Rev. 1 Table 2 `min_length` (32 bytes at the 256-bit
+    /// security strength) and the module's nonce floor (16 bytes, half the
+    /// strength; see `MIN_NONCE_LEN`), each
+    /// checked one byte below, exactly at, and with an empty input.
+    fn assert_minimums_enforced<A: HashAlg>() {
+        crate::test_support::start_module();
+        let fresh = HashDrbg::<A>::new;
+
+        // Instantiate: entropy input.
+        let mut d = fresh();
+        assert_eq!(
+            instantiate_with(&mut d, 31, 16),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(
+            instantiate_with(&mut d, 0, 16),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_with(&mut d, 32, 16), Ok(()));
+
+        // Instantiate: nonce.
+        let mut d = fresh();
+        assert_eq!(instantiate_with(&mut d, 32, 15), Err(Error::NonceTooShort));
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_with(&mut d, 32, 0), Err(Error::NonceTooShort));
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_with(&mut d, 32, 16), Ok(()));
+
+        // Reseed, directly and through prediction-resistance generate.
+        let entropy = [0x6bu8; 32];
+        assert_eq!(
+            d.reseed(&entropy[..31], &[]),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(d.reseed(&[], &[]), Err(DrbgError::EntropyInputTooShort));
+        assert_eq!(d.reseed(&entropy, &[]), Ok(()));
+        let mut out = [0u8; 16];
+        assert_eq!(
+            d.generate_pr(&entropy[..31], &[], &mut out),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(d.generate_pr(&entropy, &[], &mut out), Ok(()));
+    }
+
+    /// Personalization and additional input never count toward the
+    /// entropy or nonce minimum; an over-long input keeps its over-long
+    /// error when the entropy input or nonce is also short; reseeding an
+    /// uninstantiated DRBG reports `Uninstantiated` first; with both
+    /// entropy input and nonce short, instantiate reports the entropy
+    /// input; and an instantiate refused by a length check leaves the
+    /// DRBG uninstantiated.
+    fn assert_extras_and_precedence<A: HashAlg>() {
+        crate::test_support::start_module();
+        let material = [0x5au8; 64];
+        let extra = [0x7cu8; 64];
+        let long = [0x3cu8; 800];
+        let mut out = [0u8; 16];
+
+        let mut d = HashDrbg::<A>::new();
+        assert_eq!(d.reseed(&[], &[]), Err(DrbgError::Uninstantiated));
+        assert_eq!(
+            d.reseed(&material[..32], &[]),
+            Err(DrbgError::Uninstantiated)
+        );
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..16], &extra),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.instantiate_internal(&material[..32], &material[..15], &extra),
+            Err(Error::NonceTooShort)
+        );
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..15], &[]),
+            Err(Error::EntropyInputTooShort)
+        );
+        // entropy || nonce || personalization one byte past the bound.
+        let pers_len = HASH_DRBG_MAX_DF_INPUT + 1 - 31 - 16;
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..16], &long[..pers_len]),
+            Err(Error::InvalidInput)
+        );
+        let pers_len = HASH_DRBG_MAX_DF_INPUT + 1 - 32 - 15;
+        assert_eq!(
+            d.instantiate_internal(&material[..32], &material[..15], &long[..pers_len]),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+
+        d.instantiate_internal(&material[..32], &material[..16], &extra)
+            .unwrap();
+        assert_eq!(
+            d.reseed(&material[..31], &extra),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.generate_pr(&material[..31], &extra, &mut out),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        let ai_len = (HASH_DRBG_MAX_DF_INPUT - 1 - A::SEEDLEN) + 1 - 31;
+        assert_eq!(
+            d.reseed(&material[..31], &long[..ai_len]),
+            Err(DrbgError::InputTooLong)
+        );
+
+        // A refused re-instantiate discards the earlier instantiation
+        // and erases its working state.
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..16], &[]),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert!(d.v.iter().all(|&b| b == 0));
+        assert!(d.c.iter().all(|&b| b == 0));
+        assert_eq!(d.reseed_counter, 0);
+        assert_eq!(d.generate(None, &mut out), Err(DrbgError::Uninstantiated));
+        d.instantiate_internal(&material[..32], &material[..16], &[])
+            .unwrap();
+        let pers_len = HASH_DRBG_MAX_DF_INPUT + 1 - 32 - 16;
+        assert_eq!(
+            d.instantiate_internal(&material[..32], &material[..16], &long[..pers_len]),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(d.generate(None, &mut out), Err(DrbgError::Uninstantiated));
+    }
+
+    #[test]
+    fn hash_drbg_sha256_enforces_minimum_entropy_and_nonce() {
+        assert_minimums_enforced::<Sha256Alg>();
+        assert_extras_and_precedence::<Sha256Alg>();
+    }
+
+    #[test]
+    fn hash_drbg_sha384_enforces_minimum_entropy_and_nonce() {
+        assert_minimums_enforced::<Sha384Alg>();
+        assert_extras_and_precedence::<Sha384Alg>();
+    }
+
+    #[test]
+    fn hash_drbg_sha512_enforces_minimum_entropy_and_nonce() {
+        assert_minimums_enforced::<Sha512Alg>();
+        assert_extras_and_precedence::<Sha512Alg>();
     }
 }

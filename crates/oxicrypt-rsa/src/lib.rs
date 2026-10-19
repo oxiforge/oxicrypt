@@ -2207,7 +2207,7 @@ mod tests {
 
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-e2e-entropy-input-001",
+            b"oxicrypt-e2e-entropy-input-00001",
             b"oxicrypt-e2e-nonce",
             b"",
         )
@@ -2244,8 +2244,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"oxicrypt-crt-equiv-entropy-v1", b"oxicrypt-crt-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"oxicrypt-crt-equiv-entropy-inp-v1",
+            b"oxicrypt-crt-nonce",
+            b"",
+        )
+        .unwrap();
 
         // Pull raw keygen material so we can exercise both paths on
         // the same (n, e, d) with and without CRT plumbing.
@@ -2294,7 +2298,7 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-bellcore-entropy-v1",
+            b"oxicrypt-bellcore-entropy-inp-v1",
             b"oxicrypt-bellcore-nonce",
             b"",
         )
@@ -2335,8 +2339,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"oxicrypt-crt-pss-entropy", b"oxicrypt-crt-pss-nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"oxicrypt-crt-pss-entropy-input-1",
+            b"oxicrypt-crt-pss-nonce",
+            b"",
+        )
+        .unwrap();
         let sk = RsaPrivateKey2048::generate(&mut drbg, 65537).unwrap();
         let salt = [0x42u8; pss::SLEN];
         let sig = sk
@@ -2355,8 +2363,12 @@ mod tests {
             run: self_test,
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
-        drbg.instantiate(b"oxicrypt-reject-e-entropy", b"nonce", b"")
-            .unwrap();
+        drbg.instantiate(
+            b"oxicrypt-reject-e-entropy-input1",
+            b"oxicrypt-reject-e-nonce",
+            b"",
+        )
+        .unwrap();
         match RsaPrivateKey2048::generate(&mut drbg, 4) {
             Err(Error::InvalidInput) => {}
             Err(e) => panic!("unexpected error: {e:?}"),
@@ -2406,7 +2418,7 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-oaep-crt-entropy",
+            b"oxicrypt-oaep-crt-entropy-input1",
             b"oxicrypt-oaep-crt-nonce",
             b"",
         )
@@ -2443,7 +2455,7 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-oaep-agree-entropy",
+            b"oxicrypt-oaep-agree-entropy-in-1",
             b"oxicrypt-oaep-agree-nonce",
             b"",
         )
@@ -2494,7 +2506,7 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-oaep-bellcore-entropy",
+            b"oxicrypt-oaep-bellcore-entropy-1",
             b"oxicrypt-oaep-bellcore-nonce",
             b"",
         )
@@ -2606,7 +2618,7 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-oaep-drbg-entropy",
+            b"oxicrypt-oaep-drbg-entropy-inp-1",
             b"oxicrypt-oaep-drbg-nonce",
             b"",
         )
@@ -2640,7 +2652,7 @@ mod tests {
         }]);
         let mut drbg = oxicrypt_drbg::HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-oaep-oversize-entropy",
+            b"oxicrypt-oaep-oversize-entropy-1",
             b"oxicrypt-oaep-oversize-nonce",
             b"",
         )

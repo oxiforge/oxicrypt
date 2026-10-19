@@ -20,7 +20,9 @@ pub fn build_seeded_drbg() -> Result<oxicrypt_drbg::HmacDrbgSha256, DispatchErro
     read_os_entropy(&mut buf)?;
     let mut drbg = oxicrypt_drbg::HmacDrbgSha256::new();
     drbg.instantiate(&buf[..32], &buf[32..], &[])
-        .map_err(|_| DispatchError::Crypto("HmacDrbgSha256::instantiate failed"))?;
+        .map_err(crate::dispatch::primitive_err(
+            "HmacDrbgSha256::instantiate failed",
+        ))?;
     Ok(drbg)
 }
 

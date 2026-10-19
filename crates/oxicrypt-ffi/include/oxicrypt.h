@@ -4845,9 +4845,16 @@ void oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *handle);
 
  Each input may be NULL when its corresponding length is 0.
  Personalization length 0 is the typical path for FIPS-conformant
- callers that don't have a personalization string; entropy and
- nonce SHOULD be sized per SP 800-90A Table 2 (security strength
- 256 → entropy ≥ 256 bits, nonce ≥ 128 bits).
+ callers that don't have a personalization string. The instantiated
+ security strength is 256 bits, so an entropy input shorter than
+ 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`) returns
+ `OxiResult::EntropyInputTooShort = 29`, and a nonce shorter than
+ 16 bytes returns `OxiResult::NonceTooShort = 30`. The nonce floor is
+ the module's own check, permitted by §9.1 step 8: a shorter nonce
+ that would meet only the uniqueness condition of §8.6.7 is refused.
+ An over-long combined input returns `InvalidInput = 5` even when the
+ entropy input or nonce is also short. A refusal by any of these
+ length checks leaves the handle uninstantiated.
 
  # Safety
 
@@ -4875,7 +4882,9 @@ int oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *handle,
  Returns `OxiResult::Uninstantiated = 8` if the handle has not yet
  been instantiated. Returns `OxiResult::InvalidInput = 5` if the
  combined `entropy_len + additional_input_len` exceeds
- `HMAC_DRBG_MAX_PROVIDED = 768` bytes.
+ `HMAC_DRBG_MAX_PROVIDED = 768` bytes, and
+ `OxiResult::EntropyInputTooShort = 29` if `entropy_len` is below
+ 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`).
 
  # Safety
 
@@ -4948,8 +4957,13 @@ void oxi_hmac_drbg_sha384_free(OxiHmacDrbgSha384 *handle);
  [`oxi_hmac_drbg_sha256_instantiate`] for full contract; the
  `entropy_len + nonce_len + perso_len` ceiling is the same upstream
  `HMAC_DRBG_MAX_PROVIDED = 768` bytes (alg-independent constant).
- Per SP 800-90A Table 2, security strength 192 → entropy ≥ 192
- bits, nonce ≥ 96 bits.
+ The instantiated security strength is 256 bits (SP 800-57 Part 1),
+ so per SP 800-90A Table 2 entropy ≥ 256 bits, nonce ≥ 128 bits.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+ `min_length` and the module's nonce floor).
 
  # Safety
 
@@ -4967,6 +4981,10 @@ int oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *handle,
 /*
  HMAC_DRBG-SHA-384 Reseed (SP 800-90A §10.1.2.4). See
  [`oxi_hmac_drbg_sha256_reseed`] for full contract.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5026,6 +5044,11 @@ void oxi_hmac_drbg_sha512_free(OxiHmacDrbgSha512 *handle);
  nonce ≥ 128 bits — same as SHA-256 but with a wider internal
  `(K, V)` of 64 bytes each.
 
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+ `min_length` and the module's nonce floor).
+
  # Safety
 
  All pointer/length pairs must be valid. `handle` must be a live
@@ -5042,6 +5065,10 @@ int oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *handle,
 /*
  HMAC_DRBG-SHA-512 Reseed (SP 800-90A §10.1.2.4). See
  [`oxi_hmac_drbg_sha256_reseed`].
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5099,6 +5126,11 @@ void oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *handle);
  nonce ≥ 128 bits. Combined-input ceiling is the alg-independent
  `HASH_DRBG_MAX_DF_INPUT` upstream constant.
 
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+ `min_length` and the module's nonce floor).
+
  # Safety
 
  All pointer/length pairs must be valid. `handle` must be a live
@@ -5115,6 +5147,10 @@ int oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *handle,
 /*
  Hash_DRBG-SHA-256 Reseed (SP 800-90A §10.1.1.3). See
  [`oxi_hmac_drbg_sha256_reseed`].
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5165,8 +5201,14 @@ int oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **out_handle);
 void oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *handle);
 
 /*
- Hash_DRBG-SHA-384 Instantiate. Per SP 800-90A Table 2, security
- strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits.
+ Hash_DRBG-SHA-384 Instantiate. The instantiated security strength
+ is 256 bits (SP 800-57 Part 1), so per SP 800-90A Table 2
+ entropy ≥ 256 bits, nonce ≥ 128 bits.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+ `min_length` and the module's nonce floor).
 
  # Safety
 
@@ -5183,6 +5225,10 @@ int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
 
 /*
  Hash_DRBG-SHA-384 Reseed.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5235,6 +5281,11 @@ void oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *handle);
  Hash_DRBG-SHA-512 Instantiate. Per SP 800-90A Table 2, security
  strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
 
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 2
+ `min_length` and the module's nonce floor).
+
  # Safety
 
  All pointer/length pairs must be valid. `handle` must be a live
@@ -5250,6 +5301,10 @@ int oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *handle,
 
 /*
  Hash_DRBG-SHA-512 Reseed.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes (SP 800-90A Rev. 1 Table 2 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5330,7 +5385,9 @@ int oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *handle,
  Combined-length ceiling is `MAX_DF_INPUT` (alg-independent).
  Each input may be NULL when its length is 0. Per SP 800-90A
  Table 3, security strength 128 → entropy ≥ 128 bits, nonce ≥
- 64 bits.
+ 64 bits; a shorter entropy input returns
+ `OxiResult::EntropyInputTooShort = 29` and a shorter nonce
+ `OxiResult::NonceTooShort = 30`.
 
  # Safety
 
@@ -5363,6 +5420,10 @@ int oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *handle,
  CTR_DRBG-AES-128 Reseed, **df** variant (SP 800-90A §10.2.1.4.2).
  Runs `Block_Cipher_df(entropy || additional_input, seedlen)` to
  derive the new seed. Combined-length ceiling is `MAX_DF_INPUT`.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 16 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5457,6 +5518,11 @@ int oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *handle,
  security strength 192 → entropy ≥ 192 bits, nonce ≥ 96 bits. See
  [`oxi_ctr_drbg_aes128_instantiate_df`].
 
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 24 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 12 bytes (SP 800-90A Rev. 1 Table 3
+ `min_length` and the module's nonce floor).
+
  # Safety
 
  All pointer/length pairs must be valid. `handle` must be a live
@@ -5485,6 +5551,10 @@ int oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *handle,
 
 /*
  CTR_DRBG-AES-192 Reseed, df.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 24 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 
@@ -5568,6 +5638,11 @@ int oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *handle,
  CTR_DRBG-AES-256 Instantiate, df. Per SP 800-90A Table 3,
  security strength 256 → entropy ≥ 256 bits, nonce ≥ 128 bits.
 
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes and `OxiResult::NonceTooShort = 30` when
+ `nonce_len` is below 16 bytes (SP 800-90A Rev. 1 Table 3
+ `min_length` and the module's nonce floor).
+
  # Safety
 
  All pointer/length pairs must be valid. `handle` must be a live
@@ -5596,6 +5671,10 @@ int oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *handle,
 
 /*
  CTR_DRBG-AES-256 Reseed, df.
+
+ Returns `OxiResult::EntropyInputTooShort = 29` when `entropy_len`
+ is below 32 bytes (SP 800-90A Rev. 1 Table 3 `min_length`);
+ additional input does not count toward it.
 
  # Safety
 

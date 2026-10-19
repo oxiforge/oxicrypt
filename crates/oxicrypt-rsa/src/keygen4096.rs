@@ -110,7 +110,7 @@ mod tests {
         limbs[0] = 7;
         limbs[LIMBS2048 - 1] = 1 << 63;
         let n_fake = U2048 { limbs };
-        let mut drbg = make_drbg(b"mr-smoke-4096-seed-0000");
+        let mut drbg = make_drbg(b"oxicrypt-mr-smoke-4096-seed-0000");
         let _ = miller_rabin(&n_fake, 2, &mut drbg);
     }
 
@@ -151,14 +151,14 @@ mod tests {
     #[test]
     fn generate_4096_rejects_even_exponent() {
         crate::test_support::start_module();
-        let mut drbg = make_drbg(b"even-exp-reject-4096");
+        let mut drbg = make_drbg(b"oxicrypt-rsa4096-even-exp-reject");
         assert!(generate_4096_internal(&mut drbg, 65538).is_err());
     }
 
     #[test]
     fn generate_4096_rejects_small_exponent() {
         crate::test_support::start_module();
-        let mut drbg = make_drbg(b"small-exp-reject-4096");
+        let mut drbg = make_drbg(b"oxicrypt-rsa4096-small-exp-reject");
         assert!(generate_4096_internal(&mut drbg, 3).is_err());
     }
 }

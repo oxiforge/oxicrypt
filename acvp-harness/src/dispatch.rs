@@ -35,6 +35,14 @@ pub enum DispatchError {
     Module(oxicrypt_module::Error),
     /// A primitive returned an error or produced an unexpected shape.
     Crypto(&'static str),
+    /// A primitive refused its input for a cause it names: a DRBG
+    /// entropy input or nonce shorter than the module's minimum.
+    InputRefused {
+        /// The call that refused, as for [`DispatchError::Crypto`].
+        context: &'static str,
+        /// The cause the primitive reported.
+        cause: oxicrypt_module::Error,
+    },
     /// A hex-encoded data field could not be decoded.
     Hex(HexError),
     /// A required ACVP field is missing from a test case or group.
@@ -60,6 +68,7 @@ impl fmt::Display for DispatchError {
             Self::Envelope(e) => write!(f, "envelope: {e}"),
             Self::Module(e) => write!(f, "module: {e}"),
             Self::Crypto(s) => write!(f, "crypto: {s}"),
+            Self::InputRefused { context, cause } => write!(f, "crypto: {context}: {cause}"),
             Self::Hex(e) => write!(f, "hex: {e}"),
             Self::MissingField(name) => write!(f, "missing field {name:?}"),
             Self::UnsupportedAlgorithm {
@@ -101,15 +110,35 @@ impl From<oxicrypt_module::Error> for DispatchError {
 }
 
 /// Maps the error of an `*_internal` primitive: `InvalidInput`, the
-/// primitive rejecting its input, becomes `Crypto(context)`; any other
-/// module error, such as the self-test guard refusing the call, stays a
-/// `Module` error.
+/// primitive rejecting its input, becomes `Crypto(context)`; a DRBG
+/// minimum-length refusal becomes `InputRefused` carrying its cause; any
+/// other module error, such as the self-test guard refusing the call,
+/// stays a `Module` error.
 pub(crate) fn primitive_err(
     context: &'static str,
 ) -> impl Fn(oxicrypt_module::Error) -> DispatchError {
     move |e| match e {
         oxicrypt_module::Error::InvalidInput => DispatchError::Crypto(context),
+        cause @ (oxicrypt_module::Error::EntropyInputTooShort
+        | oxicrypt_module::Error::NonceTooShort) => DispatchError::InputRefused { context, cause },
         other => DispatchError::Module(other),
+    }
+}
+
+/// Maps a DRBG reseed or generate error: a module refusal goes through
+/// [`primitive_err`], the too-short entropy refusal becomes
+/// `InputRefused` so it reaches the operator by name, and every other
+/// DRBG error, such as an over-long input, becomes `Crypto(context)`.
+pub(crate) fn drbg_err(
+    context: &'static str,
+) -> impl Fn(oxicrypt_drbg::DrbgError) -> DispatchError {
+    move |e| match e {
+        oxicrypt_drbg::DrbgError::Module(m) => primitive_err(context)(m),
+        oxicrypt_drbg::DrbgError::EntropyInputTooShort => DispatchError::InputRefused {
+            context,
+            cause: oxicrypt_module::Error::EntropyInputTooShort,
+        },
+        _ => DispatchError::Crypto(context),
     }
 }
 

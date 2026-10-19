@@ -25,7 +25,7 @@
 //! - `modulo = 3072`, `fixedPubExp = "010001"` (65537)
 //! - `modulo = 4096`, `fixedPubExp = "010001"` (65537)
 
-use crate::dispatch::{AlgorithmHandler, DispatchError};
+use crate::dispatch::{AlgorithmHandler, DispatchError, primitive_err};
 use crate::hex;
 use crate::json::JsonValue;
 
@@ -129,7 +129,7 @@ fn handle_keygen_group(group: &JsonValue) -> Result<JsonValue, DispatchError> {
             )?;
             let mut d = oxicrypt_drbg::HmacDrbgSha256::default();
             d.instantiate(&entropy, &nonce, &perso)
-                .map_err(|_| DispatchError::Crypto("RSA keyGen: DRBG instantiate failed"))?;
+                .map_err(primitive_err("RSA keyGen: DRBG instantiate failed"))?;
             d
         } else {
             super::os_entropy::build_seeded_drbg()?

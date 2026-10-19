@@ -357,18 +357,19 @@ pub fn ctr_drbg_capability() -> JsonValue {
         (
             "capabilities",
             JsonValue::Array(vec![
-                // Entropy / nonce values per ACVP-server validation:
-                // entropy = seedlen (security_strength + AES blocklen) and
-                // nonce = 0 for ALL (mode, derFunc) entries. The server
-                // enforces seedlen-style values uniformly regardless of
-                // derFunc — stricter than SP 800-90A Rev 1 Table 3 alone
-                // suggests but matches the demo server's per-mode rules
-                // (verified empirically 2026-04-28).
-                ctr_drbg_mode_entry("AES-128", true, 256, 0),
+                // Entropy = seedlen (security strength + AES blocklen)
+                // for every entry. Without a derivation function the
+                // nonce is not used (SP 800-90A Rev. 1 §10.2.1.3.1), so
+                // nonceLen is 0. With one, the module refuses a nonce
+                // shorter than half the security strength, so nonceLen
+                // is that minimum: 64, 96 and 128 bits. NIST's sample
+                // vector set carries non-empty nonces for derFunc
+                // groups, so the server generates them.
+                ctr_drbg_mode_entry("AES-128", true, 256, 64),
                 ctr_drbg_mode_entry("AES-128", false, 256, 0),
-                ctr_drbg_mode_entry("AES-192", true, 320, 0),
+                ctr_drbg_mode_entry("AES-192", true, 320, 96),
                 ctr_drbg_mode_entry("AES-192", false, 320, 0),
-                ctr_drbg_mode_entry("AES-256", true, 384, 0),
+                ctr_drbg_mode_entry("AES-256", true, 384, 128),
                 ctr_drbg_mode_entry("AES-256", false, 384, 0),
             ]),
         ),

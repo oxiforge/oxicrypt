@@ -835,13 +835,14 @@ mod tests {
     // --------------------------------------------------------------
 
     fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
+        // HMAC_DRBG seeds from `entropy || nonce || personalization`, so
+        // where the seed splits between entropy and nonce does not change
+        // the output that `r7_keygen_pinned_regression` pins.
+        let (entropy, nonce) =
+            b"oxicrypt-r7-ecdsa-entropy-inputoxicrypt-r7-ecdsa-nonce".split_at(32);
         let mut drbg = HmacDrbgSha256::default();
-        drbg.instantiate(
-            b"oxicrypt-r7-ecdsa-entropy-input",
-            b"oxicrypt-r7-ecdsa-nonce",
-            personalization,
-        )
-        .expect("drbg instantiates");
+        drbg.instantiate(entropy, nonce, personalization)
+            .expect("drbg instantiates");
         drbg
     }
 

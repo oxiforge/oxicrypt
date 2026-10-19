@@ -503,6 +503,21 @@ pub enum Error {
     /// the profile permits it, but the actual cryptographic
     /// operation is not yet available.
     NotImplemented,
+    /// A DRBG instantiate call was given an entropy input shorter than
+    /// the minimum entropy input length (`min_length`) for the
+    /// instantiated security strength (SP 800-90A Rev. 1 §8.6.3,
+    /// Tables 2 and 3). Distinct from [`Error::InvalidInput`], which a
+    /// DRBG returns for over-long input, and CTR_DRBG without a
+    /// derivation function for seed material that is not exactly
+    /// `seedlen` bytes.
+    EntropyInputTooShort,
+    /// A DRBG instantiate call was given a nonce shorter than
+    /// `security_strength / 2` bits for the instantiated security
+    /// strength. The floor is the module's nonce check, which SP 800-90A
+    /// Rev. 1 §9.1 step 8 permits; a nonce of that length can meet
+    /// §8.6.7(a), and a shorter one that would meet only §8.6.7(b),
+    /// the uniqueness condition, is refused.
+    NonceTooShort,
 }
 
 impl fmt::Display for Error {
@@ -535,6 +550,14 @@ impl fmt::Display for Error {
                 )
             }
             Self::NotImplemented => f.write_str("algorithm not yet implemented"),
+            Self::EntropyInputTooShort => f.write_str(
+                "DRBG entropy input is shorter than the minimum for the instantiated \
+                 security strength (SP 800-90A Rev. 1 Tables 2 and 3)",
+            ),
+            Self::NonceTooShort => f.write_str(
+                "DRBG nonce is shorter than half the instantiated security strength, \
+                 the module's nonce floor (SP 800-90A Rev. 1 §9.1 step 8)",
+            ),
         }
     }
 }
@@ -3510,6 +3533,18 @@ mod tests {
             }) => {}
             other => panic!("expected P-384 ECDSA refused under CNSA 2.0, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn drbg_minimum_length_errors_display_their_cause() {
+        let entropy = Error::EntropyInputTooShort.to_string();
+        let nonce = Error::NonceTooShort.to_string();
+        assert!(
+            entropy.contains("entropy input is shorter than the minimum"),
+            "{entropy}"
+        );
+        assert!(nonce.contains("nonce is shorter than half"), "{nonce}");
+        assert_ne!(entropy, Error::InvalidInput.to_string());
     }
 
     #[test]

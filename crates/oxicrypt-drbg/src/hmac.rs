@@ -47,6 +47,22 @@ pub const HMAC_DRBG_MAX_PROVIDED: usize = 768;
 const HMAC_DRBG_RESEED_INTERVAL: u64 = 1u64 << 48;
 /// Maximum output bytes per single `generate` call.
 const HMAC_DRBG_MAX_BITS_PER_REQ: usize = 1 << 16;
+/// Instantiated security strength in bytes (256 bits): the highest
+/// strength SP 800-57 Part 1 assigns HMAC over SHA-256, SHA-384 and
+/// SHA-512, and the only strength this crate instantiates.
+const SECURITY_STRENGTH: usize = 32;
+/// Minimum entropy input length in bytes for instantiate and reseed:
+/// the security strength (SP 800-90A Rev. 1 Table 2 `min_length`).
+const MIN_ENTROPY_LEN: usize = SECURITY_STRENGTH;
+/// Minimum nonce length in bytes for instantiate: half the security
+/// strength. This floor is the module's nonce check, which SP 800-90A
+/// Rev. 1 §9.1 step 8 permits; a nonce of this length can carry the
+/// `security_strength / 2` bits of entropy that §8.6.7(a) asks for.
+/// §8.6.7(b) also accepts a shorter value that repeats no more often
+/// than a random string of that length would; the module refuses it.
+/// The strength is even, so the division is exact.
+#[allow(clippy::integer_division)]
+const MIN_NONCE_LEN: usize = SECURITY_STRENGTH / 2;
 
 /// Trait describing a concrete HMAC variant used by HMAC_DRBG.
 ///
@@ -213,6 +229,18 @@ impl<H: HmacAlg> HmacDrbg<H> {
     }
 
     /// HMAC_DRBG Instantiate — SP 800-90A §10.1.2.3.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::EntropyInputTooShort`] when `entropy` is shorter
+    /// than 32 bytes, the 256-bit security strength (SP 800-90A Rev. 1
+    /// Table 2 `min_length`), and [`Error::NonceTooShort`] when `nonce`
+    /// is shorter than 16 bytes, the module's nonce floor (see
+    /// `MIN_NONCE_LEN`). Personalization never counts toward either
+    /// minimum. An over-long combined input returns
+    /// [`Error::InvalidInput`] even when one of them is also short. A
+    /// refusal by any of these length checks leaves the DRBG
+    /// uninstantiated.
     pub fn instantiate(
         &mut self,
         entropy: &[u8],
@@ -231,6 +259,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
         nonce: &[u8],
         personalization: &[u8],
     ) -> Result<(), Error> {
+        // Any refusal below leaves no instantiation behind: a failed
+        // re-instantiate must not leave the earlier seed usable.
+        self.uninstantiate();
         let total = entropy
             .len()
             .checked_add(nonce.len())
@@ -238,6 +269,12 @@ impl<H: HmacAlg> HmacDrbg<H> {
             .ok_or(Error::InvalidInput)?;
         if total > HMAC_DRBG_MAX_PROVIDED {
             return Err(Error::InvalidInput);
+        }
+        if entropy.len() < MIN_ENTROPY_LEN {
+            return Err(Error::EntropyInputTooShort);
+        }
+        if nonce.len() < MIN_NONCE_LEN {
+            return Err(Error::NonceTooShort);
         }
         let outlen = H::OUTLEN;
         // Key = 0x00^outlen, V = 0x01^outlen.
@@ -265,6 +302,15 @@ impl<H: HmacAlg> HmacDrbg<H> {
     }
 
     /// HMAC_DRBG Reseed — SP 800-90A §10.1.2.4.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DrbgError::Uninstantiated`] before any length check,
+    /// [`DrbgError::InputTooLong`] when `entropy || additional_input` is
+    /// over-long, and otherwise [`DrbgError::EntropyInputTooShort`] when
+    /// `entropy` is shorter than 32 bytes, the 256-bit security strength
+    /// (SP 800-90A Rev. 1 Table 2 `min_length`). Additional input never
+    /// counts toward the minimum.
     pub fn reseed(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
@@ -275,6 +321,9 @@ impl<H: HmacAlg> HmacDrbg<H> {
             .ok_or(DrbgError::InputTooLong)?;
         if total > HMAC_DRBG_MAX_PROVIDED {
             return Err(DrbgError::InputTooLong);
+        }
+        if entropy.len() < MIN_ENTROPY_LEN {
+            return Err(DrbgError::EntropyInputTooShort);
         }
         let mut seed_material = [0u8; HMAC_DRBG_MAX_PROVIDED];
         seed_material[..entropy.len()].copy_from_slice(entropy);
@@ -362,9 +411,12 @@ impl<H: HmacAlg> HmacDrbg<H> {
     }
 
     /// Zeroise the instance and mark it uninstantiated.
+    ///
+    /// `Key` and `V` are cleared with the volatile writes of
+    /// `oxicrypt-zeroize`, as on drop (SP 800-90A §9.4).
     pub fn uninstantiate(&mut self) {
-        self.key = [0u8; MAX_OUTLEN];
-        self.v = [0u8; MAX_OUTLEN];
+        oxicrypt_zeroize::zeroize(&mut self.key);
+        oxicrypt_zeroize::zeroize(&mut self.v);
         self.reseed_counter = 0;
         self.instantiated = false;
     }
@@ -495,5 +547,163 @@ mod tests {
         drbg.generate(None, &mut out).unwrap();
         drbg.generate(None, &mut out).unwrap();
         assert_eq!(out, expected);
+    }
+
+    /// Instantiates `drbg` with `entropy_len` bytes of entropy input and
+    /// `nonce_len` bytes of nonce.
+    fn instantiate_with<A: HmacAlg>(
+        drbg: &mut HmacDrbg<A>,
+        entropy_len: usize,
+        nonce_len: usize,
+    ) -> Result<(), Error> {
+        let material = [0x5au8; 64];
+        drbg.instantiate_internal(&material[..entropy_len], &material[..nonce_len], &[])
+    }
+
+    /// SP 800-90A Rev. 1 Table 2 `min_length` (32 bytes at the 256-bit
+    /// security strength) and the module's nonce floor (16 bytes, half the
+    /// strength; see `MIN_NONCE_LEN`), each
+    /// checked one byte below, exactly at, and with an empty input.
+    fn assert_minimums_enforced<A: HmacAlg>() {
+        crate::test_support::start_module();
+        let fresh = HmacDrbg::<A>::new;
+
+        // Instantiate: entropy input.
+        let mut d = fresh();
+        assert_eq!(
+            instantiate_with(&mut d, 31, 16),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(
+            instantiate_with(&mut d, 0, 16),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_with(&mut d, 32, 16), Ok(()));
+
+        // Instantiate: nonce.
+        let mut d = fresh();
+        assert_eq!(instantiate_with(&mut d, 32, 15), Err(Error::NonceTooShort));
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_with(&mut d, 32, 0), Err(Error::NonceTooShort));
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_with(&mut d, 32, 16), Ok(()));
+
+        // Reseed, directly and through prediction-resistance generate.
+        let entropy = [0x6bu8; 32];
+        assert_eq!(
+            d.reseed(&entropy[..31], &[]),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(d.reseed(&[], &[]), Err(DrbgError::EntropyInputTooShort));
+        assert_eq!(d.reseed(&entropy, &[]), Ok(()));
+        let mut out = [0u8; 16];
+        assert_eq!(
+            d.generate_pr(&entropy[..31], &[], &mut out),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(d.generate_pr(&entropy, &[], &mut out), Ok(()));
+    }
+
+    /// Personalization and additional input never count toward the
+    /// entropy or nonce minimum; an over-long input keeps its over-long
+    /// error when the entropy input or nonce is also short; reseeding an
+    /// uninstantiated DRBG reports `Uninstantiated` first; with both
+    /// entropy input and nonce short, instantiate reports the entropy
+    /// input; and an instantiate refused by a length check leaves the
+    /// DRBG uninstantiated.
+    fn assert_extras_and_precedence<A: HmacAlg>() {
+        crate::test_support::start_module();
+        let material = [0x5au8; 64];
+        let extra = [0x7cu8; 64];
+        let long = [0x3cu8; 800];
+        let mut out = [0u8; 16];
+
+        let mut d = HmacDrbg::<A>::new();
+        assert_eq!(d.reseed(&[], &[]), Err(DrbgError::Uninstantiated));
+        assert_eq!(
+            d.reseed(&material[..32], &[]),
+            Err(DrbgError::Uninstantiated)
+        );
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..16], &extra),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.instantiate_internal(&material[..32], &material[..15], &extra),
+            Err(Error::NonceTooShort)
+        );
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..15], &[]),
+            Err(Error::EntropyInputTooShort)
+        );
+        // entropy || nonce || personalization one byte past the bound.
+        let pers_len = HMAC_DRBG_MAX_PROVIDED + 1 - 31 - 16;
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..16], &long[..pers_len]),
+            Err(Error::InvalidInput)
+        );
+        let pers_len = HMAC_DRBG_MAX_PROVIDED + 1 - 32 - 15;
+        assert_eq!(
+            d.instantiate_internal(&material[..32], &material[..15], &long[..pers_len]),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+
+        d.instantiate_internal(&material[..32], &material[..16], &extra)
+            .unwrap();
+        assert_eq!(
+            d.reseed(&material[..31], &extra),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.generate_pr(&material[..31], &extra, &mut out),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        let ai_len = HMAC_DRBG_MAX_PROVIDED + 1 - 31;
+        assert_eq!(
+            d.reseed(&material[..31], &long[..ai_len]),
+            Err(DrbgError::InputTooLong)
+        );
+
+        // A refused re-instantiate discards the earlier instantiation
+        // and erases its working state.
+        assert_eq!(
+            d.instantiate_internal(&material[..31], &material[..16], &[]),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert!(d.key.iter().all(|&b| b == 0));
+        assert!(d.v.iter().all(|&b| b == 0));
+        assert_eq!(d.reseed_counter, 0);
+        assert_eq!(d.generate(None, &mut out), Err(DrbgError::Uninstantiated));
+        d.instantiate_internal(&material[..32], &material[..16], &[])
+            .unwrap();
+        let pers_len = HMAC_DRBG_MAX_PROVIDED + 1 - 32 - 16;
+        assert_eq!(
+            d.instantiate_internal(&material[..32], &material[..16], &long[..pers_len]),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(d.generate(None, &mut out), Err(DrbgError::Uninstantiated));
+    }
+
+    #[test]
+    fn hmac_drbg_sha256_enforces_minimum_entropy_and_nonce() {
+        assert_minimums_enforced::<HmacSha256Alg>();
+        assert_extras_and_precedence::<HmacSha256Alg>();
+    }
+
+    #[test]
+    fn hmac_drbg_sha384_enforces_minimum_entropy_and_nonce() {
+        assert_minimums_enforced::<HmacSha384Alg>();
+        assert_extras_and_precedence::<HmacSha384Alg>();
+    }
+
+    #[test]
+    fn hmac_drbg_sha512_enforces_minimum_entropy_and_nonce() {
+        assert_minimums_enforced::<HmacSha512Alg>();
+        assert_extras_and_precedence::<HmacSha512Alg>();
     }
 }

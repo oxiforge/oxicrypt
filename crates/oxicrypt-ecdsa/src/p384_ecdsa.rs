@@ -561,7 +561,7 @@ mod tests {
     fn pct_drbg(personalization: &[u8]) -> HmacDrbgSha256 {
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-p384-entropy-input",
+            b"oxicrypt-p384-entropy-input-0001",
             b"oxicrypt-p384-nonce",
             personalization,
         )

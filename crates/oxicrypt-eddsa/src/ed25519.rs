@@ -672,7 +672,7 @@ mod tests {
 
         let mut drbg = HmacDrbgSha256::default();
         drbg.instantiate(
-            b"oxicrypt-eddsa-entropy-input",
+            b"oxicrypt-eddsa-entropy-input-v01",
             b"oxicrypt-eddsa-nonce",
             b"oxicrypt-eddsa-personalization",
         )

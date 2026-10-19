@@ -93,6 +93,11 @@ pub enum DrbgError {
     InputTooLong,
     /// `no_df` path: seed material was not exactly `seedlen` bytes.
     InvalidSeedLength,
+    /// Reseed entropy input is shorter than the minimum entropy input
+    /// length (`min_length`) for the instantiated security strength
+    /// (SP 800-90A Rev. 1 §8.6.3, Tables 2 and 3). Distinct from
+    /// [`DrbgError::InputTooLong`].
+    EntropyInputTooShort,
     /// Requested output length exceeds `2^19` bits (SP 800-90A
     /// Table 3 `max_number_of_bits_per_request`).
     RequestTooLong,
@@ -130,6 +135,11 @@ impl core::fmt::Display for DrbgError {
                 "seed material length does not match the required seedlen for this \
                  DRBG instantiation; check CipherFactory::SEED_LEN for the expected size"
             ),
+            Self::EntropyInputTooShort => write!(
+                f,
+                "entropy input is shorter than the minimum for the instantiated security \
+                 strength (SP 800-90A Rev. 1 Tables 2 and 3)"
+            ),
             Self::RequestTooLong => write!(
                 f,
                 "requested output exceeds 2^19 bits (65536 bytes) per call \
@@ -142,6 +152,10 @@ impl core::fmt::Display for DrbgError {
 
 /// Factory / constants bundle describing a concrete CTR_DRBG
 /// parameterisation (which AES variant, which seedlen).
+///
+/// The instantiated security strength is `KEY_LEN * 8` bits: the
+/// highest strength SP 800-57 Part 1 assigns the AES key size, which is
+/// the only strength this crate instantiates (128, 192 or 256 bits).
 pub trait CipherFactory {
     /// Key length in bytes (`keylen`).
     const KEY_LEN: usize;
@@ -240,6 +254,19 @@ pub type CtrDrbgAes192 = CtrDrbg<Aes192Factory>;
 pub type CtrDrbgAes256 = CtrDrbg<Aes256Factory>;
 
 impl<F: CipherFactory> CtrDrbg<F> {
+    /// `use df` minimum entropy input length in bytes: the security
+    /// strength (SP 800-90A Rev. 1 Table 3 `min_length`).
+    const MIN_ENTROPY_LEN: usize = F::KEY_LEN;
+    /// `use df` minimum nonce length in bytes for instantiate: half the
+    /// security strength. This floor is the module's nonce check, which SP 800-90A
+    /// Rev. 1 §9.1 step 8 permits; a nonce of this length can carry the
+    /// `security_strength / 2` bits of entropy that §8.6.7(a) asks for.
+    /// §8.6.7(b) also accepts a shorter value that repeats no more often
+    /// than a random string of that length would; the module refuses it.
+    /// Every AES key length is even, so the division is exact.
+    #[allow(clippy::integer_division)]
+    const MIN_NONCE_LEN: usize = F::KEY_LEN / 2;
+
     /// Create an empty, uninstantiated CTR_DRBG slot.
     #[must_use]
     pub const fn new() -> Self {
@@ -266,6 +293,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
 
     /// Internal instantiate function used by KAT runners.
     pub(crate) fn instantiate_no_df_internal(&mut self, seed_material: &[u8]) -> Result<(), Error> {
+        // Any refusal below leaves no instantiation behind: a failed
+        // re-instantiate must not leave the earlier seed usable.
+        self.uninstantiate();
         if seed_material.len() != F::SEED_LEN {
             return Err(Error::InvalidInput);
         }
@@ -288,6 +318,18 @@ impl<F: CipherFactory> CtrDrbg<F> {
     /// Runs `Block_Cipher_df(entropy || nonce || personalization, seedlen)`
     /// to derive the initial seed material. The concatenated input
     /// must fit in [`MAX_DF_INPUT`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::EntropyInputTooShort`] when `entropy` is shorter
+    /// than `KEY_LEN` bytes, the security strength (SP 800-90A Rev. 1
+    /// Table 3 `min_length`), and [`Error::NonceTooShort`] when `nonce`
+    /// is shorter than `KEY_LEN / 2` bytes, the module's nonce floor
+    /// (see `MIN_NONCE_LEN`). Personalization never counts toward either
+    /// minimum. An over-long combined input returns
+    /// [`Error::InvalidInput`] even when one of them is also short. A
+    /// refusal by any of these length checks leaves the DRBG
+    /// uninstantiated.
     pub fn instantiate_df(
         &mut self,
         entropy: &[u8],
@@ -306,6 +348,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
         nonce: &[u8],
         personalization: &[u8],
     ) -> Result<(), Error> {
+        // Any refusal below leaves no instantiation behind: a failed
+        // re-instantiate must not leave the earlier seed usable.
+        self.uninstantiate();
         // Build seed_material = entropy || nonce || personalization
         let total = entropy
             .len()
@@ -314,6 +359,12 @@ impl<F: CipherFactory> CtrDrbg<F> {
             .ok_or(Error::InvalidInput)?;
         if total > MAX_DF_INPUT {
             return Err(Error::InvalidInput);
+        }
+        if entropy.len() < Self::MIN_ENTROPY_LEN {
+            return Err(Error::EntropyInputTooShort);
+        }
+        if nonce.len() < Self::MIN_NONCE_LEN {
+            return Err(Error::NonceTooShort);
         }
         let mut seed_material = [0u8; MAX_DF_INPUT];
         seed_material[..entropy.len()].copy_from_slice(entropy);
@@ -354,6 +405,15 @@ impl<F: CipherFactory> CtrDrbg<F> {
     }
 
     /// CTR_DRBG Reseed, `use df` variant (§10.2.1.4.2).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DrbgError::Uninstantiated`] before any length check,
+    /// [`DrbgError::InputTooLong`] when `entropy || additional_input`
+    /// exceeds [`MAX_DF_INPUT`], and otherwise
+    /// [`DrbgError::EntropyInputTooShort`] when `entropy` is shorter than
+    /// `KEY_LEN` bytes, the security strength (SP 800-90A Rev. 1 Table 3
+    /// `min_length`). Additional input never counts toward the minimum.
     pub fn reseed_df(&mut self, entropy: &[u8], additional_input: &[u8]) -> Result<(), DrbgError> {
         if !self.instantiated {
             return Err(DrbgError::Uninstantiated);
@@ -364,6 +424,9 @@ impl<F: CipherFactory> CtrDrbg<F> {
             .ok_or(DrbgError::InputTooLong)?;
         if total > MAX_DF_INPUT {
             return Err(DrbgError::InputTooLong);
+        }
+        if entropy.len() < Self::MIN_ENTROPY_LEN {
+            return Err(DrbgError::EntropyInputTooShort);
         }
         let mut seed_material = [0u8; MAX_DF_INPUT];
         seed_material[..entropy.len()].copy_from_slice(entropy);
@@ -527,9 +590,12 @@ impl<F: CipherFactory> CtrDrbg<F> {
     }
 
     /// Zeroise and mark the instance uninstantiated.
+    ///
+    /// `Key` and `V` are cleared with the volatile writes of
+    /// `oxicrypt-zeroize`, as on drop (SP 800-90A §9.4).
     pub fn uninstantiate(&mut self) {
-        self.key = [0u8; MAX_KEY_LEN];
-        self.v = [0u8; OUTLEN];
+        oxicrypt_zeroize::zeroize(&mut self.key);
+        oxicrypt_zeroize::zeroize(&mut self.v);
         self.reseed_counter = 0;
         self.instantiated = false;
     }
@@ -902,21 +968,32 @@ mod tests {
     }
 
     /// Every combined input length the public guard accepts must be
-    /// processed, not panicked on. Covers the whole `0..=MAX_DF_INPUT`
-    /// band on all three entry points that reach `block_cipher_df`.
+    /// processed, not panicked on. Covers the band from the minimum
+    /// entropy input (and, for instantiate, nonce) up to `MAX_DF_INPUT`
+    /// on all three entry points that reach `block_cipher_df`, and the
+    /// whole `0..=MAX_DF_INPUT` band for generate.
     #[test]
     fn df_accepts_every_length_up_to_max_df_input() {
         crate::test_support::start_module();
         let material = [0x5au8; MAX_DF_INPUT];
+        let nonce = [0xa5u8; 16];
         for len in 0..=MAX_DF_INPUT {
-            // instantiate_df: entropy || nonce || personalization
+            // instantiate_df: entropy || nonce || personalization, with
+            // the AES-256 minimums of 32 and 16 bytes.
             let mut a = CtrDrbgAes256::new();
-            let r = a.instantiate_df_internal(&material[..len], &[], &[]);
-            assert!(r.is_ok(), "instantiate_df rejected len={len}");
+            if len >= 32 + 16 {
+                let r = a.instantiate_df_internal(&material[..len - 16], &nonce, &[]);
+                assert!(r.is_ok(), "instantiate_df rejected len={len}");
+            } else {
+                a.instantiate_df_internal(&material[..32], &nonce, &[])
+                    .unwrap();
+            }
 
             // reseed_df: entropy || additional_input
-            let r = a.reseed_df(&material[..len], &[]);
-            assert!(r.is_ok(), "reseed_df rejected len={len}");
+            if len >= 32 {
+                let r = a.reseed_df(&material[..len], &[]);
+                assert!(r.is_ok(), "reseed_df rejected len={len}");
+            }
 
             // generate_df: additional_input alone
             let mut out = [0u8; 32];
@@ -933,9 +1010,13 @@ mod tests {
         let material = [0x5au8; MAX_DF_INPUT + 1];
 
         let mut a = CtrDrbgAes256::new();
-        assert!(a.instantiate_df_internal(&material, &[], &[]).is_err());
+        assert_eq!(
+            a.instantiate_df_internal(&material[..MAX_DF_INPUT + 1 - 16], &[0x22u8; 16], &[]),
+            Err(Error::InvalidInput)
+        );
 
-        a.instantiate_df_internal(&[0x11u8; 48], &[], &[]).unwrap();
+        a.instantiate_df_internal(&[0x11u8; 48], &[0x22u8; 16], &[])
+            .unwrap();
         assert_eq!(a.reseed_df(&material, &[]), Err(DrbgError::InputTooLong));
 
         let mut out = [0u8; 32];
@@ -943,5 +1024,257 @@ mod tests {
             a.generate_df(Some(&material), &mut out),
             Err(DrbgError::InputTooLong)
         );
+    }
+
+    /// Instantiates `drbg` (`use df`) with `entropy_len` bytes of
+    /// entropy input and `nonce_len` bytes of nonce.
+    fn instantiate_df_with<F: CipherFactory>(
+        drbg: &mut CtrDrbg<F>,
+        entropy_len: usize,
+        nonce_len: usize,
+    ) -> Result<(), Error> {
+        let material = [0x5au8; 64];
+        drbg.instantiate_df_internal(&material[..entropy_len], &material[..nonce_len], &[])
+    }
+
+    /// SP 800-90A Rev. 1 Table 3 `use df` `min_length` (`min_entropy`
+    /// bytes, the security strength) and the module's nonce floor
+    /// (`min_nonce` bytes, half the strength; see `MIN_NONCE_LEN`), each checked one byte below, exactly at,
+    /// and with an empty input.
+    fn assert_df_minimums_enforced<F: CipherFactory>(min_entropy: usize, min_nonce: usize) {
+        crate::test_support::start_module();
+
+        // Instantiate: entropy input.
+        let mut d = CtrDrbg::<F>::new();
+        assert_eq!(
+            instantiate_df_with(&mut d, min_entropy - 1, min_nonce),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(
+            instantiate_df_with(&mut d, 0, min_nonce),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_df_with(&mut d, min_entropy, min_nonce), Ok(()));
+
+        // Instantiate: nonce.
+        let mut d = CtrDrbg::<F>::new();
+        assert_eq!(
+            instantiate_df_with(&mut d, min_entropy, min_nonce - 1),
+            Err(Error::NonceTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(
+            instantiate_df_with(&mut d, min_entropy, 0),
+            Err(Error::NonceTooShort)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(instantiate_df_with(&mut d, min_entropy, min_nonce), Ok(()));
+
+        // Reseed, directly and through prediction-resistance generate.
+        let entropy = [0x6bu8; 32];
+        assert_eq!(
+            d.reseed_df(&entropy[..min_entropy - 1], &[]),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(d.reseed_df(&[], &[]), Err(DrbgError::EntropyInputTooShort));
+        assert_eq!(d.reseed_df(&entropy[..min_entropy], &[]), Ok(()));
+        let mut out = [0u8; 16];
+        assert_eq!(
+            d.generate_df_pr(&entropy[..min_entropy - 1], &[], &mut out),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.generate_df_pr(&entropy[..min_entropy], &[], &mut out),
+            Ok(())
+        );
+    }
+
+    /// The `use df` counterpart of the Hash_DRBG and HMAC_DRBG
+    /// `assert_extras_and_precedence`: extras never count toward a
+    /// minimum, over-long keeps its error, `Uninstantiated` is reported
+    /// first on reseed, entropy is reported before nonce, and an
+    /// instantiate refused by a length check leaves the DRBG
+    /// uninstantiated.
+    fn assert_df_extras_and_precedence<F: CipherFactory>(min_entropy: usize, min_nonce: usize) {
+        crate::test_support::start_module();
+        let material = [0x5au8; 64];
+        let extra = [0x7cu8; 64];
+        let long = [0x3cu8; MAX_DF_INPUT + 1];
+        let mut out = [0u8; 16];
+        let (e, n) = (min_entropy, min_nonce);
+
+        let mut d = CtrDrbg::<F>::new();
+        assert_eq!(d.reseed_df(&[], &[]), Err(DrbgError::Uninstantiated));
+        assert_eq!(
+            d.reseed_df(&material[..e], &[]),
+            Err(DrbgError::Uninstantiated)
+        );
+        assert_eq!(
+            d.instantiate_df_internal(&material[..e - 1], &material[..n], &extra),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.instantiate_df_internal(&material[..e], &material[..n - 1], &extra),
+            Err(Error::NonceTooShort)
+        );
+        assert_eq!(
+            d.instantiate_df_internal(&material[..e - 1], &material[..n - 1], &[]),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.instantiate_df_internal(
+                &material[..e - 1],
+                &material[..n],
+                &long[..MAX_DF_INPUT + 1 - (e - 1) - n]
+            ),
+            Err(Error::InvalidInput)
+        );
+        assert_eq!(
+            d.instantiate_df_internal(
+                &material[..e],
+                &material[..n - 1],
+                &long[..MAX_DF_INPUT + 1 - e - (n - 1)]
+            ),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+
+        d.instantiate_df_internal(&material[..e], &material[..n], &extra)
+            .unwrap();
+        assert_eq!(
+            d.reseed_df(&material[..e - 1], &extra),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.generate_df_pr(&material[..e - 1], &extra, &mut out),
+            Err(DrbgError::EntropyInputTooShort)
+        );
+        assert_eq!(
+            d.reseed_df(&material[..e - 1], &long[..MAX_DF_INPUT + 1 - (e - 1)]),
+            Err(DrbgError::InputTooLong)
+        );
+
+        // A refused re-instantiate discards the earlier instantiation
+        // and erases its working state.
+        assert_eq!(
+            d.instantiate_df_internal(&material[..e - 1], &material[..n], &[]),
+            Err(Error::EntropyInputTooShort)
+        );
+        assert!(!d.instantiated);
+        assert!(d.key.iter().all(|&b| b == 0));
+        assert!(d.v.iter().all(|&b| b == 0));
+        assert_eq!(d.reseed_counter, 0);
+        assert_eq!(
+            d.generate_df(None, &mut out),
+            Err(DrbgError::Uninstantiated)
+        );
+        d.instantiate_df_internal(&material[..e], &material[..n], &[])
+            .unwrap();
+        assert_eq!(
+            d.instantiate_df_internal(&material[..e], &material[..n], &long),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+
+        // The same holds for a refused `no df` re-instantiate.
+        let mut d = CtrDrbg::<F>::new();
+        d.instantiate_df_internal(&material[..e], &material[..n], &[])
+            .unwrap();
+        assert_eq!(
+            d.instantiate_no_df_internal(&material[..F::SEED_LEN - 1]),
+            Err(Error::InvalidInput)
+        );
+        assert!(!d.instantiated);
+        assert_eq!(
+            d.generate_no_df(None, &mut out),
+            Err(DrbgError::Uninstantiated)
+        );
+    }
+
+    /// Formats `value` into a fixed buffer; this crate is `no_std`
+    /// without `alloc`.
+    fn display_into<'a>(value: &dyn core::fmt::Display, buf: &'a mut [u8; 256]) -> &'a str {
+        struct Writer<'b> {
+            buf: &'b mut [u8; 256],
+            len: usize,
+        }
+        impl core::fmt::Write for Writer<'_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let end = self.len + s.len();
+                if end > self.buf.len() {
+                    return Err(core::fmt::Error);
+                }
+                self.buf[self.len..end].copy_from_slice(s.as_bytes());
+                self.len = end;
+                Ok(())
+            }
+        }
+        let mut w = Writer { buf, len: 0 };
+        core::fmt::write(&mut w, format_args!("{value}")).unwrap();
+        let len = w.len;
+        core::str::from_utf8(&buf[..len]).unwrap()
+    }
+
+    #[test]
+    fn drbg_error_entropy_too_short_display_names_the_minimum() {
+        let mut a = [0u8; 256];
+        let mut b = [0u8; 256];
+        let msg = display_into(&DrbgError::EntropyInputTooShort, &mut a);
+        assert!(
+            msg.contains("entropy input is shorter than the minimum"),
+            "{msg}"
+        );
+        assert_ne!(msg, display_into(&DrbgError::InputTooLong, &mut b));
+    }
+
+    #[test]
+    fn ctr_drbg_aes128_df_enforces_minimum_entropy_and_nonce() {
+        assert_df_minimums_enforced::<Aes128Factory>(16, 8);
+        assert_df_extras_and_precedence::<Aes128Factory>(16, 8);
+    }
+
+    #[test]
+    fn ctr_drbg_aes192_df_enforces_minimum_entropy_and_nonce() {
+        assert_df_minimums_enforced::<Aes192Factory>(24, 12);
+        assert_df_extras_and_precedence::<Aes192Factory>(24, 12);
+    }
+
+    #[test]
+    fn ctr_drbg_aes256_df_enforces_minimum_entropy_and_nonce() {
+        assert_df_minimums_enforced::<Aes256Factory>(32, 16);
+        assert_df_extras_and_precedence::<Aes256Factory>(32, 16);
+    }
+
+    /// `no df` keeps Table 3's `min_length = max_length = seedlen`:
+    /// one byte short, one byte long and empty are refused, exactly
+    /// `seedlen` is accepted, on instantiate and reseed.
+    fn assert_no_df_seedlen_enforced<F: CipherFactory>(seedlen: usize) {
+        crate::test_support::start_module();
+        let material = [0x5au8; 49];
+        let mut d = CtrDrbg::<F>::new();
+        for len in [0, seedlen - 1, seedlen + 1] {
+            assert_eq!(
+                d.instantiate_no_df_internal(&material[..len]),
+                Err(Error::InvalidInput)
+            );
+            assert!(!d.instantiated);
+        }
+        assert_eq!(d.instantiate_no_df_internal(&material[..seedlen]), Ok(()));
+        for len in [0, seedlen - 1, seedlen + 1] {
+            assert_eq!(
+                d.reseed_no_df(&material[..len]),
+                Err(DrbgError::InvalidSeedLength)
+            );
+        }
+        assert_eq!(d.reseed_no_df(&material[..seedlen]), Ok(()));
+    }
+
+    #[test]
+    fn ctr_drbg_no_df_requires_exactly_seedlen() {
+        assert_no_df_seedlen_enforced::<Aes128Factory>(32);
+        assert_no_df_seedlen_enforced::<Aes192Factory>(40);
+        assert_no_df_seedlen_enforced::<Aes256Factory>(48);
     }
 }

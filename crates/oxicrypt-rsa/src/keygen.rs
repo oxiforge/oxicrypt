@@ -733,7 +733,7 @@ mod tests {
         limbs[0] = 7;
         limbs[LIMBS1024 - 1] = 1 << 63;
         let n_fake = U1024 { limbs };
-        let mut drbg = make_drbg(b"mr-smoke-test-seed-0000");
+        let mut drbg = make_drbg(b"oxicrypt-mr-smoke-test-seed-0000");
         let _ = miller_rabin(&n_fake, 2, &mut drbg);
     }
 

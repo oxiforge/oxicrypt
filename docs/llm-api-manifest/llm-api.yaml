@@ -508,6 +508,10 @@ types:
         description: Service is not permitted under the active algorithm profile.
       - name: NotImplemented
         description: Algorithm exists in Service enum but implementation is not yet available (stub).
+      - name: EntropyInputTooShort
+        description: A DRBG instantiate was given an entropy input shorter than min_length for the instantiated security strength (SP 800-90A Rev. 1 Tables 2 and 3).
+      - name: NonceTooShort
+        description: A DRBG instantiate was given a nonce shorter than security_strength/2 bits, the module's nonce floor (permitted by SP 800-90A Rev. 1 section 9.1 step 8; a nonce of that length can meet the entropy condition of section 8.6.7, and a shorter one meeting only its uniqueness condition is refused).
 
   - name: AlgorithmProfile
     module: oxicrypt-module
@@ -594,6 +598,10 @@ types:
         description: AAD length exceeds the mode's allowed maximum.
       - name: IntegrityUnverified
         description: The module was initialised without the pre-operational software integrity test, so it was never verified against its signature.
+      - name: EntropyInputTooShort
+        description: A DRBG instantiate or reseed was given an entropy input shorter than min_length for the instantiated security strength.
+      - name: NonceTooShort
+        description: A DRBG instantiate was given a nonce shorter than security_strength/2 bits.
       - name: Internal
         description: Catch-all for should-never-happen cases.
 
@@ -693,6 +701,8 @@ types:
         description: Entropy or additional input exceeds maximum.
       - name: InvalidSeedLength
         description: Seed material wrong length for no-df instantiate.
+      - name: EntropyInputTooShort
+        description: Reseed entropy input is shorter than min_length for the instantiated security strength (SP 800-90A Rev. 1 Tables 2 and 3).
       - name: RequestTooLong
         description: Requested output exceeds single-call maximum.
       - name: Module
@@ -1392,7 +1402,7 @@ types:
   - name: OxiHashDrbgSha384
     kind: opaque
     module: oxicrypt-ffi
-    description: Opaque Hash_DRBG-SHA-384 handle; per SP 800-90A Table 2, security strength 192 bits.
+    description: Opaque Hash_DRBG-SHA-384 handle; instantiated at security strength 256 bits (SP 800-57 Part 1, SP 800-90A Table 2).
 
   - name: OxiHashDrbgSha512
     kind: opaque
@@ -4514,20 +4524,20 @@ functions:
     description: Instantiate CTR_DRBG with AES-256 using the derivation function.
     signature: >-
       pub fn instantiate_df(&mut self, entropy: &[u8], nonce: &[u8],
-      personalization: &[u8]) -> Result<(), DrbgError>
+      personalization: &[u8]) -> Result<(), Error>
     parameters:
       - name: entropy
         type: "&[u8]"
         direction: in
         description: Entropy input from a noise source.
         constraints:
-          valid_range: "0..=192 bytes (MAX_DF_INPUT shared across all inputs)"
+          valid_range: "32..=192 bytes (at least the 256-bit security strength; MAX_DF_INPUT shared across all inputs)"
       - name: nonce
         type: "&[u8]"
         direction: in
-        description: Nonce; per SP 800-90A must provide at least security_strength/2 bits of entropy or be a non-repeating value.
+        description: "Nonce of at least security_strength/2 bits, a length floor SP 800-90A section 9.1 step 8 permits that refuses a shorter value meeting only the uniqueness condition of section 8.6.7."
         constraints:
-          valid_range: "0..=192 bytes"
+          valid_range: "16..=192 bytes"
       - name: personalization
         type: "&[u8]"
         direction: in
@@ -4536,11 +4546,15 @@ functions:
           valid_range: "0..=192 bytes"
           nullability: required
     returns:
-      type: "Result<(), DrbgError>"
+      type: "Result<(), Error>"
       description: Ok if instantiation succeeds.
       error_variants:
-        - name: InputTooLong
+        - name: InvalidInput
           condition: "entropy.len() + nonce.len() + personalization.len() > 192"
+        - name: EntropyInputTooShort
+          condition: "entropy.len() < 32"
+        - name: NonceTooShort
+          condition: "nonce.len() < 16"
     preconditions:
       - description: DRBG must be in uninstantiated state (new or after uninstantiate).
     postconditions:
@@ -13176,6 +13190,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -13222,6 +13240,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
         - name: NotOperational
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
@@ -13332,7 +13352,7 @@ functions:
   - name: oxi_hmac_drbg_sha384_instantiate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3); per Table 2 at strength 192, entropy >= 192 bits and nonce >= 96 bits, combined-length ceiling 768 bytes (hash-independent).
+    description: HMAC_DRBG-SHA-384 Instantiate (SP 800-90A §10.1.2.3); instantiated at strength 256 (SP 800-57 Part 1), so entropy >= 256 bits (Table 2 min_length) and nonce >= 128 bits (the module's nonce floor), combined-length ceiling 768 bytes (hash-independent).
     signature: >-
       int oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *handle,
       const uint8_t *entropy, size_t entropy_len,
@@ -13371,6 +13391,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -13417,6 +13441,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
         - name: NotOperational
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
@@ -13563,6 +13589,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -13609,6 +13639,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
         - name: NotOperational
           condition: The module has left Operational since the handle was instantiated (or was never started).
         - name: Uninstantiated
@@ -13758,6 +13790,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -13804,6 +13840,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -13907,7 +13945,7 @@ functions:
   - name: oxi_hash_drbg_sha384_instantiate
     module: oxicrypt-ffi
     family: ffi-drbg-lifecycle
-    description: Hash_DRBG-SHA-384 Instantiate; per Table 2 at strength 192, entropy >= 192 bits and nonce >= 96 bits.
+    description: Hash_DRBG-SHA-384 Instantiate; instantiated at strength 256 (SP 800-57 Part 1), so entropy >= 256 bits (Table 2 min_length) and nonce >= 128 bits (the module's nonce floor).
     signature: >-
       int oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *handle,
       const uint8_t *entropy, size_t entropy_len,
@@ -13946,6 +13984,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -13992,6 +14034,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -14134,6 +14178,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -14180,6 +14228,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 2 min_length). Personalization or additional input does not count toward it."
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -14361,6 +14411,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 16 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 8 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -14440,6 +14494,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 16 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -14663,6 +14719,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 24 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 12 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -14742,6 +14802,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 24 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -14965,6 +15027,10 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
+        - name: NonceTooShort
+          condition: "nonce_len < 16 (half the security strength): the module's nonce floor."
         - name: InvalidInput
           condition: An argument was not a valid domain element, such as a scalar out of range or a point not on the curve.
         - name: NotOperational
@@ -15044,6 +15110,8 @@ functions:
       type: int
       description: "OxiResult discriminant: Ok on success, otherwise one of the error variants below."
       error_variants:
+        - name: EntropyInputTooShort
+          condition: "entropy_len < 32 (the security strength; SP 800-90A Rev. 1 Table 3 min_length). Personalization or additional input does not count toward it."
         - name: Uninstantiated
           condition: generate or reseed was called before instantiate succeeded on this handle.
         - name: InvalidInput
@@ -17582,6 +17650,14 @@ error_types:
         description: Caller provided invalid parameters.
         recoverable: true
         user_action: Check parameter constraints and retry.
+      - name: EntropyInputTooShort
+        description: A DRBG instantiate was given an entropy input shorter than min_length for the instantiated security strength.
+        recoverable: true
+        user_action: Supply at least security_strength bits of entropy input (32 bytes for Hash_DRBG and HMAC_DRBG, the AES key length for CTR_DRBG with a derivation function).
+      - name: NonceTooShort
+        description: A DRBG instantiate was given a nonce shorter than security_strength/2 bits.
+        recoverable: true
+        user_action: Supply a nonce of at least half the security strength (16 bytes for Hash_DRBG and HMAC_DRBG, half the AES key length for CTR_DRBG with a derivation function).
 
   - name: ModeError
     module: oxicrypt-aes
@@ -17620,6 +17696,10 @@ error_types:
         description: Requested more than 65536 bytes in one call.
         recoverable: true
         user_action: Split into multiple generate calls.
+      - name: EntropyInputTooShort
+        description: Reseed entropy input is shorter than min_length for the instantiated security strength.
+        recoverable: true
+        user_action: Reseed with at least security_strength bits of entropy input.
       - name: Module
         description: Module state error (wraps oxicrypt_module::Error).
         recoverable: false
@@ -17788,6 +17868,16 @@ error_types:
         description: The module was initialised without the pre-operational software integrity test in its inventory, so it was never verified against its signature rather than having failed a test.
         recoverable: false
         user_action: Initialise the module with an inventory that includes the integrity test, and run a signed artifact.
+      - name: EntropyInputTooShort
+        value: 29
+        description: A DRBG instantiate or reseed was given an entropy input shorter than min_length for the instantiated security strength (SP 800-90A Rev. 1 Tables 2 and 3).
+        recoverable: true
+        user_action: Retry with at least security_strength bits of entropy input; an over-long input returns InvalidInput instead, as does CTR_DRBG seed material without a derivation function that is not exactly seedlen bytes.
+      - name: NonceTooShort
+        value: 30
+        description: A DRBG instantiate was given a nonce shorter than security_strength/2 bits, the module's nonce floor (permitted by SP 800-90A Rev. 1 section 9.1 step 8; a nonce of that length can meet the entropy condition of section 8.6.7, and a shorter one meeting only its uniqueness condition is refused).
+        recoverable: true
+        user_action: Retry with a nonce of at least half the security strength.
       - name: Internal
         value: 255
         description: A should-never-happen case reached the catch-all arm.

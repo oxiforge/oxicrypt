@@ -28,10 +28,28 @@
 //!   run as part of the power-up KAT set; failure returns
 //!   `SelfTestFailure` to `oxicrypt_module`.
 //! - **Instantiate / reseed input checks**: the `no df` path requires
-//!   seed material of exactly `seedlen` bytes, and the `use df` path
-//!   rejects concatenated input longer than the derivation-function
-//!   buffer. Minimum entropy length is the caller's obligation and is
-//!   not checked here.
+//!   seed material of exactly `seedlen` bytes (SP 800-90A Table 3
+//!   `min_length = max_length = seedlen`), and the `use df`, Hash_DRBG
+//!   and HMAC_DRBG paths reject concatenated input longer than their
+//!   buffers. Those three paths also refuse, on instantiate and
+//!   reseed, an entropy input shorter than the instantiated security
+//!   strength (Tables 2 and 3 `min_length`), and on instantiate a
+//!   nonce shorter than half of it, with `Error::EntropyInputTooShort`,
+//!   `Error::NonceTooShort` and [`DrbgError::EntropyInputTooShort`].
+//!   Personalization and additional input never count toward either
+//!   minimum, an over-long input keeps its over-long error, and an
+//!   instantiate refused by a length check leaves the DRBG
+//!   uninstantiated. The nonce floor is the module's own check, which
+//!   §9.1 step 8 permits: a nonce of that length can meet §8.6.7(a), at least
+//!   `security_strength / 2` bits of entropy, and a shorter value that
+//!   would meet only §8.6.7(b), repeating no more often than a random
+//!   string of that length, is refused. The instantiated security
+//!   strength is the highest SP 800-57 Part 1 assigns the primitive:
+//!   256 bits for every Hash_DRBG and HMAC_DRBG variant (32-byte
+//!   entropy input, 16-byte nonce) and the AES key size for CTR_DRBG
+//!   (16/8, 24/12 and 32/16 bytes). The checks bound length only; that
+//!   the input carries that much entropy remains the caller's
+//!   obligation.
 //!
 //! # Sensitive security parameters
 //!
