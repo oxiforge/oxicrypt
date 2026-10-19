@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DrbgError::EntropyInputTooShort` variant, which breaks exhaustive matches on `DrbgError`, and
   reach the C ABI as `OxiResult::EntropyInputTooShort` (29) and `OxiResult::NonceTooShort` (30).
   An instantiate refused by a length check leaves the DRBG uninstantiated. (#288)
+- The `oxicrypt` crate gives a Rust program the module through its separately built and signed
+  shared library, without compiling any module crate into the program. It links `liboxicrypt_ffi`
+  by exact file name, never the static archive; requires the library's verifying-key fingerprint,
+  or an explicit opt-out, at build time; checks the library's version, integrity indicator,
+  fingerprint and active profile at initialisation; and wraps SHA-384, HKDF-SHA384, AES-256-GCM,
+  HMAC_DRBG-SHA-256, ML-DSA-87 and ML-KEM-1024 with fixed-size types, single-use seeds and secrets
+  zeroed on drop. The crate is outside the cryptographic boundary.
 - The integrity signer signs Windows DLLs built with the GNU toolchain, reading the module's
   statics from the DWARF in the DLL when no program database of the name the DLL records is beside
   it (`NoDwarf`, `DwarfForm`, `DuplicateStatic`, `StaticOutsideImage`, `StaticUnlocated`,

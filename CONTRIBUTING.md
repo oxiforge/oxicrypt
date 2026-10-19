@@ -76,12 +76,19 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 All of these must be clean before opening a PR. They run on your local machine until CI is in place.
 
+The `oxicrypt` crate links a signed shared library, and its build script refuses to build it without
+that library's verifying-key fingerprint. Run the workspace commands with `OXICRYPT_LIB_OPTIONAL=1`
+exported, which builds the crate without linking the library and still runs its unit tests (the
+pre-push hook and CI do the same). Its linked tests need a library built and signed for the run, so
+they have their own row.
+
 | Gate | Command |
 |---|---|
-| Build | `cargo build --release --workspace` |
-| Tests | `cargo test --workspace --all-features` |
-| Clippy (strict) | `cargo clippy --all-targets --all-features --release -- -D warnings` |
-| Rustdocs | `cargo doc --no-deps --workspace` (no warnings) |
+| Build | `OXICRYPT_LIB_OPTIONAL=1 cargo build --release --workspace` |
+| Tests | `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace --all-features` |
+| Clippy (strict) | `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --all-targets --all-features --release -- -D warnings` |
+| Rustdocs | `OXICRYPT_LIB_OPTIONAL=1 cargo doc --no-deps --workspace` (no warnings) |
+| The `oxicrypt` crate (when it, a crate under `crates/`, the signer or the signing scripts change) | `d=$(mktemp -d); scripts/bindings-fixture.sh "$d"; . "$d/env.sh"`, then `cargo test -p oxicrypt` and `env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 cargo test -p oxicrypt`; delete `$d`, which holds the run's private keys |
 | Doc-sync hook | Activated via `git config core.hooksPath scripts/git-hooks` (one-time setup above) |
 | Integrity-sign (harness rebuilds) | build with `OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub`, then `./target/release/oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key ./target/release/acvp-harness`, with a pair from `oxicrypt-integrity-sign --keygen <dir>` outside the tree |
 
@@ -93,7 +100,7 @@ If a gate fails, fix the underlying issue rather than bypassing. The gate is the
 
 None of it, unless you ask.
 
-The pre-push hook always runs fmt, Clippy over all targets, **doctests**, the **release construction guard** and the release build, plus the containment, internal-dependency and LAMA checks — about a minute against a warm target directory. Those catch the overwhelming majority of mistakes before a push, which is why a local hook exists at all.
+The pre-push hook always runs fmt, Clippy over all targets, **doctests**, the **release construction guard** and the release build, plus the containment, internal-dependency and LAMA checks, and builds a signed fixture library for the `oxicrypt` crate's tests when `scripts/gate-scope.sh` says the push needs them — about a minute against a warm target directory. Those catch the overwhelming majority of mistakes before a push, which is why a local hook exists at all.
 
 `cargo nextest run --workspace` is **opt-in** as of 2026-08-10. CI is the gate of record: it runs on every pull request and on `main`, it slices the suite four ways, it isolates `oxicrypt-maxwell` in its own job, and it carries the feature-matrix configurations this hook structurally cannot — the hook tests default features only. It also cannot be bypassed with `--no-verify`.
 
@@ -133,8 +140,8 @@ tests-pass evidence on a PR touching the estimators.
 
 The FIPS 140-3 Security Policy is withheld from this repository and held privately;
 [`docs/security-policy/README.md`](docs/security-policy/README.md) explains why and how to request
-access. **You need it for nothing.** `cargo test --workspace` passes without it and without any
-configuration: the five `doc-guard` tests that assert the document's stated numerals against the
+access. **You need it for nothing.** `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace` (see the gate
+stack above) passes without it and without any other configuration: the five `doc-guard` tests that assert the document's stated numerals against the
 workspace skip, and `doc_guard::tests::security_policy_is_provisioned` passes with a note saying so.
 
 That gate only *fails* if your checkout claims to have the document — `$OXICRYPT_SECURITY_POLICY` is
@@ -268,7 +275,9 @@ Releases are deliberate, separate acts. **Every version literal is bumped by `sc
 4. Tag the merge commit `vX.Y.Z` — annotated **and signed** — then `git push origin vX.Y.Z`.
 5. Create the GitHub release from the tag.
 
-Release tags are the publishing trigger: 29 of the workspace's 36 members carry `publish = true` and go to crates.io. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
+Release tags are the publishing trigger: 32 of the workspace's 42 members carry `publish = true` and go to crates.io. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
+
+`cargo publish` verifies each crate by building its packaged copy. The `oxicrypt` crate's build script refuses to build without a signed library's fingerprint, so publish it with `OXICRYPT_LIB_OPTIONAL=1` set, which lets the verification build it without linking a library (`OXICRYPT_LIB_OPTIONAL=1 cargo publish -p oxicrypt`); without it the verification fails with the build script's refusal.
 
 ### Tag scheme summary
 

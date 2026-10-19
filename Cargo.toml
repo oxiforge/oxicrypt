@@ -34,6 +34,7 @@ members = [
     "acvp-harness",
     "esv-harness",
     "oxi",
+    "oxicrypt",
     "benches",
     "tools/ct-validation",
     "tools/doc-guard",

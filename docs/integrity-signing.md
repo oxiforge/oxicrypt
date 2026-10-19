@@ -690,6 +690,43 @@ To check whose key a downloaded artifact trusts, compare the fingerprint
 `oxi --integrity` or `oxicrypt-integrity-sign --show` reports with the release
 key's fingerprint.
 
+## From Rust, through the shared library
+
+A Rust program can load the module as the signed shared library instead of
+compiling it in, through the `oxicrypt` crate. The library is then the module:
+it runs its integrity test on its own image when it is initialised, whatever
+program loaded it, and the program is never signed. Build and sign the library
+as above, then build the program against it:
+
+```bash
+oxicrypt-integrity-sign --keygen <dir>                      # once, outside any source tree
+OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub cargo build --release -p oxicrypt-ffi
+oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key target/release/liboxicrypt_ffi.so
+oxicrypt-integrity-sign --show target/release/liboxicrypt_ffi.so   # prints the fingerprint
+
+OXICRYPT_LIB_DIR=<directory holding the signed library> \
+OXICRYPT_LIB_FINGERPRINT=sha256:<the fingerprint> cargo build    # your program
+```
+
+The crate's build script links the shared library by its exact file name,
+never the static archive, and refuses to link one without
+`OXICRYPT_LIB_FINGERPRINT` or `OXICRYPT_LIB_UNPINNED=1`. `Module::init` refuses
+a library of another version, one that failed its integrity test, and one that
+embeds another verifying key than the pinned one. Set the program's run-time
+search path for the library in its own build, as the crate documentation
+shows; the crate cannot set it for a dependent program.
+
+Two probes confirm the program holds no module code of its own:
+`oxicrypt-integrity-sign --show <program>` reports no integrity slot, and
+`cargo tree -i oxicrypt-module` on the program's dependency graph prints
+nothing.
+
+A `cargo test` binary of such a program needs no stub: it loads the signed
+library like any other program. `scripts/bindings-fixture.sh <empty dir>`
+builds and signs a library with a key pair generated for the run, and a second
+one with another key pair, and prints the variables a test run sets; the
+crate's own tests run against them.
+
 ## In your own test binaries
 
 A `cargo test` binary is never signed, so the real integrity test cannot pass

@@ -22,6 +22,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # The `oxicrypt` crate links a signed shared library and refuses to link one
+  # without a fingerprint pin. Workspace jobs build it unlinked; its unit tests,
+  # which pin it against the C header and status codes, still run. The
+  # `bindings` job below runs its linked tests against a signed library.
+  OXICRYPT_LIB_OPTIONAL: "1"
 
 jobs:
   # Which optional gates does this change need? Decided by
@@ -42,6 +47,7 @@ jobs:
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
       maxwell: ${{ steps.scope.outputs.maxwell }}
+      bindings: ${{ steps.scope.outputs.bindings }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -211,6 +217,42 @@ jobs:
         env:
           OXICRYPT_EA_DATA: ${{ github.workspace }}/ea-reference/bin
           OXICRYPT_SECURITY_POLICY_OPTIONAL: "1"
+
+  # The `oxicrypt` crate against a library built and signed with a key this
+  # job generates. Gated on scripts/gate-scope.sh's `bindings` key: the crate,
+  # the C library and its header, the signer, the signing and fixture scripts,
+  # the manifest the library embeds and the build configuration. The fixture
+  # build has its own target directory, so its key-embedding release build of
+  # oxicrypt-ffi does not share outputs with any other build.
+  bindings:
+    name: oxicrypt crate (signed library)
+    runs-on: ubuntu-latest
+    needs: scope
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and sign the fixture, then lint and test the crate
+        run: |
+          # Skip only on an explicit `false`: a missing or unexpected value
+          # runs the job.
+          if [ "${{ needs.scope.outputs.bindings }}" = "false" ]; then
+            echo "nothing the oxicrypt crate's linked tests depend on changed — skipping (scripts/gate-scope.sh)"
+            exit 0
+          fi
+          set -euo pipefail
+          # The provisioning test must be able to fail here.
+          unset OXICRYPT_LIB_OPTIONAL
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/bindings-target"
+          ./scripts/bindings-fixture.sh "$RUNNER_TEMP/bindings-fixture"
+          . "$RUNNER_TEMP/bindings-fixture/env.sh"
+          cargo clippy -p oxicrypt --all-targets -- -D warnings
+          env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 \
+            cargo clippy -p oxicrypt --all-targets -- -D warnings
+          cargo test -p oxicrypt
+          # Unpinned, the second-key library is accepted rather than refused.
+          env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 cargo test -p oxicrypt
 
   # Doctests are not partitioned: nextest does not run them at all, so they need
   # their own job rather than a fifth copy inside each shard. They need neither

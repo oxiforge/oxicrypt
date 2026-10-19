@@ -1,0 +1,39 @@
+[package]
+name = "oxicrypt"
+description = "Rust interface to the separately built and signed oxicrypt shared library (liboxicrypt_ffi). Outside the cryptographic boundary and not the module itself: holds no cryptographic code and depends on no oxicrypt-* crate."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["cryptography", "api-bindings"]
+publish.workspace = true
+links = "oxicrypt_ffi"
+build = "build.rs"
+
+[lints]
+workspace = true
+
+# No [dependencies]: the crate reaches the module only through the shared
+# library the loader binds. The dev-dependencies below are vector data and the
+# algorithm crates whose constants the pinning tests compare against; none of
+# them reaches a consumer's build.
+[dev-dependencies]
+oxicrypt-test-vectors = { path = "../crates/oxicrypt-test-vectors" }
+oxicrypt-sha = { path = "../crates/oxicrypt-sha" }
+oxicrypt-drbg = { path = "../crates/oxicrypt-drbg" }
+oxicrypt-ml-dsa = { path = "../crates/oxicrypt-ml-dsa" }
+oxicrypt-ml-kem = { path = "../crates/oxicrypt-ml-kem" }
+
+[[example]]
+name = "probe"
+
+[[example]]
+name = "quickstart"
+
+[package.metadata.lama]
+manifest = "https://raw.githubusercontent.com/oxiforge/oxicrypt/v0.25.0/docs/llm-api-manifest/llm-api.yaml"
+spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"

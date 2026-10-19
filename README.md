@@ -194,13 +194,15 @@ tools/integrity-probe-so/  The same probe as a shared object, so a library verif
 tools/quickstarts/      Compiles the quickstart examples carried in the LAMA manifest
 esv-harness/            ESV protocol client for SP 800-90B entropy-source validation submissions
 oxi/                    Command-line interface (crate `oxicrypt-cli`) — hash, HMAC, encrypt, generate random bytes
+oxicrypt/               Rust interface (crate `oxicrypt`) to the signed C library, for programs that load the module rather than compile it in
 xtask/                  Build automation: the one implementation of build-then-sign
 ```
 
 `AGENTS.md` states which crates are inside the cryptographic boundary, and
 `tools/doc-guard` checks that statement against the workspace: every crate
 under `crates/` except `oxicrypt-ffi`, the C ABI, and `oxicrypt-maxwell`, the
-entropy-assessment tool. The ACVP harness and tools are outside the boundary.
+entropy-assessment tool. The ACVP harness, the tools and the `oxicrypt` crate
+are outside the boundary.
 
 ### Design principles
 
@@ -564,6 +566,16 @@ the full `OxiResult` discriminant mapping live in
 The C ABI is hand-aligned with the Rust public API surface; for
 algorithmic specification consult the upstream crate's rustdoc and
 the security-policy `§4.8 C ABI` row.
+
+## From Rust, through the C library (`oxicrypt`)
+
+A Rust program can use the module without compiling it in: the `oxicrypt` crate
+links the program to a signed `liboxicrypt_ffi`, which tests its own integrity
+when it is initialised, so the program itself is never signed. The crate holds
+no cryptographic code and depends on no `oxicrypt-*` crate. See
+[`oxicrypt/README.md`](oxicrypt/README.md) for its use and
+[`docs/integrity-signing.md`](docs/integrity-signing.md#from-rust-through-the-shared-library)
+for building and signing the library it loads.
 
 ## `oxi` CLI
 

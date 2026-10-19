@@ -359,6 +359,11 @@ modules:
     no_std: false
     depends_on:
       - oxicrypt-integrity
+  - name: oxicrypt
+    description: "Out-of-boundary Rust interface to the separately built and signed shared library liboxicrypt_ffi, not the module itself, which holds no cryptographic code, depends on no oxicrypt-* crate, links the library by exact file name (on Apple targets from a directory that must not also hold the static archive), requires its verifying-key fingerprint or an explicit opt-out at build time, and checks the library's version, integrity indicator, fingerprint and active profile at initialisation."
+    no_std: false
+    depends_on: []
+
 
 
 
@@ -1902,6 +1907,307 @@ types:
     module: oxicrypt-integrity-sign
     kind: opaque
     description: An ML-DSA-87 signing key — the 32-byte key-generation seed, the private key it derives and its public half — read from a 32-byte seed file or derived from a seed an approved DRBG draws, checked by a pairwise consistency test, wiped on drop, and used to sign a slot's framed signature input deterministically.
+
+  # ── oxicrypt (the Rust interface to liboxicrypt_ffi) ──────────────
+
+  - name: Module
+    module: oxicrypt
+    kind: struct
+    description: "Zero-sized Copy token proving that the library this program loaded was initialised and checked; every service is a method on it."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: Profile
+    module: oxicrypt
+    kind: enum
+    description: "An algorithm profile of the module, non-exhaustive."
+    variants:
+      - name: Unrestricted
+        description: "Code 0: every approved algorithm."
+      - name: Cnsa2
+        description: "Code 1: the CNSA 2.0 suite."
+      - name: Cnsa1
+        description: "Code 2: the CNSA 1.0 suite."
+      - name: Migration
+        description: "Code 3: CNSA 1.0 and CNSA 2.0 together."
+      - name: Unknown
+        description: "Any other code; Unknown of a known code is that profile."
+
+  - name: IntegrityStatus
+    module: oxicrypt
+    kind: enum
+    description: "The pre-operational integrity test's latched indicator as oxi_integrity_status reports it, non-exhaustive."
+    variants:
+      - name: NotRun
+        description: "0: not run in this process."
+      - name: Passed
+        description: "1: the signature over the image verified."
+      - name: SignatureInvalid
+        description: "2: the image does not match its signature."
+      - name: SlotInvalid
+        description: "3: the slot is the unsigned template."
+      - name: Unreadable
+        description: "4: not performed; the image could not be read."
+      - name: CastNotRun
+        description: "5: reached before its self-tests passed."
+      - name: UnknownRecord
+        description: "6: the record held a value the library never writes."
+      - name: Refused
+        description: "7: a primitive was refused, so not performed."
+      - name: NoVerifyKey
+        description: "8: the library carries no verifying key."
+      - name: KeyMismatch
+        description: "9: the slot was signed for another key."
+      - name: SlotDamaged
+        description: "10: the slot, key record or a bound import is damaged."
+      - name: Unknown
+        description: "Any other value."
+
+  - name: Fingerprint
+    module: oxicrypt
+    kind: struct
+    description: "SHA-256 fingerprint of the verifying key a library embeds; public data, displayed as sha256:<64 hex digits>."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: Site
+    module: oxicrypt
+    kind: enum
+    description: "Which kind of C function returned a status code; code 22 maps to TagMismatch for an AEAD decryption and SignatureInvalid for a signature verification."
+    variants:
+      - name: AeadDecrypt
+        description: "An AEAD decryption."
+      - name: SignatureVerify
+        description: "A signature verification."
+      - name: Other
+        description: "Any other function."
+
+  - name: Error
+    module: oxicrypt
+    kind: enum
+    description: "An error from the library, in the order and with the meaning of the C ABI's OxiResult, or from a check the crate makes before calling it; non-exhaustive."
+    variants:
+      - name: NotOperational
+        description: "Code 1."
+      - name: SelfTestFailed
+        description: "Code 2."
+      - name: ConditionalTestFailed
+        description: "Code 3."
+      - name: AlreadyInitialized
+        description: "Code 4."
+      - name: InvalidInput
+        description: "Code 5."
+      - name: AlgorithmRestricted
+        description: "Code 6."
+      - name: NotImplemented
+        description: "Code 7."
+      - name: Uninstantiated
+        description: "Code 8."
+      - name: ReseedRequired
+        description: "Code 9."
+      - name: NullPointer
+        description: "Code 10."
+      - name: BufferTooSmall
+        description: "Code 11."
+      - name: OutputTooLong
+        description: "Code 12, or a requested length over a bound the crate checks before allocating or calling."
+      - name: NotBlockAligned
+        description: "Code 20."
+      - name: InvalidIvLength
+        description: "Code 21."
+      - name: TagMismatch
+        description: "Code 22 from an AEAD decryption."
+      - name: LengthMismatch
+        description: "Code 23, or an output slice whose length is not the input's, refused before calling."
+      - name: InvalidNonceLength
+        description: "Code 24."
+      - name: InvalidTagLength
+        description: "Code 25."
+      - name: InvalidPayloadLength
+        description: "Code 26."
+      - name: InvalidAadLength
+        description: "Code 27."
+      - name: IntegrityUnverified
+        description: "Code 28."
+      - name: Internal
+        description: "Code 255."
+      - name: SignatureInvalid
+        description: "Code 22 from a signature verification."
+      - name: Unknown
+        description: "Any other code."
+      - name: LibraryVersion
+        description: "The library's manifest states another version than the crate's."
+      - name: ProfileMismatch
+        description: "The library is initialised with another profile than the one requested."
+      - name: KeyFingerprint
+        description: "The library embeds another verifying key than the pinned one."
+
+  - name: InitError
+    module: oxicrypt
+    kind: struct
+    description: "Why Module::init returned no token: the refusal, the integrity indicator when it was read (None when the library was refused before anything but its manifest was called), and the library's detail text or why it could not be read."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: DetailError
+    module: oxicrypt
+    kind: enum
+    description: "Why the integrity-test detail text could not be read; non-exhaustive."
+    variants:
+      - name: Sizing
+        description: "The sizing call failed."
+      - name: TooLong
+        description: "The text is longer than the crate reads."
+      - name: Read
+        description: "The reading call failed."
+      - name: Overrun
+        description: "The library reported writing more than the buffer it was given."
+
+  - name: Aes256Key
+    module: oxicrypt
+    kind: opaque
+    description: "An AES-256 key schedule held by the library, freed exactly once when dropped; Send and Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: HmacDrbgSha256
+    module: oxicrypt
+    kind: opaque
+    description: "An HMAC_DRBG-SHA-256 instance held by the library and seeded by the caller, freed exactly once when dropped; Send, not Sync."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: HkdfPrk
+    module: oxicrypt
+    kind: struct
+    description: "48-byte HKDF-SHA384 pseudorandom key, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: Okm
+    module: oxicrypt
+    kind: struct
+    description: "HKDF-SHA384 output key material of a chosen length, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: SharedSecret
+    module: oxicrypt
+    kind: struct
+    description: "32-byte ML-KEM-1024 shared secret, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlDsa87KeySeed
+    module: oxicrypt
+    kind: struct
+    description: "32-byte ML-DSA-87 key-generation seed, consumed by key generation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem1024KeySeedD
+    module: oxicrypt
+    kind: struct
+    description: "32-byte ML-KEM-1024 key-generation seed d, consumed by key generation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem1024KeySeedZ
+    module: oxicrypt
+    kind: struct
+    description: "32-byte ML-KEM-1024 implicit-rejection seed z, consumed by key generation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem1024EncapsSeed
+    module: oxicrypt
+    kind: struct
+    description: "32-byte ML-KEM-1024 encapsulation randomness m, consumed by one encapsulation, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlDsa87SecretKey
+    module: oxicrypt
+    kind: struct
+    description: "4,896-byte ML-DSA-87 secret key, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: MlKem1024DecapsulationKey
+    module: oxicrypt
+    kind: struct
+    description: "3,168-byte ML-KEM-1024 decapsulation key, on the heap, zeroed on drop, whose Debug prints only the type name and which implements no Clone, Copy, PartialEq or Hash."
+    security:
+      contains_secret: true
+      zeroize_on_drop: true
+      constant_time: false
+
+  - name: DrbgSeed
+    module: oxicrypt
+    kind: trait
+    description: "Sealed trait of the four seed types, which HmacDrbgSha256::seed can fill."
+
+  - name: MlDsa87PublicKey
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 2592], an ML-DSA-87 public key."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlDsa87Signature
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 4627], an ML-DSA-87 signature."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlKem1024EncapsulationKey
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 1568], an ML-KEM-1024 encapsulation key."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
+
+  - name: MlKem1024Ciphertext
+    module: oxicrypt
+    kind: alias
+    description: "[u8; 1568], an ML-KEM-1024 ciphertext."
+    security:
+      contains_secret: false
+      zeroize_on_drop: false
+      constant_time: false
 
 # ─────────────────────────────────────────────────────────────────────
 # Functions
@@ -17619,6 +17925,681 @@ functions:
       handles_secrets: false
       fips_approved: false
 
+  # ── oxicrypt (the Rust interface to liboxicrypt_ffi) ──────────────
+
+  - name: "Module::init"
+    module: oxicrypt
+    description: "Initialise the loaded library with profile and check its version, oxi_init status, operational state, pinned verifying-key fingerprint and active profile, present when the crate was built with OXICRYPT_LIB_FINGERPRINT."
+    signature: "pub fn Module::init(profile: Profile) -> Result<Module, InitError>"
+    returns:
+      type: "Result<Module, InitError>"
+      description: "The token, or why the library was refused."
+      error_variants:
+        - name: LibraryVersion
+          condition: "The library's manifest states another version."
+        - name: SelfTestFailed
+          condition: "The library's power-up self-tests failed."
+        - name: NotOperational
+          condition: "An earlier initialisation of the library failed."
+        - name: InvalidInput
+          condition: "The profile code is unknown to the library."
+        - name: KeyFingerprint
+          condition: "The library embeds another verifying key than the pinned one."
+        - name: ProfileMismatch
+          condition: "The library is initialised with another profile."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::init_unpinned"
+    module: oxicrypt
+    description: "As Module::init without the fingerprint check; present only when the crate was built with OXICRYPT_LIB_UNPINNED=1."
+    signature: "pub fn Module::init_unpinned(profile: Profile) -> Result<Module, InitError>"
+    returns:
+      type: "Result<Module, InitError>"
+      description: "The token, or why the library was refused."
+      error_variants:
+        - name: LibraryVersion
+          condition: "The library's manifest states another version."
+        - name: SelfTestFailed
+          condition: "The library's power-up self-tests failed."
+        - name: NotOperational
+          condition: "An earlier initialisation of the library failed."
+        - name: InvalidInput
+          condition: "The profile code is unknown to the library."
+        - name: ProfileMismatch
+          condition: "The library is initialised with another profile."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::is_operational"
+    module: oxicrypt
+    description: "Read the library's operational state live."
+    signature: "pub fn Module::is_operational(self) -> bool"
+    returns:
+      type: "bool"
+      description: "Whether the library is operational now."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::integrity_status"
+    module: oxicrypt
+    description: "The integrity test's latched indicator."
+    signature: "pub fn Module::integrity_status(self) -> IntegrityStatus"
+    returns:
+      type: "IntegrityStatus"
+      description: "The latched indicator."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::key_fingerprint"
+    module: oxicrypt
+    description: "The fingerprint of the verifying key the library reports embedding, for logging."
+    signature: "pub fn Module::key_fingerprint(self) -> Result<Fingerprint, Error>"
+    returns:
+      type: "Result<Fingerprint, Error>"
+      description: "The self-reported fingerprint."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::library_path"
+    module: oxicrypt
+    description: "The file the loader bound the library to, for logging; never a check."
+    signature: "pub fn Module::library_path() -> Option<PathBuf>"
+    returns:
+      type: "Option<PathBuf>"
+      description: "The library file, or None when the platform does not say."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::sha384"
+    module: oxicrypt
+    description: "SHA-384 of data through the library."
+    signature: "pub fn Module::sha384(self, data: &[u8]) -> Result<[u8; 48], Error>"
+    returns:
+      type: "Result<[u8; 48], Error>"
+      description: "The digest."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::hkdf_sha384_extract"
+    module: oxicrypt
+    description: "HKDF-Extract with HMAC-SHA-384 (RFC 5869 §2.2); None or an empty salt means 48 zero bytes."
+    signature: "pub fn Module::hkdf_sha384_extract(self, salt: Option<&[u8]>, ikm: &[u8]) -> Result<HkdfPrk, Error>"
+    returns:
+      type: "Result<HkdfPrk, Error>"
+      description: "The pseudorandom key."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::hkdf_sha384_expand"
+    module: oxicrypt
+    description: "HKDF-Expand with HMAC-SHA-384 (RFC 5869 §2.3)."
+    signature: "pub fn Module::hkdf_sha384_expand(self, prk: &HkdfPrk, info: &[u8], len: usize) -> Result<Okm, Error>"
+    returns:
+      type: "Result<Okm, Error>"
+      description: "len bytes of output key material."
+      error_variants:
+        - name: OutputTooLong
+          condition: "len exceeds 12,240, refused before allocating."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes256_key"
+    module: oxicrypt
+    description: "An AES-256 key handle; the crate makes no copy of the key."
+    signature: "pub fn Module::aes256_key(self, key: &[u8; 32]) -> Result<Aes256Key, Error>"
+    returns:
+      type: "Result<Aes256Key, Error>"
+      description: "The key handle."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes256_gcm_encrypt"
+    module: oxicrypt
+    description: "AES-256-GCM encryption into a caller slice of the plaintext's length, zeroed on every error."
+    signature: "pub fn Module::aes256_gcm_encrypt(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], plaintext: &[u8], ciphertext_out: &mut [u8]) -> Result<[u8; 16], Error>"
+    returns:
+      type: "Result<[u8; 16], Error>"
+      description: "The tag."
+      error_variants:
+        - name: LengthMismatch
+          condition: "ciphertext_out is not the plaintext's length, refused before calling."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes256_gcm_decrypt"
+    module: oxicrypt
+    description: "AES-256-GCM decryption into a caller slice of the ciphertext's length, zeroed on every error."
+    signature: "pub fn Module::aes256_gcm_decrypt(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], ciphertext: &[u8], plaintext_out: &mut [u8], tag: &[u8; 16]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the tag verified."
+      error_variants:
+        - name: TagMismatch
+          condition: "The tag did not verify."
+        - name: LengthMismatch
+          condition: "plaintext_out is not the ciphertext's length, refused before calling."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes256_gcm_encrypt_vec"
+    module: oxicrypt
+    description: "Module::aes256_gcm_encrypt into a new vector."
+    signature: "pub fn Module::aes256_gcm_encrypt_vec(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 16]), Error>"
+    returns:
+      type: "Result<(Vec<u8>, [u8; 16]), Error>"
+      description: "The ciphertext and tag."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::aes256_gcm_decrypt_vec"
+    module: oxicrypt
+    description: "Module::aes256_gcm_decrypt into a new vector, zeroed before it is freed on an error."
+    signature: "pub fn Module::aes256_gcm_decrypt_vec(self, key: &Aes256Key, nonce: &[u8; 12], aad: &[u8], ciphertext: &[u8], tag: &[u8; 16]) -> Result<Vec<u8>, Error>"
+    returns:
+      type: "Result<Vec<u8>, Error>"
+      description: "The plaintext."
+      error_variants:
+        - name: TagMismatch
+          condition: "The tag did not verify."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::hmac_drbg_sha256"
+    module: oxicrypt
+    description: "A new HMAC_DRBG-SHA-256 handle."
+    signature: "pub fn Module::hmac_drbg_sha256(self) -> Result<HmacDrbgSha256, Error>"
+    returns:
+      type: "Result<HmacDrbgSha256, Error>"
+      description: "An uninstantiated handle."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_87_keygen"
+    module: oxicrypt
+    description: "ML-DSA-87 key generation (FIPS 204 §6.1); the seed is consumed and zeroed."
+    signature: "pub fn Module::ml_dsa_87_keygen(self, seed: MlDsa87KeySeed) -> Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
+    returns:
+      type: "Result<(MlDsa87PublicKey, MlDsa87SecretKey), Error>"
+      description: "The key pair."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_87_sign"
+    module: oxicrypt
+    description: "Deterministic ML-DSA-87 signature (FIPS 204 §5.2)."
+    signature: "pub fn Module::ml_dsa_87_sign(self, sk: &MlDsa87SecretKey, msg: &[u8], ctx: &[u8]) -> Result<MlDsa87Signature, Error>"
+    returns:
+      type: "Result<MlDsa87Signature, Error>"
+      description: "The signature."
+      error_variants:
+        - name: InvalidInput
+          condition: "ctx is longer than 255 bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_dsa_87_verify"
+    module: oxicrypt
+    description: "ML-DSA-87 verification (FIPS 204 §5.3)."
+    signature: "pub fn Module::ml_dsa_87_verify(self, pk: &MlDsa87PublicKey, msg: &[u8], ctx: &[u8], sig: &MlDsa87Signature) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when the signature verified."
+      error_variants:
+        - name: SignatureInvalid
+          condition: "The signature did not verify, or the signature or key did not decode."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Module::ml_kem_1024_keygen"
+    module: oxicrypt
+    description: "ML-KEM-1024 key generation (FIPS 203 §6.1); both seeds are consumed and zeroed."
+    signature: "pub fn Module::ml_kem_1024_keygen(self, d: MlKem1024KeySeedD, z: MlKem1024KeySeedZ) -> Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
+    returns:
+      type: "Result<(MlKem1024EncapsulationKey, MlKem1024DecapsulationKey), Error>"
+      description: "The key pair."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_1024_encapsulate"
+    module: oxicrypt
+    description: "ML-KEM-1024 encapsulation (FIPS 203 §6.2); m is consumed and zeroed, so it serves one encapsulation."
+    signature: "pub fn Module::ml_kem_1024_encapsulate(self, ek: &MlKem1024EncapsulationKey, m: MlKem1024EncapsSeed) -> Result<(SharedSecret, MlKem1024Ciphertext), Error>"
+    returns:
+      type: "Result<(SharedSecret, MlKem1024Ciphertext), Error>"
+      description: "The shared secret and ciphertext."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Module::ml_kem_1024_decapsulate"
+    module: oxicrypt
+    description: "ML-KEM-1024 decapsulation (FIPS 203 §6.3)."
+    signature: "pub fn Module::ml_kem_1024_decapsulate(self, dk: &MlKem1024DecapsulationKey, ct: &MlKem1024Ciphertext) -> Result<SharedSecret, Error>"
+    returns:
+      type: "Result<SharedSecret, Error>"
+      description: "The shared secret, or the implicit-rejection secret for a modified ciphertext."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "HmacDrbgSha256::instantiate"
+    module: oxicrypt
+    description: "Instantiate (SP 800-90A §10.1.2.3) with caller-supplied entropy."
+    signature: "pub fn HmacDrbgSha256::instantiate(&mut self, entropy: &[u8], nonce: &[u8], personalization: &[u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when instantiated."
+    thread_safety: not-thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "HmacDrbgSha256::reseed"
+    module: oxicrypt
+    description: "Reseed (SP 800-90A §10.1.2.4)."
+    signature: "pub fn HmacDrbgSha256::reseed(&mut self, entropy: &[u8], additional: &[u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when reseeded."
+    thread_safety: not-thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "HmacDrbgSha256::generate"
+    module: oxicrypt
+    description: "Generate (SP 800-90A §10.1.2.5) out.len() bytes; out is zeroed on every error."
+    signature: "pub fn HmacDrbgSha256::generate(&mut self, additional: &[u8], out: &mut [u8]) -> Result<(), Error>"
+    returns:
+      type: "Result<(), Error>"
+      description: "Ok when out was filled."
+      error_variants:
+        - name: OutputTooLong
+          condition: "out is longer than 65,536 bytes, refused before calling."
+        - name: Uninstantiated
+          condition: "The handle was not instantiated."
+    thread_safety: not-thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "HmacDrbgSha256::seed"
+    module: oxicrypt
+    description: "A 32-byte seed of type S from this DRBG, written into its zeroing owner."
+    signature: "pub fn HmacDrbgSha256::seed<S: DrbgSeed>(&mut self) -> Result<S, Error>"
+    returns:
+      type: "Result<S, Error>"
+      description: "A seed of the requested type."
+    thread_safety: not-thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Error::from_code"
+    module: oxicrypt
+    description: "Map a non-zero status code returned by a function of kind site."
+    signature: "pub fn Error::from_code(code: i32, site: Site) -> Error"
+    returns:
+      type: "Error"
+      description: "The mapped error."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Profile::code"
+    module: oxicrypt
+    description: "The code the C ABI uses for this profile."
+    signature: "pub const fn Profile::code(self) -> i32"
+    returns:
+      type: "i32"
+      description: "The C ABI code."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Profile::from_code"
+    module: oxicrypt
+    description: "The profile a C ABI code names."
+    signature: "pub const fn Profile::from_code(code: i32) -> Profile"
+    returns:
+      type: "Profile"
+      description: "The profile."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "IntegrityStatus::from_code"
+    module: oxicrypt
+    description: "The indicator a C ABI value names."
+    signature: "pub const fn IntegrityStatus::from_code(code: i32) -> IntegrityStatus"
+    returns:
+      type: "IntegrityStatus"
+      description: "The indicator."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Fingerprint::as_bytes"
+    module: oxicrypt
+    description: "The fingerprint's bytes."
+    signature: "pub const fn Fingerprint::as_bytes(&self) -> &[u8; 32]"
+    returns:
+      type: "&[u8; 32]"
+      description: "The 32 bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "Fingerprint::from_hex"
+    module: oxicrypt
+    description: "Parse exactly 64 hex digits, with or without the sha256: prefix."
+    signature: "pub fn Fingerprint::from_hex(text: &str) -> Option<Fingerprint>"
+    returns:
+      type: "Option<Fingerprint>"
+      description: "The fingerprint, or None."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: "HkdfPrk::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 48 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn HkdfPrk::from_bytes(bytes: &[u8; 48]) -> HkdfPrk"
+    returns:
+      type: "HkdfPrk"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "HkdfPrk::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn HkdfPrk::as_bytes(&self) -> &[u8; 48]"
+    returns:
+      type: "&[u8; 48]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "SharedSecret::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn SharedSecret::from_bytes(bytes: &[u8; 32]) -> SharedSecret"
+    returns:
+      type: "SharedSecret"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "SharedSecret::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn SharedSecret::as_bytes(&self) -> &[u8; 32]"
+    returns:
+      type: "&[u8; 32]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa87KeySeed::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlDsa87KeySeed::from_bytes(bytes: &[u8; 32]) -> MlDsa87KeySeed"
+    returns:
+      type: "MlDsa87KeySeed"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa87KeySeed::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlDsa87KeySeed::as_bytes(&self) -> &[u8; 32]"
+    returns:
+      type: "&[u8; 32]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024KeySeedD::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem1024KeySeedD::from_bytes(bytes: &[u8; 32]) -> MlKem1024KeySeedD"
+    returns:
+      type: "MlKem1024KeySeedD"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024KeySeedD::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem1024KeySeedD::as_bytes(&self) -> &[u8; 32]"
+    returns:
+      type: "&[u8; 32]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024KeySeedZ::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem1024KeySeedZ::from_bytes(bytes: &[u8; 32]) -> MlKem1024KeySeedZ"
+    returns:
+      type: "MlKem1024KeySeedZ"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024KeySeedZ::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem1024KeySeedZ::as_bytes(&self) -> &[u8; 32]"
+    returns:
+      type: "&[u8; 32]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024EncapsSeed::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 32 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem1024EncapsSeed::from_bytes(bytes: &[u8; 32]) -> MlKem1024EncapsSeed"
+    returns:
+      type: "MlKem1024EncapsSeed"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024EncapsSeed::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem1024EncapsSeed::as_bytes(&self) -> &[u8; 32]"
+    returns:
+      type: "&[u8; 32]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa87SecretKey::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 4896 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlDsa87SecretKey::from_bytes(bytes: &[u8; 4896]) -> MlDsa87SecretKey"
+    returns:
+      type: "MlDsa87SecretKey"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlDsa87SecretKey::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlDsa87SecretKey::as_bytes(&self) -> &[u8; 4896]"
+    returns:
+      type: "&[u8; 4896]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024DecapsulationKey::from_bytes"
+    module: oxicrypt
+    description: "Take a copy of 3168 bytes; the caller's array is the caller's to zero."
+    signature: "pub fn MlKem1024DecapsulationKey::from_bytes(bytes: &[u8; 3168]) -> MlKem1024DecapsulationKey"
+    returns:
+      type: "MlKem1024DecapsulationKey"
+      description: "A copy, zeroed when dropped."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "MlKem1024DecapsulationKey::as_bytes"
+    module: oxicrypt
+    description: "The secret bytes."
+    signature: "pub fn MlKem1024DecapsulationKey::as_bytes(&self) -> &[u8; 3168]"
+    returns:
+      type: "&[u8; 3168]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
+  - name: "Okm::as_bytes"
+    module: oxicrypt
+    description: "The output key material."
+    signature: "pub fn Okm::as_bytes(&self) -> &[u8]"
+    returns:
+      type: "&[u8]"
+      description: "The secret bytes."
+    thread_safety: thread-safe
+    security:
+      constant_time: false
+      handles_secrets: true
+      fips_approved: false
+
 error_types:
   - name: Error
     module: oxicrypt-module
@@ -18624,3 +19605,110 @@ constants:
     value: "3 entries"
     description: Pre-operational integrity group, the ML-DSA-87 signature-verification CAST, then the SHA-256 CAST for the key fingerprint, then the ML-DSA-87 signature check of the module image, passed as the integrity argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
 
+  - name: SHA384_LEN
+    module: oxicrypt
+    type: usize
+    value: "48"
+    description: "SHA-384 digest length."
+
+  - name: HKDF_SHA384_PRK_LEN
+    module: oxicrypt
+    type: usize
+    value: "48"
+    description: "HKDF-SHA384 pseudorandom key length."
+
+  - name: HKDF_SHA384_MAX_OKM_LEN
+    module: oxicrypt
+    type: usize
+    value: "12240"
+    description: "The longest HKDF-SHA384 output, 255 × 48 bytes."
+
+  - name: AES256_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "AES-256 key length."
+
+  - name: AES256_GCM_NONCE_LEN
+    module: oxicrypt
+    type: usize
+    value: "12"
+    description: "AES-256-GCM nonce length."
+
+  - name: AES256_GCM_TAG_LEN
+    module: oxicrypt
+    type: usize
+    value: "16"
+    description: "AES-256-GCM tag length."
+
+  - name: HMAC_DRBG_MAX_PROVIDED_LEN
+    module: oxicrypt
+    type: usize
+    value: "768"
+    description: "The most entropy, nonce and personalization bytes HMAC_DRBG-SHA-256 accepts in one call."
+
+  - name: HMAC_DRBG_MAX_REQUEST_LEN
+    module: oxicrypt
+    type: usize
+    value: "65536"
+    description: "The most bytes one HMAC_DRBG-SHA-256 generate call returns."
+
+  - name: ML_DSA_87_SEED_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "ML-DSA-87 key-generation seed length."
+
+  - name: ML_DSA_87_PUBLIC_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "2592"
+    description: "ML-DSA-87 public key length."
+
+  - name: ML_DSA_87_SECRET_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "4896"
+    description: "ML-DSA-87 secret key length."
+
+  - name: ML_DSA_87_SIGNATURE_LEN
+    module: oxicrypt
+    type: usize
+    value: "4627"
+    description: "ML-DSA-87 signature length."
+
+  - name: ML_DSA_87_MAX_CONTEXT_LEN
+    module: oxicrypt
+    type: usize
+    value: "255"
+    description: "The longest ML-DSA-87 context string."
+
+  - name: ML_KEM_1024_SEED_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "ML-KEM-1024 seed length, for each of d, z and m."
+
+  - name: ML_KEM_1024_ENCAPSULATION_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "1568"
+    description: "ML-KEM-1024 encapsulation key length."
+
+  - name: ML_KEM_1024_DECAPSULATION_KEY_LEN
+    module: oxicrypt
+    type: usize
+    value: "3168"
+    description: "ML-KEM-1024 decapsulation key length."
+
+  - name: ML_KEM_1024_CIPHERTEXT_LEN
+    module: oxicrypt
+    type: usize
+    value: "1568"
+    description: "ML-KEM-1024 ciphertext length."
+
+  - name: ML_KEM_1024_SHARED_SECRET_LEN
+    module: oxicrypt
+    type: usize
+    value: "32"
+    description: "ML-KEM-1024 shared secret length."

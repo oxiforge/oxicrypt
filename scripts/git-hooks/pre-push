@@ -13,6 +13,8 @@
 #   3. cargo nextest run --workspace           <- OPT-IN, see below
 #      cargo test --workspace --doc
 #      the release construction guard
+#      the `oxicrypt` crate against a signed fixture library, when
+#      scripts/gate-scope.sh reports bindings=true
 #   4. cargo build --workspace --release
 #
 # Gate 3 runs under cargo-nextest (2026-06-12): nextest executes
@@ -707,6 +709,65 @@ else
     echo "pre-push: nextest will run IN FULL."
 fi
 
+# --- The `oxicrypt` crate and the workspace gates.
+#
+# The crate links a signed shared library, and its build script refuses to
+# link one without a fingerprint pin. The workspace gates therefore build it
+# unlinked, with OXICRYPT_LIB_OPTIONAL=1: its unit tests, which pin it against
+# the C header and the C library's status codes, still run. Variables a
+# developer set for their own builds are cleared so that every push gates the
+# same configuration.
+unset OXICRYPT_LIB_DIR OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED
+export OXICRYPT_LIB_OPTIONAL=1
+
+# Its linked tests run against a library built and signed with a key made for
+# this push, when scripts/gate-scope.sh reports bindings=true for any pushed
+# ref against what the remote already holds (origin/main for a new branch),
+# or for the uncommitted changes in the working tree, which the gates below
+# also test. OXICRYPT_PUSH_BINDINGS=always runs them regardless.
+repo_root="$(git rev-parse --show-toplevel)"
+bindings=false
+bindings_reason=""
+if [[ "${OXICRYPT_PUSH_BINDINGS:-}" == "always" ]]; then
+    bindings=true
+    bindings_reason="OXICRYPT_PUSH_BINDINGS=always (operator choice)"
+elif [[ -n "${OXICRYPT_PUSH_BINDINGS:-}" ]]; then
+    echo "pre-push: FAILED — OXICRYPT_PUSH_BINDINGS='${OXICRYPT_PUSH_BINDINGS}' is not 'always'." >&2
+    exit 1
+fi
+if [[ "$saw_ref" != "true" ]]; then
+    bindings=true
+    bindings_reason="no refs on stdin; nothing to narrow against"
+fi
+for pair in "${ref_pairs[@]}"; do
+    [[ "$bindings" == "true" ]] && break
+    read -r scope_local scope_remote <<<"$pair"
+    [[ "$scope_local" =~ ^0+$ ]] && continue   # ref deletion — nothing to gate
+    if [[ -n "$scope_remote" && ! "$scope_remote" =~ ^0+$ ]]; then
+        scope_base="$scope_remote"
+    else
+        scope_base="origin/main"
+    fi
+    scope_out="$("$repo_root/scripts/gate-scope.sh" "$scope_base" "$scope_local")"
+    if grep -qx 'bindings=true' <<<"$scope_out"; then
+        bindings=true
+        bindings_reason="${scope_local:0:12} against ${scope_base:0:12}: $(sed -n 's/^reason=//p' <<<"$scope_out")"
+    fi
+done
+if [[ "$bindings" != "true" ]]; then
+    scope_out="$({ git diff HEAD --name-only; git ls-files --others --exclude-standard; } \
+        | "$repo_root/scripts/gate-scope.sh" --paths)"
+    if grep -qx 'bindings=true' <<<"$scope_out"; then
+        bindings=true
+        bindings_reason="uncommitted changes in the working tree"
+    fi
+fi
+if [[ "$bindings" == "true" ]]; then
+    echo "pre-push: the oxicrypt crate's linked tests will RUN — ${bindings_reason}."
+else
+    echo "pre-push: the oxicrypt crate's linked tests will be SKIPPED — nothing they depend on changed (scripts/gate-scope.sh)."
+fi
+
 echo "pre-push [1/4]: cargo fmt --all -- --check"
 cargo fmt --all -- --check
 
@@ -752,6 +813,49 @@ echo "$guard_out"
 echo "$guard_out" | grep -Eq "test result: ok\. [1-9][0-9]* passed" \
     || { echo "pre-push [3/4c] FAILED: release_guard matched no passing tests" >&2; exit 1; }
 
+# 3d: the `oxicrypt` crate against a library built and signed with a key
+# generated for this push. Its own target directory keeps the fixture's
+# release build of oxicrypt-ffi, which embeds that key, apart from the
+# workspace's.
+bindings_fixture=""
+cleanup_bindings_fixture() {
+    [[ -n "$bindings_fixture" && -d "$bindings_fixture" ]] && rm -rf "$bindings_fixture"
+    bindings_fixture=""
+}
+trap 'cleanup_check_deps_wt; cleanup_bindings_fixture' EXIT
+if [[ "$bindings" == "true" ]]; then
+    bindings_target="${OXICRYPT_BINDINGS_TARGET_DIR:-$repo_root/target/bindings}"
+    bindings_fixture="$(mktemp -d)"
+    echo "pre-push [3/4d]: scripts/bindings-fixture.sh, then clippy and cargo test -p oxicrypt, pinned and unpinned"
+    CARGO_TARGET_DIR="$bindings_target" "$repo_root/scripts/bindings-fixture.sh" "$bindings_fixture"
+    (
+        unset OXICRYPT_LIB_OPTIONAL
+        # shellcheck disable=SC1091
+        . "$bindings_fixture/env.sh"
+        export CARGO_TARGET_DIR="$bindings_target"
+        cargo clippy -p oxicrypt --all-targets -- -D warnings
+        env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 \
+            cargo clippy -p oxicrypt --all-targets -- -D warnings
+        # Pinned, then unpinned: the unpinned build accepts the fixture's
+        # second-key library, which the pinned build must refuse.
+        for mode in pinned unpinned; do
+            if [[ "$mode" == "pinned" ]]; then
+                bindings_out="$(cargo test -p oxicrypt 2>&1)" || { echo "$bindings_out" >&2; exit 1; }
+            else
+                bindings_out="$(env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 \
+                    cargo test -p oxicrypt 2>&1)" || { echo "$bindings_out" >&2; exit 1; }
+            fi
+            echo "$bindings_out"
+            # Fail closed on a run that tested nothing against the library.
+            grep -Eq "test result: ok\. [1-9][0-9]* passed" <<<"$bindings_out" \
+                || { echo "pre-push [3/4d] FAILED: cargo test -p oxicrypt ($mode) ran no tests" >&2; exit 1; }
+        done
+    )
+    cleanup_bindings_fixture
+else
+    echo "pre-push [3/4d]: SKIPPED — nothing the oxicrypt crate's linked tests depend on changed."
+fi
+
 echo "pre-push [4/4]: cargo build --workspace --release"
 cargo build --workspace --release
 
@@ -760,13 +864,17 @@ cargo build --workspace --release
 # ONLY a full run stamps. The stamp is read as "all four gates passed on
 # this exact state", and a later push that hits it skips everything — so a
 # reduced run must never be able to satisfy one. A tier-A or tier-B pass is
-# real, and it is also narrower than what the stamp claims.
-if [[ "$run_nextest" == "true" && -z "$nextest_scope" ]]; then
+# real, and it is also narrower than what the stamp claims. The same holds for
+# the oxicrypt crate's linked tests: whether they are in scope depends on the
+# refs pushed, not on the state alone, so only a run that included them stamps.
+if [[ "$run_nextest" == "true" && -z "$nextest_scope" && "$bindings" == "true" ]]; then
     { [[ -f "$stamp_file" ]] && cat "$stamp_file"; echo "$state_digest"; } \
         | tail -32 > "$stamp_file.tmp" && mv "$stamp_file.tmp" "$stamp_file"
     echo "pre-push: all four gates passed (state ${state_digest:0:12}… stamped)."
-elif [[ "$run_nextest" == "true" ]]; then
+elif [[ "$run_nextest" == "true" && -n "$nextest_scope" ]]; then
     echo "pre-push: gates passed; nextest ran without oxicrypt-maxwell (no stamp written)."
+elif [[ "$run_nextest" == "true" ]]; then
+    echo "pre-push: gates passed; the oxicrypt crate's linked tests were out of scope (no stamp written)."
 else
     echo "pre-push: gates passed; nextest was skipped (doctests and the release guard ran) (no stamp written)."
 fi
