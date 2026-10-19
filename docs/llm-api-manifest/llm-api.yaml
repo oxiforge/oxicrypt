@@ -16849,7 +16849,7 @@ functions:
 
   - name: sign_image
     module: oxicrypt-integrity-sign
-    description: Sign an image in place — derive its extent, write the version 4 slot with the embedded key's fingerprint, and sign the slot and the extent's file bytes with ML-DSA-87 under the integrity context; refuses an image built without a verifying key (NoVerifyKey), embedding a different key (SigningKeyAbsent), or, for ELF, with a file-backed zero-initialised module static (FileBackedStatic) or no symbol table to check (StaticsUnchecked).
+    description: Sign an image in place — derive its extent, write the version 4 slot with the embedded key's fingerprint, and sign the slot and the extent's file bytes with ML-DSA-87 under the integrity context; refuses an image built without a verifying key (NoVerifyKey), embedding a different key (SigningKeyAbsent), or with a file-backed zero-initialised module static (FileBackedStatic) or no symbol table to check (StaticsUnchecked), and a PE image whose statics are read from its DWARF without a program database, as NoDwarf, DwarfForm, DuplicateStatic, StaticOutsideImage, StaticUnlocated or StaticUnsized.
     signature: 'pub fn sign_image(image: &mut [u8], key: &SigningKey) -> Result<[u8; slot::SIG_LEN], String>'
     returns:
       type: 'Result<[u8; slot::SIG_LEN], String>'
@@ -16940,7 +16940,7 @@ functions:
 
   - name: sign_image_with
     module: oxicrypt-integrity-sign
-    description: Sign an image in place as sign_image does, with the loader, the debug-file symbol table and the Mach-O or PE reservation reference SignOptions supplies; refuses an image with a file-backed zero-initialised module static (FileBackedStatic) or no symbol table to check (StaticsUnchecked).
+    description: Sign an image in place as sign_image does, with the loader, the debug-file symbol table and the Mach-O or PE reservation reference SignOptions supplies; refuses an image with a file-backed zero-initialised module static (FileBackedStatic) or no symbol table to check (StaticsUnchecked), and a PE image whose statics are read from its DWARF without a program database, as NoDwarf, DwarfForm, DuplicateStatic, StaticOutsideImage, StaticUnlocated or StaticUnsized.
     signature: 'pub fn sign_image_with(image: &mut [u8], key: &SigningKey, options: &SignOptions<''_>) -> Result<[u8; slot::SIG_LEN], String>'
     returns:
       type: 'Result<[u8; slot::SIG_LEN], String>'
@@ -16979,7 +16979,7 @@ functions:
 
   - name: debug_symbols
     module: oxicrypt-integrity-sign
-    description: The separated debug file an ELF artifact names through its .gnu_debuglink, looked for beside the artifact and in its .debug subdirectory and required to match the link's CRC, or for a Mach-O artifact the file under <artifact>.dSYM/Contents/Resources/DWARF whose LC_UUID is the artifact's, or for a PE artifact the program database its CodeView record names, by file name beside the artifact, required to carry the record's GUID and age, or None when the artifact keeps local data objects in its own symbol table or no debug file is found.
+    description: The separated debug file an ELF artifact names through its .gnu_debuglink, looked for beside the artifact and in its .debug subdirectory and required to match the link's CRC, or for a Mach-O artifact the file under <artifact>.dSYM/Contents/Resources/DWARF whose LC_UUID is the artifact's, or for a PE artifact the program database its CodeView record names, by file name beside the artifact, required to carry the record's GUID and age, or None when the artifact keeps local data objects in its own symbol table or no debug file is found, for a PE artifact the statics then coming from the image's DWARF if it carries any.
     signature: 'pub fn debug_symbols(path: &std::path::Path, bytes: &[u8]) -> Result<Option<Vec<u8>>, String>'
     returns:
       type: 'Result<Option<Vec<u8>>, String>'
@@ -17005,11 +17005,11 @@ functions:
 
   - name: module_statics
     module: oxicrypt-integrity-sign
-    description: The module statics of an ELF image, read from its own symbol table or, when it holds no local objects, from the supplied debug-file bytes, which must match the image's .gnu_debuglink CRC, with relocations read as the given loader reads them; of a Mach-O image, read from its own symbol table or its dSYM as macho::module_statics does; of a PE image, read from the supplied program database as pe::module_statics does.
+    description: The module statics of an ELF image, read from its own symbol table or, when it holds no local objects, from the supplied debug-file bytes, which must match the image's .gnu_debuglink CRC, with relocations read as the given loader reads them; of a Mach-O image, read from its own symbol table or its dSYM as macho::module_statics does; of a PE image, read from the supplied program database, or without one from the image's DWARF, as pe::module_statics does.
     signature: 'pub fn module_statics(image: &[u8], symbols: Option<&[u8]>, loader: Option<elf::Loader>) -> Result<elf::Statics, String>'
     returns:
       type: 'Result<elf::Statics, String>'
-      description: The statics report, or a description beginning StaticsUnchecked when neither input carries a symbol table.
+      description: The statics report, or a description beginning StaticsUnchecked when neither input carries a symbol table, or for a PE image read from its DWARF one beginning NoDwarf, DwarfForm, DuplicateStatic, StaticOutsideImage, StaticUnlocated or StaticUnsized.
     thread_safety: thread-safe
     security:
       constant_time: false
@@ -17435,11 +17435,11 @@ functions:
 
   - name: "pe::module_statics"
     module: oxicrypt-integrity-sign
-    description: Name every zero-initialised module static a PE32+ image's file holds, from the program database whose GUID and age are the ones the image's CodeView record names (StaticsUnchecked otherwise), reading its data and public symbols — a symbol named oxicrypt in a writable section, sized to the next symbol in its section, file-backed when any byte lies inside the section's raw data, zero-initialised when those bytes are zero with no DIR64 relocation into them; the statics REQUIRED_STATICS pins, matched by mangled path or qualified name, are rows whenever any byte is file-backed.
+    description: Name every zero-initialised module static a PE32+ image's file holds, from the program database whose GUID and age are the ones the image's CodeView record names (StaticsUnchecked otherwise), reading its data and public symbols, or with no program database from the DWARF variables the image's own .debug_info names at DW_OP_addr locations, each under its linkage name and path and sized by its type (a definition under the names of the declaration it completes; refused as NoDwarf, DwarfForm, DuplicateStatic, StaticOutsideImage, StaticUnlocated or StaticUnsized when that DWARF cannot locate each pinned static by exactly one located variable, lets one variable stand for two pinned statics, locates a module static by anything but a lone DW_OP_addr, or gives a writable one no size) — a symbol named oxicrypt in a writable section, a PDB symbol sized to the next symbol in its section, file-backed when any byte lies inside the section's raw data, zero-initialised when those bytes are zero with no DIR64 relocation into them; the statics REQUIRED_STATICS pins, matched by mangled path or qualified name, are rows whenever any byte is file-backed.
     signature: 'pub fn module_statics(bytes: &[u8], pdb: Option<&[u8]>) -> Result<Statics, String>'
     returns:
       type: "Result<Statics, String>"
-      description: The statics report, or a description beginning StaticsUnchecked when no matching program database is supplied.
+      description: The statics report, or a description beginning StaticsUnchecked when a program database that does not match is supplied or none is and the image names one but carries no DWARF, or beginning with the DWARF refusal's name.
     thread_safety: thread-safe
     security:
       constant_time: false

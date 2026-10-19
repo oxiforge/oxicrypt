@@ -64,6 +64,8 @@ fn main() -> ExitCode {
     eprintln!("           MACOSX_DEPLOYMENT_TARGET at least 12.0 on arm64, 13.0 on x86_64");
     eprintln!("  Windows  RUSTFLAGS with -C link-arg=/MERGE:.bss=.zbss;");
     eprintln!("           CARGO_PROFILE_<PROFILE>_DEBUG=full");
+    eprintln!("  Windows, a -windows-gnu target, built with `cargo zigbuild`:");
+    eprintln!("           LINK=/MERGE:.bss=.zbss; CARGO_PROFILE_<PROFILE>_DEBUG=full");
     eprintln!("  Android  RUSTFLAGS with -C link-arg=-Wl,-z,max-page-size=16384");
     eprintln!("RUSTFLAGS is read as cargo reads it: CARGO_ENCODED_RUSTFLAGS, else RUSTFLAGS,");
     eprintln!("else CARGO_TARGET_<TRIPLE>_RUSTFLAGS. <PROFILE> is RELEASE or DEV.");
@@ -278,7 +280,7 @@ fn sign(args: &[String]) -> Result<(), String> {
     let mut build_subject = Command::new(&cargo);
     build_subject
         .current_dir(&root)
-        .args(["build", "-p", package]);
+        .args([build_command(format), "-p", package]);
     if release {
         build_subject.arg("--release");
     }
@@ -307,7 +309,7 @@ fn sign(args: &[String]) -> Result<(), String> {
     // today. Stated rather than discovered: reading it out of `cargo metadata`
     // would be more general and would also mean parsing JSON in a build tool
     // whose whole value is being short enough to read.
-    let subject = subject_dir.join(exe(package_binary(package)));
+    let subject = subject_dir.join(target_exe(package_binary(package), target.as_deref()));
     if !subject.exists() {
         return Err(format!(
             "{} was not produced by the build. Either {package} names its binary something \
@@ -435,8 +437,11 @@ enum Format {
         /// Whether the target is arm64.
         arm64: bool,
     },
-    /// PE32+.
+    /// PE32+, linked by the MSVC toolchain.
     Pe,
+    /// PE32+ for a `-windows-gnu` target, built with `cargo zigbuild` and
+    /// linked by lld.
+    PeGnu,
 }
 
 impl Format {
@@ -448,6 +453,7 @@ impl Format {
             Self::MachO { arm64: true } => "arm64 Mach-O",
             Self::MachO { arm64: false } => "x86_64 Mach-O",
             Self::Pe => "PE",
+            Self::PeGnu => "GNU-toolchain PE",
         }
     }
 }
@@ -461,6 +467,7 @@ fn format_for(target: Option<&str>, host_os: &str, host_arch: &str) -> Format {
             arm64: t.starts_with("aarch64") || t.starts_with("arm64"),
         },
         Some(t) if t.contains("-android") => Format::Android,
+        Some(t) if t.contains("-windows-gnu") => Format::PeGnu,
         Some(t) if t.contains("-windows") => Format::Pe,
         Some(_) => Format::Elf,
         None => match host_os {
@@ -471,6 +478,16 @@ fn format_for(target: Option<&str>, host_os: &str, host_arch: &str) -> Format {
             "android" => Format::Android,
             _ => Format::Elf,
         },
+    }
+}
+
+/// The cargo subcommand that builds an artifact of `format`: `zigbuild`
+/// for a GNU-toolchain Windows target, which `cargo zigbuild` links with
+/// lld, and `build` otherwise.
+const fn build_command(format: Format) -> &'static str {
+    match format {
+        Format::PeGnu => "zigbuild",
+        _ => "build",
     }
 }
 
@@ -512,7 +529,8 @@ fn effective_rustflags(target: Option<&str>, env: &dyn Fn(&str) -> Option<String
 /// the zero-fill sections in a segment of their own, unmerged globals on
 /// arm64 and a packed dSYM with full debug information; for PE the
 /// zero-initialised data in a section of its own and full debug
-/// information; for Android 16 KiB pages. `release` selects the profile
+/// information, the section asked of the MSVC linker in `RUSTFLAGS` and of
+/// lld for a GNU-toolchain target in `LINK`; for Android 16 KiB pages. `release` selects the profile
 /// whose variables are read.
 fn missing_build_settings(
     format: Format,
@@ -559,6 +577,7 @@ fn missing_build_settings(
             flags.push(("/MERGE:.bss=.zbss", "-C link-arg=/MERGE:.bss=.zbss"));
             need_full_debug = true;
         }
+        Format::PeGnu => need_full_debug = true,
     }
 
     let mut missing: Vec<String> = flags
@@ -566,6 +585,13 @@ fn missing_build_settings(
         .filter(|(needle, _)| !rustflags.contains(needle))
         .map(|(_, flag)| format!("RUSTFLAGS: {flag}"))
         .collect();
+    // lld reads `LINK` ahead of its default merges; `zig cc` refuses the
+    // option as a link argument.
+    if format == Format::PeGnu
+        && !env("LINK").is_some_and(|link| link.contains("/MERGE:.bss=.zbss"))
+    {
+        missing.push("LINK=/MERGE:.bss=.zbss".to_owned());
+    }
     let profile = if release { "RELEASE" } else { "DEV" };
     if need_full_debug {
         let var = format!("CARGO_PROFILE_{profile}_DEBUG");
@@ -643,10 +669,23 @@ fn exe(stem: &str) -> String {
     }
 }
 
+/// The file name of a binary built for `target`, or for the host when no
+/// target is named: a Windows target's carries `.exe` whatever the host.
+fn target_exe(stem: &str, target: Option<&str>) -> String {
+    match target {
+        Some(t) if t.contains("-windows") => format!("{stem}.exe"),
+        Some(_) => stem.to_string(),
+        None => exe(stem),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
-    use super::{Format, Step, format_for, missing_build_settings, needs_codesign, plan};
+    use super::{
+        Format, Step, build_command, format_for, missing_build_settings, needs_codesign, plan,
+        target_exe,
+    };
     use std::path::PathBuf;
 
     fn args(words: &[&str]) -> Vec<String> {
@@ -792,6 +831,7 @@ mod tests {
             ("x86_64-apple-darwin", Format::MachO { arm64: false }),
             ("x86_64-pc-windows-msvc", Format::Pe),
             ("aarch64-pc-windows-msvc", Format::Pe),
+            ("x86_64-pc-windows-gnu", Format::PeGnu),
             ("aarch64-linux-android", Format::Android),
             ("x86_64-linux-android", Format::Android),
             ("x86_64-unknown-linux-gnu", Format::Elf),
@@ -813,6 +853,41 @@ mod tests {
         );
         assert_eq!(format_for(None, "windows", "x86_64"), Format::Pe);
         assert_eq!(format_for(None, "linux", "aarch64"), Format::Elf);
+    }
+
+    #[test]
+    fn a_windows_target_binary_is_named_with_exe_from_any_host() {
+        assert_eq!(target_exe("oxi", Some("x86_64-pc-windows-gnu")), "oxi.exe");
+        assert_eq!(target_exe("oxi", Some("x86_64-pc-windows-msvc")), "oxi.exe");
+        assert_eq!(target_exe("oxi", Some("x86_64-unknown-linux-gnu")), "oxi");
+        assert_eq!(target_exe("oxi", None), super::exe("oxi"));
+    }
+
+    #[test]
+    fn a_gnu_windows_target_is_built_with_zigbuild() {
+        assert_eq!(build_command(Format::PeGnu), "zigbuild");
+        assert_eq!(build_command(Format::Pe), "build");
+        assert_eq!(build_command(Format::Elf), "build");
+    }
+
+    /// A Windows target built with the GNU toolchain links through lld,
+    /// which takes `/MERGE` from `LINK` rather than from `RUSTFLAGS`.
+    #[test]
+    fn a_gnu_windows_environment_is_checked_for_its_own_settings() {
+        let target = Some("x86_64-pc-windows-gnu");
+        let format = format_for(target, "linux", "x86_64");
+        let complete = env_of(&[
+            ("LINK", "/MERGE:.bss=.zbss"),
+            ("CARGO_PROFILE_RELEASE_DEBUG", "full"),
+        ]);
+        let missing = missing_build_settings(format, target, true, &complete);
+        assert!(missing.is_empty(), "{missing:?}");
+        let missing = missing_build_settings(format, target, true, &env_of(&[]));
+        assert_eq!(
+            missing,
+            ["LINK=/MERGE:.bss=.zbss", "CARGO_PROFILE_RELEASE_DEBUG=full"],
+            "{missing:?}"
+        );
     }
 
     #[test]

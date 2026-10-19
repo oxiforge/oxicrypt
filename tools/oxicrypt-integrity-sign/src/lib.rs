@@ -403,7 +403,11 @@ fn verify_for(image: &[u8], loader: Option<elf::Loader>) -> Result<[u8; 32], Str
 /// Returns a description when the image cannot be classified, embeds no
 /// verifying key or a different one, the slot is missing or ambiguous, the
 /// extent does not fit the slot, or the image has a file-backed module
-/// static or no symbol table to check for one.
+/// static (`FileBackedStatic`) or no symbol table to check for one
+/// (`StaticsUnchecked`). A PE image signed without its program database has
+/// its statics read from its DWARF, refused as [`pe::module_statics`]
+/// refuses them (`NoDwarf`, `DwarfForm`, `DuplicateStatic`,
+/// `StaticOutsideImage`, `StaticUnlocated`, `StaticUnsized`).
 pub fn sign_image(image: &mut [u8], key: &SigningKey) -> Result<[u8; slot::SIG_LEN], String> {
     sign_image_with(image, key, &SignOptions::default())
 }
@@ -441,7 +445,8 @@ pub fn sign_image_with(
 ///
 /// For a PE artifact, the program database its CodeView debug record names,
 /// by file name beside the artifact, required to carry the record's GUID and
-/// age.
+/// age; `None` when no such file is there, and the statics are then read
+/// from the image's own DWARF, if it carries any.
 ///
 /// # Errors
 ///
@@ -572,12 +577,14 @@ fn pdb_symbols(path: &std::path::Path, bytes: &[u8]) -> Result<Option<Vec<u8>>, 
 /// The module statics of an ELF image, read from its own symbol table or,
 /// when it has none, from `symbols`; of a Mach-O image, from `symbols`, its
 /// dSYM, when given, else from its own symbol table; of a PE image, from
-/// `symbols`, its program database.
+/// `symbols`, its program database, when given, else from the image's own
+/// DWARF.
 ///
 /// # Errors
 ///
 /// `StaticsUnchecked` when neither carries a symbol table, or a description
-/// when either is malformed.
+/// when either is malformed. For a PE image read from its DWARF, the
+/// refusals [`pe::module_statics`] names.
 pub fn module_statics(
     image: &[u8],
     symbols: Option<&[u8]>,
@@ -640,8 +647,10 @@ fn refuse_file_backed_statics(
              info and split-debuginfo set to packed, strip, and sign with <artifact>.dSYM beside \
              it"
         } else if pe {
-            "build with full debug information (CARGO_PROFILE_RELEASE_DEBUG=full), whose program \
-             database names every static, and sign with that PDB beside the artifact"
+            "with the MSVC toolchain, build with full debug information \
+             (CARGO_PROFILE_RELEASE_DEBUG=full), whose program database names every static, and \
+             sign with that PDB beside the artifact; with a GNU toolchain, remove the program \
+             database lld wrote from beside the artifact, so the DWARF in the image is read"
         } else {
             "split the debug file off with a matching .gnu_debuglink, keep it beside the \
              artifact, strip, and sign the stripped artifact"
@@ -659,7 +668,8 @@ fn refuse_file_backed_statics(
              before signing"
         } else if pe {
             "Link with zero-initialised data in a section of its own, which has no file bytes \
-             (-C link-arg=/MERGE:.bss=.zbss), before signing"
+             (-C link-arg=/MERGE:.bss=.zbss with the MSVC linker; LINK=/MERGE:.bss=.zbss in \
+             the environment of a GNU toolchain build that links with lld), before signing"
         } else {
             "Place module state in zero-fill (.bss) before signing"
         };

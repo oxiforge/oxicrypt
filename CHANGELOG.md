@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DrbgError::EntropyInputTooShort` variant, which breaks exhaustive matches on `DrbgError`, and
   reach the C ABI as `OxiResult::EntropyInputTooShort` (29) and `OxiResult::NonceTooShort` (30).
   An instantiate refused by a length check leaves the DRBG uninstantiated. (#288)
+- The integrity signer signs Windows DLLs built with the GNU toolchain, reading the module's
+  statics from the DWARF in the DLL when no program database of the name the DLL records is beside
+  it (`NoDwarf`, `DwarfForm`, `DuplicateStatic`, `StaticOutsideImage`, `StaticUnlocated`,
+  `StaticUnsized`). The four pinned statics are always located exactly or the DLL is refused. The
+  other module statics are covered only on two assumptions the reader cannot check: that the
+  compiler gives every static with storage a `DW_AT_location`, and that every module crate is
+  built with full debug information; a static that breaks either is not seen, where a program
+  database would list it. An image with neither a program database record nor DWARF is now
+  refused as `NoDwarf` where it was `StaticsUnchecked`.
 
 ## [0.25.0] - 2026-10-17
 

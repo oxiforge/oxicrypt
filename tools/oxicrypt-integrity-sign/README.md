@@ -109,7 +109,9 @@ signtool sign /fd SHA256 /sha1 <thumbprint> oxicrypt_ffi.dll
 
 A PE image must keep its zero-initialised data out of the file and be linked
 with full debug information, whose program database the signer reads beside
-the artifact; `docs/integrity-signing.md` gives the build.
+the artifact, or, for a DLL linked by the GNU toolchain, whose DWARF the
+signer reads from the DLL itself; `docs/integrity-signing.md` gives both
+builds.
 
 Two more subcommands are useful in a release pipeline:
 
@@ -143,7 +145,8 @@ let mut image = std::fs::read(&artifact)?;
 // A stripped ELF artifact's symbols come from the debug file its
 // .gnu_debuglink names; the library checks that file's CRC. A Mach-O
 // artifact's come from <artifact>.dSYM, matched by LC_UUID, and a PE
-// artifact's from the PDB its CodeView record names, matched by GUID and age.
+// artifact's from the PDB its CodeView record names, matched by GUID and age,
+// or, with no such PDB beside it, from the DWARF the artifact carries.
 let symbols = debug_symbols(&artifact, &image)?;
 let options = SignOptions { loader: None, symbols: symbols.as_deref(), reserved_against: None };
 sign_image_with(&mut image, &key, &options)?;
@@ -227,7 +230,10 @@ or `LOW` base relocations, bound imports, an import descriptor without a lookup
 table, a delay-load IAT in a read-only section, or XFG enabled, and one in
 which a zero-initialised module static lies in the file's bytes; it reads the
 symbols for that check from the program database the image's CodeView record
-names, beside the artifact, accepted only with the record's GUID and age.
+names, beside the artifact, accepted only with the record's GUID and age, or,
+when that file is not there, from the image's own DWARF, refusing DWARF that
+does not locate each static the module pins exactly once, or that locates a
+module static by anything but a single address.
 
 `--staticlib-target` is deliberately refused: a static library is not a loaded
 image, so there is nothing for the runtime test to verify. Sign the executable

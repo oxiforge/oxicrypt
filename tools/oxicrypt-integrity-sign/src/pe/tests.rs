@@ -8,6 +8,7 @@
 use oxicrypt_integrity::slot::{BindRecord, EntryKind};
 use oxicrypt_integrity::{SLOT_FOOTER_MAGIC, SLOT_HEADER_MAGIC, SLOT_SIZE};
 
+use super::dwarf::tests::{Loc, Shape, Split, Static, dwarf};
 use super::pdb::tests::{pdb, record};
 use super::pdb::{S_GDATA32, S_LDATA32, S_PUB32};
 use super::{
@@ -1128,4 +1129,814 @@ fn a_loader_option_is_refused_for_a_pe_image() {
     let err = crate::classify_with(&img, &options).unwrap_err();
     assert!(err.starts_with("--loader applies to ELF images"), "{err}");
     assert!(crate::classify_with(&img, &SignOptions::default()).is_ok());
+}
+
+/// How [`with_sections_as`] lays out the appended sections and the COFF
+/// string table that names them.
+#[derive(Clone, Copy, Default)]
+struct SectionLayout {
+    /// COFF symbols written ahead of the string table, so its offset
+    /// counts eighteen bytes for each.
+    symbols: u32,
+    /// The string table's declared length, when not its true one.
+    strings_len: Option<u32>,
+    /// Each section's `VirtualSize` written as zero.
+    no_virtual_size: bool,
+}
+
+/// `img` with `sections` appended, each a discardable read-only section
+/// with a long name in a COFF string table, as a GNU toolchain links its
+/// DWARF.
+fn with_sections(img: &[u8], sections: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    with_sections_as(img, sections, SectionLayout::default())
+}
+
+/// As [`with_sections`], laid out as `layout` says.
+fn with_sections_as(img: &[u8], sections: &[(&str, Vec<u8>)], layout: SectionLayout) -> Vec<u8> {
+    let mut out = img.to_vec();
+    let count = u16::from_le_bytes([out[PE_OFF + 6], out[PE_OFF + 7]]) as usize;
+    let mut strings = vec![0u8; 4];
+    let mut rva = SIZE_OF_IMAGE;
+    for (i, (name, data)) in sections.iter().enumerate() {
+        let o = OPT + OPT_SIZE + 40 * (count + i);
+        assert!(
+            o + 40 <= HEADERS as usize,
+            "the headers hold no more sections"
+        );
+        let field = format!("/{}", strings.len());
+        strings.extend_from_slice(name.as_bytes());
+        strings.push(0);
+        let raw_at = out.len() as u32;
+        let raw_len = data.len().next_multiple_of(0x200) as u32;
+        out.extend_from_slice(data);
+        out.resize((raw_at + raw_len) as usize, 0);
+        let virtual_size = if layout.no_virtual_size {
+            0
+        } else {
+            data.len() as u32
+        };
+        out[o..o + 8].fill(0);
+        out[o..o + field.len()].copy_from_slice(field.as_bytes());
+        out[o + 8..o + 12].copy_from_slice(&virtual_size.to_le_bytes());
+        out[o + 12..o + 16].copy_from_slice(&rva.to_le_bytes());
+        out[o + 16..o + 20].copy_from_slice(&raw_len.to_le_bytes());
+        out[o + 20..o + 24].copy_from_slice(&raw_at.to_le_bytes());
+        out[o + 36..o + 40].copy_from_slice(&(READ | 0x0200_0040).to_le_bytes());
+        rva += raw_len.next_multiple_of(0x1000);
+    }
+    let len = layout.strings_len.unwrap_or(strings.len() as u32);
+    strings[..4].copy_from_slice(&len.to_le_bytes());
+    let table = out.len() as u32;
+    // Symbols the signer does not read: a pattern, so a string table
+    // looked for at the symbol table's start reads no name.
+    out.extend((0..18 * layout.symbols).map(|i| (i % 7) as u8 + 1));
+    out.extend_from_slice(&strings);
+    out[PE_OFF + 6..PE_OFF + 8].copy_from_slice(&((count + sections.len()) as u16).to_le_bytes());
+    out[PE_OFF + 12..PE_OFF + 16].copy_from_slice(&table.to_le_bytes());
+    out[PE_OFF + 16..PE_OFF + 20].copy_from_slice(&layout.symbols.to_le_bytes());
+    out[OPT + 56..OPT + 60].copy_from_slice(&rva.to_le_bytes());
+    out
+}
+
+/// The address of `rva` in the fixture.
+const fn va(rva: u32) -> u64 {
+    IMAGE_BASE + rva as u64
+}
+
+/// The fixture's statics as DWARF describes them: the PDB fixture's, at the
+/// same addresses, under their namespaces and mangled names, two of them in
+/// the second unit.
+fn fixture_statics(f: &Fixture) -> Vec<Static> {
+    let (seg, off) = f.state_at();
+    let state = if seg == 6 { ZBSS.0 + off } else { DATA.0 + off };
+    vec![
+        Static::new(
+            "oxicrypt_module::STATE",
+            Some("_ZN15oxicrypt_module5STATE17h0123456789abcdefE"),
+            Loc::Addr(va(state)),
+            Some(8),
+        ),
+        Static::new(
+            "oxicrypt_integrity::LAST_STATUS",
+            Some("_RNvCs1_18oxicrypt_integrity11LAST_STATUS"),
+            Loc::Addr(va(ZBSS.0 + 0x10)),
+            Some(1),
+        )
+        .in_unit(1),
+        Static::new(
+            "oxicrypt_integrity::ML_DSA_CAST_PASSED",
+            Some("_RNvCs1_18oxicrypt_integrity18ML_DSA_CAST_PASSED"),
+            Loc::Addr(va(ZBSS.0 + 0x18)),
+            Some(1),
+        ),
+        Static::new(
+            "oxicrypt_integrity::SHA256_CAST_PASSED",
+            Some("_RNvCs1_18oxicrypt_integrity18SHA256_CAST_PASSED"),
+            Loc::Addr(va(ZBSS.0 + 0x20)),
+            Some(1),
+        )
+        .in_unit(1),
+        Static::new(
+            "oxicrypt_thing::INIT",
+            Some("_RNvCs1_14oxicrypt_thing4INIT"),
+            Loc::Addr(va(DATA_INIT)),
+            Some(8),
+        ),
+    ]
+}
+
+/// The DWARF sections describing `statics`.
+fn dwarf_sections_of(statics: &[Static]) -> Vec<(&'static str, Vec<u8>)> {
+    let [info, abbrev, strs] = dwarf(statics);
+    vec![
+        (".debug_abbrev", abbrev),
+        (".debug_info", info),
+        (".debug_str", strs),
+    ]
+}
+
+/// The fixture image carrying `statics` as DWARF.
+fn dwarf_image(f: &Fixture, statics: &[Static]) -> Vec<u8> {
+    with_sections(&f.build(), &dwarf_sections_of(statics))
+}
+
+/// The refusal the DWARF route draws for `statics`, the same from
+/// [`module_statics`] and from signing.
+fn dwarf_refusal(f: &Fixture, statics: &[Static]) -> String {
+    let mut img = dwarf_image(f, statics);
+    let err = module_statics(&img, None).unwrap_err();
+    let signed = sign_image(&mut img, test_key()).unwrap_err();
+    assert_eq!(signed, err);
+    err
+}
+
+/// Without a program database, the DWARF in the image gives the same
+/// statics, rows and pinned set as the PDB does, and the image signs.
+#[test]
+fn the_statics_come_from_dwarf_when_no_pdb_is_given() {
+    for state_in_file in [false, true] {
+        let mut f = Fixture::new();
+        f.state_in_file = state_in_file;
+        let img = dwarf_image(&f, &fixture_statics(&f));
+        let from_dwarf = module_statics(&img, None).unwrap();
+        let from_pdb = module_statics(&img, Some(&f.pdb(GUID, AGE))).unwrap();
+        // The PDB names each static by its path, the DWARF by its mangled
+        // name, and the DWARF sizes each by its type, the PDB to the next
+        // symbol; the rest agrees.
+        let shape = |s: &crate::elf::Statics| {
+            let rows: Vec<u64> = s.rows.iter().map(|r| r.addr).collect();
+            (s.matched, s.initialised, s.missing.clone(), rows)
+        };
+        assert_eq!(
+            shape(&from_dwarf),
+            shape(&from_pdb),
+            "state in file: {state_in_file}"
+        );
+        assert_eq!(from_dwarf.matched, 5);
+        assert_eq!(from_dwarf.initialised, 1);
+        assert!(from_dwarf.missing.is_empty());
+        let mut signed = img.clone();
+        let result = sign_image(&mut signed, test_key());
+        if state_in_file {
+            assert_eq!(from_dwarf.rows.len(), 1, "{:?}", from_dwarf.rows);
+            assert_eq!(from_dwarf.rows[0].addr, va(DATA.0 + 0x180));
+            assert_eq!(from_dwarf.rows[0].size, 8, "STATE's type is 8 bytes");
+            let err = result.unwrap_err();
+            assert!(err.starts_with("FileBackedStatic"), "{err}");
+            assert!(err.contains("LINK=/MERGE:.bss=.zbss"), "{err}");
+        } else {
+            assert!(from_dwarf.rows.is_empty(), "{:?}", from_dwarf.rows);
+            result.unwrap();
+            assert!(verify_image(&signed).is_ok());
+        }
+    }
+}
+
+/// Each way the DWARF can fail to name the statics exactly is refused by
+/// its own name.
+#[test]
+fn dwarf_that_does_not_locate_each_pinned_static_once_is_refused() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    let refusal = |statics: &[Static]| dwarf_refusal(&f, statics);
+
+    let mut twice = good.clone();
+    twice.push(good[0].clone().in_unit(1));
+    let err = refusal(&twice);
+    assert!(
+        err.starts_with("DuplicateStatic") && err.contains("oxicrypt_module::STATE"),
+        "{err}"
+    );
+
+    let mut outside = good.clone();
+    outside[0].loc = Loc::Addr(IMAGE_BASE + 0x10_0000);
+    let err = refusal(&outside);
+    assert!(err.starts_with("StaticOutsideImage"), "{err}");
+    let mut below = good.clone();
+    below[1].loc = Loc::Addr(0);
+    assert!(refusal(&below).starts_with("StaticOutsideImage"));
+    // An unpinned module static outside the image, by its linkage name or
+    // by its path alone.
+    let mut unpinned = good.clone();
+    unpinned[4].loc = Loc::Addr(IMAGE_BASE + 0x10_0000);
+    let err = refusal(&unpinned);
+    assert!(
+        err.starts_with("StaticOutsideImage") && err.contains("INIT"),
+        "{err}"
+    );
+    let mut exported = good.clone();
+    exported.push(Static::new(
+        "oxicrypt_thing::EXPORTED",
+        Some("fips_exported"),
+        Loc::Addr(IMAGE_BASE + 0x10_0000),
+        Some(8),
+    ));
+    assert!(refusal(&exported).starts_with("StaticOutsideImage"));
+
+    let mut unlocated = good.clone();
+    unlocated[2].loc = Loc::Absent;
+    let err = refusal(&unlocated);
+    assert!(
+        err.starts_with("StaticUnlocated") && err.contains("ML_DSA_CAST_PASSED"),
+        "{err}"
+    );
+    // Located, but in a read-only section.
+    let mut read_only = good.clone();
+    read_only[3].loc = Loc::Addr(va(RDATA.0 + 0x10));
+    let err = refusal(&read_only);
+    assert!(
+        err.starts_with("StaticUnlocated") && err.contains("SHA256_CAST_PASSED"),
+        "{err}"
+    );
+    let mut absent = good.clone();
+    absent.remove(0);
+    assert!(refusal(&absent).starts_with("StaticUnlocated"));
+}
+
+/// A module static is located only by a lone `DW_OP_addr`: any other
+/// expression, for a pinned static or not, is refused, and a static with
+/// no location at all, which the compiler emitted no storage for, is not
+/// a module static.
+#[test]
+fn a_static_located_by_any_other_expression_is_refused() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    let mut addr = vec![super::dwarf::OP_ADDR];
+    addr.extend(va(ZBSS.0).to_le_bytes());
+    // `DW_OP_const8u`: nine bytes, an operand that is not an address.
+    let mut constant = addr.clone();
+    constant[0] = 0x0e;
+    // `DW_OP_addr` then `DW_OP_plus_uconst 0`.
+    let mut longer = addr.clone();
+    longer.extend([0x23, 0]);
+    for (which, expr) in [(0, constant.clone()), (0, longer.clone()), (4, longer)] {
+        let mut s = good.clone();
+        s[which].loc = Loc::Expr(expr.clone());
+        let err = dwarf_refusal(&f, &s);
+        assert!(
+            err.starts_with("StaticUnlocated"),
+            "{which} {expr:02x?}: {err}"
+        );
+    }
+    let mut unemitted = good.clone();
+    unemitted.push(Static::new(
+        "oxicrypt_thing::KAT",
+        Some("_RNvCs1_14oxicrypt_thing3KAT"),
+        Loc::Absent,
+        Some(8),
+    ));
+    let s = module_statics(&dwarf_image(&f, &unemitted), None).unwrap();
+    assert_eq!(s.matched, 5, "{s:?}");
+}
+
+/// A zero, file-backed module static in `.data`: at `.data + 0x180`, past
+/// every initialised byte the fixture writes.
+fn zero_in_data(path: &str, linkage: Option<&str>) -> Static {
+    Static::new(path, linkage, Loc::Addr(va(DATA.0 + 0x180)), Some(8))
+}
+
+/// A module static is one by its path or by its linkage name, as the PDB
+/// names a static by its path; and a pinned static is named twice whether
+/// the second entry with storage repeats its path or its linkage name. A
+/// declaration with no location is not a second static.
+#[test]
+fn a_static_is_matched_by_its_path_or_its_linkage_name() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    for (linkage, why) in [
+        (Some("fips_zero"), "an exported name outside the crate"),
+        (None, "no linkage name"),
+    ] {
+        let mut s = good.clone();
+        s.push(zero_in_data("oxicrypt_thing::ZERO", linkage));
+        let mut img = dwarf_image(&f, &s);
+        let statics = module_statics(&img, None).unwrap();
+        assert_eq!(statics.rows.len(), 1, "{why}: {statics:?}");
+        assert_eq!(statics.rows[0].addr, va(DATA.0 + 0x180), "{why}");
+        let err = sign_image(&mut img, test_key()).unwrap_err();
+        assert!(err.starts_with("FileBackedStatic"), "{why}: {err}");
+    }
+
+    let state = &good[0];
+    let mut by_linkage = good.clone();
+    by_linkage.push(Static::new(
+        "elsewhere::COPY",
+        state.linkage.as_deref(),
+        Loc::Addr(va(ZBSS.0 + 0x40)),
+        Some(8),
+    ));
+    let mut by_path = good.clone();
+    by_path.push(Static::new(
+        "oxicrypt_module::STATE",
+        Some("fips_state"),
+        Loc::Addr(va(ZBSS.0 + 0x40)),
+        Some(8),
+    ));
+    let mut declared_too = good.clone();
+    let mut declaration = state.clone().in_unit(1);
+    declaration.loc = Loc::Absent;
+    declared_too.push(declaration);
+    let mut img = dwarf_image(&f, &declared_too);
+    sign_image(&mut img, test_key()).unwrap();
+    let mut nested_copy = good.clone();
+    nested_copy.push(state.clone().nested());
+    for (statics, why) in [
+        (by_linkage, "the same linkage name"),
+        (by_path, "the same path"),
+        (nested_copy, "a copy under a function"),
+    ] {
+        let err = dwarf_refusal(&f, &statics);
+        assert!(
+            err.starts_with("DuplicateStatic") && err.contains("oxicrypt_module::STATE"),
+            "{why}: {err}"
+        );
+    }
+}
+
+/// A static extends as far as its type's size, not to the next static the
+/// DWARF happens to describe; a file-backed module static whose type gives
+/// no size is refused.
+#[test]
+fn a_static_extends_as_far_as_its_type() {
+    let f = Fixture::new();
+    // INIT left out: nothing is described between ZERO and `.data`'s end,
+    // where the fixture writes non-zero bytes in its raw data.
+    let mut s: Vec<Static> = fixture_statics(&f).into_iter().take(4).collect();
+    let mut img = f.build();
+    let at = file_of(DATA.0 + 0x188);
+    img[at..at + 8].fill(0x77);
+    s.push(zero_in_data(
+        "oxicrypt_thing::ZERO",
+        Some("_RNvCs1_14oxicrypt_thing4ZERO"),
+    ));
+    let image = with_sections(&img, &dwarf_sections_of(&s));
+    let statics = module_statics(&image, None).unwrap();
+    assert_eq!(statics.rows.len(), 1, "{statics:?}");
+    assert_eq!((statics.rows[0].size, statics.rows[0].file_backed), (8, 8));
+
+    let last = s.len() - 1;
+    s[last].size = None;
+    let image = with_sections(&img, &dwarf_sections_of(&s));
+    let err = module_statics(&image, None).unwrap_err();
+    assert!(
+        err.starts_with("StaticUnsized") && err.contains("ZERO"),
+        "{err}"
+    );
+}
+
+/// A static lies in the section whose extent, the larger of its virtual
+/// and raw sizes, holds its first byte: at a section's end it is in the
+/// next, and past `VirtualSize` inside the raw data it is still inside.
+#[test]
+fn a_static_lies_in_the_section_that_holds_its_first_byte() {
+    let f = Fixture::new();
+    let mut s = fixture_statics(&f);
+    // `.data` ends where `.tls` begins; `.tls`'s first bytes are its
+    // template, which the fixture fills.
+    s.push(Static::new(
+        "oxicrypt_thing::EDGE",
+        Some("_RNvCs1_14oxicrypt_thing4EDGE"),
+        Loc::Addr(va(DATA.0 + DATA.1)),
+        Some(8),
+    ));
+    // Inside `.tls`'s raw data, past its virtual size.
+    s.push(Static::new(
+        "oxicrypt_thing::TAIL",
+        Some("_RNvCs1_14oxicrypt_thing4TAIL"),
+        Loc::Addr(va(TLS.0 + 0x100)),
+        Some(8),
+    ));
+    let statics = module_statics(&dwarf_image(&f, &s), None).unwrap();
+    assert_eq!(
+        (statics.matched, statics.initialised),
+        (7, 2),
+        "{statics:?}"
+    );
+}
+
+/// A static described under a function, as a C compiler may place a
+/// function's `static`, is a static like any other: checked for file
+/// backing, location and section by its path or its linkage name.
+#[test]
+fn a_static_under_a_function_is_checked_as_any_other() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    let zero = zero_in_data(
+        "oxicrypt_thing::ZERO",
+        Some("_RNvCs1_14oxicrypt_thing4ZERO"),
+    )
+    .nested();
+    let mut s = good.clone();
+    s.push(zero.clone());
+    let mut img = dwarf_image(&f, &s);
+    let statics = module_statics(&img, None).unwrap();
+    assert_eq!(statics.rows.len(), 1, "{statics:?}");
+    let err = sign_image(&mut img, test_key()).unwrap_err();
+    assert!(err.starts_with("FileBackedStatic"), "{err}");
+
+    let mut addr_then_more = vec![super::dwarf::OP_ADDR];
+    addr_then_more.extend(va(DATA.0 + 0x180).to_le_bytes());
+    addr_then_more.extend([0x23, 0]);
+    let mut s = good.clone();
+    let mut other = zero.clone();
+    other.loc = Loc::Expr(addr_then_more);
+    s.push(other);
+    assert!(dwarf_refusal(&f, &s).starts_with("StaticUnlocated"));
+    let mut s = good.clone();
+    let mut outside = zero;
+    outside.loc = Loc::Addr(IMAGE_BASE + 0x10_0000);
+    s.push(outside);
+    assert!(dwarf_refusal(&f, &s).starts_with("StaticOutsideImage"));
+
+    // A pinned static described only under a function is located there.
+    let mut s = good;
+    s[0] = s[0].clone().nested();
+    let mut img = dwarf_image(&f, &s);
+    sign_image(&mut img, test_key()).unwrap();
+}
+
+/// A definition that names no static itself takes its name, linkage name
+/// and type from the declaration its `DW_AT_specification` or
+/// `DW_AT_abstract_origin` names, a static member's included; a
+/// declaration with no definition has no storage.
+#[test]
+fn a_definition_takes_its_identity_from_its_declaration() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    for split in [Split::Specification, Split::Origin, Split::Member] {
+        let mut s = good.clone();
+        s[0] = s[0].clone().split(split);
+        let mut img = dwarf_image(&f, &s);
+        sign_image(&mut img, test_key()).unwrap_or_else(|e| panic!("{split:?}: {e}"));
+
+        let mut s = good.clone();
+        s.push(
+            zero_in_data(
+                "oxicrypt_thing::ZERO",
+                Some("_RNvCs1_14oxicrypt_thing4ZERO"),
+            )
+            .split(split),
+        );
+        let statics = module_statics(&dwarf_image(&f, &s), None).unwrap();
+        assert_eq!(statics.rows.len(), 1, "{split:?}: {statics:?}");
+        assert_eq!(statics.rows[0].size, 8, "{split:?}: the declaration's type");
+    }
+    let mut s = good;
+    let mut declared = zero_in_data(
+        "oxicrypt_thing::ZERO",
+        Some("_RNvCs1_14oxicrypt_thing4ZERO"),
+    )
+    .split(Split::Specification);
+    declared.loc = Loc::Absent;
+    s.push(declared);
+    let statics = module_statics(&dwarf_image(&f, &s), None).unwrap();
+    assert_eq!(statics.matched, 5, "{statics:?}");
+}
+
+/// A definition that repeats its name outside the declaration's
+/// namespaces still lies in them: a static whose linkage name is no module
+/// crate's is a module static by the declaration's path.
+#[test]
+fn a_named_definition_takes_its_declarations_scope() {
+    let f = Fixture::new();
+    let mut s = fixture_statics(&f);
+    s.push(
+        zero_in_data("oxicrypt_thing::COUNTER", Some("fips_counter"))
+            .split(Split::NamedSpecification),
+    );
+    let statics = module_statics(&dwarf_image(&f, &s), None).unwrap();
+    assert_eq!(statics.rows.len(), 1, "{statics:?}");
+}
+
+/// The shapes the other identity and location rules turn on: a function's
+/// static with a linkage name but not external is a static; a declaration
+/// with a path and no linkage name names its definition; and an entry both
+/// located and marked a declaration is refused.
+#[test]
+fn identity_rules_hold_for_each_shape_they_name() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    let mut addr_then_more = vec![super::dwarf::OP_ADDR];
+    addr_then_more.extend(va(DATA.0 + 0x180).to_le_bytes());
+    addr_then_more.extend([0x23, 0]);
+    let mut s = good.clone();
+    s.push(
+        Static::new(
+            "oxicrypt_thing::ZERO",
+            Some("_RNvCs1_14oxicrypt_thing4ZERO"),
+            Loc::Expr(addr_then_more),
+            Some(8),
+        )
+        .nested()
+        .internal(),
+    );
+    let err = dwarf_refusal(&f, &s);
+    assert!(
+        err.starts_with("StaticUnlocated") && err.contains("ZERO"),
+        "{err}"
+    );
+
+    let mut s = good.clone();
+    s.push(zero_in_data("oxicrypt_thing::ZERO", None).split(Split::Specification));
+    let statics = module_statics(&dwarf_image(&f, &s), None).unwrap();
+    assert_eq!(statics.rows.len(), 1, "{statics:?}");
+
+    let mut s = good;
+    s.push(
+        zero_in_data(
+            "oxicrypt_thing::ZERO",
+            Some("_RNvCs1_14oxicrypt_thing4ZERO"),
+        )
+        .declared(),
+    );
+    let err = dwarf_refusal(&f, &s);
+    assert!(
+        err.starts_with("NoDwarf") && err.contains("both a declaration and located"),
+        "{err}"
+    );
+}
+
+/// One entry stands for at most one pinned static: an entry whose path is
+/// one pinned static's and whose linkage name is another's is refused.
+#[test]
+fn one_entry_cannot_stand_for_two_pinned_statics() {
+    let f = Fixture::new();
+    let mut s = fixture_statics(&f);
+    s.remove(2);
+    s[0].linkage = Some("_RNvCs1_18oxicrypt_integrity18ML_DSA_CAST_PASSED".to_owned());
+    let err = dwarf_refusal(&f, &s);
+    assert!(
+        err.starts_with("DuplicateStatic")
+            && err.contains("oxicrypt_module::STATE")
+            && err.contains("ML_DSA_CAST_PASSED"),
+        "{err}"
+    );
+}
+
+/// An array's size is its element's times its count, or its bounds'
+/// span; a module static whose type gives no size is refused wherever it
+/// lies in writable memory.
+#[test]
+fn an_array_static_is_sized_by_its_elements() {
+    let f = Fixture::new();
+    let good = fixture_statics(&f);
+    for shape in [Shape::Count(4), Shape::Bounds(0, 3)] {
+        let mut s = good.clone();
+        s.push(
+            zero_in_data(
+                "oxicrypt_thing::TABLE",
+                Some("_RNvCs1_14oxicrypt_thing5TABLE"),
+            )
+            .shaped(shape),
+        );
+        let statics = module_statics(&dwarf_image(&f, &s), None).unwrap();
+        assert_eq!(statics.rows.len(), 1, "{shape:?}: {statics:?}");
+        assert_eq!(statics.rows[0].size, 32, "{shape:?}");
+    }
+    let mut s = good;
+    s.push(Static::new(
+        "oxicrypt_thing::OPAQUE",
+        Some("_RNvCs1_14oxicrypt_thing6OPAQUE"),
+        Loc::Addr(va(ZBSS.0 + 0x80)),
+        None,
+    ));
+    let err = dwarf_refusal(&f, &s);
+    assert!(
+        err.starts_with("StaticUnsized") && err.contains("OPAQUE"),
+        "{err}"
+    );
+}
+
+/// The COFF string table lies after the symbol table, and a long name must
+/// lie inside the length it declares.
+#[test]
+fn long_section_names_come_from_the_declared_string_table() {
+    let f = Fixture::new();
+    let statics = fixture_statics(&f);
+    let sections = dwarf_sections_of(&statics);
+    for layout in [
+        SectionLayout {
+            symbols: 3,
+            ..SectionLayout::default()
+        },
+        SectionLayout {
+            no_virtual_size: true,
+            ..SectionLayout::default()
+        },
+    ] {
+        let img = with_sections_as(&f.build(), &sections, layout);
+        let s = module_statics(&img, None).unwrap();
+        assert_eq!(s.matched, 5);
+    }
+    // A table declaring only its length field holds no name; one declaring
+    // ten bytes cuts the first name short.
+    for (declared, why) in [(4, "the 4 bytes"), (10, "not terminated")] {
+        let img = with_sections_as(
+            &f.build(),
+            &sections,
+            SectionLayout {
+                strings_len: Some(declared),
+                ..SectionLayout::default()
+            },
+        );
+        let err = module_statics(&img, None).unwrap_err();
+        assert!(
+            err.starts_with("NoDwarf") && err.contains(why),
+            "{declared}: {err}"
+        );
+    }
+}
+
+/// An image with no DWARF and no program database named, or DWARF the
+/// reader cannot use, is refused as `NoDwarf`. One that names a program
+/// database not beside it keeps the PDB route's `StaticsUnchecked`, with a
+/// remedy for either toolchain.
+#[test]
+fn an_image_without_usable_dwarf_is_refused() {
+    let f = Fixture::new();
+    let mut bare = f.build();
+    bare[OPT + 112 + 8 * 6..OPT + 112 + 8 * 7].fill(0);
+    let err = module_statics(&bare, None).unwrap_err();
+    assert!(err.starts_with("NoDwarf"), "{err}");
+    let err = module_statics(&f.build(), None).unwrap_err();
+    assert!(err.starts_with("StaticsUnchecked"), "{err}");
+    assert!(
+        err.contains("fixture.pdb") && err.contains("GNU toolchain") && err.contains("DWARF"),
+        "{err}"
+    );
+
+    let statics = fixture_statics(&f);
+    let [mut info, abbrev, strs] = dwarf(&statics);
+    info[4] = 5;
+    let img = with_sections(
+        &f.build(),
+        &[
+            (".debug_abbrev", abbrev.clone()),
+            (".debug_info", info),
+            (".debug_str", strs.clone()),
+        ],
+    );
+    let err = module_statics(&img, None).unwrap_err();
+    assert!(
+        err.starts_with("NoDwarf") && err.contains("version 5"),
+        "{err}"
+    );
+    // `.debug_info` with no `.debug_abbrev`.
+    let [info, ..] = dwarf(&statics);
+    let img = with_sections(&f.build(), &[(".debug_info", info), (".debug_str", strs)]);
+    let err = module_statics(&img, None).unwrap_err();
+    assert!(err.starts_with("NoDwarf"), "{err}");
+}
+
+/// The file range of the section named `name`.
+fn section_bytes(img: &[u8], name: &str) -> std::ops::Range<usize> {
+    let parsed = super::parse(img).unwrap();
+    let s = parsed
+        .sections
+        .iter()
+        .find(|s| super::section_name(img, &parsed, s).unwrap() == name)
+        .unwrap_or_else(|| panic!("no {name} section"));
+    let start = s.raw_offset as usize;
+    start..start + s.virtual_size.min(s.raw_size) as usize
+}
+
+/// An edit of an image's bytes, and the refusal it must draw.
+type Edit<'a> = (&'a str, Box<dyn Fn(&mut Vec<u8>) + 'a>);
+
+/// The one offset in `hay` where `needle` lies.
+fn only(hay: &[u8], needle: &[u8]) -> usize {
+    let at: Vec<usize> = hay
+        .windows(needle.len())
+        .enumerate()
+        .filter_map(|(i, w)| (w == needle).then_some(i))
+        .collect();
+    assert_eq!(at.len(), 1, "{needle:02x?} occurs {} times", at.len());
+    at[0]
+}
+
+/// A DLL of `oxicrypt-ffi` linked by `cargo zigbuild --target
+/// x86_64-pc-windows-gnu` with full debug information and zero-initialised
+/// data in `.zbss`, named by `OXICRYPT_GNU_FFI_DLL` (`docs/integrity-signing.md`
+/// gives the build): it signs with its statics read from its DWARF, each
+/// pinned static located once in `.zbss`, and each edit of its DWARF that
+/// leaves a pinned static unnamed, twice named, outside the image, or
+/// unreadable is refused by name.
+#[test]
+#[ignore = "needs a GNU-toolchain oxicrypt-ffi DLL named by OXICRYPT_GNU_FFI_DLL"]
+fn a_gnu_toolchain_dll_signs_from_its_dwarf() {
+    let path = std::env::var_os("OXICRYPT_GNU_FFI_DLL")
+        .expect("OXICRYPT_GNU_FFI_DLL names the DLL this test signs");
+    let mut img = std::fs::read(path).unwrap();
+    crate::embed_verify_key(&mut img, test_key().public_key()).unwrap();
+
+    let parsed = super::parse(&img).unwrap();
+    let sections = super::dwarf_sections(&img, &parsed).unwrap().unwrap();
+    let vars = super::dwarf::variables(&sections).unwrap();
+    let zbss = parsed
+        .sections
+        .iter()
+        .find(|s| super::section_name(&img, &parsed, s).unwrap() == ".zbss")
+        .expect("the DLL is linked with zero-initialised data in .zbss");
+    assert_eq!(zbss.raw_size, 0, ".zbss has no file bytes");
+    let zbss_va = parsed.image_base + u64::from(zbss.virtual_address);
+    let mut state = 0u64;
+    for (path, ident, _) in crate::elf::REQUIRED_STATICS {
+        let hits: Vec<&super::dwarf::Variable> = vars
+            .iter()
+            .filter(|v| {
+                v.linkage
+                    .iter()
+                    .chain([&v.path])
+                    .any(|n| super::pins(n, path, ident))
+            })
+            .collect();
+        assert_eq!(hits.len(), 1, "{path}: {hits:?}");
+        let addr = hits[0]
+            .addr()
+            .unwrap_or_else(|| panic!("{path} is not located"));
+        assert!(
+            (zbss_va..zbss_va + u64::from(zbss.virtual_size)).contains(&addr),
+            "{path} at {addr:#x} is not in .zbss"
+        );
+        if path == "oxicrypt_module::STATE" {
+            state = addr;
+        }
+    }
+    let statics = module_statics(&img, None).unwrap();
+    assert!(
+        statics.missing.is_empty() && statics.rows.is_empty(),
+        "{statics:?}"
+    );
+    assert!(statics.matched >= crate::elf::REQUIRED_STATICS.len());
+    let mut signed = img.clone();
+    sign_image(&mut signed, test_key()).unwrap();
+    verify_image(&signed).unwrap();
+
+    let info = section_bytes(&img, ".debug_info");
+    let abbrev = section_bytes(&img, ".debug_abbrev");
+    let strs = section_bytes(&img, ".debug_str");
+    let mut location = vec![super::dwarf::OP_ADDR];
+    location.extend_from_slice(&state.to_le_bytes());
+    let state_at = info.start + only(&img[info.clone()], &location);
+    let edits: Vec<Edit<'_>> = vec![
+        // The first unit declares version 5.
+        ("NoDwarf", Box::new(|b: &mut Vec<u8>| b[info.start + 4] = 5)),
+        // The first abbreviation's first attribute given DW_FORM_strx1.
+        (
+            "DwarfForm",
+            Box::new(|b: &mut Vec<u8>| {
+                assert_eq!(b[abbrev.start..abbrev.start + 5], [1, 0x11, 1, 0x25, 0x0e]);
+                b[abbrev.start + 4] = 0x25;
+            }),
+        ),
+        // ML_DSA_CAST_PASSED's mangled name respelled as SHA256's.
+        (
+            "DuplicateStatic",
+            Box::new(|b: &mut Vec<u8>| {
+                let from = b"18oxicrypt_integrity18ML_DSA_CAST_PASSED";
+                let at = strs.start + only(&b[strs.clone()], from);
+                b[at..at + from.len()].copy_from_slice(b"18oxicrypt_integrity18SHA256_CAST_PASSED");
+            }),
+        ),
+        // STATE located 256 MiB further on.
+        (
+            "StaticOutsideImage",
+            Box::new(move |b: &mut Vec<u8>| {
+                b[state_at + 1..state_at + 9].copy_from_slice(&(state + (1 << 28)).to_le_bytes());
+            }),
+        ),
+        // STATE's location a constant rather than an address.
+        (
+            "StaticUnlocated",
+            Box::new(move |b: &mut Vec<u8>| b[state_at] = 0x0e),
+        ),
+    ];
+    for (name, edit) in &edits {
+        let mut b = img.clone();
+        edit(&mut b);
+        let err = module_statics(&b, None).unwrap_err();
+        assert!(err.starts_with(name), "{name}: {err}");
+        let err = sign_image(&mut b, test_key()).unwrap_err();
+        assert!(err.starts_with(name), "{name}: {err}");
+    }
 }

@@ -45,7 +45,8 @@
 //! directory and load configuration, and `--sign` refuses one in which a
 //! module static the module must start from zero-fill is file-backed,
 //! reading the symbols from the program database its CodeView record names,
-//! beside the artifact, matched by GUID and age. `--reserved-against <reference>` names the same
+//! beside the artifact, matched by GUID and age, or, when that file is not
+//! there, from the DWARF the image carries. `--reserved-against <reference>` names the same
 //! build as linked, the artifact being the result of `signtool` with the
 //! final certificate and options: `CheckSum` and the Security directory
 //! entry, where they differ, become holes, and any other difference before
@@ -56,7 +57,9 @@
 //! every chain word against the kind and import the signed table gives it,
 //! and for a PE artifact every import lookup table against the records.
 //! `--show` reports the typed extent, the file-backed module statics row
-//! and both fingerprints without touching the artifact.
+//! and both fingerprints without touching the artifact. For a PE artifact,
+//! `--show` and `--sign` name where the statics were read from: the
+//! program database beside it, or the DWARF in the image.
 //!
 //! This tool is **outside the cryptographic boundary**. It parses
 //! executable formats, which the module deliberately does not: the module
@@ -306,6 +309,7 @@ fn sign(
     };
     let layout = oxicrypt_integrity_sign::classify_with(&bytes, &options)?;
     let signature = oxicrypt_integrity_sign::sign_image_with(&mut bytes, key, &options)?;
+    let source = statics_source(&bytes, symbols.as_deref());
     // Everything that can fail is done before the artifact is replaced, so
     // a reported failure always means the original is untouched.
     let fingerprint = format_fingerprint(&key.fingerprint()?);
@@ -331,6 +335,9 @@ fn sign(
         slot::table_len(&layout.entries),
         slot::MAX_ENTRIES
     );
+    if let Some(source) = source {
+        println!("  module statics read from: {source}");
+    }
     if let Some(note) = oxicrypt_integrity_sign::after_signing_note(&bytes) {
         println!("  note: {note}");
     }
@@ -678,9 +685,23 @@ fn print_kinds(entries: &[slot::Entry]) {
     }
 }
 
+/// Where the signer reads a PE image's module statics from: the program
+/// database `symbols` holds when one was found beside the artifact, else the
+/// DWARF the image carries. `None` for any other format.
+fn statics_source(bytes: &[u8], symbols: Option<&[u8]>) -> Option<&'static str> {
+    pe::is_pe32plus(bytes).then_some(if symbols.is_some() {
+        "the program database beside the artifact"
+    } else {
+        "the DWARF in the image"
+    })
+}
+
 /// Prints the file-backed module statics row the signer refuses on.
 fn show_statics(path: &Path, bytes: &[u8], loader: Option<elf::Loader>) {
     let statics = oxicrypt_integrity_sign::debug_symbols(path, bytes).and_then(|symbols| {
+        if let Some(source) = statics_source(bytes, symbols.as_deref()) {
+            println!("  module statics read from: {source}");
+        }
         oxicrypt_integrity_sign::module_statics(bytes, symbols.as_deref(), loader)
     });
     match statics {
@@ -770,9 +791,27 @@ fn usage() {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
-    use super::replace_verified;
+    use super::{replace_verified, statics_source};
+
+    /// A PE32+ image says which route supplied its statics; an ELF image
+    /// names none.
+    #[test]
+    fn the_statics_route_is_named_for_a_pe_image() {
+        let mut pe = vec![0u8; 0x200];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3c] = 0x80;
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        pe[0x98..0x9a].copy_from_slice(&0x20bu16.to_le_bytes());
+        let pdb = b"a program database";
+        assert_eq!(
+            statics_source(&pe, Some(pdb)),
+            Some("the program database beside the artifact")
+        );
+        assert_eq!(statics_source(&pe, None), Some("the DWARF in the image"));
+        assert_eq!(statics_source(b"\x7fELF", None), None);
+    }
 
     /// A temporary name this run did not create is left alone when the
     /// replacement fails: another process may own that file.

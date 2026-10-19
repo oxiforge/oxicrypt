@@ -233,9 +233,28 @@ signer finds the module's statics in the artifact's own symbol table or, for
 a stripped artifact, in the debug file split off before stripping: the file
 its `.gnu_debuglink` names on ELF, `<artifact>.dSYM` on Mach-O, the program
 database its CodeView record names on PE, each required to match the
-artifact. Stripping comes first and signing after. The signer refuses with
-`FileBackedStatic` while any zero-initialised module static lies in the
-file's bytes, and with `StaticsUnchecked` when it cannot name them. The
+artifact. Stripping comes first and signing after. A PE image linked by a
+GNU toolchain is not stripped: with no file of its program database's name
+beside it, the signer reads its statics from the DWARF in its own
+`.debug_info`, `.debug_abbrev` and `.debug_str` sections, which then lie in
+the signed extent. The signer refuses with `FileBackedStatic` while any
+zero-initialised module static lies in the file's bytes, and with
+`StaticsUnchecked` when it cannot name them from a symbol table or debug
+file. Read from DWARF, it refuses with `NoDwarf` an image that names no
+program database and carries no DWARF or whose DWARF is malformed,
+`DwarfForm` a form it does not read, `DuplicateStatic` a pinned static named
+twice, `StaticOutsideImage` a module static outside every section,
+`StaticUnlocated` a module static located by anything but a single
+`DW_OP_addr` or a pinned static not located in a writable section, and
+`StaticUnsized` a module static in writable memory whose type gives no size.
+For the four pinned statics this coverage holds unconditionally: each must
+be named by exactly one located DWARF entry, at a single `DW_OP_addr` in a
+writable section, and anything else is refused. For the other module
+statics it rests on two assumptions the reader cannot detect a breach of:
+the compiler never leaves a static that has storage without a
+`DW_AT_location`, and every module crate is built with full debug
+information. A static with storage that has no DWARF entry, or an entry
+with no location, is not seen, where a program database would list it. The
 refusal is a property of the artifact as signed: an edit after signing that
 moves the state word into the file's bytes keeps the test from running, which
 the threat model excludes.
@@ -418,9 +437,14 @@ Besides the per-format refusals above, `oxicrypt-integrity-sign --sign`:
 - refuses with `FileBackedStatic` an artifact whose module state is a file
   byte;
 - refuses with `StaticsUnchecked` an artifact whose module statics it cannot
-  name: no symbol table and no matching debug file, a debug file that fails
-  its CRC, UUID or GUID and age check, or a symbol table that does not name the
+  name: no symbol table and no matching debug file (on PE, a program
+  database named but not found and no DWARF), a debug file that fails its
+  CRC, UUID or GUID and age check, or a symbol table that does not name the
   module's statics in writable memory;
+- refuses a PE artifact whose statics it reads from DWARF, with no program
+  database beside it, as `NoDwarf`, `DwarfForm`, `DuplicateStatic`,
+  `StaticOutsideImage`, `StaticUnlocated` or `StaticUnsized` when that DWARF
+  does not locate each module static exactly and each pinned static once;
 - never generates a key implicitly and never embeds a default.
 
 It writes the signed copy beside the artifact, verifies it, and only then

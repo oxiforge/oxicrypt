@@ -439,6 +439,63 @@ module's statics from the program database the linker writes
 accepts it only when its GUID and age are the ones the image's CodeView record
 names. Keep the PDB beside the artifact when signing.
 
+A DLL built with the GNU toolchain (`x86_64-pc-windows-gnu`) carries its
+debug information as DWARF in its own `.debug_info`, `.debug_abbrev` and
+`.debug_str` sections. When no file of the name its CodeView record gives
+is beside it, the signer reads the module's statics from that DWARF: each
+variable's linkage name and path, the address its location names, and its
+type's size. A file of that name that is not the DLL's program database is
+refused (`StaticsUnchecked`), not passed over. Linked by `cargo zigbuild`,
+whose linker is lld, the same two requirements hold. lld merges `.bss`
+into `.data` by default, and `zig cc` refuses `-Wl,/MERGE:...`, but lld
+reads further options from the `LINK` environment variable, ahead of its
+defaults. From the repository root:
+
+```bash
+{ echo EXPORTS; grep -oE '\b(oxi|lama)_[a-z0-9_]+\s*\(' crates/oxicrypt-ffi/include/oxicrypt.h \
+    | tr -d '( ' | sort -u; } > oxicrypt_ffi.def
+LINK=/MERGE:.bss=.zbss CARGO_PROFILE_RELEASE_DEBUG=full \
+  RUSTFLAGS="-C link-arg=$PWD/oxicrypt_ffi.def" \
+  cargo zigbuild --release -p oxicrypt-ffi --target x86_64-pc-windows-gnu
+```
+
+The `.def` file is there because `zig cc`, the linker driver `cargo
+zigbuild` uses, does not pass the export list `rustc` writes for a `cdylib`
+on to lld, so without one the DLL exports none of the functions the header
+declares; the list names every one of them, the `oxi_*` functions and
+`lama_manifest`, which the `oxicrypt` crate also calls. `objdump -p` lists
+what the DLL exports. lld prints `.bss=.data: already merged
+into .zbss` when it applies `LINK`. `cargo xtask sign --target
+x86_64-pc-windows-gnu` builds an executable this way, with `cargo zigbuild`,
+and checks for `LINK` and full debug information before it does.
+
+Strip nothing: `strip` removes the DWARF the signer reads, and a DLL that
+names a program database but carries no DWARF is refused
+(`StaticsUnchecked`). lld also writes a program database, under `deps/`,
+that matches the DLL's CodeView record but names none of the statics the
+module pins; keep it away from the DLL, because the signer reads a matching
+program database in preference to the DWARF and refuses this one
+(`StaticsUnchecked`). The DWARF sections are mapped read-only sections of
+the image, so they lie inside the signed extent and the integrity test
+verifies them at power-up with everything else: about 17 MB of the 21 MB
+extent of a release `oxicrypt_ffi.dll` built this way.
+
+Read from DWARF, the statics are refused when the DLL names no program
+database and carries no DWARF, or its DWARF is malformed (`NoDwarf`); its
+DWARF uses an attribute form the signer does not read (`DwarfForm`); two
+located variables name one of the statics the module pins, or one variable
+names two of them (`DuplicateStatic`); a module static's address lies
+outside every section of the image (`StaticOutsideImage`); a module static
+is located by anything but a single `DW_OP_addr`, or a pinned static is not
+located in a writable section (`StaticUnlocated`); or a module static in a
+writable section has a type that gives no size, an array's being its
+element's size times its count (`StaticUnsized`). A variable with no
+location, or marked as a declaration, has no storage and is not a module
+static; a definition that names nothing itself is read under the name of
+the declaration it completes, and a static described under a function is
+read like any other. The signer reads DWARF version 4 units with 32-bit offsets and
+8-byte addresses, as the compilers write them for this target.
+
 The signer refuses an image with `HIGHLOW`, `HIGH` or `LOW` base relocations
 (`RelocationType`), bound imports (`BoundImports`), an import descriptor with
 no lookup table (`MissingLookupTable`), a delay-load IAT or module handle in

@@ -78,15 +78,43 @@
 //!
 //! # Module statics
 //!
-//! A PE image carries no symbol table the signer can trust to name the
-//! module's statics, so [`module_statics`] reads them from the program
-//! database the linker wrote, accepted only when its GUID and age are the
-//! ones the image's CodeView debug record names. The linker places
-//! zero-initialised data after `.data`'s initialised bytes, and the section's
-//! raw data is rounded up to the file alignment, so a zero-initialised static
-//! that falls inside that rounding is a byte of the file. The signer refuses
-//! while any module static is.
+//! The signer does not read a PE image's COFF symbol table, which the MSVC
+//! linker and lld leave empty; it reads the COFF string table only for the
+//! names of sections longer than eight bytes. [`module_statics`] reads the
+//! module's statics from the program database the linker wrote, accepted
+//! only when its GUID and age are the ones the image's CodeView debug
+//! record names. When no such database is given, it reads them from the
+//! DWARF debug information a GNU toolchain links into the image's own
+//! `.debug_info`, `.debug_abbrev` and `.debug_str` sections: each static's
+//! linkage name and path, the address its `DW_OP_addr` location names, and
+//! its type's size. The linker places zero-initialised data after `.data`'s
+//! initialised bytes, and the section's raw data is rounded up to the file
+//! alignment, so a zero-initialised static that falls inside that rounding
+//! is a byte of the file. The signer refuses while any module static is.
+//!
+//! Read from DWARF, the statics are refused by name when the image carries
+//! no usable DWARF (`NoDwarf`), the DWARF uses an attribute form the reader
+//! does not handle (`DwarfForm`), two located variables name one pinned
+//! static or one names two (`DuplicateStatic`), a module static's address
+//! lies outside every section (`StaticOutsideImage`), a module static is
+//! located by anything but a lone `DW_OP_addr` or a pinned static the image
+//! needs is not located in a writable section (`StaticUnlocated`), or a
+//! module static in a writable section has a type that gives no size
+//! (`StaticUnsized`). A variable marked as a declaration has no storage
+//! and is not a module static. A variable with no location is skipped as
+//! having none, under the first assumption below. The pinned set is the
+//! one the program database route requires.
+//!
+//! For the pinned statics the DWARF route's coverage holds unconditionally:
+//! each must be named by exactly one located entry, at a lone `DW_OP_addr`
+//! in a writable section, or the image is refused. For the other module
+//! statics it rests on two assumptions the reader cannot detect a breach
+//! of: the compiler never leaves a static that has storage without a
+//! `DW_AT_location`, and every module crate is built with full debug
+//! information. A static with storage that has no entry, or an entry with
+//! no location, is not seen, where a program database would list it.
 
+mod dwarf;
 mod pdb;
 
 use oxicrypt_integrity::SLOT_SIZE;
@@ -205,6 +233,9 @@ pub fn unsupported_reason(bytes: &[u8]) -> Option<&'static str> {
 /// One section header, reduced to what classification needs.
 #[derive(Debug, Clone)]
 struct Section {
+    /// The name field as the header holds it: the name, NUL-padded, or
+    /// `/` and the decimal offset of a longer one in the string table.
+    name: [u8; 8],
     virtual_size: u32,
     virtual_address: u32,
     raw_size: u32,
@@ -244,6 +275,9 @@ struct Image {
     /// The optional header's `ImageBase`: the link base.
     image_base: u64,
     size_of_headers: u32,
+    /// The file offset of the COFF string table, which holds the names
+    /// of sections longer than eight bytes.
+    strings: Option<usize>,
     sections: Vec<Section>,
     /// Every data directory, padded to sixteen with empty ones.
     dirs: [(u32, u32); 16],
@@ -371,7 +405,10 @@ fn parse(bytes: &[u8]) -> Result<Image, String> {
     for i in 0..usize::from(nsections) {
         let off = table.saturating_add(i.saturating_mul(SECTION_HEADER_SIZE));
         let at = |d: usize| off.saturating_add(d);
+        let mut name = [0u8; 8];
+        name.copy_from_slice(bytes.get(at(0)..at(8)).ok_or("truncated section header")?);
         let s = Section {
+            name,
             virtual_size: u32_at(bytes, at(8)).ok_or("truncated section header")?,
             virtual_address: u32_at(bytes, at(12)).ok_or("truncated section header")?,
             raw_size: u32_at(bytes, at(16)).ok_or("truncated section header")?,
@@ -428,10 +465,23 @@ fn parse(bytes: &[u8]) -> Result<Image, String> {
         }
         sections.push(s);
     }
+    // The string table follows the symbol table, whose entries are
+    // eighteen bytes each.
+    let symbols = u32_at(bytes, pe.checked_add(12).ok_or("PE header overflows")?)
+        .ok_or("truncated COFF header")?;
+    let nsymbols = u32_at(bytes, pe.checked_add(16).ok_or("PE header overflows")?)
+        .ok_or("truncated COFF header")?;
+    let strings = (symbols != 0)
+        .then(|| {
+            usize::try_from(u64::from(symbols).checked_add(u64::from(nsymbols).checked_mul(18)?)?)
+                .ok()
+        })
+        .flatten();
     Ok(Image {
         opt,
         image_base,
         size_of_headers,
+        strings,
         sections,
         dirs,
         has_security_entry: count > DIR_SECURITY,
@@ -1461,6 +1511,97 @@ pub(crate) fn matching_pdb(bytes: &[u8], pdb: &[u8]) -> Result<pdb::Pdb, String>
     Ok(pdb)
 }
 
+/// A section's name: its header's eight bytes, or the entry in the COFF
+/// string table that a `/`-prefixed decimal offset there names.
+///
+/// # Errors
+///
+/// `NoDwarf` when a long name's offset is malformed, or the name does not
+/// lie, terminated, inside the length the string table declares, or that
+/// table is not in the file.
+fn section_name(bytes: &[u8], img: &Image, s: &Section) -> Result<String, String> {
+    let n = s.name.iter().position(|&b| b == 0).unwrap_or(s.name.len());
+    let short = s.name.get(..n).unwrap_or(&[]);
+    let Some(digits) = short.strip_prefix(b"/") else {
+        return Ok(String::from_utf8_lossy(short).into_owned());
+    };
+    let off = std::str::from_utf8(digits)
+        .ok()
+        .and_then(|d| d.parse::<usize>().ok())
+        .ok_or("NoDwarf: a section's long name is not a string table offset")?;
+    let table = img
+        .strings
+        .ok_or("NoDwarf: a section's long name points into a string table the image has none of")?;
+    // The table's first four bytes are its length, that field included.
+    let declared = u32_at(bytes, table)
+        .and_then(|l| usize::try_from(l).ok())
+        .ok_or("NoDwarf: the COFF string table lies past the end of the file")?;
+    if off < 4 || off >= declared {
+        return Err(format!(
+            "NoDwarf: a section's long name at offset {off} lies outside the {declared} bytes \
+             the COFF string table declares"
+        ));
+    }
+    let names = table
+        .checked_add(declared)
+        .and_then(|end| bytes.get(table.checked_add(off)?..end))
+        .ok_or("NoDwarf: the COFF string table runs past the end of the file")?;
+    let end = names
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or("NoDwarf: a section's long name is not terminated inside the string table")?;
+    Ok(String::from_utf8_lossy(names.get(..end).unwrap_or(&[])).into_owned())
+}
+
+/// The DWARF sections the statics reader takes, when the image carries
+/// `.debug_info`: each section's raw data, capped at its virtual size when
+/// it declares one.
+///
+/// # Errors
+///
+/// `NoDwarf` when a section name cannot be read, one of the three
+/// sections is present twice or its bytes lie past the end of the file, or
+/// `.debug_info` comes without `.debug_abbrev`.
+fn dwarf_sections<'a>(bytes: &'a [u8], img: &Image) -> Result<Option<dwarf::Sections<'a>>, String> {
+    const NAMES: [&str; 3] = [".debug_info", ".debug_abbrev", ".debug_str"];
+    let mut found: [Option<&'a [u8]>; 3] = [None; 3];
+    for s in &img.sections {
+        let name = section_name(bytes, img, s)?;
+        let Some(slot) = NAMES
+            .iter()
+            .position(|n| *n == name)
+            .and_then(|i| found.get_mut(i))
+        else {
+            continue;
+        };
+        let len = if s.virtual_size == 0 {
+            s.raw_size
+        } else {
+            s.virtual_size.min(s.raw_size)
+        };
+        let data = usize::try_from(s.raw_offset)
+            .ok()
+            .zip(usize::try_from(len).ok())
+            .and_then(|(o, n)| bytes.get(o..o.checked_add(n)?))
+            .ok_or_else(|| format!("NoDwarf: {name}'s bytes lie past the end of the file"))?;
+        if slot.replace(data).is_some() {
+            return Err(format!("NoDwarf: the image has two {name} sections"));
+        }
+    }
+    let [info, abbrev, str] = found;
+    let Some(info) = info else {
+        return Ok(None);
+    };
+    let abbrev = abbrev.ok_or("NoDwarf: the image has .debug_info but no .debug_abbrev")?;
+    Ok(Some(dwarf::Sections { info, abbrev, str }))
+}
+
+/// Whether a symbol named `name` is the static [`REQUIRED_STATICS`] pins as
+/// `path`, whose mangled names spell `ident`.
+fn pins(name: &str, path: &str, ident: &str) -> bool {
+    name.contains(ident) || name == path
+}
+
 /// Names every zero-initialised module static the image's file holds.
 ///
 /// The pre-operational tests run inside module initialisation, which the
@@ -1470,44 +1611,65 @@ pub(crate) fn matching_pdb(bytes: &[u8], pdb: &[u8]) -> Result<pdb::Pdb, String>
 /// one must not be signed.
 ///
 /// The symbols come from `pdb`, the program database whose GUID and age are
-/// the ones the image's CodeView record names. A module static is a data or
-/// public symbol whose name contains `oxicrypt`, in a writable section. A
-/// symbol extends to the next symbol in its section, or to the section's
-/// end. It is file-backed when any of its bytes lie inside the section's
-/// raw data, and zero-initialised when every such byte is zero and no
-/// `DIR64` relocation writes into it. The statics [`REQUIRED_STATICS`] pins,
-/// matched by their mangled path or their qualified name, are rows whenever
-/// any byte is file-backed.
+/// the ones the image's CodeView record names. With no `pdb`, an image that
+/// carries DWARF (`.debug_info`, as a GNU toolchain links it with full debug
+/// information) has its statics read from that: each `DW_TAG_variable`
+/// with storage, under its linkage name and its path (a definition under
+/// those of the declaration it completes), at the address its `DW_OP_addr`
+/// location names, sized by its type.
+///
+/// A module static is a data or public symbol, or a variable, one of whose
+/// names contains `oxicrypt`, in a writable section. A PDB symbol extends
+/// to the next symbol in its section, or to the section's end; a variable
+/// extends as far as its type's size. It is file-backed when any of its
+/// bytes lie inside the section's raw data, and zero-initialised when every
+/// such byte is zero and no `DIR64` relocation writes into it. The statics
+/// [`REQUIRED_STATICS`] pins, matched by their mangled path or their
+/// qualified name, are rows whenever any byte is file-backed.
 ///
 /// # Errors
 ///
-/// `StaticsUnchecked` when no PDB is given or it is not this image's, or a
-/// description when either is malformed.
-#[allow(
-    clippy::too_many_lines,
-    reason = "one pass over the symbols; each condition sits beside the field it reads"
-)]
+/// `StaticsUnchecked` when a PDB is given that is not this image's, or none
+/// is given and the image carries no DWARF but names one in its CodeView
+/// record. With no PDB: `NoDwarf` when the image carries neither, or its
+/// DWARF is malformed or of a version or shape the reader does not take;
+/// `DwarfForm` when the DWARF uses a form the reader does not handle;
+/// `DuplicateStatic` when two located variables name one pinned static or
+/// one names two;
+/// `StaticOutsideImage` when a module static's address lies outside every
+/// section; `StaticUnlocated` when a module static is located by anything
+/// but a lone `DW_OP_addr`, or a pinned static the image needs is not
+/// located in a writable section; and `StaticUnsized` when a module
+/// static in a writable section has a type that gives no size. A description when either input is
+/// otherwise malformed.
 pub fn module_statics(bytes: &[u8], pdb: Option<&[u8]>) -> Result<Statics, String> {
     let img = parse(bytes)?;
     let Some(pdb) = pdb else {
-        let named = codeview(bytes)?.map_or_else(
-            || "no program database: the image has no CodeView debug record".to_owned(),
+        if let Some(sections) = dwarf_sections(bytes, &img)? {
+            return dwarf_statics(bytes, &img, &sections);
+        }
+        return Err(codeview(bytes)?.map_or_else(
+            || {
+                "NoDwarf: the image has no CodeView debug record naming a program database and \
+                 no DWARF (.debug_info); link with full debug information and keep it in the \
+                 image, or beside it as the program database the linker wrote"
+                    .to_owned()
+            },
             |cv| {
                 format!(
-                    "the program database {} was not found beside the artifact",
+                    "StaticsUnchecked: the program database {} was not found beside the \
+                     artifact, and the image carries no DWARF (.debug_info). Built with the \
+                     MSVC toolchain, link with full debug information and keep the PDB the \
+                     linker wrote beside the artifact; built with a GNU toolchain, link with \
+                     full debug information, do not strip the image, and keep the program \
+                     database lld writes away from it, since that names no module static",
                     cv.path
                 )
             },
-        );
-        return Err(format!(
-            "StaticsUnchecked: {named}; link with full debug information and keep the PDB the \
-             linker wrote beside the artifact"
         ));
     };
     let pdb = matching_pdb(bytes, pdb)?;
-    let regions = regions(bytes, &img)?;
-    let relocated = base_relocations(bytes, &img, &regions)?;
-    let mut syms: Vec<(u64, usize, String)> = Vec::new();
+    let mut syms: Vec<Sym> = Vec::new();
     for s in &pdb.symbols {
         let Some(index) = usize::from(s.segment).checked_sub(1) else {
             continue;
@@ -1521,42 +1683,195 @@ pub fn module_statics(bytes: &[u8], pdb: Option<&[u8]>) -> Result<Statics, Strin
             continue;
         }
         let rva = u64::from(sec.virtual_address).saturating_add(u64::from(s.offset));
-        syms.push((rva, index, s.name.clone()));
+        syms.push(Sym {
+            rva,
+            index,
+            names: vec![s.name.clone()],
+            size: None,
+        });
     }
-    syms.sort_by(|a, b| (a.0, &a.2).cmp(&(b.0, &b.2)));
-    syms.dedup_by(|a, b| a.0 == b.0 && a.2 == b.2);
+    let (statics, missing) = scan(bytes, &img, syms)?;
+    Ok(Statics { missing, ..statics })
+}
+
+/// A symbol the statics check reads: where it lies, by RVA and the index of
+/// the section holding it, every name it goes by (the first is the one a
+/// row shows), and its size when that is known rather than taken to run to
+/// the next symbol.
+struct Sym {
+    rva: u64,
+    index: usize,
+    names: Vec<String>,
+    size: Option<u64>,
+}
+
+impl Sym {
+    /// One of its names is in a module crate.
+    fn module(&self) -> bool {
+        self.names.iter().any(|n| n.contains("oxicrypt"))
+    }
+}
+
+/// The module statics an image's DWARF names, refused unless every pinned
+/// static the image needs is named once and located in a writable section,
+/// and every module static is located by a lone `DW_OP_addr` inside a
+/// section and, when the file holds any of it, sized.
+fn dwarf_statics(
+    bytes: &[u8],
+    img: &Image,
+    sections: &dwarf::Sections<'_>,
+) -> Result<Statics, String> {
+    let vars = dwarf::variables(sections)?;
+    let mut pinned_count = [0usize; REQUIRED_STATICS.len()];
+    let mut syms: Vec<Sym> = Vec::new();
+    for v in &vars {
+        // A declaration, or a constant the compiler emitted no storage
+        // for, is no second static and no static at all.
+        if v.location == dwarf::Location::Absent {
+            continue;
+        }
+        let names: Vec<String> = v
+            .linkage
+            .iter()
+            .cloned()
+            .chain(Some(v.path.clone()).filter(|p| !p.is_empty()))
+            .collect();
+        let shown = names.first().cloned().unwrap_or_default();
+        let pinned: Vec<usize> = REQUIRED_STATICS
+            .iter()
+            .enumerate()
+            .filter(|(_, (path, ident, _))| names.iter().any(|n| pins(n, path, ident)))
+            .map(|(i, _)| i)
+            .collect();
+        if let [first, second, ..] = pinned.as_slice() {
+            let path = |i: &usize| REQUIRED_STATICS.get(*i).map_or("", |r| r.0);
+            return Err(format!(
+                "DuplicateStatic: the DWARF entry {shown} stands for both {} and {}, so \
+                 which one holds each is ambiguous",
+                path(first),
+                path(second)
+            ));
+        }
+        for &i in &pinned {
+            if let (Some(count), Some((path, _, _))) =
+                (pinned_count.get_mut(i), REQUIRED_STATICS.get(i))
+            {
+                *count = count.saturating_add(1);
+                if *count > 1 {
+                    return Err(format!(
+                        "DuplicateStatic: the DWARF names {path} more than once, so which \
+                         one holds the module's state is ambiguous"
+                    ));
+                }
+            }
+        }
+        let module = names.iter().any(|n| n.contains("oxicrypt"));
+        let addr = match &v.location {
+            dwarf::Location::Addr(a) => *a,
+            dwarf::Location::Other(what) if module => {
+                return Err(format!(
+                    "StaticUnlocated: the DWARF locates {shown} by {what}, which the signer \
+                     does not evaluate; only a lone DW_OP_addr locates a module static"
+                ));
+            }
+            dwarf::Location::Absent | dwarf::Location::Other(_) => continue,
+        };
+        let index = addr.checked_sub(img.image_base).and_then(|rva| {
+            img.sections.iter().position(|s| {
+                let va = u64::from(s.virtual_address);
+                rva >= va && rva < va.saturating_add(u64::from(s.virtual_size.max(s.raw_size)))
+            })
+        });
+        match index {
+            Some(index) => syms.push(Sym {
+                rva: addr.saturating_sub(img.image_base),
+                index,
+                names,
+                size: v.size,
+            }),
+            None if module => {
+                return Err(format!(
+                    "StaticOutsideImage: the DWARF locates {shown} at {addr:#x}, outside every \
+                     section of the image linked at {:#x}",
+                    img.image_base
+                ));
+            }
+            None => {}
+        }
+    }
+    for s in &syms {
+        let writable = img.sections.get(s.index).is_some_and(Section::writable);
+        if s.size.is_none() && s.module() && writable {
+            return Err(format!(
+                "StaticUnsized: the DWARF gives {}'s type no size, so how many of its bytes \
+                 the module's state may hold is unknown",
+                s.names.first().map_or("a module static", String::as_str)
+            ));
+        }
+    }
+    let (statics, missing) = scan(bytes, img, syms)?;
+    if !missing.is_empty() {
+        return Err(format!(
+            "StaticUnlocated: the DWARF does not locate {} in a writable section; link with \
+             full debug information (CARGO_PROFILE_RELEASE_DEBUG=full) and do not strip it",
+            missing.join(", ")
+        ));
+    }
+    Ok(statics)
+}
+
+/// The module statics among `syms`, and the pinned statics the image needs
+/// that none of them is in a writable section.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass over the symbols; each condition sits beside the field it reads"
+)]
+fn scan(
+    bytes: &[u8],
+    img: &Image,
+    mut syms: Vec<Sym>,
+) -> Result<(Statics, Vec<&'static str>), String> {
+    let regions = regions(bytes, img)?;
+    let relocated = base_relocations(bytes, img, &regions)?;
+    syms.sort_by(|a, b| (a.rva, &a.names).cmp(&(b.rva, &b.names)));
+    syms.dedup_by(|a, b| a.rva == b.rva && a.names == b.names);
 
     let mut matched = 0usize;
     let mut initialised = 0usize;
     let mut rows = Vec::new();
     let mut found = [false; REQUIRED_STATICS.len()];
-    for (idx, (rva, index, name)) in syms.iter().enumerate() {
-        if !name.contains("oxicrypt") {
+    for (idx, sym) in syms.iter().enumerate() {
+        if !sym.module() {
             continue;
         }
-        let Some(sec) = img.sections.get(*index) else {
+        let Some(sec) = img.sections.get(sym.index) else {
             continue;
         };
         if !sec.writable() {
             continue;
         }
+        let rva = sym.rva;
         matched = matched.saturating_add(1);
         let mut pinned = false;
         for (seen, (path, ident, _)) in found.iter_mut().zip(REQUIRED_STATICS) {
-            let is = name.contains(ident) || name == path;
+            let is = sym.names.iter().any(|n| pins(n, path, ident));
             *seen |= is;
             pinned |= is;
         }
         let va = u64::from(sec.virtual_address);
-        let sec_end = va.saturating_add(u64::from(sec.virtual_size.max(sec.raw_size)));
-        let next = syms
-            .iter()
-            .skip(idx.saturating_add(1))
-            .find(|(v, s, _)| s == index && v > rva)
-            .map_or(sec_end, |(v, _, _)| *v);
-        let size = next.saturating_sub(*rva).max(1);
+        let size = if let Some(n) = sym.size {
+            n.max(1)
+        } else {
+            let sec_end = va.saturating_add(u64::from(sec.virtual_size.max(sec.raw_size)));
+            let next = syms
+                .iter()
+                .skip(idx.saturating_add(1))
+                .find(|s| s.index == sym.index && s.rva > rva)
+                .map_or(sec_end, |s| s.rva);
+            next.saturating_sub(rva).max(1)
+        };
         let file_end = va.saturating_add(u64::from(sec.mapped_len()));
-        let backed = rva.saturating_add(size).min(file_end).saturating_sub(*rva);
+        let backed = rva.saturating_add(size).min(file_end).saturating_sub(rva);
         if backed == 0 {
             continue;
         }
@@ -1568,14 +1883,14 @@ pub fn module_statics(bytes: &[u8], pdb: Option<&[u8]>) -> Result<Statics, Strin
             .ok_or("a module static's file bytes lie past the end of the file")?;
         let written = relocated
             .iter()
-            .any(|&w| w < rva.saturating_add(size) && w.saturating_add(WORD) > *rva);
+            .any(|&w| w < rva.saturating_add(size) && w.saturating_add(WORD) > rva);
         if !pinned && (written || file.iter().any(|&b| b != 0)) {
             initialised = initialised.saturating_add(1);
             continue;
         }
         rows.push(StaticRow {
-            name: name.clone(),
-            addr: img.image_base.saturating_add(*rva),
+            name: sym.names.first().cloned().unwrap_or_default(),
+            addr: img.image_base.saturating_add(rva),
             size,
             file_backed: backed,
         });
@@ -1587,12 +1902,15 @@ pub fn module_statics(bytes: &[u8], pdb: Option<&[u8]>) -> Result<Statics, Strin
         .filter(|((_, _, boot_owned), seen)| !seen && (boot || !boot_owned))
         .map(|((path, _, _), _)| *path)
         .collect();
-    Ok(Statics {
-        matched,
-        initialised,
-        rows,
+    Ok((
+        Statics {
+            matched,
+            initialised,
+            rows,
+            missing: Vec::new(),
+        },
         missing,
-    })
+    ))
 }
 
 /// The ranges the loader may write to: every writable section's file-backed
