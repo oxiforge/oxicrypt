@@ -184,21 +184,26 @@ impl Module {
     /// Initialises the library with `profile` and checks that it is the
     /// library this crate was built for.
     ///
-    /// In order: the library's version must equal this crate's (checked once
-    /// per process, before anything but `lama_manifest` is called);
-    /// `oxi_init(profile)` must return 0, else the code it returned is
-    /// reported with the integrity indicator and detail as the library
-    /// reports them after this call; the library must report itself
-    /// operational; the verifying key it embeds must have the fingerprint
-    /// pinned at build time; and its active profile must be `profile`.
-    /// Operational state and the active profile are read on every call,
-    /// never cached.
+    /// In order: the library's `oxi_abi_version` must return this crate's
+    /// [`OXI_ABI_VERSION`](crate::OXI_ABI_VERSION), else
+    /// [`Error::LibraryAbi`]; a library without that function must be this
+    /// crate's own release version, else [`Error::LibraryVersion`] (checked
+    /// once per loaded library, before anything but `lama_manifest` is
+    /// called). Then `oxi_init(profile)` must return 0, else the code it
+    /// returned is reported with the integrity indicator and detail as the
+    /// library reports them after this call; the library must report itself
+    /// operational; its integrity indicator must read
+    /// [`IntegrityStatus::Passed`], else [`Error::IntegrityUnverified`]; the
+    /// verifying key it embeds must have the fingerprint pinned at build
+    /// time; and its active profile must be `profile`. Operational state, the
+    /// indicator and the active profile are read on every call, never cached.
     ///
     /// The first call runs the library's power-up self-tests and blocks for
-    /// their duration. Later calls are cheap, and every caller in a process
-    /// shares the one initialised library: a later call with another profile
-    /// is refused with [`Error::ProfileMismatch`]. A failed initialisation is
-    /// terminal for the process; this function never retries it.
+    /// their duration. Later calls are cheap, and every caller sharing the
+    /// loaded library shares its one initialisation: a later call with
+    /// another profile is refused with [`Error::ProfileMismatch`]. A failed
+    /// initialisation is terminal for the loaded library until the process
+    /// restarts; this function never retries it.
     ///
     /// Present when the crate was built with `OXICRYPT_LIB_FINGERPRINT`.
     #[cfg(any(oxicrypt_pinned, doc))]
@@ -233,8 +238,9 @@ impl Module {
             integrity: Some(integrity_status()),
             detail: integrity_detail(),
         };
-        // A library of another version is not called beyond its manifest,
-        // so its indicator is not read.
+        // A library the ABI or version check refuses is called for nothing
+        // but its manifest and `oxi_abi_version`, so its indicator is not
+        // read.
         library_compatible().map_err(|code| InitError {
             code,
             integrity: None,
@@ -249,6 +255,11 @@ impl Module {
         // SAFETY: U1; no pointers.
         if unsafe { sys::oxi_is_operational() } != 1 {
             return Err(refused(Error::NotOperational));
+        }
+        // An operational library has passed its integrity test; the
+        // indicator must say so, or the library is refused.
+        if integrity_status() != IntegrityStatus::Passed {
+            return Err(refused(Error::IntegrityUnverified));
         }
         if let Pin::Required(hex) = pin {
             let found = key_fingerprint().map_err(refused)?;
@@ -412,12 +423,25 @@ pub(crate) fn manifest_library_version(manifest: &str) -> Option<&str> {
     None
 }
 
-/// Whether the loaded library is one this crate may call: today, that its
-/// manifest states exactly this crate's version. Checked once per process.
+/// Whether the loaded library is one this crate may call: that its
+/// `oxi_abi_version` returns this crate's ABI number or, for a library that
+/// predates the function, that its manifest states exactly this crate's
+/// version. Checked once per loaded library instance, calling nothing that needs
+/// initialisation.
 fn library_compatible() -> Result<(), Error> {
     static CHECKED: OnceLock<Result<(), Error>> = OnceLock::new();
     CHECKED
         .get_or_init(|| {
+            match crate::platform::abi_version() {
+                Some(library) if library == crate::OXI_ABI_VERSION => return Ok(()),
+                Some(library) => {
+                    return Err(Error::LibraryAbi {
+                        library,
+                        crate_: crate::OXI_ABI_VERSION,
+                    });
+                }
+                None => {}
+            }
             let crate_ = env!("CARGO_PKG_VERSION");
             let text = manifest();
             let library = text.as_deref().and_then(manifest_library_version);

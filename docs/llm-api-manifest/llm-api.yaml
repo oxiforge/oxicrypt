@@ -557,7 +557,7 @@ types:
   - name: OxiResult
     module: oxicrypt-ffi
     kind: enum
-    description: "C ABI status code returned by every oxi_* function, banded by source crate. #[repr(C)] for stable C-side discriminants."
+    description: "C ABI status code returned by every oxi_* function that returns an int status (all but oxi_abi_version, oxi_active_profile, oxi_is_operational and oxi_integrity_status, which return values of their own, lama_manifest and the _free functions), banded by source crate, #[repr(C)] for stable discriminants and exported into oxicrypt.h as the OXI_RESULT_* constants."
     variants:
       - name: Ok
         description: Operation succeeded.
@@ -2039,8 +2039,10 @@ types:
         description: "Code 22 from a signature verification."
       - name: Unknown
         description: "Any other code."
+      - name: LibraryAbi
+        description: "The library's oxi_abi_version returns another ABI number than the crate's."
       - name: LibraryVersion
-        description: "The library's manifest states another version than the crate's."
+        description: "A library without oxi_abi_version states another release version than the crate's."
       - name: ProfileMismatch
         description: "The library is initialised with another profile than the one requested."
       - name: KeyFingerprint
@@ -2049,7 +2051,7 @@ types:
   - name: InitError
     module: oxicrypt
     kind: struct
-    description: "Why Module::init returned no token: the refusal, the integrity indicator when it was read (None when the library was refused before anything but its manifest was called), and the library's detail text or why it could not be read."
+    description: "Why Module::init returned no token: the refusal, the integrity indicator when it was read (None when the library was refused before anything but oxi_abi_version and its manifest was called), and the library's detail text or why it could not be read."
     security:
       contains_secret: false
       zeroize_on_drop: false
@@ -8433,6 +8435,20 @@ functions:
     preconditions: []
     postconditions:
       - description: Module is in Operational state with the selected profile (on Ok).
+    security:
+      constant_time: false
+      handles_secrets: false
+      fips_approved: false
+
+  - name: oxi_abi_version
+    module: oxicrypt-ffi
+    description: "The ABI number of the C interface, independent of the release version, which changes only when the interface breaks compatibility and never when functions are added, and which the library's SONAME and macOS install name carry."
+    signature: "int oxi_abi_version(void)"
+    parameters: []
+    returns:
+      type: int
+      description: "The ABI number, 1 for this interface."
+    preconditions: []
     security:
       constant_time: false
       handles_secrets: false
@@ -17935,8 +17951,10 @@ functions:
       type: "Result<Module, InitError>"
       description: "The token, or why the library was refused."
       error_variants:
+        - name: LibraryAbi
+          condition: "The library reports another ABI number."
         - name: LibraryVersion
-          condition: "The library's manifest states another version."
+          condition: "A library without oxi_abi_version states another release version."
         - name: SelfTestFailed
           condition: "The library's power-up self-tests failed."
         - name: NotOperational
@@ -17961,8 +17979,10 @@ functions:
       type: "Result<Module, InitError>"
       description: "The token, or why the library was refused."
       error_variants:
+        - name: LibraryAbi
+          condition: "The library reports another ABI number."
         - name: LibraryVersion
-          condition: "The library's manifest states another version."
+          condition: "A library without oxi_abi_version states another release version."
         - name: SelfTestFailed
           condition: "The library's power-up self-tests failed."
         - name: NotOperational
@@ -19604,6 +19624,12 @@ constants:
     type: "&[KatEntry]"
     value: "3 entries"
     description: Pre-operational integrity group, the ML-DSA-87 signature-verification CAST, then the SHA-256 CAST for the key fingerprint, then the ML-DSA-87 signature check of the module image, passed as the integrity argument of oxicrypt_module::initialize_with_tests or initialize_with_profile.
+
+  - name: OXI_ABI_VERSION
+    module: oxicrypt
+    type: i32
+    value: "1"
+    description: "The ABI number of the C interface the crate was built against, which Module::init requires the library to report."
 
   - name: SHA384_LEN
     module: oxicrypt

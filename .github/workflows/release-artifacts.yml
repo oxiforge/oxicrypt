@@ -338,6 +338,9 @@ jobs:
             cli: oxi.exe
             cdylib: oxicrypt_ffi.dll
             staticlib: oxicrypt_ffi.lib
+            # The import library a program links the DLL through; the
+            # `oxicrypt` crate links exactly this name.
+            implib: oxicrypt_ffi.dll.lib
             load: host
           - name: android-x86_64
             runner: ubuntu-latest
@@ -609,8 +612,26 @@ jobs:
           # never downloads this.
           DIR="oxicrypt-ffi-${LABEL}-${{ matrix.name }}"
           mkdir -p "$DIR"
-          cp "$OUT/${{ matrix.cdylib }}"    "$DIR/"
+          # The library ships under the name a program linked against it asks
+          # the loader for: its SONAME (liboxicrypt_ffi.so.<ABI>) or macOS
+          # install name (liboxicrypt_ffi.<ABI>.dylib), with the plain name a
+          # link to it for linking. The Windows DLL keeps its name.
+          if [ '${{ matrix.format }}' = macho ]; then
+            # The install name the build sets must be the versioned one.
+            install_name="$(otool -D "$OUT/${{ matrix.cdylib }}" | sed -n 2p)"
+            echo "install name: $install_name"
+            printf '%s\n' "$install_name" | grep -qxE '@rpath/liboxicrypt_ffi\.[0-9]+\.dylib' \
+              || { echo "::error::unexpected install name: $install_name"; exit 1; }
+          fi
+          LIB_FILE="$(bash scripts/library-file-name.sh "$OUT/${{ matrix.cdylib }}")"
+          cp "$OUT/${{ matrix.cdylib }}" "$DIR/$LIB_FILE"
+          if [ "$LIB_FILE" != "${{ matrix.cdylib }}" ]; then
+            ln -s "$LIB_FILE" "$DIR/${{ matrix.cdylib }}"
+          fi
           cp "$OUT/${{ matrix.staticlib }}" "$DIR/"
+          if [ -n '${{ matrix.implib }}' ]; then
+            cp "$OUT/${{ matrix.implib }}" "$DIR/"
+          fi
           cp crates/oxicrypt-ffi/include/oxicrypt.h "$DIR/"
           cp LICENSE-APACHE LICENSE-MIT "$DIR/"
 
@@ -641,7 +662,9 @@ jobs:
             echo "extent, named by its SHA-256 digest) and the fingerprint of the"
             echo "embedded verify key, as emitted by oxicrypt-integrity-sign at"
             echo "signing time:"
-            grep -E '^(signed |  verify key: )' sign-lib.txt | sed -E 's#^signed .*[/\\]#  #'
+            # Named as it ships: the signed bytes are the delivered file.
+            grep -E '^(signed |  verify key: )' sign-lib.txt | sed -E 's#^signed .*[/\\]#  #' \
+              | sed "s#^  ${{ matrix.cdylib }} -> #  $LIB_FILE -> #"
             echo ""
             echo "The static archive ships unsigned. An archive has no loadable"
             echo "image, so sign the binary you link it into, with a key pair of"
@@ -659,9 +682,23 @@ jobs:
 
           # Verify the STAGED copy, the one that ships, so a truncated `cp` is
           # caught here rather than by the consumer's power-up self-test.
-          "$SIGNER" --verify "$DIR/${{ matrix.cdylib }}" | tee verify-lib.txt
-          grep -qxF "verify ok: $DIR/${{ matrix.cdylib }} (verify key $INTEGRITY_KEY_FINGERPRINT)" verify-lib.txt \
+          "$SIGNER" --verify "$DIR/$LIB_FILE" | tee verify-lib.txt
+          grep -qxF "verify ok: $DIR/$LIB_FILE (verify key $INTEGRITY_KEY_FINGERPRINT)" verify-lib.txt \
             || { echo "::error::the staged library does not verify against $INTEGRITY_KEY_FINGERPRINT"; exit 1; }
+
+          # Load the staged layout as a consumer does: link by the plain name,
+          # run against the delivered name the program records, whose ABI
+          # suffix must be the number oxi_abi_version() returns.
+          if [ '${{ matrix.load }}' = host ] && [ "$RUNNER_OS" != "Windows" ]; then
+            cc -O1 -Wall -Wextra -o staged-link .github/probes/staged-link.c \
+              -L"$DIR" -loxicrypt_ffi -Wl,-rpath,"$PWD/$DIR"
+            if [ '${{ matrix.format }}' = macho ]; then
+              otool -L staged-link | grep -F "@rpath/$LIB_FILE"
+            else
+              readelf -d staged-link | grep -F "Shared library: [$LIB_FILE]"
+            fi
+            ./staged-link "$LIB_FILE"
+          fi
 
           tar -czf "${DIR}.tar.gz" "$DIR"
           sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256" 2>/dev/null \

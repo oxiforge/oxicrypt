@@ -58,31 +58,51 @@ fn library_is_provisioned() {
 
 // ----- status codes -----
 
-/// The `OxiResult` discriminants of the C ABI, as `(name, code)`.
+/// The `OxiResult` discriminants of the C ABI, as `(name, code)`, with the
+/// name in the Rust spelling (`TagMismatch` for `OXI_RESULT_TAG_MISMATCH`).
 ///
-/// Read from the `oxicrypt-ffi` source, which is where they are defined; this
-/// function is the one place that knows where the table lives.
+/// Read from the committed header, which carries them as `OXI_RESULT_*`
+/// constants; this function is the one place that knows where they live.
 fn ffi_status_codes() -> Vec<(String, i32)> {
-    let src = workspace_file("crates/oxicrypt-ffi/src/error.rs");
-    let start = src
-        .find("pub enum OxiResult {")
-        .expect("OxiResult in error.rs");
-    let body = &src[start..];
-    let body = &body[..body.find("\n}").expect("end of OxiResult")];
+    let header = workspace_file("crates/oxicrypt-ffi/include/oxicrypt.h");
     let mut out = Vec::new();
-    for line in body.lines() {
-        let line = line.trim();
-        if line.starts_with("//") {
+    for line in header.lines() {
+        let Some(rest) = line.trim().strip_prefix("OXI_RESULT_") else {
             continue;
-        }
-        if let Some((name, rest)) = line.split_once(" = ") {
-            let code = rest.trim_end_matches(',').trim();
-            if let Ok(code) = code.parse::<i32>() {
-                out.push((name.trim().to_owned(), code));
-            }
-        }
+        };
+        let Some((name, code)) = rest.split_once(" = ") else {
+            continue;
+        };
+        let Ok(code) = code.trim_end_matches(',').trim().parse::<i32>() else {
+            continue;
+        };
+        let camel: String = name
+            .split('_')
+            .map(|w| {
+                let mut c = w.chars();
+                c.next().map_or_else(String::new, |f| {
+                    f.to_string() + &c.as_str().to_ascii_lowercase()
+                })
+            })
+            .collect();
+        out.push((camel, code));
     }
     out
+}
+
+#[test]
+fn the_crate_abi_number_is_the_c_interfaces() {
+    let src = workspace_file("crates/oxicrypt-ffi/src/abi_version.rs");
+    let line = src
+        .lines()
+        .find(|l| l.starts_with("const OXI_ABI_VERSION: i32 = "))
+        .expect("the ABI number in oxicrypt-ffi");
+    let value: i32 = line
+        .trim_start_matches("const OXI_ABI_VERSION: i32 = ")
+        .trim_end_matches(';')
+        .parse()
+        .unwrap();
+    assert_eq!(crate::OXI_ABI_VERSION, value);
 }
 
 const SITES: [Site; 3] = [Site::AeadDecrypt, Site::SignatureVerify, Site::Other];
@@ -101,7 +121,7 @@ fn every_ffi_status_code_maps_to_its_named_variant_at_every_site() {
     let codes = ffi_status_codes();
     assert!(
         codes.len() >= 20,
-        "parsed only {} codes from error.rs; the parser is broken",
+        "parsed only {} codes from the header; the parser is broken",
         codes.len()
     );
     assert!(codes.iter().any(|(n, c)| n == "TagMismatch" && *c == 22));
@@ -292,7 +312,7 @@ fn sys_functions() -> BTreeMap<String, Signature> {
 fn sys_declares_exactly_the_header() {
     let header = header_functions();
     let sys = sys_functions();
-    assert_eq!(header.len(), 292, "the header's export count changed");
+    assert_eq!(header.len(), 293, "the header's export count changed");
     assert!(header.contains_key("lama_manifest"));
     assert_eq!(
         header["oxi_aes256_new"],

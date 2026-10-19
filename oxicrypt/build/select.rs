@@ -63,7 +63,9 @@ pub(crate) fn check_dir(choice: &Choice, present: impl Fn(&str) -> bool) -> Resu
     if !present(choice.file) {
         return Err(format!(
             "oxicrypt: OXICRYPT_LIB_DIR does not hold {}, the shared library this \
-             crate links; it never links the static archive {}",
+             crate links (for a library delivered under its versioned name, \
+             liboxicrypt_ffi.so.<ABI> or liboxicrypt_ffi.<ABI>.dylib, a link to it); it \
+             never links the static archive {}",
             choice.file, choice.archive
         ));
     }

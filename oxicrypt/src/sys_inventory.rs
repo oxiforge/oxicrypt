@@ -11,6 +11,7 @@ use core::ffi::{c_char, c_int};
 /// declaration's exact type.
 pub(crate) struct Inventory {
     pub(crate) lama_manifest: unsafe extern "C" fn() -> *const c_char,
+    pub(crate) oxi_abi_version: unsafe extern "C" fn() -> c_int,
     pub(crate) oxi_init: unsafe extern "C" fn(c_int) -> c_int,
     pub(crate) oxi_active_profile: unsafe extern "C" fn() -> c_int,
     pub(crate) oxi_is_operational: unsafe extern "C" fn() -> c_int,
@@ -753,6 +754,7 @@ pub(crate) struct Inventory {
 #[used]
 pub(crate) static INVENTORY: Inventory = Inventory {
     lama_manifest,
+    oxi_abi_version,
     oxi_init,
     oxi_active_profile,
     oxi_is_operational,
@@ -1048,9 +1050,10 @@ pub(crate) static INVENTORY: Inventory = Inventory {
 
 impl Inventory {
     /// The address of every function in the table, in declaration order.
-    pub(crate) fn addresses(&self) -> [usize; 292] {
+    pub(crate) fn addresses(&self) -> [usize; 293] {
         [
             self.lama_manifest as usize,
+            self.oxi_abi_version as usize,
             self.oxi_init as usize,
             self.oxi_active_profile as usize,
             self.oxi_is_operational as usize,

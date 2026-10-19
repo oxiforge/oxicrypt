@@ -55,6 +55,7 @@ opaque!(
 
 unsafe extern "C" {
     pub(crate) fn lama_manifest() -> *const c_char;
+    pub(crate) fn oxi_abi_version() -> c_int;
     pub(crate) fn oxi_init(profile: c_int) -> c_int;
     pub(crate) fn oxi_active_profile() -> c_int;
     pub(crate) fn oxi_is_operational() -> c_int;

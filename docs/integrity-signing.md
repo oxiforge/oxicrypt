@@ -701,18 +701,29 @@ as above, then build the program against it:
 ```bash
 oxicrypt-integrity-sign --keygen <dir>                      # once, outside any source tree
 OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub cargo build --release -p oxicrypt-ffi
-oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key target/release/liboxicrypt_ffi.so
-oxicrypt-integrity-sign --show target/release/liboxicrypt_ffi.so   # prints the fingerprint
 
-OXICRYPT_LIB_DIR=<directory holding the signed library> \
-OXICRYPT_LIB_FINGERPRINT=sha256:<the fingerprint> cargo build    # your program
+# Deliver it under its SONAME, liboxicrypt_ffi.so.<ABI>, with the plain name a link to it
+name="$(scripts/library-file-name.sh target/release/liboxicrypt_ffi.so)"   # liboxicrypt_ffi.so.1
+cp target/release/liboxicrypt_ffi.so <lib>/"$name"
+ln -s "$name" <lib>/liboxicrypt_ffi.so
+oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key <lib>/"$name"
+oxicrypt-integrity-sign --show <lib>/"$name"                # prints the fingerprint
+
+OXICRYPT_LIB_DIR=<lib> OXICRYPT_LIB_FINGERPRINT=sha256:<the fingerprint> cargo build    # your program
 ```
 
-The crate's build script links the shared library by its exact file name,
-never the static archive, and refuses to link one without
+The program records the library's `SONAME` and asks the loader for that file at
+run time; the plain name is what the linker reads at build time. On macOS the
+install name is `@rpath/liboxicrypt_ffi.<ABI>.dylib`, delivered the same way.
+
+The crate's build script links the shared library, never the static
+archive: by its exact file name on Linux, Android and Windows, and on macOS
+and iOS by `-loxicrypt_ffi`, refusing a library directory that also holds
+`liboxicrypt_ffi.a`. It refuses to link one without
 `OXICRYPT_LIB_FINGERPRINT` or `OXICRYPT_LIB_UNPINNED=1`. `Module::init` refuses
-a library of another version, one that failed its integrity test, and one that
-embeds another verifying key than the pinned one. Set the program's run-time
+a library reporting another ABI number (`oxi_abi_version`), a library without
+that function at another release version, one that failed its integrity test,
+and one that embeds another verifying key than the pinned one. Set the program's run-time
 search path for the library in its own build, as the crate documentation
 shows; the crate cannot set it for a dependent program.
 

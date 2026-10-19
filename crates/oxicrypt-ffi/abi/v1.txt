@@ -1,0 +1,327 @@
+# The C interface at ABI 1: one line per exported function, its parameter
+# types and its return type, as `include/oxicrypt.h` declares them, then one
+# line per status code the header defines.
+#
+# Lines may be added at the end: a new function or status code does not
+# change the ABI number. A line may never be edited or removed: the first
+# lines are frozen, their count and digest recorded in src/abi_tests.rs. A
+# change that would alter one (a function removed, a parameter or return type
+# changed, a status code renumbered) is a new ABI: raise OXI_ABI_VERSION in
+# src/abi_version.rs and start abi/v<number>.txt from the header as it then
+# stands.
+lama_manifest() -> const char *
+oxi_abi_version() -> int
+oxi_active_profile() -> int
+oxi_aes256_cbc_decrypt(const OxiAes256Key *, const uint8_t *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_cbc_encrypt(const OxiAes256Key *, const uint8_t *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_ccm_decrypt(const OxiAes256Key *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uintptr_t, uint8_t *) -> int
+oxi_aes256_ccm_encrypt(const OxiAes256Key *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uintptr_t, uint8_t *) -> int
+oxi_aes256_cmac(const OxiAes256Key *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_ctr(const OxiAes256Key *, const uint8_t *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_free(OxiAes256Key *) -> void
+oxi_aes256_gcm_decrypt(const OxiAes256Key *, const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *, const uint8_t *) -> int
+oxi_aes256_gcm_encrypt(const OxiAes256Key *, const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *, uint8_t *) -> int
+oxi_aes256_kw_unwrap(const OxiAes256Key *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_kw_wrap(const OxiAes256Key *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_kwp_unwrap(const OxiAes256Key *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t *) -> int
+oxi_aes256_kwp_wrap(const OxiAes256Key *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_aes256_new(OxiAes256Key **, const uint8_t *) -> int
+oxi_ctr_drbg_aes128_free(OxiCtrDrbgAes128 *) -> void
+oxi_ctr_drbg_aes128_generate_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_generate_no_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_instantiate_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_instantiate_no_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_new(OxiCtrDrbgAes128 **) -> int
+oxi_ctr_drbg_aes128_reseed_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes128_reseed_no_df(OxiCtrDrbgAes128 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_free(OxiCtrDrbgAes192 *) -> void
+oxi_ctr_drbg_aes192_generate_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_generate_no_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_instantiate_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_instantiate_no_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_new(OxiCtrDrbgAes192 **) -> int
+oxi_ctr_drbg_aes192_reseed_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes192_reseed_no_df(OxiCtrDrbgAes192 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_free(OxiCtrDrbgAes256 *) -> void
+oxi_ctr_drbg_aes256_generate_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_generate_no_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_instantiate_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_instantiate_no_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_new(OxiCtrDrbgAes256 **) -> int
+oxi_ctr_drbg_aes256_reseed_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ctr_drbg_aes256_reseed_no_df(OxiCtrDrbgAes256 *, const uint8_t *, uintptr_t) -> int
+oxi_dh3072_compute_shared_secret(const uint8_t *, const uint8_t *, uint8_t *) -> int
+oxi_dh3072_generate_keypair(OxiHmacDrbgSha256 *, uint8_t *, uint8_t *) -> int
+oxi_ecdh_p256_compute_shared_secret(const uint8_t *, const uint8_t *, uint8_t *) -> int
+oxi_ecdh_p256_generate_keypair(OxiHmacDrbgSha256 *, uint8_t *, uint8_t *) -> int
+oxi_ecdh_p384_compute_shared_secret(const uint8_t *, const uint8_t *, uint8_t *) -> int
+oxi_ecdh_p384_generate_keypair(OxiHmacDrbgSha256 *, uint8_t *, uint8_t *) -> int
+oxi_ecdsa_p256_derive_public_key(const uint8_t *, uint8_t *) -> int
+oxi_ecdsa_p256_private_key_free(OxiEcdsaP256PrivateKey *) -> void
+oxi_ecdsa_p256_private_key_new_generate(OxiHmacDrbgSha256 *, OxiEcdsaP256PrivateKey **) -> int
+oxi_ecdsa_p256_private_key_public_key(const OxiEcdsaP256PrivateKey *, uint8_t *) -> int
+oxi_ecdsa_p256_private_key_sign_sha256(const OxiEcdsaP256PrivateKey *, OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_ecdsa_p256_sign_with_k(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uint8_t *) -> int
+oxi_ecdsa_p256_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_ecdsa_p384_derive_public_key(const uint8_t *, uint8_t *) -> int
+oxi_ecdsa_p384_private_key_free(OxiEcdsaP384PrivateKey *) -> void
+oxi_ecdsa_p384_private_key_new_generate(OxiHmacDrbgSha256 *, OxiEcdsaP384PrivateKey **) -> int
+oxi_ecdsa_p384_private_key_public_key(const OxiEcdsaP384PrivateKey *, uint8_t *) -> int
+oxi_ecdsa_p384_private_key_sign_sha384(const OxiEcdsaP384PrivateKey *, OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_ecdsa_p384_sign_with_k(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uint8_t *) -> int
+oxi_ecdsa_p384_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_ed25519_keygen(const uint8_t *, uint8_t *) -> int
+oxi_ed25519_sign(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_ed25519_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_hash_drbg_sha256_free(OxiHashDrbgSha256 *) -> void
+oxi_hash_drbg_sha256_generate(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha256_instantiate(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha256_new(OxiHashDrbgSha256 **) -> int
+oxi_hash_drbg_sha256_reseed(OxiHashDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha384_free(OxiHashDrbgSha384 *) -> void
+oxi_hash_drbg_sha384_generate(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha384_instantiate(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha384_new(OxiHashDrbgSha384 **) -> int
+oxi_hash_drbg_sha384_reseed(OxiHashDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha512_free(OxiHashDrbgSha512 *) -> void
+oxi_hash_drbg_sha512_generate(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha512_instantiate(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hash_drbg_sha512_new(OxiHashDrbgSha512 **) -> int
+oxi_hash_drbg_sha512_reseed(OxiHashDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hkdf_sha256_expand(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hkdf_sha256_extract(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hkdf_sha384_expand(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hkdf_sha384_extract(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hkdf_sha512_expand(const uint8_t *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hkdf_sha512_extract(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_drbg_sha256_free(OxiHmacDrbgSha256 *) -> void
+oxi_hmac_drbg_sha256_generate(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha256_instantiate(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha256_new(OxiHmacDrbgSha256 **) -> int
+oxi_hmac_drbg_sha256_reseed(OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha384_free(OxiHmacDrbgSha384 *) -> void
+oxi_hmac_drbg_sha384_generate(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha384_instantiate(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha384_new(OxiHmacDrbgSha384 **) -> int
+oxi_hmac_drbg_sha384_reseed(OxiHmacDrbgSha384 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha512_free(OxiHmacDrbgSha512 *) -> void
+oxi_hmac_drbg_sha512_generate(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha512_instantiate(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_drbg_sha512_new(OxiHmacDrbgSha512 **) -> int
+oxi_hmac_drbg_sha512_reseed(OxiHmacDrbgSha512 *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_hmac_sha256(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_sha384(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_sha3_224(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_sha3_256(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_sha3_384(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_sha3_512(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_hmac_sha512(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_init(int) -> int
+oxi_integrity_key_fingerprint(uint8_t *, uintptr_t) -> int
+oxi_integrity_status() -> int
+oxi_integrity_status_detail(uint8_t *, uintptr_t, uintptr_t *) -> int
+oxi_is_operational() -> int
+oxi_lms_sha256_m24_h10_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h10_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h10_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h10_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h15_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h15_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h15_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h15_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h20_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h20_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h20_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h20_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h25_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h25_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h25_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h25_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h5_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h5_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h5_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m24_h5_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h10_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h10_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h10_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h10_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h15_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h15_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h15_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h15_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h20_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h20_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h20_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h20_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h25_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h25_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h25_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h25_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h5_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h5_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h5_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_sha256_m32_h5_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h10_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h10_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h10_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h10_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h15_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h15_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h15_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h15_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h20_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h20_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h20_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h20_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h25_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h25_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h25_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h25_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h5_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h5_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h5_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m24_h5_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h10_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h10_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h10_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h10_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h15_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h15_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h15_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h15_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h20_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h20_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h20_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h20_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h25_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h25_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h25_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h25_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h5_w1_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h5_w2_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h5_w4_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_shake_m32_h5_w8_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_lms_verify_any(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t) -> int
+oxi_ml_dsa_44_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_dsa_44_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_ml_dsa_44_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_ml_dsa_65_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_dsa_65_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_ml_dsa_65_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_ml_dsa_87_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_dsa_87_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_ml_dsa_87_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_ml_kem_1024_decapsulate(const uint8_t *, const uint8_t *, uint8_t *) -> int
+oxi_ml_kem_1024_encapsulate(const uint8_t *, const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_kem_1024_keygen(const uint8_t *, const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_kem_512_decapsulate(const uint8_t *, const uint8_t *, uint8_t *) -> int
+oxi_ml_kem_512_encapsulate(const uint8_t *, const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_kem_512_keygen(const uint8_t *, const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_kem_768_decapsulate(const uint8_t *, const uint8_t *, uint8_t *) -> int
+oxi_ml_kem_768_encapsulate(const uint8_t *, const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_ml_kem_768_keygen(const uint8_t *, const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_rsa_2048_modulus(const OxiRsaPrivateKey2048 *, uint8_t *) -> int
+oxi_rsa_2048_oaep_decrypt_sha256(const OxiRsaPrivateKey2048 *, const uint8_t *, uintptr_t, const uint8_t *, uint8_t *, uintptr_t, uintptr_t *) -> int
+oxi_rsa_2048_oaep_encrypt_sha256(OxiHmacDrbgSha256 *, const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_2048_private_key_free(OxiRsaPrivateKey2048 *) -> void
+oxi_rsa_2048_private_key_new_generate(OxiHmacDrbgSha256 *, uint64_t, OxiRsaPrivateKey2048 **) -> int
+oxi_rsa_2048_public_exponent(const OxiRsaPrivateKey2048 *, uint64_t *) -> int
+oxi_rsa_2048_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey2048 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_2048_sign_pss_sha256(const OxiRsaPrivateKey2048 *, OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_3072_modulus(const OxiRsaPrivateKey3072 *, uint8_t *) -> int
+oxi_rsa_3072_oaep_decrypt_sha256(const OxiRsaPrivateKey3072 *, const uint8_t *, uintptr_t, const uint8_t *, uint8_t *, uintptr_t, uintptr_t *) -> int
+oxi_rsa_3072_oaep_encrypt_sha256(OxiHmacDrbgSha256 *, const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_3072_private_key_free(OxiRsaPrivateKey3072 *) -> void
+oxi_rsa_3072_private_key_new_generate(OxiHmacDrbgSha256 *, uint64_t, OxiRsaPrivateKey3072 **) -> int
+oxi_rsa_3072_public_exponent(const OxiRsaPrivateKey3072 *, uint64_t *) -> int
+oxi_rsa_3072_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey3072 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_3072_sign_pss_sha256(const OxiRsaPrivateKey3072 *, OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_4096_modulus(const OxiRsaPrivateKey4096 *, uint8_t *) -> int
+oxi_rsa_4096_oaep_decrypt_sha256(const OxiRsaPrivateKey4096 *, const uint8_t *, uintptr_t, const uint8_t *, uint8_t *, uintptr_t, uintptr_t *) -> int
+oxi_rsa_4096_oaep_encrypt_sha256(OxiHmacDrbgSha256 *, const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_4096_private_key_free(OxiRsaPrivateKey4096 *) -> void
+oxi_rsa_4096_private_key_new_generate(OxiHmacDrbgSha256 *, uint64_t, OxiRsaPrivateKey4096 **) -> int
+oxi_rsa_4096_public_exponent(const OxiRsaPrivateKey4096 *, uint64_t *) -> int
+oxi_rsa_4096_sign_pkcs1_v15_sha256(const OxiRsaPrivateKey4096 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_4096_sign_pss_sha256(const OxiRsaPrivateKey4096 *, OxiHmacDrbgSha256 *, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_rsa_pkcs1_v15_verify_2048_sha256(const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_rsa_pkcs1_v15_verify_3072_sha256(const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_rsa_pkcs1_v15_verify_4096_sha256(const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_rsa_pss_verify_2048_sha256(const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_rsa_pss_verify_3072_sha256(const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_rsa_pss_verify_4096_sha256(const uint8_t *, uint64_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_sha224(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha256(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha384(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha3_224(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha3_256(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha3_384(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha3_512(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha512(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha512_224(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_sha512_256(const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_128f_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_sha2_128f_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_128f_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_sha2_128s_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_sha2_128s_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_128s_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_sha2_192f_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_sha2_192f_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_192f_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_sha2_192s_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_sha2_192s_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_192s_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_sha2_256f_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_sha2_256f_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_256f_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_sha2_256s_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_sha2_256s_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_sha2_256s_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_shake_128f_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_shake_128f_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_shake_128f_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_shake_128s_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_shake_128s_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_shake_128s_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_shake_192f_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_shake_192f_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_shake_192f_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_shake_192s_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_shake_192s_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_shake_192s_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_shake_256f_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_shake_256f_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_shake_256f_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_slh_dsa_shake_256s_keygen(const uint8_t *, uint8_t *, uint8_t *) -> int
+oxi_slh_dsa_shake_256s_sign(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *) -> int
+oxi_slh_dsa_shake_256s_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *) -> int
+oxi_tls13_derive_secret_sha256(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_tls13_derive_secret_sha384(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_tls13_hkdf_expand_label_sha256(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_tls13_hkdf_expand_label_sha384(const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, const uint8_t *, uintptr_t, uint8_t *, uintptr_t) -> int
+oxi_xmss_verify(const uint8_t *, const uint8_t *, uintptr_t, const uint8_t *) -> int
+OXI_RESULT_OK = 0
+OXI_RESULT_NOT_OPERATIONAL = 1
+OXI_RESULT_SELF_TEST_FAILED = 2
+OXI_RESULT_CONDITIONAL_TEST_FAILED = 3
+OXI_RESULT_ALREADY_INITIALIZED = 4
+OXI_RESULT_INVALID_INPUT = 5
+OXI_RESULT_ALGORITHM_RESTRICTED = 6
+OXI_RESULT_NOT_IMPLEMENTED = 7
+OXI_RESULT_UNINSTANTIATED = 8
+OXI_RESULT_RESEED_REQUIRED = 9
+OXI_RESULT_NULL_POINTER = 10
+OXI_RESULT_BUFFER_TOO_SMALL = 11
+OXI_RESULT_OUTPUT_TOO_LONG = 12
+OXI_RESULT_NOT_BLOCK_ALIGNED = 20
+OXI_RESULT_INVALID_IV_LENGTH = 21
+OXI_RESULT_TAG_MISMATCH = 22
+OXI_RESULT_LENGTH_MISMATCH = 23
+OXI_RESULT_INVALID_NONCE_LENGTH = 24
+OXI_RESULT_INVALID_TAG_LENGTH = 25
+OXI_RESULT_INVALID_PAYLOAD_LENGTH = 26
+OXI_RESULT_INVALID_AAD_LENGTH = 27
+OXI_RESULT_INTEGRITY_UNVERIFIED = 28
+OXI_RESULT_INTERNAL = 255

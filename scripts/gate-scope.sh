@@ -101,10 +101,11 @@ maxwell_closure_re='^crates/oxicrypt-(maxwell|module|sha|test-vectors|zeroize)/|
 # What the `oxicrypt` crate's linked tests are built from: the crate; the C
 # library, which links every module crate under crates/, its header and its
 # embedded manifest; the signer and the scripts that sign and build the
-# fixture; the gate itself (this file, the pre-push hook and the CI workflow
+# fixture, and the library's delivered name, its staging and its staged load
+# probe; the gate itself (this file, the pre-push hook and the CI workflow
 # that run the fixture); and the build configuration, for the same reason as
 # above.
-bindings_re='^oxicrypt/|^crates/|^tools/oxicrypt-integrity-sign/|^scripts/(bindings-fixture|release-sign|release-signing-key|gate-scope)\.sh$|^scripts/git-hooks/pre-push$|^\.github/workflows/ci\.yml$|^docs/llm-api-manifest/llm-api\.yaml$|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^\.cargo/'
+bindings_re='^oxicrypt/|^crates/|^tools/oxicrypt-integrity-sign/|^scripts/(bindings-fixture|release-sign|release-signing-key|gate-scope|library-file-name)\.sh$|^scripts/git-hooks/pre-push$|^\.github/workflows/(ci|release-artifacts)\.yml$|^\.github/probes/staged-link\.c$|^docs/llm-api-manifest/llm-api\.yaml$|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^\.cargo/'
 
 # The workspace inventory as it stood when this was written. A changed
 # `crates/<name>/` path outside it is a crate this file has never seen, so it is

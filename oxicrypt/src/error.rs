@@ -24,7 +24,7 @@ pub enum Site {
 /// it.
 ///
 /// Variants up to [`Error::Internal`] are the library's status codes, in the
-/// order and with the meaning of `OxiResult` in the C ABI. The last four are
+/// order and with the meaning of `OxiResult` in the C ABI. The last five are
 /// the crate's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -82,7 +82,16 @@ pub enum Error {
     SignatureInvalid,
     /// Any other code: negative, or not assigned by this version of the C ABI.
     Unknown(i32),
-    /// The library is not the version this crate was built for.
+    /// The library reports another ABI number than the one this crate was
+    /// built against ([`OXI_ABI_VERSION`](crate::OXI_ABI_VERSION)).
+    LibraryAbi {
+        /// The number the library's `oxi_abi_version` returned.
+        library: i32,
+        /// The number this crate was built against.
+        crate_: i32,
+    },
+    /// A library without `oxi_abi_version` is not the release version this
+    /// crate was built for.
     LibraryVersion {
         /// The version the library's manifest states, or `None` when the
         /// manifest could not be read.
@@ -188,6 +197,9 @@ impl fmt::Display for Error {
             Self::Internal => f.write_str("internal error in the library"),
             Self::SignatureInvalid => f.write_str("signature did not verify"),
             Self::Unknown(code) => write!(f, "unknown status code {code}"),
+            Self::LibraryAbi { library, crate_ } => {
+                write!(f, "library ABI {library} is not the binding's ABI {crate_}")
+            }
             Self::LibraryVersion { library, crate_ } => match library {
                 Some(v) => write!(
                     f,

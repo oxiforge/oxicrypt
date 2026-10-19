@@ -59,6 +59,11 @@ TESTS := test_init test_aes_gcm test_aes_modes test_handles \
 # Passes only against an artifact that was NOT signed.
 REFUSAL_TEST := test_integrity_unsigned
 
+# The dynamically linked tests ask the loader for the library's SONAME,
+# liboxicrypt_ffi.so.<ABI>. Each copy is made under that name, read from the
+# built library when the copy is made, with the plain name a link to it; a
+# library whose name cannot be read stops the build.
+LIB_FILE_NAME := ../../../../scripts/library-file-name.sh
 SIGNED_SO := $(OUT_DIR)/signed/liboxicrypt_ffi.so
 UNSIGNED_SO := $(OUT_DIR)/unsigned/liboxicrypt_ffi.so
 
@@ -118,13 +123,17 @@ test-unsigned: $(OUT_DIR)/cdylib/$(REFUSAL_TEST) $(SIGNED_SO) $(UNSIGNED_SO) $(U
 
 $(SIGNED_SO): $(LIB_DIR)/liboxicrypt_ffi.so $(SIGN)
 	@mkdir -p $(dir $@)
-	cp $< $@.tmp
-	$(SIGN_CMD) $@.tmp
-	mv $@.tmp $@
+	name=$$($(LIB_FILE_NAME) $<) || exit 1; \
+	cp $< $(dir $@)$$name.tmp && \
+	$(SIGN_CMD) $(dir $@)$$name.tmp && \
+	mv $(dir $@)$$name.tmp $(dir $@)$$name && \
+	ln -sfn $$name $@
 
 $(UNSIGNED_SO): $(LIB_DIR)/liboxicrypt_ffi.so
 	@mkdir -p $(dir $@)
-	cp $< $@
+	name=$$($(LIB_FILE_NAME) $<) || exit 1; \
+	cp $< $(dir $@)$$name && \
+	ln -sfn $$name $@
 
 # cdylib link: dynamic. The library is chosen at run time by
 # LD_LIBRARY_PATH, so one executable runs against the signed or the

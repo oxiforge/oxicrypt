@@ -63,11 +63,15 @@
 // This crate is the FFI boundary — unsafe is required by definition.
 #![allow(unsafe_code, clippy::missing_safety_doc)]
 
+#[cfg(test)]
+mod abi_tests;
 mod aes;
 mod drbg;
 mod error;
 mod handle;
 mod power_up;
+
+include!("abi_version.rs");
 pub use aes::{
     OxiAes256Key, oxi_aes256_cbc_decrypt, oxi_aes256_cbc_encrypt, oxi_aes256_ccm_decrypt,
     oxi_aes256_ccm_encrypt, oxi_aes256_cmac, oxi_aes256_ctr, oxi_aes256_free,
@@ -217,6 +221,30 @@ static LAMA_MANIFEST: &str = concat!(include_str!("../llm-api.yaml"), "\0");
 #[unsafe(no_mangle)]
 pub extern "C" fn lama_manifest() -> *const core::ffi::c_char {
     LAMA_MANIFEST.as_ptr().cast::<core::ffi::c_char>()
+}
+
+/// Return the ABI number of this C interface.
+///
+/// The number is independent of the release version. It changes only when
+/// the interface breaks compatibility (a function removed, a parameter or
+/// return type changed, or an output size changed) and never when functions
+/// are added. Compatibility within a number runs one way: a library returning
+/// N serves a caller built against an earlier release of ABI N, but a caller
+/// that uses a function added later in ABI N cannot load an older library of
+/// the same number, which lacks it. The library's `SONAME` on Linux
+/// (`liboxicrypt_ffi.so.<N>`) and its macOS install name follow the number;
+/// Android keeps the plain `liboxicrypt_ffi.so`.
+///
+/// A query about the interface, not a service: it requires no
+/// initialisation and is callable before [`oxi_init`] and in any module
+/// state. A library that predates this function does not export it.
+///
+/// # Safety
+///
+/// No pointers; always safe to call.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxi_abi_version() -> c_int {
+    OXI_ABI_VERSION
 }
 
 /// Initialise the FIPS module with the given algorithm profile,

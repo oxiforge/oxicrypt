@@ -472,6 +472,14 @@ cargo build --release -p oxicrypt-ffi
 #   target/release/liboxicrypt_ffi.a    (staticlib — static linking)
 ```
 
+The C interface has an ABI number, `oxi_abi_version()`, which changes only when
+the interface breaks compatibility. The shared library's `SONAME` carries it
+(`liboxicrypt_ffi.so.1` on Linux; on macOS the install name `@rpath/liboxicrypt_ffi.1.dylib`;
+Android keeps the plain `liboxicrypt_ffi.so`, the only form an application packages),
+so a program linked against it asks the loader for that file: deploy the library
+under that name, with `liboxicrypt_ffi.so` as a link to it for the linker, as the
+release tarballs do. `include/oxicrypt.h` defines the status codes as `OXI_RESULT_*`.
+
 Building **from a git clone** requires symlink support in your checkout — the
 crate reaches the LAMA manifest through one. See
 [CONTRIBUTING.md § One-time setup](CONTRIBUTING.md#one-time-setup). This does not

@@ -38,7 +38,7 @@ fn child_does_nothing() {}
 fn the_table_holds_every_declaration() {
     let addresses = sys_inventory::INVENTORY.addresses();
     assert_eq!(addresses.len(), declared().len());
-    assert_eq!(addresses.len(), 292);
+    assert_eq!(addresses.len(), 293);
     assert!(addresses.iter().all(|a| *a != 0));
 }
 
@@ -64,7 +64,7 @@ fn this_binary_imports_every_export() {
         missing.is_empty(),
         "not imported by the final link: {missing:?}"
     );
-    assert_eq!(imported.len(), 292);
+    assert_eq!(imported.len(), 293);
 }
 
 fn spawn_with_library(dir: &Path) -> std::process::Output {
@@ -82,7 +82,7 @@ fn a_library_lacking_one_export_does_not_load() {
     let (intact, lacking) = (base.join("intact"), base.join("lacking"));
     fs::create_dir_all(&intact).unwrap();
     fs::create_dir_all(&lacking).unwrap();
-    fs::write(intact.join("liboxicrypt_ffi.so"), &bytes).unwrap();
+    fs::write(intact.join(common::delivered_name()), &bytes).unwrap();
 
     // Rename one dynamic symbol the safe layer never calls, so that only the
     // table references it.
@@ -101,7 +101,7 @@ fn a_library_lacking_one_export_does_not_load() {
     for at in positions {
         patched[at + needle.len() - 2] = b'X';
     }
-    fs::write(lacking.join("liboxicrypt_ffi.so"), &patched).unwrap();
+    fs::write(lacking.join(common::delivered_name()), &patched).unwrap();
 
     let ok = spawn_with_library(&intact);
     let bad = spawn_with_library(&lacking);

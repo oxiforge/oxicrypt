@@ -66,7 +66,18 @@ impl Consumer {
         let dir = self.root.join(name);
         fs::create_dir_all(&dir).unwrap();
         for f in files {
-            fs::copy(f, dir.join(f.file_name().unwrap())).unwrap();
+            let name = f.file_name().unwrap();
+            if name == "liboxicrypt_ffi.so" {
+                // The shared library as a consumer deploys it: the file under
+                // its delivered name, and the plain name a link to it.
+                let delivered = common::delivered_name();
+                fs::copy(f, dir.join(&delivered)).unwrap();
+                if delivered != "liboxicrypt_ffi.so" {
+                    std::os::unix::fs::symlink(&delivered, dir.join(name)).unwrap();
+                }
+            } else {
+                fs::copy(f, dir.join(name)).unwrap();
+            }
         }
         dir
     }
@@ -122,7 +133,7 @@ fn tool(program: &str, args: &[&str], file: &Path) -> Output {
 fn assert_outside_the_image(binary: &Path) {
     let dynamic = String::from_utf8_lossy(&tool("readelf", &["-d"], binary).stdout).into_owned();
     assert!(
-        dynamic.contains("Shared library: [liboxicrypt_ffi.so]"),
+        dynamic.contains(&format!("Shared library: [{}]", common::delivered_name())),
         "{dynamic}"
     );
     let undefined = tool("nm", &["-D", "--undefined-only"], binary);
@@ -232,7 +243,7 @@ fn negative_link_tests_and_the_external_consumer() {
     assert_eq!(lines[0], "consumer ok cba7");
     assert_eq!(
         lines[1],
-        format!("path {}", both.join("liboxicrypt_ffi.so").display())
+        format!("path {}", both.join(common::delivered_name()).display())
     );
 }
 
@@ -308,6 +319,6 @@ fn library_path_names_the_library_in_a_non_pie_program() {
     let run = Command::new(&binary).env_clear().output().unwrap();
     assert!(run.status.success(), "{}", stderr(&run));
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
-    let expected = format!("path {}", lib.join("liboxicrypt_ffi.so").display());
+    let expected = format!("path {}", lib.join(common::delivered_name()).display());
     assert_eq!(stdout.lines().nth(1), Some(expected.as_str()));
 }

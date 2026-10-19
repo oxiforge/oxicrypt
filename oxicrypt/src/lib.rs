@@ -76,8 +76,9 @@
 //! or deploy the library where the loader looks: on Windows, the
 //! application's directory. When the library is missing, the loader refuses
 //! to start the program with its own message, before any Rust code runs: on
-//! Linux `error while loading shared libraries: liboxicrypt_ffi.so: cannot
-//! open shared object file`, exit status 127; on macOS `dyld: Library not
+//! Linux `error while loading shared libraries: liboxicrypt_ffi.so.1: cannot
+//! open shared object file`, naming the library's delivered name, exit status
+//! 127; on macOS `dyld: Library not
 //! loaded`; on Windows a dialog or exit status `0xC0000135`
 //! (`STATUS_DLL_NOT_FOUND`).
 //!
@@ -264,9 +265,29 @@
 //!
 //! # Versions
 //!
-//! A crate at version V requires the library at version V: [`Module::init`]
-//! reads the version the library's API manifest states and refuses any other
-//! with [`Error::LibraryVersion`], before initialising it.
+//! The C interface has an ABI number, independent of the release version,
+//! that changes only when the interface breaks compatibility. This crate was
+//! built against [`OXI_ABI_VERSION`]; [`Module::init`] calls the library's
+//! `oxi_abi_version` before initialising it and refuses any other number with
+//! [`Error::LibraryAbi`]. Within one ABI number, compatibility runs one way:
+//! a library of a later release serves this crate, while an older release
+//! of the same number may lack a function this crate calls, and the program
+//! then fails at load (immediate binding) rather than through the number.
+//! The function is looked up at run time, not linked, and only in the image
+//! the library was loaded from: a library that predates it still loads, and
+//! is then held to the exact-version rule, its API manifest's version equal
+//! to this crate's, else [`Error::LibraryVersion`].
+//!
+//! | crate built against | accepts |
+//! |---|---|
+//! | ABI 1 | a library reporting ABI 1 that exports every function the crate calls; a library without `oxi_abi_version` only at the crate's own release version |
+//!
+//! On Linux the library's `SONAME` is `liboxicrypt_ffi.so.<ABI>` and on macOS
+//! its install name is `@rpath/liboxicrypt_ffi.<ABI>.dylib`: the loader asks
+//! for that file, so deploy the library under that name, with the plain name
+//! (`liboxicrypt_ffi.so`, `liboxicrypt_ffi.dylib`) as a link to it for the
+//! linker, which `OXICRYPT_LIB_DIR` must hold. On Android the `SONAME` is the
+//! plain `liboxicrypt_ffi.so`, the only form an application packages.
 
 mod error;
 mod module;
@@ -285,6 +306,9 @@ pub use secret::{
     DrbgSeed, HkdfPrk, MlDsa87KeySeed, MlDsa87SecretKey, MlKem1024DecapsulationKey,
     MlKem1024EncapsSeed, MlKem1024KeySeedD, MlKem1024KeySeedZ, Okm, SharedSecret,
 };
+
+/// The ABI number of the C interface this crate was built against.
+pub const OXI_ABI_VERSION: i32 = 1;
 
 /// SHA-384 digest length.
 pub const SHA384_LEN: usize = 48;

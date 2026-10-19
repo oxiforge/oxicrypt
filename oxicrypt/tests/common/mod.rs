@@ -90,3 +90,14 @@ pub(crate) fn fixture_fingerprint() -> String {
         .expect("--show reports the verify key")
         .to_owned()
 }
+
+/// The file name the library is delivered under, which the program asks the
+/// loader for: the target of the fixture's `liboxicrypt_ffi.so` link
+/// (`liboxicrypt_ffi.so.<ABI>`), or the plain name for a library without one.
+pub(crate) fn delivered_name() -> String {
+    let plain = lib_dir().join("liboxicrypt_ffi.so");
+    std::fs::read_link(&plain).map_or_else(
+        |_| "liboxicrypt_ffi.so".to_owned(),
+        |target| target.to_string_lossy().into_owned(),
+    )
+}

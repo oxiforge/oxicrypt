@@ -21,12 +21,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reach the C ABI as `OxiResult::EntropyInputTooShort` (29) and `OxiResult::NonceTooShort` (30).
   An instantiate refused by a length check leaves the DRBG uninstantiated. (#288)
 - The `oxicrypt` crate gives a Rust program the module through its separately built and signed
-  shared library, without compiling any module crate into the program. It links `liboxicrypt_ffi`
-  by exact file name, never the static archive; requires the library's verifying-key fingerprint,
-  or an explicit opt-out, at build time; checks the library's version, integrity indicator,
-  fingerprint and active profile at initialisation; and wraps SHA-384, HKDF-SHA384, AES-256-GCM,
-  HMAC_DRBG-SHA-256, ML-DSA-87 and ML-KEM-1024 with fixed-size types, single-use seeds and secrets
-  zeroed on drop. The crate is outside the cryptographic boundary.
+  shared library, without compiling any module crate into the program. It never links the static
+  archive: on Linux, Android and Windows it links the shared library by its exact file name, and on
+  Apple targets, whose linker takes no exact name, it refuses a library directory that also holds
+  the archive. It requires the library's verifying-key fingerprint, or an explicit opt-out, at
+  build time. At initialisation it checks the library's ABI number, that the library is
+  operational with its integrity indicator reading `Passed`, its fingerprint and its active
+  profile. It wraps SHA-384, HKDF-SHA384, AES-256-GCM, HMAC_DRBG-SHA-256, ML-DSA-87 and ML-KEM-1024
+  with fixed-size types, single-use seeds and secrets zeroed on drop. The crate is outside the
+  cryptographic boundary.
+- `oxi_abi_version()` returns the C interface's ABI number, 1, which is independent of the release
+  version and changes only when the interface breaks compatibility; within a number, a newer
+  library serves an older caller, not the reverse. The `oxicrypt` crate accepts any library that
+  reports its ABI number and refuses another with `Error::LibraryAbi`. A library without
+  `oxi_abi_version`, as every earlier release is, is accepted only at the crate's own release
+  version, so any such library of a different release is refused. `abi/v1.txt` in `oxicrypt-ffi`
+  records every exported function's parameter and return types and every status code at that
+  number, and a test fails when one is removed or changed while the number stays, or when a
+  recorded line is edited. Output sizes are not in that record.
+- `oxicrypt.h` defines the status codes as `OXI_RESULT_*` constants of the `OxiResult` enum, with the
+  values the C functions return.
+- **Breaking for C programs linked against a cargo build of the library on Linux or macOS:** the
+  shared library's `SONAME` is `liboxicrypt_ffi.so.<ABI>` on Linux, and its macOS install name
+  `@rpath/liboxicrypt_ffi.<ABI>.dylib`, so a loader refuses a library of another ABI by name. Cargo
+  still writes the plain `liboxicrypt_ffi.so`, so a program linked with `-loxicrypt_ffi` against
+  `target/release` now records `liboxicrypt_ffi.so.1`, and the loader refuses to start it (`cannot
+  open shared object file`, exit status 127) until the library is deployed under that name: copy
+  the build output to the name `scripts/library-file-name.sh` prints and keep the plain name as a
+  link to it. Release tarballs ship that layout, and the Windows tarball also ships the MSVC import
+  library `oxicrypt_ffi.dll.lib`. Android keeps the plain `liboxicrypt_ffi.so`, the only form an
+  application packages, and the Windows DLL keeps its name.
 - The integrity signer signs Windows DLLs built with the GNU toolchain, reading the module's
   statics from the DWARF in the DLL when no program database of the name the DLL records is beside
   it (`NoDwarf`, `DwarfForm`, `DuplicateStatic`, `StaticOutsideImage`, `StaticUnlocated`,

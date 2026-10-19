@@ -20,6 +20,133 @@
 #include <stdint.h>
 
 /*
+ C ABI status code returned by every `oxi_*` function that returns an `int`
+ status: `Ok = 0` is success, and non-zero values are distinct failure
+ modes.
+
+ Four functions return a value of their own instead, never an `OxiResult`:
+ `oxi_abi_version` (the ABI number), `oxi_active_profile` (a profile code),
+ `oxi_is_operational` (1 or 0) and `oxi_integrity_status` (the integrity
+ indicator). `lama_manifest` returns a string, and the `_free` functions
+ return nothing.
+ Layout is fixed (`#[repr(C)]`) so the C-side typedef has stable
+ discriminants across cbindgen regenerations.
+ */
+typedef enum {
+  /*
+   Operation succeeded.
+   */
+  OXI_RESULT_OK = 0,
+  /*
+   Module not in `Operational` state — call `oxi_init` first.
+   */
+  OXI_RESULT_NOT_OPERATIONAL = 1,
+  /*
+   Power-up self-test failed during init. Module is in terminal `Error` state.
+   */
+  OXI_RESULT_SELF_TEST_FAILED = 2,
+  /*
+   Conditional self-test failed during operation (e.g. DRBG CRNGT, pairwise consistency).
+   */
+  OXI_RESULT_CONDITIONAL_TEST_FAILED = 3,
+  /*
+   `oxi_init` called more than once. The first init's outcome is authoritative.
+   */
+  OXI_RESULT_ALREADY_INITIALIZED = 4,
+  /*
+   Cryptographic input was not a valid domain element (invalid scalar, point not on curve, etc.).
+   */
+  OXI_RESULT_INVALID_INPUT = 5,
+  /*
+   Service blocked by the active algorithm profile. Requires process restart with different profile.
+   */
+  OXI_RESULT_ALGORITHM_RESTRICTED = 6,
+  /*
+   Service exists in the `Service` enum but its implementation is not yet built (stub crate).
+   */
+  OXI_RESULT_NOT_IMPLEMENTED = 7,
+  /*
+   `generate` (or `reseed`) called before `instantiate` succeeded on this DRBG handle.
+   */
+  OXI_RESULT_UNINSTANTIATED = 8,
+  /*
+   `reseed_counter` reached the SP 800-90A Table 3 reseed-interval bound; caller MUST
+   call `reseed` with fresh entropy before `generate` will return more output.
+   */
+  OXI_RESULT_RESEED_REQUIRED = 9,
+  /*
+   Caller passed a NULL pointer where one is required.
+   */
+  OXI_RESULT_NULL_POINTER = 10,
+  /*
+   Caller-allocated output buffer is smaller than the documented minimum.
+   */
+  OXI_RESULT_BUFFER_TOO_SMALL = 11,
+  /*
+   Output bound exceeded. Reused across families: HKDF-Expand requested more than
+   `255 * HashLen` bytes (RFC 5869 §2.3); HMAC_DRBG `generate` requested more than
+   `2^19` bits (SP 800-90A Table 3 `max_number_of_bits_per_request`). Same
+   cross-family-discriminant-reuse pattern as `TagMismatch = 22`: one code, multiple
+   upstream sources, all sharing the same caller-recovery semantic ("ask for less").
+   */
+  OXI_RESULT_OUTPUT_TOO_LONG = 12,
+  /*
+   Input length is not aligned to the cipher block size (where required).
+   */
+  OXI_RESULT_NOT_BLOCK_ALIGNED = 20,
+  /*
+   IV length doesn't match the mode's specification (e.g. GCM requires exactly 12 bytes).
+   */
+  OXI_RESULT_INVALID_IV_LENGTH = 21,
+  /*
+   Cryptographic verification mismatched.
+
+   Covers BOTH AEAD tag verification (AES-GCM, AES-CCM, AES-KW, AES-KWP)
+   AND signature verification (ECDSA `Ok(false)` from FIPS 186-5 §6.4.2,
+   and future RSA-PSS / EdDSA / ML-DSA / SLH-DSA / LMS / XMSS verify
+   fns). The semantic is uniform: "the cryptographic verification
+   primitive ran cleanly but the result disagrees with the claimed
+   value." Distinct from [`OxiResult::InvalidInput`] (= 5), which
+   signals input that failed to decode BEFORE any cryptographic
+   comparison. AEAD plaintext output buffer contents are UNDEFINED
+   when this code is returned.
+   */
+  OXI_RESULT_TAG_MISMATCH = 22,
+  /*
+   Input/output buffer length pair is mismatched (e.g. plaintext.len() != ciphertext.len()).
+   */
+  OXI_RESULT_LENGTH_MISMATCH = 23,
+  /*
+   Nonce length doesn't match the mode's specification.
+   */
+  OXI_RESULT_INVALID_NONCE_LENGTH = 24,
+  /*
+   Tag length doesn't match the mode's specification.
+   */
+  OXI_RESULT_INVALID_TAG_LENGTH = 25,
+  /*
+   Payload length exceeds the mode's allowed maximum.
+   */
+  OXI_RESULT_INVALID_PAYLOAD_LENGTH = 26,
+  /*
+   AAD length exceeds the mode's allowed maximum.
+   */
+  OXI_RESULT_INVALID_AAD_LENGTH = 27,
+  /*
+   The module was initialised without the pre-operational software
+   integrity test, so it was never verified against its integrity
+   signature. Distinct from `SelfTestFailed`: no test failed, none ran.
+   */
+  OXI_RESULT_INTEGRITY_UNVERIFIED = 28,
+  /*
+   Catch-all for "should-never-happen" cases. New error sources should
+   be paired with new `OxiResult` variants in the same change set —
+   reaching `Internal` is a flag for reviewer attention.
+   */
+  OXI_RESULT_INTERNAL = 255,
+} OxiResult;
+
+/*
  Opaque AES-256 key handle. The internal layout
  (`OxiHandle<Aes256Key>`) is implementation detail and not part
  of the C ABI; cbindgen renders this as an opaque struct.
@@ -154,6 +281,29 @@ extern "C" {
  as read-only and must not free it.
  */
 const char *lama_manifest(void);
+
+/*
+ Return the ABI number of this C interface.
+
+ The number is independent of the release version. It changes only when
+ the interface breaks compatibility (a function removed, a parameter or
+ return type changed, or an output size changed) and never when functions
+ are added. Compatibility within a number runs one way: a library returning
+ N serves a caller built against an earlier release of ABI N, but a caller
+ that uses a function added later in ABI N cannot load an older library of
+ the same number, which lacks it. The library's `SONAME` on Linux
+ (`liboxicrypt_ffi.so.<N>`) and its macOS install name follow the number;
+ Android keeps the plain `liboxicrypt_ffi.so`.
+
+ A query about the interface, not a service: it requires no
+ initialisation and is callable before [`oxi_init`] and in any module
+ state. A library that predates this function does not export it.
+
+ # Safety
+
+ No pointers; always safe to call.
+ */
+int oxi_abi_version(void);
 
 /*
  Initialise the FIPS module with the given algorithm profile,

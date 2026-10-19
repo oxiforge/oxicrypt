@@ -51,12 +51,12 @@ fn run(lib_dir: &Path, args: &[&str]) -> (Vec<String>, bool) {
 
 /// A scratch directory holding a copy of the signed library with `patch`
 /// applied.
-fn patched(name: &str, patch: impl FnOnce(&mut Vec<u8>)) -> PathBuf {
+fn patched(name: &str, patch: impl FnOnce(&mut [u8])) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oxicrypt-bindings-{}-{name}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     let mut bytes = fs::read(common::lib_dir().join("liboxicrypt_ffi.so")).unwrap();
     patch(&mut bytes);
-    fs::write(dir.join("liboxicrypt_ffi.so"), bytes).unwrap();
+    fs::write(dir.join(common::delivered_name()), bytes).unwrap();
     dir
 }
 
@@ -141,6 +141,22 @@ fn init_refuses_a_library_that_is_not_operational_after_init() {
     assert_eq!(
         lines,
         ["init Cnsa2: err code=NotOperational integrity=Some(Passed) detail=none"]
+    );
+    assert!(!ok);
+}
+
+/// `oxi_init` returns 0 but the integrity indicator is not `Passed`: the
+/// crate requires both.
+#[test]
+fn init_requires_the_integrity_indicator_to_read_passed() {
+    let so = shim(
+        "intnotrun",
+        "int oxi_integrity_status(void) { return 0; }\n",
+    );
+    let (lines, ok) = run_with_shim(&so, &["init", "1"]);
+    assert_eq!(
+        lines,
+        ["init Cnsa2: err code=IntegrityUnverified integrity=Some(NotRun) detail=none"]
     );
     assert!(!ok);
 }
@@ -249,24 +265,187 @@ fn a_modified_library_fails_its_integrity_test() {
     assert!(!ok);
 }
 
+/// The release version the crate was built as, which the fixture library
+/// states in its manifest.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Another version of the same length: the last digit changed.
+fn other_version() -> String {
+    let (head, last) = VERSION.split_at(VERSION.len() - 1);
+    format!("{head}{}", if last == "9" { "8" } else { "9" })
+}
+
+/// The library's version line, edited to [`other_version`]; the signature
+/// then no longer holds, but the version and ABI checks run before the
+/// integrity test.
+fn edit_version(b: &mut [u8]) {
+    let line = |v: &str| format!("library:\n  name: oxicrypt\n  version: \"{v}\"");
+    replace_once(
+        b,
+        line(VERSION).as_bytes(),
+        line(&other_version()).as_bytes(),
+    );
+}
+
+/// The refusal a library at [`other_version`] without `oxi_abi_version` gets.
+fn version_refusal() -> String {
+    format!(
+        "init Cnsa2: err code=LibraryVersion {{ library: Some({:?}), crate_: {VERSION:?} }} integrity=None detail=none",
+        other_version()
+    )
+}
+
+/// The `oxi_abi_version` export, renamed in the dynamic string table, as a
+/// library that predates the function has none.
+fn drop_abi_version(b: &mut [u8]) {
+    replace_once(b, b"\0oxi_abi_version\0", b"\0oxi_abi_versioX\0");
+}
+
+/// The file offset of `symbol`'s code in the library at `lib`, from its
+/// dynamic symbol table and program headers.
+fn code_offset(lib: &Path, symbol: &str) -> usize {
+    let nm = Command::new("nm")
+        .args(["-D", "--defined-only"])
+        .arg(lib)
+        .output()
+        .unwrap();
+    let nm = String::from_utf8_lossy(&nm.stdout).into_owned();
+    let vaddr = nm
+        .lines()
+        .find_map(|l| {
+            let mut f = l.split_whitespace();
+            let addr = f.next()?;
+            (f.nth(1)? == symbol).then(|| usize::from_str_radix(addr, 16).unwrap())
+        })
+        .expect("symbol in the dynamic table");
+    let segs = Command::new("readelf")
+        .arg("-lW")
+        .arg(lib)
+        .output()
+        .unwrap();
+    let segs = String::from_utf8_lossy(&segs.stdout).into_owned();
+    segs.lines()
+        .filter(|l| l.trim_start().starts_with("LOAD"))
+        .find_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let hex = |s: &str| usize::from_str_radix(s.trim_start_matches("0x"), 16).unwrap();
+            let (offset, seg_vaddr, filesz) = (hex(f[1]), hex(f[2]), hex(f[4]));
+            (seg_vaddr <= vaddr && vaddr < seg_vaddr + filesz).then(|| vaddr - seg_vaddr + offset)
+        })
+        .expect("a LOAD segment holding the symbol")
+}
+
+/// The library's own `oxi_abi_version`, patched in a copy to return 2. The
+/// version and ABI checks run before the integrity test, so the patch is
+/// refused by the ABI check, not by the broken signature. The patch is of
+/// x86_64 code, so it runs only on x86_64. The CI workflows have no macOS
+/// job for this crate, so no test here exercises the macOS lookup path.
+#[cfg(target_arch = "x86_64")]
 #[test]
-fn a_library_of_another_version_is_refused_before_init() {
-    let dir = patched("version", |b| {
-        replace_once(
-            b,
-            b"library:\n  name: oxicrypt\n  version: \"0.25.0\"",
-            b"library:\n  name: oxicrypt\n  version: \"0.25.9\"",
-        );
+fn a_library_of_another_abi_is_refused_before_init() {
+    let lib = common::lib_dir().join("liboxicrypt_ffi.so");
+    let at = code_offset(&lib, "oxi_abi_version");
+    let dir = patched("abi2", |b| {
+        // `mov eax, 1; ret`, the whole function at ABI 1.
+        assert_eq!(b[at..at + 6], [0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3]);
+        b[at + 1] = 0x02;
     });
     let (lines, ok) = run(&dir, &["init", "1"]);
     fs::remove_dir_all(&dir).unwrap();
     assert_eq!(
         lines,
-        [
-            r#"init Cnsa2: err code=LibraryVersion { library: Some("0.25.9"), crate_: "0.25.0" } integrity=None detail=none"#
-        ]
+        ["init Cnsa2: err code=LibraryAbi { library: 2, crate_: 1 } integrity=None detail=none"]
     );
     assert!(!ok);
+}
+
+/// Another object defining `oxi_abi_version`, loaded ahead of the library,
+/// does not stand in for the library's own.
+#[test]
+fn a_foreign_oxi_abi_version_does_not_override_the_librarys() {
+    let so = shim("abi2", "int oxi_abi_version(void) { return 2; }\n");
+    let (lines, ok) = run_with_shim(&so, &["init", "1"]);
+    assert_eq!(lines, ["init Cnsa2: ok"]);
+    assert!(ok);
+}
+
+/// The library's own number is read even when a foreign definition comes
+/// first in the lookup scope: a library of another release version with
+/// ABI 1 passes the ABI check, and is then refused by its integrity test
+/// because the edit broke its signature, not by the version rule.
+#[test]
+fn the_librarys_own_oxi_abi_version_is_read_past_a_foreign_one() {
+    let dir = patched("own-past-foreign", edit_version);
+    let so = shim("abi2-past", "int oxi_abi_version(void) { return 2; }\n");
+    let out = Command::new(probe())
+        .args(["init", "1"])
+        .env("LD_LIBRARY_PATH", &dir)
+        .env("LD_PRELOAD", &so)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["init Cnsa2: err code=SelfTestFailed integrity=Some(SignatureInvalid) detail=some"]
+    );
+}
+
+/// Nor does it stand in for a library that has none: the release-version
+/// rule still applies.
+#[test]
+fn a_foreign_oxi_abi_version_does_not_stand_in_for_a_missing_one() {
+    let dir = patched("foreign-noabi", |b| {
+        edit_version(b);
+        drop_abi_version(b);
+    });
+    let so = shim("abi1", "int oxi_abi_version(void) { return 1; }\n");
+    let out = Command::new(probe())
+        .args(["init", "1"])
+        .env("LD_LIBRARY_PATH", &dir)
+        .env("LD_PRELOAD", &so)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), [version_refusal()]);
+}
+
+/// A library of another release version with this crate's ABI number passes
+/// the ABI check, which replaces the version rule, and then fails its
+/// integrity test, because the edit invalidated its signature.
+#[test]
+fn the_abi_number_decides_and_not_the_release_version() {
+    let dir = patched("version", edit_version);
+    let (lines, ok) = run(&dir, &["init", "1"]);
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(
+        lines,
+        ["init Cnsa2: err code=SelfTestFailed integrity=Some(SignatureInvalid) detail=some"]
+    );
+    assert!(!ok);
+}
+
+#[test]
+fn without_oxi_abi_version_the_release_version_decides() {
+    let dir = patched("noabi-version", |b| {
+        edit_version(b);
+        drop_abi_version(b);
+    });
+    let (lines, ok) = run(&dir, &["init", "1"]);
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(lines, [version_refusal()]);
+    assert!(!ok);
+
+    // The same library at this crate's version passes the fallback, and is
+    // then refused by its integrity test, since the rename changed it.
+    let dir = patched("noabi", drop_abi_version);
+    let (lines, _) = run(&dir, &["init", "1"]);
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(
+        lines,
+        ["init Cnsa2: err code=SelfTestFailed integrity=Some(SignatureInvalid) detail=some"]
+    );
 }
 
 #[test]

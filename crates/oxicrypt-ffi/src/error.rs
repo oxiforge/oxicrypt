@@ -23,9 +23,15 @@
 
 use core::ffi::c_int;
 
-/// C ABI status code for every `oxi_*` function.
+/// C ABI status code returned by every `oxi_*` function that returns an `int`
+/// status: `Ok = 0` is success, and non-zero values are distinct failure
+/// modes.
 ///
-/// `Ok = 0` is success. Non-zero values are distinct failure modes.
+/// Four functions return a value of their own instead, never an `OxiResult`:
+/// `oxi_abi_version` (the ABI number), `oxi_active_profile` (a profile code),
+/// `oxi_is_operational` (1 or 0) and `oxi_integrity_status` (the integrity
+/// indicator). `lama_manifest` returns a string, and the `_free` functions
+/// return nothing.
 /// Layout is fixed (`#[repr(C)]`) so the C-side typedef has stable
 /// discriminants across cbindgen regenerations.
 #[repr(C)]

@@ -5,7 +5,7 @@ The Rust interface to `liboxicrypt_ffi`, the oxicrypt cryptographic module deliv
 ## Use
 
 1. Get a signed library: download a project release and pin the release key's fingerprint, or build `oxicrypt-ffi` yourself and sign it with your own key (`docs/integrity-signing.md` in the repository).
-2. Build your program with `OXICRYPT_LIB_DIR=<directory holding the library>` and `OXICRYPT_LIB_FINGERPRINT=sha256:<…>`, the fingerprint `oxicrypt-integrity-sign --show <library>` prints. `OXICRYPT_LIB_UNPINNED=1` is the explicit alternative to the fingerprint.
+2. Build your program with `OXICRYPT_LIB_DIR=<directory holding the library>` (the library under its versioned name, `liboxicrypt_ffi.so.<ABI>`, with `liboxicrypt_ffi.so` a link to it, as release tarballs ship it) and `OXICRYPT_LIB_FINGERPRINT=sha256:<…>`, the fingerprint `oxicrypt-integrity-sign --show <library>` prints. `OXICRYPT_LIB_UNPINNED=1` is the explicit alternative to the fingerprint.
 3. Give your program a run-time search path for the library (for example `-C link-arg=-Wl,--enable-new-dtags -C link-arg=-Wl,-rpath,<dir>` on Linux), or deploy the library where the loader looks.
 
 ```rust,ignore
