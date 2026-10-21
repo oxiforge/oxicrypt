@@ -63,6 +63,16 @@ fn hmac_drbg_sha256_states_and_bounds() {
         Err(Error::InvalidInput),
         "769 bytes provided, over HMAC_DRBG_MAX_PROVIDED_LEN"
     );
+    assert_eq!(
+        drbg.instantiate(&[0; 31], &[0; 16], &[]),
+        Err(Error::EntropyInputTooShort),
+        "31 bytes of entropy, under the 256-bit strength"
+    );
+    assert_eq!(
+        drbg.instantiate(&[0; 32], &[0; 15], &[]),
+        Err(Error::NonceTooShort),
+        "15-byte nonce, under half the strength"
+    );
 }
 
 /// A request over the bound is refused by the crate before the library is

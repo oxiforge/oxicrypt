@@ -75,6 +75,10 @@ pub enum Error {
     InvalidAadLength,
     /// Code 28: the module was initialised without its integrity test.
     IntegrityUnverified,
+    /// Code 29: a DRBG's entropy input is shorter than its security strength.
+    EntropyInputTooShort,
+    /// Code 30: a DRBG's nonce is shorter than half its security strength.
+    NonceTooShort,
     /// Code 255: an internal error of the library.
     Internal,
     /// Code 22 from a signature verification: the signature did not verify,
@@ -147,6 +151,8 @@ impl Error {
             26 => Self::InvalidPayloadLength,
             27 => Self::InvalidAadLength,
             28 => Self::IntegrityUnverified,
+            29 => Self::EntropyInputTooShort,
+            30 => Self::NonceTooShort,
             255 => Self::Internal,
             other => Self::Unknown(other),
         }
@@ -193,6 +199,12 @@ impl fmt::Display for Error {
             Self::InvalidAadLength => f.write_str("AAD length exceeds the mode's maximum"),
             Self::IntegrityUnverified => {
                 f.write_str("module initialised without the software integrity test")
+            }
+            Self::EntropyInputTooShort => {
+                f.write_str("entropy input shorter than the DRBG's security strength")
+            }
+            Self::NonceTooShort => {
+                f.write_str("nonce shorter than half the DRBG's security strength")
             }
             Self::Internal => f.write_str("internal error in the library"),
             Self::SignatureInvalid => f.write_str("signature did not verify"),

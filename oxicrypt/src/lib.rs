@@ -215,7 +215,8 @@
 //!         | E::OutputTooLong | E::NotBlockAligned | E::InvalidIvLength | E::TagMismatch
 //!         | E::LengthMismatch | E::InvalidNonceLength | E::InvalidTagLength
 //!         | E::InvalidPayloadLength | E::InvalidAadLength | E::IntegrityUnverified
-//!         | E::Internal | E::SignatureInvalid | E::Unknown(_) | E::LibraryVersion { .. }
+//!         | E::EntropyInputTooShort | E::NonceTooShort | E::Internal | E::SignatureInvalid
+//!         | E::Unknown(_) | E::LibraryAbi { .. } | E::LibraryVersion { .. }
 //!         | E::ProfileMismatch { .. } | E::KeyFingerprint { .. } => false,
 //!     }
 //! }

@@ -2033,6 +2033,10 @@ types:
         description: "Code 27."
       - name: IntegrityUnverified
         description: "Code 28."
+      - name: EntropyInputTooShort
+        description: "Code 29: a DRBG's entropy input is shorter than its security strength."
+      - name: NonceTooShort
+        description: "Code 30: a DRBG's nonce is shorter than half its security strength."
       - name: Internal
         description: "Code 255."
       - name: SignatureInvalid

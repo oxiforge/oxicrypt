@@ -139,6 +139,21 @@ typedef enum {
    */
   OXI_RESULT_INTEGRITY_UNVERIFIED = 28,
   /*
+   A DRBG `_instantiate` or `_reseed` was given an entropy input shorter
+   than the minimum for the instantiated security strength (SP 800-90A
+   Rev. 1 Tables 2 and 3). Distinct from `InvalidInput = 5`, which an
+   over-long input returns, as does CTR_DRBG `_no_df` seed material
+   that is not exactly `seedlen` bytes.
+   */
+  OXI_RESULT_ENTROPY_INPUT_TOO_SHORT = 29,
+  /*
+   A DRBG `_instantiate` was given a nonce shorter than half the
+   instantiated security strength, the module's nonce floor
+   (permitted by SP 800-90A Rev. 1 §9.1 step 8; a shorter nonce that
+   would meet only the uniqueness condition of §8.6.7 is refused).
+   */
+  OXI_RESULT_NONCE_TOO_SHORT = 30,
+  /*
    Catch-all for "should-never-happen" cases. New error sources should
    be paired with new `OxiResult` variants in the same change set —
    reaching `Internal` is a flag for reviewer attention.

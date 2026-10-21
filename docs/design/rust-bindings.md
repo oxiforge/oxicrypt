@@ -108,7 +108,7 @@ When the crate was built with `OXICRYPT_LIB_FINGERPRINT`, step 4, after the oper
 
 ### Errors
 
-`Error` is an enum with one variant per `OxiResult` discriminant, in the header's order and with the header's meaning: `Ok` is never a variant; codes 1 to 12, 20 to 28 and 255 each have one; `Unknown(i32)` holds any other value, negative or unassigned, a newer library might return; and four crate-level variants exist for `LibraryAbi`, `LibraryVersion`, `ProfileMismatch` and `KeyFingerprint`. The mapping is `fn from_code(code: i32, site: Site) -> Error` with `Site::{AeadDecrypt, SignatureVerify, Other}`, and the round-trip test runs per site.
+`Error` is an enum with one variant per `OxiResult` discriminant, in the header's order and with the header's meaning: `Ok` is never a variant; codes 1 to 12, 20 to 30 and 255 each have one; `Unknown(i32)` holds any other value, negative or unassigned, a newer library might return; and four crate-level variants exist for `LibraryAbi`, `LibraryVersion`, `ProfileMismatch` and `KeyFingerprint`. The mapping is `fn from_code(code: i32, site: Site) -> Error` with `Site::{AeadDecrypt, SignatureVerify, Other}`, and the round-trip test runs per site.
 
 cbindgen emits only types reachable from exported signatures, and every `oxi_*` returns `int`, so `OxiResult` is exported into `oxicrypt.h` explicitly through the cbindgen configuration (D2): the header carries `OXI_RESULT_TAG_MISMATCH = 22` and the rest. The mapping is pinned by a workspace test that reads those lines of the committed header and requires `from_code(N, site)` to produce the variant named for `N` at every site in which that code is not remapped; a discriminant the header gains that the crate does not map fails that test.
 
