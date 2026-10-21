@@ -48,6 +48,7 @@ readelf --version | head -1
 step "fixtures" bash "$here/build-fixtures.sh" fixtures
 step "analyse.py" python3 "$here/analyse.py" --selftest
 step "reservation.py" python3 "$here/reservation.py" --selftest
+step "pe-tamper.py" python3 "$here/pe-tamper.py" --selftest
 step "fixup-crosscheck.py" python3 "$here/fixup-crosscheck.py" --selftest
 step "file-backed-statics.py" python3 "$here/file-backed-statics.py" --selftest fixtures
 

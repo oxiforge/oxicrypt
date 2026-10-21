@@ -24,10 +24,14 @@
   apply <file> <offset> <mask>
       XORs `mask`, little-endian, into the bytes from `offset`, in place.
 
+  --selftest
+      Checks the row selection that needs no DLL against fixed cases.
+
 Every edited byte is one nothing reads before the integrity test, so the
 test, not a crash or an earlier self-test, gives the verdict.
 
-Exit status: 0 done, 2 the input could not be read, 3 a crash.
+Exit status: 0 done, 1 a self-test case failed, 2 the input could not be read,
+3 a crash.
 """
 import re
 import struct
@@ -148,6 +152,45 @@ class Pe:
         return self.off(rva) if size else None
 
 
+def first_fileonly_in(entries, section):
+    """The first file offset inside `section` (start, end) that a FileOnly
+    entry covers, or None. The signer merges entries that are contiguous in
+    both the file and the image, so an entry can start in the section before
+    and run into this one; it counts from the section's first byte."""
+    if section is None:
+        return None
+    start, end = section
+    hits = [max(f, start) for k, f, n in entries
+            if k == "FileOnly" and f < end and f + n > start]
+    return min(hits) if hits else None
+
+
+def selftest():
+    data = (0x2E9A00, 0x2E9C00)
+    cases = [
+        ("an entry inside the section", first_fileonly_in([("FileOnly", 0x2E9A5A, 422)], data), 0x2E9A5A),
+        ("an entry running into the section from the one before",
+         first_fileonly_in([("FileOnly", 0x2E99D0, 560)], data), 0x2E9A00),
+        ("the lowest of several", first_fileonly_in([("FileOnly", 0x2E9B00, 4), ("FileOnly", 0x2E99F0, 32)], data),
+         0x2E9A00),
+        ("an entry ending at the section's first byte", first_fileonly_in([("FileOnly", 0x2E9900, 0x100)], data),
+         None),
+        ("an entry starting at the section's end", first_fileonly_in([("FileOnly", 0x2E9C00, 10)], data), None),
+        ("an entry spanning the whole section", first_fileonly_in([("FileOnly", 0x2E9900, 0x400)], data), 0x2E9A00),
+        ("another kind", first_fileonly_in([("Plain", 0x2E9A00, 16)], data), None),
+        ("no such section", first_fileonly_in([("FileOnly", 0x2E9A00, 16)], None), None),
+    ]
+    def show(v):
+        return hex(v) if v is not None else v
+
+    bad = 0
+    for name, got, want in cases:
+        ok = got == want
+        bad += not ok
+        print(f"{'ok' if ok else 'MISMATCH':8} {name}: expected {show(want)}, got {show(got)}")
+    return bad == 0
+
+
 def rows(dll, show, out=print):
     data = open(dll, "rb").read()
     text = open(show).read()
@@ -206,11 +249,9 @@ def rows(dll, show, out=print):
         return pe.off(va - pe.image_base) if va else None
     row("cfg-check-storage", storage(0x70), 0x01)
     row("xfg-check-storage", storage(0x118), 0x10)
-    # FileOnly: the first byte of `.data`'s first FileOnly entry.
+    # FileOnly: the first byte of `.data` that a FileOnly entry covers.
     data_sec = next(((ptr, ptr + raw) for n, _va, _vs, ptr, raw in pe.sections if n == ".data"), None)
-    fo = sorted(f for k, f, n in entries
-                if k == "FileOnly" and data_sec and data_sec[0] <= f < data_sec[1])
-    row("fileonly-byte", fo[0] if fo else None, 0x01)
+    row("fileonly-byte", first_fileonly_in(entries, data_sec), 0x01)
     row("signature", slot + OFF_SIG if slot is not None else None, 0x01)
     row("key-id", slot + OFF_KEY_ID if slot is not None else None, 0x01, KEY_MISMATCH)
     # Alignment padding past a section's VirtualSize, signed from the file.
@@ -263,6 +304,8 @@ def apply(path, offset, mask):
 
 
 def main(argv):
+    if argv[1:] == ["--selftest"]:
+        return 0 if selftest() else 1
     try:
         if len(argv) == 4 and argv[1] == "rows":
             return rows(argv[2], argv[3])
