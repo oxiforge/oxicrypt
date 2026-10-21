@@ -275,7 +275,7 @@ Releases are deliberate, separate acts. **Every version literal is bumped by `sc
 4. Tag the merge commit `vX.Y.Z` — annotated **and signed** — then `git push origin vX.Y.Z`.
 5. Create the GitHub release from the tag.
 
-Release tags are the publishing trigger: 32 of the workspace's 42 members carry `publish = true` and go to crates.io. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
+Publishing the GitHub release builds the release tarballs and attaches them to it. Publishing to crates.io is a separate step a maintainer runs after the release: 32 of the workspace's 42 members carry `publish = true` and go to crates.io. Note that crates.io reads the version from `Cargo.toml` at publish time and never sees a git tag.
 
 `cargo publish` verifies each crate by building its packaged copy. The `oxicrypt` crate's build script refuses to build without a signed library's fingerprint, so publish it with `OXICRYPT_LIB_OPTIONAL=1` set, which lets the verification build it without linking a library (`OXICRYPT_LIB_OPTIONAL=1 cargo publish -p oxicrypt`); without it the verification fails with the build script's refusal.
 
