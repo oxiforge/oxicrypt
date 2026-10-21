@@ -46,7 +46,6 @@ members = [
 ]
 exclude = [
     "playground",
-    "oxicrypt-pointer",
 ]
 
 [workspace.package]

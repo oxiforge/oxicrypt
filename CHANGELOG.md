@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built with full debug information; a static that breaks either is not seen, where a program
   database would list it. An image with neither a program database record nor DWARF is now
   refused as `NoDwarf` where it was `StaticsUnchecked`.
+- Removed the `oxicrypt-pointer` placeholder crate. The `oxicrypt` crate name on crates.io passes
+  to the Rust binding at its first publish, and the placeholder versions 1.40.3 and 0.0.1 are
+  yanked then.
 
 ## [0.25.0] - 2026-10-17
 
