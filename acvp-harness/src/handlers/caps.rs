@@ -382,7 +382,10 @@ pub fn ctr_drbg_capability() -> JsonValue {
 fn ctr_drbg_mode_entry(mode: &str, der_func: bool, entropy_len: i64, nonce_len: i64) -> JsonValue {
     obj(vec![
         ("mode", str_val(mode)),
-        ("derFunc", JsonValue::Bool(der_func)),
+        // The registration field is `derFuncEnabled`; `derFunc` is the name
+        // the server uses in the test groups it sends back. A registration
+        // carrying `derFunc` is read as derivation function disabled.
+        ("derFuncEnabled", JsonValue::Bool(der_func)),
         // Fixed (spec-mandated) values use num_array to produce `[N]`;
         // ranges use range_domain. The server enforces strict min < max
         // on range objects, so single-value entries must use the array

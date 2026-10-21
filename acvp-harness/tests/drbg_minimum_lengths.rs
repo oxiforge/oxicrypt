@@ -109,9 +109,14 @@ fn ctr_drbg_df_registration_asks_for_the_minimum_nonce() {
         .and_then(JsonValue::as_array)
         .unwrap();
     assert_eq!(entries.len(), 6);
+    let mut registered = Vec::new();
     for entry in entries {
         let mode = field(entry, "mode").unwrap().as_str().unwrap();
-        let df = matches!(field(entry, "derFunc"), Some(JsonValue::Bool(true)));
+        assert!(
+            field(entry, "derFunc").is_none(),
+            "{mode}: the registration field is derFuncEnabled; the server ignores derFunc"
+        );
+        let df = matches!(field(entry, "derFuncEnabled"), Some(JsonValue::Bool(true)));
         let nonce = json::to_compact_string(field(entry, "nonceLen").unwrap());
         let expected = match (mode, df) {
             ("AES-128", true) => "[64]",
@@ -120,8 +125,19 @@ fn ctr_drbg_df_registration_asks_for_the_minimum_nonce() {
             (_, false) => "[0]",
             other => panic!("unexpected entry {other:?}"),
         };
-        assert_eq!(nonce, expected, "{mode} derFunc={df}");
+        assert_eq!(nonce, expected, "{mode} derFuncEnabled={df}");
+        registered.push((mode.to_owned(), df));
     }
+    registered.sort();
+    let mut wanted: Vec<(String, bool)> = ["AES-128", "AES-192", "AES-256"]
+        .iter()
+        .flat_map(|mode| [(mode.to_string(), false), (mode.to_string(), true)])
+        .collect();
+    wanted.sort();
+    assert_eq!(
+        registered, wanted,
+        "each AES key size is registered once with and once without the derivation function"
+    );
 }
 
 #[test]
