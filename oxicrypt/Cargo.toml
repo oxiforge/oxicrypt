@@ -35,5 +35,5 @@ name = "probe"
 name = "quickstart"
 
 [package.metadata.lama]
-manifest = "https://raw.githubusercontent.com/oxiforge/oxicrypt/v0.25.0/docs/llm-api-manifest/llm-api.yaml"
+manifest = "https://raw.githubusercontent.com/oxiforge/oxicrypt/v0.26.0/docs/llm-api-manifest/llm-api.yaml"
 spec = "https://github.com/lamaspec/lama/blob/main/SPEC.md"
