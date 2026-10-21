@@ -166,7 +166,13 @@ Every task is incomplete until all of these pass. Run them as the last step befo
 and re-run after any post-review fix-ups:
 
 1. `cargo fmt --all --check` — no unformatted code (run `cargo fmt --all` to fix, then re-check).
-2. `cargo clippy --workspace --all-targets -- -D warnings` — no warnings.
+2. `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --workspace --all-targets -- -D warnings` — no warnings.
+   `OXICRYPT_LIB_OPTIONAL=1` builds the `oxicrypt` crate without linking the signed library its build
+   script otherwise requires. When any path `scripts/gate-scope.sh` lists for the bindings changes
+   (on Linux; the fixture builds ELF only), also run its linked tests against a fresh fixture, pinned
+   and unpinned:
+   `scripts/bindings-fixture.sh <empty dir>`, source the `env.sh` it writes, then
+   `cargo test -p oxicrypt` and `env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 cargo test -p oxicrypt`.
 3. **Crypto correctness** — for any change to an approved-algorithm crate, its known-answer / ACVP
    vectors stay green (`oxicrypt-test-vectors`, `acvp-harness/`) and power-up self-tests pass
    (`oxicrypt-integrity`). A green lint pass does not substitute for green vectors on a crypto change.

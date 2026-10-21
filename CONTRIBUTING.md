@@ -88,7 +88,7 @@ they have their own row.
 | Tests | `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace --all-features` |
 | Clippy (strict) | `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --all-targets --all-features --release -- -D warnings` |
 | Rustdocs | `OXICRYPT_LIB_OPTIONAL=1 cargo doc --no-deps --workspace` (no warnings) |
-| The `oxicrypt` crate (when it, a crate under `crates/`, the signer or the signing scripts change) | `d=$(mktemp -d); scripts/bindings-fixture.sh "$d"; . "$d/env.sh"`, then `cargo test -p oxicrypt` and `env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 cargo test -p oxicrypt`; delete `$d`, which holds the run's private keys |
+| The `oxicrypt` crate (when any path `scripts/gate-scope.sh` lists for the bindings changes; Linux only, as the fixture builds ELF only) | `d=$(mktemp -d); scripts/bindings-fixture.sh "$d"; . "$d/env.sh"`, then `cargo test -p oxicrypt` and `env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 cargo test -p oxicrypt`; delete `$d`, which holds the run's private keys |
 | Doc-sync hook | Activated via `git config core.hooksPath scripts/git-hooks` (one-time setup above) |
 | Integrity-sign (harness rebuilds) | build with `OXICRYPT_INTEGRITY_VERIFY_KEY=<dir>/integrity-verify.pub`, then `./target/release/oxicrypt-integrity-sign --sign --key <dir>/integrity-signing.key ./target/release/acvp-harness`, with a pair from `oxicrypt-integrity-sign --keygen <dir>` outside the tree |
 
