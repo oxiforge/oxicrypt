@@ -8,7 +8,7 @@ demonstration server**.
 `acvp-demo-evidence.json` lists **every vector set submitted for grading — passing and failing
 alike** — identified by the **test session ID** and **vector set ID** NIST itself issued, together
 with the algorithm, mode, revision, verdict and grading date. Failures are published alongside
-passes so the denominator is visible rather than implied: **154 vector sets graded, 141 passed, 13
+passes so the denominator is visible rather than implied: **158 vector sets graded, 145 passed, 13
 failed.**
 
 **It is not a certificate.** These results come from NIST's *demonstration* server. That server runs
@@ -44,8 +44,8 @@ A per-case count is recomputed from the retained verdict body where one exists, 
 than estimated where it does not**. Two cuts of that limit, because the second is sharper and should
 not have to be discovered:
 
-- By vector set: 81 of 154 graded sets carry a reproducible count (76 of the 141 passing ones).
-- **By algorithm: only 16 of 59 carry any reproducible count at all**, and the 43 that do not
+- By vector set: 85 of 158 graded sets carry a reproducible count (80 of the 145 passing ones).
+- **By algorithm: only 17 of 59 carry any reproducible count at all**, and the 42 that do not
   include the high-volume symmetric and hash families.
 
 The `summary` block therefore reports what this file proves and nothing more. It does **not** restate

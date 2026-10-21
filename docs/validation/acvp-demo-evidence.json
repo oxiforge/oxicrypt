@@ -5,23 +5,23 @@
   "method": {
     "verdict_map": "The vector-set-to-verdict map is built globally across all transcripts before joining to prompts. A session that failed to submit and was banked later has its verdict in a different transcript from its prompt; a per-file join silently loses those grades.",
     "case_counting": "test_cases_recounted counts entries carrying an explicit per-case result in the verdict body. It deliberately does NOT count tcId occurrences, which appear twice per transcript (prompt and response) and produce a 2x overcount.",
-    "coverage_limit": "A per-case count is reproducible for 81 of 154 graded vector sets, because the full verdict body was retained only for those. Cut by algorithm the limit is sharper and is stated plainly here rather than left to be discovered: only 16 of 59 algorithms carry any reproducible count at all, and the ones that do not include the high-volume symmetric and hash families. The project's overall test-case total is therefore NOT reconstructible from this file, and this file does not assert it.",
+    "coverage_limit": "A per-case count is reproducible for 85 of 158 graded vector sets, because the full verdict body was retained only for those. Cut by algorithm the limit is sharper and is stated plainly here rather than left to be discovered: only 17 of 59 algorithms carry any reproducible count at all, and the ones that do not include the high-volume symmetric and hash families. The project's overall test-case total is therefore NOT reconstructible from this file, and this file does not assert it.",
     "counting_unit": "The algorithm count here is distinct ACVP algorithm registrations, which is a finer unit than the algorithm-family count the project quotes elsewhere. The two are different units, not competing figures.",
     "verification": "These rows are attestable, not re-queryable by a third party, and the difference is worth stating exactly. ACVP test sessions expire 30 days after creation, and most of these are long past that; session URLs are also scoped to the account that created them, so another party's demonstration-server credentials reach their own sessions and not these. What the identifiers give a reader is the ability to put a specific, falsifiable question to NIST or to a testing laboratory about a specific session, and the ability to hold this record against any future certification submission."
   },
   "summary": {
-    "vector_sets_graded": 154,
+    "vector_sets_graded": 158,
     "vector_sets_without_recorded_verdict": 22,
-    "vector_sets_passed": 141,
+    "vector_sets_passed": 145,
     "vector_sets_failed": 13,
-    "distinct_test_sessions": 151,
+    "distinct_test_sessions": 155,
     "distinct_algorithms": 59,
-    "algorithms_with_reproducible_case_count": 16,
-    "vector_sets_with_reproducible_case_count": 81,
-    "vector_sets_passed_with_reproducible_case_count": 76,
-    "passing_test_cases_reproducible_from_this_file": 8780,
+    "algorithms_with_reproducible_case_count": 17,
+    "vector_sets_with_reproducible_case_count": 85,
+    "vector_sets_passed_with_reproducible_case_count": 80,
+    "passing_test_cases_reproducible_from_this_file": 10540,
     "earliest_grading": "2026-04-27",
-    "latest_grading": "2026-08-09"
+    "latest_grading": "2026-10-21"
   },
   "algorithms": [
     "ACVP-AES-CBC",
@@ -1644,6 +1644,47 @@
       "mode": "sigGen",
       "test_groups": 4,
       "test_cases_recounted": 40
+    },
+    {
+      "test_session_id": "779664",
+      "vector_set_id": 4099842,
+      "algorithm": "LMS",
+      "revision": "SP800-208",
+      "disposition": "passed",
+      "graded_on": "2026-10-17",
+      "mode": "sigVer",
+      "test_groups": 80,
+      "test_cases_recounted": 320
+    },
+    {
+      "test_session_id": "781176",
+      "vector_set_id": 4104522,
+      "algorithm": "hashDRBG",
+      "revision": "1.0",
+      "disposition": "passed",
+      "graded_on": "2026-10-21",
+      "test_groups": 24,
+      "test_cases_recounted": 360
+    },
+    {
+      "test_session_id": "781178",
+      "vector_set_id": 4104524,
+      "algorithm": "hmacDRBG",
+      "revision": "1.0",
+      "disposition": "passed",
+      "graded_on": "2026-10-21",
+      "test_groups": 24,
+      "test_cases_recounted": 360
+    },
+    {
+      "test_session_id": "781185",
+      "vector_set_id": 4104531,
+      "algorithm": "ctrDRBG",
+      "revision": "1.0",
+      "disposition": "passed",
+      "graded_on": "2026-10-21",
+      "test_groups": 48,
+      "test_cases_recounted": 720
     }
   ]
 }

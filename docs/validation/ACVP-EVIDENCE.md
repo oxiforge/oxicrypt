@@ -18,9 +18,9 @@ NIST's demonstration server does not advertise it, so it cannot be submitted for
 |---|--:|
 | Algorithm families | **20** |
 | ACVP services graded | **78** |
-| Vector sets graded | **154** — 141 passed, 13 failed |
-| NIST test sessions | 151 |
-| Period | 2026-04-27 to 2026-08-09 |
+| Vector sets graded | **158** — 145 passed, 13 failed |
+| NIST test sessions | 155 |
+| Period | 2026-04-27 to 2026-10-21 |
 
 ## What was graded
 
@@ -48,9 +48,9 @@ One row per ACVP service — the (algorithm, mode, revision) tuple NIST register
 
 | Algorithm | Mode | Revision | Vector sets | Cases |
 |---|---|---|--:|--:|
-| `ctrDRBG` | — | 1.0 | 1 | — |
-| `hashDRBG` | — | 1.0 | 1 | 360 |
-| `hmacDRBG` | — | 1.0 | 1 | 360 |
+| `ctrDRBG` | — | 1.0 | 2 | 720 |
+| `hashDRBG` | — | 1.0 | 2 | 720 |
+| `hmacDRBG` | — | 1.0 | 2 | 720 |
 
 **ECDSA** — 4 services
 
@@ -119,7 +119,7 @@ One row per ACVP service — the (algorithm, mode, revision) tuple NIST register
 | `LMS` | sigGen † | 1.0 | 4 | 800 |
 | `LMS` | sigGen † | SP800-208 | 6 | 1184 |
 | `LMS` | sigVer | 1.0 | 5 | 848 |
-| `LMS` | sigVer | SP800-208 | 1 | 320 |
+| `LMS` | sigVer | SP800-208 | 2 | 640 |
 
 † Graded, and not offered by the module. SP 800-208 §8.1 confines LMS key generation and signing to hardware modules, so the module offers LMS signature verification only. These rows record what was graded.
 
@@ -207,7 +207,7 @@ One row per ACVP service — the (algorithm, mode, revision) tuple NIST register
 | `kdf-components` | tls | 1.0 | 1 | — |
 
 <details>
-<summary>Full session record — all 154 graded vector sets, with the NIST identifiers</summary>
+<summary>Full session record — all 158 graded vector sets, with the NIST identifiers</summary>
 
 | Graded | Session | Vector set | Algorithm | Mode | Revision | Verdict | Cases |
 |---|--:|--:|---|---|---|---|--:|
@@ -365,6 +365,10 @@ One row per ACVP service — the (algorithm, mode, revision) tuple NIST register
 | 2026-08-06 | 758378 | 3995036 | `LMS` | sigGen | SP800-208 | passed | 80 |
 | 2026-08-08 | 758706 | 3997505 | `LMS` | sigGen | SP800-208 | passed | 40 |
 | 2026-08-09 | 758856 | 3998015 | `LMS` | sigGen | SP800-208 | passed | 40 |
+| 2026-10-17 | 779664 | 4099842 | `LMS` | sigVer | SP800-208 | passed | 320 |
+| 2026-10-21 | 781176 | 4104522 | `hashDRBG` | — | 1.0 | passed | 360 |
+| 2026-10-21 | 781178 | 4104524 | `hmacDRBG` | — | 1.0 | passed | 360 |
+| 2026-10-21 | 781185 | 4104531 | `ctrDRBG` | — | 1.0 | passed | 720 |
 
 </details>
 
@@ -381,7 +385,7 @@ above rather than smoothed over: vector set 3851852 on 2026-05-11.
 **Failures are listed.** A failed vector set means that submission did not pass; where the
 implementation was then corrected, a later passing row for the same service records it.
 
-**Case counts are partial.** A count appears only where the full verdict body was retained — 81 of 154 sets, and 16 of 59 algorithms. It is
+**Case counts are partial.** A count appears only where the full verdict body was retained — 85 of 158 sets, and 17 of 59 algorithms. It is
 left blank rather than estimated elsewhere, so the project's overall test-case total cannot be
 rebuilt from this page and is not claimed here.
 
