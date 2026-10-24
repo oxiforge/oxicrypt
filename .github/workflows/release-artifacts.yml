@@ -15,15 +15,32 @@
 #      it has to be an artifact somebody can actually obtain. That is this
 #      workflow's real output; the convenience is a side effect.
 #
-# TRIGGER POLICY — deliberately not `push`.
-#   It fires on `release: published` — an event a human causes by hand, at
-#   most once per release — so it runs exactly when the artifacts are wanted
-#   and never otherwise. `workflow_dispatch` runs it
-#   by hand as a dry run: every artifact is built, signed and verified exactly
-#   as for a release and uploaded as a workflow artifact, and nothing is
-#   attached to any release. Only a published release attaches artifacts; a
-#   release whose run failed is re-run from that run, which keeps its commit
-#   and tag ref.
+# TRIGGER POLICY — a pushed tag stages a release; a person publishes it.
+#   A push of a `v*` tag builds every artifact, signs it with the release key
+#   in the `release` environment, whose required reviewer approves the run
+#   once, and attaches the tarballs to a DRAFT release for the tag, creating
+#   the draft if there is none. A draft is visible only to people with write
+#   access to the repository. The maintainer downloads the draft's files,
+#   tests them, and publishes the draft by hand; the bytes tested are the bytes
+#   published, because nothing is rebuilt in between. The workflow never
+#   publishes a release and never changes a published one.
+#   The tag is checked first by `scripts/check-release-tag.sh`, taken from
+#   `main` with `keys/allowed-signers` from `main`: an annotated tag, signed by
+#   a key that file names, whose signed name is the pushed name, `v` and a
+#   SemVer version naming the workspace version, on a commit reachable from
+#   `main`. A staging run whose leg failed is re-run from that run, which keeps
+#   its commit and tag ref; the draft takes the re-run's files in place of any
+#   of the same name.
+#   A tag push runs this file as it stands in the tagged commit, so a tag on a
+#   commit that predates a change to this file runs the older file, and a tag
+#   on a commit whose copy of this file lacks the guard is held only by the
+#   `release` environment: its required reviewer, and its rule admitting `v*`
+#   tags alone. A tag ruleset limiting who may create `v*` tags narrows that to
+#   the people who may release.
+#   `workflow_dispatch` runs it by hand as a dry run: every artifact is built,
+#   signed and verified exactly as for a release, with a key the run
+#   generates, and uploaded as a workflow artifact; nothing is attached to any
+#   release.
 #
 # WHAT IS NOT COVERED — stated here rather than discovered later.
 #   * The Linux `.so` carries a glibc floor: a shared object built against
@@ -69,15 +86,16 @@
 #                environment, the public half from
 #                keys/release-integrity-verify.pub in the repository;
 #     hardware-token, kms   documented in that script, not implemented.
-#   `guard` admits ci-secret only for a run that attaches to a release, and a
-#   run that attaches to a release only with ci-secret. With ci-secret, the
+#   `guard` admits ci-secret only for a run that stages a release from a tag
+#   push, and such a run only with ci-secret. With ci-secret, the
 #   private key file exists only during the step that signs: that step writes
 #   it, holds its path in a shell variable, and erases it when it ends, and the
 #   step after erases it again before any action runs. A test key pair is
 #   generated once per run by the `test-key` job, fetched into each build
 #   job's key directory before it builds, and erased the same way.
 #   Build jobs hold read-only repository permissions and no persisted
-#   credentials; the `publish` job, which writes the release, never sees a key.
+#   credentials; the `attach` job, which writes the draft release, never sees
+#   a key.
 #
 # THE ORDER, PER FORMAT (docs/integrity-signing.md)
 #   ELF (glibc and bionic): link, split the debug information, strip, add a
@@ -95,8 +113,8 @@
 name: release-artifacts
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -124,14 +142,24 @@ env:
     -C link-arg=-Wl,-rename_section,__DATA,__bss,__ZEROFILL,__bss
     -C link-arg=-Wl,-rename_section,__DATA,__common,__ZEROFILL,__common
   PE_SIGNED_RUSTFLAGS: -C link-arg=/MERGE:.bss=.zbss
+  # The matrix below builds this many libraries, and this many CLIs. `one-key`
+  # and `attach` require exactly these counts, so a leg added to or removed
+  # from the matrix changes these two numbers with it.
+  RELEASE_LIBRARIES: 7
+  RELEASE_CLIS: 5
+
+concurrency:
+  group: release-artifacts-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # Decides, before anything reads a secret, what this run builds and whether
-  # it may publish. Only a published release attaches artifacts; its tag must
-  # resolve to a commit on main, and every job checks out that commit. A
-  # dispatched run never publishes.
+  # it stages a release (the `publish` output). Only a tag push does, and only
+  # for a tag scripts/check-release-tag.sh accepts; the script and the allowed
+  # signers are read from main, not from the tag's tree. Every job checks out
+  # the tag's commit. A dispatched run never stages a release.
   guard:
-    name: guard (what to build, whether to publish)
+    name: guard (what to build, whether to stage a release)
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.decide.outputs.sha }}
@@ -151,36 +179,40 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_SOURCE: ${{ inputs.signing_key_source }}
         run: |
           set -euo pipefail
           refuse() { echo "::error::$*"; exit 1; }
-          if [ "$EVENT" = release ]; then
-            publish=true; source=ci-secret; tag="$RELEASE_TAG"
-          else
-            publish=false; source="$INPUT_SOURCE"; tag="$INPUT_TAG"
-          fi
+          case "$EVENT" in
+            push) publish=true; source=ci-secret; tag="$REF_NAME" ;;
+            workflow_dispatch) publish=false; source="$INPUT_SOURCE"; tag="$INPUT_TAG" ;;
+            *) refuse "unexpected event $EVENT" ;;
+          esac
           case "$source" in
             test | ci-secret | hardware-token | kms) ;;
             *) refuse "unknown signing key source" ;;
           esac
           sha="$EVENT_SHA"
-          if [ -n "$tag" ]; then
-            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
-              || refuse "the tag is not of the form vX.Y.Z or vX.Y.Z-suffix"
-            sha="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}")" \
-              || refuse "refs/tags/$tag does not exist"
-          fi
           if [ "$publish" = true ]; then
-            [ "$source" = ci-secret ] || refuse "a run that attaches to a release signs with ci-secret only"
-            [ -n "$tag" ] || refuse "a run that attaches to a release must name its tag"
-            [ "$EVENT" = release ] || refuse "only a published release attaches artifacts"
-            [ "$sha" = "$EVENT_SHA" ] || refuse "the release's commit is not the tag's commit"
-            git merge-base --is-ancestor "$sha" origin/main || refuse "$tag is not on main"
+            [ "$REF_TYPE" = tag ] || refuse "a run that stages a release must be a tag push"
+            [[ "$tag" =~ ^v[0-9A-Za-z.-]+$ ]] || refuse "the tag is not of the form vX.Y.Z or vX.Y.Z-suffix"
+            # Fetch the tag object itself: the checkout may hold the tag as a
+            # plain ref to its commit, which carries no signature to verify.
+            git fetch --no-tags --force origin "+refs/tags/${tag}:refs/tags/${tag}"
+            git show origin/main:scripts/check-release-tag.sh > "$RUNNER_TEMP/check-release-tag.sh"
+            git show origin/main:keys/allowed-signers > "$RUNNER_TEMP/allowed-signers"
+            bash "$RUNNER_TEMP/check-release-tag.sh" "$tag" "$EVENT_SHA" "$RUNNER_TEMP/allowed-signers" origin/main
           else
-            [ "$source" != ci-secret ] || refuse "ci-secret is admitted only for a run that attaches to a release"
+            [ "$source" != ci-secret ] || refuse "ci-secret is admitted only for a run that stages a release from a tag push"
+            if [ -n "$tag" ]; then
+              [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+                || refuse "the tag is not of the form vX.Y.Z or vX.Y.Z-suffix"
+              sha="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}")" \
+                || refuse "refs/tags/$tag does not exist"
+            fi
           fi
           if [ -n "$tag" ]; then label="$tag"; else label="dryrun-${sha:0:12}"; fi
           {
@@ -263,9 +295,9 @@ jobs:
           if-no-files-found: error
 
   # Two jobs with one definition (the YAML anchors below): `build` for a run
-  # that does not publish, which enters no environment, and `build-release`
-  # for one that does, which enters the `release` environment holding the
-  # release key. The guard's `publish` output selects exactly one.
+  # that does not stage a release, which enters no environment, and
+  # `build-release` for one that does, which enters the `release` environment
+  # holding the release key. The guard's `publish` output selects exactly one.
   build:
     name: ${{ matrix.name }}
     needs: [guard, header, test-key]
@@ -366,6 +398,21 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
+
+      # A re-run reuses the guard's verdict, so a staging leg checks again,
+      # before any key is fetched, that the tag still names the commit the
+      # guard accepted. `attach` checks the same before it uploads.
+      - name: The tag still names the accepted commit
+        if: env.PUBLISH == 'true'
+        shell: bash
+        env:
+          TAG: ${{ needs.guard.outputs.tag }}
+          SHA: ${{ needs.guard.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force --depth=1 origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse --verify "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$SHA" ] || { echo "::error::$TAG now names $now, not the accepted $SHA"; exit 1; }
 
       - name: Install pinned toolchain and target
         shell: bash
@@ -778,6 +825,9 @@ jobs:
             dist/
             sign-lib.txt
             sign-cli.txt
+          # Long enough to re-run a failed leg and attach; on a public
+          # repository any signed-in user can download a run's artifacts.
+          retention-days: 7
           if-no-files-found: error
 
   build-release:
@@ -820,40 +870,93 @@ jobs:
           SIGNED="$(grep -cE '^signed .* -> signature sha256:[0-9a-f]{64}$' all-signs.txt)"
           KEYS="$(wc -l < keys.txt)"
           echo "signed artifacts: $SIGNED; distinct verify keys: $KEYS"
-          # 7 libraries and 5 CLIs.
-          if [ "$SIGNED" -ne 12 ] || [ "$KEYS" -ne 1 ]; then
-            echo "::error::expected 12 signed artifacts under one verify key, got $SIGNED under $KEYS"
+          WANT=$((RELEASE_LIBRARIES + RELEASE_CLIS))
+          if [ "$SIGNED" -ne "$WANT" ] || [ "$KEYS" -ne 1 ]; then
+            echo "::error::expected $WANT signed artifacts under one verify key, got $SIGNED under $KEYS"
             exit 1
           fi
 
-  # The only job that writes to the repository, and it holds no key: it
-  # attaches what the build jobs uploaded.
-  publish:
-    name: attach to the release
+  # The only job that writes to the repository, and it holds no key and runs
+  # no workspace code: it checks out scripts/attach-draft.sh alone and attaches
+  # what the build jobs uploaded to a draft release, which the maintainer
+  # tests and then publishes. It starts only when every build leg and
+  # `one-key` passed, and first checks that the tag still names the commit the
+  # guard accepted, so a re-run of an older run cannot attach builds of a
+  # commit the tag has moved away from. It succeeds only when the draft holds
+  # exactly this run's files; an upload that fails part way leaves the draft
+  # incomplete and the job failed, and re-running the job completes it.
+  attach:
+    name: attach to a draft release
     needs: [guard, build-release, one-key]
-    if: needs.guard.outputs.publish == 'true'
+    # `always()` because `one-key` also depends on the dry-run `build` job,
+    # which a staging run skips; without it this job is skipped with it.
+    if: >-
+      always() && needs.guard.result == 'success' && needs.build-release.result == 'success'
+      && needs.one-key.result == 'success' && needs.guard.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    timeout-minutes: 30
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/attach-draft.sh
+          sparse-checkout-cone-mode: false
+
+      - name: The tag still names the accepted commit
+        shell: bash
+        env:
+          TAG: ${{ needs.guard.outputs.tag }}
+          SHA: ${{ needs.guard.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force --depth=1 origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse --verify "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$SHA" ] || { echo "::error::$TAG now names $now, not the accepted $SHA"; exit 1; }
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
           path: records
 
-      - name: Attach every tarball and checksum
+      - name: Check the set
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Captured first, so a failing `find` fails the step.
+          listing="$(find records -path '*/dist/*' -type f)"
+          mapfile -t files < <(sort <<<"$listing")
+          mapfile -t sums < <(printf '%s\n' "${files[@]}" | grep '\.tar\.gz\.sha256$')
+          libs="$(printf '%s\n' "${files[@]}" | grep -c '/oxicrypt-ffi-[^/]*\.tar\.gz$' || true)"
+          clis="$(printf '%s\n' "${files[@]}" | grep -c '/oxicrypt-cli-[^/]*\.tar\.gz$' || true)"
+          echo "libraries: $libs; CLIs: $clis; checksums: ${#sums[@]}; files: ${#files[@]}"
+          want=$((RELEASE_LIBRARIES + RELEASE_CLIS))
+          if [ "$libs" -ne "$RELEASE_LIBRARIES" ] || [ "$clis" -ne "$RELEASE_CLIS" ] \
+              || [ "${#sums[@]}" -ne "$want" ] || [ "${#files[@]}" -ne $((2 * want)) ]; then
+            echo "::error::expected $RELEASE_LIBRARIES libraries and $RELEASE_CLIS CLIs, each with its checksum, and nothing else"
+            exit 1
+          fi
+          for sum in "${sums[@]}"; do
+            # Each checksum file names exactly its own tarball.
+            read -r _ named rest < "$sum"
+            if [ "${named#\*}" != "$(basename "${sum%.sha256}")" ] || [ -n "${rest:-}" ] \
+                || [ "$(wc -l < "$sum")" -ne 1 ]; then
+              echo "::error::$sum does not name only $(basename "${sum%.sha256}")"
+              exit 1
+            fi
+            (cd "$(dirname "$sum")" && sha256sum -c "$(basename "$sum")")
+          done
+
+      - name: Attach to the draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.guard.outputs.tag }}
         run: |
           set -euo pipefail
-          n=0
-          while IFS= read -r f; do
-            gh release upload "$TAG" "$f" --clobber
-            echo "uploaded $(basename "$f") to $TAG"
-            n=$((n + 1))
-          done < <(find records -path '*/dist/*' -type f | sort)
-          # 7 library and 5 CLI tarballs, each with its checksum.
-          [ "$n" -eq 24 ] || { echo "::error::attached $n files, expected 24"; exit 1; }
+          listing="$(find records -path '*/dist/*' -type f)"
+          mapfile -t files < <(sort <<<"$listing")
+          bash scripts/attach-draft.sh "$TAG" "$GITHUB_REPOSITORY" "${files[@]}"

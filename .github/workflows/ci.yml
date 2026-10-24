@@ -487,6 +487,15 @@ jobs:
       - run: python3 scripts/check-cast-vectors.py
       - run: python3 tools/acvp-gen/test_merge_manifest.py
 
+  # The release workflow's tag check and draft attach run only on a tag push,
+  # which no pull request makes. Their fixture tests run here instead.
+  release-scripts:
+    name: release scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/test-release-scripts.sh
+
   # Non-default feature configs — the local pre-push hook tests
   # default features only, so this job is cloud CI's unique
   # coverage: the SHA-NI `accel-sha` dispatch/equivalence suites

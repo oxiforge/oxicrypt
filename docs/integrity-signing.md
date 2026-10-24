@@ -647,14 +647,26 @@ tarball's `BUILD-PROVENANCE.txt` records them with the key source and the load
 check, and a final job requires every artifact of the run to name the same
 verifying key.
 
-**What a run builds, and whether it publishes.** A `guard` job decides both
-before any job reads a secret. A run attaches to a release only when it is a
-published release, and a dispatched run never does. The tag must have the
-form `vX.Y.Z` (or `vX.Y.Z-suffix`), resolve as `refs/tags/<tag>`, and point at a commit on `main`, and every job checks out
+**What a run builds, and whether it stages a release.** A `guard` job decides
+both before any job reads a secret. Only a push of a `v*` tag stages a
+release, and a dispatched run never does. The tag is checked by
+`scripts/check-release-tag.sh`, taken from `main` together with
+`keys/allowed-signers` from `main`: it must be an annotated tag signed by a key
+that file names, carry the pushed name as its own signed name, be `v` and a
+SemVer version naming the workspace version, and point at a commit reachable
+from `main`. Every job checks out
 that commit. Such a run must sign with `ci-secret`, and `ci-secret` is refused
 for any other run. Build jobs have read-only access to the repository and keep
-no credentials; a separate `publish` job, which holds no key, attaches the
-tarballs. Every action is pinned to a commit.
+no credentials. Each leg of a staging run first checks that the tag still
+names the commit the guard accepted, since a re-run reuses the guard's
+verdict. A separate `attach` job, which holds no key and runs no workspace code
+besides `scripts/attach-draft.sh`, starts only when every leg passed, checks
+the tag the same way, and attaches the tarballs to a
+draft release for the tag. It succeeds only when the draft holds exactly the
+run's files at their sizes; an upload that fails part way leaves the job
+failed, and re-running it completes the draft. The workflow never publishes:
+the maintainer tests the draft's files and publishes the draft, so the files
+tested are the files published. Every action is pinned to a commit.
 
 **The signing key.** `scripts/release-signing-key.sh` is the one place the key
 comes from. Before the build it supplies the verifying key every build embeds
@@ -670,7 +682,7 @@ named by the run:
   project, and their provenance files say so.
 - `ci-secret`: the release key. The 32-byte ML-DSA-87 seed is read, base64-encoded,
   from the `OXICRYPT_RELEASE_SIGNING_KEY` secret of the `release` environment,
-  which only a job of a publishing run enters, and written to a `0600` file
+  which only a build job of a tag-push run enters, and written to a `0600` file
   that is erased when the signing step ends. On Windows the mode has no effect
   on NTFS; what protects the file there is the runner's ephemeral disk and that
   erasure. The verifying key is `keys/release-integrity-verify.pub` in the
@@ -684,7 +696,14 @@ named by the run:
 The `release` environment is repository configuration, not part of the
 workflow. It should require a reviewer's approval, admit only tags matching
 `v*` as deployment refs, and hold `OXICRYPT_RELEASE_SIGNING_KEY` as the only
-copy of the secret. A run that does not publish enters no environment.
+copy of the secret. A run that does not stage a release enters no
+environment. A tag push runs the workflow as it stands in the tagged commit,
+so the environment's reviewer and its `v*` rule are what hold a tag on a
+commit whose workflow lacks the guard; a tag ruleset limiting who may create
+`v*` tags narrows that further. The repository should also have immutable
+releases turned on: `attach` reads the release back before each upload, and
+immutability closes the remaining window, a publish between that check and the
+upload.
 
 To check whose key a downloaded artifact trusts, compare the fingerprint
 `oxi --integrity` or `oxicrypt-integrity-sign --show` reports with the release
