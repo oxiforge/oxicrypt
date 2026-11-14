@@ -10,6 +10,8 @@
 # Gates:
 #   1. cargo fmt --all -- --check
 #   2. cargo clippy --workspace --all-targets -- -D warnings
+#      and the same for --target aarch64-apple-darwin and
+#      --target aarch64-unknown-linux-gnu (type-check only)
 #   3. cargo nextest run --workspace           <- OPT-IN, see below
 #      cargo test --workspace --doc
 #      the release construction guard
@@ -801,6 +803,20 @@ cargo fmt --all -- --check
 
 echo "pre-push [2/4]: cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
+
+# The same lint for two of the aarch64 targets the release ships, so code
+# behind `cfg(target_arch = "aarch64")`, and code unused only there, fails
+# here rather than on an ARM machine. Clippy type-checks without linking,
+# so each target's standard library is the only prerequisite.
+installed_targets="$(rustup target list --installed)"
+for target in aarch64-apple-darwin aarch64-unknown-linux-gnu; do
+    if ! grep -qx "$target" <<<"$installed_targets"; then
+        echo "pre-push: the $target standard library is not installed; run: rustup target add $target" >&2
+        exit 1
+    fi
+    echo "pre-push [2/4]: cargo clippy --workspace --all-targets --target $target -- -D warnings"
+    cargo clippy --workspace --all-targets --target "$target" -- -D warnings
+done
 
 if [[ "$run_nextest" == "true" ]]; then
     if [[ -n "$nextest_scope" ]]; then

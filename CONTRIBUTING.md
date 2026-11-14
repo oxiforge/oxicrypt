@@ -87,6 +87,7 @@ they have their own row.
 | Build | `OXICRYPT_LIB_OPTIONAL=1 cargo build --release --workspace` |
 | Tests | `OXICRYPT_LIB_OPTIONAL=1 cargo test --workspace --all-features` |
 | Clippy (strict) | `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --all-targets --all-features --release -- -D warnings` |
+| Clippy (aarch64) | `rustup target add aarch64-apple-darwin aarch64-unknown-linux-gnu`, then `OXICRYPT_LIB_OPTIONAL=1 cargo clippy --workspace --all-targets --target <triple> -- -D warnings` for each triple; type-checks only, no ARM hardware needed |
 | Rustdocs | `OXICRYPT_LIB_OPTIONAL=1 cargo doc --no-deps --workspace` (no warnings) |
 | The `oxicrypt` crate (when any path `scripts/gate-scope.sh` lists for the bindings changes; Linux only, as the fixture builds ELF only) | `d=$(mktemp -d); scripts/bindings-fixture.sh "$d"; . "$d/env.sh"`, then `cargo test -p oxicrypt` and `env -u OXICRYPT_LIB_FINGERPRINT OXICRYPT_LIB_UNPINNED=1 cargo test -p oxicrypt`; delete `$d`, which holds the run's private keys |
 | Doc-sync hook | Activated via `git config core.hooksPath scripts/git-hooks` (one-time setup above) |

@@ -84,6 +84,13 @@ jobs:
       # it enables `raw-counter` for every `--workspace` command — so the only
       # way to lint those targets is a separate invocation that opts in.
       - run: cargo clippy -p oxicrypt-bench --features entropy-bench --all-targets -- -D warnings
+      # Code behind `cfg(target_arch = "aarch64")`, and code that is unused
+      # only there, is linted by checking the workspace for two of the
+      # aarch64 targets the release ships. Clippy type-checks without linking, so the
+      # targets' standard libraries are all this needs: no ARM runner.
+      - run: rustup target add aarch64-apple-darwin aarch64-unknown-linux-gnu
+      - run: cargo clippy --workspace --all-targets --target aarch64-apple-darwin -- -D warnings
+      - run: cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
 
   # Sharded across four runners. The suite's cost is spread over many slow
   # tests rather than concentrated in one, which is what makes sharding the
