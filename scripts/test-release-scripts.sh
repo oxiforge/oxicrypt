@@ -16,6 +16,15 @@
 # ssh-keygen, python3 and jq. Exits 0 when every case passes, 1 otherwise.
 set -euo pipefail
 
+# A git hook exports GIT_DIR, GIT_INDEX_FILE and their relatives to every
+# process it starts, and a git command that inherits them acts on the hook's
+# repository whatever directory it runs in or names with -C. The fixtures
+# below create, commit to and tag scratch repositories, so the suite starts
+# by dropping git's repository-local environment. The list of names comes
+# from git itself and needs no repository, so the word splitting is wanted.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
@@ -286,6 +295,24 @@ check "two releases for the tag: nothing uploaded" [ "$(uploads)" = 0 ]
 
 expect "missing file: usage error" 2 "not a file" \
     env PATH="$T/bin:$PATH" "$HERE/attach-draft.sh" v1.2.3 owner/repo "$T/files/absent"
+
+# --- an inherited GIT_DIR ----------------------------------------------------
+# Runs this suite once more the way a git hook would start it, with GIT_DIR
+# naming a sentinel repository, and requires the sentinel's refs and
+# configuration to be byte-identical afterwards. The inner run skips this
+# section.
+
+if [ -z "${RELEASE_SCRIPTS_INNER:-}" ]; then
+    git init -q -b main "$T/sentinel"
+    git -C "$T/sentinel" -c user.name=Test -c user.email=tagger@example.org -c commit.gpgsign=false \
+        commit -q --allow-empty -m sentinel
+    sentinel() { git -C "$T/sentinel" for-each-ref; git -C "$T/sentinel" config --list --local; }
+    before="$(sentinel)"
+    check "inherited GIT_DIR: the sentinel has a ref" grep -q refs/heads/main <<<"$before"
+    expect "inherited GIT_DIR: the suite still passes" 0 ", 0 failed" \
+        env GIT_DIR="$T/sentinel/.git" RELEASE_SCRIPTS_INNER=1 "$HERE/test-release-scripts.sh"
+    check "inherited GIT_DIR: the sentinel is unchanged" [ "$(sentinel)" = "$before" ]
+fi
 
 echo "release scripts: $pass passed, $failed failed"
 [ "$failed" -eq 0 ] && [ "$pass" -gt 0 ]
