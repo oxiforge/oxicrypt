@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Clippy with warnings denied runs for `aarch64-apple-darwin` and `aarch64-unknown-linux-gnu` in CI and the pre-push hook, type-checking only; `CONTRIBUTING.md` lists the command. (#294)
+- `scripts/attach-draft.sh` reads the releases list again after creating a draft release until the draft appears, up to `ATTACH_LIST_ATTEMPTS` times (default 6) `ATTACH_LIST_DELAY` seconds apart (default 5), and refuses a non-numeric attempt count before creating anything. (#293)
+- `scripts/test-release-scripts.sh` clears git's repository-local environment at start and re-runs itself under an inherited `GIT_DIR`, checking that the repository it names is untouched.
+
+### Fixed
+
+- The `oxicrypt-keccak-accel` test helpers used only by the AVX2 cross-path test are compiled only on x86_64, so clippy with warnings denied passes for aarch64 targets. (#287)
+
 ## [0.26.0] - 2026-10-21
 
 - **Breaking:** HMAC_DRBG, Hash_DRBG and CTR_DRBG with a derivation function refuse an entropy
