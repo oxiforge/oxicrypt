@@ -416,11 +416,14 @@ mod tests {
     use super::{keccak_f1600_x4, keccak_f1600_x4_available};
 
     /// Tiny deterministic PRNG (splitmix64) so the cross-path fuzz is
-    /// reproducible without pulling in an `rand` dependency.
+    /// reproducible without pulling in an `rand` dependency. Used only by
+    /// the AVX2 cross-path test, so it is compiled for the same target.
+    #[cfg(target_arch = "x86_64")]
     struct SplitMix64 {
         state: u64,
     }
 
+    #[cfg(target_arch = "x86_64")]
     impl SplitMix64 {
         fn new(seed: u64) -> Self {
             Self { state: seed }
@@ -436,6 +439,7 @@ mod tests {
     }
 
     /// Number of cross-path fuzz trials.
+    #[cfg(target_arch = "x86_64")]
     const TRIALS: usize = 1000;
 
     #[cfg(target_arch = "x86_64")]
