@@ -5,8 +5,11 @@
 #
 # Finds the release for the existing tag <tag> in <owner/repo> and creates it
 # as a draft when there is none. The draft is made with `--verify-tag`, so it
-# attaches to the tag that was pushed and never creates one. Each file is then
-# uploaded to the draft by its release ID, replacing an asset of the same name.
+# attaches to the tag that was pushed and never creates one. A draft just
+# created is looked up again until the releases list shows it, up to
+# ATTACH_LIST_ATTEMPTS times (default 6) ATTACH_LIST_DELAY seconds apart
+# (default 5). Each file is then uploaded to the draft by its release ID,
+# replacing an asset of the same name.
 # Immediately before each upload the release is looked up again, and if it is
 # no longer a draft nothing more is uploaded.
 #
@@ -44,10 +47,19 @@ releases() {
 
 found="$(releases)" || fail "could not list the releases of ${REPO}"
 if [ -z "${found}" ]; then
+    attempts="${ATTACH_LIST_ATTEMPTS:-6}"
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || fail "ATTACH_LIST_ATTEMPTS must be a positive integer, not ${attempts}"
     gh release create "${TAG}" --repo "${REPO}" --draft --verify-tag --title "${TAG}" \
         --notes "oxicrypt ${TAG}. Draft: not yet tested or published." >/dev/null \
         || fail "could not create a draft release for ${TAG}"
-    found="$(releases)" || fail "could not list the releases of ${REPO}"
+    # The releases list can trail a create by a few seconds, so it is read
+    # again until the draft appears, up to ATTACH_LIST_ATTEMPTS times
+    # ATTACH_LIST_DELAY seconds apart.
+    for ((n = 1; n <= attempts; n++)); do
+        found="$(releases)" || fail "could not list the releases of ${REPO}"
+        [ -z "${found}" ] || break
+        [ "${n}" -eq "${attempts}" ] || sleep "${ATTACH_LIST_DELAY:-5}"
+    done
 fi
 [ -n "${found}" ] || fail "the draft release for ${TAG} is not listed after it was created"
 [ "$(printf '%s\n' "${found}" | wc -l)" -eq 1 ] || fail "${REPO} has more than one release for ${TAG}: ${found//$'\n'/, }"

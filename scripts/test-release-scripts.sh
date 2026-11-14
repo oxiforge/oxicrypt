@@ -152,6 +152,8 @@ cat > "$T/bin/gh" <<'STUB'
 # uploads to $STUB/uploaded as "<name> <sha256> <content-type> <path>".
 # $STUB_FAIL names one call kind to fail: create, list, assets, delete,
 # list:<n> for the n-th releases list, or upload:<n> for the n-th upload.
+# $STUB_LIST_LAG makes the first <n> releases lists after a create answer
+# empty, as the live list does while it catches up.
 set -euo pipefail
 S="$STUB/releases.json"
 echo "$*" >> "$STUB/calls"
@@ -160,6 +162,7 @@ failing() { [ "${STUB_FAIL:-}" = "$1" ] && { echo "HTTP 502: stub failure ($1)" 
 if [ "$1" = release ] && [ "$2" = create ]; then
     failing create
     save --arg t "$3" '. + [{id: 101, tag_name: $t, draft: true, assets: []}]'
+    : > "$STUB/created"
     exit 0
 fi
 [ "$1" = api ] || { echo "stub: unhandled $*" >&2; exit 3; }
@@ -181,6 +184,11 @@ case "$method $path" in
         l=$(( $(cat "$STUB/lists" 2>/dev/null || echo 0) + 1 ))
         echo "$l" > "$STUB/lists"
         failing "list:$l"
+        if [ -e "$STUB/created" ]; then
+            p=$(( $(cat "$STUB/postlists" 2>/dev/null || echo 0) + 1 ))
+            echo "$p" > "$STUB/postlists"
+            [ "$p" -gt "${STUB_LIST_LAG:-0}" ] || exit 0
+        fi
         jq -r "$filter" "$S" ;;
     "GET repos/"*"/releases/"*"/assets?per_page=100")
         failing assets
@@ -219,7 +227,7 @@ scenario() {
     mkdir -p "$STUB"
     printf '%s\n' "$2" > "$STUB/releases.json"
     : > "$STUB/calls"
-    unset STUB_FAIL STUB_PUBLISH_AFTER
+    unset STUB_FAIL STUB_PUBLISH_AFTER STUB_LIST_LAG ATTACH_LIST_ATTEMPTS ATTACH_LIST_DELAY
 }
 attach() { PATH="$T/bin:$PATH" "$HERE/attach-draft.sh" v1.2.3 owner/repo "$T/files/a.tar.gz" "$T/files/a.tar.gz.sha256"; }
 assets() { jq -r '.[] | select(.tag_name == "v1.2.3") | [.assets[].name] | join(",")' "$STUB/releases.json"; }
@@ -237,6 +245,25 @@ check "no release: the checksum file's bytes uploaded" \
     grep -qxF "a.tar.gz.sha256 $(sha "$T/files/a.tar.gz.sha256") application/octet-stream https://uploads.github.com/repos/owner/repo" "$STUB/uploaded"
 check "no release: releases of other tags untouched" \
     [ "$(jq -r '[.[] | select(.tag_name != "v1.2.3") | .assets | length] | add' "$STUB/releases.json")" = 0 ]
+
+scenario lag "[$others]"
+export STUB_LIST_LAG=2 ATTACH_LIST_DELAY=0
+expect "a draft the list shows late: found and filled" 0 "holds exactly the 2 files given" attach
+check "a draft the list shows late: created once" [ "$(grep -c 'release create' "$STUB/calls")" = 1 ]
+# Three lists until the draft shows, one before each of the two uploads, one
+# after them: a loop that keeps listing after the draft appears is caught.
+check "a draft the list shows late: six lists after the create" [ "$(cat "$STUB/postlists")" = 6 ]
+
+scenario lagout "[$others]"
+export STUB_LIST_LAG=9 ATTACH_LIST_ATTEMPTS=3 ATTACH_LIST_DELAY=0
+expect "a draft the list never shows: refused" 1 "is not listed after it was created" attach
+check "a draft the list never shows: nothing uploaded" [ "$(uploads)" = 0 ]
+check "a draft the list never shows: three attempts" [ "$(cat "$STUB/postlists")" = 3 ]
+
+scenario badattempts "[$others]"
+export ATTACH_LIST_ATTEMPTS=abc
+expect "a non-numeric attempt count: refused" 1 "must be a positive integer" attach
+check "a non-numeric attempt count: no release created" bash -c "! grep -q 'release create' '$STUB/calls'"
 
 scenario draft "[{\"id\": 9, \"tag_name\": \"v1.2.3\", \"draft\": true, \"assets\": [{\"id\": 1, \"name\": \"a.tar.gz\", \"size\": 3}]}, $others]"
 expect "draft: files attached" 0 "holds exactly the 2 files given" attach
