@@ -10,31 +10,122 @@ with `no_std` support, a formal module boundary, power-up self-tests, and
 an ACVP test harness — targeting CAVP algorithm validation and CMVP module
 validation through an accredited CST laboratory.
 
-**Target:** FIPS 140-3 Level 1, following FIPS 140-3 Implementation
-Guidance D.G (March 2026).
+**Target:** FIPS 140-3 Level 1, following the current FIPS 140-3
+Implementation Guidance. The IG revision and the section dates this module
+reconciles against are stated once, in [`ISA.md` § Constraints](ISA.md#constraints).
+
+**Ships three ways:** a signed, prebuilt shared library with a C interface for
+seven platforms, which any language can load, crates on crates.io for Rust, and
+the `oxi` command-line tool. All three are the same pure-Rust module; the
+library's C interface is a thin exported layer, with no C code behind it.
+Every release publishes all three: the library bundles and the CLI on the
+[release page](https://github.com/oxiforge/oxicrypt/releases/latest), the
+crates on crates.io.
 
 ## Quick start
 
-Two ways in. Pick the one that matches what you want.
+Three ways in. Pick the one that matches what you want.
 
-### See it work — no Rust toolchain needed
+### Use the library from any language — no Rust toolchain needed
 
-Download the CLI for your platform from the
-[latest release](https://github.com/oxiforge/oxicrypt/releases/latest):
+Every release ships the module as a **signed, prebuilt shared library with a C
+interface** for seven platforms: the pure-Rust module compiled once, exporting
+plain C functions. Download the bundle for yours from the
+[latest release](https://github.com/oxiforge/oxicrypt/releases/latest) and
+load it from C, Python, Go, .NET, Java, Swift, Node or anything else that
+can call a C function. Nothing to compile, nothing to sign.
 
-```bash
-tar -xzf oxicrypt-cli-<version>-<platform>.tar.gz
-cd oxicrypt-cli-<version>-<platform>
-./oxi --integrity     # the module verifies its own image, and reports what it covered
-./oxi selftest        # every self-test, named with the NIST vector it checks (currently 89)
+| Platform | Bundle | Library inside |
+|----------|--------|----------------|
+| Linux x86_64 | `oxicrypt-ffi-<version>-linux-x86_64.tar.gz` | `liboxicrypt_ffi.so.1` |
+| Linux aarch64 | `oxicrypt-ffi-<version>-linux-aarch64.tar.gz` | `liboxicrypt_ffi.so.1` |
+| macOS Apple silicon | `oxicrypt-ffi-<version>-macos-aarch64.tar.gz` | `liboxicrypt_ffi.1.dylib` |
+| macOS Intel | `oxicrypt-ffi-<version>-macos-x86_64.tar.gz` | `liboxicrypt_ffi.1.dylib` |
+| Windows x86_64 | `oxicrypt-ffi-<version>-windows-x86_64.tar.gz` | `oxicrypt_ffi.dll` (+ `oxicrypt_ffi.dll.lib` import library, `oxicrypt_ffi.lib` static) |
+| Android arm64-v8a | `oxicrypt-ffi-<version>-android-aarch64.tar.gz` | `liboxicrypt_ffi.so` |
+| Android x86_64 | `oxicrypt-ffi-<version>-android-x86_64.tar.gz` | `liboxicrypt_ffi.so` |
+
+Each bundle holds the shared library, the static library, the C header
+`oxicrypt.h`, the licences, and `BUILD-PROVENANCE.txt`: the integrity
+signature, the fingerprint of the release key, the commit and the CI run that
+built it. A `.sha256` file sits beside every bundle.
+
+The shared library **is the cryptographic module**: the same bytes a FIPS
+140-3 validation would cover, should the module reach one. Loading it is how
+oxicrypt is used from outside Rust. It verifies its own image when it starts,
+so your program is never signed. That holds for the shared library only: a
+program that links the static archive carries the module itself and must be
+signed with your own key; `BUILD-PROVENANCE.txt` gives the commands.
+
+SHA-256 of `"abc"` from Python, with nothing installed but Python:
+
+```python
+import ctypes
+lib = ctypes.CDLL("./liboxicrypt_ffi.so.1")   # macOS: liboxicrypt_ffi.1.dylib · Windows: oxicrypt_ffi.dll
+lib.oxi_sha256.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
+assert lib.oxi_init(0) == 0                   # power-up self-tests and the integrity test run here
+out = (ctypes.c_uint8 * 32)()
+lib.oxi_sha256(b"abc", 3, out)
+print(bytes(out).hex())                       # ba7816bf…15ad
 ```
 
-Signed per platform, with a provenance record inside the tarball. `oxi` also
-hashes, HMACs and generates random bytes — see [its README](oxi/README.md).
+The same from C, linked against the extracted bundle directory `$DIR`:
 
-### Use it in your code
+```c
+#include <stdio.h>
+#include "oxicrypt.h"
 
-Take only the algorithms you need; there is no aggregate crate to swallow whole.
+int main(void) {
+    if (oxi_init(0) != OXI_RESULT_OK) return 1;   /* the module refused to start */
+    unsigned char out[32];
+    oxi_sha256((const unsigned char *)"abc", 3, out);
+    for (int i = 0; i < 32; i++) printf("%02x", out[i]);
+    printf("\n");
+    return 0;
+}
+```
+
+```bash
+DIR=$PWD/oxicrypt-ffi-<version>-<platform>     # the extracted bundle
+cc -o sha256_demo sha256_demo.c -I"$DIR" -L"$DIR" -loxicrypt_ffi -Wl,-rpath,"$DIR"
+./sha256_demo
+```
+
+`oxi_init(0)` selects the unrestricted profile; `1` is CNSA 2.0. Every
+function, its buffer sizes and its status codes are in the header and in
+[the C ABI section](#c-abi-oxicrypt-ffi) below. To check whose key the
+library trusts, run `oxicrypt-integrity-sign --verify` on it and compare the
+verify-key fingerprint it prints, and the one in `BUILD-PROVENANCE.txt`, with
+the project's release key
+`sha256:ef4ff23cd2cdd5c9aa97576f928e874b149017485b3a0e74e45aee1155f248fe`
+([`keys/release-integrity-verify.pub`](keys/release-integrity-verify.pub));
+see [Release artifacts](docs/integrity-signing.md#release-artifacts).
+
+### Use it from Rust
+
+Two routes. The first needs no signing step.
+
+**Link the signed library.** The `oxicrypt` crate links your program to a
+release bundle above and gives typed Rust over it. It contains no
+cryptographic code; the module stays in the library, which tests its own
+integrity when initialised, so your binary is never signed.
+
+```bash
+cargo add oxicrypt
+OXICRYPT_LIB_DIR=<extracted bundle dir> OXICRYPT_LIB_FINGERPRINT=sha256:<from BUILD-PROVENANCE.txt> cargo build
+```
+
+```rust
+let module = oxicrypt::Module::init(oxicrypt::Profile::Cnsa2)?;
+let digest = module.sha384(b"abc")?;
+```
+
+The crate wraps a CNSA 2.0 subset of the C functions (SHA-384, HKDF, AES-256-GCM,
+HMAC-DRBG, ML-KEM-1024, ML-DSA-87). See [`oxicrypt/README.md`](oxicrypt/README.md)
+for the run-time search path and the build variables.
+
+**Compile the module into your binary.** Take only the algorithms you need;
+there is no aggregate crate to swallow whole.
 
 ```bash
 cargo add oxicrypt-module oxicrypt-integrity oxicrypt-ml-kem   # whichever you want
@@ -67,6 +158,21 @@ Full recipe, from an empty directory to a running module:
 
 What the test covers on each executable format, and why:
 [the integrity extent design record](docs/design/integrity-extent-v2.md).
+
+### See it work — the CLI
+
+The same release carries `oxi`, a command-line front end to the module, for
+every platform but Android:
+
+```bash
+tar -xzf oxicrypt-cli-<version>-<platform>.tar.gz
+cd oxicrypt-cli-<version>-<platform>
+./oxi --integrity     # the module verifies its own image, and reports what it covered
+./oxi selftest        # every self-test, named with the NIST vector it checks (currently 89)
+```
+
+Signed per platform, with a provenance record inside the tarball. `oxi` also
+hashes, HMACs and generates random bytes — see [its README](oxi/README.md).
 
 ### Building from source
 
@@ -449,7 +555,18 @@ P-521), and additional language bindings (Python, Go, Node).
 ## C ABI (`oxicrypt-ffi`)
 
 The module exposes a C ABI for non-Rust consumers via the
-`oxicrypt-ffi` crate. The full design is documented in
+`oxicrypt-ffi` crate. **You do not need to build it:** every release ships it
+prebuilt and signed for seven platforms as `oxicrypt-ffi-<version>-<platform>.tar.gz`,
+with the shared library, the static library, the header and a provenance
+record inside. The
+[Quick start](#use-the-library-from-any-language--no-rust-toolchain-needed)
+has the download table and a working C and Python call; how the release
+workflow builds, signs and checks each bundle is in
+[Release artifacts](docs/integrity-signing.md#release-artifacts). The rest
+of this section is the interface itself and how to build the library from
+source.
+
+The full design is documented in
 [`docs/c-api-design.md`](docs/c-api-design.md); the cbindgen-generated
 header lives at
 [`crates/oxicrypt-ffi/include/oxicrypt.h`](crates/oxicrypt-ffi/include/oxicrypt.h).
