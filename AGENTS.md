@@ -259,6 +259,15 @@ direction that cannot be undone. Neither says anything about git history.
 `policy_resolution_precedence_holds` pins the resolution order itself, since a resolver that
 resolved nothing would be indistinguishable from a clean skip.
 
+## Comments
+
+The code is the documentation; comments exist for navigation and for the facts the code cannot
+carry. A comment is one of: the rustdoc contract of a public item (inputs, sizes, errors,
+`# Safety`); the `lib.rs` header sections the Security Policy and the LAMA manifest derive from; a
+citation of the standard clause a line implements; the reason for a choice a reader would otherwise
+reverse; `// SAFETY:` on an unsafe block; `TODO(#N)`; a module map. Anything else is removed. A
+comment that states something the code can contradict is covered by a test or deleted.
+
 ## Documentation sync
 
 At each commit boundary, refresh documentation while the context is fresh. oxicrypt adopts the
