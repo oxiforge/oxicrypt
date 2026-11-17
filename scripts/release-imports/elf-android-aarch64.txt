@@ -1,0 +1,70 @@
+# Run-time imports allowed for liboxicrypt_ffi.so in the android-aarch64 archive.
+# Read by `release-archive-check.sh imports`, which fails the release build
+# on any ELF import not named here. A new import is a deliberate change,
+# made in this file in the commit that introduces it, with its reason.
+# Generated from the liboxicrypt_ffi.so of oxicrypt-ffi v0.26.1.
+
+# Bionic's shared objects: the C library and the dynamic linker interface.
+# Bionic versions its symbols LIBC.
+needs libc.so
+needs libdl.so
+
+# The module's integrity test and image reader: locating the module's own
+# image and reading it back from memory.
+dladdr@LIBC
+getauxval@LIBC
+getpid@LIBC
+pread64@LIBC
+process_vm_readv@LIBC
+syscall@LIBC
+
+# The NDK's shared-object startup code, which runs the library's destructors
+# when it is unloaded.
+__cxa_finalize@LIBC
+
+# The statically linked LLVM libunwind: its diagnostics on a corrupt unwind
+# table, written to stderr, which bionic exports inside __sF, and the program
+# header walk that finds the unwind tables.
+__sF@LIBC
+abort@LIBC
+dl_iterate_phdr@LIBC
+fflush@LIBC
+fprintf@LIBC
+fwrite@LIBC
+
+# The Rust standard library.
+__errno@LIBC
+calloc@LIBC
+close@LIBC
+dlsym@LIBC
+free@LIBC
+fstat@LIBC
+getcwd@LIBC
+getenv@LIBC
+gettid@LIBC
+lseek64@LIBC
+malloc@LIBC
+memcmp@LIBC
+memcpy@LIBC
+memmove@LIBC
+memset@LIBC
+mmap@LIBC
+munmap@LIBC
+open@LIBC
+posix_memalign@LIBC
+pthread_getspecific@LIBC
+pthread_key_create@LIBC
+pthread_key_delete@LIBC
+pthread_rwlock_rdlock@LIBC
+pthread_rwlock_unlock@LIBC
+pthread_rwlock_wrlock@LIBC
+pthread_setspecific@LIBC
+read@LIBC
+readlink@LIBC
+realloc@LIBC
+realpath@LIBC
+stat@LIBC
+strerror_r@LIBC
+strlen@LIBC
+write@LIBC
+writev@LIBC

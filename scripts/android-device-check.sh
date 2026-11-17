@@ -28,10 +28,11 @@
 #      magics with zeros between them. `<signer> --show` gives the slot's
 #      file offset; the slot is SLOT_SIZE (65536) bytes and both magics must
 #      be in place before the bytes between them are zeroed. The module
-#      reports such a slot as SlotDefect::Unsigned
-#      (crates/oxicrypt-integrity/src/verify.rs:336), integrity status 3
-#      (crates/oxicrypt-integrity/src/lib.rs:694). A slot zeroed whole would
-#      lose its header magic and be reported as damage, status 10. The copy
+#      reports such a slot as SlotDefect::Unsigned (the arm that returns it
+#      in crates/oxicrypt-integrity/src/verify.rs), integrity status 3
+#      (IntegrityStatus::SlotInvalid, crates/oxicrypt-integrity/src/lib.rs).
+#      A slot zeroed whole would lose its header magic and be reported as
+#      damage, status 10 (IntegrityStatus::SlotDamaged). The copy
 #      differs from the signed library only inside the slot, and
 #      `<signer> --verify` must refuse it, saying the slot holds no signature.
 #   4. Prints the device's ro.build.version.release, ro.build.version.sdk,

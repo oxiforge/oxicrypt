@@ -6,6 +6,8 @@ set -euo pipefail
 dir="$(cd "$1" && pwd)"
 if command -v cygpath >/dev/null 2>&1; then dir="$(cygpath -w "$dir")"; fi
 cd "$(dirname "$0")"
+out="$(mktemp -d)"
+trap 'rm -rf "$out"' EXIT
 export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
-dotnet build --nologo -v quiet -clp:NoSummary -o bin/out >&2
-dotnet bin/out/Sha256.dll "$dir"
+dotnet build --nologo -v quiet -clp:NoSummary -o "$out" >&2
+dotnet "$out/Sha256.dll" "$dir"

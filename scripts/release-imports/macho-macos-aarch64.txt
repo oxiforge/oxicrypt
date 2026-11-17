@@ -31,8 +31,7 @@ _mach_task_self_
 _mach_vm_read_overwrite
 
 # The Rust standard library: memory, threads and thread-local storage, files,
-# environment and errors. The $INODE64 and $NOCANCEL suffixes are the x86_64
-# names of the 64-bit-inode and non-cancellable variants.
+# environment and errors.
 ___error
 __tlv_atexit
 __tlv_bootstrap

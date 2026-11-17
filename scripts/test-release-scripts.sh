@@ -15,17 +15,25 @@
 # stub `oxi` printing chosen lines and exiting with a chosen status, and
 # against malformed bundles. Its library mode runs the README's examples
 # against a stand-in library compiled here, whose oxi_init fails when
-# STUB_OXI_INIT_FAILS is set and whose oxi_sha256 writes the digest of "abc".
-# Its examples mode runs examples/*/run.sh against the same stand-in, once
-# with the PATH it is given, where each example whose toolchain is present
-# must pass and each other must be reported as skipped, and once with a PATH
-# that hides every toolchain.
+# STUB_OXI_INIT_FAILS is set and whose oxi_sha256 writes the digest of "abc"
+# when it is given the three bytes "abc" and fails otherwise.
+# Its examples mode runs examples/*/run.sh against stub toolchains, which
+# test which examples run, which are skipped and which are required, and
+# against a PATH that hides every toolchain. With OXICRYPT_TEST_EXAMPLES=1 it
+# also runs them against the same stand-in with the PATH it is given, where
+# each example whose toolchain is present must pass and each other must be
+# reported as skipped. Those cases need the toolchains the script names (go
+# and the C compiler `go env CC` names, node and npm, java and javac 22 or
+# later, dotnet with a .NET SDK 10 or later) and network access for the
+# packages npm and dotnet fetch.
 # Its imports mode runs against a bundle holding a shared library compiled
 # here that calls puts, with allow-lists written from `nm -D` independently
-# of the script.
+# of the script, and against stub objdump, llvm-readobj, nm, readelf and
+# otool printing canned listings.
 #
 # Every case asserts the exit status and a line of the output. Needs git,
-# ssh-keygen, python3, jq, cc, nm and readelf. Exits 0 when every case passes, 1 otherwise.
+# ssh-keygen, python3, jq, sha256sum, cc, nm and readelf. Exits 0 when every
+# case passes, 1 otherwise.
 set -euo pipefail
 
 # A git hook exports GIT_DIR, GIT_INDEX_FILE and their relatives to every
@@ -398,7 +406,7 @@ cli_archive outside "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS
 mv "$T/archives/outside/oxicrypt-cli-test/oxi" "$T/archives/outside-oxi"
 ln -s "$T/archives/outside-oxi" "$T/archives/outside/oxicrypt-cli-test/oxi"
 tar -czf "$T/archives/outside.tar.gz" -C "$T/archives/outside" oxicrypt-cli-test
-expect "archive cli: oxi as a link out of the bundle refused" 1 "FAILED: oxi is a symbolic link, not a file in the bundle" \
+expect "archive cli: oxi as a link out of the bundle refused" 1 "FAILED: oxi is a symbolic link out of the bundle" \
     archive_check cli "$T/archives/outside.tar.gz" "$FP"
 mkdir -p "$T/archives/twodirs/a" "$T/archives/twodirs/b"
 tar -czf "$T/archives/twodirs.tar.gz" -C "$T/archives/twodirs" a b
@@ -440,7 +448,11 @@ mkdir -p "$T/ffi"
     printf 'static const uint8_t abc[32] = { %s };\n' \
         "$(printf '%s' ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad | sed -E 's/(..)/0x\1, /g')"
     echo 'int oxi_init(int profile) { (void)profile; return getenv("STUB_OXI_INIT_FAILS") ? 1 : 0; }'
-    echo 'int oxi_sha256(const uint8_t *d, uintptr_t n, uint8_t *out) { (void)d; (void)n; memcpy(out, abc, 32); return 0; }'
+    echo 'int oxi_sha256(const uint8_t *d, uintptr_t n, uint8_t *out) {'
+    echo '    if (n != 3 || memcmp(d, "abc", 3) != 0) return 1;'
+    echo '    memcpy(out, abc, 32);'
+    echo '    return 0;'
+    echo '}'
 } > "$T/ffi/stub.c"
 ffi_archive one 1
 ffi_archive eight 8
@@ -461,58 +473,201 @@ mkdir -p "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64"
 ln -s "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1"
 tar -czf "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/linked" oxicrypt-ffi-v9.9.9-linux-x86_64
 expect "archive library: a versioned library that is a link out of the bundle refused" 1 \
-    "FAILED: liboxicrypt_ffi.so.1 is a symbolic link, not a file in the bundle" \
+    "FAILED: liboxicrypt_ffi.so.1 is a symbolic link out of the bundle" \
     archive_check library "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 
+# ffi_variant <name>: a copy of the `one` bundle under $T/ffi/<name>, which
+# the caller changes and packs with ffi_pack <name>.
+ffi_variant() { mkdir -p "$T/ffi/$1"; cp -a "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64" "$T/ffi/$1/"; }
+ffi_pack() { tar -czf "$T/ffi/$1/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/$1" oxicrypt-ffi-v9.9.9-linux-x86_64; }
+cp "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/outside.so"
+ffi_variant alias
+ln -sfn "$T/ffi/outside.so" "$T/ffi/alias/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so"
+ffi_pack alias
+expect "archive library: the unversioned alias as a link out of the bundle refused" 1 \
+    "FAILED: liboxicrypt_ffi.so is a symbolic link out of the bundle" \
+    archive_check library "$T/ffi/alias/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+ffi_variant dangling
+ln -sfn liboxicrypt_ffi.so.7 "$T/ffi/dangling/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so"
+ffi_pack dangling
+expect "archive library: a dangling alias refused" 1 \
+    "FAILED: liboxicrypt_ffi.so is a symbolic link out of the bundle" \
+    archive_check library "$T/ffi/dangling/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+ffi_variant chain
+ln -s "$T/ffi/outside.so" "$T/ffi/chain/oxicrypt-ffi-v9.9.9-linux-x86_64/hop"
+ln -sfn hop "$T/ffi/chain/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so"
+ffi_pack chain
+expect "archive library: a two-link chain ending out of the bundle refused" 1 \
+    "FAILED: liboxicrypt_ffi.so is a symbolic link out of the bundle" \
+    archive_check library "$T/ffi/chain/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+ffi_variant two
+cp "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.2"
+ffi_pack two
+expect "archive library: two shared libraries refused" 1 \
+    "FAILED: oxicrypt-ffi-v9.9.9-linux-x86_64 holds more than one shared library" \
+    archive_check library "$T/ffi/two/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+ffi_variant header
+ln -sfn oxicrypt.h "$T/ffi/header/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so"
+ffi_pack header
+expect "archive library: the unversioned alias linking to another file in the bundle refused" 1 \
+    "FAILED: liboxicrypt_ffi.so links to oxicrypt.h, not to liboxicrypt_ffi.so.1" \
+    archive_check library "$T/ffi/header/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+
+# A PATH holding only what the scripts call hides every toolchain.
+mkdir -p "$T/minpath"
+for t in bash env dirname basename mktemp rm tar gzip find wc tr readlink grep sed awk od cat head sort cp chmod; do
+    ln -s "$(command -v "$t")" "$T/minpath/$t"
+done
+FFI_ONE="$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+out_examples="$(PATH="$T/minpath" archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
+check "archive examples: no toolchain on PATH exits 1" [ "$status" = 1 ]
+check "archive examples: no toolchain on PATH is named" grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
+for skip in "go (no go on PATH)" "node (no node on PATH)" "java (no java on PATH)" "csharp (no dotnet on PATH)"; do
+    check "archive examples: skip: $skip" grep -qxF "skip: $skip" <<<"$out_examples"
+done
+expect "archive examples: a required language without its toolchain fails" 1 \
+    "FAILED: examples/node is required here and no node on PATH" \
+    env PATH="$T/minpath" OXICRYPT_EXAMPLES_REQUIRED=node "$HERE/release-archive-check.sh" examples "$FFI_ONE"
+
+# Stub toolchains: each prints the digest the stand-in would, so these cases
+# test which examples the script runs, not the examples. $STUB_GO_VERSION,
+# $STUB_DOTNET_SDKS and $STUB_JAVAC_VERSION set what `go version`, `dotnet
+# --list-sdks` and `javac -version` report. $STUB_EXAMPLE_FAIL=<language>
+# makes that language's program exit 1 without printing the digest. The java
+# and javac stubs sit in their own directory, on PATH only where a case puts
+# them there.
+mkdir -p "$T/toolstub" "$T/javastub" "$T/toolstub-nocc"
+fail_or_digest() { printf '#!/usr/bin/env bash\n[ "${STUB_EXAMPLE_FAIL:-}" != %s ] || exit 1\necho ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n' "$1"; }
+cat > "$T/toolstub/go" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    version) echo "go version go${STUB_GO_VERSION:-1.24.0} linux/amd64" ;;
+    env) echo stub-cc ;;
+    build) cp "$(dirname "$0")/go-program" "$3" ;;
+    *) exit 3 ;;
+esac
+STUB
+fail_or_digest go > "$T/toolstub/go-program"
+cat > "$T/toolstub/dotnet" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    --list-sdks) printf '%s\n' "${STUB_DOTNET_SDKS:-10.0.100 [/stub/sdk]}" ;;
+    build) ;;
+    *) [ "${STUB_EXAMPLE_FAIL:-}" != csharp ] || exit 1
+       echo ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ;;
+esac
+STUB
+fail_or_digest node > "$T/toolstub/node"
+printf '#!/usr/bin/env bash\n' > "$T/toolstub/npm"
+printf '#!/usr/bin/env bash\n' > "$T/toolstub/stub-cc"
+cat > "$T/javastub/javac" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" != -version ] || echo "javac ${STUB_JAVAC_VERSION:-21}"
+STUB
+fail_or_digest java > "$T/javastub/java"
+chmod +x "$T/toolstub/"* "$T/javastub/"*
+for t in go go-program dotnet node npm; do ln -s "$T/toolstub/$t" "$T/toolstub-nocc/$t"; done
+# stub_examples <go version> <dotnet sdks> <required>: examples mode on the
+# stand-in with the stub toolchains on $stub_path.
+stub_path="$T/toolstub:$T/minpath"
+stub_examples() {
+    env PATH="$stub_path" STUB_GO_VERSION="$1" STUB_DOTNET_SDKS="$2" OXICRYPT_EXAMPLES_REQUIRED="$3" \
+        "$HERE/release-archive-check.sh" examples "$FFI_ONE"
+}
+expect "archive examples: suitable stub toolchains run" 0 "ok: the examples for csharp go node run against" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" "go node csharp"
+expect "archive examples: a present required language passes" 0 "examples/node (exit 0):" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" node
+expect "archive examples: a Go newer by a two-digit minor runs" 0 "examples/go (exit 0):" \
+    stub_examples 1.100 "10.0.100 [/stub/sdk]" ""
+expect "archive examples: a Go older than go.mod is skipped, naming both" 0 \
+    "skip: go (go 1.3.9 on PATH, examples/go/go.mod needs 1.24 or later)" \
+    stub_examples 1.3.9 "10.0.100 [/stub/sdk]" ""
+expect "archive examples: a Go older than go.mod is skipped by patch" 0 "skip: go (go 1.23.12 on PATH" \
+    stub_examples 1.23.12 "10.0.100 [/stub/sdk]" ""
+expect "archive examples: only an older .NET SDK is skipped" 0 "skip: csharp (no .NET SDK 10 or later)" \
+    stub_examples 1.24.0 $'8.0.404 [/stub/sdk]\n9.0.100 [/stub/sdk]' ""
+expect "archive examples: a required Go too old fails" 1 \
+    "FAILED: examples/go is required here and go 1.3.9 on PATH, examples/go/go.mod needs 1.24 or later" \
+    stub_examples 1.3.9 "10.0.100 [/stub/sdk]" go
+expect "archive examples: a required csharp with an older SDK fails" 1 \
+    "FAILED: examples/csharp is required here and no .NET SDK 10 or later" \
+    stub_examples 1.24.0 "9.0.100 [/stub/sdk]" "node csharp"
+expect "archive examples: a required java without a JDK fails" 1 \
+    "FAILED: examples/java is required here and no java on PATH" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" java
+expect "archive examples: a required language with no example fails" 1 \
+    "FAILED: examples/cobol is required here and has no run.sh" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" cobol
+expect "archive examples: a required language after a tab or newline is still required" 1 \
+    "FAILED: examples/csharp is required here and no .NET SDK 10 or later" \
+    stub_examples 1.24.0 "9.0.100 [/stub/sdk]" $'node\tcsharp\ngo\n'
+export STUB_EXAMPLE_FAIL=node
+expect "archive examples: an example that exits 1 fails" 1 "FAILED: examples/node exited 1" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+unset STUB_EXAMPLE_FAIL
+stub_path="$T/javastub:$T/toolstub:$T/minpath"
+export STUB_JAVAC_VERSION=21
+expect "archive examples: a javac older than 22 is skipped" 0 \
+    "skip: java (javac 21 on PATH, the example needs 22 or later)" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+export STUB_JAVAC_VERSION=22
+expect "archive examples: a javac of 22 runs the example" 0 "examples/java (exit 0):" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" java
+unset STUB_JAVAC_VERSION
+stub_path="$T/toolstub-nocc:$T/minpath"
+expect "archive examples: go without the C compiler cgo needs is skipped" 0 \
+    "skip: go (no stub-cc on PATH for cgo)" \
+    stub_examples 1.24.0 "10.0.100 [/stub/sdk]" ""
+stub_path="$T/toolstub:$T/minpath"
+
 # example_runs <language>: the toolchain release-archive-check.sh's header
-# names for examples/<language> is on PATH.
+# names for examples/<language> is on PATH, at a version it accepts.
 example_runs() {
     case "$1" in
-        go) command -v go >/dev/null && command -v "$(go env CC)" >/dev/null ;;
+        go) command -v go >/dev/null && command -v "$(go env CC)" >/dev/null \
+            && awk -v have="$(go version | sed -nE 's/^go version go([0-9.]+).*/\1/p')" \
+                -v need="$(sed -nE 's/^go ([0-9.]+)$/\1/p' "$HERE/../examples/go/go.mod")" 'BEGIN {
+                    if (have == "" || need == "") exit 1
+                    nh = split(have, h, "."); nn = split(need, w, ".")
+                    for (i = 1; i <= (nh > nn ? nh : nn); i++) { if (h[i] + 0 != w[i] + 0) exit !(h[i] + 0 > w[i] + 0) }
+                }' ;;
         node) command -v node >/dev/null && command -v npm >/dev/null ;;
         java) command -v java >/dev/null && command -v javac >/dev/null \
             && [ "$(javac -version 2>&1 | sed -nE 's/^javac ([0-9]+).*/\1/p')" -ge 22 ] 2>/dev/null ;;
-        csharp) command -v dotnet >/dev/null ;;
+        csharp) command -v dotnet >/dev/null \
+            && dotnet --list-sdks 2>/dev/null | awk '{ split($1, v, "."); if (v[1] + 0 >= 10) ok = 1 } END { exit !ok }' ;;
         *) return 1 ;;
     esac
 }
-out_examples="$(archive_check examples "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
-    && status=0 || status=$?
-present=0
-for language in go node java csharp; do
-    if example_runs "$language"; then
-        present=$((present + 1))
-        check "archive examples: $language runs against the stand-in" \
-            grep -qxF "examples/$language (exit 0):" <<<"$out_examples"
+examples_ran=""
+if [ "${OXICRYPT_TEST_EXAMPLES:-}" = 1 ]; then
+    out_examples="$(archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
+    for language in go node java csharp; do
+        if example_runs "$language"; then
+            examples_ran="$examples_ran $language"
+            check "archive examples: $language runs against the stand-in" \
+                grep -qxF "examples/$language (exit 0):" <<<"$out_examples"
+        else
+            check "archive examples: $language is skipped without its toolchain" \
+                grep -q "^skip: $language (" <<<"$out_examples"
+        fi
+    done
+    if [ -n "$examples_ran" ]; then
+        check "archive examples: every example whose toolchain is present passes" [ "$status" = 0 ]
+        expect "archive examples: every present language required passes" 0 "ok: the examples for" \
+            env OXICRYPT_EXAMPLES_REQUIRED="$examples_ran" "$HERE/release-archive-check.sh" examples "$FFI_ONE"
     else
-        check "archive examples: $language is skipped without its toolchain" \
-            grep -q "^skip: $language (" <<<"$out_examples"
+        check "archive examples: no toolchain present fails" [ "$status" = 1 ]
     fi
-done
-if [ "$present" -gt 0 ]; then
-    check "archive examples: every example whose toolchain is present passes" [ "$status" = 0 ]
+    out_examples="$(STUB_OXI_INIT_FAILS=1 archive_check examples "$FFI_ONE" 2>&1)" && status=0 || status=$?
+    check "archive examples: a failing oxi_init exits 1" [ "$status" = 1 ]
+    for language in $examples_ran; do
+        check "archive examples: a failing oxi_init fails $language" \
+            grep -qxF "FAILED: examples/$language exited 1" <<<"$out_examples"
+    done
 else
-    check "archive examples: no toolchain present fails" [ "$status" = 1 ]
-fi
-# A PATH holding only what the script itself calls hides every toolchain.
-mkdir -p "$T/minpath"
-for t in bash env dirname basename mktemp rm tar gzip find wc tr readlink grep sed awk od cat head; do
-    ln -s "$(command -v "$t")" "$T/minpath/$t"
-done
-out_examples="$(PATH="$T/minpath" archive_check examples "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
-    && status=0 || status=$?
-check "archive examples: no toolchain on PATH exits 1" [ "$status" = 1 ]
-check "archive examples: no toolchain on PATH is named" grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
-check "archive examples: a missing toolchain is reported as a skip" grep -qxF "skip: go (no go on PATH)" <<<"$out_examples"
-out_examples="$(STUB_OXI_INIT_FAILS=1 archive_check examples "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
-    && status=0 || status=$?
-check "archive examples: a failing oxi_init exits 1" [ "$status" = 1 ]
-if [ "$present" -gt 0 ]; then
-    check "archive examples: a failing oxi_init fails an example" \
-        grep -qE '^FAILED: examples/[a-z]+ exited 1$' <<<"$out_examples"
-else
-    check "archive examples: a failing oxi_init with no toolchain present fails" \
-        grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
+    echo "examples cases: toolchains not exercised (set OXICRYPT_TEST_EXAMPLES=1)"
 fi
 expect "archive examples: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh examples" \
     archive_check examples
@@ -537,6 +692,95 @@ expect "archive imports: an allowed entry not imported is a note" 0 "note: gone@
     archive_check imports "$IMP.tar.gz" "$T/allow/extra"
 expect "archive imports: no allow-list refused" 1 "FAILED: no allow-list $T/allow/none/elf-linux-x86_64.txt" \
     archive_check imports "$IMP.tar.gz" "$T/allow/none"
+mkdir -p "$T/imports-android/oxicrypt-ffi-v9.9.9-android-x86_64"
+cp "$IMP/liboxicrypt_ffi.so.9" "$T/imports-android/oxicrypt-ffi-v9.9.9-android-x86_64/liboxicrypt_ffi.so"
+tar -czf "$T/imports-android/oxicrypt-ffi-v9.9.9-android-x86_64.tar.gz" -C "$T/imports-android" oxicrypt-ffi-v9.9.9-android-x86_64
+cp "$T/allow/exact/elf-linux-x86_64.txt" "$T/allow/exact/elf-android-x86_64.txt"
+expect "archive imports: an Android bundle's unversioned library checked against its allow-list" 0 \
+    "ok: liboxicrypt_ffi.so imports only what $T/allow/exact/elf-android-x86_64.txt allows" \
+    archive_check imports "$T/imports-android/oxicrypt-ffi-v9.9.9-android-x86_64.tar.gz" "$T/allow/exact"
+mkdir -p "$T/allow/noneeds" "$T/allow/empty"
+grep -v '^needs libc\.so\.6$' "$T/allow/exact/elf-linux-x86_64.txt" > "$T/allow/noneeds/elf-linux-x86_64.txt"
+expect "archive imports: a NEEDED entry the allow-list lacks refused" 1 \
+    "FAILED: liboxicrypt_ffi.so.9 imports needs libc.so.6, which the allow-list" \
+    archive_check imports "$IMP.tar.gz" "$T/allow/noneeds"
+
+# imports_listed <archive> <PATH>: the imports the mode finds in <archive>
+# with <PATH>, read from what it refuses against an empty allow-list.
+imports_listed() {
+    local name
+    name="$(basename "$1" .tar.gz)"
+    printf '# nothing allowed\n' > "$T/allow/empty/$(case "$name" in
+        *-windows-*) echo pe ;; *-macos-*) echo macho ;; *) echo elf ;; esac)-${name##*-v9.9.9-}.txt"
+    env PATH="$2" "$HERE/release-archive-check.sh" imports "$1" "$T/allow/empty" 2>&1 \
+        | sed -nE 's/^FAILED: [^ ]+ imports (.*), which the allow-list .*/\1/p' | LC_ALL=C sort
+}
+# fake_bundle <dir> <file> <hex magic>: an archive <dir>.tar.gz whose bundle
+# holds <file>, starting with the bytes <hex magic>.
+fake_bundle() {
+    mkdir -p "$1"
+    printf '%b' "$(printf '%s' "$3" | sed -E 's/(..)/\\x\1/g')" > "$1/$2"
+    head -c 64 /dev/zero >> "$1/$2"
+    tar -czf "$1.tar.gz" -C "$(dirname "$1")" "$(basename "$1")"
+}
+mkdir -p "$T/pestub" "$T/readobjstub" "$T/machostub" "$T/nonm" "$T/noreadelf"
+fake_bundle "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64" oxicrypt_ffi.dll 4d5a9000
+fake_bundle "$T/fake/oxicrypt-ffi-v9.9.9-macos-aarch64" liboxicrypt_ffi.1.dylib cffaedfe
+fake_bundle "$T/fake/oxicrypt-ffi-v9.9.9-linux-aarch64" liboxicrypt_ffi.so.9 68656c6c
+cp "$IMP.tar.gz" "$T/fake/oxicrypt-ffi-v9.9.9-freebsd-x86_64.tar.gz"
+# GNU objdump 2.46, with an Ordinal column, and an older one without it.
+cat > "$T/pestub/objdump" <<'STUB'
+#!/usr/bin/env bash
+printf 'The Import Tables (interpreted .idata section contents)\n'
+printf '\tDLL Name: KERNEL32.dll\n'
+printf '\tvma:     Ordinal  Hint  Member-Name  Bound-To\n'
+printf '\t00022500      5  <none> <none>\n'
+printf '\t00022508  <none>  0006  CreateFileW\n'
+printf '\n'
+printf '\tDLL Name: WS2_32.dll\n'
+printf '\tvma:  Hint/Ord Member-Name Bound-To\n'
+printf '\t2a0c\t  123  WSAStartup\n'
+printf '\t2a14\t    7  <none>\n'
+printf '\n'
+STUB
+cat > "$T/readobjstub/llvm-readobj" <<'STUB'
+#!/usr/bin/env bash
+printf 'File: %s\nFormat: COFF-x86-64\nArch: x86_64\nAddressSize: 64bit\n' "${@: -1}"
+printf 'Import {\n  Name: KERNEL32.dll\n  ImportLookupTableRVA: 0x22000\n  ImportAddressTableRVA: 0x22500\n'
+printf '  Symbol: CreateFileW (6)\n  Symbol:  (5)\n}\n'
+STUB
+cat > "$T/machostub/nm" <<'STUB'
+#!/usr/bin/env bash
+[ "$1 $2 $3" = "-u -arch arm64" ] || exit 3
+printf '_free\n_malloc\n'
+STUB
+cat > "$T/machostub/otool" <<'STUB'
+#!/usr/bin/env bash
+printf '%s:\n' "$2"
+case "$1" in
+    -D) printf '@rpath/liboxicrypt_ffi.1.dylib\n' ;;
+    -L) printf '\t@rpath/liboxicrypt_ffi.1.dylib (compatibility version 1.0.0, current version 1.0.0)\n'
+        printf '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n' ;;
+esac
+STUB
+printf '#!/usr/bin/env bash\n' > "$T/nonm/nm"
+printf '#!/usr/bin/env bash\n' > "$T/noreadelf/readelf"
+chmod +x "$T/pestub/"* "$T/readobjstub/"* "$T/machostub/"* "$T/nonm/"* "$T/noreadelf/"*
+check "archive imports: objdump's listing normalised, ordinals included" [ "$(imports_listed "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/pestub:$PATH")" = \
+    "$(printf '%s\n' kernel32.dll!CreateFileW kernel32.dll!ordinal-5 'needs kernel32.dll' 'needs ws2_32.dll' ws2_32.dll!WSAStartup ws2_32.dll!ordinal-7)" ]
+check "archive imports: llvm-readobj's listing normalised, ordinals included" [ "$(imports_listed "$T/fake/oxicrypt-ffi-v9.9.9-windows-x86_64.tar.gz" "$T/readobjstub:$T/minpath")" = \
+    "$(printf '%s\n' kernel32.dll!CreateFileW kernel32.dll!ordinal-5 'needs kernel32.dll')" ]
+check "archive imports: nm -u and otool listings normalised" [ "$(imports_listed "$T/fake/oxicrypt-ffi-v9.9.9-macos-aarch64.tar.gz" "$T/machostub:$PATH")" = \
+    "$(printf '%s\n' _free _malloc 'needs /usr/lib/libSystem.B.dylib')" ]
+expect "archive imports: an unknown format refused" 1 "FAILED: liboxicrypt_ffi.so.9 starts with 68656c6c, which is not ELF, PE or Mach-O" \
+    archive_check imports "$T/fake/oxicrypt-ffi-v9.9.9-linux-aarch64.tar.gz" "$T/allow/exact"
+expect "archive imports: a platform the name does not give refused" 1 \
+    "FAILED: oxicrypt-ffi-v9.9.9-freebsd-x86_64.tar.gz does not end in <os>-<arch>.tar.gz" \
+    archive_check imports "$T/fake/oxicrypt-ffi-v9.9.9-freebsd-x86_64.tar.gz" "$T/allow/exact"
+expect "archive imports: a listing with no symbols refused" 1 "FAILED: found no symbols in liboxicrypt_ffi.so.9" \
+    env PATH="$T/nonm:$PATH" "$HERE/release-archive-check.sh" imports "$IMP.tar.gz" "$T/allow/exact"
+expect "archive imports: a listing with no libraries refused" 1 "FAILED: found no libraries in liboxicrypt_ffi.so.9" \
+    env PATH="$T/noreadelf:$PATH" "$HERE/release-archive-check.sh" imports "$IMP.tar.gz" "$T/allow/exact"
 
 # --- android-device-check.sh ----------------------------------------------
 # Runs against a bundle holding a stand-in library: an ELF header, a slot of
@@ -553,7 +797,8 @@ expect "archive imports: no allow-list refused" 1 "FAILED: no allow-list $T/allo
 # operational, its unsigned template copy refused with status 3, anything
 # else refused with status 2. $ADB_LIE makes it report the signed library
 # refused, the tampered one operational, the unsigned one operational, or the
-# unsigned one refused with status 10.
+# unsigned one refused with status 10. One case runs on a PATH without
+# `timeout`, which both scripts use only where it is installed.
 
 mkdir -p "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64" "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 python3 - "$T/android" <<'PY'
@@ -603,7 +848,7 @@ cat > "$T/bin/stub-sign" <<'STUB'
 sha="$(sha256sum < "$2" | cut -d' ' -f1)"
 case "$1" in
     --show)
-        echo "  slot at file offset 0x10000, RVA 0x10000"
+        echo "  slot at file offset ${STUB_SHOW_OFFSET:-0x10000}, RVA 0x10000"
         echo "    [0] Plain rva 0x00000000 file 0x00000000 len 65536 hole 0"
         echo "    [1] Plain rva 0x00020000 file 0x00020000 len 65536 hole 0" ;;
     --verify)
@@ -624,7 +869,7 @@ case "$1" in
 esac
 case "$*" in
     "getprop ro.product.cpu.abi") echo "${ADB_ABI:-arm64-v8a}" ;;
-    "getprop ro.build.version.release") echo 14 ;;
+    "getprop ro.build.version.release") [ -n "${ADB_EMPTY_RELEASE:-}" ] || echo 14 ;;
     "getprop ro.build.version.sdk") echo 34 ;;
     "getconf PAGESIZE") echo 16384 ;;
     true) exit 0 ;;
@@ -655,7 +900,7 @@ device_check() {
     export ADB_STUB="$T/adb-$1"
     mkdir -p "$ADB_STUB"
     : > "$ADB_STUB/calls"
-    env PATH="$T/bin:$PATH" ANDROID_SERIAL=stub-device ANDROID_NDK_HOME="$T/ndk" \
+    env PATH="$T/bin:${device_path:-$PATH}" ANDROID_SERIAL=stub-device ANDROID_NDK_HOME="$T/ndk" \
         "$HERE/android-device-check.sh" "${2:-$T/android/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz}" "$T/bin/stub-sign"
 }
 
@@ -670,6 +915,18 @@ check "device check: the unsigned control pushed is the template" [ "$(sha "$T/a
 check "device check: the signed library pushed as shipped" [ "$(sha "$T/adb-good/dev/signed.so")" = "$ADB_SIGNED_SHA" ]
 check "device check: the harness linked for 16 KiB pages" \
     grep -qE -- "-Wl,-z,max-page-size=16384 -o .* .*/\.github/probes/ffi-operational\.c -ldl$" "$T/adb-good/clang"
+# A PATH holding what the device check and its stubs call, without timeout.
+mkdir -p "$T/notimeout"
+for t in bash env dirname basename mktemp rm tar gzip find wc tr grep sed awk od cat head cp chmod mkdir cut cmp tee sha256sum python3; do
+    ln -s "$(command -v "$t")" "$T/notimeout/$t"
+done
+check "device check: the PATH without timeout lacks it" bash -c "! PATH='$T/notimeout' command -v timeout"
+device_path="$T/notimeout"
+expect "device check: no timeout on PATH waits for the device without it" 0 \
+    "verdict ok: the tampered control is refused as not matching its signature" device_check notimeout
+unset device_path
+check "device check: no timeout on PATH still waits for the device" \
+    [ "$(grep -cx 'wait-for-device' "$T/adb-notimeout/calls")" = 2 ]
 
 export ADB_LIE=signed-refused
 expect "device check: the signed library refused fails" 1 "verdict FAILED: the signed library reaches operational" \
@@ -705,6 +962,20 @@ unset STUB_SIGN_NO_DIAGNOSIS
 expect "device check: a library without the footer magic fails" 1 "no slot magics at 0x10000" \
     device_check nofooter "$T/android/nofooter/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz"
 
+export STUB_SHOW_OFFSET=0xfff0
+expect "device check: a slot offset 16 bytes early refused" 1 "no slot magics at 0xfff0" device_check early
+unset STUB_SHOW_OFFSET
+mkdir -p "$T/android/template/oxicrypt-ffi-v9.9.9-android-aarch64"
+cp "$T/android/template.so" "$T/android/template/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0"
+tar -czf "$T/android/template/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz" -C "$T/android/template" oxicrypt-ffi-v9.9.9-android-aarch64
+expect "device check: a shipped library already unsigned refused" 1 \
+    "the unsigned control differs from the signed library outside the slot body, or not at all (0 0)" \
+    device_check template "$T/android/template/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz"
+export ADB_EMPTY_RELEASE=1
+expect "device check: an empty ro.build.version.release refused" 1 \
+    "FAILED: device properties: release '', sdk '34', page size '16384'" device_check norelease
+unset ADB_EMPTY_RELEASE
+
 export STUB_READELF_MACHINE="Advanced Micro Devices X86-64"
 expect "device check: a harness for another machine refused" 1 "the harness is not an ELF for AArch64" \
     device_check machine
@@ -719,7 +990,7 @@ unset ADB_ABI STUB_READELF_MACHINE
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
 # naming a sentinel repository, and requires the sentinel's refs and
 # configuration to be byte-identical afterwards. The inner run skips this
-# section.
+# section and the toolchain cases, which the outer run has already run.
 
 if [ -z "${RELEASE_SCRIPTS_INNER:-}" ]; then
     git init -q -b main "$T/sentinel"
@@ -729,9 +1000,9 @@ if [ -z "${RELEASE_SCRIPTS_INNER:-}" ]; then
     before="$(sentinel)"
     check "inherited GIT_DIR: the sentinel has a ref" grep -q refs/heads/main <<<"$before"
     expect "inherited GIT_DIR: the suite still passes" 0 ", 0 failed" \
-        env GIT_DIR="$T/sentinel/.git" RELEASE_SCRIPTS_INNER=1 "$HERE/test-release-scripts.sh"
+        env -u OXICRYPT_TEST_EXAMPLES GIT_DIR="$T/sentinel/.git" RELEASE_SCRIPTS_INNER=1 "$HERE/test-release-scripts.sh"
     check "inherited GIT_DIR: the sentinel is unchanged" [ "$(sentinel)" = "$before" ]
 fi
 
-echo "release scripts: $pass passed, $failed failed"
+echo "release scripts: $pass passed, $failed failed; examples run with their toolchains:${examples_ran:- none}"
 [ "$failed" -eq 0 ] && [ "$pass" -gt 0 ]
