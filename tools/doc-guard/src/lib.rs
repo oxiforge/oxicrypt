@@ -1100,7 +1100,10 @@ mod tests {
     const OPEN_MARKERS: &[(&str, usize)] = &[
         // Each count is the number of markers of that kind open in the
         // Security Policy. Lower it in the change that resolves one.
-        ("TODO", 2),
+        // `TODO`: the remaining marker is §1.5's; §6 Operational Environment
+        // states the build, the target triples and the run-time dependencies
+        // the release workflow's import allow-lists enumerate.
+        ("TODO", 1),
         ("TBD", 0),
         ("FIXME", 0),
         ("XXX", 0),
