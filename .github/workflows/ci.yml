@@ -379,7 +379,7 @@ jobs:
       - name: Refusal test against unsigned artifacts
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-unsigned
-      # Requires the module to refuse a signed copy with one byte flipped inside its extent (status 2).
+      # Requires the unsigned copy refused (integrity status 3), the signed copy operational (1), and a copy with one byte flipped inside the signed region refused (2).
       - name: Unsigned, signed and tampered library through oxi_init
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
@@ -509,6 +509,8 @@ jobs:
   release-scripts:
     name: release scripts
     runs-on: ubuntu-latest
+    env:
+      OXICRYPT_TEST_EXAMPLES: "1"
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/test-release-scripts.sh

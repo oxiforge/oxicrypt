@@ -156,7 +156,12 @@ case "$mode" in
         trap 'rm -rf "$tmp"' EXIT
         step "the tamper control's copy" tampered_copy "$5" "$4" "$tmp/tampered.so"
         dev=/data/local/tmp/oxicrypt-release
-        step "adb wait-for-device" timeout 300 adb wait-for-device
+        # `timeout` bounds the wait where it is installed.
+        if command -v timeout >/dev/null 2>&1; then
+            step "adb wait-for-device" timeout 300 adb wait-for-device
+        else
+            step "adb wait-for-device" adb wait-for-device
+        fi
         # adb shell has returned the remote exit status since Android 7; the
         # emulator here runs API 34. A probe of it is the first check.
         step "adb shell exit status" adb shell true

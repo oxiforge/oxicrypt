@@ -15,4 +15,4 @@ If `oxi_init` returns anything other than 0, the program prints the code and exi
 | [`java/`](java/) | Java | Foreign Function & Memory API |
 | [`csharp/`](csharp/) | C# | P/Invoke (`DllImport`) |
 
-Each directory's `run.sh <bundle-dir>` builds the program if it needs building and runs it against the bundle. The release workflow runs every example whose toolchain is on the runner against every library it ships, with `scripts/release-archive-check.sh examples`.
+Each directory's `run.sh <bundle-dir>` builds the program if it needs building and runs it against the bundle. The release workflow runs, against every library it ships for a host it can execute on, each example whose toolchain that host has, and fails if a toolchain the host is known to have is missing.

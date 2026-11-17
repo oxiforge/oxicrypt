@@ -8,7 +8,13 @@
 #   release-archive-check.sh imports <archive.tar.gz> <allow-list-dir>
 #   release-archive-check.sh examples <archive.tar.gz>
 #
-# Each archive must hold exactly one top-level directory, the bundle.
+# Each archive must hold exactly one top-level directory, the bundle. Every
+# symbolic link in the bundle must resolve to a file or directory inside it;
+# a dangling link, or one whose chain ends outside, fails as
+# `FAILED: <name> is a symbolic link out of the bundle`. In the library,
+# imports and examples modes a liboxicrypt_ffi.so or liboxicrypt_ffi.dylib
+# that is a link must resolve to the bundle's shared library, or the check
+# fails as `FAILED: <alias> links to <target>, not to <library>`.
 #
 # cli      The bundle holds an entry named `oxi` or one named `oxi.exe`, not
 #          both, and it is not a symbolic link. Run from inside the bundle,
@@ -37,20 +43,25 @@
 # imports  The bundle's shared library, found as in `library`, imports only
 #          what its allow-list names, so a run-time dependency nobody
 #          declared fails the build. The format comes from the library's
-#          magic bytes and the platform from the archive name, which picks
+#          magic bytes and the platform (linux, windows, macos or android,
+#          then x86_64 or aarch64) from the archive name, which picks
 #          <allow-list-dir>/<format>-<platform>.txt, e.g. elf-linux-x86_64.txt.
 #          One import per line:
 #              ELF     symbol@VERSION (unversioned if the library asks for no
 #                      version) from `nm -D --undefined-only`, and
 #                      `needs <soname>` per NEEDED entry from `readelf -d`
 #              PE      <dll, lower case>!<symbol> per import from
-#                      `objdump -p`, and `needs <dll, lower case>` per DLL
+#                      `objdump -p`, <dll>!ordinal-<N> per import by
+#                      ordinal, and `needs <dll, lower case>` per DLL
 #              Mach-O  each undefined symbol from `nm -u`, and
 #                      `needs <install name>` per dylib `otool -L` lists
 #                      other than the library's own
 #          The llvm- tool of the same name stands in for a missing one, and
 #          `llvm-readobj --coff-imports` for objdump. The Mach-O branch is
-#          exercised only by the release workflow's macOS legs. The
+#          exercised only by the release workflow's macOS legs. A listing
+#          with no symbol, or with no `needs` entry, fails as a tool that
+#          read nothing, and so does a failure of the tools that compare
+#          the listing with the allow-list. The
 #          allow-list holds one entry per line; `#` starts a comment, so an
 #          entry may carry `  # reason`. An import the allow-list does not
 #          name fails the check. An entry the library no longer imports is
@@ -61,11 +72,16 @@
 #          the bundle directory as its argument, and it must exit 0 and print
 #              ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 #          An example whose toolchain is not on PATH is skipped with
-#          `skip: <language> (<reason>)`: go needs `go` and the C compiler
+#          `skip: <language> (<reason>)`: go needs a `go` at least as new as
+#          the `go` directive of examples/go/go.mod and the C compiler
 #          `go env CC` names, node needs `node` and `npm`, java needs `java`
-#          and a `javac` of 22 or later, csharp needs `dotnet`. A directory
-#          with a run.sh and no toolchain listed here fails the check, and so
-#          does a run in which no example ran.
+#          and a `javac` of 22 or later, csharp needs `dotnet` listing a .NET
+#          SDK of 10 or later. A directory with a run.sh and no toolchain
+#          listed here fails the check, and so does a run in which no example
+#          ran. OXICRYPT_EXAMPLES_REQUIRED names, space-separated, languages
+#          that must run: one that would be skipped, or that has no
+#          examples/<language>/run.sh, fails as
+#          `FAILED: examples/<language> is required here and <reason>`.
 #
 # Each check requires the program's exit status AND its verdict lines, each
 # matched as a whole line exactly once, so neither a lost status nor a stray
@@ -151,22 +167,50 @@ readme_cc_line() {
     ' "$root/README.md"
 }
 
+# links_inside <dir>: every symbolic link under <dir> resolves, through
+# however many links, to an existing path inside <dir>.
+links_inside() {
+    local dir="$1" real links link target failed=0
+    real="$(readlink -f -- "$dir")" && [ -n "$real" ] || { echo "FAILED: could not resolve $dir" >&2; return 1; }
+    links="$(find "$dir" -type l)" || { echo "FAILED: could not list the links in $(basename "$dir")" >&2; return 1; }
+    while IFS= read -r link; do
+        [ -n "$link" ] || continue
+        target="$(readlink -f -- "$link")" || target=""
+        if [ -z "$target" ] || [ ! -e "$target" ] || [ "${target#"$real"/}" = "$target" ]; then
+            echo "FAILED: ${link#"$dir"/} is a symbolic link out of the bundle" >&2
+            failed=1
+        fi
+    done <<<"$links"
+    return "$failed"
+}
+
 # shared_library <dir>: prints the name of the one shared library <dir> holds,
-# not counting a symbolic link to a file beside it. A link whose target names
-# a directory, which can lead out of the bundle, fails.
+# not counting a symbolic link to a file beside it. An Android library's
+# SONAME is the unversioned liboxicrypt_ffi.so, so that name counts too. The
+# plain names liboxicrypt_ffi.so and liboxicrypt_ffi.dylib, when they are
+# links, must resolve to that library, as a program linked with
+# -loxicrypt_ffi loads whatever they name.
 shared_library() {
-    local dir="$1" candidate lib=""
-    for candidate in "$dir"/liboxicrypt_ffi.so.[0-9]* "$dir"/liboxicrypt_ffi.[0-9]*.dylib "$dir/oxicrypt_ffi.dll"; do
+    local dir="$1" candidate lib="" alias target real
+    links_inside "$dir" || return 1
+    for candidate in "$dir"/liboxicrypt_ffi.so.[0-9]* "$dir/liboxicrypt_ffi.so" "$dir"/liboxicrypt_ffi.[0-9]*.dylib "$dir/oxicrypt_ffi.dll"; do
         if [ -L "$candidate" ]; then
-            case "$(readlink "$candidate")" in
-                "" | */*) echo "FAILED: $(basename "$candidate") is a symbolic link, not a file in the bundle" >&2; return 1 ;;
-            esac
+            continue
         elif [ -f "$candidate" ]; then
             [ -z "$lib" ] || { echo "FAILED: $(basename "$dir") holds more than one shared library" >&2; return 1; }
             lib="$(basename "$candidate")"
         fi
     done
     [ -n "$lib" ] || { echo "FAILED: $(basename "$dir") holds no shared library" >&2; return 1; }
+    real="$(readlink -f -- "$dir")" || return 1
+    for alias in liboxicrypt_ffi.so liboxicrypt_ffi.dylib; do
+        [ -L "$dir/$alias" ] || continue
+        target="$(readlink -f -- "$dir/$alias")" || return 1
+        if [ "$target" != "$real/$lib" ]; then
+            echo "FAILED: $alias links to ${target#"$real"/}, not to $lib" >&2
+            return 1
+        fi
+    done
     printf '%s' "$lib"
 }
 
@@ -200,12 +244,13 @@ list_imports() {
                 listing="$(objdump -p "$lib")" || { echo "FAILED: objdump could not read $lib" >&2; return 1; }
                 # Each `DLL Name:` line is followed by a column header and one
                 # row per import. Newer binutils add an Ordinal column before
-                # the hint; a row without a name is an import by ordinal.
+                # the hint. An import by ordinal has `<none>` for its name,
+                # and its ordinal in the second field.
                 printf '%s\n' "$listing" | tr -d '\r' | awk '
                     /^\tDLL Name: / { dll = tolower($3); print "needs " dll; col = 0; next }
                     dll != "" && /^\tvma:/ { col = ($0 ~ /Ordinal/) ? 4 : 3; next }
                     dll != "" && col && NF == 0 { dll = ""; col = 0; next }
-                    dll != "" && col { if (NF >= col) print dll "!" $col; else print dll "!ordinal-" $2 }
+                    dll != "" && col { if (NF >= col && $col != "<none>") print dll "!" $col; else print dll "!ordinal-" $2 }
                 '
             elif command -v llvm-readobj >/dev/null 2>&1; then
                 listing="$(llvm-readobj --coff-imports "$lib")" || { echo "FAILED: llvm-readobj could not read $lib" >&2; return 1; }
@@ -213,7 +258,11 @@ list_imports() {
                     /^Import \{/ { inside = 1; next }
                     /^\}/ { inside = 0; dll = ""; next }
                     inside && /^  Name: / { dll = tolower($2); print "needs " dll; next }
-                    inside && dll != "" && /^  Symbol: / { print dll "!" $2 }
+                    inside && dll != "" && /^  Symbol: / {
+                        # `Symbol: <name> (<hint>)`, or `Symbol:  (<ordinal>)` by ordinal.
+                        if ($2 ~ /^\([0-9]+\)$/) { o = $2; gsub(/[()]/, "", o); print dll "!ordinal-" o }
+                        else print dll "!" $2
+                    }
                 '
             else
                 echo "FAILED: neither objdump nor llvm-readobj is on PATH" >&2
@@ -243,6 +292,7 @@ case "$mode" in
     cli)
         [ $# -eq 3 ] || { echo "usage: release-archive-check.sh cli <archive.tar.gz> <verify-key-fingerprint>" >&2; exit 1; }
         dir="$(bundle "$2")" || exit 1
+        links_inside "$dir" || exit 1
         # By entry name: under Git Bash `test -f oxi` also finds oxi.exe.
         names="$(find "$dir" -mindepth 1 -maxdepth 1 \( -name oxi -o -name oxi.exe \) -exec basename {} \;)"
         case "$(printf '%s' "$names" | grep -c .)" in
@@ -353,7 +403,7 @@ case "$mode" in
         [ $# -eq 3 ] || { echo "usage: release-archive-check.sh imports <archive.tar.gz> <allow-list-dir>" >&2; exit 1; }
         dir="$(bundle "$2")" || exit 1
         lib="$(shared_library "$dir")" || exit 1
-        platform="$(basename "$2" | sed -nE 's/.*-((linux|windows|macos)-(x86_64|aarch64))\.tar\.gz$/\1/p')"
+        platform="$(basename "$2" | sed -nE 's/.*-((linux|windows|macos|android)-(x86_64|aarch64))\.tar\.gz$/\1/p')"
         [ -n "$platform" ] || { echo "FAILED: $(basename "$2") does not end in <os>-<arch>.tar.gz" >&2; exit 1; }
         magic="$(od -An -tx1 -N4 "$dir/$lib" | tr -d ' \n')"
         case "$magic" in
@@ -368,20 +418,36 @@ case "$mode" in
         [ "$arch" != aarch64 ] || arch=arm64
         found="$(list_imports "$format" "$(native "$dir/$lib")" "$arch")" || exit 1
         found="$(printf '%s\n' "$found" | tr -d '\r' | awk 'NF' | LC_ALL=C sort -u)"
-        n="$(printf '%s\n' "$found" | grep -c . || true)"
-        # A tool that prints nothing must not read as a library that imports nothing.
-        [ "$n" -gt 0 ] || { echo "FAILED: found no imports in $lib" >&2; exit 1; }
-        allowed="$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' "$list" | awk 'NF' | LC_ALL=C sort -u)"
+        # A tool that prints nothing must not read as a library that imports
+        # nothing: every shipped library imports symbols from some library.
+        counts="$(printf '%s\n' "$found" | awk '/^needs / { l++; next } NF { s++ } END { print s + 0, l + 0 }')" \
+            || { echo "FAILED: could not count the imports of $lib" >&2; exit 1; }
+        n="${counts% *}"
+        n_needs="${counts#* }"
+        [ "$n" -gt 0 ] 2>/dev/null || { echo "FAILED: found no symbols in $lib" >&2; exit 1; }
+        [ "$n_needs" -gt 0 ] 2>/dev/null || { echo "FAILED: found no libraries in $lib" >&2; exit 1; }
+        n=$((n + n_needs))
+        allowed="$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' "$list" | awk 'NF' | LC_ALL=C sort -u)" \
+            || { echo "FAILED: could not read $list" >&2; exit 1; }
+        printf '%s\n' "$found" > "$tmp/found" && printf '%s\n' "$allowed" > "$tmp/allowed" \
+            || { echo "FAILED: could not write the import lists" >&2; exit 1; }
+        # minus <a> <b>: the lines of <b> that <a> lacks. The files are told
+        # apart by FILENAME, not NR == FNR, which misreads an empty <a>, and
+        # against ARGV[1], not a -v copy of the path, which awk would
+        # escape-process.
+        minus() { awk 'FILENAME == ARGV[1] { have[$0] = 1; next } NF && !($0 in have)' "$1" "$2"; }
+        unlisted="$(minus "$tmp/allowed" "$tmp/found")" || { echo "FAILED: could not compare $lib's imports with $list" >&2; exit 1; }
+        unused="$(minus "$tmp/found" "$tmp/allowed")" || { echo "FAILED: could not compare $list with $lib's imports" >&2; exit 1; }
         failed=0
         while IFS= read -r entry; do
             [ -n "$entry" ] || continue
             echo "FAILED: $lib imports $entry, which the allow-list $list does not name" >&2
             failed=1
-        done < <(LC_ALL=C comm -23 <(printf '%s\n' "$found") <(printf '%s\n' "$allowed"))
+        done <<<"$unlisted"
         while IFS= read -r entry; do
             [ -n "$entry" ] || continue
             echo "note: $entry is allowed but not imported"
-        done < <(LC_ALL=C comm -13 <(printf '%s\n' "$found") <(printf '%s\n' "$allowed"))
+        done <<<"$unused"
         if [ "$failed" -eq 0 ]; then
             echo "ok: $lib imports only what $list allows ($n imports)"
         fi
@@ -393,9 +459,14 @@ case "$mode" in
         lib="$(shared_library "$dir")" || exit 1
         failed=0
         ran=""
+        seen=""
+        # Tabs and newlines, as a YAML block scalar leaves them, separate
+        # names as spaces do.
+        required=" $(printf '%s' "${OXICRYPT_EXAMPLES_REQUIRED:-}" | tr -s '[:space:]' ' ') "
         for example in "$root"/examples/*/; do
             [ -f "$example/run.sh" ] || continue
             language="$(basename "$example")"
+            seen="$seen $language "
             case "$language" in
                 go) tools="go" ;;
                 node) tools="node npm" ;;
@@ -408,9 +479,30 @@ case "$mode" in
                 command -v "$t" >/dev/null 2>&1 || { skip="no $t on PATH"; break; }
             done
             if [ -z "$skip" ] && [ "$language" = go ]; then
+                go_have="$(go version 2>&1 | tr -d '\r' | sed -nE 's/^go version go([0-9]+(\.[0-9]+)*).*/\1/p')"
+                go_need="$(tr -d '\r' < "$example/go.mod" | sed -nE 's/^go ([0-9]+(\.[0-9]+)*)[[:space:]]*$/\1/p')"
+                if [ -z "$go_need" ]; then
+                    skip="examples/go/go.mod has no go directive"
+                elif [ -z "$go_have" ] || ! awk -v have="$go_have" -v need="$go_need" 'BEGIN {
+                        nh = split(have, h, "."); nn = split(need, w, ".")
+                        for (i = 1; i <= (nh > nn ? nh : nn); i++) {
+                            if (h[i] + 0 > w[i] + 0) exit 0
+                            if (h[i] + 0 < w[i] + 0) exit 1
+                        }
+                        exit 0
+                    }'; then
+                    skip="go ${go_have:-of unknown version} on PATH, examples/go/go.mod needs $go_need or later"
+                fi
+            fi
+            if [ -z "$skip" ] && [ "$language" = go ]; then
                 # cgo compiles the example with this compiler.
                 go_cc="$(go env CC)"
                 command -v "$go_cc" >/dev/null 2>&1 || skip="no $go_cc on PATH for cgo"
+            fi
+            if [ -z "$skip" ] && [ "$language" = csharp ]; then
+                # The project targets net10.0, which an older SDK cannot build.
+                dotnet --list-sdks 2>/dev/null | tr -d '\r' | awk '{ split($1, v, "."); if (v[1] + 0 >= 10) ok = 1 } END { exit !ok }' \
+                    || skip="no .NET SDK 10 or later"
             fi
             if [ -z "$skip" ] && [ "$language" = java ]; then
                 # The Foreign Function & Memory API the example uses is final from Java 22.
@@ -420,12 +512,23 @@ case "$mode" in
                 fi
             fi
             if [ -n "$skip" ]; then
-                echo "skip: $language ($skip)"
+                if [ "${required#* "$language" }" != "$required" ]; then
+                    echo "FAILED: examples/$language is required here and $skip" >&2
+                    failed=1
+                else
+                    echo "skip: $language ($skip)"
+                fi
                 continue
             fi
             ran="$ran $language"
             run_program "examples/$language" bash "$example/run.sh" "$dir"
             require "examples/$language" "$abc_digest" || failed=1
+        done
+        for language in $required; do
+            if [ "${seen#* "$language" }" = "$seen" ]; then
+                echo "FAILED: examples/$language is required here and has no run.sh" >&2
+                failed=1
+            fi
         done
         [ -n "$ran" ] || { echo "FAILED: no example toolchain on PATH" >&2; exit 1; }
         if [ "$failed" -eq 0 ]; then

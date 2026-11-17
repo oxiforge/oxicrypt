@@ -648,9 +648,10 @@ flip. Pull requests observe it for the Linux x86_64 library in the
 `c-integration` job of `.github/workflows/ci.yml`.
 Each check requires both the harness's exit status and its verdict line.
 Android arm64 is verified offline only, because no runner the workflow uses
-executes it, and its provenance file says so. Before a draft release is
-published, the arm64 library is verified on an arm64-v8a device with
-`scripts/android-device-check.sh`. Each job prints the signature
+executes it, and its provenance file says so. The arm64 library is checked
+by hand on an arm64-v8a device with `scripts/android-device-check.sh` before
+a draft release is published; its provenance file records only the offline
+verification. Each job prints the signature
 and the key fingerprint of every artifact as `provenance:` lines, each
 tarball's `BUILD-PROVENANCE.txt` records them with the key source and the load
 check, and a final job requires every artifact of the run to name the same
