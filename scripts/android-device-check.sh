@@ -13,7 +13,8 @@
 # Environment:
 #   ANDROID_SERIAL    the device, as `adb devices` lists it
 #   ANDROID_NDK_HOME  the Android NDK root
-# Needs adb on PATH and python3.
+# Needs adb on PATH and python3. `timeout` bounds the wait for the device
+# where it is installed.
 #
 # Steps:
 #   1. Extracts the bundle into a new, empty directory. It must hold exactly
@@ -32,9 +33,10 @@
 #      (crates/oxicrypt-integrity/src/lib.rs:694). A slot zeroed whole would
 #      lose its header magic and be reported as damage, status 10. The copy
 #      differs from the signed library only inside the slot, and
-#      `<signer> --verify` must refuse it.
+#      `<signer> --verify` must refuse it, saying the slot holds no signature.
 #   4. Prints the device's ro.build.version.release, ro.build.version.sdk,
-#      ro.product.cpu.abi and page size.
+#      ro.product.cpu.abi and page size. The first two must be non-empty and
+#      the page size a number.
 #   5. Runs `release-load-check.sh adb-library` with the harness, the
 #      unsigned control and the signed library. It derives the tampered
 #      control from the signed library with <signer>, pushes the four files
@@ -83,7 +85,11 @@ readelf="$bin/llvm-readelf"
 # getprop <key>: the device property, carriage returns removed.
 getprop() { adb shell getprop "$1" | tr -d '\r'; }
 
-timeout 300 adb wait-for-device || fail "adb wait-for-device"
+if command -v timeout >/dev/null 2>&1; then
+    timeout 300 adb wait-for-device
+else
+    adb wait-for-device
+fi || fail "adb wait-for-device"
 device_abi="$(getprop ro.product.cpu.abi)" || fail "adb shell getprop ro.product.cpu.abi"
 [ "$device_abi" = "$abi" ] || fail "the device's ABI is $device_abi; $name is for $abi"
 
@@ -106,8 +112,10 @@ echo "signed library: ${signed#"$x"/}"
 harness="$tmp/harness"
 "$clang" -O1 -Wall -Wextra -Wl,-z,max-page-size=16384 -o "$harness" "$root/.github/probes/ffi-operational.c" -ldl \
     || fail "building the harness with $clang"
-"$readelf" -h "$harness" | grep -qE "^ *Machine: +$machine\$" \
-    || fail "the harness is not an ELF for $machine: $("$readelf" -h "$harness" 2>&1 | grep Machine)"
+# Captured first: under pipefail, grep -q closing the pipe early can fail it.
+header="$("$readelf" -h "$harness" 2>&1)" || fail "$readelf -h $harness: $header"
+grep -qE "^ *Machine: +$machine\$" <<<"$header" \
+    || fail "the harness is not an ELF for $machine: $(grep Machine <<<"$header")"
 echo "harness: built for $machine with $(basename "$clang")"
 
 unsigned="$tmp/unsigned.so"
@@ -140,13 +148,20 @@ diffs="$(cmp -l "$signed" "$unsigned" | awk -v lo="$((slot + 17))" -v hi="$((slo
 if "$signer" --verify "$unsigned" > "$tmp/unsigned-verify.txt" 2>&1; then
     fail "$signer --verify accepts the unsigned control"
 fi
+grep -qF "holds no signature" "$tmp/unsigned-verify.txt" \
+    || fail "$signer --verify refuses the unsigned control without saying it holds no signature: $(cat "$tmp/unsigned-verify.txt")"
 echo "unsigned control: slot at $slot reset to the unsigned template (${diffs% *} bytes changed); --verify refuses it: $(cat "$tmp/unsigned-verify.txt")"
 
+release="$(getprop ro.build.version.release)"
+sdk="$(getprop ro.build.version.sdk)"
+page="$(adb shell getconf PAGESIZE | tr -d '\r')"
+[ -n "$release" ] && [ -n "$sdk" ] && [[ "$page" =~ ^[0-9]+$ ]] \
+    || fail "device properties: release '$release', sdk '$sdk', page size '$page'"
 echo "device: $ANDROID_SERIAL"
-echo "  ro.build.version.release: $(getprop ro.build.version.release)"
-echo "  ro.build.version.sdk: $(getprop ro.build.version.sdk)"
+echo "  ro.build.version.release: $release"
+echo "  ro.build.version.sdk: $sdk"
 echo "  ro.product.cpu.abi: $device_abi"
-echo "  page size: $(adb shell getconf PAGESIZE | tr -d '\r')"
+echo "  page size: $page"
 
 bash "$here/release-load-check.sh" adb-library "$harness" "$unsigned" "$signed" "$signer" 2>&1 | tee "$tmp/load.txt"
 rc="${PIPESTATUS[0]}"
