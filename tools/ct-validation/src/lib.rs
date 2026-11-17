@@ -9,11 +9,14 @@
 //!
 //! ## Why this tool exists
 //!
-//! FIPS 140-3 Level 1 does not require side-channel resistance, and
-//! IG D.G (March 2026 revision) does not mandate any specific
-//! constant-time validation methodology. oxicrypt's security policy
-//! nevertheless **voluntarily** claims constant-time secret-dependent
-//! operations on the RSA and P-256 private-key paths. Claims that
+//! FIPS 140-3 does not yet impose non-invasive (side-channel)
+//! requirements: the Implementation Guidance (the revision `ISA.md`
+//! names) holds ISO/IEC 19790:2012 §7.8 non-applicable until SP 800-140F
+//! defines them, places such mechanisms under §7.12 Mitigation of other
+//! attacks meanwhile, and mandates no constant-time validation methodology.
+//! oxicrypt's security policy nevertheless **voluntarily** claims
+//! constant-time secret-dependent operations on the RSA and P-256
+//! private-key paths. Claims that
 //! aren't tested drift over time; this harness turns the claims into
 //! something we can re-run after every refactor.
 //!
