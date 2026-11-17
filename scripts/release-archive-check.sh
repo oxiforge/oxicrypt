@@ -9,8 +9,9 @@
 #
 # Each archive must hold exactly one top-level directory, the bundle.
 #
-# cli      The bundle holds `oxi` or `oxi.exe`, not both. Run from inside the
-#          bundle, `oxi --integrity` must exit 0 and print
+# cli      The bundle holds an entry named `oxi` or one named `oxi.exe`, not
+#          both, and it is not a symbolic link. Run from inside the bundle,
+#          `oxi --integrity` must exit 0 and print
 #              integrity: passed — this binary matches the signature recorded inside it
 #                verify key: <verify-key-fingerprint>
 #          and `oxi selftest --quiet` must exit 0 and print
@@ -19,15 +20,19 @@
 #          bundle. Both are read from README.md at run time, so the check runs
 #          the programs the README shows. The C example is compiled with the
 #          README's `cc` command, its `$DIR` set to the bundle; the Python
-#          example runs from inside the bundle, its library name rewritten to
-#          the shared library the bundle holds. Each must exit 0 and print
+#          example runs from inside the bundle. On an ELF bundle the library
+#          name the Python example loads must be in the bundle and is loaded
+#          as written; on a Mach-O or PE bundle it is rewritten to the shared
+#          library the bundle holds, and a note names both. Each must exit 0
+#          and print
 #              ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 #          Both call oxi_init(0) before hashing, so a library that fails its
 #          power-up self-tests or its integrity test prints no digest. A
 #          bundle holding the import library oxicrypt_ffi.dll.lib is compiled
 #          with MSVC `cl` instead of `cc`: the one on PATH, or else the
-#          toolchain `vswhere` reports, set up by its vcvars64.bat. That
-#          branch is exercised only by the release workflow's Windows leg.
+#          toolchain `vswhere` reports, through a build.bat that calls its
+#          vcvars64.bat and then `cl`. That branch is exercised only by the
+#          release workflow's Windows leg.
 # imports  The bundle's shared library, found as in `library`, imports only
 #          what its allow-list names, so a run-time dependency nobody
 #          declared fails the build. The format comes from the library's
@@ -117,6 +122,7 @@ require() {
 # README that contains <needle>.
 readme_block() {
     awk -v lang="$1" -v needle="$2" '
+        { sub(/\r$/, "") }
         !inside && $0 == "```" lang { inside = 1; block = ""; hit = 0; next }
         inside && $0 == "```" { if (hit) { printf "%s", block; exit } inside = 0; next }
         inside { block = block $0 "\n"; if (index($0, needle)) hit = 1 }
@@ -127,6 +133,7 @@ readme_block() {
 # the README's C example.
 readme_cc_line() {
     awk '
+        { sub(/\r$/, "") }
         $0 == "```c" { c = 1 }
         c && $0 == "```bash" { bash = 1; next }
         bash && $0 == "```" { exit }
@@ -135,11 +142,16 @@ readme_cc_line() {
 }
 
 # shared_library <dir>: prints the name of the one shared library <dir> holds,
-# not counting symbolic links to it.
+# not counting a symbolic link to a file beside it. A link whose target names
+# a directory, which can lead out of the bundle, fails.
 shared_library() {
     local dir="$1" candidate lib=""
     for candidate in "$dir"/liboxicrypt_ffi.so.[0-9]* "$dir"/liboxicrypt_ffi.[0-9]*.dylib "$dir/oxicrypt_ffi.dll"; do
-        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+        if [ -L "$candidate" ]; then
+            case "$(readlink "$candidate")" in
+                "" | */*) echo "FAILED: $(basename "$candidate") is a symbolic link, not a file in the bundle" >&2; return 1 ;;
+            esac
+        elif [ -f "$candidate" ]; then
             [ -z "$lib" ] || { echo "FAILED: $(basename "$dir") holds more than one shared library" >&2; return 1; }
             lib="$(basename "$candidate")"
         fi
@@ -214,23 +226,25 @@ list_imports() {
 }
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+# The mode may still be inside the extract directory.
+trap 'cd / && rm -rf "$tmp"' EXIT
 
 case "$mode" in
     cli)
         [ $# -eq 3 ] || { echo "usage: release-archive-check.sh cli <archive.tar.gz> <verify-key-fingerprint>" >&2; exit 1; }
         dir="$(bundle "$2")" || exit 1
-        if [ -f "$dir/oxi" ] && [ -f "$dir/oxi.exe" ]; then
-            echo "FAILED: $(basename "$dir") holds both oxi and oxi.exe" >&2
-            exit 1
-        elif [ -f "$dir/oxi" ]; then
-            bin=./oxi
-        elif [ -f "$dir/oxi.exe" ]; then
-            bin=./oxi.exe
-        else
-            echo "FAILED: $(basename "$dir") holds neither oxi nor oxi.exe" >&2
+        # By entry name: under Git Bash `test -f oxi` also finds oxi.exe.
+        names="$(find "$dir" -mindepth 1 -maxdepth 1 \( -name oxi -o -name oxi.exe \) -exec basename {} \;)"
+        case "$(printf '%s' "$names" | grep -c .)" in
+            0) echo "FAILED: $(basename "$dir") holds neither oxi nor oxi.exe" >&2; exit 1 ;;
+            1) ;;
+            *) echo "FAILED: $(basename "$dir") holds both oxi and oxi.exe" >&2; exit 1 ;;
+        esac
+        if [ -L "$dir/$names" ]; then
+            echo "FAILED: $names is a symbolic link, not a file in the bundle" >&2
             exit 1
         fi
+        bin="./$names"
         cd "$dir" || exit 1
         failed=0
         run_program "$bin --integrity" "$bin" --integrity
@@ -270,7 +284,8 @@ case "$mode" in
                 vs="$("$vswhere" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
                     -property installationPath 2>/dev/null | tr -d '\r' | head -n 1)"
                 [ -n "$vs" ] || { echo "FAILED: no MSVC toolchain found (vswhere reported none)" >&2; exit 1; }
-                compile=(cmd //c "call \"$vs\\VC\\Auxiliary\\Build\\vcvars64.bat\" >nul && cl $cl_args")
+                printf 'call "%s\\VC\\Auxiliary\\Build\\vcvars64.bat" >nul\r\ncl %s\r\n' "$vs" "$cl_args" > "$work/build.bat"
+                compile=(cmd //c "$(native "$work/build.bat")")
             fi
             if (cd "$work" && "${compile[@]}"); then
                 # The loader finds the DLL through PATH; the program stays outside the bundle.
@@ -295,10 +310,30 @@ case "$mode" in
         fi
 
         py="$(command -v python3 || command -v python)" || { echo "FAILED: no python for the README's Python example" >&2; exit 1; }
-        printf '%s\n' "$py_source" | sed -E "s#ctypes\\.CDLL\\(\"[^\"]*\"\\)#ctypes.CDLL(\"./$lib\")#" > "$tmp/sha256_demo.py"
-        # -I keeps the bundle directory off the module search path.
-        run_program "the README's Python example" bash -c 'cd "$1" && "$2" -I "$3"' _ "$dir" "$py" "$(native "$tmp/sha256_demo.py")"
-        require "the README's Python example" "$abc_digest" || failed=1
+        py_name="$(printf '%s\n' "$py_source" | sed -nE 's/.*ctypes\.CDLL\("([^"]*)"\).*/\1/p')"
+        py_name="${py_name#./}"
+        py_ok=1
+        if [ "$(od -An -tx1 -N4 "$dir/$lib" | tr -d ' \n')" = 7f454c46 ]; then
+            # The README names the ELF library, so the name must ship.
+            case "$py_name" in
+                "" | */*) py_ok=0 ;;
+                *) [ -e "$dir/$py_name" ] || py_ok=0 ;;
+            esac
+            if [ "$py_ok" -eq 1 ]; then
+                printf '%s\n' "$py_source" > "$tmp/sha256_demo.py"
+            else
+                echo "FAILED: the README's Python example loads $py_name, which the bundle does not hold" >&2
+                failed=1
+            fi
+        else
+            printf '%s\n' "$py_source" | sed -E "s#ctypes\\.CDLL\\(\"[^\"]*\"\\)#ctypes.CDLL(\"./$lib\")#" > "$tmp/sha256_demo.py"
+            echo "note: Python example loads $lib here; the README names $py_name"
+        fi
+        if [ "$py_ok" -eq 1 ]; then
+            # -I keeps the bundle directory off the module search path.
+            run_program "the README's Python example" bash -c 'cd "$1" && "$2" -I "$3"' _ "$dir" "$py" "$(native "$tmp/sha256_demo.py")"
+            require "the README's Python example" "$abc_digest" || failed=1
+        fi
         if [ "$failed" -eq 0 ]; then
             echo "ok: the README's C and Python examples run against $lib from the extracted archive"
         fi

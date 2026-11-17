@@ -12,10 +12,13 @@
 # The stub records the bytes, content type and path of every upload, refuses
 # a second asset of the same name as GitHub does, and fails a named call on
 # request. release-archive-check.sh runs against archives whose bundle holds a
-# stub `oxi` printing chosen lines, and against malformed bundles; its
-# library mode needs a real library and is not run here. Its imports mode
-# runs against a bundle holding a shared library compiled here that calls
-# puts, with allow-lists written from `nm -D` independently of the script.
+# stub `oxi` printing chosen lines and exiting with a chosen status, and
+# against malformed bundles. Its library mode runs the README's examples
+# against a stand-in library compiled here, whose oxi_init fails when
+# STUB_OXI_INIT_FAILS is set and whose oxi_sha256 writes the digest of "abc".
+# Its imports mode runs against a bundle holding a shared library compiled
+# here that calls puts, with allow-lists written from `nm -D` independently
+# of the script.
 #
 # Every case asserts the exit status and a line of the output. Needs git,
 # ssh-keygen, python3, jq, cc, nm and readelf. Exits 0 when every case passes, 1 otherwise.
@@ -333,21 +336,22 @@ expect "missing file: usage error" 2 "not a file" \
 FP="sha256:$(printf '%064d' 0 | tr 0 a)"
 PASSED="integrity: passed — this binary matches the signature recorded inside it"
 
-# cli_archive <name> <integrity lines> <indicator>: an archive whose bundle
-# holds a stub `oxi` printing <integrity lines> for --integrity and
-# `self-test indicator: <indicator>` for `selftest --quiet`.
+# cli_archive <name> <integrity lines> <indicator> [<status> [<binary>]]: an
+# archive whose bundle holds a stub <binary> (default oxi) printing
+# <integrity lines> for --integrity and exiting <status> (default 0), and
+# printing `self-test indicator: <indicator>` for `selftest --quiet`.
 cli_archive() {
-    local d="$T/archives/$1/oxicrypt-cli-test"
+    local d="$T/archives/$1/oxicrypt-cli-test" bin="${5:-oxi}"
     mkdir -p "$d"
     {
         echo '#!/usr/bin/env bash'
-        echo 'case "$1" in'
-        printf -- '--integrity) printf %%s %q ;;\n' "$2"
-        printf 'selftest) echo "self-test indicator: %s" ;;\n' "$3"
+        echo 'case "$*" in'
+        printf -- '--integrity) printf %%s %q; exit %s ;;\n' "$2" "${4:-0}"
+        printf '"selftest --quiet") echo "self-test indicator: %s" ;;\n' "$3"
         echo '*) exit 2 ;;'
         echo 'esac'
-    } > "$d/oxi"
-    chmod +x "$d/oxi"
+    } > "$d/$bin"
+    chmod +x "$d/$bin"
     tar -czf "$T/archives/$1.tar.gz" -C "$T/archives/$1" oxicrypt-cli-test
 }
 archive_check() { "$HERE/release-archive-check.sh" "$@"; }
@@ -369,10 +373,92 @@ printf 'licence\n' > "$T/archives/nooxi/oxicrypt-cli-test/LICENSE-MIT"
 tar -czf "$T/archives/nooxi.tar.gz" -C "$T/archives/nooxi" oxicrypt-cli-test
 expect "archive cli: a bundle without oxi refused" 1 "holds neither oxi nor oxi.exe" \
     archive_check cli "$T/archives/nooxi.tar.gz" "$FP"
+cli_archive integrityexit "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS 1
+expect "archive cli: the right lines with exit 1 refused" 1 "FAILED: ./oxi --integrity exited 1" \
+    archive_check cli "$T/archives/integrityexit.tar.gz" "$FP"
+cli_archive prefixed "xx $PASSED"$'\n'"  verify key: $FP"$'\n' PASS
+expect "archive cli: a prefixed integrity line refused" 1 "did not print \"$PASSED\" exactly once" \
+    archive_check cli "$T/archives/prefixed.tar.gz" "$FP"
+cli_archive suffixed "$PASSED xx"$'\n'"  verify key: $FP"$'\n' PASS
+expect "archive cli: a suffixed integrity line refused" 1 "did not print \"$PASSED\" exactly once" \
+    archive_check cli "$T/archives/suffixed.tar.gz" "$FP"
+cli_archive exe "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS 0 oxi.exe
+expect "archive cli: a bundle holding oxi.exe passes" 0 "ok: ./oxi.exe from the extracted archive" \
+    archive_check cli "$T/archives/exe.tar.gz" "$FP"
+cli_archive both "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS
+cp "$T/archives/both/oxicrypt-cli-test/oxi" "$T/archives/both/oxicrypt-cli-test/oxi.exe"
+tar -czf "$T/archives/both.tar.gz" -C "$T/archives/both" oxicrypt-cli-test
+expect "archive cli: a bundle holding oxi and oxi.exe refused" 1 "holds both oxi and oxi.exe" \
+    archive_check cli "$T/archives/both.tar.gz" "$FP"
+cli_archive outside "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS
+mv "$T/archives/outside/oxicrypt-cli-test/oxi" "$T/archives/outside-oxi"
+ln -s "$T/archives/outside-oxi" "$T/archives/outside/oxicrypt-cli-test/oxi"
+tar -czf "$T/archives/outside.tar.gz" -C "$T/archives/outside" oxicrypt-cli-test
+expect "archive cli: oxi as a link out of the bundle refused" 1 "FAILED: oxi is a symbolic link, not a file in the bundle" \
+    archive_check cli "$T/archives/outside.tar.gz" "$FP"
 mkdir -p "$T/archives/twodirs/a" "$T/archives/twodirs/b"
 tar -czf "$T/archives/twodirs.tar.gz" -C "$T/archives/twodirs" a b
 expect "archive library: two top-level directories refused" 1 "holds 2 top-level entries, not one directory" \
     archive_check library "$T/archives/twodirs.tar.gz"
+mkdir -p "$T/archives/lonefile"
+printf 'oxi\n' > "$T/archives/lonefile/oxi"
+tar -czf "$T/archives/lonefile.tar.gz" -C "$T/archives/lonefile" oxi
+expect "archive cli: a lone top-level file refused" 1 "holds 1 top-level entries, not one directory" \
+    archive_check cli "$T/archives/lonefile.tar.gz" "$FP"
+expect "archive cli: a missing archive refused" 1 "FAILED: $T/archives/absent.tar.gz is not a file" \
+    archive_check cli "$T/archives/absent.tar.gz" "$FP"
+expect "archive cli: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh cli" \
+    archive_check cli "$T/archives/good.tar.gz"
+
+# ffi_archive <name> <soname version>: $T/ffi/<name>/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz,
+# whose bundle holds the stand-in library liboxicrypt_ffi.so.<version>, the
+# liboxicrypt_ffi.so link to it and an oxicrypt.h declaring what the README's
+# C example calls.
+ffi_archive() {
+    local d="$T/ffi/$1/oxicrypt-ffi-v9.9.9-linux-x86_64"
+    mkdir -p "$d"
+    cat > "$d/oxicrypt.h" <<'H'
+#include <stdint.h>
+typedef enum { OXI_RESULT_OK = 0 } OxiResult;
+int oxi_init(int profile);
+int oxi_sha256(const uint8_t *data_ptr, uintptr_t data_len, uint8_t *out);
+H
+    cc -shared -fPIC -Wl,-soname,"liboxicrypt_ffi.so.$2" -I"$d" -o "$d/liboxicrypt_ffi.so.$2" "$T/ffi/stub.c"
+    ln -s "liboxicrypt_ffi.so.$2" "$d/liboxicrypt_ffi.so"
+    tar -czf "$T/ffi/$1/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/$1" oxicrypt-ffi-v9.9.9-linux-x86_64
+}
+mkdir -p "$T/ffi"
+{
+    echo '#include <stdlib.h>'
+    echo '#include <string.h>'
+    echo '#include "oxicrypt.h"'
+    # SHA-256("abc"), FIPS 180-4 Appendix B.1.
+    printf 'static const uint8_t abc[32] = { %s };\n' \
+        "$(printf '%s' ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad | sed -E 's/(..)/0x\1, /g')"
+    echo 'int oxi_init(int profile) { (void)profile; return getenv("STUB_OXI_INIT_FAILS") ? 1 : 0; }'
+    echo 'int oxi_sha256(const uint8_t *d, uintptr_t n, uint8_t *out) { (void)d; (void)n; memcpy(out, abc, 32); return 0; }'
+} > "$T/ffi/stub.c"
+ffi_archive one 1
+ffi_archive eight 8
+expect "archive library: the README's examples pass against the stand-in" 0 \
+    "ok: the README's C and Python examples run against liboxicrypt_ffi.so.1 from the extracted archive" \
+    archive_check library "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+out_initfail="$(STUB_OXI_INIT_FAILS=1 archive_check library "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
+    && status=0 || status=$?
+check "archive library: a failing oxi_init exits 1" [ "$status" = 1 ]
+check "archive library: a failing oxi_init fails the C example" \
+    grep -qxF "FAILED: the README's C example exited 1" <<<"$out_initfail"
+check "archive library: a failing oxi_init fails the Python example" \
+    grep -qxF "FAILED: the README's Python example exited 1" <<<"$out_initfail"
+expect "archive library: a bundle without the README's library name refused" 1 \
+    "FAILED: the README's Python example loads liboxicrypt_ffi.so.1, which the bundle does not hold" \
+    archive_check library "$T/ffi/eight/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+mkdir -p "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64"
+ln -s "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1" "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64/liboxicrypt_ffi.so.1"
+tar -czf "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/linked" oxicrypt-ffi-v9.9.9-linux-x86_64
+expect "archive library: a versioned library that is a link out of the bundle refused" 1 \
+    "FAILED: liboxicrypt_ffi.so.1 is a symbolic link, not a file in the bundle" \
+    archive_check library "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
 
 IMP="$T/imports/oxicrypt-ffi-v9.9.9-linux-x86_64"
 mkdir -p "$IMP" "$T/allow/exact" "$T/allow/missing" "$T/allow/extra" "$T/allow/none"
@@ -399,14 +485,18 @@ expect "archive imports: no allow-list refused" 1 "FAILED: no allow-list $T/allo
 # Runs against a bundle holding a stand-in library: an ELF header, a slot of
 # non-zero bytes between the two magics at 0x10000, and filler. The NDK's
 # clang and llvm-readelf are stubs; the stub clang records its arguments and
-# writes a placeholder harness. The stub signer reports that slot and two
-# hashed ranges for --show, and for --verify accepts the signed library,
-# refuses the unsigned template copy as version 0 and anything else as
-# SignatureInvalid. The stub `adb` keeps every pushed file and answers a
-# harness run by the bytes of the library it names, as the module would:
-# the signed library operational, its unsigned template copy refused with
-# status 3, anything else refused with status 2. $ADB_LIE makes it report
-# the signed library refused or the tampered one operational.
+# writes a placeholder harness, and the stub llvm-readelf reports the machine
+# $STUB_READELF_MACHINE (default AArch64). The stub signer reports that slot
+# and two hashed ranges for --show, and for --verify accepts the signed
+# library, refuses the unsigned template copy as version 0 and anything else
+# as SignatureInvalid; $STUB_SIGN_ACCEPT_ALL makes it accept everything and
+# $STUB_SIGN_NO_DIAGNOSIS refuse the unsigned copy as SignatureInvalid. The
+# stub `adb` keeps every pushed file and answers a harness run by the bytes
+# of the library it names, as the module would: the signed library
+# operational, its unsigned template copy refused with status 3, anything
+# else refused with status 2. $ADB_LIE makes it report the signed library
+# refused, the tampered one operational, the unsigned one operational, or the
+# unsigned one refused with status 10.
 
 mkdir -p "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64" "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 python3 - "$T/android" <<'PY'
@@ -422,6 +512,19 @@ open(f"{d}/template.so", "wb").write(lib)
 PY
 ln -s liboxicrypt_ffi.so.0 "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so"
 tar -czf "$T/android/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz" -C "$T/android/bundle" oxicrypt-ffi-v9.9.9-android-aarch64
+mkdir -p "$T/android/x86/oxicrypt-ffi-v9.9.9-android-x86_64"
+cp "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0" "$T/android/x86/oxicrypt-ffi-v9.9.9-android-x86_64/"
+tar -czf "$T/android/oxicrypt-ffi-v9.9.9-android-x86_64.tar.gz" -C "$T/android/x86" oxicrypt-ffi-v9.9.9-android-x86_64
+# The same library with its footer magic overwritten.
+mkdir -p "$T/android/nofooter/oxicrypt-ffi-v9.9.9-android-aarch64"
+python3 - "$T/android" <<'PY2'
+import sys
+d = sys.argv[1]
+lib = bytearray(open(f"{d}/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0", "rb").read())
+lib[0x1fff0:0x20000] = bytes(16)
+open(f"{d}/nofooter/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0", "wb").write(lib)
+PY2
+tar -czf "$T/android/nofooter/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz" -C "$T/android/nofooter" oxicrypt-ffi-v9.9.9-android-aarch64
 export ADB_SIGNED_SHA ADB_UNSIGNED_SHA
 ADB_SIGNED_SHA="$(sha "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0")"
 ADB_UNSIGNED_SHA="$(sha "$T/android/template.so")"
@@ -436,7 +539,7 @@ done
 STUB
 cat > "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" <<'STUB'
 #!/usr/bin/env bash
-echo "  Machine:                           AArch64"
+echo "  Machine:                           ${STUB_READELF_MACHINE:-AArch64}"
 STUB
 cat > "$T/bin/stub-sign" <<'STUB'
 #!/usr/bin/env bash
@@ -447,8 +550,9 @@ case "$1" in
         echo "    [0] Plain rva 0x00000000 file 0x00000000 len 65536 hole 0"
         echo "    [1] Plain rva 0x00020000 file 0x00020000 len 65536 hole 0" ;;
     --verify)
+        [ -n "${STUB_SIGN_ACCEPT_ALL:-}" ] && { echo "verify ok: $2"; exit 0; }
         [ "$sha" = "$ADB_SIGNED_SHA" ] && { echo "verify ok: $2"; exit 0; }
-        [ "$sha" = "$ADB_UNSIGNED_SHA" ] && { echo "$2: slot invalid: slot version 0: the slot holds no signature"; exit 2; }
+        [ "$sha" = "$ADB_UNSIGNED_SHA" ] && [ -z "${STUB_SIGN_NO_DIAGNOSIS:-}" ] && { echo "$2: slot invalid: slot version 0: the slot holds no signature"; exit 2; }
         echo "$2: SignatureInvalid: the file does not match its signature"; exit 2 ;;
 esac
 STUB
@@ -472,12 +576,14 @@ case "$*" in
     */harness" "*)
         sha="$(sha256sum < "$ADB_STUB/dev/$(basename "$2")" | cut -d' ' -f1)"
         if { [ "$sha" = "$ADB_SIGNED_SHA" ] && [ "${ADB_LIE:-}" != signed-refused ]; } \
-            || { [ "$sha" != "$ADB_SIGNED_SHA" ] && [ "$sha" != "$ADB_UNSIGNED_SHA" ] && [ "${ADB_LIE:-}" = tampered-operational ]; }; then
+            || { [ "$sha" != "$ADB_SIGNED_SHA" ] && [ "$sha" != "$ADB_UNSIGNED_SHA" ] && [ "${ADB_LIE:-}" = tampered-operational ]; } \
+            || { [ "$sha" = "$ADB_UNSIGNED_SHA" ] && [ "${ADB_LIE:-}" = unsigned-operational ]; }; then
             echo "oxi_init=0 oxi_is_operational=1 oxi_integrity_status=1"
             echo "library: operational"
             exit 0
         fi
         if [ "$sha" = "$ADB_UNSIGNED_SHA" ]; then status=3; else status=2; fi
+        [ "$sha" != "$ADB_UNSIGNED_SHA" ] || [ "${ADB_LIE:-}" != unsigned-status-10 ] || status=10
         echo "oxi_init=-1 oxi_is_operational=0 oxi_integrity_status=$status"
         echo "library: refused by the module's power-up tests"
         exit 1 ;;
@@ -486,13 +592,14 @@ esac
 STUB
 chmod +x "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/"* "$T/bin/stub-sign" "$T/bin/adb"
 
-# device_check <name>: runs the check with a fresh stub state in $T/adb-<name>.
+# device_check <name> [<archive>]: runs the check on <archive> (default the
+# aarch64 bundle) with a fresh stub state in $T/adb-<name>.
 device_check() {
     export ADB_STUB="$T/adb-$1"
     mkdir -p "$ADB_STUB"
     : > "$ADB_STUB/calls"
     env PATH="$T/bin:$PATH" ANDROID_SERIAL=stub-device ANDROID_NDK_HOME="$T/ndk" \
-        "$HERE/android-device-check.sh" "$T/android/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz" "$T/bin/stub-sign"
+        "$HERE/android-device-check.sh" "${2:-$T/android/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz}" "$T/bin/stub-sign"
 }
 
 unset ADB_ABI ADB_LIE
@@ -521,6 +628,35 @@ expect "device check: another ABI refused" 1 "the device's ABI is x86_64; oxicry
     device_check abi
 check "device check: another ABI: nothing pushed" bash -c "! grep -q '^push' '$T/adb-abi/calls'"
 unset ADB_ABI
+
+export ADB_LIE=unsigned-operational
+expect "device check: the unsigned control operational fails" 1 \
+    "verdict FAILED: the unsigned control is refused as unsigned" device_check unsignedok
+export ADB_LIE=unsigned-status-10
+expect "device check: the unsigned control refused as damage fails" 1 \
+    "verdict FAILED: the unsigned control is refused as unsigned" device_check unsigned10
+unset ADB_LIE
+
+export STUB_SIGN_ACCEPT_ALL=1
+expect "device check: a signer accepting the unsigned control fails" 1 \
+    "FAILED: $T/bin/stub-sign --verify accepts the unsigned control" device_check acceptall
+unset STUB_SIGN_ACCEPT_ALL
+export STUB_SIGN_NO_DIAGNOSIS=1
+expect "device check: a signer refusing the unsigned control for another reason fails" 1 \
+    "--verify refuses the unsigned control without saying it holds no signature" device_check nodiagnosis
+unset STUB_SIGN_NO_DIAGNOSIS
+expect "device check: a library without the footer magic fails" 1 "no slot magics at 0x10000" \
+    device_check nofooter "$T/android/nofooter/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz"
+
+export STUB_READELF_MACHINE="Advanced Micro Devices X86-64"
+expect "device check: a harness for another machine refused" 1 "the harness is not an ELF for AArch64" \
+    device_check machine
+cp "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" \
+    "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang"
+export ADB_ABI=x86_64
+expect "device check: an x86_64 bundle passes" 0 "verdict ok: the tampered control is refused as not matching its signature" \
+    device_check x86 "$T/android/oxicrypt-ffi-v9.9.9-android-x86_64.tar.gz"
+unset ADB_ABI STUB_READELF_MACHINE
 
 # --- an inherited GIT_DIR ----------------------------------------------------
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
