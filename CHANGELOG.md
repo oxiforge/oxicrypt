@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The release workflow extracts each CLI archive it builds and runs `oxi --integrity` and `oxi selftest --quiet` from the extracted bundle, requiring both pass lines and the leg's verify-key fingerprint. (#300)
+- The release workflow runs the README's C and Python examples against each extracted library archive on the Linux, macOS and Windows legs, requiring the SHA-256 of `"abc"` from each. (#300)
+- Loader examples in Go (cgo), Node.js (`koffi`), Java (Foreign Function & Memory API) and C# (P/Invoke) under `examples/`, each with a `run.sh <bundle-dir>`; the release workflow runs each one whose toolchain the leg's runner has, and fails if one the leg lists as required cannot run. (#301)
+- Every shipped shared library's run-time imports, Android included, are checked against a committed allow-list in `scripts/release-imports/`; an import the list does not name fails the release build.
+- `scripts/android-device-check.sh` loads a release's Android library on a connected device and requires the unsigned copy refused, the signed copy operational and the tampered copy refused. (#302)
+- The CI `c-integration` job runs the unsigned, signed and tampered Linux x86_64 library through `release-load-check.sh library`, requiring integrity statuses 3, 1 and 2.
+
+### Changed
+
+- `scripts/git-hooks/pre-push` run with nothing on stdin scans `HEAD`, and runs no scan when every pushed ref is a deletion. (#299)
+
 ## [0.26.1] - 2026-11-14
 
 ### Added
