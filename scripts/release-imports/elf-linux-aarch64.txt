@@ -1,0 +1,71 @@
+# Run-time imports allowed for liboxicrypt_ffi.so.1 in the linux-aarch64 archive.
+# Read by `release-archive-check.sh imports`, which fails the release build
+# on any ELF import not named here. A new import is a deliberate change,
+# made in this file in the commit that introduces it, with its reason.
+# Generated from the liboxicrypt_ffi.so.1 of oxicrypt-ffi v0.26.1.
+
+# glibc's shared objects. The 2.17 glibc floor predates 2.34, which merged
+# libpthread and libdl into libc.
+needs libc.so.6
+needs libdl.so.2
+needs libpthread.so.0
+
+# The module's integrity test and image reader: locating the module's own
+# image and reading it back from memory.
+dladdr@GLIBC_2.17
+getauxval@GLIBC_2.17
+getpid@GLIBC_2.17
+pread64@GLIBC_2.17
+process_vm_readv@GLIBC_2.17
+syscall@GLIBC_2.17
+
+# The statically linked LLVM libunwind: its diagnostics on a corrupt unwind
+# table, and the program header walk that finds the unwind tables. No
+# libgcc_s is needed because the unwinder is linked in.
+abort@GLIBC_2.17
+dl_iterate_phdr@GLIBC_2.17
+fflush@GLIBC_2.17
+fprintf@GLIBC_2.17
+fwrite@GLIBC_2.17
+snprintf@GLIBC_2.17
+stderr@GLIBC_2.17
+
+# The Rust standard library. Unversioned entries are weak symbols it looks for
+# and does without when glibc lacks them; __xstat64 and __fxstat64 are how
+# glibc before 2.33 exports stat.
+__cxa_thread_atexit_impl
+__errno_location@GLIBC_2.17
+__fxstat64@GLIBC_2.17
+__xpg_strerror_r@GLIBC_2.17
+__xstat64@GLIBC_2.17
+bcmp@GLIBC_2.17
+calloc@GLIBC_2.17
+close@GLIBC_2.17
+dlsym@GLIBC_2.17
+free@GLIBC_2.17
+getcwd@GLIBC_2.17
+getenv@GLIBC_2.17
+gettid
+lseek64@GLIBC_2.17
+malloc@GLIBC_2.17
+memcpy@GLIBC_2.17
+memmove@GLIBC_2.17
+memset@GLIBC_2.17
+mmap64@GLIBC_2.17
+munmap@GLIBC_2.17
+open64@GLIBC_2.17
+posix_memalign@GLIBC_2.17
+pthread_key_create@GLIBC_2.17
+pthread_key_delete@GLIBC_2.17
+pthread_rwlock_rdlock@GLIBC_2.17
+pthread_rwlock_unlock@GLIBC_2.17
+pthread_rwlock_wrlock@GLIBC_2.17
+pthread_setspecific@GLIBC_2.17
+read@GLIBC_2.17
+readlink@GLIBC_2.17
+realloc@GLIBC_2.17
+realpath@GLIBC_2.17
+statx
+strlen@GLIBC_2.17
+write@GLIBC_2.17
+writev@GLIBC_2.17

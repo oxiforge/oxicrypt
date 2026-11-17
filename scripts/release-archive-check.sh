@@ -5,6 +5,7 @@
 #
 #   release-archive-check.sh cli <archive.tar.gz> <verify-key-fingerprint>
 #   release-archive-check.sh library <archive.tar.gz>
+#   release-archive-check.sh imports <archive.tar.gz> <allow-list-dir>
 #
 # Each archive must hold exactly one top-level directory, the bundle.
 #
@@ -27,6 +28,29 @@
 #          with MSVC `cl` instead of `cc`: the one on PATH, or else the
 #          toolchain `vswhere` reports, set up by its vcvars64.bat. That
 #          branch is exercised only by the release workflow's Windows leg.
+# imports  The bundle's shared library, found as in `library`, imports only
+#          what its allow-list names, so a run-time dependency nobody
+#          declared fails the build. The format comes from the library's
+#          magic bytes and the platform from the archive name, which picks
+#          <allow-list-dir>/<format>-<platform>.txt, e.g. elf-linux-x86_64.txt.
+#          One import per line:
+#              ELF     symbol@VERSION (unversioned if the library asks for no
+#                      version) from `nm -D --undefined-only`, and
+#                      `needs <soname>` per NEEDED entry from `readelf -d`
+#              PE      <dll, lower case>!<symbol> per import from
+#                      `objdump -p`, and `needs <dll, lower case>` per DLL
+#              Mach-O  each undefined symbol from `nm -u`, and
+#                      `needs <install name>` per dylib `otool -L` lists
+#                      other than the library's own
+#          The llvm- tool of the same name stands in for a missing one, and
+#          `llvm-readobj --coff-imports` for objdump. The Mach-O branch is
+#          exercised only by the release workflow's macOS legs. The
+#          allow-list holds one entry per line; `#` starts a comment, so an
+#          entry may carry `  # reason`. An import the allow-list does not
+#          name fails the check. An entry the library no longer imports is
+#          reported as a note and does not fail it. Names a library looks
+#          up at run time through dlsym or GetProcAddress are not imports
+#          and are not checked.
 #
 # Each check requires the program's exit status AND its verdict lines, each
 # matched as a whole line exactly once, so neither a lost status nor a stray
@@ -110,6 +134,85 @@ readme_cc_line() {
     ' "$root/README.md"
 }
 
+# shared_library <dir>: prints the name of the one shared library <dir> holds,
+# not counting symbolic links to it.
+shared_library() {
+    local dir="$1" candidate lib=""
+    for candidate in "$dir"/liboxicrypt_ffi.so.[0-9]* "$dir"/liboxicrypt_ffi.[0-9]*.dylib "$dir/oxicrypt_ffi.dll"; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+            [ -z "$lib" ] || { echo "FAILED: $(basename "$dir") holds more than one shared library" >&2; return 1; }
+            lib="$(basename "$candidate")"
+        fi
+    done
+    [ -n "$lib" ] || { echo "FAILED: $(basename "$dir") holds no shared library" >&2; return 1; }
+    printf '%s' "$lib"
+}
+
+# tool <name>: prints <name>, or llvm-<name> when only that is on PATH.
+tool() {
+    if command -v "$1" >/dev/null 2>&1; then
+        printf '%s' "$1"
+    elif command -v "llvm-$1" >/dev/null 2>&1; then
+        printf 'llvm-%s' "$1"
+    else
+        echo "FAILED: neither $1 nor llvm-$1 is on PATH" >&2
+        return 1
+    fi
+}
+
+# list_imports <elf|pe|macho> <library> <mach-o arch>: prints the library's
+# imports, one per line, in the forms the header lists. Returns non-zero,
+# naming the tool, when a tool fails to read the library.
+list_imports() {
+    local format="$1" lib="$2" arch="$3" nm readelf otool listing id
+    case "$format" in
+        elf)
+            nm="$(tool nm)" && readelf="$(tool readelf)" || return 1
+            listing="$("$nm" -D --undefined-only "$lib")" || { echo "FAILED: $nm could not read $lib" >&2; return 1; }
+            printf '%s\n' "$listing" | awk 'NF { print $NF }'
+            listing="$("$readelf" -d "$lib")" || { echo "FAILED: $readelf could not read $lib" >&2; return 1; }
+            printf '%s\n' "$listing" | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/needs \1/p'
+            ;;
+        pe)
+            if command -v objdump >/dev/null 2>&1; then
+                listing="$(objdump -p "$lib")" || { echo "FAILED: objdump could not read $lib" >&2; return 1; }
+                # Each `DLL Name:` line is followed by a column header and one
+                # row per import. Newer binutils add an Ordinal column before
+                # the hint; a row without a name is an import by ordinal.
+                printf '%s\n' "$listing" | tr -d '\r' | awk '
+                    /^\tDLL Name: / { dll = tolower($3); print "needs " dll; col = 0; next }
+                    dll != "" && /^\tvma:/ { col = ($0 ~ /Ordinal/) ? 4 : 3; next }
+                    dll != "" && col && NF == 0 { dll = ""; col = 0; next }
+                    dll != "" && col { if (NF >= col) print dll "!" $col; else print dll "!ordinal-" $2 }
+                '
+            elif command -v llvm-readobj >/dev/null 2>&1; then
+                listing="$(llvm-readobj --coff-imports "$lib")" || { echo "FAILED: llvm-readobj could not read $lib" >&2; return 1; }
+                printf '%s\n' "$listing" | tr -d '\r' | awk '
+                    /^Import \{/ { inside = 1; next }
+                    /^\}/ { inside = 0; dll = ""; next }
+                    inside && /^  Name: / { dll = tolower($2); print "needs " dll; next }
+                    inside && dll != "" && /^  Symbol: / { print dll "!" $2 }
+                '
+            else
+                echo "FAILED: neither objdump nor llvm-readobj is on PATH" >&2
+                return 1
+            fi
+            ;;
+        macho)
+            nm="$(tool nm)" && otool="$(tool otool)" || return 1
+            listing="$("$nm" -u -arch "$arch" "$lib")" || { echo "FAILED: $nm could not read $lib" >&2; return 1; }
+            printf '%s\n' "$listing" | awk 'NF && !/:$/ { print $NF }'
+            # `otool -L` lists the library's own install name with the dylibs
+            # it loads; `otool -D` prints that name after a header line.
+            id="$("$otool" -D "$lib" | tail -n +2)" || { echo "FAILED: $otool could not read $lib" >&2; return 1; }
+            listing="$("$otool" -L "$lib")" || { echo "FAILED: $otool could not read $lib" >&2; return 1; }
+            printf '%s\n' "$listing" | tail -n +2 | sed -E 's/^[[:space:]]+//; s/ \(compatibility version.*$//' \
+                | awk -v id="$id" 'NF && $0 != id { print "needs " $0 }'
+            ;;
+    esac
+    return 0
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -144,14 +247,7 @@ case "$mode" in
     library)
         [ $# -eq 2 ] || { echo "usage: release-archive-check.sh library <archive.tar.gz>" >&2; exit 1; }
         dir="$(bundle "$2")" || exit 1
-        lib=""
-        for candidate in "$dir"/liboxicrypt_ffi.so.[0-9]* "$dir"/liboxicrypt_ffi.[0-9]*.dylib "$dir/oxicrypt_ffi.dll"; do
-            if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
-                [ -z "$lib" ] || { echo "FAILED: $(basename "$dir") holds more than one shared library" >&2; exit 1; }
-                lib="$(basename "$candidate")"
-            fi
-        done
-        [ -n "$lib" ] || { echo "FAILED: $(basename "$dir") holds no shared library" >&2; exit 1; }
+        lib="$(shared_library "$dir")" || exit 1
         c_source="$(readme_block c 'oxi_sha256((const unsigned char *)"abc"')"
         [ -n "$c_source" ] || { echo "FAILED: no C example in README.md" >&2; exit 1; }
         py_source="$(readme_block python 'ctypes.CDLL(')"
@@ -208,8 +304,46 @@ case "$mode" in
         fi
         exit "$failed"
         ;;
+    imports)
+        [ $# -eq 3 ] || { echo "usage: release-archive-check.sh imports <archive.tar.gz> <allow-list-dir>" >&2; exit 1; }
+        dir="$(bundle "$2")" || exit 1
+        lib="$(shared_library "$dir")" || exit 1
+        platform="$(basename "$2" | sed -nE 's/.*-((linux|windows|macos)-(x86_64|aarch64))\.tar\.gz$/\1/p')"
+        [ -n "$platform" ] || { echo "FAILED: $(basename "$2") does not end in <os>-<arch>.tar.gz" >&2; exit 1; }
+        magic="$(od -An -tx1 -N4 "$dir/$lib" | tr -d ' \n')"
+        case "$magic" in
+            7f454c46) format=elf ;;
+            4d5a*) format=pe ;;
+            cffaedfe | cafebabe) format=macho ;;
+            *) echo "FAILED: $lib starts with $magic, which is not ELF, PE or Mach-O" >&2; exit 1 ;;
+        esac
+        list="$3/$format-$platform.txt"
+        [ -f "$list" ] || { echo "FAILED: no allow-list $list" >&2; exit 1; }
+        arch="${platform#*-}"
+        [ "$arch" != aarch64 ] || arch=arm64
+        found="$(list_imports "$format" "$(native "$dir/$lib")" "$arch")" || exit 1
+        found="$(printf '%s\n' "$found" | tr -d '\r' | awk 'NF' | LC_ALL=C sort -u)"
+        n="$(printf '%s\n' "$found" | grep -c . || true)"
+        # A tool that prints nothing must not read as a library that imports nothing.
+        [ "$n" -gt 0 ] || { echo "FAILED: found no imports in $lib" >&2; exit 1; }
+        allowed="$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' "$list" | awk 'NF' | LC_ALL=C sort -u)"
+        failed=0
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            echo "FAILED: $lib imports $entry, which the allow-list $list does not name" >&2
+            failed=1
+        done < <(LC_ALL=C comm -23 <(printf '%s\n' "$found") <(printf '%s\n' "$allowed"))
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            echo "note: $entry is allowed but not imported"
+        done < <(LC_ALL=C comm -13 <(printf '%s\n' "$found") <(printf '%s\n' "$allowed"))
+        if [ "$failed" -eq 0 ]; then
+            echo "ok: $lib imports only what $list allows ($n imports)"
+        fi
+        exit "$failed"
+        ;;
     *)
-        echo "usage: release-archive-check.sh cli|library ..." >&2
+        echo "usage: release-archive-check.sh cli|library|imports ..." >&2
         exit 1
         ;;
 esac

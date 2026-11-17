@@ -13,10 +13,12 @@
 # a second asset of the same name as GitHub does, and fails a named call on
 # request. release-archive-check.sh runs against archives whose bundle holds a
 # stub `oxi` printing chosen lines, and against malformed bundles; its
-# library mode needs a real library and is not run here.
+# library mode needs a real library and is not run here. Its imports mode
+# runs against a bundle holding a shared library compiled here that calls
+# puts, with allow-lists written from `nm -D` independently of the script.
 #
 # Every case asserts the exit status and a line of the output. Needs git,
-# ssh-keygen, python3 and jq. Exits 0 when every case passes, 1 otherwise.
+# ssh-keygen, python3, jq, cc, nm and readelf. Exits 0 when every case passes, 1 otherwise.
 set -euo pipefail
 
 # A git hook exports GIT_DIR, GIT_INDEX_FILE and their relatives to every
@@ -371,6 +373,27 @@ mkdir -p "$T/archives/twodirs/a" "$T/archives/twodirs/b"
 tar -czf "$T/archives/twodirs.tar.gz" -C "$T/archives/twodirs" a b
 expect "archive library: two top-level directories refused" 1 "holds 2 top-level entries, not one directory" \
     archive_check library "$T/archives/twodirs.tar.gz"
+
+IMP="$T/imports/oxicrypt-ffi-v9.9.9-linux-x86_64"
+mkdir -p "$IMP" "$T/allow/exact" "$T/allow/missing" "$T/allow/extra" "$T/allow/none"
+printf '#include <stdio.h>\nint f(void) { return puts("f"); }\n' | cc -shared -fPIC -o "$IMP/liboxicrypt_ffi.so.9" -x c -
+tar -czf "$IMP.tar.gz" -C "$T/imports" oxicrypt-ffi-v9.9.9-linux-x86_64
+{
+    echo "# every import the stub library has"
+    nm -D --undefined-only "$IMP/liboxicrypt_ffi.so.9" | awk '{ print $NF "  # from nm" }'
+    echo "needs libc.so.6"
+} > "$T/allow/exact/elf-linux-x86_64.txt"
+check "archive imports: the stub library imports puts" grep -q '^puts@GLIBC_' "$T/allow/exact/elf-linux-x86_64.txt"
+grep -v '^puts@' "$T/allow/exact/elf-linux-x86_64.txt" > "$T/allow/missing/elf-linux-x86_64.txt"
+{ cat "$T/allow/exact/elf-linux-x86_64.txt"; echo "gone@GLIBC_2.2.5  # no longer imported"; } > "$T/allow/extra/elf-linux-x86_64.txt"
+expect "archive imports: every import allowed passes" 0 "ok: liboxicrypt_ffi.so.9 imports only what $T/allow/exact/elf-linux-x86_64.txt allows" \
+    archive_check imports "$IMP.tar.gz" "$T/allow/exact"
+expect "archive imports: an import the allow-list lacks refused" 1 "FAILED: liboxicrypt_ffi.so.9 imports puts@GLIBC_" \
+    archive_check imports "$IMP.tar.gz" "$T/allow/missing"
+expect "archive imports: an allowed entry not imported is a note" 0 "note: gone@GLIBC_2.2.5 is allowed but not imported" \
+    archive_check imports "$IMP.tar.gz" "$T/allow/extra"
+expect "archive imports: no allow-list refused" 1 "FAILED: no allow-list $T/allow/none/elf-linux-x86_64.txt" \
+    archive_check imports "$IMP.tar.gz" "$T/allow/none"
 
 # --- android-device-check.sh ----------------------------------------------
 # Runs against a bundle holding a stand-in library: an ELF header, a slot of

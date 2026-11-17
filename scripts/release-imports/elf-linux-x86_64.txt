@@ -1,0 +1,73 @@
+# Run-time imports allowed for liboxicrypt_ffi.so.1 in the linux-x86_64 archive.
+# Read by `release-archive-check.sh imports`, which fails the release build
+# on any ELF import not named here. A new import is a deliberate change,
+# made in this file in the commit that introduces it, with its reason.
+# Generated from the liboxicrypt_ffi.so.1 of oxicrypt-ffi v0.26.1.
+
+# glibc's shared objects. The 2.17 glibc floor predates 2.34, which merged
+# libpthread and libdl into libc.
+needs ld-linux-x86-64.so.2
+needs libc.so.6
+needs libdl.so.2
+needs libpthread.so.0
+
+# The module's integrity test and image reader: locating the module's own
+# image and reading it back from memory.
+dladdr@GLIBC_2.2.5
+getauxval@GLIBC_2.16
+getpid@GLIBC_2.2.5
+pread64@GLIBC_2.2.5
+process_vm_readv@GLIBC_2.15
+syscall@GLIBC_2.2.5
+
+# The statically linked LLVM libunwind: its diagnostics on a corrupt unwind
+# table, and the program header walk that finds the unwind tables. No
+# libgcc_s is needed because the unwinder is linked in.
+abort@GLIBC_2.2.5
+dl_iterate_phdr@GLIBC_2.2.5
+fflush@GLIBC_2.2.5
+fprintf@GLIBC_2.2.5
+fwrite@GLIBC_2.2.5
+snprintf@GLIBC_2.2.5
+stderr@GLIBC_2.2.5
+
+# The Rust standard library. Unversioned entries are weak symbols it looks for
+# and does without when glibc lacks them; __xstat64 and __fxstat64 are how
+# glibc before 2.33 exports stat.
+__cxa_thread_atexit_impl
+__errno_location@GLIBC_2.2.5
+__fxstat64@GLIBC_2.2.5
+__tls_get_addr@GLIBC_2.3
+__xpg_strerror_r@GLIBC_2.3.4
+__xstat64@GLIBC_2.2.5
+bcmp@GLIBC_2.2.5
+calloc@GLIBC_2.2.5
+close@GLIBC_2.2.5
+dlsym@GLIBC_2.2.5
+free@GLIBC_2.2.5
+getcwd@GLIBC_2.2.5
+getenv@GLIBC_2.2.5
+gettid
+lseek64@GLIBC_2.2.5
+malloc@GLIBC_2.2.5
+memcpy@GLIBC_2.14
+memmove@GLIBC_2.2.5
+memset@GLIBC_2.2.5
+mmap64@GLIBC_2.2.5
+munmap@GLIBC_2.2.5
+open64@GLIBC_2.2.5
+posix_memalign@GLIBC_2.2.5
+pthread_key_create@GLIBC_2.2.5
+pthread_key_delete@GLIBC_2.2.5
+pthread_rwlock_rdlock@GLIBC_2.2.5
+pthread_rwlock_unlock@GLIBC_2.2.5
+pthread_rwlock_wrlock@GLIBC_2.2.5
+pthread_setspecific@GLIBC_2.2.5
+read@GLIBC_2.2.5
+readlink@GLIBC_2.2.5
+realloc@GLIBC_2.2.5
+realpath@GLIBC_2.3
+statx
+strlen@GLIBC_2.2.5
+write@GLIBC_2.2.5
+writev@GLIBC_2.2.5

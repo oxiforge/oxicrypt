@@ -760,6 +760,12 @@ jobs:
         shell: bash
         run: bash scripts/release-archive-check.sh library "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz"
 
+      # The library's run-time dependencies are the ones its allow-list declares.
+      - name: Check the staged library's imports against its allow-list
+        if: matrix.load == 'host'
+        shell: bash
+        run: bash scripts/release-archive-check.sh imports "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz" scripts/release-imports
+
       - name: Stage the CLI
         if: matrix.cli != ''
         shell: bash
