@@ -754,6 +754,12 @@ jobs:
           mkdir -p dist
           mv "${DIR}.tar.gz" "${DIR}.tar.gz.sha256" dist/
 
+      # The library archive that ships is the one the README's examples ran against.
+      - name: Run the staged library archive — the README's C and Python examples against the extracted bundle
+        if: matrix.load == 'host'
+        shell: bash
+        run: bash scripts/release-archive-check.sh library "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz"
+
       - name: Stage the CLI
         if: matrix.cli != ''
         shell: bash
@@ -817,6 +823,12 @@ jobs:
           cat "${DIR}.tar.gz.sha256"
           mkdir -p dist
           mv "${DIR}.tar.gz" "${DIR}.tar.gz.sha256" dist/
+
+      # The CLI archive that ships is the one whose oxi ran here.
+      - name: Run the staged CLI archive — oxi from the extracted bundle
+        if: matrix.cli != ''
+        shell: bash
+        run: bash scripts/release-archive-check.sh cli "dist/oxicrypt-cli-${LABEL}-${{ matrix.name }}.tar.gz" "$INTEGRITY_KEY_FINGERPRINT"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
