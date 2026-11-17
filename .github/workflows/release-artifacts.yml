@@ -766,6 +766,12 @@ jobs:
         shell: bash
         run: bash scripts/release-archive-check.sh imports "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz" scripts/release-imports
 
+      # Every shipped library runs every example whose toolchain the runner has.
+      - name: Run the examples against the staged library archive
+        if: matrix.load == 'host'
+        shell: bash
+        run: bash scripts/release-archive-check.sh examples "dist/oxicrypt-ffi-${LABEL}-${{ matrix.name }}.tar.gz"
+
       - name: Stage the CLI
         if: matrix.cli != ''
         shell: bash
