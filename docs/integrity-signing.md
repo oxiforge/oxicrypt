@@ -639,6 +639,13 @@ Each signed artifact is checked twice before it is staged: offline with
 and by loading it. The library is loaded and `oxi_init` called, and `oxi` is
 run, on the runner that built it; Android x86_64 is loaded on an emulator. The
 same artifact as linked, unsigned, must be refused, which shows the test runs.
+A copy of each signed ELF or PE artifact with one byte flipped inside the
+extent must be refused with integrity status 2 (`SignatureInvalid`), so a
+tampered shared library is observed refused on Linux x86_64 and arm64, Windows
+x86_64 and the Android x86_64 emulator. The integrity image probe workflow
+observes the same for Mach-O libraries, on copies code-signed again after the
+flip. Pull requests observe it for the Linux x86_64 library in the
+`c-integration` job of `.github/workflows/ci.yml`.
 Each check requires both the harness's exit status and its verdict line.
 Android arm64 is verified offline only, because no runner the workflow uses
 executes it, and its provenance file says so. Before a draft release is

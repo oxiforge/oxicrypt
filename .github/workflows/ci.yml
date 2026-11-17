@@ -379,6 +379,16 @@ jobs:
       - name: Refusal test against unsigned artifacts
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make -C crates/oxicrypt-ffi/tests/c-integration SIGNING_KEY="$INTEGRITY_SIGNING_KEY" test-unsigned
+      # Requires the module to refuse a signed copy with one byte flipped inside its extent (status 2).
+      - name: Unsigned, signed and tampered library through oxi_init
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cc -O1 -Wall -Wextra -o "$RUNNER_TEMP/harness" .github/probes/ffi-operational.c -ldl
+          bash scripts/release-load-check.sh library "$RUNNER_TEMP/harness" \
+            target/release/c-integration/unsigned/liboxicrypt_ffi.so \
+            target/release/c-integration/signed/liboxicrypt_ffi.so \
+            target/release/oxicrypt-integrity-sign
 
   # The release-build guard, on a second machine.
   #
