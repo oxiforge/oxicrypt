@@ -641,7 +641,9 @@ run, on the runner that built it; Android x86_64 is loaded on an emulator. The
 same artifact as linked, unsigned, must be refused, which shows the test runs.
 Each check requires both the harness's exit status and its verdict line.
 Android arm64 is verified offline only, because no runner the workflow uses
-executes it, and its provenance file says so. Each job prints the signature
+executes it, and its provenance file says so. Before a draft release is
+published, the arm64 library is verified on an arm64-v8a device with
+`scripts/android-device-check.sh`. Each job prints the signature
 and the key fingerprint of every artifact as `provenance:` lines, each
 tarball's `BUILD-PROVENANCE.txt` records them with the key source and the load
 check, and a final job requires every artifact of the run to name the same

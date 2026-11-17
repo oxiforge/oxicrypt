@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests check-release-tag.sh, attach-draft.sh and release-archive-check.sh
-# against fixtures.
+# Tests check-release-tag.sh, attach-draft.sh, release-archive-check.sh and
+# android-device-check.sh against fixtures.
 #
 #   test-release-scripts.sh
 #
@@ -371,6 +371,133 @@ mkdir -p "$T/archives/twodirs/a" "$T/archives/twodirs/b"
 tar -czf "$T/archives/twodirs.tar.gz" -C "$T/archives/twodirs" a b
 expect "archive library: two top-level directories refused" 1 "holds 2 top-level entries, not one directory" \
     archive_check library "$T/archives/twodirs.tar.gz"
+
+# --- android-device-check.sh ----------------------------------------------
+# Runs against a bundle holding a stand-in library: an ELF header, a slot of
+# non-zero bytes between the two magics at 0x10000, and filler. The NDK's
+# clang and llvm-readelf are stubs; the stub clang records its arguments and
+# writes a placeholder harness. The stub signer reports that slot and two
+# hashed ranges for --show, and for --verify accepts the signed library,
+# refuses the unsigned template copy as version 0 and anything else as
+# SignatureInvalid. The stub `adb` keeps every pushed file and answers a
+# harness run by the bytes of the library it names, as the module would:
+# the signed library operational, its unsigned template copy refused with
+# status 3, anything else refused with status 2. $ADB_LIE makes it report
+# the signed library refused or the tampered one operational.
+
+mkdir -p "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64" "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+python3 - "$T/android" <<'PY'
+import sys
+d = sys.argv[1]
+lib = bytearray(bytes(range(256)) * (0x30000 // 256))
+lib[:64] = b"\x7fELF\x02\x01\x01" + bytes(57)
+body = bytes([0x5A]) * (65536 - 32)
+lib[0x10000:0x20000] = b"\xfcOXICRYPT_FIPS_H" + body + b"\xfdOXICRYPT_FIPS_F"
+open(f"{d}/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0", "wb").write(lib)
+lib[0x10010:0x1fff0] = bytes(65536 - 32)
+open(f"{d}/template.so", "wb").write(lib)
+PY
+ln -s liboxicrypt_ffi.so.0 "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so"
+tar -czf "$T/android/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz" -C "$T/android/bundle" oxicrypt-ffi-v9.9.9-android-aarch64
+export ADB_SIGNED_SHA ADB_UNSIGNED_SHA
+ADB_SIGNED_SHA="$(sha "$T/android/bundle/oxicrypt-ffi-v9.9.9-android-aarch64/liboxicrypt_ffi.so.0")"
+ADB_UNSIGNED_SHA="$(sha "$T/android/template.so")"
+
+cat > "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$ADB_STUB/clang"
+while [ $# -gt 0 ]; do
+    if [ "$1" = -o ]; then printf 'harness\n' > "$2"; fi
+    shift
+done
+STUB
+cat > "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" <<'STUB'
+#!/usr/bin/env bash
+echo "  Machine:                           AArch64"
+STUB
+cat > "$T/bin/stub-sign" <<'STUB'
+#!/usr/bin/env bash
+sha="$(sha256sum < "$2" | cut -d' ' -f1)"
+case "$1" in
+    --show)
+        echo "  slot at file offset 0x10000, RVA 0x10000"
+        echo "    [0] Plain rva 0x00000000 file 0x00000000 len 65536 hole 0"
+        echo "    [1] Plain rva 0x00020000 file 0x00020000 len 65536 hole 0" ;;
+    --verify)
+        [ "$sha" = "$ADB_SIGNED_SHA" ] && { echo "verify ok: $2"; exit 0; }
+        [ "$sha" = "$ADB_UNSIGNED_SHA" ] && { echo "$2: slot invalid: slot version 0: the slot holds no signature"; exit 2; }
+        echo "$2: SignatureInvalid: the file does not match its signature"; exit 2 ;;
+esac
+STUB
+cat > "$T/bin/adb" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$ADB_STUB/calls"
+case "$1" in
+    wait-for-device) exit 0 ;;
+    push) mkdir -p "$ADB_STUB/dev"; cp "$2" "$ADB_STUB/dev/$(basename "$3")"; exit ;;
+    shell) shift ;;
+    *) exit 3 ;;
+esac
+case "$*" in
+    "getprop ro.product.cpu.abi") echo "${ADB_ABI:-arm64-v8a}" ;;
+    "getprop ro.build.version.release") echo 14 ;;
+    "getprop ro.build.version.sdk") echo 34 ;;
+    "getconf PAGESIZE") echo 16384 ;;
+    true) exit 0 ;;
+    false) exit 1 ;;
+    "rm -rf "* | "chmod 755 "*) exit 0 ;;
+    */harness" "*)
+        sha="$(sha256sum < "$ADB_STUB/dev/$(basename "$2")" | cut -d' ' -f1)"
+        if { [ "$sha" = "$ADB_SIGNED_SHA" ] && [ "${ADB_LIE:-}" != signed-refused ]; } \
+            || { [ "$sha" != "$ADB_SIGNED_SHA" ] && [ "$sha" != "$ADB_UNSIGNED_SHA" ] && [ "${ADB_LIE:-}" = tampered-operational ]; }; then
+            echo "oxi_init=0 oxi_is_operational=1 oxi_integrity_status=1"
+            echo "library: operational"
+            exit 0
+        fi
+        if [ "$sha" = "$ADB_UNSIGNED_SHA" ]; then status=3; else status=2; fi
+        echo "oxi_init=-1 oxi_is_operational=0 oxi_integrity_status=$status"
+        echo "library: refused by the module's power-up tests"
+        exit 1 ;;
+    *) echo "stub adb: unhandled shell $*" >&2; exit 3 ;;
+esac
+STUB
+chmod +x "$T/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/"* "$T/bin/stub-sign" "$T/bin/adb"
+
+# device_check <name>: runs the check with a fresh stub state in $T/adb-<name>.
+device_check() {
+    export ADB_STUB="$T/adb-$1"
+    mkdir -p "$ADB_STUB"
+    : > "$ADB_STUB/calls"
+    env PATH="$T/bin:$PATH" ANDROID_SERIAL=stub-device ANDROID_NDK_HOME="$T/ndk" \
+        "$HERE/android-device-check.sh" "$T/android/oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz" "$T/bin/stub-sign"
+}
+
+unset ADB_ABI ADB_LIE
+expect "device check: all three verdicts hold" 0 "verdict ok: the tampered control is refused as not matching its signature" \
+    device_check good
+out_good="$(device_check good 2>&1)" || true
+check "device check: the unsigned verdict printed" grep -qxF "verdict ok: the unsigned control is refused as unsigned" <<<"$out_good"
+check "device check: the signed verdict printed" grep -qxF "verdict ok: the signed library reaches operational" <<<"$out_good"
+check "device check: the page size printed" grep -qxF "  page size: 16384" <<<"$out_good"
+check "device check: the unsigned control pushed is the template" [ "$(sha "$T/adb-good/dev/unsigned.so")" = "$ADB_UNSIGNED_SHA" ]
+check "device check: the signed library pushed as shipped" [ "$(sha "$T/adb-good/dev/signed.so")" = "$ADB_SIGNED_SHA" ]
+check "device check: the harness linked for 16 KiB pages" \
+    grep -qE -- "-Wl,-z,max-page-size=16384 -o .* .*/\.github/probes/ffi-operational\.c -ldl$" "$T/adb-good/clang"
+
+export ADB_LIE=signed-refused
+expect "device check: the signed library refused fails" 1 "verdict FAILED: the signed library reaches operational" \
+    device_check signedrefused
+
+export ADB_LIE=tampered-operational
+expect "device check: the tampered library operational fails" 1 \
+    "verdict FAILED: the tampered control is refused as not matching its signature" device_check tamperedok
+
+unset ADB_LIE
+export ADB_ABI=x86_64
+expect "device check: another ABI refused" 1 "the device's ABI is x86_64; oxicrypt-ffi-v9.9.9-android-aarch64.tar.gz is for arm64-v8a" \
+    device_check abi
+check "device check: another ABI: nothing pushed" bash -c "! grep -q '^push' '$T/adb-abi/calls'"
+unset ADB_ABI
 
 # --- an inherited GIT_DIR ----------------------------------------------------
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
