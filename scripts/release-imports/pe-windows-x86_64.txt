@@ -1,0 +1,89 @@
+# Run-time imports allowed for oxicrypt_ffi.dll in the windows-x86_64 archive.
+# Read by `release-archive-check.sh imports`, which fails the release build
+# on any PE import not named here. A new import is a deliberate change,
+# made in this file in the commit that introduces it, with its reason.
+# Generated from the oxicrypt_ffi.dll of oxicrypt-ffi v0.26.1.
+
+# Windows system DLLs, present on every supported Windows.
+needs api-ms-win-core-synch-l1-2-0.dll
+needs kernel32.dll
+needs ntdll.dll
+
+# The MSVC toolchain's runtime: VCRUNTIME140 from the Visual C++
+# Redistributable and the Universal C Runtime. Both are run-time dependencies
+# a consumer must have installed.
+api-ms-win-crt-runtime-l1-1-0.dll!_cexit
+api-ms-win-crt-runtime-l1-1-0.dll!_configure_narrow_argv
+api-ms-win-crt-runtime-l1-1-0.dll!_execute_onexit_table
+api-ms-win-crt-runtime-l1-1-0.dll!_initialize_narrow_environment
+api-ms-win-crt-runtime-l1-1-0.dll!_initialize_onexit_table
+api-ms-win-crt-runtime-l1-1-0.dll!_initterm
+api-ms-win-crt-runtime-l1-1-0.dll!_initterm_e
+api-ms-win-crt-runtime-l1-1-0.dll!_seh_filter_dll
+needs api-ms-win-crt-runtime-l1-1-0.dll
+needs vcruntime140.dll
+vcruntime140.dll!__C_specific_handler
+vcruntime140.dll!__CxxFrameHandler3
+vcruntime140.dll!__std_type_info_destroy_list
+vcruntime140.dll!memcmp
+vcruntime140.dll!memcpy
+vcruntime140.dll!memset
+
+# The module's integrity test and image reader: locating the module's own
+# image and reading it back from memory.
+kernel32.dll!GetCurrentProcess
+kernel32.dll!GetModuleFileNameW
+kernel32.dll!GetModuleHandleExW
+kernel32.dll!ReadProcessMemory
+kernel32.dll!VirtualQuery
+
+# The Rust standard library: memory, threads and their parking, files,
+# console output, environment, errors, and panic backtraces (dbghelp loaded
+# on demand behind a named mutex, and the unwind functions).
+api-ms-win-core-synch-l1-2-0.dll!WaitOnAddress
+api-ms-win-core-synch-l1-2-0.dll!WakeByAddressAll
+api-ms-win-core-synch-l1-2-0.dll!WakeByAddressSingle
+kernel32.dll!CloseHandle
+kernel32.dll!CreateFileW
+kernel32.dll!CreateMutexA
+kernel32.dll!DisableThreadLibraryCalls
+kernel32.dll!FindClose
+kernel32.dll!FindFirstFileExW
+kernel32.dll!FormatMessageW
+kernel32.dll!GetConsoleMode
+kernel32.dll!GetConsoleOutputCP
+kernel32.dll!GetCurrentDirectoryW
+kernel32.dll!GetCurrentProcessId
+kernel32.dll!GetCurrentThreadId
+kernel32.dll!GetEnvironmentVariableW
+kernel32.dll!GetFileInformationByHandle
+kernel32.dll!GetFileInformationByHandleEx
+kernel32.dll!GetFullPathNameW
+kernel32.dll!GetLastError
+kernel32.dll!GetModuleHandleW
+kernel32.dll!GetProcAddress
+kernel32.dll!GetProcessHeap
+kernel32.dll!GetStdHandle
+kernel32.dll!GetSystemTimeAsFileTime
+kernel32.dll!HeapAlloc
+kernel32.dll!HeapFree
+kernel32.dll!HeapReAlloc
+kernel32.dll!InitializeSListHead
+kernel32.dll!LoadLibraryA
+kernel32.dll!MultiByteToWideChar
+kernel32.dll!QueryPerformanceCounter
+kernel32.dll!ReleaseMutex
+kernel32.dll!RtlCaptureContext
+kernel32.dll!RtlLookupFunctionEntry
+kernel32.dll!RtlVirtualUnwind
+kernel32.dll!SetFileInformationByHandle
+kernel32.dll!SetFileTime
+kernel32.dll!SetLastError
+kernel32.dll!WaitForSingleObject
+kernel32.dll!WaitForSingleObjectEx
+kernel32.dll!WideCharToMultiByte
+kernel32.dll!WriteConsoleW
+kernel32.dll!lstrlenW
+ntdll.dll!NtReadFile
+ntdll.dll!NtWriteFile
+ntdll.dll!RtlNtStatusToDosError

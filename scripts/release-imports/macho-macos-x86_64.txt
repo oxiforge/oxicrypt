@@ -1,0 +1,82 @@
+# Run-time imports allowed for liboxicrypt_ffi.1.dylib in the macos-x86_64 archive.
+# Read by `release-archive-check.sh imports`, which fails the release build
+# on any Mach-O import not named here. A new import is a deliberate change,
+# made in this file in the commit that introduces it, with its reason.
+# Generated from the liboxicrypt_ffi.1.dylib of oxicrypt-ffi v0.26.1.
+
+# libSystem, which holds libc, libpthread, dyld, libdispatch, the Mach calls
+# and the unwinder on macOS.
+needs /usr/lib/libSystem.B.dylib
+
+# The system unwinder, called by the Rust panic runtime.
+__Unwind_Backtrace
+__Unwind_GetDataRelBase
+__Unwind_GetIP
+__Unwind_GetIPInfo
+__Unwind_GetLanguageSpecificData
+__Unwind_GetRegionStart
+__Unwind_GetTextRelBase
+__Unwind_Resume
+__Unwind_SetGR
+__Unwind_SetIP
+
+# The module's integrity test and image reader: locating the module's own
+# image and reading it back from memory.
+__dyld_get_image_header
+__dyld_get_image_name
+__dyld_get_image_vmaddr_slide
+__dyld_image_count
+_dladdr
+_mach_task_self_
+_mach_vm_read_overwrite
+
+# The Rust standard library: memory, threads and thread-local storage, files,
+# environment and errors. The $INODE64 and $NOCANCEL suffixes are the x86_64
+# names of the 64-bit-inode and non-cancellable variants.
+___bzero
+___error
+__tlv_atexit
+__tlv_bootstrap
+_abort
+_calloc
+_close$NOCANCEL
+_closedir
+_dirfd
+_dispatch_release
+_dispatch_semaphore_create
+_dispatch_semaphore_signal
+_dispatch_semaphore_wait
+_dlclose
+_dlopen
+_dlsym
+_free
+_fstat$INODE64
+_getcwd
+_getenv
+_malloc
+_memcmp
+_memcpy
+_memmove
+_memset
+_mmap
+_munmap
+_open
+_opendir$INODE64
+_posix_memalign
+_pread
+_pthread_mutex_destroy
+_pthread_mutex_init
+_pthread_mutex_lock
+_pthread_mutex_trylock
+_pthread_mutex_unlock
+_pthread_mutexattr_destroy
+_pthread_mutexattr_init
+_pthread_mutexattr_settype
+_pthread_threadid_np
+_readdir_r$INODE64
+_realloc
+_stat$INODE64
+_strerror_r
+_strlen
+_write
+_writev
