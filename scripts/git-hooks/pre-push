@@ -202,7 +202,9 @@ else
     deny_revs=()
     for pair in "${ref_pairs[@]:-}"; do
         read -r _l _r <<<"$pair"
-        [[ "$_l" =~ ^0+$ ]] && continue          # ref deletion pushes no content
+        # An empty local sha is not a revision: `"${ref_pairs[@]:-}"` yields one
+        # empty element when nothing was read from stdin.
+        [[ -z "$_l" || "$_l" =~ ^0+$ ]] && continue
         if [[ "$_r" =~ ^0+$ ]]; then
             # New remote ref: bound by what the remote already has.
             base="$(git merge-base "$_l" origin/main 2>/dev/null || true)"
@@ -221,12 +223,18 @@ else
             deny_revs+=("$_l")
         fi
     done
-    # No refs on stdin (manual invocation, edge cases): fall back to HEAD rather
-    # than scanning nothing, and say so.
     if [[ "${#deny_revs[@]}" -eq 0 ]]; then
-        deny_revs=("HEAD")
-        echo "pre-push: private-name check — no pushed revisions enumerated; scanning HEAD."
+        if [[ "$saw_ref" == "true" ]]; then
+            # Every ref supplied is a deletion, so no tree is being published.
+            echo "pre-push: private-name check — no revisions to scan (every pushed ref is a deletion)."
+        else
+            # No refs on stdin (manual invocation): scan HEAD, and say so.
+            deny_revs=("HEAD")
+            echo "pre-push: private-name check — no pushed revisions enumerated; scanning HEAD."
+        fi
     fi
+    # An empty set must not reach git grep, which then scans the working tree.
+    if [[ "${#deny_revs[@]}" -gt 0 ]]; then
     # Bound the work, visibly. A silent cap would read as full coverage.
     if [[ "${#deny_revs[@]}" -gt 200 ]]; then
         echo "pre-push: private-name check — ${#deny_revs[@]} revisions in range; scanning the newest 200."
@@ -299,6 +307,7 @@ else
         exit 1
     fi
     echo "pre-push: private-name check passed ($deny_ran/$deny_seen pattern(s) applied over ${#deny_revs[@]} revision(s))."
+    fi
 fi
 
 # ---------------------------------------------------------------------------
