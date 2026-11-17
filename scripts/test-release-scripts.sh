@@ -16,6 +16,10 @@
 # against malformed bundles. Its library mode runs the README's examples
 # against a stand-in library compiled here, whose oxi_init fails when
 # STUB_OXI_INIT_FAILS is set and whose oxi_sha256 writes the digest of "abc".
+# Its examples mode runs examples/*/run.sh against the same stand-in, once
+# with the PATH it is given, where each example whose toolchain is present
+# must pass and each other must be reported as skipped, and once with a PATH
+# that hides every toolchain.
 # Its imports mode runs against a bundle holding a shared library compiled
 # here that calls puts, with allow-lists written from `nm -D` independently
 # of the script.
@@ -459,6 +463,59 @@ tar -czf "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" -C "$T/ffi/link
 expect "archive library: a versioned library that is a link out of the bundle refused" 1 \
     "FAILED: liboxicrypt_ffi.so.1 is a symbolic link, not a file in the bundle" \
     archive_check library "$T/ffi/linked/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz"
+
+# example_runs <language>: the toolchain release-archive-check.sh's header
+# names for examples/<language> is on PATH.
+example_runs() {
+    case "$1" in
+        go) command -v go >/dev/null && command -v "$(go env CC)" >/dev/null ;;
+        node) command -v node >/dev/null && command -v npm >/dev/null ;;
+        java) command -v java >/dev/null && command -v javac >/dev/null \
+            && [ "$(javac -version 2>&1 | sed -nE 's/^javac ([0-9]+).*/\1/p')" -ge 22 ] 2>/dev/null ;;
+        csharp) command -v dotnet >/dev/null ;;
+        *) return 1 ;;
+    esac
+}
+out_examples="$(archive_check examples "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
+    && status=0 || status=$?
+present=0
+for language in go node java csharp; do
+    if example_runs "$language"; then
+        present=$((present + 1))
+        check "archive examples: $language runs against the stand-in" \
+            grep -qxF "examples/$language (exit 0):" <<<"$out_examples"
+    else
+        check "archive examples: $language is skipped without its toolchain" \
+            grep -q "^skip: $language (" <<<"$out_examples"
+    fi
+done
+if [ "$present" -gt 0 ]; then
+    check "archive examples: every example whose toolchain is present passes" [ "$status" = 0 ]
+else
+    check "archive examples: no toolchain present fails" [ "$status" = 1 ]
+fi
+# A PATH holding only what the script itself calls hides every toolchain.
+mkdir -p "$T/minpath"
+for t in bash env dirname basename mktemp rm tar gzip find wc tr readlink grep sed awk od cat head; do
+    ln -s "$(command -v "$t")" "$T/minpath/$t"
+done
+out_examples="$(PATH="$T/minpath" archive_check examples "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
+    && status=0 || status=$?
+check "archive examples: no toolchain on PATH exits 1" [ "$status" = 1 ]
+check "archive examples: no toolchain on PATH is named" grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
+check "archive examples: a missing toolchain is reported as a skip" grep -qxF "skip: go (no go on PATH)" <<<"$out_examples"
+out_examples="$(STUB_OXI_INIT_FAILS=1 archive_check examples "$T/ffi/one/oxicrypt-ffi-v9.9.9-linux-x86_64.tar.gz" 2>&1)" \
+    && status=0 || status=$?
+check "archive examples: a failing oxi_init exits 1" [ "$status" = 1 ]
+if [ "$present" -gt 0 ]; then
+    check "archive examples: a failing oxi_init fails an example" \
+        grep -qE '^FAILED: examples/[a-z]+ exited 1$' <<<"$out_examples"
+else
+    check "archive examples: a failing oxi_init with no toolchain present fails" \
+        grep -qxF "FAILED: no example toolchain on PATH" <<<"$out_examples"
+fi
+expect "archive examples: a wrong argument count is a usage error" 1 "usage: release-archive-check.sh examples" \
+    archive_check examples
 
 IMP="$T/imports/oxicrypt-ffi-v9.9.9-linux-x86_64"
 mkdir -p "$IMP" "$T/allow/exact" "$T/allow/missing" "$T/allow/extra" "$T/allow/none"

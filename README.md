@@ -91,6 +91,9 @@ cc -o sha256_demo sha256_demo.c -I"$DIR" -L"$DIR" -loxicrypt_ffi -Wl,-rpath,"$DI
 ./sha256_demo
 ```
 
+The same program in Go, Node.js, Java and C#, each with the commands to
+build and run it against a bundle, is in [`examples/`](examples/).
+
 `oxi_init(0)` selects the unrestricted profile; `1` is CNSA 2.0. Every
 function, its buffer sizes and its status codes are in the header and in
 [the C ABI section](#c-abi-oxicrypt-ffi) below. To check whose key the

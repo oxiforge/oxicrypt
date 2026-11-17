@@ -6,6 +6,7 @@
 #   release-archive-check.sh cli <archive.tar.gz> <verify-key-fingerprint>
 #   release-archive-check.sh library <archive.tar.gz>
 #   release-archive-check.sh imports <archive.tar.gz> <allow-list-dir>
+#   release-archive-check.sh examples <archive.tar.gz>
 #
 # Each archive must hold exactly one top-level directory, the bundle.
 #
@@ -56,6 +57,15 @@
 #          reported as a note and does not fail it. Names a library looks
 #          up at run time through dlsym or GetProcAddress are not imports
 #          and are not checked.
+# examples Each examples/<language>/ directory holding a run.sh runs it with
+#          the bundle directory as its argument, and it must exit 0 and print
+#              ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+#          An example whose toolchain is not on PATH is skipped with
+#          `skip: <language> (<reason>)`: go needs `go` and the C compiler
+#          `go env CC` names, node needs `node` and `npm`, java needs `java`
+#          and a `javac` of 22 or later, csharp needs `dotnet`. A directory
+#          with a run.sh and no toolchain listed here fails the check, and so
+#          does a run in which no example ran.
 #
 # Each check requires the program's exit status AND its verdict lines, each
 # matched as a whole line exactly once, so neither a lost status nor a stray
@@ -377,8 +387,54 @@ case "$mode" in
         fi
         exit "$failed"
         ;;
+    examples)
+        [ $# -eq 2 ] || { echo "usage: release-archive-check.sh examples <archive.tar.gz>" >&2; exit 1; }
+        dir="$(bundle "$2")" || exit 1
+        lib="$(shared_library "$dir")" || exit 1
+        failed=0
+        ran=""
+        for example in "$root"/examples/*/; do
+            [ -f "$example/run.sh" ] || continue
+            language="$(basename "$example")"
+            case "$language" in
+                go) tools="go" ;;
+                node) tools="node npm" ;;
+                java) tools="java javac" ;;
+                csharp) tools="dotnet" ;;
+                *) echo "FAILED: examples/$language has a run.sh and no toolchain this check knows" >&2; failed=1; continue ;;
+            esac
+            skip=""
+            for t in $tools; do
+                command -v "$t" >/dev/null 2>&1 || { skip="no $t on PATH"; break; }
+            done
+            if [ -z "$skip" ] && [ "$language" = go ]; then
+                # cgo compiles the example with this compiler.
+                go_cc="$(go env CC)"
+                command -v "$go_cc" >/dev/null 2>&1 || skip="no $go_cc on PATH for cgo"
+            fi
+            if [ -z "$skip" ] && [ "$language" = java ]; then
+                # The Foreign Function & Memory API the example uses is final from Java 22.
+                javac_major="$(javac -version 2>&1 | tr -d '\r' | sed -nE 's/^javac ([0-9]+).*/\1/p')"
+                if [ -z "$javac_major" ] || [ "$javac_major" -lt 22 ]; then
+                    skip="javac ${javac_major:-of unknown version} on PATH, the example needs 22 or later"
+                fi
+            fi
+            if [ -n "$skip" ]; then
+                echo "skip: $language ($skip)"
+                continue
+            fi
+            ran="$ran $language"
+            run_program "examples/$language" bash "$example/run.sh" "$dir"
+            require "examples/$language" "$abc_digest" || failed=1
+        done
+        [ -n "$ran" ] || { echo "FAILED: no example toolchain on PATH" >&2; exit 1; }
+        if [ "$failed" -eq 0 ]; then
+            echo "ok: the examples for${ran} run against $lib from the extracted archive"
+        fi
+        exit "$failed"
+        ;;
     *)
-        echo "usage: release-archive-check.sh cli|library|imports ..." >&2
+        echo "usage: release-archive-check.sh cli|library|imports|examples ..." >&2
         exit 1
         ;;
 esac
