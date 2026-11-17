@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests check-release-tag.sh and attach-draft.sh against fixtures.
+# Tests check-release-tag.sh, attach-draft.sh and release-archive-check.sh
+# against fixtures.
 #
 #   test-release-scripts.sh
 #
@@ -10,7 +11,9 @@
 # `--jq` filter with jq, so the filters the script sends are the ones tested.
 # The stub records the bytes, content type and path of every upload, refuses
 # a second asset of the same name as GitHub does, and fails a named call on
-# request.
+# request. release-archive-check.sh runs against archives whose bundle holds a
+# stub `oxi` printing chosen lines, and against malformed bundles; its
+# library mode needs a real library and is not run here.
 #
 # Every case asserts the exit status and a line of the output. Needs git,
 # ssh-keygen, python3 and jq. Exits 0 when every case passes, 1 otherwise.
@@ -322,6 +325,52 @@ check "two releases for the tag: nothing uploaded" [ "$(uploads)" = 0 ]
 
 expect "missing file: usage error" 2 "not a file" \
     env PATH="$T/bin:$PATH" "$HERE/attach-draft.sh" v1.2.3 owner/repo "$T/files/absent"
+
+# --- release-archive-check.sh ---------------------------------------------
+
+FP="sha256:$(printf '%064d' 0 | tr 0 a)"
+PASSED="integrity: passed — this binary matches the signature recorded inside it"
+
+# cli_archive <name> <integrity lines> <indicator>: an archive whose bundle
+# holds a stub `oxi` printing <integrity lines> for --integrity and
+# `self-test indicator: <indicator>` for `selftest --quiet`.
+cli_archive() {
+    local d="$T/archives/$1/oxicrypt-cli-test"
+    mkdir -p "$d"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'case "$1" in'
+        printf -- '--integrity) printf %%s %q ;;\n' "$2"
+        printf 'selftest) echo "self-test indicator: %s" ;;\n' "$3"
+        echo '*) exit 2 ;;'
+        echo 'esac'
+    } > "$d/oxi"
+    chmod +x "$d/oxi"
+    tar -czf "$T/archives/$1.tar.gz" -C "$T/archives/$1" oxicrypt-cli-test
+}
+archive_check() { "$HERE/release-archive-check.sh" "$@"; }
+
+cli_archive good "$PASSED"$'\n'"  verify key: $FP"$'\n' PASS
+expect "archive cli: the expected lines pass" 0 "ok: ./oxi from the extracted archive" \
+    archive_check cli "$T/archives/good.tar.gz" "$FP"
+cli_archive wrongkey "$PASSED"$'\n'"  verify key: ${FP%a}b"$'\n' PASS
+expect "archive cli: another verify key refused" 1 "did not print \"  verify key: $FP\" exactly once" \
+    archive_check cli "$T/archives/wrongkey.tar.gz" "$FP"
+cli_archive twice "$PASSED"$'\n'"$PASSED"$'\n'"  verify key: $FP"$'\n' PASS
+expect "archive cli: a repeated integrity line refused" 1 "did not print \"$PASSED\" exactly once" \
+    archive_check cli "$T/archives/twice.tar.gz" "$FP"
+cli_archive selftestfail "$PASSED"$'\n'"  verify key: $FP"$'\n' FAIL
+expect "archive cli: a failed self-test refused" 1 "did not print \"self-test indicator: PASS\" exactly once" \
+    archive_check cli "$T/archives/selftestfail.tar.gz" "$FP"
+mkdir -p "$T/archives/nooxi/oxicrypt-cli-test"
+printf 'licence\n' > "$T/archives/nooxi/oxicrypt-cli-test/LICENSE-MIT"
+tar -czf "$T/archives/nooxi.tar.gz" -C "$T/archives/nooxi" oxicrypt-cli-test
+expect "archive cli: a bundle without oxi refused" 1 "holds neither oxi nor oxi.exe" \
+    archive_check cli "$T/archives/nooxi.tar.gz" "$FP"
+mkdir -p "$T/archives/twodirs/a" "$T/archives/twodirs/b"
+tar -czf "$T/archives/twodirs.tar.gz" -C "$T/archives/twodirs" a b
+expect "archive library: two top-level directories refused" 1 "holds 2 top-level entries, not one directory" \
+    archive_check library "$T/archives/twodirs.tar.gz"
 
 # --- an inherited GIT_DIR ----------------------------------------------------
 # Runs this suite once more the way a git hook would start it, with GIT_DIR
