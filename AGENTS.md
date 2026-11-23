@@ -160,6 +160,39 @@ roadmap entry is removed and it is built, with GitHub issues when it changes rel
 doc stays). Nothing here records
 *status* or *history* — that is issues + git tags + `CHANGELOG.md`.
 
+## Branch & merge workflow
+
+Every change to `main` lands through a pull request, and `main` stays linear: no merge commits,
+no squash by the forge, every commit signed by its author.
+
+1. Work on a branch; one branch and one pull request per arc of work. Related commits stay as
+   separate signed commits on that branch. A revision requested in review is amended or
+   autosquashed into the commit it corrects while the branch is unmerged, never added as a
+   follow-up commit.
+2. Before the pull request opens, the branch is current with `origin/main` (`git rev-list --count
+   HEAD..origin/main` is 0) and the gates in **Definition of done** have passed on its head tree.
+3. The pull request body is written for the public record: what the change delivers, in plain
+   sentences, with `Closes #N` for each issue it resolves. A pre-release change gets its line under
+   `## [Unreleased]` in `CHANGELOG.md` in the same branch.
+4. Merge by fast-forward, never with the forge's merge button, which drops or replaces the
+   signatures (`--rebase` and `--squash` re-sign nothing; `--merge` adds an unsigned-by-author merge
+   commit):
+
+   ```sh
+   git fetch origin
+   git checkout main && git merge --ff-only origin/main
+   git merge --ff-only <branch>
+   git push origin main
+   git push origin --delete <branch>
+   ```
+
+   The forge marks the pull request merged when the branch's head commit reaches `main`, and the
+   `Closes #N` lines close their issues. Read the pull request state back after the push. If the
+   branch had to be rebased after the pull request opened, force-push the branch first
+   (`--force-with-lease`), or the pull request closes as unmerged when its branch is deleted.
+5. Release chores (version bump, `CHANGELOG.md` section rename, signed `vX.Y.Z` tag) are a separate
+   commit after the merge, per **Documentation sync**.
+
 ## Definition of done
 
 Every task is incomplete until all of these pass. Run them as the last step before handing control back,
